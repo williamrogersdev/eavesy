@@ -21,8 +21,8 @@ import { BrandMark } from '@/components/brand-mark';
 import { CaptureBar } from '@/components/recorder/capture-bar';
 import { Link } from '@/components/ui/app-link';
 import { type LibItem, useLibraryItems } from '@/lib/api/use-library';
+import { useMe } from '@/lib/api/use-me';
 import { isDesktop } from '@/lib/desktop/bridge';
-import { isRecord, optionalString } from '@/lib/json';
 import { usePathname, useRouter } from '@/lib/next-compat/navigation';
 import { useSignOut } from '@/lib/use-sign-out';
 import { cn } from '@/lib/utils';
@@ -292,20 +292,8 @@ function RecentRow({ item, onNavigate }: { item: LibItem; onNavigate?: () => voi
 }
 
 function DownloadCard({ onNavigate }: { onNavigate?: () => void }) {
-  const [hasMac, setHasMac] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/me')
-      .then(async (response): Promise<unknown> => (response.ok ? response.json() : null))
-      .then((value) => {
-        if (!cancelled && isRecord(value)) setHasMac(value.hasMac === true);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  if (hasMac) return null;
+  const { data: me } = useMe();
+  if (!me || me.hasMac) return null;
   return (
     <Link
       href="/download/mac"
@@ -466,32 +454,10 @@ function TypeIcon({ item, className }: { item: LibItem; className?: string }) {
   }
 }
 
-interface Me {
-  email?: string;
-  displayName?: string;
-}
-
 function AccountFooter({ onNavigate }: { onNavigate?: () => void }) {
-  const [me, setMe] = useState<Me | null>(null);
+  const { data: me } = useMe();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/me')
-      .then(async (response): Promise<unknown> => (response.ok ? response.json() : null))
-      .then((value) => {
-        if (cancelled || !isRecord(value)) return;
-        setMe({
-          email: optionalString(value.email),
-          displayName: optionalString(value.displayName),
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!open) return;

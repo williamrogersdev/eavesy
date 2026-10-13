@@ -7,6 +7,7 @@ import { TranscriptPanel } from '@/components/transcript/transcript-panel';
 import { useCapture } from '@/lib/api/use-captures';
 import { cn, formatBytes, formatDuration } from '@/lib/utils';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
+import { refreshLibrary } from '@/lib/api/use-library';
 
 export const Route = createFileRoute('/app/captures/$id')({
   component: CaptureDetailPage,
@@ -26,6 +27,7 @@ function CaptureDetailPage() {
     try {
       const res = await fetch(`/api/captures/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      refreshLibrary();
       await router.push('/app?tab=captures');
     } catch (err) {
       setDeleting(false);

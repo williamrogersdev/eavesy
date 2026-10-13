@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createResource } from './shared-resource';
 import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 
 export interface UseMeetingResult<T> {
@@ -103,37 +104,10 @@ export interface MeetingListItem {
   status?: string;
 }
 
+export const meetingList = createResource('/api/meetings/list', parseMeetingList);
+
 export function useMeetings() {
-  const [data, setData] = useState<MeetingListItem[] | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch('/api/meetings/list')
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        const json: unknown = await r.json();
-        return json;
-      })
-      .then((json) => {
-        if (!cancelled) setData(parseMeetingList(json));
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setError(asError(error));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
-
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
+  return meetingList.use();
 }
 
 function parseMeetingList(value: unknown): MeetingListItem[] {

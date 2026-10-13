@@ -1,4 +1,5 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
+import { timeD1 } from '@/server/perf';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import type { D1Database } from '@cloudflare/workers-types';
 
@@ -14,7 +15,7 @@ export function getDb(): AppDb {
       'D1 binding (DB) is missing. Did you provision the database with `bunx wrangler d1 create eavesy` and update wrangler.toml?',
     );
   }
-  return drizzle(d1, { schema });
+  return drizzle(timeD1(d1), { schema });
 }
 
 export type { D1Database };

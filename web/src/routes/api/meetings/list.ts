@@ -17,7 +17,7 @@ export const Route = createFileRoute('/api/meetings/list')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const limit = Math.min(Number(url.searchParams.get('limit') ?? '50'), 200);
-        const items = await meetingsRepo.listForUser(getDb(), { userId: actor.userId, limit });
+        const items = await meetingsRepo.listSummariesForUser(getDb(), { userId: actor.userId, limit });
         return Response.json({ items });
       },
     },

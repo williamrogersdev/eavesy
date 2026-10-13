@@ -1,8 +1,13 @@
 'use client';
 
 import { useMemo } from 'react';
-import { type CaptureItem, useCaptures } from './use-captures';
-import { type MeetingListItem, useMeetings } from './use-meeting';
+import { type CaptureItem, captureList, useCaptures } from './use-captures';
+import { type MeetingListItem, meetingList, useMeetings } from './use-meeting';
+
+export function refreshLibrary() {
+  void meetingList.refresh();
+  void captureList.refresh();
+}
 
 export type LibKind = 'meeting' | 'capture';
 
