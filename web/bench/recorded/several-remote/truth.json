@@ -1,0 +1,33 @@
+{
+  "totalMs": 18905,
+  "lines": [
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 800,
+      "endMs": 4401,
+      "text": "Welcome to the design review, I have invited Priya as well."
+    },
+    {
+      "speaker": "them2",
+      "side": "them",
+      "startMs": 4901,
+      "endMs": 8476,
+      "text": "Hi everyone, I will walk you through the new onboarding screens."
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 9076,
+      "endMs": 12572,
+      "text": "Thanks Priya. Does the permission step come before pairing now?"
+    },
+    {
+      "speaker": "them2",
+      "side": "them",
+      "startMs": 13072,
+      "endMs": 17405,
+      "text": "Yes, permissions first, then pairing, then a short test recording."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# Eavesy
+
+> Eavesy is context capture for AI agents. Record your screen and voice on your Mac, and Eavesy turns the session into a clean Markdown brief — TL;DR, key decisions, the steps you took, and the full transcript — that you paste straight into Claude, Cursor, ChatGPT, or any agent. Everything is also saved as a real folder of Markdown, JSON, and audio that you own.
+
+## What makes Eavesy different
+- **Eyes and ears:** It captures your screen plus system audio and your microphone — what you saw and what was said. No bot joins the call and no "recording" banner appears, so it works on any call and in person.
+- **AI-ready brief:** Stop recording and get a structured Markdown brief built to paste into an AI agent. One click and your agent has the context it was missing.
+- **Context you own:** Every session is written to a folder on your disk as Markdown + JSON + audio. Point an agent at it, open it in Obsidian, or grep it from the terminal. No lock-in.
+- **Private by default:** Anonymous browser recordings auto-delete within 24 hours. AI providers run with no-train flags. Deletion actually deletes.
+
+## How it works
+1. Hit record — capture your voice, your screen, or both, from a hotkey or your browser.
+2. Eavesy transcribes and tracks the session in real time.
+3. Stop, and copy an AI-ready Markdown brief into your agent — or save it to disk.
+
+## Where it works
+Any Mac app or call — Zoom, Google Meet, Microsoft Teams, Webex, Slack huddles — screen walkthroughs, and in-person conversations. Briefs export to Obsidian, Notion, and Apple Notes, or paste into any AI agent.
+
+## Pricing
+- Free — capture in your browser, 30-minute sessions, AI transcript + Markdown brief, copy to any agent.
+- Pro ($12/mo) — Mac app with screen + system audio, unlimited length, semantic search, templates, and sync.
+- Team ($20/user/mo) — shared workspace, SSO, and admin controls.
+
+## Key pages
+- Home: https://eavesy.com/
+- Features: https://eavesy.com/features
+- How it works: https://eavesy.com/how-it-works
+- Pricing: https://eavesy.com/pricing
+- Integrations: https://eavesy.com/integrations
+- Docs: https://eavesy.com/docs
+- Blog: https://eavesy.com/blog
+- Security: https://eavesy.com/security
+
+## Contact
+hello@eavesy.com

@@ -1,0 +1,2 @@
+ALTER TABLE `product_metrics_daily` ADD `users_first_brief_use` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `product_metrics_daily` ADD `meetings_brief_used` integer DEFAULT 0 NOT NULL;

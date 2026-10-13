@@ -1,0 +1,400 @@
+{
+  "activeMs": 13680,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 21.584,
+      "duration_after_vad": 21.088
+    },
+    "text": "Can everyone see the dashboard on my screen right now? I can see it. The error rate looks much lower than last week. It dropped after we fixed the retry logic in the upload queue. Great work. Let us add an alert so we notice if it climbs again. I will set that up this afternoon and share the link in the channel.",
+    "word_count": 63,
+    "segments": [
+      {
+        "start": 0.5,
+        "end": 3.8,
+        "text": " Can everyone see the dashboard on my screen right now?",
+        "temperature": 0,
+        "avg_logprob": -0.16472941546178446,
+        "compression_ratio": 1.4764150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Can",
+            "start": 0.5,
+            "end": 1
+          },
+          {
+            "word": " everyone",
+            "start": 1,
+            "end": 1.42
+          },
+          {
+            "word": " see",
+            "start": 1.42,
+            "end": 1.78
+          },
+          {
+            "word": " the",
+            "start": 1.78,
+            "end": 1.96
+          },
+          {
+            "word": " dashboard",
+            "start": 1.96,
+            "end": 2.36
+          },
+          {
+            "word": " on",
+            "start": 2.36,
+            "end": 2.6
+          },
+          {
+            "word": " my",
+            "start": 2.6,
+            "end": 2.8
+          },
+          {
+            "word": " screen",
+            "start": 2.8,
+            "end": 3.14
+          },
+          {
+            "word": " right",
+            "start": 3.14,
+            "end": 3.46
+          },
+          {
+            "word": " now?",
+            "start": 3.46,
+            "end": 3.8
+          }
+        ],
+        "word_count": 10
+      },
+      {
+        "start": 4.22,
+        "end": 7.92,
+        "text": " I can see it. The error rate looks much lower than last week.",
+        "temperature": 0,
+        "avg_logprob": -0.16472941546178446,
+        "compression_ratio": 1.4764150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " I",
+            "start": 4.22,
+            "end": 4.66
+          },
+          {
+            "word": " can",
+            "start": 4.66,
+            "end": 4.86
+          },
+          {
+            "word": " see",
+            "start": 4.86,
+            "end": 5.1
+          },
+          {
+            "word": " it.",
+            "start": 5.1,
+            "end": 5.32
+          },
+          {
+            "word": " The",
+            "start": 5.48,
+            "end": 5.68
+          },
+          {
+            "word": " error",
+            "start": 5.68,
+            "end": 5.98
+          },
+          {
+            "word": " rate",
+            "start": 5.98,
+            "end": 6.22
+          },
+          {
+            "word": " looks",
+            "start": 6.22,
+            "end": 6.46
+          },
+          {
+            "word": " much",
+            "start": 6.46,
+            "end": 6.74
+          },
+          {
+            "word": " lower",
+            "start": 6.74,
+            "end": 7.02
+          },
+          {
+            "word": " than",
+            "start": 7.02,
+            "end": 7.22
+          },
+          {
+            "word": " last",
+            "start": 7.22,
+            "end": 7.5
+          },
+          {
+            "word": " week.",
+            "start": 7.5,
+            "end": 7.92
+          }
+        ],
+        "word_count": 13
+      },
+      {
+        "start": 8.32,
+        "end": 11.9,
+        "text": " It dropped after we fixed the retry logic in the upload queue.",
+        "temperature": 0,
+        "avg_logprob": -0.16472941546178446,
+        "compression_ratio": 1.4764150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " It",
+            "start": 8.32,
+            "end": 8.78
+          },
+          {
+            "word": " dropped",
+            "start": 8.78,
+            "end": 9.08
+          },
+          {
+            "word": " after",
+            "start": 9.08,
+            "end": 9.46
+          },
+          {
+            "word": " we",
+            "start": 9.46,
+            "end": 9.66
+          },
+          {
+            "word": " fixed",
+            "start": 9.66,
+            "end": 9.98
+          },
+          {
+            "word": " the",
+            "start": 9.98,
+            "end": 10.16
+          },
+          {
+            "word": " retry",
+            "start": 10.16,
+            "end": 10.54
+          },
+          {
+            "word": " logic",
+            "start": 10.54,
+            "end": 10.86
+          },
+          {
+            "word": " in",
+            "start": 10.86,
+            "end": 11.06
+          },
+          {
+            "word": " the",
+            "start": 11.06,
+            "end": 11.18
+          },
+          {
+            "word": " upload",
+            "start": 11.18,
+            "end": 11.56
+          },
+          {
+            "word": " queue.",
+            "start": 11.56,
+            "end": 11.9
+          }
+        ],
+        "word_count": 12
+      },
+      {
+        "start": 12.48,
+        "end": 16.02,
+        "text": " Great work. Let us add an alert so we notice if it climbs again.",
+        "temperature": 0,
+        "avg_logprob": -0.16472941546178446,
+        "compression_ratio": 1.4764150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Great",
+            "start": 12.48,
+            "end": 12.8
+          },
+          {
+            "word": " work.",
+            "start": 12.8,
+            "end": 13.1
+          },
+          {
+            "word": " Let",
+            "start": 13.44,
+            "end": 13.58
+          },
+          {
+            "word": " us",
+            "start": 13.58,
+            "end": 13.76
+          },
+          {
+            "word": " add",
+            "start": 13.76,
+            "end": 13.96
+          },
+          {
+            "word": " an",
+            "start": 13.96,
+            "end": 14.08
+          },
+          {
+            "word": " alert",
+            "start": 14.08,
+            "end": 14.28
+          },
+          {
+            "word": " so",
+            "start": 14.28,
+            "end": 14.5
+          },
+          {
+            "word": " we",
+            "start": 14.5,
+            "end": 14.68
+          },
+          {
+            "word": " notice",
+            "start": 14.68,
+            "end": 14.98
+          },
+          {
+            "word": " if",
+            "start": 14.98,
+            "end": 15.2
+          },
+          {
+            "word": " it",
+            "start": 15.2,
+            "end": 15.32
+          },
+          {
+            "word": " climbs",
+            "start": 15.32,
+            "end": 15.66
+          },
+          {
+            "word": " again.",
+            "start": 15.66,
+            "end": 16.02
+          }
+        ],
+        "word_count": 14
+      },
+      {
+        "start": 16.6,
+        "end": 19.96,
+        "text": " I will set that up this afternoon and share the link in the channel.",
+        "temperature": 0,
+        "avg_logprob": -0.16472941546178446,
+        "compression_ratio": 1.4764150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " I",
+            "start": 16.6,
+            "end": 17.08
+          },
+          {
+            "word": " will",
+            "start": 17.08,
+            "end": 17.26
+          },
+          {
+            "word": " set",
+            "start": 17.26,
+            "end": 17.5
+          },
+          {
+            "word": " that",
+            "start": 17.5,
+            "end": 17.7
+          },
+          {
+            "word": " up",
+            "start": 17.7,
+            "end": 17.88
+          },
+          {
+            "word": " this",
+            "start": 17.88,
+            "end": 18.06
+          },
+          {
+            "word": " afternoon",
+            "start": 18.06,
+            "end": 18.54
+          },
+          {
+            "word": " and",
+            "start": 18.54,
+            "end": 18.76
+          },
+          {
+            "word": " share",
+            "start": 18.76,
+            "end": 19.02
+          },
+          {
+            "word": " the",
+            "start": 19.02,
+            "end": 19.18
+          },
+          {
+            "word": " link",
+            "start": 19.18,
+            "end": 19.38
+          },
+          {
+            "word": " in",
+            "start": 19.38,
+            "end": 19.54
+          },
+          {
+            "word": " the",
+            "start": 19.54,
+            "end": 19.64
+          },
+          {
+            "word": " channel.",
+            "start": 19.64,
+            "end": 19.96
+          }
+        ],
+        "word_count": 14
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.500 --> 00:01.000\n Can\n\n00:01.000 --> 00:01.420\n everyone\n\n00:01.420 --> 00:01.780\n see\n\n00:01.780 --> 00:01.960\n the\n\n00:01.960 --> 00:02.360\n dashboard\n\n00:02.360 --> 00:02.600\n on\n\n00:02.600 --> 00:02.800\n my\n\n00:02.800 --> 00:03.140\n screen\n\n00:03.140 --> 00:03.460\n right\n\n00:03.460 --> 00:03.800\n now?\n\n00:04.220 --> 00:04.660\n I\n\n00:04.660 --> 00:04.860\n can\n\n00:04.860 --> 00:05.100\n see\n\n00:05.100 --> 00:05.320\n it.\n\n00:05.480 --> 00:05.680\n The\n\n00:05.680 --> 00:05.980\n error\n\n00:05.980 --> 00:06.220\n rate\n\n00:06.220 --> 00:06.460\n looks\n\n00:06.460 --> 00:06.740\n much\n\n00:06.740 --> 00:07.020\n lower\n\n00:07.020 --> 00:07.220\n than\n\n00:07.220 --> 00:07.500\n last\n\n00:07.500 --> 00:07.920\n week.\n\n00:08.320 --> 00:08.780\n It\n\n00:08.780 --> 00:09.080\n dropped\n\n00:09.080 --> 00:09.460\n after\n\n00:09.460 --> 00:09.660\n we\n\n00:09.660 --> 00:09.980\n fixed\n\n00:09.980 --> 00:10.160\n the\n\n00:10.160 --> 00:10.540\n retry\n\n00:10.540 --> 00:10.860\n logic\n\n00:10.860 --> 00:11.060\n in\n\n00:11.060 --> 00:11.180\n the\n\n00:11.180 --> 00:11.560\n upload\n\n00:11.560 --> 00:11.900\n queue.\n\n00:12.480 --> 00:12.800\n Great\n\n00:12.800 --> 00:13.100\n work.\n\n00:13.440 --> 00:13.580\n Let\n\n00:13.580 --> 00:13.760\n us\n\n00:13.760 --> 00:13.960\n add\n\n00:13.960 --> 00:14.080\n an\n\n00:14.080 --> 00:14.280\n alert\n\n00:14.280 --> 00:14.500\n so\n\n00:14.500 --> 00:14.680\n we\n\n00:14.680 --> 00:14.980\n notice\n\n00:14.980 --> 00:15.200\n if\n\n00:15.200 --> 00:15.320\n it\n\n00:15.320 --> 00:15.660\n climbs\n\n00:15.660 --> 00:16.020\n again.\n\n00:16.600 --> 00:17.080\n I\n\n00:17.080 --> 00:17.260\n will\n\n00:17.260 --> 00:17.500\n set\n\n00:17.500 --> 00:17.700\n that\n\n00:17.700 --> 00:17.880\n up\n\n00:17.880 --> 00:18.060\n this\n\n00:18.060 --> 00:18.540\n afternoon\n\n00:18.540 --> 00:18.760\n and\n\n00:18.760 --> 00:19.020\n share\n\n00:19.020 --> 00:19.180\n the\n\n00:19.180 --> 00:19.380\n link\n\n00:19.380 --> 00:19.540\n in\n\n00:19.540 --> 00:19.640\n the\n\n00:19.640 --> 00:19.960\n channel.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 16.774450843385598
+    }
+  }
+}

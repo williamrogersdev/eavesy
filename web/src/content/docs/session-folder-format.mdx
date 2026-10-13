@@ -1,0 +1,87 @@
+---
+title: The session folder format
+description: Exactly what Eavesy writes to disk for every session, so you (or an agent) can read it reliably.
+category: For AI agents
+order: 21
+---
+
+Every session the Mac app records is written as a self-contained folder of plain
+files. Nothing is proprietary — it&rsquo;s all Markdown, JSON, and standard
+audio, so any tool or agent can read it.
+
+## Folder layout
+
+```text
+~/Eavesy/Recordings/2026-06-15 Design review/
+├── summary.md       # the structured brief
+├── transcript.md    # the full, timestamped transcript
+├── notes.md         # your editable notes
+├── meeting.json     # machine-readable metadata
+├── audio.m4a        # canonical audio for transcription and playback
+└── screen.mp4       # present when screen capture was enabled
+```
+
+The folder name is the **date plus a slug of the title**, so sessions sort
+chronologically and are easy to scan. You choose the parent directory in
+**Settings → Files**. If two sessions have the same title on the same day,
+Eavesy adds the capture time (and a counter when necessary) so existing audio
+and Markdown are never reused.
+
+You can edit `summary.md`, `transcript.md`, or `notes.md` in Obsidian, VS Code,
+or any plain-text editor. The Mac app detects genuine content changes, keeps the
+newest edit durable while offline, and synchronizes it after the Mac reconnects.
+An Eavesy-generated refresh never overwrites a file whose contents changed on
+disk.
+
+## `summary.md`
+
+The human- and agent-friendly brief: a title, TL;DR, decisions, owner-tagged
+action items, and open questions — the same content you can copy and paste into
+an agent.
+
+## `transcript.md`
+
+The complete transcript in Markdown. Editable, exportable, and the source of
+truth the summary is built from.
+
+## `notes.md`
+
+Your own Markdown notes. Eavesy creates this file with every recording and
+preserves it independently from AI-generated output.
+
+## `meeting.json`
+
+Structured metadata for programmatic use. Read this when you want to ingest
+sessions into a script or pipeline rather than read prose:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "meeting-id",
+  "title": "Design review",
+  "date": "2026-06-15T15:00:00Z",
+  "durationSeconds": 1820,
+  "source": "mixed",
+  "status": "complete",
+  "files": {
+    "audio": "audio.m4a",
+    "video": null,
+    "summary": "summary.md",
+    "transcript": "transcript.md",
+    "notes": "notes.md"
+  }
+}
+```
+
+<Callout type="note">
+Field names are descriptive and stable. If you&rsquo;re building automation on
+top of `meeting.json`, treat unknown fields as additive — we add, we don&rsquo;t
+rename.
+</Callout>
+
+## Using it with agents
+
+Because everything is on disk in open formats, an agent with filesystem access
+can read a session with no API. See
+[Context for AI agents](/docs/context-for-agents) for patterns, and
+[Exporting &amp; your files](/docs/exporting-and-files) for moving it elsewhere.

@@ -1,0 +1,52 @@
+---
+title: Transcripts & summaries
+description: How Eavesy processes recordings into a transcript and structured AI summary.
+category: Using Eavesy
+order: 11
+---
+
+Every recording produces two linked artifacts: the **transcript** (the complete
+record of what was said) and the **summary** (a structured distillation on top
+of it).
+
+## The transcript
+
+- Mac recordings are sealed into **recoverable rolling segments** and processed
+  as those segments upload.
+- Browser recordings upload and process **after you stop**.
+- Supports **dozens of languages** automatically.
+- Copyable and **exportable as Markdown**.
+
+The transcript is always included on every plan. It&rsquo;s never paywalled
+behind a summary-only tier.
+
+<Callout type="note" title="Rolling is not instant">
+The Mac app processes durable audio segments during long recordings, so text can
+arrive in batches. The browser recorder waits until capture is complete. Eavesy
+does not currently provide sub-second live captions or speaker diarization.
+</Callout>
+
+## The summary
+
+After you stop recording and processing finishes, Eavesy generates:
+
+- a **title** and **TL;DR**,
+- **decisions** made in the session,
+- **action items** with owners and due dates where mentioned, and
+- **open questions** to follow up on.
+
+It&rsquo;s structured as clean Markdown, so you can copy the whole brief and
+paste it straight into Claude, Cursor, or ChatGPT — your agent gets the full
+context in one shot. [More on feeding agents →](/docs/context-for-agents)
+
+## Working with the output
+
+Copy or export the Markdown brief and transcript from the completed session.
+You can edit a brief directly, restore the generated version later, or
+regenerate it with a built-in format or [custom template](/docs/templates).
+
+<Callout type="tip">
+Looking for an old decision across every session? Use
+[semantic search](/docs/finding-past-sessions) to find a relevant excerpt and
+open the matching session.
+</Callout>

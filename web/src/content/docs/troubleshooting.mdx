@@ -1,0 +1,59 @@
+---
+title: Troubleshooting
+description: Fixes for the most common recording, audio, and permission issues.
+category: Help
+order: 51
+---
+
+Most issues come down to a macOS permission or an audio-routing setting. Here are
+the quick fixes.
+
+## The recording has no sound
+
+Eavesy captures the audio your Mac is **playing**, so:
+
+1. Check **System Settings → Privacy &amp; Security → Screen &amp; System Audio
+   Recording** and make sure Eavesy is allowed.
+2. Confirm your call&rsquo;s audio is routed to the output device you can hear
+   from — if it&rsquo;s going to a muted or different device, it won&rsquo;t be
+   captured.
+3. Make a short test recording, stop it, and inspect the processed transcript
+   and audio before starting an important session.
+
+## My voice isn&rsquo;t captured
+
+Allow **Microphone** access in **System Settings → Privacy &amp; Security →
+Microphone**, then start a fresh recording.
+
+<Callout type="warning">
+macOS only applies a newly granted permission to *new* recordings. If you
+granted access mid-session, stop and start again.
+</Callout>
+
+## The app won&rsquo;t open on first launch
+
+Because Eavesy is distributed outside the App Store, Gatekeeper may block the
+first launch. Open **System Settings → Privacy &amp; Security**, scroll to the
+bottom, and click **Open Anyway**. See
+[Installing the Mac app](/docs/installing-the-mac-app).
+
+## Processing is slow or the transcript is empty
+
+- Check your internet connection — segments and completed browser captures need
+  to upload before transcription can run.
+- Long Mac recordings appear in processed batches rather than as sub-second
+  captions.
+- Very quiet input can produce an empty transcript; move closer to the mic or
+  raise the other side&rsquo;s volume, then make a short test recording.
+
+## My browser recording didn&rsquo;t finish uploading
+
+Keep the tab open and choose **Try again** once you&rsquo;re back online; the
+upload resumes where it stopped. You can also **Download** the recording so you
+always have a copy. If the tab closed, the parts that already uploaded still
+become a transcript within the hour.
+
+## Still stuck?
+
+Email <a href="mailto:support@eavesy.com">support@eavesy.com</a> — include your
+macOS version and what you were recording, and we&rsquo;ll help.

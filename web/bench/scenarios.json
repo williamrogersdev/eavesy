@@ -1,0 +1,58 @@
+{
+  "$comment": "Scripted calls for the two-track bench. `gapMs` is the pause before a line; negative overlaps the previous line. `you` is spoken into the mic track, `them` into the computer-audio track. `echo` leaks the computer audio into the mic, as happens on laptop speakers.",
+  "voices": { "you": "Samantha", "them": "Daniel", "them2": "Karen" },
+  "scenarios": [
+    {
+      "name": "call-headset",
+      "echo": 0,
+      "lines": [
+        { "speaker": "them", "gapMs": 800, "text": "Morning everyone, can you all hear me alright?" },
+        { "speaker": "you", "gapMs": 500, "text": "Yes, loud and clear. Shall we start with the launch checklist?" },
+        { "speaker": "them", "gapMs": 600, "text": "Good idea. The release notes are still missing a section on pricing." },
+        { "speaker": "you", "gapMs": 500, "text": "I will write that section today and send it to you before five." },
+        { "speaker": "them", "gapMs": 700, "text": "Perfect. Then we ship on Friday afternoon." }
+      ]
+    },
+    {
+      "name": "call-speakers",
+      "echo": 0.25,
+      "echoDelayMs": 40,
+      "lines": [
+        { "speaker": "them", "gapMs": 800, "text": "Can everyone see the dashboard on my screen right now?" },
+        { "speaker": "you", "gapMs": 600, "text": "I can see it. The error rate looks much lower than last week." },
+        { "speaker": "them", "gapMs": 600, "text": "It dropped after we fixed the retry logic in the upload queue." },
+        { "speaker": "you", "gapMs": 500, "text": "Great work. Let us add an alert so we notice if it climbs again." },
+        { "speaker": "them", "gapMs": 700, "text": "I will set that up this afternoon and share the link in the channel." }
+      ]
+    },
+    {
+      "name": "overlap",
+      "echo": 0.25,
+      "echoDelayMs": 40,
+      "lines": [
+        { "speaker": "them", "gapMs": 800, "text": "So the budget for the next quarter is mostly going into hiring." },
+        { "speaker": "you", "gapMs": -1500, "text": "Sorry, quick question about that." },
+        { "speaker": "them", "gapMs": 400, "text": "Sure, go ahead." },
+        { "speaker": "you", "gapMs": 400, "text": "Are we hiring designers or only engineers this time?" },
+        { "speaker": "them", "gapMs": 600, "text": "Two engineers and one designer, starting in March." }
+      ]
+    },
+    {
+      "name": "several-remote",
+      "echo": 0,
+      "lines": [
+        { "speaker": "them", "gapMs": 800, "text": "Welcome to the design review, I have invited Priya as well." },
+        { "speaker": "them2", "gapMs": 500, "text": "Hi everyone, I will walk you through the new onboarding screens." },
+        { "speaker": "you", "gapMs": 600, "text": "Thanks Priya. Does the permission step come before pairing now?" },
+        { "speaker": "them2", "gapMs": 500, "text": "Yes, permissions first, then pairing, then a short test recording." }
+      ]
+    },
+    {
+      "name": "silence",
+      "echo": 0,
+      "noise": 0.002,
+      "durationMs": 30000,
+      "lines": []
+    }
+  ]
+}

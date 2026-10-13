@@ -1,0 +1,40 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "eavesy-web",
+      "cwd": "web",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "3000",
+        "--strictPort"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "eavesy-web-test",
+      "cwd": "web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "bunx wrangler d1 migrations apply eavesy --local && EAVESY_LOCAL_TEST=1 bun run dev -- --port 4173 --strictPort"
+      ],
+      "port": 4173
+    },
+    {
+      "name": "eavesy-launcher",
+      "cwd": "desktop/launcher-ui",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 1420,
+      "autoPort": true
+    }
+  ]
+}

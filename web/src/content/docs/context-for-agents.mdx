@@ -1,0 +1,65 @@
+---
+title: Context for AI agents
+description: Turn any session into clean, structured context you can paste into — or point — your AI agent.
+category: For AI agents
+order: 20
+---
+
+Eavesy exists to solve one problem: your AI agent didn&rsquo;t see the call,
+the walkthrough, or the hallway decision — so it&rsquo;s working blind. Every
+session becomes context your agent can actually use.
+
+## Paste the brief
+
+The fastest path. After any session, copy the Markdown brief and paste it into
+Claude, Cursor, ChatGPT, or any agent. Because it&rsquo;s clean Markdown with a
+TL;DR, decisions, and action items, the model gets the full picture in one shot —
+no copy-pasting raw transcript and hoping it sorts it out.
+
+<Callout type="tip">
+Pair a paste with a prompt like *&ldquo;Here&rsquo;s the brief from my call with
+the design team — draft the follow-up tasks as a checklist.&rdquo;* The structure
+in the brief does the heavy lifting.
+</Callout>
+
+## Point an agent at the folder
+
+With the Mac app, every session is a folder of plain files on your disk
+([the session folder format](/docs/session-folder-format)). That means an agent
+with filesystem access can read them directly:
+
+```text
+~/Eavesy/2026-06-15-design-review/
+├── summary.md
+├── transcript.md
+├── meeting.json
+└── audio.m4a
+```
+
+Point a coding agent, a local assistant, or a script at your Eavesy directory and
+it can search, summarize, and reason over everything you&rsquo;ve ever recorded —
+no API, no export step.
+
+## Shape the context with a template
+
+Different agents want context shaped differently. A coding agent wants file
+paths and explicit TODOs; a research assistant wants quotes and open questions.
+Open a completed recording and choose a built-in coding, research, customer, or
+meeting format before selecting **Regenerate**. You can also create reusable
+[custom templates](/docs/templates) in **Settings** or edit the final Markdown
+directly.
+
+## Why this beats a raw transcript
+
+- **Structured, not a wall of text** — decisions and actions are already
+  extracted, so the model spends its context budget on reasoning, not parsing.
+- **Markdown the model already understands** — headings and lists map cleanly to
+  how LLMs read documents.
+- **Yours, on disk** — no vendor API in the loop; the files are local and
+  portable.
+
+## Next
+
+- [The session folder format](/docs/session-folder-format)
+- [Custom templates](/docs/templates)
+- [Finding past sessions](/docs/finding-past-sessions)

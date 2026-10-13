@@ -1,0 +1,290 @@
+@import "tailwindcss" source("../");
+
+:root {
+  --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --background: #fbfbfa;
+  --foreground: #171719;
+  --muted: #f1f1ef;
+  --muted-foreground: #68686f;
+  --border: #dedee2;
+  --signal: #ff3b30;
+  --accent: #d92d20;
+  --accent-hover: #b42318;
+  --accent-soft: #fef2f2;
+  --action: #d92d20;
+  --action-hover: #b42318;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --primary: #1d1d20;
+  --primary-foreground: #fafafa;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-signal: var(--signal);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0b0d;
+    --foreground: #fafafa;
+    --muted: #18181b;
+    --muted-foreground: #a1a1aa;
+    --border: #27272a;
+    --signal: #ff453a;
+    --accent: #f87171;
+    --accent-hover: #fca5a5;
+    --accent-soft: #2a1212;
+    --action: #dc2626;
+    --action-hover: #b91c1c;
+    --danger: #ef4444;
+    --danger-soft: #2a1212;
+    --primary: #fafafa;
+    --primary-foreground: #18181b;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--foreground);
+}
+
+button:not(:disabled),
+summary,
+[role='button']:not([aria-disabled='true']) {
+  cursor: pointer;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+:where(input, select, textarea):focus-visible {
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html:focus-within {
+    scroll-behavior: smooth;
+  }
+}
+
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-recording-pulse {
+  animation: recording-pulse 1.4s ease-in-out infinite;
+}
+
+.bg-dot-grid {
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.text-gradient {
+  background: linear-gradient(180deg, var(--foreground) 0%, color-mix(in oklab, var(--foreground) 55%, transparent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out both;
+}
+
+.theme-dark {
+  --background: #0a0a0b;
+  --foreground: #fafafa;
+  --muted: #141416;
+  --muted-foreground: #9b9ba6;
+  --border: #232327;
+  --signal: #ff453a;
+  --accent: #f87171;
+  --accent-hover: #fca5a5;
+  --accent-soft: #2a1212;
+  --action: #dc2626;
+  --action-hover: #b91c1c;
+  --primary: #fafafa;
+  --primary-foreground: #101014;
+  background: var(--background);
+  color: var(--foreground);
+  color-scheme: dark;
+}
+
+.text-brand-gradient {
+  background-image: linear-gradient(108deg, #ffffff 0%, #ffffff 55%, #ff5c52 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes aurora-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(5%, -4%) scale(1.1); }
+  66%      { transform: translate(-4%, 5%) scale(0.94); }
+}
+.animate-aurora { animation: aurora-float 20s ease-in-out infinite; }
+
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.animate-marquee { animation: marquee 30s linear infinite; }
+
+@keyframes eq {
+  0%, 100% { transform: scaleY(0.25); }
+  50%      { transform: scaleY(1); }
+}
+.animate-eq { transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
+
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.animate-spin-slow { animation: spin-slow 8s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-aurora, .animate-marquee, .animate-eq, .animate-spin-slow,
+  .animate-fade-up, .animate-recording-pulse { animation: none; }
+}
+
+.launcher-scope {
+  --lr-brand: #ef4444;
+  --lr-brand-ink: #fecaca;
+  --lr-surface: color-mix(in srgb, var(--background) 86%, transparent);
+  --lr-elevated: color-mix(in srgb, var(--background) 70%, transparent);
+  --lr-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --lr-selected: color-mix(in srgb, var(--lr-brand) 16%, transparent);
+  --lr-brand-soft: color-mix(in srgb, var(--lr-brand) 20%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  .launcher-scope {
+    --lr-brand: #dc2626;
+    --lr-brand-ink: #7f1d1d;
+  }
+}
+.lr-row-active {
+  background: var(--lr-selected);
+  box-shadow: inset 2px 0 0 0 var(--lr-brand);
+}
+.lr-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 15px; }
+.lr-eq > i {
+  width: 2.5px;
+  background: var(--lr-brand);
+  border-radius: 2px;
+  opacity: 0.7;
+  transform-origin: bottom;
+  animation: eq 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .lr-eq > i { animation: none; } }
+.launcher-scrim {
+  background: color-mix(in srgb, #000 38%, transparent);
+}
+.launcher-scope[data-desktop='true'] .launcher-scrim { background: transparent; }
+
+.launcher-panel {
+  background: var(--lr-surface);
+  -webkit-backdrop-filter: saturate(180%) blur(26px);
+  backdrop-filter: saturate(180%) blur(26px);
+  box-shadow: 0 24px 70px -20px color-mix(in srgb, #000 55%, transparent);
+}
+.launcher-scope[data-desktop='true'] .launcher-panel {
+  background: color-mix(in srgb, var(--background) 94%, transparent);
+  box-shadow: none;
+}
+
+.launcher-list::-webkit-scrollbar,
+.launcher-preview::-webkit-scrollbar,
+.launcher-actions::-webkit-scrollbar { width: 8px; }
+.launcher-list::-webkit-scrollbar-thumb,
+.launcher-preview::-webkit-scrollbar-thumb,
+.launcher-actions::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 18%, transparent);
+  border-radius: 9999px;
+}
+
+.prose {
+  color: color-mix(in oklab, var(--foreground) 82%, transparent);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  color: var(--foreground);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  scroll-margin-top: 6rem;
+}
+.prose h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 1rem; }
+.prose h2 { font-size: 1.5rem; line-height: 1.25; margin: 2.5rem 0 1rem; }
+.prose h3 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
+.prose h4 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
+.prose p { margin: 1rem 0; }
+.prose a {
+  color: #fca5a5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, #fca5a5 40%, transparent);
+}
+.prose a:hover { text-decoration-color: #fca5a5; }
+.prose strong { color: var(--foreground); font-weight: 600; }
+.prose ul, .prose ol { margin: 1rem 0; padding-left: 1.4rem; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin: 0.4rem 0; }
+.prose li::marker { color: var(--muted-foreground); }
+.prose blockquote {
+  margin: 1.5rem 0;
+  padding: 0.25rem 0 0.25rem 1.1rem;
+  border-left: 3px solid var(--accent);
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.prose code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
+}
+.prose pre {
+  margin: 1.5rem 0;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #0c0c12 !important;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.prose pre code { background: transparent; padding: 0; font-size: inherit; }
+.prose hr { margin: 2.5rem 0; border: 0; border-top: 1px solid var(--border); }
+.prose img { border-radius: 12px; border: 1px solid var(--border); margin: 1.5rem 0; }
+.prose table { width: 100%; margin: 1.5rem 0; border-collapse: collapse; font-size: 0.9rem; }
+.prose th, .prose td { border: 1px solid var(--border); padding: 0.6rem 0.85rem; text-align: left; }
+.prose th { background: color-mix(in oklab, var(--foreground) 5%, transparent); font-weight: 600; color: var(--foreground); }

@@ -1,0 +1,282 @@
+{
+  "activeMs": 9660,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 15.434,
+      "duration_after_vad": 14.906
+    },
+    "text": "So the budget for the next quarter is mostly going into hiring. Sorry, quick question about that. Sure, go ahead. Are we hiring designers or only engineers this time? Two engineers and one designer. Starting in March.",
+    "word_count": 37,
+    "segments": [
+      {
+        "start": 0.53,
+        "end": 3.65,
+        "text": " So the budget for the next quarter is mostly going into hiring.",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " So",
+            "start": 0.53,
+            "end": 1.03
+          },
+          {
+            "word": " the",
+            "start": 1.03,
+            "end": 1.21
+          },
+          {
+            "word": " budget",
+            "start": 1.21,
+            "end": 1.53
+          },
+          {
+            "word": " for",
+            "start": 1.53,
+            "end": 1.73
+          },
+          {
+            "word": " the",
+            "start": 1.73,
+            "end": 1.85
+          },
+          {
+            "word": " next",
+            "start": 1.85,
+            "end": 2.13
+          },
+          {
+            "word": " quarter",
+            "start": 2.13,
+            "end": 2.55
+          },
+          {
+            "word": " is",
+            "start": 2.55,
+            "end": 2.81
+          },
+          {
+            "word": " mostly",
+            "start": 2.81,
+            "end": 3.09
+          },
+          {
+            "word": " going",
+            "start": 3.09,
+            "end": 3.49
+          },
+          {
+            "word": " into",
+            "start": 3.49,
+            "end": 3.65
+          },
+          {
+            "word": " hiring.",
+            "start": 3.65,
+            "end": 3.65
+          }
+        ],
+        "word_count": 12
+      },
+      {
+        "start": 3.65,
+        "end": 5.01,
+        "text": " Sorry, quick question about that.",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Sorry,",
+            "start": 3.65,
+            "end": 3.67
+          },
+          {
+            "word": " quick",
+            "start": 3.67,
+            "end": 3.79
+          },
+          {
+            "word": " question",
+            "start": 3.79,
+            "end": 4.29
+          },
+          {
+            "word": " about",
+            "start": 4.29,
+            "end": 4.59
+          },
+          {
+            "word": " that.",
+            "start": 4.59,
+            "end": 5.01
+          }
+        ],
+        "word_count": 5
+      },
+      {
+        "start": 5.45,
+        "end": 6.69,
+        "text": " Sure, go ahead.",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Sure,",
+            "start": 5.45,
+            "end": 5.81
+          },
+          {
+            "word": " go",
+            "start": 6.27,
+            "end": 6.39
+          },
+          {
+            "word": " ahead.",
+            "start": 6.39,
+            "end": 6.69
+          }
+        ],
+        "word_count": 3
+      },
+      {
+        "start": 7.13,
+        "end": 10.07,
+        "text": " Are we hiring designers or only engineers this time?",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Are",
+            "start": 7.13,
+            "end": 7.33
+          },
+          {
+            "word": " we",
+            "start": 7.33,
+            "end": 7.49
+          },
+          {
+            "word": " hiring",
+            "start": 7.49,
+            "end": 7.87
+          },
+          {
+            "word": " designers",
+            "start": 7.87,
+            "end": 8.35
+          },
+          {
+            "word": " or",
+            "start": 8.35,
+            "end": 8.61
+          },
+          {
+            "word": " only",
+            "start": 8.61,
+            "end": 8.93
+          },
+          {
+            "word": " engineers",
+            "start": 8.93,
+            "end": 9.45
+          },
+          {
+            "word": " this",
+            "start": 9.45,
+            "end": 9.71
+          },
+          {
+            "word": " time?",
+            "start": 9.71,
+            "end": 10.07
+          }
+        ],
+        "word_count": 9
+      },
+      {
+        "start": 10.73,
+        "end": 12.45,
+        "text": " Two engineers and one designer.",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Two",
+            "start": 10.73,
+            "end": 11.03
+          },
+          {
+            "word": " engineers",
+            "start": 11.03,
+            "end": 11.53
+          },
+          {
+            "word": " and",
+            "start": 11.53,
+            "end": 11.73
+          },
+          {
+            "word": " one",
+            "start": 11.73,
+            "end": 11.95
+          },
+          {
+            "word": " designer.",
+            "start": 11.95,
+            "end": 12.45
+          }
+        ],
+        "word_count": 5
+      },
+      {
+        "start": 12.85,
+        "end": 13.69,
+        "text": " Starting in March.",
+        "temperature": 0,
+        "avg_logprob": -0.3009159426236975,
+        "compression_ratio": 1.4370860927152318,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Starting",
+            "start": 12.85,
+            "end": 13.13
+          },
+          {
+            "word": " in",
+            "start": 13.13,
+            "end": 13.37
+          },
+          {
+            "word": " March.",
+            "start": 13.37,
+            "end": 13.69
+          }
+        ],
+        "word_count": 3
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.530 --> 00:01.030\n So\n\n00:01.030 --> 00:01.210\n the\n\n00:01.210 --> 00:01.530\n budget\n\n00:01.530 --> 00:01.730\n for\n\n00:01.730 --> 00:01.850\n the\n\n00:01.850 --> 00:02.130\n next\n\n00:02.130 --> 00:02.550\n quarter\n\n00:02.550 --> 00:02.810\n is\n\n00:02.810 --> 00:03.090\n mostly\n\n00:03.090 --> 00:03.490\n going\n\n00:03.490 --> 00:03.650\n into\n\n00:03.650 --> 00:03.650\n hiring.\n\n00:03.650 --> 00:03.670\n Sorry,\n\n00:03.670 --> 00:03.790\n quick\n\n00:03.790 --> 00:04.290\n question\n\n00:04.290 --> 00:04.590\n about\n\n00:04.590 --> 00:05.010\n that.\n\n00:05.450 --> 00:05.810\n Sure,\n\n00:06.270 --> 00:06.390\n go\n\n00:06.390 --> 00:06.690\n ahead.\n\n00:07.130 --> 00:07.330\n Are\n\n00:07.330 --> 00:07.490\n we\n\n00:07.490 --> 00:07.870\n hiring\n\n00:07.870 --> 00:08.350\n designers\n\n00:08.350 --> 00:08.610\n or\n\n00:08.610 --> 00:08.930\n only\n\n00:08.930 --> 00:09.450\n engineers\n\n00:09.450 --> 00:09.710\n this\n\n00:09.710 --> 00:10.070\n time?\n\n00:10.730 --> 00:11.030\n Two\n\n00:11.030 --> 00:11.530\n engineers\n\n00:11.530 --> 00:11.730\n and\n\n00:11.730 --> 00:11.950\n one\n\n00:11.950 --> 00:12.450\n designer.\n\n00:12.850 --> 00:13.130\n Starting\n\n00:13.130 --> 00:13.370\n in\n\n00:13.370 --> 00:13.690\n March.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 11.994851478725598
+    }
+  }
+}

@@ -1,0 +1,50 @@
+name = "eavesy-processing"
+account_id = "5bc563d42299762f9b48f5dec0531954"
+main = "src/index.ts"
+compatibility_date = "2026-07-16"
+compatibility_flags = ["nodejs_compat"]
+observability = { enabled = true }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "eavesy"
+database_id = "72c5c5f6-a2d9-4a07-b17f-15eb282e9782"
+
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "eavesy-audio"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "eavesy-embeddings"
+
+[ai]
+binding = "AI"
+
+[[queues.consumers]]
+queue = "eavesy-processing"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "eavesy-processing-dlq"
+
+[[queues.consumers]]
+queue = "eavesy-processing-dlq"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+
+[[queues.producers]]
+queue = "eavesy-processing"
+binding = "PROCESSING_QUEUE"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MeetingRoom"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["MeetingRoom"]
+
+[triggers]
+crons = ["0 * * * *"]

@@ -1,0 +1,196 @@
+{
+  "activeMs": 8310,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 21.122,
+      "duration_after_vad": 13.074
+    },
+    "text": "Morning everyone. Can you all hear me alright? Good idea, the release notes are still missing a section on pricing. Perfect, then we ship on Friday afternoon.",
+    "word_count": 27,
+    "segments": [
+      {
+        "start": 0.4,
+        "end": 3.34,
+        "text": " Morning everyone. Can you all hear me alright?",
+        "temperature": 0,
+        "avg_logprob": -0.2339843764901161,
+        "compression_ratio": 1.253968253968254,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Morning",
+            "start": 0.4,
+            "end": 1.08
+          },
+          {
+            "word": " everyone.",
+            "start": 1.08,
+            "end": 1.64
+          },
+          {
+            "word": " Can",
+            "start": 2.1,
+            "end": 2.36
+          },
+          {
+            "word": " you",
+            "start": 2.36,
+            "end": 2.52
+          },
+          {
+            "word": " all",
+            "start": 2.52,
+            "end": 2.66
+          },
+          {
+            "word": " hear",
+            "start": 2.66,
+            "end": 2.84
+          },
+          {
+            "word": " me",
+            "start": 2.84,
+            "end": 3.02
+          },
+          {
+            "word": " alright?",
+            "start": 3.02,
+            "end": 3.34
+          }
+        ],
+        "word_count": 8
+      },
+      {
+        "start": 8.18,
+        "end": 12.26,
+        "text": " Good idea, the release notes are still missing a section on pricing.",
+        "temperature": 0,
+        "avg_logprob": -0.2339843764901161,
+        "compression_ratio": 1.253968253968254,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Good",
+            "start": 8.18,
+            "end": 8.74
+          },
+          {
+            "word": " idea,",
+            "start": 8.74,
+            "end": 9.12
+          },
+          {
+            "word": " the",
+            "start": 9.38,
+            "end": 9.56
+          },
+          {
+            "word": " release",
+            "start": 9.56,
+            "end": 9.86
+          },
+          {
+            "word": " notes",
+            "start": 9.86,
+            "end": 10.18
+          },
+          {
+            "word": " are",
+            "start": 10.18,
+            "end": 10.44
+          },
+          {
+            "word": " still",
+            "start": 10.44,
+            "end": 10.66
+          },
+          {
+            "word": " missing",
+            "start": 10.66,
+            "end": 10.96
+          },
+          {
+            "word": " a",
+            "start": 10.96,
+            "end": 11.2
+          },
+          {
+            "word": " section",
+            "start": 11.2,
+            "end": 11.54
+          },
+          {
+            "word": " on",
+            "start": 11.54,
+            "end": 11.78
+          },
+          {
+            "word": " pricing.",
+            "start": 11.78,
+            "end": 12.26
+          }
+        ],
+        "word_count": 12
+      },
+      {
+        "start": 16.51,
+        "end": 19.27,
+        "text": " Perfect, then we ship on Friday afternoon.",
+        "temperature": 0,
+        "avg_logprob": -0.2339843764901161,
+        "compression_ratio": 1.253968253968254,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Perfect,",
+            "start": 16.51,
+            "end": 17.11
+          },
+          {
+            "word": " then",
+            "start": 17.53,
+            "end": 17.79
+          },
+          {
+            "word": " we",
+            "start": 17.79,
+            "end": 17.93
+          },
+          {
+            "word": " ship",
+            "start": 17.93,
+            "end": 18.19
+          },
+          {
+            "word": " on",
+            "start": 18.19,
+            "end": 18.35
+          },
+          {
+            "word": " Friday",
+            "start": 18.35,
+            "end": 18.69
+          },
+          {
+            "word": " afternoon.",
+            "start": 18.69,
+            "end": 19.27
+          }
+        ],
+        "word_count": 7
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.400 --> 00:01.080\n Morning\n\n00:01.080 --> 00:01.640\n everyone.\n\n00:02.100 --> 00:02.360\n Can\n\n00:02.360 --> 00:02.520\n you\n\n00:02.520 --> 00:02.660\n all\n\n00:02.660 --> 00:02.840\n hear\n\n00:02.840 --> 00:03.020\n me\n\n00:03.020 --> 00:03.340\n alright?\n\n00:08.180 --> 00:08.740\n Good\n\n00:08.740 --> 00:09.120\n idea,\n\n00:09.380 --> 00:09.560\n the\n\n00:09.560 --> 00:09.860\n release\n\n00:09.860 --> 00:10.180\n notes\n\n00:10.180 --> 00:10.440\n are\n\n00:10.440 --> 00:10.660\n still\n\n00:10.660 --> 00:10.960\n missing\n\n00:10.960 --> 00:11.200\n a\n\n00:11.200 --> 00:11.540\n section\n\n00:11.540 --> 00:11.780\n on\n\n00:11.780 --> 00:12.260\n pricing.\n\n00:16.510 --> 00:17.110\n Perfect,\n\n00:17.530 --> 00:17.790\n then\n\n00:17.790 --> 00:17.930\n we\n\n00:17.930 --> 00:18.190\n ship\n\n00:18.190 --> 00:18.350\n on\n\n00:18.350 --> 00:18.690\n Friday\n\n00:18.690 --> 00:19.270\n afternoon.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 16.4153980130648
+    }
+  }
+}

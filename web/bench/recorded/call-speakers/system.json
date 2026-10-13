@@ -1,0 +1,241 @@
+{
+  "activeMs": 8970,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 21.584,
+      "duration_after_vad": 13.28
+    },
+    "text": "Can everyone see the dashboard on my screen right now? It dropped after we fixed the retry logic in the upload queue. I will set that up this afternoon and share the link in the channel.",
+    "word_count": 36,
+    "segments": [
+      {
+        "start": 0.4,
+        "end": 3.78,
+        "text": " Can everyone see the dashboard on my screen right now?",
+        "temperature": 0,
+        "avg_logprob": -0.15774600493147017,
+        "compression_ratio": 1.3777777777777778,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Can",
+            "start": 0.4,
+            "end": 0.96
+          },
+          {
+            "word": " everyone",
+            "start": 0.96,
+            "end": 1.36
+          },
+          {
+            "word": " see",
+            "start": 1.36,
+            "end": 1.74
+          },
+          {
+            "word": " the",
+            "start": 1.74,
+            "end": 1.92
+          },
+          {
+            "word": " dashboard",
+            "start": 1.92,
+            "end": 2.3
+          },
+          {
+            "word": " on",
+            "start": 2.3,
+            "end": 2.54
+          },
+          {
+            "word": " my",
+            "start": 2.54,
+            "end": 2.76
+          },
+          {
+            "word": " screen",
+            "start": 2.76,
+            "end": 3.12
+          },
+          {
+            "word": " right",
+            "start": 3.12,
+            "end": 3.42
+          },
+          {
+            "word": " now?",
+            "start": 3.42,
+            "end": 3.78
+          }
+        ],
+        "word_count": 10
+      },
+      {
+        "start": 8.15,
+        "end": 11.85,
+        "text": " It dropped after we fixed the retry logic in the upload queue.",
+        "temperature": 0,
+        "avg_logprob": -0.15774600493147017,
+        "compression_ratio": 1.3777777777777778,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " It",
+            "start": 8.15,
+            "end": 8.75
+          },
+          {
+            "word": " dropped",
+            "start": 8.75,
+            "end": 9.05
+          },
+          {
+            "word": " after",
+            "start": 9.05,
+            "end": 9.41
+          },
+          {
+            "word": " we",
+            "start": 9.41,
+            "end": 9.61
+          },
+          {
+            "word": " fixed",
+            "start": 9.61,
+            "end": 9.95
+          },
+          {
+            "word": " the",
+            "start": 9.95,
+            "end": 10.11
+          },
+          {
+            "word": " retry",
+            "start": 10.11,
+            "end": 10.49
+          },
+          {
+            "word": " logic",
+            "start": 10.49,
+            "end": 10.81
+          },
+          {
+            "word": " in",
+            "start": 10.81,
+            "end": 11.03
+          },
+          {
+            "word": " the",
+            "start": 11.03,
+            "end": 11.13
+          },
+          {
+            "word": " upload",
+            "start": 11.13,
+            "end": 11.53
+          },
+          {
+            "word": " queue.",
+            "start": 11.53,
+            "end": 11.85
+          }
+        ],
+        "word_count": 12
+      },
+      {
+        "start": 16.44,
+        "end": 19.92,
+        "text": " I will set that up this afternoon and share the link in the channel.",
+        "temperature": 0,
+        "avg_logprob": -0.15774600493147017,
+        "compression_ratio": 1.3777777777777778,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " I",
+            "start": 16.44,
+            "end": 17.04
+          },
+          {
+            "word": " will",
+            "start": 17.04,
+            "end": 17.2
+          },
+          {
+            "word": " set",
+            "start": 17.2,
+            "end": 17.46
+          },
+          {
+            "word": " that",
+            "start": 17.46,
+            "end": 17.66
+          },
+          {
+            "word": " up",
+            "start": 17.66,
+            "end": 17.82
+          },
+          {
+            "word": " this",
+            "start": 17.82,
+            "end": 18.02
+          },
+          {
+            "word": " afternoon",
+            "start": 18.02,
+            "end": 18.48
+          },
+          {
+            "word": " and",
+            "start": 18.48,
+            "end": 18.72
+          },
+          {
+            "word": " share",
+            "start": 18.72,
+            "end": 18.98
+          },
+          {
+            "word": " the",
+            "start": 18.98,
+            "end": 19.14
+          },
+          {
+            "word": " link",
+            "start": 19.14,
+            "end": 19.36
+          },
+          {
+            "word": " in",
+            "start": 19.36,
+            "end": 19.48
+          },
+          {
+            "word": " the",
+            "start": 19.48,
+            "end": 19.58
+          },
+          {
+            "word": " channel.",
+            "start": 19.58,
+            "end": 19.92
+          }
+        ],
+        "word_count": 14
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.400 --> 00:00.960\n Can\n\n00:00.960 --> 00:01.360\n everyone\n\n00:01.360 --> 00:01.740\n see\n\n00:01.740 --> 00:01.920\n the\n\n00:01.920 --> 00:02.300\n dashboard\n\n00:02.300 --> 00:02.540\n on\n\n00:02.540 --> 00:02.760\n my\n\n00:02.760 --> 00:03.120\n screen\n\n00:03.120 --> 00:03.420\n right\n\n00:03.420 --> 00:03.780\n now?\n\n00:08.150 --> 00:08.750\n It\n\n00:08.750 --> 00:09.050\n dropped\n\n00:09.050 --> 00:09.410\n after\n\n00:09.410 --> 00:09.610\n we\n\n00:09.610 --> 00:09.950\n fixed\n\n00:09.950 --> 00:10.110\n the\n\n00:10.110 --> 00:10.490\n retry\n\n00:10.490 --> 00:10.810\n logic\n\n00:10.810 --> 00:11.030\n in\n\n00:11.030 --> 00:11.130\n the\n\n00:11.130 --> 00:11.530\n upload\n\n00:11.530 --> 00:11.850\n queue.\n\n00:16.440 --> 00:17.040\n I\n\n00:17.040 --> 00:17.200\n will\n\n00:17.200 --> 00:17.460\n set\n\n00:17.460 --> 00:17.660\n that\n\n00:17.660 --> 00:17.820\n up\n\n00:17.820 --> 00:18.020\n this\n\n00:18.020 --> 00:18.480\n afternoon\n\n00:18.480 --> 00:18.720\n and\n\n00:18.720 --> 00:18.980\n share\n\n00:18.980 --> 00:19.140\n the\n\n00:19.140 --> 00:19.360\n link\n\n00:19.360 --> 00:19.480\n in\n\n00:19.480 --> 00:19.580\n the\n\n00:19.580 --> 00:19.920\n channel.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 16.774450843385598
+    }
+  }
+}

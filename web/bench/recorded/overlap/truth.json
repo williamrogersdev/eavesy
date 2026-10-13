@@ -1,0 +1,40 @@
+{
+  "totalMs": 15434,
+  "lines": [
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 800,
+      "endMs": 4434,
+      "text": "So the budget for the next quarter is mostly going into hiring."
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 2934,
+      "endMs": 5073,
+      "text": "Sorry, quick question about that."
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 5473,
+      "endMs": 6797,
+      "text": "Sure, go ahead."
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 7197,
+      "endMs": 10259,
+      "text": "Are we hiring designers or only engineers this time?"
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 10859,
+      "endMs": 13934,
+      "text": "Two engineers and one designer, starting in March."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.eavesy.desktop.capture</string>
+    <key>CFBundleName</key>
+    <string>Eavesy Audio Capture</string>
+    <key>CFBundleDisplayName</key>
+    <string>Eavesy</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Eavesy records your microphone so it can transcribe your meetings and dictation.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Eavesy captures system audio from your meetings so it can transcribe everyone on the call.</string>
+</dict>
+</plist>

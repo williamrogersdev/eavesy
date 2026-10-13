@@ -1,0 +1,49 @@
+---
+title: Privacy & your data
+description: Where your data lives, who can touch it, and the controls you have over it.
+category: Accounts & billing
+order: 41
+---
+
+Eavesy is built local-first and privacy-first. Here&rsquo;s exactly how your
+data is handled.
+
+## Where it lives
+
+- **Mac app:** source files are written to a folder on your disk. A private cloud
+  copy supports transcription, search, sync, and recovery after you pair the app.
+- **Browser:** recordings, transcripts, and briefs are stored under your signed-in
+  account so processing can finish and you can return to them later.
+
+## Encryption
+
+- **In transit:** TLS.
+- **At rest:** Cloudflare-managed encryption protects audio in object storage
+  and metadata in the database.
+
+## Model-provider policies
+
+Eavesy does not train models on your recordings. Cloudflare states that Workers
+AI customer content is not used to train models or improve its services without
+explicit consent. Anthropic states that its commercial API data is not used for
+model training unless the customer explicitly opts in. If you connect your own
+OpenRouter account, provider training and retention follow the privacy settings
+you control in OpenRouter.
+
+<Callout type="privacy">
+Capture only happens while a recording is running, and only with the macOS
+permissions you grant. Stop a recording and nothing is being captured.
+</Callout>
+
+## Your controls
+
+- **Export everything** from Settings → Your data, or a single meeting bundle or
+  capture from its detail page.
+- **Delete** any recording or capture in the app; its cloud copies (audio,
+  transcript, search index) are permanently removed within a day.
+- **Delete your account** from Settings → Your data. Everything stored in the
+  cloud is permanently removed and your Mac is signed out; local folders remain
+  yours.
+
+For the full list of subprocessors, see the [security page](/security) and the
+[privacy policy](/privacy).

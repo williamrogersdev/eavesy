@@ -1,0 +1,24 @@
+{
+  "name": "eavesy",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "scripts": {
+    "dev": "cd web && bun dev",
+    "build": "cd web && bun run build",
+    "deploy": "cd web && bun run deploy",
+    "deploy:processing": "cd workers/processing && ../../scripts/cf bunx wrangler deploy",
+    "deploy:mcp": "cd workers/mcp && ../../scripts/cf bunx wrangler deploy",
+    "lint": "cd web && bun run lint",
+    "typecheck": "cd web && bun run typecheck",
+    "test": "cd web && bun run test",
+    "db:generate": "cd web && bunx drizzle-kit generate",
+    "db:apply": "cd web && bunx wrangler d1 migrations apply eavesy",
+    "db:apply:remote": "cd web && ../scripts/cf bunx wrangler d1 migrations apply eavesy --remote",
+    "desktop:dev": "cd desktop/src-tauri && bunx @tauri-apps/cli dev",
+    "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build"
+  },
+  "devDependencies": {
+    "wrangler": "^4.111.0"
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "Eavesy",
+  "version": "0.1.9",
+  "identifier": "com.eavesy.desktop",
+  "build": {
+    "frontendDist": "frontend-shell",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": {
+      "script": "bun install && bun run dev",
+      "cwd": "../launcher-ui"
+    },
+    "beforeBuildCommand": {
+      "script": "sh scripts/prebuild.sh",
+      "cwd": ".."
+    }
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "Eavesy",
+        "label": "main",
+        "url": "index.html",
+        "width": 420,
+        "height": 440,
+        "minWidth": 360,
+        "minHeight": 320,
+        "center": false,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "hiddenTitle": true,
+        "shadow": true,
+        "visible": false,
+        "focus": false,
+        "maxWidth": 960,
+        "maxHeight": 1200
+      },
+      {
+        "title": "Eavesy Recording",
+        "label": "hud",
+        "url": "hud.html",
+        "width": 272,
+        "height": 40,
+        "minWidth": 196,
+        "minHeight": 36,
+        "maxWidth": 560,
+        "maxHeight": 120,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "hiddenTitle": true,
+        "shadow": true,
+        "visible": false,
+        "focus": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "app"
+    ],
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/SwiftAudio"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true,
+      "exceptionDomain": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwRjI3RTA2RDQ3N0I3MDQKUldRRXQzZlVCbjd5d0FUZC96djBqcVlSL25xbFozSXhBTWlPbStvamVod2tHR1V6Sk5mVDJWZWUK",
+      "endpoints": [
+        "https://eavesy.com/api/updates/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    }
+  }
+}

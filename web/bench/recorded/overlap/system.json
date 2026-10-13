@@ -1,0 +1,176 @@
+{
+  "activeMs": 7110,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 15.434,
+      "duration_after_vad": 11.61
+    },
+    "text": "So the budget for the next quarter is mostly going into hiring. Sure, go ahead. Two engineers and one designer, starting in March.",
+    "word_count": 23,
+    "segments": [
+      {
+        "start": 0.5,
+        "end": 4.22,
+        "text": " So the budget for the next quarter is mostly going into hiring.",
+        "temperature": 0,
+        "avg_logprob": -0.2104910731315613,
+        "compression_ratio": 1.2264150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " So",
+            "start": 0.5,
+            "end": 1
+          },
+          {
+            "word": " the",
+            "start": 1,
+            "end": 1.18
+          },
+          {
+            "word": " budget",
+            "start": 1.18,
+            "end": 1.48
+          },
+          {
+            "word": " for",
+            "start": 1.48,
+            "end": 1.68
+          },
+          {
+            "word": " the",
+            "start": 1.68,
+            "end": 1.82
+          },
+          {
+            "word": " next",
+            "start": 1.82,
+            "end": 2.1
+          },
+          {
+            "word": " quarter",
+            "start": 2.1,
+            "end": 2.5
+          },
+          {
+            "word": " is",
+            "start": 2.5,
+            "end": 2.76
+          },
+          {
+            "word": " mostly",
+            "start": 2.76,
+            "end": 3.12
+          },
+          {
+            "word": " going",
+            "start": 3.12,
+            "end": 3.44
+          },
+          {
+            "word": " into",
+            "start": 3.44,
+            "end": 3.7
+          },
+          {
+            "word": " hiring.",
+            "start": 3.7,
+            "end": 4.22
+          }
+        ],
+        "word_count": 12
+      },
+      {
+        "start": 5.2,
+        "end": 6.68,
+        "text": " Sure, go ahead.",
+        "temperature": 0,
+        "avg_logprob": -0.2104910731315613,
+        "compression_ratio": 1.2264150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Sure,",
+            "start": 5.2,
+            "end": 5.86
+          },
+          {
+            "word": " go",
+            "start": 6.2,
+            "end": 6.36
+          },
+          {
+            "word": " ahead.",
+            "start": 6.36,
+            "end": 6.68
+          }
+        ],
+        "word_count": 3
+      },
+      {
+        "start": 10.5,
+        "end": 13.72,
+        "text": " Two engineers and one designer, starting in March.",
+        "temperature": 0,
+        "avg_logprob": -0.2104910731315613,
+        "compression_ratio": 1.2264150943396226,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Two",
+            "start": 10.5,
+            "end": 10.98
+          },
+          {
+            "word": " engineers",
+            "start": 10.98,
+            "end": 11.44
+          },
+          {
+            "word": " and",
+            "start": 11.44,
+            "end": 11.7
+          },
+          {
+            "word": " one",
+            "start": 11.7,
+            "end": 11.9
+          },
+          {
+            "word": " designer,",
+            "start": 11.9,
+            "end": 12.4
+          },
+          {
+            "word": " starting",
+            "start": 12.64,
+            "end": 13.1
+          },
+          {
+            "word": " in",
+            "start": 13.1,
+            "end": 13.34
+          },
+          {
+            "word": " March.",
+            "start": 13.34,
+            "end": 13.72
+          }
+        ],
+        "word_count": 8
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.500 --> 00:01.000\n So\n\n00:01.000 --> 00:01.180\n the\n\n00:01.180 --> 00:01.480\n budget\n\n00:01.480 --> 00:01.680\n for\n\n00:01.680 --> 00:01.820\n the\n\n00:01.820 --> 00:02.100\n next\n\n00:02.100 --> 00:02.500\n quarter\n\n00:02.500 --> 00:02.760\n is\n\n00:02.760 --> 00:03.120\n mostly\n\n00:03.120 --> 00:03.440\n going\n\n00:03.440 --> 00:03.700\n into\n\n00:03.700 --> 00:04.220\n hiring.\n\n00:05.200 --> 00:05.860\n Sure,\n\n00:06.200 --> 00:06.360\n go\n\n00:06.360 --> 00:06.680\n ahead.\n\n00:10.500 --> 00:10.980\n Two\n\n00:10.980 --> 00:11.440\n engineers\n\n00:11.440 --> 00:11.700\n and\n\n00:11.700 --> 00:11.900\n one\n\n00:11.900 --> 00:12.400\n designer,\n\n00:12.640 --> 00:13.100\n starting\n\n00:13.100 --> 00:13.340\n in\n\n00:13.340 --> 00:13.720\n March.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 11.994851478725598
+    }
+  }
+}

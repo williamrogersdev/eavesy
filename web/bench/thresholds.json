@@ -1,0 +1,5 @@
+{
+  "default": { "found": 0.9, "side": 0.95, "leaked": 0 },
+  "overlap": { "found": 0.85, "side": 0.95, "leaked": 0 },
+  "silence": { "lines": 0 }
+}

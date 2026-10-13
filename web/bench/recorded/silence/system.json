@@ -1,0 +1,24 @@
+{
+  "activeMs": 0,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 30,
+      "duration_after_vad": 0
+    },
+    "text": "",
+    "word_count": 0,
+    "segments": [],
+    "vtt": "WEBVTT\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 23.315118851999998
+    }
+  }
+}

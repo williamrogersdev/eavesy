@@ -1,0 +1,221 @@
+{
+  "activeMs": 10110,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 18.905,
+      "duration_after_vad": 14.697
+    },
+    "text": "Welcome to the design review. I have invited Priya as well. Hi everyone, I will walk you through the new onboarding screens. Yes, permissions first, then pairing, then a short test recording.",
+    "word_count": 32,
+    "segments": [
+      {
+        "start": 0.4,
+        "end": 4.32,
+        "text": " Welcome to the design review. I have invited Priya as well.",
+        "temperature": 0,
+        "avg_logprob": -0.18957270894731795,
+        "compression_ratio": 1.3356643356643356,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Welcome",
+            "start": 0.4,
+            "end": 1.1
+          },
+          {
+            "word": " to",
+            "start": 1.1,
+            "end": 1.32
+          },
+          {
+            "word": " the",
+            "start": 1.32,
+            "end": 1.44
+          },
+          {
+            "word": " design",
+            "start": 1.44,
+            "end": 1.78
+          },
+          {
+            "word": " review.",
+            "start": 1.78,
+            "end": 2.22
+          },
+          {
+            "word": " I",
+            "start": 2.56,
+            "end": 2.78
+          },
+          {
+            "word": " have",
+            "start": 2.78,
+            "end": 3
+          },
+          {
+            "word": " invited",
+            "start": 3,
+            "end": 3.46
+          },
+          {
+            "word": " Priya",
+            "start": 3.46,
+            "end": 3.8
+          },
+          {
+            "word": " as",
+            "start": 3.8,
+            "end": 3.98
+          },
+          {
+            "word": " well.",
+            "start": 3.98,
+            "end": 4.32
+          }
+        ],
+        "word_count": 11
+      },
+      {
+        "start": 4.86,
+        "end": 8.24,
+        "text": " Hi everyone, I will walk you through the new onboarding screens.",
+        "temperature": 0,
+        "avg_logprob": -0.18957270894731795,
+        "compression_ratio": 1.3356643356643356,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Hi",
+            "start": 4.86,
+            "end": 5.16
+          },
+          {
+            "word": " everyone,",
+            "start": 5.16,
+            "end": 5.6
+          },
+          {
+            "word": " I",
+            "start": 5.96,
+            "end": 6.18
+          },
+          {
+            "word": " will",
+            "start": 6.18,
+            "end": 6.34
+          },
+          {
+            "word": " walk",
+            "start": 6.34,
+            "end": 6.56
+          },
+          {
+            "word": " you",
+            "start": 6.56,
+            "end": 6.7
+          },
+          {
+            "word": " through",
+            "start": 6.7,
+            "end": 6.88
+          },
+          {
+            "word": " the",
+            "start": 6.88,
+            "end": 7.06
+          },
+          {
+            "word": " new",
+            "start": 7.06,
+            "end": 7.26
+          },
+          {
+            "word": " onboarding",
+            "start": 7.26,
+            "end": 7.74
+          },
+          {
+            "word": " screens.",
+            "start": 7.74,
+            "end": 8.24
+          }
+        ],
+        "word_count": 11
+      },
+      {
+        "start": 12.79,
+        "end": 17.19,
+        "text": " Yes, permissions first, then pairing, then a short test recording.",
+        "temperature": 0,
+        "avg_logprob": -0.18957270894731795,
+        "compression_ratio": 1.3356643356643356,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Yes,",
+            "start": 12.79,
+            "end": 13.43
+          },
+          {
+            "word": " permissions",
+            "start": 13.67,
+            "end": 14.21
+          },
+          {
+            "word": " first,",
+            "start": 14.21,
+            "end": 14.65
+          },
+          {
+            "word": " then",
+            "start": 14.93,
+            "end": 15.13
+          },
+          {
+            "word": " pairing,",
+            "start": 15.13,
+            "end": 15.47
+          },
+          {
+            "word": " then",
+            "start": 15.81,
+            "end": 16.01
+          },
+          {
+            "word": " a",
+            "start": 16.01,
+            "end": 16.17
+          },
+          {
+            "word": " short",
+            "start": 16.17,
+            "end": 16.37
+          },
+          {
+            "word": " test",
+            "start": 16.37,
+            "end": 16.65
+          },
+          {
+            "word": " recording.",
+            "start": 16.65,
+            "end": 17.19
+          }
+        ],
+        "word_count": 10
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:00.400 --> 00:01.100\n Welcome\n\n00:01.100 --> 00:01.320\n to\n\n00:01.320 --> 00:01.440\n the\n\n00:01.440 --> 00:01.780\n design\n\n00:01.780 --> 00:02.220\n review.\n\n00:02.560 --> 00:02.780\n I\n\n00:02.780 --> 00:03.000\n have\n\n00:03.000 --> 00:03.460\n invited\n\n00:03.460 --> 00:03.800\n Priya\n\n00:03.800 --> 00:03.980\n as\n\n00:03.980 --> 00:04.320\n well.\n\n00:04.860 --> 00:05.160\n Hi\n\n00:05.160 --> 00:05.600\n everyone,\n\n00:05.960 --> 00:06.180\n I\n\n00:06.180 --> 00:06.340\n will\n\n00:06.340 --> 00:06.560\n walk\n\n00:06.560 --> 00:06.700\n you\n\n00:06.700 --> 00:06.880\n through\n\n00:06.880 --> 00:07.060\n the\n\n00:07.060 --> 00:07.260\n new\n\n00:07.260 --> 00:07.740\n onboarding\n\n00:07.740 --> 00:08.240\n screens.\n\n00:12.790 --> 00:13.430\n Yes,\n\n00:13.670 --> 00:14.210\n permissions\n\n00:14.210 --> 00:14.650\n first,\n\n00:14.930 --> 00:15.130\n then\n\n00:15.130 --> 00:15.470\n pairing,\n\n00:15.810 --> 00:16.010\n then\n\n00:16.010 --> 00:16.170\n a\n\n00:16.170 --> 00:16.370\n short\n\n00:16.370 --> 00:16.650\n test\n\n00:16.650 --> 00:17.190\n recording.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 14.692410729902
+    }
+  }
+}

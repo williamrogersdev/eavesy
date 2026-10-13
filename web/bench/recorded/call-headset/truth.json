@@ -1,0 +1,40 @@
+{
+  "totalMs": 21122,
+  "lines": [
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 800,
+      "endMs": 3694,
+      "text": "Morning everyone, can you all hear me alright?"
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 4194,
+      "endMs": 7937,
+      "text": "Yes, loud and clear. Shall we start with the launch checklist?"
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 8537,
+      "endMs": 12452,
+      "text": "Good idea. The release notes are still missing a section on pricing."
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 12952,
+      "endMs": 16060,
+      "text": "I will write that section today and send it to you before five."
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 16760,
+      "endMs": 19622,
+      "text": "Perfect. Then we ship on Friday afternoon."
+    }
+  ]
+}

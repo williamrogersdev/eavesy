@@ -1,0 +1,87 @@
+{
+  "activeMs": 2940,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 18.905,
+      "duration_after_vad": 4.16
+    },
+    "text": "Thanks Priya. Does the permission step come before pairing now?",
+    "word_count": 10,
+    "segments": [
+      {
+        "start": 8.78,
+        "end": 12.38,
+        "text": " Thanks Priya. Does the permission step come before pairing now?",
+        "temperature": 0,
+        "avg_logprob": -0.09423828218132257,
+        "compression_ratio": 0.9,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Thanks",
+            "start": 8.78,
+            "end": 9.38
+          },
+          {
+            "word": " Priya.",
+            "start": 9.38,
+            "end": 9.78
+          },
+          {
+            "word": " Does",
+            "start": 9.94,
+            "end": 10.2
+          },
+          {
+            "word": " the",
+            "start": 10.2,
+            "end": 10.34
+          },
+          {
+            "word": " permission",
+            "start": 10.34,
+            "end": 10.7
+          },
+          {
+            "word": " step",
+            "start": 10.7,
+            "end": 11.08
+          },
+          {
+            "word": " come",
+            "start": 11.08,
+            "end": 11.34
+          },
+          {
+            "word": " before",
+            "start": 11.34,
+            "end": 11.7
+          },
+          {
+            "word": " pairing",
+            "start": 11.7,
+            "end": 12.1
+          },
+          {
+            "word": " now?",
+            "start": 12.1,
+            "end": 12.38
+          }
+        ],
+        "word_count": 10
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:08.780 --> 00:09.380\n Thanks\n\n00:09.380 --> 00:09.780\n Priya.\n\n00:09.940 --> 00:10.200\n Does\n\n00:10.200 --> 00:10.340\n the\n\n00:10.340 --> 00:10.700\n permission\n\n00:10.700 --> 00:11.080\n step\n\n00:11.080 --> 00:11.340\n come\n\n00:11.340 --> 00:11.700\n before\n\n00:11.700 --> 00:12.100\n pairing\n\n00:12.100 --> 00:12.380\n now?\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 14.692410729902
+    }
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE `summaries` ADD `chapters_json` text DEFAULT '[]' NOT NULL;

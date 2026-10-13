@@ -1,0 +1,116 @@
+---
+title: 'Best speech-to-text AI models in 2026: a builder’s buyer’s guide'
+description: A practical, up-to-date comparison of the best speech-to-text (STT) models and APIs in 2026 — Deepgram, AssemblyAI, OpenAI, ElevenLabs, Whisper, NVIDIA Parakeet and more — with pricing, real-time support, and which to pick for your use case.
+date: 2026-06-15
+author: The Eavesy team
+category: Comparison
+tags: ['Speech-to-text', 'AI models', 'Comparison', 'Transcription']
+featured: true
+---
+
+Speech-to-text (STT) is having a moment. The accuracy gap between the best
+models and human transcribers has all but closed for clean English audio, prices
+have fallen by an order of magnitude, and a wave of streaming-first models has
+made real-time voice agents practical. We build a transcription product, so we
+spend an unreasonable amount of time benchmarking these APIs — here's the
+honest, current state of the field in mid-2026.
+
+> **One caveat up front.** Every vendor publishes accuracy numbers on a dataset
+> that flatters it. "WER" (word error rate) on clean LibriSpeech audio is a
+> different universe from WER on a noisy three-person Zoom call with accents and
+> cross-talk. Treat all headline accuracy claims — including the ones below — as
+> directional, and benchmark on _your_ audio before you commit.
+
+## The short list
+
+| Model (Company) | Best for | Real-time? | Languages | Price (list, mid-2026) | Key strength |
+| --- | --- | --- | --- | --- | --- |
+| **Deepgram Nova-3** | High-volume streaming infra | ✅ Streaming + batch | ~36+ | ~$0.0077/min | Cheapest serious streaming, great dev tooling |
+| **AssemblyAI Universal** | Multilingual batch + speech intelligence | ⚠️ Batch (streaming: 6 langs) | 99 (batch) | ~$0.15–0.21/hr | PII redaction, sentiment, summaries built in |
+| **OpenAI gpt-4o-transcribe** | Easiest high-quality managed route | ⚠️ Near real-time | 99+ | ~$0.006/min | Top accuracy, dead-simple API |
+| **OpenAI Whisper (open source)** | Self-hosting, offline, privacy | ❌ Batch only | 99 | Free (self-host) | MIT license, vast ecosystem |
+| **ElevenLabs Scribe v2** | Accurate low-latency multilingual | ✅ Realtime variant | 90+ | ~$0.28/hr+ | Strong real-time accuracy |
+| **NVIDIA Parakeet / Canary (OSS)** | Fast self-hosted on GPUs | ✅ With NeMo | 25 EU (v3) | Free (self-host) | Tops the open ASR leaderboard |
+| **Speechmatics Ursa 2** | Accents, dialects, on-prem | ✅ Streaming + batch | 55+ | Free tier; enterprise quote | Best-in-class accent handling |
+| **Gladia Solaria** | Broad-language real-time, EU/GDPR | ✅ ~100ms partials | 100+ | ~$0.20–0.75/hr | 100+ languages incl. underserved ones |
+
+## How to actually choose
+
+The mistake is shopping for "the most accurate model." The right question is
+which model fits your **binding constraint** — and there are usually only three.
+
+### 1. Are you streaming, or batch?
+
+This single question eliminates most of the list. If you're transcribing
+recorded files (podcasts, meetings, voicemails), you want the cheapest accurate
+**batch** model, and latency is irrelevant. If you're building a live captioner
+or a voice agent, you need true **streaming** with sub-second partial results —
+and several "real-time" APIs are really just _fast batch_, which is not the same
+thing.
+
+- **Deepgram Nova-3** is the default for serious streaming volume. It does live
+  code-switching across languages and is among the cheapest credible options.
+- For voice _agents_ specifically, Deepgram's newer **Flux** model adds
+  model-based turn detection (knowing when the speaker is actually done) under
+  ~400ms — a real differentiator for natural-feeling conversation.
+- **OpenAI's `gpt-4o-transcribe`** endpoints are excellent but near-real-time;
+  for true low latency, OpenAI's separate Realtime API is the right tool.
+
+### 2. How many languages — and are they streaming languages?
+
+Watch for the gap between batch and streaming language coverage. **AssemblyAI**
+is the cleanest example: 99 languages for batch, but only ~6 for streaming.
+**Gladia Solaria** is the standout for breadth, covering 100+ languages
+(including dozens that others ignore) in both modes, with a GDPR-friendly EU
+footprint. **Speechmatics Ursa 2** is the one to beat on hard accents and
+dialects.
+
+### 3. Cloud API or self-hosted?
+
+If privacy, offline operation, or per-minute cost at massive scale matters, run
+the model yourself. The open-source story in 2026 is genuinely strong:
+
+- **OpenAI Whisper (large-v3)** is still the most-deployed open model — MIT
+  licensed, 99 languages, enormous tooling ecosystem (WhisperX adds the
+  diarization and timestamps Whisper lacks natively).
+- **NVIDIA Parakeet / Canary** now top the neutral
+  [Hugging Face Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)
+  on accuracy _and_ speed — if you have NVIDIA GPUs and don't need long-tail
+  languages, they're hard to beat.
+- **Mistral's Voxtral** is a newer open-weight challenger with native streaming
+  and built-in audio understanding (summaries, Q&A over audio).
+
+## Don't forget the extras
+
+Raw transcription is table stakes. The features that actually save you
+engineering time are usually the add-ons:
+
+- **Diarization** ("who said what") — solid in Deepgram, AssemblyAI,
+  Speechmatics, and Gladia; weaker on the OpenAI transcribe endpoints.
+- **Speech intelligence** — AssemblyAI bundles PII redaction, sentiment, auto
+  chapters, and summarization, which can replace a whole post-processing layer.
+- **Billing gotchas** — Google's Chirp rounds to 15-second chunks (brutal for
+  many short clips); Azure charges per-feature surcharges on real-time;
+  several vendors bill per token, not per minute. Model your _actual_ traffic.
+
+## Our recommendations
+
+- **Building a voice agent?** Deepgram (Nova-3 or Flux) or OpenAI Realtime.
+- **Transcribing files at scale?** OpenAI `gpt-4o-mini-transcribe` for cost, or
+  AssemblyAI if you want the analysis features included.
+- **Need 50+ languages, including rare ones?** Gladia Solaria.
+- **Self-hosting for privacy or scale?** Whisper for language breadth, NVIDIA
+  Parakeet for speed and accuracy.
+- **Hard accents, regulated industry, on-prem?** Speechmatics Ursa 2.
+
+## How Eavesy uses speech-to-text
+
+We practice what we preach. [Eavesy](/) splits the problem the same way this
+guide recommends: recorded files run through Whisper for accurate, private batch
+transcription, while live recording uses a streaming model so the transcript
+appears as you speak. The point isn't just a transcript on a screen — it's
+turning everything you say into a clean, structured brief your AI agent can
+actually use. If you're choosing an STT stack for a product of your own, the
+framework above is exactly how we'd start.
+
+_Want the transcript to be the easy part? [Try Eavesy with a free account](/sign-up) in your browser._

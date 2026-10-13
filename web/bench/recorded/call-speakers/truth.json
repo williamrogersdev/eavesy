@@ -1,0 +1,40 @@
+{
+  "totalMs": 21584,
+  "lines": [
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 800,
+      "endMs": 3948,
+      "text": "Can everyone see the dashboard on my screen right now?"
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 4548,
+      "endMs": 8016,
+      "text": "I can see it. The error rate looks much lower than last week."
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 8616,
+      "endMs": 12091,
+      "text": "It dropped after we fixed the retry logic in the upload queue."
+    },
+    {
+      "speaker": "you",
+      "side": "you",
+      "startMs": 12591,
+      "endMs": 16221,
+      "text": "Great work. Let us add an alert so we notice if it climbs again."
+    },
+    {
+      "speaker": "them",
+      "side": "them",
+      "startMs": 16921,
+      "endMs": 20084,
+      "text": "I will set that up this afternoon and share the link in the channel."
+    }
+  ]
+}

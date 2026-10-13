@@ -1,0 +1,169 @@
+{
+  "activeMs": 6000,
+  "whisper": {
+    "transcription_info": {
+      "language": "en",
+      "language_probability": 1,
+      "duration": 21.122,
+      "duration_after_vad": 8.384
+    },
+    "text": "Yes, loud and clear. Shall we start with the launch checklist? I will write that section today and send it to you before 5.",
+    "word_count": 24,
+    "segments": [
+      {
+        "start": 3.79,
+        "end": 7.63,
+        "text": " Yes, loud and clear. Shall we start with the launch checklist?",
+        "temperature": 0,
+        "avg_logprob": -0.18016098484848486,
+        "compression_ratio": 1.1603773584905661,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " Yes,",
+            "start": 3.79,
+            "end": 4.53
+          },
+          {
+            "word": " loud",
+            "start": 4.87,
+            "end": 5.03
+          },
+          {
+            "word": " and",
+            "start": 5.03,
+            "end": 5.23
+          },
+          {
+            "word": " clear.",
+            "start": 5.23,
+            "end": 5.55
+          },
+          {
+            "word": " Shall",
+            "start": 5.93,
+            "end": 6.05
+          },
+          {
+            "word": " we",
+            "start": 6.05,
+            "end": 6.29
+          },
+          {
+            "word": " start",
+            "start": 6.29,
+            "end": 6.57
+          },
+          {
+            "word": " with",
+            "start": 6.57,
+            "end": 6.77
+          },
+          {
+            "word": " the",
+            "start": 6.77,
+            "end": 6.93
+          },
+          {
+            "word": " launch",
+            "start": 6.93,
+            "end": 7.19
+          },
+          {
+            "word": " checklist?",
+            "start": 7.19,
+            "end": 7.63
+          }
+        ],
+        "word_count": 11
+      },
+      {
+        "start": 12.57,
+        "end": 15.85,
+        "text": " I will write that section today and send it to you before 5.",
+        "temperature": 0,
+        "avg_logprob": -0.18016098484848486,
+        "compression_ratio": 1.1603773584905661,
+        "no_speech_prob": 0,
+        "words": [
+          {
+            "word": " I",
+            "start": 12.57,
+            "end": 13.05
+          },
+          {
+            "word": " will",
+            "start": 13.05,
+            "end": 13.19
+          },
+          {
+            "word": " write",
+            "start": 13.19,
+            "end": 13.41
+          },
+          {
+            "word": " that",
+            "start": 13.41,
+            "end": 13.63
+          },
+          {
+            "word": " section",
+            "start": 13.63,
+            "end": 14.01
+          },
+          {
+            "word": " today",
+            "start": 14.01,
+            "end": 14.33
+          },
+          {
+            "word": " and",
+            "start": 14.33,
+            "end": 14.53
+          },
+          {
+            "word": " send",
+            "start": 14.53,
+            "end": 14.77
+          },
+          {
+            "word": " it",
+            "start": 14.77,
+            "end": 14.93
+          },
+          {
+            "word": " to",
+            "start": 14.93,
+            "end": 15.05
+          },
+          {
+            "word": " you",
+            "start": 15.05,
+            "end": 15.23
+          },
+          {
+            "word": " before",
+            "start": 15.23,
+            "end": 15.53
+          },
+          {
+            "word": " 5.",
+            "start": 15.53,
+            "end": 15.85
+          }
+        ],
+        "word_count": 13
+      }
+    ],
+    "vtt": "WEBVTT\n\n00:03.790 --> 00:04.530\n Yes,\n\n00:04.870 --> 00:05.030\n loud\n\n00:05.030 --> 00:05.230\n and\n\n00:05.230 --> 00:05.550\n clear.\n\n00:05.930 --> 00:06.050\n Shall\n\n00:06.050 --> 00:06.290\n we\n\n00:06.290 --> 00:06.570\n start\n\n00:06.570 --> 00:06.770\n with\n\n00:06.770 --> 00:06.930\n the\n\n00:06.930 --> 00:07.190\n launch\n\n00:07.190 --> 00:07.630\n checklist?\n\n00:12.570 --> 00:13.050\n I\n\n00:13.050 --> 00:13.190\n will\n\n00:13.190 --> 00:13.410\n write\n\n00:13.410 --> 00:13.630\n that\n\n00:13.630 --> 00:14.010\n section\n\n00:14.010 --> 00:14.330\n today\n\n00:14.330 --> 00:14.530\n and\n\n00:14.530 --> 00:14.770\n send\n\n00:14.770 --> 00:14.930\n it\n\n00:14.930 --> 00:15.050\n to\n\n00:15.050 --> 00:15.230\n you\n\n00:15.230 --> 00:15.530\n before\n\n00:15.530 --> 00:15.850\n 5.\n\n",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 16.4153980130648
+    }
+  }
+}
