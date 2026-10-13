@@ -22,6 +22,7 @@ import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
 import { BRIEF_FORMATS, type BriefFormatId } from '@/lib/brief-formats';
 import { isRecord } from '@/lib/json';
 import { clockLabel, TranscriptPlayer, type Chapter, type TranscriptLine } from './transcript-player';
+import { refreshLibrary } from '@/lib/api/use-library';
 
 type Segment = TranscriptLine;
 interface ActionItem {
@@ -465,6 +466,7 @@ function EditableTitle({
         body: JSON.stringify({ title }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      refreshLibrary();
       onSaved();
     } catch (cause) {
       setSaveError(cause instanceof Error ? cause.message : 'Could not rename meeting');

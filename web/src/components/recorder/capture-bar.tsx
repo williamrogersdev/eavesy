@@ -22,6 +22,7 @@ import {
 } from '@/lib/capture/visual-capture';
 import { formatDuration } from '@/lib/utils';
 import { isRecord, optionalString } from '@/lib/json';
+import { refreshLibrary } from '@/lib/api/use-library';
 
 type Phase = 'idle' | 'recording' | 'review' | 'saving';
 type Mode = 'audio' | 'webcam' | 'screen';
@@ -232,6 +233,7 @@ export function CaptureBar() {
       const body: unknown = await res.json();
       const id = isRecord(body) ? optionalString(body.id) : undefined;
       if (!id) throw new Error('Server returned an invalid capture');
+      refreshLibrary();
       reset();
       await router.push(`/app/captures/${id}`);
     } catch (err) {

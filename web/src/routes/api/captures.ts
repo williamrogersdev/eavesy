@@ -31,8 +31,8 @@ export const Route = createFileRoute('/api/captures')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const limit = Math.min(Number(new URL(request.url).searchParams.get('limit') ?? '100'), 200);
-        const rows = await capturesRepo.listForUser(getDb(), { userId: actor.userId, limit });
-        const items = rows.map((c) => ({ ...c, url: mediaProxyUrl(c.r2Key) }));
+        const rows = await capturesRepo.listSummariesForUser(getDb(), { userId: actor.userId, limit });
+        const items = rows.map(({ r2Key, ...c }) => ({ ...c, url: mediaProxyUrl(r2Key) }));
         return Response.json({ items });
       },
 

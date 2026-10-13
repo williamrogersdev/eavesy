@@ -139,11 +139,41 @@ export async function listForUser(db: AppDb, args: { userId: string; limit?: num
     .limit(args.limit ?? 50);
 }
 
-export async function getFull(db: AppDb, args: { meetingId: string; userId: string }) {
-  const meeting = await get(db, args);
-  if (!meeting) return null;
+export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number }) {
+  return await db
+    .select({
+      id: meetings.id,
+      title: meetings.title,
+      description: meetings.description,
+      startedAt: meetings.startedAt,
+      endedAt: meetings.endedAt,
+      durationSec: meetings.durationSec,
+      source: meetings.source,
+      platform: meetings.platform,
+      status: meetings.status,
+      folderId: meetings.folderId,
+      createdAt: meetings.createdAt,
+      updatedAt: meetings.updatedAt,
+    })
+    .from(meetings)
+    .where(and(eq(meetings.userId, args.userId), isNull(meetings.deletedAt)))
+    .orderBy(desc(meetings.startedAt))
+    .limit(args.limit ?? 50);
+}
 
-  const [summaryRow, notesRow, segments] = await Promise.all([
+export async function getFull(db: AppDb, args: { meetingId: string; userId: string }) {
+  const [meetingRows, summaryRow, notesRow, segments] = await db.batch([
+    db
+      .select()
+      .from(meetings)
+      .where(
+        and(
+          eq(meetings.id, args.meetingId),
+          eq(meetings.userId, args.userId),
+          isNull(meetings.deletedAt),
+        ),
+      )
+      .limit(1),
     db
       .select()
       .from(summaries)
@@ -160,6 +190,8 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
       .where(eq(transcriptSegments.meetingId, args.meetingId))
       .orderBy(transcriptSegments.startMs),
   ]);
+  const meeting = meetingRows[0];
+  if (!meeting) return null;
 
   const summary = summaryRow[0]
     ? {

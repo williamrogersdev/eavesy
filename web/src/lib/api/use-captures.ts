@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createResource } from './shared-resource';
 
 export interface CaptureItem {
   id: string;
@@ -23,36 +24,10 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error('Request failed');
 }
 
+export const captureList = createResource('/api/captures', parseCaptureList);
+
 export function useCaptures() {
-  const [data, setData] = useState<CaptureItem[] | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch('/api/captures')
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        const json: unknown = await r.json();
-        return json;
-      })
-      .then((json) => {
-        if (!cancelled) setData(parseCaptureList(json));
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setError(asError(error));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
-
-  return { data, loading, error, refresh: useCallback(() => setTick((t) => t + 1), []) };
+  return captureList.use();
 }
 
 export function useCapture(id: string) {

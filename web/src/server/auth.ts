@@ -1,6 +1,8 @@
 import { auth, clerkClient } from '@clerk/tanstack-react-start/server';
+import { timeSpan } from '@/server/perf';
 import { getDb } from '@/db/client';
 import { ensureClerkUser, getByClerkId } from '@/db/repo/users';
+import type { users } from '@/db/schema';
 import { LOCAL_TEST } from '@/lib/local-test';
 import { ensureLocalTestUser, LOCAL_TEST_USER_ID } from '@/server/local-test-seed';
 
@@ -33,6 +35,7 @@ export interface ResolvedActor {
   userId: string;
   isAnonymous: boolean;
   clerkUserId?: string;
+  user?: typeof users.$inferSelect;
 }
 
 export async function resolveActor(_args?: {
@@ -46,15 +49,15 @@ export async function resolveActor(_args?: {
   }
 
   try {
-    const { userId: clerkId } = await auth();
+    const { userId: clerkId } = await timeSpan('auth', () => auth());
     if (clerkId) {
       const existing = await getByClerkId(db, clerkId);
       if (existing && existing.email) {
-        return { userId: existing.id, isAnonymous: false, clerkUserId: clerkId };
+        return { userId: existing.id, isAnonymous: false, clerkUserId: clerkId, user: existing };
       }
       const identity = await loadClerkIdentity(clerkId);
       const user = await ensureClerkUser(db, { clerkUserId: clerkId, ...identity });
-      return { userId: user.id, isAnonymous: false, clerkUserId: clerkId };
+      return { userId: user.id, isAnonymous: false, clerkUserId: clerkId, user };
     }
   } catch {
     /* fall through to anonymous */

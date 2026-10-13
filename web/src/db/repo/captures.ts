@@ -86,6 +86,28 @@ export async function listForUser(
     .limit(args.limit ?? 100);
 }
 
+export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number }) {
+  return await db
+    .select({
+      id: captures.id,
+      kind: captures.kind,
+      captureMode: captures.captureMode,
+      title: captures.title,
+      contentType: captures.contentType,
+      bytes: captures.bytes,
+      durationSec: captures.durationSec,
+      width: captures.width,
+      height: captures.height,
+      r2Key: captures.r2Key,
+      transcriptStatus: captures.transcriptStatus,
+      createdAt: captures.createdAt,
+    })
+    .from(captures)
+    .where(and(eq(captures.userId, args.userId), isNull(captures.deletedAt)))
+    .orderBy(desc(captures.createdAt))
+    .limit(args.limit ?? 100);
+}
+
 export async function get(
   db: AppDb,
   args: { captureId: string; userId: string },

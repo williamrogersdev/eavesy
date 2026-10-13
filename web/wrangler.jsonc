@@ -7,6 +7,8 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
 
+  "placement": { "mode": "smart" },
+
   "routes": [
     { "pattern": "eavesy.com", "custom_domain": true },
     { "pattern": "www.eavesy.com", "custom_domain": true }

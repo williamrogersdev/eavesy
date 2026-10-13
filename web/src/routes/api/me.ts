@@ -2,10 +2,9 @@ import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { devices, users } from '@/db/schema';
+import { devices, subscriptions, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
-import * as subsRepo from '@/db/repo/subscriptions';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveActor } from '@/server/auth';
 
@@ -30,15 +29,19 @@ export const Route = createFileRoute('/api/me')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const db = getDb();
-        const rows = await db.select().from(users).where(eq(users.id, actor.userId)).limit(1);
-        const u = rows[0] ? await openUserKeys(rows[0]) : undefined;
+        const [u, [subRows, macDevice]] = await Promise.all([
+          actor.user ? openUserKeys(actor.user) : usersRepo.getById(db, actor.userId),
+          db.batch([
+            db.select().from(subscriptions).where(eq(subscriptions.userId, actor.userId)).limit(1),
+            db
+              .select({ id: devices.id })
+              .from(devices)
+              .where(and(eq(devices.userId, actor.userId), eq(devices.platform, 'macos')))
+              .limit(1),
+          ]),
+        ]);
         if (!u) return Response.json({ error: 'not found' }, { status: 404 });
-        const sub = await subsRepo.getByUserId(db, actor.userId);
-        const macDevice = await db
-          .select({ id: devices.id })
-          .from(devices)
-          .where(and(eq(devices.userId, actor.userId), eq(devices.platform, 'macos')))
-          .limit(1);
+        const sub = subRows[0];
         return Response.json({
           id: u.id,
           email: u.email,

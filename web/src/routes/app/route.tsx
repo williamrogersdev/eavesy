@@ -14,7 +14,7 @@ const getAppGate = createServerFn({ method: 'GET' }).handler(async () => {
   }
   if (!actor) return { redirectTo: '/sign-in' as const };
 
-  const user = await usersRepo.getById(getDb(), actor.userId);
+  const user = actor.user ?? (await usersRepo.getById(getDb(), actor.userId));
   if (!user?.onboardingCompletedAt) return { redirectTo: '/onboarding' as const };
 
   return { redirectTo: null };

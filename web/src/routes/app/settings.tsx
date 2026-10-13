@@ -7,6 +7,7 @@ import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/compo
 import { AccountData } from '@/components/settings/account-data';
 import { PLAN_DEFS } from '@/lib/plans';
 import { TemplateManager } from '@/components/settings/template-manager';
+import { refreshMe } from '@/lib/api/use-me';
 
 interface Me {
   id: string;
@@ -124,6 +125,7 @@ function SettingsPage() {
       const fresh = parseMe(await freshResponse.json());
       if (!fresh) throw new Error('Server returned invalid account settings');
       setMe(fresh);
+      void refreshMe();
       setAnthropic('');
       setSaved(true);
     } catch (cause) {
