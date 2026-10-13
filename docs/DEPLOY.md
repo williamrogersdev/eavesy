@@ -144,6 +144,38 @@ scripts/release-gate.sh
 The gate uses local Miniflare resources and Wrangler dry-runs. It does not
 deploy, call paid AI providers, or modify production data.
 
+## Automatic deploys
+
+`.github/workflows/deploy.yml` deploys production on every push to `main`.
+It re-runs the web checks on the merged code, applies D1 migrations, deploys
+processing → MCP → web, and smoke-tests the live domains. If the smoke test
+fails it rolls the web Worker back; the processing and MCP Workers and
+migrations are left as they are.
+
+The job is skipped until it is configured. One-time setup:
+
+```bash
+gh api -X PUT repos/williamrogersdev/eavesy/environments/production \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/williamrogersdev/eavesy/environments/production/deployment-branch-policies \
+  -f name=main
+gh secret set CLOUDFLARE_API_TOKEN --env production --repo williamrogersdev/eavesy
+gh variable set VITE_CLERK_PUBLISHABLE_KEY --repo williamrogersdev/eavesy
+```
+
+The token is the Cloudflare API token described above; it lives in the
+`production` environment, which only `main` can deploy from. The Clerk key
+is public build-time config. `VITE_MAC_DMG_URL` is an optional variable for
+the download page.
+
+Use this workflow or Cloudflare Workers Builds, not both: Workers Builds
+deploys only the web Worker, ahead of migrations and the processing Worker.
+
+To redeploy `main` without a new commit:
+`gh workflow run deploy.yml --ref main`. The manual steps below still work
+for a deploy from your Mac.
+
 ## Deploy
 
 ```bash
