@@ -40,10 +40,13 @@ export const Route = createFileRoute('/api/devices/pair/status')({
         }
         if (!row.rawToken) return Response.json({ status: 'pending' });
 
-        await db
+        // Hand the token over once: only the poll that clears it may return it.
+        const handedOff = await db
           .update(devicePairingCodes)
           .set({ rawToken: null, expiresAt: Date.now() })
-          .where(eq(devicePairingCodes.codeHash, codeHash));
+          .where(and(eq(devicePairingCodes.codeHash, codeHash), eq(devicePairingCodes.rawToken, row.rawToken)))
+          .returning({ codeHash: devicePairingCodes.codeHash });
+        if (handedOff.length === 0) return Response.json({ status: 'expired' }, { status: 404 });
         return Response.json({ status: 'paired', token: row.rawToken });
       },
     },

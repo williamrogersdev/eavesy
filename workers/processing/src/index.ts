@@ -12,6 +12,7 @@ import { captureMessage, sentryOptions, withSentry } from '../../../web/src/serv
 import {
   deadLetterQueue,
   purgeDeleted,
+  recoverStaleSegments,
   sealLegacyKeys,
   SUMMARY_WAIT_LIMIT_MS,
   queue as runQueue,
@@ -129,6 +130,7 @@ export const worker = {
       await env.DB.prepare('UPDATE meetings SET updated_at = ? WHERE id = ?').bind(now, meeting.id).run();
       await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
     }
+    await recoverStaleSegments(env, now);
     await purgeDeleted(env, now);
     await sealLegacyKeys(env);
     await rollupOperationalMetrics(env, now);
