@@ -60,15 +60,15 @@ export const Route = createFileRoute('/api/me')({
       },
 
       PATCH: async ({ request }) => {
-        const parsedBody = updateSchema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = updateSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         const db = getDb();
         if ('byoAnthropicKey' in body) {
           await usersRepo.updateByoKeys(db, actor.userId, {
