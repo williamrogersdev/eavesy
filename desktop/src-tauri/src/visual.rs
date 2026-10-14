@@ -1,3 +1,7 @@
+// tauri-nspanel re-exports the legacy `cocoa`/`objc` crates: their APIs are deprecated and
+// their `msg_send!` macros trip `unexpected_cfgs`. Moving to objc2 is a separate migration.
+#![allow(deprecated, unexpected_cfgs)]
+
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;

@@ -1,5 +1,4 @@
 mod telemetry;
-mod api;
 mod audio;
 mod visual;
 mod commands;
@@ -39,7 +38,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_sql::Builder::default().build())
         .manage(fs_watcher::WatcherManager::default())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
