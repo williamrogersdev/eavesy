@@ -91,8 +91,9 @@ pub fn set_transcript<R: Runtime>(
     })
 }
 
-/// Applies a cloud result; returns the recording if anything about it changed, so
-/// callers can skip rewriting files and notifying the UI on an unchanged poll.
+/// Applies a cloud result. Returns the recording (None if it is not in the
+/// registry) and whether anything changed, so an unchanged poll does not rewrite
+/// recordings.json or notify the UI.
 pub fn set_result<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -101,7 +102,7 @@ pub fn set_result<R: Runtime>(
     summary: Option<String>,
     notes: Option<String>,
     status: &str,
-) -> Result<Option<StoredRecording>, String> {
+) -> Result<Option<(StoredRecording, bool)>, String> {
     let mut updated = None;
     mutate(app, |list| {
         let Some(recording) = list.iter_mut().find(|recording| recording.id == id) else {
@@ -133,11 +134,9 @@ pub fn set_result<R: Runtime>(
             recording.notes = notes;
         }
         recording.status = status.to_string();
-        if *recording == before {
-            return Ok(false);
-        }
-        updated = Some(recording.clone());
-        Ok(true)
+        let changed = *recording != before;
+        updated = Some((recording.clone(), changed));
+        Ok(changed)
     })?;
     Ok(updated)
 }
@@ -330,20 +329,25 @@ mod tests {
     }
 
     #[test]
-    fn an_unchanged_mutation_does_not_rewrite_the_registry() {
-        let path = temp_registry();
-        let _guard = registry_guard();
-        mutate_path(&path, |list| {
-            list.push(sample("a", 1));
-            Ok(true)
-        })
-        .unwrap();
+    fn an_unchanged_result_poll_does_not_rewrite_the_registry() {
+        let root = std::env::temp_dir().join(format!("eavesy-store-app-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        append(app, sample("meeting", 1)).unwrap();
+        let path = registry_path(app).unwrap();
+        let poll = || set_result(app, "meeting", "Sync", "transcript".into(), None, None, "processing").unwrap();
+
+        assert!(poll().unwrap().1, "the first result changes the recording");
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
-        mutate_path(&path, |_| Ok(false)).unwrap();
+        let (recording, changed) = poll().unwrap();
+
+        assert!(!changed);
+        assert_eq!(recording.transcript.as_deref(), Some("transcript"));
         assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), written);
-        assert_eq!(read_registry(&path).unwrap().len(), 1);
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

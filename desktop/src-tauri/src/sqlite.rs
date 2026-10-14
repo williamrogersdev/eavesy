@@ -486,21 +486,7 @@ pub fn mark_segment_uploaded<R: Runtime>(app: &AppHandle<R>, segment: &PendingSe
             params![segment.session_id, segment.idx, segment.track, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|e| format!("mark segment uploaded: {e}"))?;
-    remove_segment_files(&segment.file_path);
     Ok(())
-}
-
-/// The cloud has the segment and the continuous archive has the same audio, so
-/// the local copy and its manifest are no longer needed.
-fn remove_segment_files(file: &Path) {
-    let manifest = PathBuf::from(format!("{}.json", file.to_string_lossy()));
-    for path in [file, manifest.as_path()] {
-        if let Err(error) = std::fs::remove_file(path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("could not remove uploaded segment {}: {error}", path.display());
-            }
-        }
-    }
 }
 
 pub fn mark_segment_failed<R: Runtime>(app: &AppHandle<R>, segment: &PendingSegment, error: &str) -> Result<(), String> {
@@ -563,12 +549,21 @@ pub fn mark_complete<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), Str
             params![id, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|e| format!("mark session complete: {e}"))?;
-    let segment_dir: Option<String> = open(app)?
-        .query_row("SELECT segment_dir FROM recording_sessions WHERE id=?1", params![id], |row| row.get(0))
+    let session: Option<(Option<String>, bool)> = open(app)?
+        .query_row(
+            "SELECT segment_dir, archive_missing FROM recording_sessions WHERE id=?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .optional()
-        .map_err(|e| format!("find completed session's segments: {e}"))?
-        .flatten();
-    // Only a folder laid out as `<captures>/<id>/segments` is removed, whole.
+        .map_err(|e| format!("find completed session's segments: {e}"))?;
+    // Segments are the only local audio of a session finished without its archive:
+    // keep them. Otherwise the archive (validated before upload) holds the same
+    // audio, so the per-capture folder `<captures>/<id>/segments` is removed whole.
+    let segment_dir = match session {
+        Some((segment_dir, false)) => segment_dir,
+        _ => None,
+    };
     let capture_dir = segment_dir
         .as_deref()
         .map(Path::new)
@@ -1333,21 +1328,35 @@ mod recovery_tests {
     }
 
     #[test]
-    fn uploaded_segments_and_completed_captures_are_removed_from_disk() {
+    fn segments_are_kept_until_a_session_completes_with_its_archive() {
         let mut fixture = Fixture::new();
-        fixture.capture("meeting", 2);
+        let archive = fixture.capture("meeting", 2);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
         fixture.restart();
         let capture_dir = fixture.root.join("capture").join("meeting");
         let first = next_segment(fixture.handle(), "meeting").unwrap().unwrap();
-        let manifest = PathBuf::from(format!("{}.json", first.file_path.to_string_lossy()));
-        assert!(first.file_path.exists() && manifest.exists());
 
         mark_segment_uploaded(fixture.handle(), &first).unwrap();
+        assert!(first.file_path.exists(), "uploaded segments stay until the session completes");
 
-        assert!(!first.file_path.exists() && !manifest.exists());
-        assert!(capture_dir.join("segments").join("segment-000001-mixed.m4a").exists());
         mark_complete(fixture.handle(), "meeting").unwrap();
         assert!(!capture_dir.exists());
+    }
+
+    #[test]
+    fn segments_of_a_session_without_its_archive_are_never_removed() {
+        let mut fixture = Fixture::new();
+        fixture.capture("lost-archive", 2);
+        fixture.restart();
+        assert!(fixture.status("lost-archive").1);
+        let capture_dir = fixture.root.join("capture").join("lost-archive");
+        let first = next_segment(fixture.handle(), "lost-archive").unwrap().unwrap();
+
+        mark_segment_uploaded(fixture.handle(), &first).unwrap();
+        mark_complete(fixture.handle(), "lost-archive").unwrap();
+
+        assert!(first.file_path.exists());
+        assert!(capture_dir.join("segments").join("segment-000001-mixed.m4a").exists());
     }
 
     #[test]

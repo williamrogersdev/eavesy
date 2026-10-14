@@ -438,11 +438,16 @@ async fn poll_result<R: Runtime>(
         let transcript = transcript.clone();
         let notes = result.notes_md.clone();
         move || -> Result<bool, String> {
-            let Some(recording) =
+            let Some((recording, changed)) =
                 crate::store::set_result(&app, &id, &title, transcript, summary, Some(notes), status)?
             else {
                 return Ok(false);
             };
+            // The poll that completes the session always writes the folder, so a
+            // write that failed on an earlier poll is not skipped forever.
+            if !changed && status != "complete" {
+                return Ok(false);
+            }
             if let Some(folder) = folder {
                 fs_writer::persist_recording_artifacts(
                     Some(&app),
@@ -452,7 +457,7 @@ async fn poll_result<R: Runtime>(
                     recording.notes.as_deref(),
                 )?;
             }
-            Ok(true)
+            Ok(changed)
         }
     })
     .await?;
@@ -1000,6 +1005,58 @@ mod tests {
             assert_eq!(harness.pass().await, Pass::Busy);
             assert_eq!(harness.session_state("meeting").0, "complete");
             assert_eq!(harness.pass().await, Pass::Idle);
+        }
+
+        #[tokio::test]
+        async fn files_that_failed_to_write_are_written_when_the_session_completes() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "uploading", 0);
+            sqlite::mark_processing(harness.handle(), "meeting").unwrap();
+            let folder = harness.root.join("meeting");
+            crate::store::append(harness.handle(), crate::store::StoredRecording {
+                id: "meeting".into(),
+                title: "Memo".into(),
+                started_at_ms: 1,
+                duration_sec: 0,
+                source: "mic".into(),
+                status: "processing".into(),
+                summary: None,
+                transcript: None,
+                notes: None,
+                has_audio: true,
+                has_video: false,
+                folder_path: Some(folder.to_string_lossy().into_owned()),
+            })
+            .unwrap();
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "status": "complete", "title": "Memo",
+                    "transcript": [{ "startMs": 0, "text": "Hello." }],
+                })))
+                .mount(&harness.server)
+                .await;
+            let set_mode = |mode: u32| {
+                let mut permissions = std::fs::metadata(&folder).unwrap().permissions();
+                std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, mode);
+                std::fs::set_permissions(&folder, permissions).unwrap();
+            };
+
+            // The completing poll updates the registry, then cannot write the folder.
+            set_mode(0o500);
+            assert_eq!(harness.pass().await, Pass::Busy);
+            set_mode(0o700);
+            assert_eq!(harness.session_state("meeting").0, "processing", "not complete until written");
+            assert!(!folder.join("transcript.md").exists());
+
+            // The same result again: unchanged in the registry, but still written.
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_sessions SET next_attempt_at=0", []).unwrap();
+            });
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            assert_eq!(harness.session_state("meeting").0, "complete");
+            let transcript = std::fs::read_to_string(folder.join("transcript.md")).unwrap();
+            assert!(transcript.contains("Hello."), "{transcript}");
         }
 
         #[tokio::test]
