@@ -222,43 +222,58 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
           processing_ms_total: number;
           processing_ms_max: number;
         }>(),
+      // The "first …" metrics start from the day's rows and look back per user
+      // through an index, instead of grouping every user's whole history.
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT user_id, min(created_at) AS first_at
-             FROM meetings
-            GROUP BY user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT m.user_id) AS count
+           FROM meetings m
+          WHERE m.created_at >= ? AND m.created_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM meetings earlier
+               WHERE earlier.user_id = m.user_id AND earlier.created_at < ?
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT user_id, min(created_at) AS first_at
-             FROM activity_log
-            WHERE event_type = 'meeting.complete'
-            GROUP BY user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT a.user_id) AS count
+           FROM activity_log a
+          WHERE a.event_type = 'meeting.complete'
+            AND a.created_at >= ? AND a.created_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM activity_log earlier
+               WHERE earlier.user_id = a.user_id
+                 AND earlier.event_type = 'meeting.complete'
+                 AND earlier.created_at < ?
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT used.user_id, min(used.created_at) AS first_at
-             FROM activity_log used
-            WHERE used.event_type IN ('meeting.copy', 'meeting.export')
-              AND EXISTS (
-                SELECT 1 FROM activity_log completed
-                 WHERE completed.meeting_id = used.meeting_id
-                   AND completed.event_type = 'meeting.complete'
-                   AND completed.created_at <= used.created_at
-              )
-            GROUP BY used.user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT used.user_id) AS count
+           FROM activity_log used
+          WHERE used.event_type IN ('meeting.copy', 'meeting.export')
+            AND used.created_at >= ? AND used.created_at < ?
+            AND EXISTS (
+              SELECT 1 FROM activity_log completed
+               WHERE completed.meeting_id = used.meeting_id
+                 AND completed.event_type = 'meeting.complete'
+                 AND completed.created_at <= used.created_at
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM activity_log earlier
+               WHERE earlier.user_id = used.user_id
+                 AND earlier.event_type IN ('meeting.copy', 'meeting.export')
+                 AND earlier.created_at < ?
+                 AND EXISTS (
+                   SELECT 1 FROM activity_log completed
+                    WHERE completed.meeting_id = earlier.meeting_id
+                      AND completed.event_type = 'meeting.complete'
+                      AND completed.created_at <= earlier.created_at
+                 )
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
         `SELECT count(DISTINCT used.meeting_id) AS count
@@ -274,24 +289,26 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
       )
         .bind(start, end)
         .first<{ count: number }>(),
+      // A return that happened today is a meeting started today, so only users
+      // with a meeting started today can count.
       db.prepare(
-        `WITH first_recordings AS (
-           SELECT user_id, min(started_at) AS first_at
-             FROM meetings
-            GROUP BY user_id
-         ), first_returns AS (
-           SELECT first_recordings.user_id, min(meetings.started_at) AS returned_at
-             FROM first_recordings
-             JOIN meetings ON meetings.user_id = first_recordings.user_id
-            WHERE meetings.started_at > first_recordings.first_at
-              AND meetings.started_at <= first_recordings.first_at + 7 * 24 * 60 * 60 * 1000
-            GROUP BY first_recordings.user_id
+        `WITH candidates AS (
+           SELECT DISTINCT m.user_id,
+                  (SELECT min(f.started_at) FROM meetings f WHERE f.user_id = m.user_id) AS first_at
+             FROM meetings m
+            WHERE m.started_at >= ? AND m.started_at < ?
+         ), returns AS (
+           SELECT (SELECT min(r.started_at) FROM meetings r
+                    WHERE r.user_id = candidates.user_id
+                      AND r.started_at > candidates.first_at
+                      AND r.started_at <= candidates.first_at + 7 * 24 * 60 * 60 * 1000) AS returned_at
+             FROM candidates
          )
          SELECT count(*) AS count
-           FROM first_returns
+           FROM returns
           WHERE returned_at >= ? AND returned_at < ?`,
       )
-        .bind(start, end)
+        .bind(start, end, start, end)
         .first<{ count: number }>(),
       db.prepare(
         `SELECT coalesce(sum(length(t.text)), 0) AS chars

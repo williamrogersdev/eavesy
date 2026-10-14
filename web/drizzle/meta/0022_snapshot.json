@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "81db038a-2926-434e-95c7-88d51e738936",
+  "id": "b0e9aa68-29f8-4732-848d-dcb568dd26cf",
   "prevId": "d41e90af-f758-46a3-ad92-dda6728df391",
   "tables": {
     "activity_log": {
@@ -64,6 +64,21 @@
           "columns": [
             "user_id",
             "created_at"
+          ],
+          "isUnique": false
+        },
+        "activity_event_created_idx": {
+          "name": "activity_event_created_idx",
+          "columns": [
+            "event_type",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "activity_meeting_idx": {
+          "name": "activity_meeting_idx",
+          "columns": [
+            "meeting_id"
           ],
           "isUnique": false
         }
@@ -448,6 +463,14 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "captures_deleted_idx": {
+          "name": "captures_deleted_idx",
+          "columns": [
+            "deleted_at"
+          ],
+          "isUnique": false,
+          "where": "deleted_at IS NOT NULL"
         }
       },
       "foreignKeys": {
@@ -779,6 +802,13 @@
             "user_id"
           ],
           "isUnique": false
+        },
+        "devices_created_idx": {
+          "name": "devices_created_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -896,6 +926,14 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "dictations_deleted_idx": {
+          "name": "dictations_deleted_idx",
+          "columns": [
+            "deleted_at"
+          ],
+          "isUnique": false,
+          "where": "deleted_at IS NOT NULL"
         }
       },
       "foreignKeys": {
@@ -1759,12 +1797,43 @@
           ],
           "isUnique": false
         },
-        "meetings_status_idx": {
-          "name": "meetings_status_idx",
+        "meetings_status_updated_idx": {
+          "name": "meetings_status_updated_idx",
           "columns": [
-            "status"
+            "status",
+            "updated_at"
           ],
           "isUnique": false
+        },
+        "meetings_created_idx": {
+          "name": "meetings_created_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "meetings_started_idx": {
+          "name": "meetings_started_idx",
+          "columns": [
+            "started_at"
+          ],
+          "isUnique": false
+        },
+        "meetings_user_created_idx": {
+          "name": "meetings_user_created_idx",
+          "columns": [
+            "user_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "meetings_deleted_idx": {
+          "name": "meetings_deleted_idx",
+          "columns": [
+            "deleted_at"
+          ],
+          "isUnique": false,
+          "where": "deleted_at IS NOT NULL"
         },
         "meetings_client_session_uq": {
           "name": "meetings_client_session_uq",
@@ -2770,6 +2839,28 @@
             "email"
           ],
           "isUnique": false
+        },
+        "users_created_idx": {
+          "name": "users_created_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "users_onboarded_idx": {
+          "name": "users_onboarded_idx",
+          "columns": [
+            "onboarding_completed_at"
+          ],
+          "isUnique": false
+        },
+        "users_byo_keys_idx": {
+          "name": "users_byo_keys_idx",
+          "columns": [
+            "id"
+          ],
+          "isUnique": false,
+          "where": "byo_anthropic_key IS NOT NULL OR byo_deepgram_key IS NOT NULL OR byo_openrouter_key IS NOT NULL"
         }
       },
       "foreignKeys": {},

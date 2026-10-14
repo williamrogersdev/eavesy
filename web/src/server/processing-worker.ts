@@ -1,4 +1,5 @@
 import { and, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { drizzle } from 'drizzle-orm/d1';
 import type {
   D1Database,
@@ -322,9 +323,9 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
     ai: env.AI,
   });
 
-  for (const [index, segment] of transcription.segments.entries()) {
+  await runBatched(db, transcription.segments.map((segment, index) => {
     const id = `web_${meetingId}_${index}_${segment.startMs}`;
-    await db
+    return db
       .insert(transcriptSegments)
       .values({
         id,
@@ -347,7 +348,7 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
           isFinal: true,
         },
       });
-  }
+  }));
 
   if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
 
@@ -486,10 +487,9 @@ async function handleTranscribeSegment(
         contextBlurb: meeting.contextBlurb,
       });
       const speakerId = speakerForTrack(track);
-      let stored = 0;
+      const lines = transcription.segments.filter((relative) => !isHallucination(relative));
 
-      for (const relative of transcription.segments) {
-        if (isHallucination(relative)) continue;
+      await runBatched(db, lines.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
         const absoluteEnd = Math.max(
@@ -500,7 +500,7 @@ async function handleTranscribeSegment(
           track === 'mixed'
             ? `seg_${meetingId}_${idx}_${relativeStart}`
             : `seg_${meetingId}_${idx}_${track}_${relativeStart}`;
-        await db
+        return db
           .insert(transcriptSegments)
           .values({
             id,
@@ -524,9 +524,8 @@ async function handleTranscribeSegment(
               isFinal: true,
             },
           });
-        stored += 1;
-      }
-      if (stored > 0) await recordFirstTranscript(db, meeting, segment);
+      }));
+      if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
     await db
@@ -854,17 +853,17 @@ async function replaceEmbeddings(
     values,
     metadata: { userId: source.userId, sourceType: source.sourceType, sourceId: source.sourceId, chunkIdx },
   }));
-  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
-    await db.insert(embeddings).values({
+  await runBatched(db, chunks.map((chunk, chunkIdx) =>
+    db.insert(embeddings).values({
       id: vectorRows[chunkIdx].id,
       userId: source.userId,
       sourceType: source.sourceType,
       sourceId: source.sourceId,
       chunkIdx,
-      contentExcerpt: chunks[chunkIdx].slice(0, 280),
+      contentExcerpt: chunk.slice(0, 280),
       createdAt: now,
-    });
-  }
+    }),
+  ));
   await env.VECTORIZE.upsert(vectorRows);
 }
 
@@ -1019,9 +1018,12 @@ export async function sealLegacyKeys(env: ProcessingEnv) {
     })
     .from(users)
     .where(
-      sql`(${users.byoAnthropicKey} IS NOT NULL AND ${users.byoAnthropicKey} NOT LIKE 'enc:%')
+      // The first term matches users_byo_keys_idx exactly, so only users who
+      // ever saved a key are read.
+      sql`(byo_anthropic_key IS NOT NULL OR byo_deepgram_key IS NOT NULL OR byo_openrouter_key IS NOT NULL)
+        AND ((${users.byoAnthropicKey} IS NOT NULL AND ${users.byoAnthropicKey} NOT LIKE 'enc:%')
         OR (${users.byoDeepgramKey} IS NOT NULL AND ${users.byoDeepgramKey} NOT LIKE 'enc:%')
-        OR (${users.byoOpenRouterKey} IS NOT NULL AND ${users.byoOpenRouterKey} NOT LIKE 'enc:%')`,
+        OR (${users.byoOpenRouterKey} IS NOT NULL AND ${users.byoOpenRouterKey} NOT LIKE 'enc:%'))`,
     )
     .limit(200);
   let sealed = 0;
@@ -1091,6 +1093,16 @@ export async function purgeDeleted(env: ProcessingEnv, now = Date.now()) {
     dictations: deletedDictations.length,
     drops: expiredDrops.length,
   };
+}
+
+const D1_BATCH_SIZE = 50;
+
+/** Sends row writes to D1 in batches: one round trip per 50 rows, not per row. */
+async function runBatched(db: Db, statements: BatchItem<'sqlite'>[]) {
+  for (let i = 0; i < statements.length; i += D1_BATCH_SIZE) {
+    const [first, ...rest] = statements.slice(i, i + D1_BATCH_SIZE);
+    await db.batch([first, ...rest]);
+  }
 }
 
 function chunkText(text: string, maxChars: number): string[] {

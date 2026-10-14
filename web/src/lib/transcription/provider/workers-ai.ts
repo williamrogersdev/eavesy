@@ -1,6 +1,7 @@
 import type { WorkersAiRunner } from '@/lib/ai/embed';
 import type { TranscriptSegment } from '@/lib/transcription/types';
 import type { SegmentTranscriber, SegmentTranscription } from '@/lib/transcription/provider';
+import { audioBase64 } from '@/lib/transcription/base64';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -13,7 +14,7 @@ export class WorkersAiSegmentTranscriber implements SegmentTranscriber {
     contextBlurb?: string | null;
   }): Promise<SegmentTranscription> {
     const result = await this.ai.run(WHISPER_MODEL, {
-      audio: toBase64(args.audio),
+      audio: audioBase64(args.audio),
       task: 'transcribe',
       language: args.language ?? 'en',
       vad_filter: true,
@@ -66,15 +67,6 @@ function mapResult(result: unknown, fallbackLanguage?: string): SegmentTranscrip
     language: typeof info.language === 'string' ? info.language : fallbackLanguage,
     durationSec: typeof info.duration === 'number' ? info.duration : undefined,
   };
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

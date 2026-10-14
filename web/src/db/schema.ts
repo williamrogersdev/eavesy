@@ -41,6 +41,13 @@ export const users = sqliteTable(
     uniqueIndex('users_clerk_user_id_uq').on(t.clerkUserId),
     uniqueIndex('users_anonymous_token_uq').on(t.anonymousSessionToken),
     index('users_email_idx').on(t.email),
+    index('users_created_idx').on(t.createdAt),
+    index('users_onboarded_idx').on(t.onboardingCompletedAt),
+    index('users_byo_keys_idx')
+      .on(t.id)
+      .where(
+        sql`byo_anthropic_key IS NOT NULL OR byo_deepgram_key IS NOT NULL OR byo_openrouter_key IS NOT NULL`,
+      ),
   ],
 );
 
@@ -124,7 +131,11 @@ export const meetings = sqliteTable(
   },
   (t) => [
     index('meetings_user_started_idx').on(t.userId, t.startedAt),
-    index('meetings_status_idx').on(t.status),
+    index('meetings_status_updated_idx').on(t.status, t.updatedAt),
+    index('meetings_created_idx').on(t.createdAt),
+    index('meetings_started_idx').on(t.startedAt),
+    index('meetings_user_created_idx').on(t.userId, t.createdAt),
+    index('meetings_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
     uniqueIndex('meetings_client_session_uq').on(t.clientSessionId),
     index('meetings_expires_idx').on(t.expiresAt),
     uniqueIndex('meetings_share_slug_uq').on(t.shareSlug),
@@ -243,7 +254,10 @@ export const dictations = sqliteTable(
     createdAt: integer('created_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
-  (t) => [index('dictations_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('dictations_user_created_idx').on(t.userId, t.createdAt),
+    index('dictations_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+  ],
 );
 
 export const captures = sqliteTable(
@@ -279,7 +293,10 @@ export const captures = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
-  (t) => [index('captures_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('captures_user_created_idx').on(t.userId, t.createdAt),
+    index('captures_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+  ],
 );
 
 // Cross-device "send to myself" inbox. Short text lives inline; files and
@@ -430,7 +447,11 @@ export const activityLog = sqliteTable(
     metadataJson: text('metadata_json').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('activity_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('activity_user_created_idx').on(t.userId, t.createdAt),
+    index('activity_event_created_idx').on(t.eventType, t.createdAt),
+    index('activity_meeting_idx').on(t.meetingId),
+  ],
 );
 
 export const devices = sqliteTable(
@@ -446,7 +467,7 @@ export const devices = sqliteTable(
     lastSeenAt: integer('last_seen_at').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('devices_user_idx').on(t.userId)],
+  (t) => [index('devices_user_idx').on(t.userId), index('devices_created_idx').on(t.createdAt)],
 );
 
 export const deviceTokens = sqliteTable(
