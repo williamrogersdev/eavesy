@@ -1,6 +1,6 @@
 // Browser error reporting. Off unless VITE_SENTRY_DSN is set at build time;
 // the SDK is loaded lazily so builds without a DSN never download it.
-import { PRIVATE_DATA_COLLECTION, scrubBreadcrumb, scrubEvent } from './scrub';
+import { PRIVATE_DATA_COLLECTION, scrubBreadcrumb, scrubEvent, scrubStreamedSpan } from './scrub';
 
 type BrowserSentry = typeof import('@sentry/browser');
 
@@ -21,11 +21,16 @@ function load(): Promise<BrowserSentry | null> {
         tracesSampleRate: TRACES_SAMPLE_RATE,
         // Same-origin API calls only; never send trace headers to third parties.
         tracePropagationTargets: [/^\/(?!\/)/],
-        integrations: [Sentry.browserTracingIntegration()],
+        // DOM breadcrumbs carry title/aria-label text (meeting and chapter titles).
+        integrations: [
+          Sentry.browserTracingIntegration(),
+          Sentry.breadcrumbsIntegration({ dom: false }),
+        ],
         initialScope: { tags: { service: 'browser' } },
         beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
         beforeSend: (event) => scrubEvent(event),
         beforeSendTransaction: (event) => scrubEvent(event),
+        beforeSendSpan: (span) => scrubStreamedSpan(span),
       });
       return Sentry;
     })

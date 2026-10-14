@@ -13,7 +13,7 @@ where, in which release) without carrying anything a user wrote or said.
 | Stack trace (function, file, line) | Stack-frame local variables |
 | Route / URL path and HTTP method | Query strings and URL fragments |
 | Release, environment, `service` tag | Request and response bodies |
-| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, app log lines on the Mac) | Headers, cookies, `Authorization`, form input breadcrumbs, info-level console output |
+| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, app log lines on the Mac) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
 | Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames |
 | Job kind, meeting id, attempt count | Any context key that looks like content or a credential (`text`, `transcript`, `summary`, `notes`, `body`, `title`, `token`, `key`, `secret`, `email`, …) |
 
@@ -30,26 +30,43 @@ through pattern scrubbing that replaces:
 - query strings inside embedded URLs.
 
 The MCP Worker accepts its token as the URL path, so it also replaces every
-path with `/[redacted]`.
+path with `/[redacted]`, including the root span's `url.full`/`url.path`
+attributes on the trace context. The SDK streams spans as their own envelope
+items, which skip `beforeSend`/`beforeSendTransaction`, so spans are scrubbed
+in `beforeSendSpan`; user agents and client addresses are dropped from span
+attributes.
 
-Transcript text has no recognisable shape, so scrubbing cannot catch it if code
-puts it in an error message. Don't: throw errors that describe the failure,
-not the data.
+Transcript text and model output have no recognisable shape, so scrubbing
+cannot catch them if code puts them in an error message. Throw errors that
+describe the failure, not the data: report a length or status code, never a
+slice of the body (`summary was not valid JSON (len=812)`, `Search failed
+(500)`). As a backstop, messages from known content-bearing sites are cut
+after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 
 ## Where the code lives
 
 - `web/src/lib/observability/scrub.ts` — the shared scrubber and the
   `dataCollection` policy, used by the Workers and the browser. Tested in
   `scrub.test.ts` with realistic payloads and, end to end with the real
-  Cloudflare SDK inside workerd, in `web/test/workers/observability.test.ts`.
+  Cloudflare SDK inside workerd, in `web/test/workers/observability.test.ts`
+  and `observability-mcp.test.ts` (every trace sampled; asserts the MCP token
+  appears in no envelope item).
 - `web/src/server/observability.ts` — Worker `sentryOptions` and `reportError`.
 - `web/src/lib/observability/browser.ts` — browser init. The SDK
   (`@sentry/browser`) is loaded lazily, only when `VITE_SENTRY_DSN` was set at
   build time; without it the bundle contains no Sentry code. Router error
-  boundaries report through `reportClientError`. No session replay.
+  boundaries report through `reportClientError`. No session replay, no DOM
+  breadcrumbs.
 - `desktop/src-tauri/src/telemetry.rs` — Mac app Sentry init, the Rust
-  scrubber (home-directory paths collapse to `~/…/<file name>` because
-  recording folders are named after meeting titles), and the app log.
+  scrubber, and the app log. Recording folders are named after meeting
+  titles, which can contain spaces, colons and quotes, so any path under the
+  configured recordings root becomes `<recordings>/…` and any other path under
+  `/Users`, `/Volumes` or `/private` becomes `~/…`, `/Volumes/…` or
+  `/private/…`, through the end of the line. A trailing OS error ("Permission
+  denied (os error 13)") is kept. Only the app's own folders, whose names are
+  generated, keep their path (`<app>/captures/<id>/segments/3.m4a`). Names
+  that macOS quotes in “curly quotes” are replaced too. Log sites in the file
+  watcher log the file role, not the folder.
 
 ## Configuration
 
@@ -77,7 +94,8 @@ own `capture.log` under the app data folder.
 
 **Copy Diagnostics** in the menu bar menu puts a support bundle on the
 clipboard: app version, macOS version and architecture, the last 200 app log
-lines and the last 100 `capture.log` lines, each scrubbed with the same rules
+lines (spanning yesterday's file, so a bundle copied after midnight is not
+empty) and the last 100 `capture.log` lines, each scrubbed with the same rules
 as Sentry events. Nothing is uploaded; the user decides where to paste it.
 
 ## Latency metric

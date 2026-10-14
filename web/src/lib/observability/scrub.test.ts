@@ -105,6 +105,50 @@ describe('scrubEvent', () => {
   });
 });
 
+describe('trace context', () => {
+  test('scrubs root span attributes and drops the user agent', () => {
+    const event = scrubEvent(
+      {
+        transaction: 'POST /nt_0123456789abcdef0123',
+        contexts: {
+          trace: {
+            trace_id: 't',
+            span_id: 's',
+            data: {
+              'url.full': 'https://mcp.eavesy.com/nt_0123456789abcdef0123?x=1',
+              'url.path': '/nt_0123456789abcdef0123',
+              'user_agent.original': 'Mozilla/5.0 (Macintosh)',
+              'http.request.method': 'POST',
+              'sentry.op': 'http.server',
+            },
+          },
+        },
+      },
+      { redactPath: true },
+    );
+    expect(event.contexts?.trace).toEqual({
+      trace_id: 't',
+      span_id: 's',
+      data: {
+        'url.full': 'https://mcp.eavesy.com/[redacted]',
+        'url.path': '/[redacted]',
+        'http.request.method': 'POST',
+        'sentry.op': 'http.server',
+      },
+    });
+    expect(JSON.stringify(event)).not.toContain('nt_');
+  });
+});
+
+describe('content-bearing messages', () => {
+  test('drops model output that follows a known prefix', () => {
+    expect(scrubText('summary was not valid JSON: {"tldr":"We agreed to lay off the design team"')).toBe(
+      'summary was not valid JSON [content removed]',
+    );
+    expect(scrubText('summary was not valid JSON (len=812)')).toBe('summary was not valid JSON (len=812)');
+  });
+});
+
 describe('scrub helpers', () => {
   test('scrubText strips query strings from embedded URLs', () => {
     expect(scrubText('GET https://eavesy.com/api/search?q=layoffs failed')).toBe(

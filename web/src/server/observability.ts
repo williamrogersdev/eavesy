@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/cloudflare';
 import type { CloudflareOptions } from '@sentry/cloudflare';
-import { PRIVATE_DATA_COLLECTION, scrubBreadcrumb, scrubEvent } from '../lib/observability/scrub';
+import { PRIVATE_DATA_COLLECTION, scrubBreadcrumb, scrubEvent, scrubStreamedSpan } from '../lib/observability/scrub';
 
 export const withSentry = Sentry.withSentry;
 export const captureMessage = Sentry.captureMessage;
@@ -23,6 +23,7 @@ export function sentryOptions(
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb, scrub),
     beforeSend: (event) => scrubEvent(event, scrub),
     beforeSendTransaction: (event) => scrubEvent(event, scrub),
+    beforeSendSpan: (span) => scrubStreamedSpan(span, scrub),
   };
 }
 

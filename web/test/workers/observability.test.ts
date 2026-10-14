@@ -3,6 +3,8 @@ import type { Envelope, Event } from '@sentry/core';
 import { describe, expect, it } from 'vitest';
 import { sentryOptions, withSentry } from '../../src/server/observability';
 
+type Fetch = (request: Request, env: unknown, ctx: ExecutionContext) => Promise<Response>;
+
 // Drives the real @sentry/cloudflare SDK inside workerd with a capturing
 // transport, so the test sees exactly the event that would leave the Worker.
 describe('Worker error reporting', () => {
@@ -50,7 +52,7 @@ describe('Worker error reporting', () => {
       },
     );
     await expect(
-      (handler.fetch as (r: Request, e: typeof env, c: ExecutionContext) => Promise<Response>)(
+      (handler.fetch as Fetch)(
         request,
         env,
         ctx,

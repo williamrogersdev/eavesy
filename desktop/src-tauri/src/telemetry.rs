@@ -1,17 +1,19 @@
 //! Error reporting and the app log.
 //!
 //! Sentry events keep the failing operation and the error text so a report is
-//! actionable, but the text is scrubbed first: home-directory paths collapse
-//! to `~/…/<file>` (recording folders are named after meeting titles), and
-//! tokens, API keys, emails and query strings are replaced. Audio,
+//! actionable, but the text is scrubbed first. Recording folders are named
+//! after meeting titles, so any path under the recordings root, a home
+//! directory, `/Volumes` or `/private` collapses to a placeholder (keeping a
+//! trailing OS error such as "Permission denied"); only app-owned paths with
+//! generated names survive. Tokens, API keys, emails, IPs, query strings and
+//! quoted file names are replaced. Audio,
 //! transcripts, notes and summaries are never attached.
 //!
 //! App logs go to a daily-rotating file in `~/Library/Logs/<identifier>`
 //! (seven files kept), plus stderr in debug builds.
 
-use std::borrow::Cow;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 
 use regex::{Captures, Regex};
 use sentry::integrations::tracing::EventFilter;
@@ -104,14 +106,22 @@ fn patterns() -> &'static [(Regex, &'static str)] {
         [
             (r"(https?://[^\s?#'<>]+)[?#][^\s'<>]*", "$1"),
             (r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [token]"),
+            (r"\b(?:Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}", "[credential]"),
             (r"\bsk-ant-[A-Za-z0-9_-]{8,}", "[api-key]"),
             (r"\bsk-or-[A-Za-z0-9_-]{8,}", "[api-key]"),
+            (r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{8,}", "[api-key]"),
+            (r"\bwhsec_[A-Za-z0-9]{8,}", "[api-key]"),
             (r"\bsk-[A-Za-z0-9_-]{20,}", "[api-key]"),
             (r"\beavesy_device_[A-Za-z0-9_-]{8,}", "[token]"),
             (r"\bnt_[0-9a-f]{16,}", "[token]"),
+            (r"(?i)\banon_[0-9a-f-]{16,}", "[token]"),
             (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", "[jwt]"),
             (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email]"),
+            (r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "[ip]"),
             (r"(?i)\b[0-9a-f]{32,}\b", "[token]"),
+            // macOS error text quotes file and folder names (meeting titles).
+            (r"“[^”\n]*”", "“…”"),
+            (r"‘[^’\n]*’", "‘…’"),
         ]
         .into_iter()
         .map(|(pattern, replacement)| (Regex::new(pattern).expect("valid pattern"), replacement))
@@ -119,14 +129,62 @@ fn patterns() -> &'static [(Regex, &'static str)] {
     })
 }
 
-fn home_path() -> &'static Regex {
-    static HOME: OnceLock<Regex> = OnceLock::new();
-    // Middle folders may contain spaces (they are meeting titles); the final
-    // component stops at whitespace so trailing error text survives.
-    HOME.get_or_init(|| {
-        Regex::new(r#"(?:file://)?/Users/[^/\s"'<>]+(?:(?:/[^/\n\r\t:"'<>]+)*/([^/\s:"'<>]+))?"#)
+/// Recordings-root paths the watcher is using, as given and canonicalized.
+static RECORDINGS_ROOTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+pub fn set_recordings_root(root: &Path) {
+    let mut roots = vec![root.to_string_lossy().into_owned()];
+    if let Ok(canonical) = std::fs::canonicalize(root) {
+        roots.push(canonical.to_string_lossy().into_owned());
+    }
+    roots.retain(|root| root.len() > 1);
+    if let Ok(mut current) = RECORDINGS_ROOTS.write() {
+        *current = roots;
+    }
+}
+
+// A path below a user-visible folder may contain spaces, colons and quotes
+// (it is named after a meeting), so everything up to the end of the line or
+// a closing quote is treated as part of it.
+const PATH_REST: &str = r#"[^\n"“”‘’`]*"#;
+
+fn app_path() -> &'static Regex {
+    static APP: OnceLock<Regex> = OnceLock::new();
+    // App-owned folders have generated names (ids, indexes); keep them.
+    APP.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?:file://)?/Users/[^/\s]+/Library/(?:Application Support|Logs|Caches)/{}((?:/[A-Za-z0-9._-]+)*)",
+            regex::escape(IDENTIFIER)
+        ))
+        .expect("valid pattern")
+    })
+}
+
+fn user_path() -> &'static Regex {
+    static USER: OnceLock<Regex> = OnceLock::new();
+    USER.get_or_init(|| {
+        Regex::new(&format!(r"(?:file://)?/(Users|Volumes|private)/[^/\s]+{PATH_REST}"))
             .expect("valid pattern")
     })
+}
+
+fn os_error_tail() -> &'static Regex {
+    static TAIL: OnceLock<Regex> = OnceLock::new();
+    TAIL.get_or_init(|| {
+        Regex::new(
+            r"(?i):\s*((?:Permission denied|No such file or directory|Operation not permitted|File exists|Is a directory|Not a directory|Directory not empty|No space left on device|Read-only file system|Resource busy|Input/output error|Operation timed out|Too many open files|File name too long)(?:\s*\(os error \d+\))?)",
+        )
+        .expect("valid pattern")
+    })
+}
+
+/// Replacement for a swallowed path: the placeholder plus any OS error text
+/// that was caught up in it, so "why" survives even when "where" does not.
+fn collapse(placeholder: &str, swallowed: &str) -> String {
+    match os_error_tail().captures_iter(swallowed).last() {
+        Some(tail) => format!("{placeholder}: {}", &tail[1]),
+        None => placeholder.to_owned(),
+    }
 }
 
 fn opaque_run() -> &'static Regex {
@@ -136,12 +194,30 @@ fn opaque_run() -> &'static Regex {
 
 /// Remove user paths, credentials and contact details from free text.
 pub fn scrub_text(text: &str) -> String {
-    let mut out: Cow<str> = home_path().replace_all(text, |caps: &Captures| match caps.get(1) {
-        Some(last) => format!("~/…/{}", last.as_str()),
-        None => "~".to_owned(),
-    });
+    let mut out = text.to_owned();
+    if let Ok(roots) = RECORDINGS_ROOTS.read() {
+        for root in roots.iter() {
+            let pattern = format!("(?:file://)?{}{PATH_REST}", regex::escape(root));
+            if let Ok(pattern) = Regex::new(&pattern) {
+                out = pattern
+                    .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[0][root.len()..]))
+                    .into_owned();
+            }
+        }
+    }
+    out = app_path().replace_all(&out, "<app>$1").into_owned();
+    out = user_path()
+        .replace_all(&out, |caps: &Captures| {
+            let placeholder = match &caps[1] {
+                "Users" => "~/…",
+                "Volumes" => "/Volumes/…",
+                _ => "/private/…",
+            };
+            collapse(placeholder, &caps[0])
+        })
+        .into_owned();
     for (pattern, replacement) in patterns() {
-        out = Cow::Owned(pattern.replace_all(&out, *replacement).into_owned());
+        out = pattern.replace_all(&out, *replacement).into_owned();
     }
     let mut out = opaque_run()
         .replace_all(&out, |caps: &Captures| {
@@ -278,25 +354,68 @@ mod tests {
     }
 
     #[test]
-    fn scrub_text_collapses_home_paths_and_removes_secrets() {
+    fn meeting_titles_in_paths_never_survive() {
+        // Titles with spaces, colons and apostrophes, under home and custom roots.
+        let cases = [
+            (
+                "could not read /Users/dana/Eavesy/Recordings/2026-10-14 Board layoffs with Dana: Q3/audio.m4a: Permission denied (os error 13)",
+                "could not read ~/…: Permission denied (os error 13)",
+            ),
+            (
+                "could not create /Users/dana/Eavesy/Recordings/Dana's 1:1 – comp review/notes.md",
+                "could not create ~/…",
+            ),
+            (
+                "recording at /Volumes/Archive/Meetings/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
+                "recording at <recordings>/…: No such file or directory (os error 2)",
+            ),
+            (
+                "file:///private/var/folders/xy/Board offsite.m4a missing",
+                "/private/…",
+            ),
+            ("home is /Users/dana", "home is ~/…"),
+            (
+                "The file “Board layoffs with Dana” couldn’t be opened.",
+                "The file “…” couldn’t be opened.",
+            ),
+        ];
+        super::set_recordings_root(std::path::Path::new("/Volumes/Archive/Meetings"));
+        for (input, expected) in cases {
+            assert_eq!(scrub_text(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn app_owned_paths_keep_their_generated_names() {
         assert_eq!(
-            scrub_text("could not read /Users/dana/Eavesy/2026-10-14 Board layoffs/audio.m4a: No such file"),
-            "could not read ~/…/audio.m4a: No such file"
+            scrub_text("segment write failed: /Users/dana/Library/Application Support/com.eavesy.desktop/captures/9f1c/segments/3.m4a"),
+            "segment write failed: <app>/captures/9f1c/segments/3.m4a"
         );
-        assert_eq!(scrub_text("home is /Users/dana"), "home is ~");
-        assert_eq!(
-            scrub_text("HTTP 401 with Bearer eavesy_device_kq2N0dS8mX4bV7cZ1aP9wE3rT6yU5iO0lK8jH2gF4dS"),
-            "HTTP 401 with Bearer [token]"
-        );
-        assert_eq!(
-            scrub_text("key sk-ant-api03-Zx9yQ8wV7uT6sR5qP4oN3mL2kJ1iH0gF-abcd for dana@example.com"),
-            "key [api-key] for [email]"
-        );
-        assert_eq!(
-            scrub_text("GET https://eavesy.com/api/sessions/01JA2B?token=abc failed"),
-            "GET https://eavesy.com/api/sessions/01JA2B failed"
-        );
-        assert_eq!(scrub_text("segment 3 upload HTTP 503"), "segment 3 upload HTTP 503");
+    }
+
+    #[test]
+    fn scrub_text_removes_credentials_and_contact_details() {
+        let cases = [
+            (
+                "HTTP 401 with Bearer eavesy_device_kq2N0dS8mX4bV7cZ1aP9wE3rT6yU5iO0lK8jH2gF4dS",
+                "HTTP 401 with Bearer [token]",
+            ),
+            (
+                "key sk-ant-api03-Zx9yQ8wV7uT6sR5qP4oN3mL2kJ1iH0gF-abcd for dana@example.com",
+                "key [api-key] for [email]",
+            ),
+            ("stripe sk_live_51Hxyzabcdefgh and whsec_abcdefgh1234", "stripe [api-key] and [api-key]"),
+            ("restricted rk_test_abcdefgh123", "restricted [api-key]"),
+            ("anon_6f9619ff-8b86-d011-b42d-00cf4fc964ff from 203.0.113.9", "[token] from [ip]"),
+            (
+                "GET https://eavesy.com/api/sessions/01JA2B?token=abc failed",
+                "GET https://eavesy.com/api/sessions/01JA2B failed",
+            ),
+            ("segment 3 upload HTTP 503", "segment 3 upload HTTP 503"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(scrub_text(input), expected, "input: {input}");
+        }
     }
 
     #[test]
@@ -324,19 +443,13 @@ mod tests {
         let event = sanitize_event(event);
         assert_eq!(event.message.as_deref(), Some("upload failed for [email]"));
         assert!(event.server_name.is_none());
-        assert_eq!(event.extra["detail"], "~/…/notes.md");
-        assert_eq!(
-            event.breadcrumbs.values[0].message.as_deref(),
-            Some("opened ~/…/audio.m4a")
-        );
+        assert_eq!(event.extra["detail"], "~/…");
+        assert_eq!(event.breadcrumbs.values[0].message.as_deref(), Some("opened ~/…"));
         let exception = &event.exception.values[0];
-        assert_eq!(
-            exception.value.as_deref(),
-            Some("called `Result::unwrap()` on ~/…/audio.m4a")
-        );
+        assert_eq!(exception.value.as_deref(), Some("called `Result::unwrap()` on ~/…"));
         assert_eq!(
             exception.stacktrace.as_ref().unwrap().frames[0].abs_path.as_deref(),
-            Some("~/…/sync.rs")
+            Some("~/…")
         );
         assert!(!format!("{event:?}").contains("Secret plans"));
     }

@@ -67,8 +67,9 @@ before making a network request.
 `SENTRY_DSN` is required for `build-macos-release.sh`, which fails without it
 (self-hosted builds can opt out with `EAVESY_ALLOW_NO_SENTRY=1`). It enables
 panic and operational error reporting: events keep the failing operation and
-error text, with home-directory paths collapsed to `~/…/<file>` and tokens,
-keys and emails removed. Audio, transcripts and notes are never attached. See
+error text, with recording, home, `/Volumes` and `/private` paths replaced
+by placeholders (folder names are meeting titles) and tokens, keys, emails and
+IPs removed. Audio, transcripts and notes are never attached. See
 [../docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
 
 App logs rotate daily in `~/Library/Logs/com.eavesy.desktop` (seven files

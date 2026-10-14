@@ -58,6 +58,13 @@ const SDK_CONTEXTS = new Set([
   'trace',
 ]);
 
+// Span attributes that hold payloads or identify the client.
+const SPAN_DROP_KEY = /query|statement|args|input|output|message|user_agent|client\.address|\bip\b/i;
+
+// Error messages that embed model output or response bodies by construction.
+// Keep the description, drop whatever follows it.
+const CONTENT_BEARING_MESSAGES = [/^(summary was not valid JSON):[\s\S]*$/];
+
 // Breadcrumb data keys that describe a request or navigation, not content.
 const BREADCRUMB_DATA_KEYS = new Set([
   'url',
@@ -71,7 +78,9 @@ const BREADCRUMB_DATA_KEYS = new Set([
 ]);
 
 export function scrubText(value: string, max = MAX_TEXT): string {
-  let text = value.replace(/(https?:\/\/[^\s?#"'<>]+)[?#][^\s"'<>]*/g, '$1');
+  let text = value;
+  for (const pattern of CONTENT_BEARING_MESSAGES) text = text.replace(pattern, '$1 [content removed]');
+  text = text.replace(/(https?:\/\/[^\s?#"'<>]+)[?#][^\s"'<>]*/g, '$1');
   for (const [pattern, replacement] of TEXT_PATTERNS) text = text.replace(pattern, replacement);
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -194,6 +203,10 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T, opts: ScrubOptio
     for (const [key, value] of Object.entries(event.contexts)) {
       if (!SDK_CONTEXTS.has(key)) event.contexts[key] = scrubValue(value);
     }
+    // The root span's attributes (url.full, url.path, user agent) ride on the
+    // trace context of sampled transactions and errors alike.
+    const trace = event.contexts.trace as { data?: { [key: string]: unknown } } | undefined;
+    if (trace?.data) trace.data = scrubSpanData(trace.data, opts);
   }
   if (event.extra) event.extra = scrubValue(event.extra) as T['extra'];
   if (event.tags) {
@@ -212,16 +225,49 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T, opts: ScrubOptio
   return event;
 }
 
+interface ScrubbableStreamedSpan {
+  name: string;
+  attributes: { [key: string]: unknown };
+}
+
+/**
+ * Span streaming (the SDK default) sends spans as their own envelope items,
+ * bypassing beforeSend/beforeSendTransaction; this is the `beforeSendSpan`
+ * hook. Attribute values may be raw or `{ value, type }`.
+ */
+export function scrubStreamedSpan<T extends ScrubbableStreamedSpan>(span: T, opts: ScrubOptions = {}): T {
+  span.name = opts.redactPath ? span.name.replace(/\/\S*/, '/[redacted]') : scrubText(span.name);
+  const raw: { [key: string]: unknown } = {};
+  const typed = new Set<string>();
+  for (const [key, value] of Object.entries(span.attributes)) {
+    if (value !== null && typeof value === 'object' && 'value' in value) {
+      raw[key] = value.value;
+      typed.add(key);
+    } else {
+      raw[key] = value;
+    }
+  }
+  const scrubbed = scrubSpanData(raw, opts);
+  const attributes: { [key: string]: unknown } = {};
+  for (const [key, value] of Object.entries(scrubbed)) {
+    attributes[key] = typed.has(key)
+      ? { ...(span.attributes[key] as object), value }
+      : value;
+  }
+  span.attributes = attributes;
+  return span;
+}
+
 function scrubSpanData(data: { [key: string]: unknown }, opts: ScrubOptions) {
   const out: { [key: string]: unknown } = {};
   for (const [key, value] of Object.entries(data)) {
-    if (SENSITIVE_KEY.test(key) || /query|statement|args|input|output|message/i.test(key)) continue;
+    if (SENSITIVE_KEY.test(key) || SPAN_DROP_KEY.test(key)) continue;
     out[key] =
       typeof value === 'string'
         ? /url|target|route/i.test(key)
           ? scrubUrl(value, opts)
           : scrubText(value, MAX_BREADCRUMB_TEXT)
-        : value;
+        : scrubValue(value);
   }
   return out;
 }
