@@ -15,13 +15,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: Install
         run: |
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+      - name: Check migration numbering
+        run: scripts/check-migrations.sh
+      - name: Write placeholder env for the build
+        # VITE_* values are baked in at build time and web/.env.production is not
+        # tracked. PR builds only need a well-formed key; deploy.yml writes the
+        # real one from repository variables.
+        run: |
+          {
+            echo "VITE_CLERK_PUBLISHABLE_KEY=pk_test_cGxhY2Vob2xkZXIuY2xlcmsuYWNjb3VudHMuZGV2JA"
+            echo "VITE_APP_URL=https://eavesy.com"
+          } > web/.env.production
+      # Build must run before typecheck: it generates src/routeTree.gen.ts
+      # (gitignored), which tsc needs to resolve the route tree types.
       - name: Build
         working-directory: web
         run: bun run build
@@ -32,7 +45,7 @@ jobs:
           (cd workers/mcp && bunx tsc --noEmit)
       - name: Lint
         working-directory: web
-        run: bunx eslint .
+        run: bunx eslint . --max-warnings 0
       - name: Test
         working-directory: web
         run: bun test src
@@ -52,10 +65,12 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri
       - name: Prebuild
@@ -66,3 +81,6 @@ jobs:
       - name: Rust tests
         working-directory: desktop/src-tauri
         run: cargo test --locked
+      - name: Clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy --locked -- -D warnings

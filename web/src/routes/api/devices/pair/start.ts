@@ -34,7 +34,7 @@ export const Route = createFileRoute('/api/devices/pair/start')({
             { status: 429, headers: { 'retry-after': String(limited.retryAfterSec) } },
           );
         }
-        const parsed = bodySchema.safeParse(await request.json());
+        const parsed = bodySchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
 
         const code = pairingCode();

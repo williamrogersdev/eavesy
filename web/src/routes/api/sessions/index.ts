@@ -26,7 +26,7 @@ export const Route = createFileRoute('/api/sessions/')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
 
-        const parsed = createSessionSchema.safeParse(await request.json());
+        const parsed = createSessionSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
         }
