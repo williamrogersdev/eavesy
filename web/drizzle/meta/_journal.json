@@ -124,8 +124,15 @@
     {
       "idx": 17,
       "version": "6",
-      "when": 1792011632707,
-      "tag": "0017_drops",
+      "when": 1792011453338,
+      "tag": "0017_segment_transcribe_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792012842331,
+      "tag": "0018_drops",
       "breakpoints": true
     }
   ]

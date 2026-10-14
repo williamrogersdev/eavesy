@@ -98,9 +98,6 @@ queue handling. If enabled later, keep it as a Worker secret and use separate
 projects per environment. `OPS_METRICS_TOKEN` protects the aggregate-only
 operations endpoint and must be generated independently of user/device tokens.
 
-Stripe secrets are deliberately optional while paid plans are gated as
-**Coming soon**.
-
 ### Error reporting (optional, strongly recommended)
 
 All three Workers report to Sentry when `SENTRY_DSN` is set, and do nothing

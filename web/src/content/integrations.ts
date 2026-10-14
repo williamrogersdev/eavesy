@@ -25,7 +25,7 @@ export const INTEGRATIONS: Integration[] = [
       'Stop, and your Zoom call is saved as a transcript, brief, and audio file — ready to paste into an agent.',
     ],
     faqs: [
-      { q: 'Do I need a Zoom paid plan or admin rights?', a: 'No. Eavesy records the audio your Mac plays, so it works on any Zoom plan with no account settings to change.' },
+      { q: 'Do I need Zoom admin rights?', a: 'No. Eavesy records the audio your Mac plays, so it works on any Zoom plan with no account settings to change.' },
       { q: 'Will other people see a recording bot?', a: 'No. Nothing joins your Zoom call — Eavesy captures audio locally on your machine.' },
     ],
   },

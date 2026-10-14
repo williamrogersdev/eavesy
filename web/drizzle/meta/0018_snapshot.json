@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7e21e98d-a2b5-43de-bea7-d3abcd06c783",
+  "id": "72b0908a-9d28-46d3-97b9-4fddb2367c73",
   "prevId": "d41e90af-f758-46a3-ad92-dda6728df391",
   "tables": {
     "activity_log": {
@@ -1355,6 +1355,13 @@
           "autoincrement": false,
           "default": "'pending'"
         },
+        "transcribe_claimed_at": {
+          "name": "transcribe_claimed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1380,6 +1387,14 @@
             "idx"
           ],
           "isUnique": false
+        },
+        "meeting_segments_processing_idx": {
+          "name": "meeting_segments_processing_idx",
+          "columns": [
+            "transcribe_claimed_at"
+          ],
+          "isUnique": false,
+          "where": "\"meeting_segments\".\"transcribe_status\" = 'processing'"
         }
       },
       "foreignKeys": {

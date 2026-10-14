@@ -45,21 +45,21 @@ async function seed(db: AppDb) {
     updatedAt: at,
   });
   await db.insert(meetings).values([
-    meeting('mtg_local_complete', 'Pricing review with Sarah', now - 2 * HOUR, 'complete', 1834),
+    meeting('mtg_local_complete', 'Launch review with Sarah', now - 2 * HOUR, 'complete', 1834),
     meeting('mtg_local_processing', 'Standup', now - 0.2 * HOUR, 'processing', 640),
     meeting('mtg_local_failed', 'Call with the design agency', now - 30 * HOUR, 'failed', 95),
   ]);
   await db.insert(summaries).values({
     id: 'sum_local_complete',
     meetingId: 'mtg_local_complete',
-    tldr: 'Agreed to keep the free tier unlimited and launch Pro at $12/month in November.',
-    decisionsJson: JSON.stringify([{ text: 'Pro launches at $12/month.' }, { text: 'No length limit on the free tier.' }]),
+    tldr: 'Agreed to keep the beta open and ship the new onboarding flow in November.',
+    decisionsJson: JSON.stringify([{ text: 'Onboarding ships in November.' }, { text: 'No length limit during the beta.' }]),
     actionItemsJson: JSON.stringify([
-      { text: 'Draft the pricing page copy', owner: 'Sarah', due: 'Friday', completed: false },
-      { text: 'Wire up Stripe checkout', owner: 'Will', completed: true },
+      { text: 'Draft the launch announcement', owner: 'Sarah', due: 'Friday', completed: false },
+      { text: 'Finish the onboarding flow', owner: 'Will', completed: true },
     ]),
-    openQuestionsJson: JSON.stringify([{ text: 'Do we offer an annual discount?' }]),
-    chaptersJson: JSON.stringify([{ startMs: 0, title: 'Free tier' }, { startMs: 60_000, title: 'Pro price' }]),
+    openQuestionsJson: JSON.stringify([{ text: 'Do we need a staged rollout?' }]),
+    chaptersJson: JSON.stringify([{ startMs: 0, title: 'Beta scope' }, { startMs: 60_000, title: 'Launch date' }]),
     generatedByModel: 'local-test',
     generatedAt: now,
   });
@@ -79,7 +79,7 @@ async function seed(db: AppDb) {
       text,
     })),
   );
-  await db.insert(userNotes).values({ meetingId: 'mtg_local_complete', contentMd: 'Check annual pricing with finance.', updatedAt: now });
+  await db.insert(userNotes).values({ meetingId: 'mtg_local_complete', contentMd: 'Check the launch budget with finance.', updatedAt: now });
   await db.insert(captures).values({
     id: 'cap_local_screenshot',
     userId: LOCAL_TEST_USER_ID,
@@ -92,7 +92,7 @@ async function seed(db: AppDb) {
     bytes: 182_000,
     width: 1440,
     height: 900,
-    transcript: 'Stripe checkout shows “Your card was declined.” under the pay button.',
+    transcript: 'The checkout page shows “Your card was declined.” under the pay button.',
     transcriptStatus: 'complete',
     createdAt: now - 26 * HOUR,
     updatedAt: now - 26 * HOUR,
@@ -101,8 +101,8 @@ async function seed(db: AppDb) {
     id: 'dic_local_1',
     userId: LOCAL_TEST_USER_ID,
     title: 'Reply to Sarah',
-    transcript: 'thanks sarah lets go with twelve a month and revisit annual next week',
-    cleanedText: 'Thanks Sarah, let’s go with $12 a month and revisit annual pricing next week.',
+    transcript: 'thanks sarah lets go with the november date and revisit the rollout next week',
+    cleanedText: 'Thanks Sarah, let’s go with the November date and revisit the rollout next week.',
     durationSec: 9,
     createdAt: now - 3 * HOUR,
   });

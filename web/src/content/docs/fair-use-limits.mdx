@@ -1,0 +1,50 @@
+---
+title: Fair-use limits
+description: The daily per-account limits that apply to everyone, and how self-hosters can change them.
+category: Account & data
+order: 40
+---
+
+Everyone gets the same limits. There are no tiers, and nothing about your
+account changes them. The limits exist to keep shared infrastructure and AI
+provider costs predictable, and they are counted **per account, per day**.
+
+## Daily limits
+
+Counters reset at midnight UTC.
+
+| What | Per day | Environment override |
+| --- | --- | --- |
+| Audio segments uploaded | 600 | `QUOTA_SEGMENT_PER_DAY` |
+| Transcriptions | 300 | `QUOTA_TRANSCRIBE_PER_DAY` |
+| Session processing runs (summaries and briefs) | 100 | `QUOTA_PROCESS_PER_DAY` |
+| Dictations | 500 | `QUOTA_DICTATION_PER_DAY` |
+| Captures | 300 | `QUOTA_CAPTURE_PER_DAY` |
+| Chat messages | 300 | `QUOTA_CHAT_PER_DAY` |
+| Brief regenerations | 60 | `QUOTA_REGENERATE_PER_DAY` |
+| Searches | 1,000 | `QUOTA_SEARCH_PER_DAY` |
+| Exports | 10 | `QUOTA_EXPORT_PER_DAY` |
+
+When you reach a limit, the request returns HTTP 429 with the code
+`daily_quota`, and you can try again after the reset.
+
+## Instance-wide limits
+
+The transcription and processing endpoints also have per-IP and instance-wide
+limits:
+
+| Endpoint | Per IP, per minute | Instance, per day |
+| --- | --- | --- |
+| Transcribe | 20 (`RL_TRANSCRIBE_PER_MIN`) | 5,000 (`BUDGET_TRANSCRIBE_PER_DAY`) |
+| Process | 10 (`RL_PROCESS_PER_MIN`) | 2,000 (`BUDGET_PROCESS_PER_DAY`) |
+
+## Self-hosting
+
+The defaults live in `web/src/server/rate-limit.ts`. To change a limit on your
+own deployment, set the matching environment variable from the table above.
+Limits are enforced with a Workers KV namespace; if it is not bound, limits
+are not enforced.
+
+## Next
+
+- [Privacy &amp; your data](/docs/privacy-and-data)
