@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
+import { folders } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
@@ -47,7 +49,7 @@ export const Route = createFileRoute('/api/meetings/$id')({
 
       PATCH: async ({ request, params }) => {
         const { id } = params;
-        const parsed = patchSchema.safeParse(await request.json());
+        const parsed = patchSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
         }
@@ -58,6 +60,14 @@ export const Route = createFileRoute('/api/meetings/$id')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const { speakerNames, ...fields } = parsed.data;
+        if (fields.folderId) {
+          const folder = await getDb()
+            .select({ id: folders.id })
+            .from(folders)
+            .where(and(eq(folders.id, fields.folderId), eq(folders.userId, actor.userId)))
+            .limit(1);
+          if (folder.length === 0) return Response.json({ error: 'folder not found' }, { status: 404 });
+        }
         let speakerNamesJson: string | undefined;
         if (speakerNames) {
           const meeting = await meetingsRepo.get(getDb(), { meetingId: id, userId: actor.userId });

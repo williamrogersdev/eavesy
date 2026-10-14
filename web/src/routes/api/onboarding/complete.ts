@@ -12,7 +12,8 @@ export const Route = createFileRoute('/api/onboarding/complete')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        schema.parse(await request.json());
+        const parsedBody = schema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         let actor;
         try {
           actor = await resolveActor();
