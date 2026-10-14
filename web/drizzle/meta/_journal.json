@@ -113,6 +113,13 @@
       "when": 1790351318380,
       "tag": "0011_summary_chapters",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1792006426051,
+      "tag": "0016_drops",
+      "breakpoints": true
     }
   ]
 }

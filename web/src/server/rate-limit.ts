@@ -134,6 +134,7 @@ export const USER_DAILY_QUOTAS = {
   process: 100,
   dictation: 500,
   capture: 300,
+  drop: 500,
   chat: 300,
   regenerate: 60,
   search: 1_000,

@@ -272,6 +272,29 @@ export const captures = sqliteTable(
   (t) => [index('captures_user_created_idx').on(t.userId, t.createdAt)],
 );
 
+// Cross-device "send to myself" inbox. Short text lives inline; files and
+// oversized text live in R2 under users/{userId}/drops/.
+export const drops = sqliteTable(
+  'drops',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: text('kind', { enum: ['text', 'file'] }).notNull(),
+    text: text('text'),
+    // First few hundred chars, so list views never need to read R2.
+    preview: text('preview'),
+    r2Key: text('r2_key'),
+    filename: text('filename'),
+    contentType: text('content_type'),
+    bytes: integer('bytes').notNull(),
+    deviceLabel: text('device_label'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('drops_user_created_idx').on(t.userId, t.createdAt)],
+);
+
 export const promptTemplates = sqliteTable(
   'prompt_templates',
   {

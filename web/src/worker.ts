@@ -1,6 +1,9 @@
 import { sentryOptions, withSentry } from '@/server/observability';
 import { withRequestTiming } from '@/server/perf';
+import { hubNamespace } from '@/server/drops-hub';
 import handler from '@tanstack/react-start/server-entry';
+
+export { DropsHub } from '@/server/drops-hub';
 
 interface Env {
   SENTRY_DSN?: string;
@@ -8,6 +11,16 @@ interface Env {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    // Live drop sync sockets skip the app handler: the per-user DropsHub
+    // authenticates them with the one-time ticket from /api/drops/ticket.
+    if (url.pathname === '/api/drops/live') {
+      const userId = url.searchParams.get('u');
+      if (!userId) return new Response('missing user', { status: 400 });
+      const ns = hubNamespace(env);
+      return ns.get(ns.idFromName(userId)).fetch(request);
+    }
+
     const handle = async () =>
       (
         handler.fetch as (
@@ -16,7 +29,7 @@ const worker = {
           executionContext: ExecutionContext,
         ) => Response | Promise<Response>
       )(request, env, ctx);
-    return new URL(request.url).pathname.startsWith('/api/')
+    return url.pathname.startsWith('/api/')
       ? withRequestTiming(request, handle)
       : handle();
   },

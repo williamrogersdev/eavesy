@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { BrandMark } from '@/components/brand-mark';
+import { DropButton } from '@/components/drops/drop-button';
+import { DropsProvider } from '@/components/drops/drops-provider';
 import { CaptureBar } from '@/components/recorder/capture-bar';
 import { Link } from '@/components/ui/app-link';
 import { type LibItem, useLibraryItems } from '@/lib/api/use-library';
@@ -80,58 +82,61 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-background">
-      <a
-        href="#app-content"
-        className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition focus:translate-y-0"
-      >
-        Skip to content
-      </a>
+    <DropsProvider>
+      <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-background">
+        <a
+          href="#app-content"
+          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition focus:translate-y-0"
+        >
+          Skip to content
+        </a>
 
-      <div className="hidden h-full w-[232px] shrink-0 lg:block">
-        <Sidebar />
-      </div>
+        <div className="hidden h-full w-[232px] shrink-0 lg:block">
+          <Sidebar />
+        </div>
 
-      {mobileNavOpen ? (
-        <div className="fixed inset-0 z-[60] lg:hidden">
-          <button
-            type="button"
-            aria-label="Close navigation"
-            onClick={closeMobileNav}
-            className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-[2px]"
-          />
-          <div
-            ref={drawerRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Main navigation"
-            className="relative h-full w-[min(86vw,320px)] animate-fade-up"
-          >
-            <Sidebar onNavigate={() => setMobileNavOpen(false)} />
+        {mobileNavOpen ? (
+          <div className="fixed inset-0 z-[60] lg:hidden">
             <button
-              ref={drawerCloseRef}
               type="button"
               aria-label="Close navigation"
               onClick={closeMobileNav}
-              className="absolute right-3 top-3 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-[2px]"
+            />
+            <div
+              ref={drawerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Main navigation"
+              className="relative h-full w-[min(86vw,320px)] animate-fade-up"
             >
-              <X className="h-5 w-5" />
-            </button>
+              <Sidebar onNavigate={() => setMobileNavOpen(false)} />
+              <button
+                ref={drawerCloseRef}
+                type="button"
+                aria-label="Close navigation"
+                onClick={closeMobileNav}
+                className="absolute right-3 top-3 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <MobileHeader menuButtonRef={menuButtonRef} onMenu={() => setMobileNavOpen(true)} />
-        <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:px-4">
-          <TopSearch />
-          <CaptureBar />
-        </header>
-        <main id="app-content" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {children}
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <MobileHeader menuButtonRef={menuButtonRef} onMenu={() => setMobileNavOpen(true)} />
+          <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:px-4">
+            <TopSearch />
+            <DropButton />
+            <CaptureBar />
+          </header>
+          <main id="app-content" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </DropsProvider>
   );
 }
 
