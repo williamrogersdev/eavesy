@@ -1,0 +1,79 @@
+#!/usr/bin/env node
+// Fills the account-specific values in the three wrangler configs from env.
+//
+// The committed configs carry obviously fake placeholder IDs so the repo runs
+// locally with no Cloudflare account. Wrangler reads CLOUDFLARE_ACCOUNT_ID
+// itself, but D1/KV IDs and route domains cannot come from env, so deploys
+// run this first. It edits the files in place; use --restore to undo.
+//
+//   EAVESY_D1_DATABASE_ID   required  D1 database UUID
+//   EAVESY_KV_CACHE_ID      required  KV namespace ID for the web Worker
+//   EAVESY_APP_DOMAIN       optional  custom domain for the web Worker (e.g. eavesy.com)
+//   EAVESY_WWW_DOMAIN       optional  extra custom domain for the web Worker
+//   EAVESY_MCP_DOMAIN       optional  custom domain for the MCP Worker
+//
+// Unset domains drop the route, so the Worker serves from *.workers.dev.
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const FILES = ['web/wrangler.jsonc', 'workers/processing/wrangler.toml', 'workers/mcp/wrangler.toml'];
+
+if (process.argv.includes('--restore')) {
+  execFileSync('git', ['checkout', '--', ...FILES], { cwd: root, stdio: 'inherit' });
+  process.exit(0);
+}
+
+const PLACEHOLDER = {
+  d1: '00000000-0000-0000-0000-000000000000',
+  kv: '00000000000000000000000000000000',
+  app: 'app.example.invalid',
+  www: 'www.example.invalid',
+  mcp: 'mcp.example.invalid',
+  appUrl: 'http://localhost:3000',
+};
+const env = (k) => (process.env[k] ?? '').trim();
+const d1 = env('EAVESY_D1_DATABASE_ID');
+const kv = env('EAVESY_KV_CACHE_ID');
+const app = env('EAVESY_APP_DOMAIN');
+const www = env('EAVESY_WWW_DOMAIN');
+const mcp = env('EAVESY_MCP_DOMAIN');
+
+const missing = [!d1 && 'EAVESY_D1_DATABASE_ID', !kv && 'EAVESY_KV_CACHE_ID'].filter(Boolean);
+if (missing.length) {
+  console.error(`render-wrangler: set ${missing.join(' and ')} (see docs/SELF_HOSTING.md)`);
+  process.exit(1);
+}
+if (!/^[0-9a-f-]{36}$/i.test(d1) || !/^[0-9a-f]{32}$/i.test(kv)) {
+  console.error('render-wrangler: D1 ID must be a UUID and the KV ID 32 hex characters');
+  process.exit(1);
+}
+for (const d of [app, www, mcp]) {
+  if (d && !/^[a-z0-9.-]+$/i.test(d)) {
+    console.error(`render-wrangler: invalid domain "${d}"`);
+    process.exit(1);
+  }
+}
+
+// Drop route entries whose domain is unset, then substitute the rest.
+const dropRoute = (text, placeholder) =>
+  text.split('\n').filter((l) => !(l.includes(placeholder) && l.includes('custom_domain'))).join('\n');
+
+function render(file) {
+  let t = readFileSync(join(root, file), 'utf8');
+  t = t.replaceAll(PLACEHOLDER.d1, d1).replaceAll(PLACEHOLDER.kv, kv);
+  for (const [key, value] of [['app', app], ['www', www], ['mcp', mcp]]) {
+    t = value ? t.replaceAll(PLACEHOLDER[key], value) : dropRoute(t, PLACEHOLDER[key]);
+  }
+  if (app) t = t.replaceAll(PLACEHOLDER.appUrl, `https://${app}`);
+  // An emptied routes list is invalid TOML/JSON-with-trailing-comma noise; remove it entirely.
+  t = t.replace(/\nroutes = \[\s*\]\n/, '\n').replace(/\n\s*"routes": \[\s*\],?/, '');
+  // Tolerate a trailing comma left behind by a removed final route entry.
+  t = t.replace(/,(\s*\])/g, '$1');
+  writeFileSync(join(root, file), t);
+}
+
+FILES.forEach(render);
+console.log('render-wrangler: updated', FILES.join(', '));

@@ -1,7 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "eavesy",
-  "account_id": "5bc563d42299762f9b48f5dec0531954",
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-16",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -10,15 +9,15 @@
   "placement": { "mode": "smart" },
 
   "routes": [
-    { "pattern": "eavesy.com", "custom_domain": true },
-    { "pattern": "www.eavesy.com", "custom_domain": true }
+    { "pattern": "app.example.invalid", "custom_domain": true },
+    { "pattern": "www.example.invalid", "custom_domain": true }
   ],
 
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "eavesy",
-      "database_id": "72c5c5f6-a2d9-4a07-b17f-15eb282e9782",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "./drizzle"
     }
   ],
@@ -26,7 +25,7 @@
   "r2_buckets": [{ "binding": "AUDIO_BUCKET", "bucket_name": "eavesy-audio" }],
 
   "kv_namespaces": [
-    { "binding": "CACHE", "id": "747194bd464a41259c256bba5181f6e7" }
+    { "binding": "CACHE", "id": "00000000000000000000000000000000" }
   ],
 
   "queues": {
@@ -38,7 +37,7 @@
   "ai": { "binding": "AI" },
 
   "vars": {
-    "NEXT_PUBLIC_APP_URL": "https://eavesy.com"
+    "NEXT_PUBLIC_APP_URL": "http://localhost:3000"
   },
 
   "env": {
