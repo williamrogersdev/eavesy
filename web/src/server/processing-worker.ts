@@ -43,6 +43,7 @@ import {
 } from '@/lib/transcription/two-track';
 import { reportError } from '@/server/observability';
 import { isSealed, openUserKeys, sealSecret } from '@/server/secret-box';
+import { recordFirstTranscript } from '@/server/transcript-latency';
 import type { QueueMessage } from '@/server/queue';
 
 export interface ProcessingEnv {
@@ -314,6 +315,8 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
       });
   }
 
+  if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
+
   const fullText = transcription.segments
     .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
     .join('\n');
@@ -416,6 +419,7 @@ async function handleTranscribeSegment(
         contextBlurb: meeting.contextBlurb,
       });
       const speakerId = speakerForTrack(track);
+      let stored = 0;
 
       for (const relative of transcription.segments) {
         if (isHallucination(relative)) continue;
@@ -453,7 +457,9 @@ async function handleTranscribeSegment(
               isFinal: true,
             },
           });
+        stored += 1;
       }
+      if (stored > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
     await db
