@@ -1,7 +1,7 @@
 import { applyD1Migrations, createExecutionContext, createMessageBatch, getQueueResult } from 'cloudflare:test';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { worker } from '../../../workers/processing/src/index';
-import type { ProcessingMessage } from '../../src/server/processing-worker';
+import { recoverStaleSegments, type ProcessingMessage } from '../../src/server/processing-worker';
 import { Route as PairRoute } from '../../src/routes/api/devices/pair';
 import { Route as PairStatusRoute } from '../../src/routes/api/devices/pair/status';
 import { Route as SegmentRoute } from '../../src/routes/api/sessions/$id/segments/$idx';
@@ -145,6 +145,49 @@ describe('concurrent transcribe jobs', () => {
     expect(
       await row<{ transcribe_status: string }>('SELECT transcribe_status FROM meeting_segments WHERE id = ?', 'mseg_stale'),
     ).toEqual({ transcribe_status: 'complete' });
+  });
+});
+
+describe('segments busy past the retry budget', () => {
+  async function seedClaimed(id: string, claimedAt: number) {
+    await insertUser(`user_${id}`);
+    await insertMeeting({ id: `meet_${id}`, userId: `user_${id}`, status: 'uploading' });
+    await insertSegment({ id: `mseg_${id}`, meetingId: `meet_${id}`, idx: 0, r2Key: `users/user_${id}/seg.m4a` });
+    await testEnv.DB.prepare(
+      "UPDATE meeting_segments SET transcribe_status = 'processing', transcribe_claimed_at = ? WHERE id = ?",
+    )
+      .bind(claimedAt, `mseg_${id}`)
+      .run();
+  }
+
+  it('sends a fresh delayed message on the last attempt instead of dropping it', async () => {
+    await seedClaimed('busy', Date.now());
+    const queue = mockQueue();
+    const body = { kind: 'transcribe-segment', meetingId: 'meet_busy', idx: 0 } as const;
+    const batch = createMessageBatch<ProcessingMessage>('eavesy-processing', [
+      { id: 'last', timestamp: new Date(), attempts: 5, body },
+    ]);
+    await worker.queue(batch, runtimeEnv(queue.binding));
+
+    const result = await getQueueResult(batch, createExecutionContext());
+    expect(result.explicitAcks).toEqual(['last']);
+    expect(queue.send).toHaveBeenCalledWith(body, { delaySeconds: 300 });
+  });
+
+  it('cron resets claims older than the TTL and re-enqueues them', async () => {
+    await seedClaimed('dead', Date.now() - 60 * 60 * 1000);
+    await seedClaimed('live', Date.now());
+    const queue = mockQueue();
+    await recoverStaleSegments(runtimeEnv(queue.binding));
+
+    expect(
+      await row('SELECT transcribe_status, transcribe_claimed_at FROM meeting_segments WHERE id = ?', 'mseg_dead'),
+    ).toEqual({ transcribe_status: 'pending', transcribe_claimed_at: null });
+    expect(await row('SELECT transcribe_status FROM meeting_segments WHERE id = ?', 'mseg_live')).toEqual({
+      transcribe_status: 'processing',
+    });
+    expect(queue.send).toHaveBeenCalledTimes(1);
+    expect(queue.send).toHaveBeenCalledWith({ kind: 'transcribe-segment', meetingId: 'meet_dead', idx: 0, track: 'mixed' });
   });
 });
 

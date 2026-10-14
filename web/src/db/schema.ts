@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -152,6 +153,9 @@ export const meetingSegments = sqliteTable(
   (t) => [
     uniqueIndex('meeting_segments_meeting_idx_track_uq').on(t.meetingId, t.idx, t.track),
     index('meeting_segments_meeting_idx').on(t.meetingId, t.idx),
+    index('meeting_segments_processing_idx')
+      .on(t.transcribeClaimedAt)
+      .where(sql`${t.transcribeStatus} = 'processing'`),
   ],
 );
 

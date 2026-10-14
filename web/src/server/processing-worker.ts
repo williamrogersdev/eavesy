@@ -91,8 +91,23 @@ export async function queue(batch: MessageBatch<ProcessingMessage>, env: Process
       if (error instanceof SegmentBusyError) {
         // Another job holds the claim. Check back after it should have finished;
         // by then the segment is complete or the claim is stale and reclaimable.
-        if (message.attempts >= MAX_ATTEMPTS) message.ack();
-        else message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+        if (message.attempts < MAX_ATTEMPTS) {
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          continue;
+        }
+        // Out of retries, but the claim may belong to a worker that died and
+        // won't go stale for a few more minutes. Start a fresh message rather
+        // than drop the segment; the cron sweep is the backstop if this fails.
+        try {
+          await env.PROCESSING_QUEUE.send(message.body, { delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          console.warn(
+            JSON.stringify({ message: 'segment busy past retry budget; requeued', job: message.body }),
+          );
+          message.ack();
+        } catch (sendError) {
+          reportError('could not requeue busy segment', sendError, { job: message.body });
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+        }
         continue;
       }
       const reason = error instanceof Error ? error.message : String(error);
@@ -933,6 +948,36 @@ async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
   }
   await env.DB.prepare('DELETE FROM device_pairing_codes WHERE claimed_by_user_id = ?').bind(userId).run();
   await db.delete(users).where(eq(users.id, userId));
+}
+
+const STALE_SEGMENT_SWEEP_LIMIT = 100;
+
+/**
+ * Reset segments whose transcription claim outlived any possible consumer and
+ * queue them again. Without this, a segment whose worker died after its queue
+ * message gave up would stay 'processing' and leave a gap in the transcript.
+ */
+export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now()) {
+  const db = drizzle(env.DB, { schema });
+  const stale = and(
+    eq(meetingSegments.transcribeStatus, 'processing'),
+    or(isNull(meetingSegments.transcribeClaimedAt), lt(meetingSegments.transcribeClaimedAt, now - SEGMENT_CLAIM_TTL_MS)),
+  );
+  const candidates = await db
+    .select({ id: meetingSegments.id })
+    .from(meetingSegments)
+    .where(stale)
+    .limit(STALE_SEGMENT_SWEEP_LIMIT);
+  if (candidates.length === 0) return;
+  const reset = await db
+    .update(meetingSegments)
+    .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+    .where(and(inArray(meetingSegments.id, candidates.map((c) => c.id)), stale))
+    .returning({ meetingId: meetingSegments.meetingId, idx: meetingSegments.idx, track: meetingSegments.track });
+  for (const segment of reset) {
+    await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
+  }
+  console.warn(JSON.stringify({ message: 'requeued stale segment claims', count: reset.length }));
 }
 
 export async function sealLegacyKeys(env: ProcessingEnv) {
