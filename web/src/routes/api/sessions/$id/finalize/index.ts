@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetingSegments, meetingUploads, meetings } from '@/db/schema';
 import { resolveIngestActor } from '@/server/device-auth';
+import { guardBurst } from '@/server/rate-limit';
 import { loadOrCreateMultipart, parseUploadedParts } from '@/server/multipart-state';
 import { enqueue } from '@/server/queue';
 import { archiveFormatOf, bucket, meetingArchiveKey } from '@/server/r2';
@@ -18,6 +19,8 @@ export const Route = createFileRoute('/api/sessions/$id/finalize/')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'session-finalize');
+        if (limited) return limited;
 
         // The desktop app sends `?archive=none` when its continuous archive could not be
         // saved: the meeting is then finished from the segments it already uploaded.

@@ -5,6 +5,7 @@ import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 import * as schema from '../../../web/src/db/schema';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { captureMessage, sentryOptions, withSentry } from '../../../web/src/server/observability';
+import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
 
 interface Env {
   DB: D1Database;
@@ -23,6 +24,7 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
+const MCP_REQUESTS_PER_MINUTE = 120;
 
 async function resolveToken(env: Env, rawToken: string) {
   const db = drizzle(env.DB, { schema });
@@ -59,6 +61,20 @@ const worker = {
       });
     }
     const userId = token.userId;
+    // Per token, failing open: the server is read-only, every call is already
+    // authenticated, and an unreachable counter means D1 is down anyway.
+    const limited = await consumeRateLimit(env.DB, {
+      key: `mcp:${token.id}`,
+      limit: MCP_REQUESTS_PER_MINUTE,
+      windowSec: 60,
+      failMode: 'open',
+    });
+    if (!limited.allowed) {
+      return new Response(JSON.stringify({ error: 'rate limited' }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': String(limited.retryAfterSec) },
+      });
+    }
     const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
     if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
       return new Response(JSON.stringify({ error: 'unsupported MCP protocol version' }), {
