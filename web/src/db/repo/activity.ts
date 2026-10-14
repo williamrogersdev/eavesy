@@ -24,9 +24,7 @@ export type EventType =
   | 'auth.upgrade'
   | 'settings.update'
   | 'onboarding.complete'
-  | 'device.pair'
-  | 'billing.checkout'
-  | 'billing.update';
+  | 'device.pair';
 
 export async function log(
   db: AppDb,

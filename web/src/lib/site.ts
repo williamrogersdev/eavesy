@@ -31,7 +31,6 @@ export const MARKETING_ROUTES: RouteEntry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/features', changeFrequency: 'monthly', priority: 0.9 },
   { path: '/how-it-works', changeFrequency: 'monthly', priority: 0.8 },
-  { path: '/pricing', changeFrequency: 'monthly', priority: 0.9 },
   { path: '/integrations', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/docs', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/blog', changeFrequency: 'daily', priority: 0.7 },

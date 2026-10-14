@@ -75,7 +75,7 @@ function OnboardingPage() {
       const completeResponse = await fetch('/api/onboarding/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ plan: 'free' }),
+        body: JSON.stringify({}),
       });
       if (!completeResponse.ok) throw new Error('Could not finish setup. Please try again.');
       const returnTo = new URLSearchParams(window.location.search).get('redirect_url');
@@ -169,7 +169,7 @@ function OnboardingPage() {
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating your workspace…</> : <>Open your workspace <ArrowRight className="h-4 w-4" /></>}
           </button>
           <p className="text-center text-xs leading-relaxed text-muted-foreground">
-            You&apos;ll start on the free plan. No card required.
+            No card required.
           </p>
         </form>
       </section>

@@ -27,7 +27,6 @@ export interface NavItem {
 export const PRIMARY_NAV: NavItem[] = [
   { label: 'Features', href: '/features' },
   { label: 'How it works', href: '/how-it-works' },
-  { label: 'Pricing', href: '/pricing' },
   { label: 'Docs', href: '/docs' },
 ];
 
@@ -122,42 +121,6 @@ export const COMPARISON: CompareRow[] = [
   { label: 'Joins your call', them: 'A bot everyone sees', us: 'Captures directly on your Mac' },
 ];
 
-export type PlanCta = 'download' | 'sales';
-
-export interface Plan {
-  name: string;
-  price: string;
-  period?: string;
-  tagline: string;
-  features: string[];
-  cta: PlanCta;
-  featured?: boolean;
-}
-
-export const PLANS: Plan[] = [
-  {
-    name: 'Free',
-    price: '$0',
-    tagline: 'Everything you need to start',
-    features: ['Mac app: screen, system audio + mic', 'No length limit', 'AI transcript + editable brief', 'Local Markdown + source files', 'Copy to any agent'],
-    cta: 'download',
-  },
-  {
-    name: 'Pro',
-    price: 'Soon',
-    tagline: 'For heavy use',
-    features: ['Everything in Free', 'Higher daily limits', 'Semantic search across everything', 'Sync across devices', 'Priority processing'],
-    cta: 'download',
-  },
-  {
-    name: 'Team',
-    price: 'Soon',
-    tagline: 'Team access',
-    features: ['Everything in Pro', 'Shared workspace', 'SSO & admin controls', 'Priority support'],
-    cta: 'sales',
-  },
-];
-
 export interface Faq {
   q: string;
   a: string;
@@ -178,7 +141,7 @@ export interface FooterColumn {
 }
 
 export const FOOTER_COLUMNS: FooterColumn[] = [
-  { title: 'Product', links: [{ label: 'Features', href: '/features' }, { label: 'How it works', href: '/how-it-works' }, { label: 'Integrations', href: '/integrations' }, { label: 'Pricing', href: '/pricing' }, { label: 'Mac app', href: '/download/mac' }] },
+  { title: 'Product', links: [{ label: 'Features', href: '/features' }, { label: 'How it works', href: '/how-it-works' }, { label: 'Integrations', href: '/integrations' }, { label: 'Mac app', href: '/download/mac' }] },
   { title: 'Resources', links: [{ label: 'Docs', href: '/docs' }, { label: 'Blog', href: '/blog' }, { label: 'Changelog', href: '/changelog' }, { label: 'GitHub', href: 'https://github.com/williamrogersdev/eavesy' }] },
   { title: 'Company', links: [{ label: 'About', href: '/about' }, { label: 'Contact', href: '/contact' }, { label: 'Security', href: '/security' }] },
   { title: 'Legal', links: [{ label: 'Privacy', href: '/privacy' }, { label: 'Terms', href: '/terms' }] },

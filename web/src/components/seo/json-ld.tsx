@@ -42,9 +42,7 @@ export function websiteSchema(): Schema {
   };
 }
 
-export function softwareApplicationSchema(
-  offers: { name: string; price: string }[],
-): Schema {
+export function softwareApplicationSchema(): Schema {
   return {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -53,12 +51,6 @@ export function softwareApplicationSchema(
     operatingSystem: 'macOS, Web',
     description: siteConfig.description,
     url: siteConfig.url,
-    offers: offers.map((o) => ({
-      '@type': 'Offer',
-      name: o.name,
-      price: o.price.replace(/[^0-9.]/g, '') || '0',
-      priceCurrency: 'USD',
-    })),
   };
 }
 
