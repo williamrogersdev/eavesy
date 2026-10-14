@@ -347,7 +347,8 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
     ))
 }
 
-#[tauri::command]
+// Async so reading the registry never runs on the main (UI) thread.
+#[tauri::command(async)]
 pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingDto>, String> {
     let out = store::load_all(&app)
         .into_iter()

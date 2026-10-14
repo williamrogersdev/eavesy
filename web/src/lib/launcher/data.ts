@@ -44,13 +44,10 @@ function booleanValue(value: unknown): boolean | undefined {
 
 export async function loadRecordings(now: number): Promise<Recording[]> {
   if (isDesktop()) {
-    try {
-      const { core } = window.__TAURI__!;
-      const rows = await core.invoke<unknown[]>('list_recordings');
-      return (rows ?? []).map(normalize).filter((row): row is Recording => row !== null);
-    } catch {
-      return [];
-    }
+    // Errors propagate: an empty list here would read as "you have no recordings".
+    const { core } = window.__TAURI__!;
+    const rows = await core.invoke<unknown[]>('list_recordings');
+    return (rows ?? []).map(normalize).filter((row): row is Recording => row !== null);
   }
 
   try {
