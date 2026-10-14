@@ -953,9 +953,13 @@ async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
 const STALE_SEGMENT_SWEEP_LIMIT = 100;
 
 /**
- * Reset segments whose transcription claim outlived any possible consumer and
- * queue them again. Without this, a segment whose worker died after its queue
- * message gave up would stay 'processing' and leave a gap in the transcript.
+ * Queue segments whose transcription claim outlived any possible consumer.
+ * Without this, a segment whose worker died after its queue message gave up
+ * would stay 'processing' and leave a gap in the transcript.
+ *
+ * Each row is sent first and reset to 'pending' only after its send succeeds,
+ * so a failed send leaves the row stale for the next sweep. Failures are
+ * reported, never thrown: the rest of the cron must still run.
  */
 export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now()) {
   const db = drizzle(env.DB, { schema });
@@ -963,21 +967,42 @@ export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now())
     eq(meetingSegments.transcribeStatus, 'processing'),
     or(isNull(meetingSegments.transcribeClaimedAt), lt(meetingSegments.transcribeClaimedAt, now - SEGMENT_CLAIM_TTL_MS)),
   );
-  const candidates = await db
-    .select({ id: meetingSegments.id })
-    .from(meetingSegments)
-    .where(stale)
-    .limit(STALE_SEGMENT_SWEEP_LIMIT);
-  if (candidates.length === 0) return;
-  const reset = await db
-    .update(meetingSegments)
-    .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
-    .where(and(inArray(meetingSegments.id, candidates.map((c) => c.id)), stale))
-    .returning({ meetingId: meetingSegments.meetingId, idx: meetingSegments.idx, track: meetingSegments.track });
-  for (const segment of reset) {
-    await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
+  let candidates;
+  try {
+    candidates = await db
+      .select({
+        id: meetingSegments.id,
+        meetingId: meetingSegments.meetingId,
+        idx: meetingSegments.idx,
+        track: meetingSegments.track,
+      })
+      .from(meetingSegments)
+      .where(stale)
+      .limit(STALE_SEGMENT_SWEEP_LIMIT);
+  } catch (error) {
+    reportError('could not look up stale segment claims', error);
+    return;
   }
-  console.warn(JSON.stringify({ message: 'requeued stale segment claims', count: reset.length }));
+  let requeued = 0;
+  for (const { id, ...segment } of candidates) {
+    try {
+      await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
+      // Conditional on still being stale: if the message was already picked up
+      // and claimed, the fresh claim is left alone.
+      await db
+        .update(meetingSegments)
+        .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+        .where(and(eq(meetingSegments.id, id), stale));
+      requeued += 1;
+    } catch (error) {
+      reportError('could not requeue stale segment claim', error, { segment });
+    }
+  }
+  if (candidates.length > 0) {
+    console.warn(
+      JSON.stringify({ message: 'requeued stale segment claims', count: requeued, failed: candidates.length - requeued }),
+    );
+  }
 }
 
 export async function sealLegacyKeys(env: ProcessingEnv) {

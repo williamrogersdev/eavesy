@@ -191,6 +191,40 @@ describe('segments busy past the retry budget', () => {
   });
 });
 
+describe('stale segment sweep', () => {
+  it('leaves a segment for the next sweep when its send fails, and keeps going', async () => {
+    const stale = Date.now() - 60 * 60 * 1000;
+    for (const id of ['send_fails', 'send_works']) {
+      await insertUser(`user_${id}`);
+      await insertMeeting({ id: `meet_${id}`, userId: `user_${id}`, status: 'uploading' });
+      await insertSegment({ id: `mseg_${id}`, meetingId: `meet_${id}`, idx: 0, r2Key: `users/user_${id}/seg.m4a` });
+      await testEnv.DB.prepare(
+        "UPDATE meeting_segments SET transcribe_status = 'processing', transcribe_claimed_at = ? WHERE id = ?",
+      )
+        .bind(stale, `mseg_${id}`)
+        .run();
+    }
+    const send = vi.fn(async (body: ProcessingMessage) => {
+      if ('meetingId' in body && body.meetingId === 'meet_send_fails') throw new Error('queue unavailable');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      recoverStaleSegments(runtimeEnv({ send } as unknown as Queue<ProcessingMessage>)),
+    ).resolves.toBeUndefined();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await row('SELECT transcribe_status FROM meeting_segments WHERE id = ?', 'mseg_send_fails')).toEqual({
+      transcribe_status: 'processing',
+    });
+    expect(await row('SELECT transcribe_status FROM meeting_segments WHERE id = ?', 'mseg_send_works')).toEqual({
+      transcribe_status: 'pending',
+    });
+    vi.restoreAllMocks();
+  });
+});
+
 describe('pairing codes', () => {
   const CODE = 'ABCD2345';
   const DEVICE = '6f1c2a4e-1b2c-4d3e-8f90-123456789abc';
