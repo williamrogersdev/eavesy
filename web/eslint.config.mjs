@@ -4,18 +4,6 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-function asWarnings(...configs) {
-  return Object.fromEntries(
-    configs.flat().flatMap((config) =>
-      Object.entries(config.rules ?? {}).map(([rule, setting]) => {
-        const severity = Array.isArray(setting) ? setting[0] : setting;
-        if (severity === 0 || severity === 'off') return [rule, 'off'];
-        return [rule, Array.isArray(setting) ? ['warn', ...setting.slice(1)] : 'warn'];
-      }),
-    ),
-  );
-}
-
 export default defineConfig([
   globalIgnores([
     'dist/**',
@@ -29,7 +17,7 @@ export default defineConfig([
   ]),
   {
     linterOptions: {
-      reportUnusedDisableDirectives: 'warn',
+      reportUnusedDisableDirectives: 'error',
     },
   },
   {
@@ -52,9 +40,8 @@ export default defineConfig([
       'react-hooks': reactHooks,
     },
     rules: {
-      ...asWarnings(js.configs.recommended, tseslint.configs.recommended),
       '@typescript-eslint/no-unused-vars': [
-        'warn',
+        'error',
         {
           argsIgnorePattern: '^_',
           caughtErrorsIgnorePattern: '^_',
@@ -62,7 +49,7 @@ export default defineConfig([
         },
       ],
       'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
     },
   },
   {
@@ -76,8 +63,7 @@ export default defineConfig([
       },
     },
     rules: {
-      ...asWarnings(tseslint.configs.recommendedTypeCheckedOnly),
-      '@typescript-eslint/no-floating-promises': 'warn',
+      '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/only-throw-error': 'off',
     },
   },
