@@ -37,8 +37,8 @@ function PrivacyPage() {
           </li>
           <li>
             <strong>Operational analytics do not receive recording content</strong>, audio,
-            transcript text, summaries, or notes. PostHog receives product events; the optional
-            Sentry integration receives sanitized diagnostic errors only when enabled.
+            transcript text, summaries, or notes. Eavesy does not use a product analytics service;
+            the optional Sentry integration receives sanitized diagnostic errors only when enabled.
           </li>
           <li>
             <strong>Eavesy does not train models on recording content.</strong> Cloudflare
@@ -70,7 +70,6 @@ function PrivacyPage() {
           <li><strong>OpenRouter</strong> — optional bring-your-own AI connection</li>
           <li><strong>Stripe</strong> — billing when paid plans are enabled</li>
           <li><strong>Sentry (optional)</strong> — sanitized operational error diagnostics when enabled</li>
-          <li><strong>PostHog</strong> — product usage events without recording content</li>
         </ul>
       </section>
 
