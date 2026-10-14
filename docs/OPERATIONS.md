@@ -11,10 +11,14 @@ beta session, tail the web, processing, and MCP Workers; inspect the desktop
 work. Do not run the beta unattended while automated alerts are disabled.
 
 Sentry remains available later. If enabled, create separate projects for the
-web/Workers runtime and macOS app as described in [DEPLOY.md](DEPLOY.md) and
-[../desktop/BUILD.md](../desktop/BUILD.md). The integration removes request
-data, user identity, breadcrumbs, exception text, transcript/audio content, and
-local home paths before sending an event. Tracing is disabled. Configure
+web/Workers runtime, the browser and the macOS app as described in
+[DEPLOY.md](DEPLOY.md) and [../desktop/BUILD.md](../desktop/BUILD.md). Events
+keep the scrubbed error message, route, release and breadcrumbs; bodies,
+headers, cookies, query strings, emails, IPs, tokens, transcript/audio content
+and local home paths are removed before sending (details in
+[OBSERVABILITY.md](OBSERVABILITY.md)). Traces are sampled at 5% on the Workers
+and in the browser. For a desktop problem, ask the user for **Copy
+Diagnostics** from the menu bar menu: it copies a scrubbed log tail. Configure
 notifications for:
 
 - new or regressed production errors at `error` or `fatal` severity;
@@ -48,7 +52,11 @@ for more than 30 minutes, audio duration, and estimated platform AI cost.
 Brief-use conversion only counts copies/exports that happened after that meeting
 emitted `meeting.complete`. Processing latency runs from `meetings.ended_at` to
 the first `meeting.complete` event and includes a sample count so missing legacy
-timestamps are visible rather than treated as zero. A wrong or missing token
+timestamps are visible rather than treated as zero. First-transcript latency
+(`average_first_transcript_ms`, `first_transcript_ms_max`,
+`first_transcript_samples`) runs from recording start to the first stored
+transcript line for streamed recordings; each sample is also logged by the
+processing Worker as a `first_transcript_latency` JSON line. A wrong or missing token
 returns `401`; an unconfigured endpoint returns `503`.
 
 `estimated_platform_ai_cost_microusd` is an estimate, not an invoice. It uses a
@@ -69,7 +77,8 @@ Suggested launch thresholds:
 - compare seven-day first returns with first recordings, allowing for the
   conversion window;
 - alert on a material increase in `average_processing_ms` or
-  `processing_ms_max`.
+  `processing_ms_max`;
+- investigate a rise in `average_first_transcript_ms`: live notes are late.
 
 ## Recovery
 
@@ -95,7 +104,7 @@ It never deploys Workers or publishes to R2. Configure the protected
 - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`;
 - `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
-`DESKTOP_SENTRY_DSN` may be added later but is not required. The
+`DESKTOP_SENTRY_DSN` is required: the release build fails without it. The
 `macos-release` environment exists as of 2026-07-17, but none of the required
 secrets has been uploaded. The local Developer ID Application identity and
 updater private key are present and the current-source app and embedded Swift

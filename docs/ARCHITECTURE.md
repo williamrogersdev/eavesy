@@ -95,6 +95,16 @@ tokens are not retained.
   audio.
 - Results are written through temporary files and atomic renames.
 
+## Observability
+
+Every surface (web, processing and MCP Workers, browser, Mac app) can report
+errors to Sentry. Reports keep the error message, stack, route, method and
+release; a shared scrubber removes bodies, headers, cookies, query strings,
+emails, IPs, API keys and tokens, and the Mac app collapses home-directory
+paths. Audio, transcripts, notes and summaries are never sent. The Mac app
+also keeps a rotating local log and offers a scrubbed **Copy Diagnostics**
+bundle. See [OBSERVABILITY.md](OBSERVABILITY.md) for the exact rules.
+
 ## Deliberate launch boundaries
 
 - Long-form recording is macOS-only; the web live-streaming path was removed.
