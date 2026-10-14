@@ -69,7 +69,6 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("recordings watcher: {error}");
                 crate::telemetry::capture("filesystem.watch", &error.to_string());
                 let _ = callback_app.emit("recordings:watch-error", ());
             }
@@ -81,7 +80,6 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
         .with_context(|| format!("watch recordings root {}", root.display()))?;
 
     if let Err(error) = reconcile_folder_locations(&app, &root) {
-        eprintln!("could not locate moved recording folders during startup: {error:#}");
         crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
     }
     seed_existing_files(&app);
@@ -125,13 +123,11 @@ fn reconcile_loop(
         }
         if rescan_folders {
             if let Err(error) = reconcile_folder_locations(&app, &root) {
-                eprintln!("could not reconcile moved recording folders: {error:#}");
                 crate::telemetry::capture("filesystem.folder-scan", &error.to_string());
             }
         }
         for path in paths {
             if let Err(error) = reconcile_path(&app, &path) {
-                eprintln!("could not reconcile {}: {error:#}", path.display());
                 crate::telemetry::capture("filesystem.reconcile", &error.to_string());
             }
         }
@@ -226,7 +222,7 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
         let entries = match std::fs::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if folder != root => {
-                eprintln!("could not inspect recording subfolder {}: {error}", folder.display());
+                tracing::warn!("could not inspect recording subfolder {}: {error}", folder.display());
                 continue;
             }
             Err(error) => {
@@ -258,7 +254,6 @@ fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
         for filename in ["summary.md", "transcript.md", "notes.md"] {
             let path = folder.join(filename);
             if let Err(error) = reconcile_path(app, &path) {
-                eprintln!("could not reconcile {} during startup: {error:#}", path.display());
                 crate::telemetry::capture("filesystem.startup-reconcile", &error.to_string());
             }
         }
