@@ -11,14 +11,14 @@ export const Route = createFileRoute('/api/onboarding/complete')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const parsedBody = schema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = schema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const db = getDb();
         await usersRepo.markOnboarded(db, actor.userId);
         await activityRepo.log(db, { userId: actor.userId, eventType: 'onboarding.complete' });

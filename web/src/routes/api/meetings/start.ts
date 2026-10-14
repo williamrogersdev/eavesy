@@ -17,15 +17,15 @@ export const Route = createFileRoute('/api/meetings/start')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const parsedBody = schema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const body = parsedBody.data;
         let actor;
         try {
-          actor = await resolveActor({ anonymousSessionToken: body.anonymousSessionToken });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = schema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         const db = getDb();
         const meetingId = await meetingsRepo.start(db, {
           userId: actor.userId,

@@ -14,22 +14,20 @@ export const Route = createFileRoute('/api/dictations')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const form = await request.formData();
-        const file = form.get('audio') as File | null;
-        const targetApp = (form.get('targetApp') as string | null) ?? undefined;
-        const templatePrompt = (form.get('templatePrompt') as string | null) ?? undefined;
-        if (!file) return Response.json({ error: 'missing audio' }, { status: 400 });
-
         let actor;
         try {
-          actor = await resolveActor({
-            anonymousSessionToken: (form.get('anonymousSessionToken') as string | null) ?? undefined,
-          });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const overQuota = await guardUserQuota(actor.userId, 'dictation');
         if (overQuota) return overQuota;
+
+        const form = await request.formData().catch(() => null);
+        const file = form?.get('audio');
+        if (!form || !(file instanceof File)) return Response.json({ error: 'missing audio' }, { status: 400 });
+        const targetApp = (form.get('targetApp') as string | null) ?? undefined;
+        const templatePrompt = (form.get('templatePrompt') as string | null) ?? undefined;
 
         const db = getDb();
         const audio = new Uint8Array(await file.arrayBuffer());
