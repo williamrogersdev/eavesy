@@ -30,7 +30,7 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
 
         let body: z.infer<typeof schema>;
         try {
-          body = schema.parse(await request.json());
+          body = schema.parse(await request.json().catch(() => null));
         } catch {
           return Response.json({ error: 'invalid_request' }, { status: 400 });
         }

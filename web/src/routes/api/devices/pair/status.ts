@@ -18,7 +18,7 @@ export const Route = createFileRoute('/api/devices/pair/status')({
           windowSec: 60,
         });
         if (!limited.allowed) return Response.json({ error: 'rate_limited' }, { status: 429 });
-        const parsed = bodySchema.safeParse(await request.json());
+        const parsed = bodySchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
 
         const db = getDb();

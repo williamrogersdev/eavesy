@@ -323,6 +323,54 @@ describe('processing queue orchestration', () => {
     expect(queue.send).toHaveBeenCalledWith({ kind: 'embed', meetingId: 'meet_summary' });
   });
 
+  it("bills the user's own Anthropic key for the meeting summary", async () => {
+    await insertUser('user_byo');
+    await testEnv.DB.prepare(`UPDATE users SET byo_anthropic_key = 'sk-ant-user' WHERE id = ?`)
+      .bind('user_byo')
+      .run();
+    await insertMeeting({ id: 'meet_byo', userId: 'user_byo', status: 'processing' });
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments
+        (id, meeting_id, start_ms, end_ms, text, is_edited, is_final)
+       VALUES ('tseg_byo', 'meet_byo', 0, 1000, 'Final transcript', 0, 1)`,
+    ).run();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              title: 'BYO',
+              description: '',
+              tldr: 'Done.',
+              decisions: [],
+              actionItems: [],
+              followUps: [],
+              openQuestions: [],
+              topics: [],
+              mentions: [],
+            }),
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const queue = mockQueue();
+    const batch = createMessageBatch<ProcessingMessage>('eavesy-processing', [
+      queueMessage('summary-byo', { kind: 'summarize', meetingId: 'meet_byo' }),
+    ]);
+    await worker.queue(batch, runtimeEnv(queue.binding));
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('x-api-key')).toBe('sk-ant-user');
+    expect(
+      await row<{ generated_by_model: string }>(
+        'SELECT generated_by_model FROM summaries WHERE meeting_id = ?',
+        'meet_byo',
+      ),
+    ).toEqual({ generated_by_model: 'byo-anthropic:claude-sonnet-4-6' });
+  });
+
   it('processes a browser recording asynchronously and makes replay a no-op', async () => {
     await insertUser('user_web');
     const key = 'users/user_web/meetings/meet_web.webm';

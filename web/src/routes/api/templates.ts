@@ -37,7 +37,9 @@ export const Route = createFileRoute('/api/templates')({
       },
 
       POST: async ({ request }) => {
-        const body = createSchema.parse(await request.json());
+        const parsedBody = createSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
@@ -49,7 +51,9 @@ export const Route = createFileRoute('/api/templates')({
       },
 
       PATCH: async ({ request }) => {
-        const body = updateSchema.parse(await request.json());
+        const parsedBody = updateSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
