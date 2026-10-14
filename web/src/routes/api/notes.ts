@@ -14,15 +14,15 @@ export const Route = createFileRoute('/api/notes')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const parsedBody = schema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = schema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         const db = getDb();
         const meeting = await meetingsRepo.get(db, { meetingId: body.meetingId, userId: actor.userId });
         if (!meeting) return Response.json({ error: 'not found' }, { status: 404 });

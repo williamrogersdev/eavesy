@@ -26,17 +26,17 @@ export const Route = createFileRoute('/api/search')({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const url = new URL(request.url);
-        const q = url.searchParams.get('q')?.trim();
-        const limit = Math.min(Number(url.searchParams.get('limit') ?? '10'), 25);
-        if (!q) return Response.json({ items: [] });
-
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+
+        const url = new URL(request.url);
+        const q = url.searchParams.get('q')?.trim();
+        const limit = Math.min(Number(url.searchParams.get('limit') ?? '10'), 25);
+        if (!q) return Response.json({ items: [] });
 
         const db = getDb();
         const pattern = `%${q.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
