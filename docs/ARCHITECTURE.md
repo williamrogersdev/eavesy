@@ -111,4 +111,4 @@ bundle. See [OBSERVABILITY.md](OBSERVABILITY.md) for the exact rules.
 - The browser recorder remains a short, one-shot experience.
 - No speaker diarization is promised.
 - Local Whisper is not part of this launch; cloud transcription is Workers AI.
-- Paid plans and mobile capture are deferred.
+- Mobile capture is deferred.

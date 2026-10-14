@@ -5,7 +5,6 @@ import { getSettings, isDesktop } from '@/lib/desktop/bridge';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
-import { PLAN_DEFS } from '@/lib/plans';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 
@@ -17,9 +16,6 @@ interface Me {
   role?: string | null;
   phoneNumber?: string | null;
   isAnonymous: boolean;
-  plan: 'free' | 'pro' | 'team';
-  subscriptionStatus: string;
-  hasBilling: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
   hasAnthropicKey: boolean;
@@ -35,7 +31,6 @@ interface McpToken {
   lastUsedAt?: number | null;
 }
 
-const PLAN_LABEL: Record<Me['plan'], string> = { free: 'Free', pro: 'Pro', team: 'Team' };
 
 export const Route = createFileRoute('/app/settings')({
   component: SettingsPage,
@@ -58,7 +53,6 @@ function SettingsPage() {
   });
   const [toggleHotkey, setToggleHotkey] = useState('Cmd+Shift+Space');
   const [dictationHotkey, setDictationHotkey] = useState('Cmd+Shift+D');
-  const [billingBusy, setBillingBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
@@ -213,26 +207,6 @@ function SettingsPage() {
     setMe(fresh);
   };
 
-  const openBilling = async () => {
-    setBillingBusy(true);
-    try {
-      const endpoint = me?.hasBilling ? '/api/billing/portal' : '/api/billing/checkout';
-      const body = me?.hasBilling ? undefined : JSON.stringify({ plan: 'pro' });
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-      });
-      const data: unknown = await res.json();
-      const url = isRecord(data) ? optionalString(data.url) : undefined;
-      if (!res.ok || !url) throw new Error('Could not open billing');
-      window.location.assign(url);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not open billing.');
-      setBillingBusy(false);
-    }
-  };
-
   if (!me && error) {
     return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
   }
@@ -240,7 +214,6 @@ function SettingsPage() {
     return <AppPage width="compact"><p role="status" className="text-sm text-muted-foreground">Loading settings…</p></AppPage>;
   }
 
-  const proComingSoon = PLAN_DEFS.find((plan) => plan.id === 'pro')?.comingSoon ?? false;
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
   const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
 
@@ -411,19 +384,6 @@ function SettingsPage() {
         ) : null}
       </AppSection>
 
-      <AppSection title="Plan">
-        <Row
-          label={`${PLAN_LABEL[me.plan]}${me.plan !== 'free' ? ` · ${me.subscriptionStatus}` : ''}`}
-          hint={me.hasBilling ? 'Update payment, change plan, or cancel.' : proComingSoon ? 'Paid plans aren’t open yet.' : 'Upgrade for semantic search, templates and sync.'}
-        >
-          {me.hasBilling || !proComingSoon ? (
-            <button type="button" onClick={() => void openBilling()} disabled={billingBusy} className={appButton('secondary', 'sm')}>
-              {billingBusy ? 'Opening…' : me.hasBilling ? 'Manage' : 'Upgrade'}
-            </button>
-          ) : null}
-        </Row>
-      </AppSection>
-
       <AppSection title="Your data">
         <AccountData email={me.email} />
       </AppSection>
@@ -433,13 +393,9 @@ function SettingsPage() {
 
 function parseMe(value: unknown): Me | null {
   if (!isRecord(value)) return null;
-  const plan = value.plan;
   if (
     typeof value.id !== 'string' ||
-    (plan !== 'free' && plan !== 'pro' && plan !== 'team') ||
     typeof value.isAnonymous !== 'boolean' ||
-    typeof value.subscriptionStatus !== 'string' ||
-    typeof value.hasBilling !== 'boolean' ||
     value.defaultTranscriptionEngine !== 'whisper' ||
     typeof value.defaultLanguage !== 'string' ||
     typeof value.hasAnthropicKey !== 'boolean' ||
@@ -455,9 +411,6 @@ function parseMe(value: unknown): Me | null {
     role: nullableString(value.role),
     phoneNumber: nullableString(value.phoneNumber),
     isAnonymous: value.isAnonymous,
-    plan,
-    subscriptionStatus: value.subscriptionStatus,
-    hasBilling: value.hasBilling,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
     hasAnthropicKey: value.hasAnthropicKey,

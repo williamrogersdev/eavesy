@@ -70,7 +70,6 @@ function PrivacyPage() {
           <li><strong>Cloudflare</strong> — all infrastructure (Workers, R2, D1, Vectorize, Queues, KV), plus Workers AI for transcription (Whisper) and semantic-search embeddings</li>
           <li><strong>Clerk</strong> — authentication</li>
           <li><strong>OpenRouter</strong> — optional bring-your-own AI connection</li>
-          <li><strong>Stripe</strong> — billing when paid plans are enabled</li>
           <li><strong>Sentry (optional)</strong> — scrubbed error reports from the web app, browser, and Mac app when enabled</li>
         </ul>
       </section>
