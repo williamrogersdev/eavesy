@@ -30,7 +30,7 @@ function SearchPage() {
     setError(null);
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(normalized)}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(`Search failed (${r.status})`);
       setItems(parseSearchItems(await r.json()));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

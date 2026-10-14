@@ -83,6 +83,8 @@ export const meetings = sqliteTable(
     contextBlurb: text('context_blurb'),
     startedAt: integer('started_at').notNull(),
     endedAt: integer('ended_at'),
+    // When the first transcript line was stored; drives the latency metric.
+    firstTranscriptAt: integer('first_transcript_at'),
     durationSec: integer('duration_sec'),
     source: text('source', {
       enum: ['desktop', 'web', 'public', 'ios', 'android', 'import'],
@@ -501,6 +503,9 @@ export const productMetricsDaily = sqliteTable('product_metrics_daily', {
   processingSamples: integer('processing_samples').notNull().default(0),
   processingMsTotal: integer('processing_ms_total').notNull().default(0),
   processingMsMax: integer('processing_ms_max').notNull().default(0),
+  firstTranscriptSamples: integer('first_transcript_samples').notNull().default(0),
+  firstTranscriptMsTotal: integer('first_transcript_ms_total').notNull().default(0),
+  firstTranscriptMsMax: integer('first_transcript_ms_max').notNull().default(0),
   audioSeconds: integer('audio_seconds').notNull().default(0),
   estimatedAiCostMicrousd: integer('estimated_ai_cost_microusd').notNull().default(0),
   updatedAt: integer('updated_at').notNull(),

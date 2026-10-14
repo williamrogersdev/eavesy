@@ -6,10 +6,11 @@ import {
   createRootRoute,
 } from '@tanstack/react-router';
 import { ClerkProvider } from '@clerk/tanstack-react-start';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { siteConfig } from '@/lib/site';
 import appCss from '@/styles/globals.css?url';
 import { RootError, RootNotFound } from '@/components/ui/root-fallbacks';
+import { initBrowserErrorReporting } from '@/lib/observability/browser';
 
 export const Route = createRootRoute({
   errorComponent: RootError,
@@ -65,6 +66,7 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  useEffect(initBrowserErrorReporting, []);
   return (
     <RootDocument>
       <Outlet />

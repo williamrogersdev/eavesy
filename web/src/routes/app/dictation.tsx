@@ -68,7 +68,7 @@ function DictationPage() {
       const form = new FormData();
       form.append('audio', new File([blob], 'dictation.webm', { type: blob.type || 'audio/webm' }));
       const res = await fetch('/api/dictations', { method: 'POST', body: form });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(`Dictation failed (${res.status})`);
       const json: unknown = await res.json();
       const transcript = isRecord(json) ? optionalString(json.transcript) : undefined;
       if (!transcript) throw new Error('Server returned an invalid transcript');
