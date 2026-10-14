@@ -2,6 +2,7 @@ mod telemetry;
 mod audio;
 mod visual;
 mod commands;
+mod diagnostics;
 mod fs_writer;
 mod fs_watcher;
 #[cfg(target_os = "macos")]
@@ -108,7 +109,6 @@ pub fn run() {
             }
 
             if let Err(e) = panel::install(&handle) {
-                eprintln!("panel install failed: {e}");
                 telemetry::capture("panel.install", &e);
             }
 
@@ -136,7 +136,6 @@ pub fn run() {
             hud::set_state(&handle, hud::HudState::idle());
 
             if let Err(e) = tray::install(&handle) {
-                eprintln!("tray install failed: {e}");
                 telemetry::capture("tray.install", &e.to_string());
             }
 
@@ -150,12 +149,10 @@ pub fn run() {
             }) {
                 Ok(()) => {}
                 Err(error) => {
-                    eprintln!("recordings watcher failed: {error}");
                     telemetry::capture("filesystem.watch.start", &error);
                 }
             }
             if let Err(e) = hotkeys::register_all(&handle, &settings) {
-                eprintln!("hotkey registration: {e}");
                 telemetry::capture("hotkeys.register", &e);
                 use tauri_plugin_notification::NotificationExt;
                 let _ = handle
@@ -181,7 +178,6 @@ pub fn run() {
             let sync_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sync::run(sync_handle).await {
-                    eprintln!("sync engine exited: {e:?}");
                     telemetry::capture("sync.run", &format!("{e:?}"));
                 }
             });

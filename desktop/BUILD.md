@@ -64,12 +64,17 @@ No shared API secret is compiled into the app. A Mac that has not been paired
 still saves captured media locally, but transcription asks the user to pair
 before making a network request.
 
-`SENTRY_DSN` is optional. When configured, it enables privacy-scoped panic and
-operational error reporting; when omitted, the client stays disabled and the
-release build continues. Eavesy strips user/request data, does not collect
-breadcrumbs, and never attaches audio or transcripts. The initial beta omits
-Sentry and relies on local capture logs, Cloudflare logs, aggregate metrics,
-and the hands-on acceptance checklist.
+`SENTRY_DSN` is required for `build-macos-release.sh`, which fails without it
+(self-hosted builds can opt out with `EAVESY_ALLOW_NO_SENTRY=1`). It enables
+panic and operational error reporting: events keep the failing operation and
+error text, with recording, home, `/Volumes` and `/private` paths replaced
+by placeholders (folder names are meeting titles) and tokens, keys, emails and
+IPs removed. Audio, transcripts and notes are never attached. See
+[../docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
+
+App logs rotate daily in `~/Library/Logs/com.eavesy.desktop` (seven files
+kept); **Copy Diagnostics** in the menu bar menu copies a scrubbed tail of
+that log and the capture engine's `capture.log`.
 
 It also needs the **updater signing key**, or `tauri build` emits no updater
 artifacts and `release-macos.sh --publish` refuses to publish (a build that

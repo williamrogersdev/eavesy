@@ -96,7 +96,6 @@ pub fn toggle_launcher(app: &AppHandle) {
     let handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || toggle_launcher_on_main(&handle)) {
         let message = format!("failed to schedule launcher toggle: {error}");
-        eprintln!("{message}");
         crate::telemetry::capture("launcher.toggle.dispatch", &message);
     }
 }
@@ -126,7 +125,6 @@ pub fn show_launcher_and_emit(app: &AppHandle, event: Option<&'static str>) {
         }
     }) {
         let message = format!("failed to schedule launcher open: {error}");
-        eprintln!("{message}");
         crate::telemetry::capture("launcher.open.dispatch", &message);
     }
 }

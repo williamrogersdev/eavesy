@@ -159,6 +159,7 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
     transcriptChars,
     summaryChars,
     stuckMeetings,
+    firstTranscriptLatency,
   ] =
     await Promise.all([
       db.prepare(
@@ -328,6 +329,19 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
           )
             .bind(date)
             .first<{ count: number }>(),
+      // Streamed recordings only: an uploaded file's first line arrives after
+      // the whole recording, which would swamp the live-transcript signal.
+      db.prepare(
+        `SELECT count(*) AS samples,
+                coalesce(sum(first_transcript_at - started_at), 0) AS ms_total,
+                coalesce(max(first_transcript_at - started_at), 0) AS ms_max
+           FROM meetings m
+          WHERE m.first_transcript_at >= ? AND m.first_transcript_at < ?
+            AND m.first_transcript_at >= m.started_at
+            AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)`,
+      )
+        .bind(start, end)
+        .first<{ samples: number; ms_total: number; ms_max: number }>(),
     ]);
 
   const audioSeconds = meetingStarts?.audio_seconds ?? 0;
@@ -343,9 +357,10 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
        users_first_transcript, users_first_brief_use, users_first_return_7d,
        meetings_started, meetings_completed, meetings_brief_used,
        meetings_failed, meetings_stuck, processing_samples,
-       processing_ms_total, processing_ms_max, audio_seconds,
+       processing_ms_total, processing_ms_max, first_transcript_samples,
+       first_transcript_ms_total, first_transcript_ms_max, audio_seconds,
        estimated_ai_cost_microusd, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(date) DO UPDATE SET
        signups = excluded.signups,
        onboarded_users = excluded.onboarded_users,
@@ -362,6 +377,9 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
        processing_samples = excluded.processing_samples,
        processing_ms_total = excluded.processing_ms_total,
        processing_ms_max = excluded.processing_ms_max,
+       first_transcript_samples = excluded.first_transcript_samples,
+       first_transcript_ms_total = excluded.first_transcript_ms_total,
+       first_transcript_ms_max = excluded.first_transcript_ms_max,
        audio_seconds = excluded.audio_seconds,
        estimated_ai_cost_microusd = excluded.estimated_ai_cost_microusd,
        updated_at = excluded.updated_at`,
@@ -383,6 +401,9 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
       outcomes?.processing_samples ?? 0,
       outcomes?.processing_ms_total ?? 0,
       outcomes?.processing_ms_max ?? 0,
+      firstTranscriptLatency?.samples ?? 0,
+      firstTranscriptLatency?.ms_total ?? 0,
+      firstTranscriptLatency?.ms_max ?? 0,
       audioSeconds,
       estimatedAiCostMicrousd,
       observedAt,
