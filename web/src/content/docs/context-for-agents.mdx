@@ -49,6 +49,41 @@ meeting format before selecting **Regenerate**. You can also create reusable
 [custom templates](/docs/templates) in **Settings** or edit the final Markdown
 directly.
 
+## Connect an agent over MCP
+
+Agents that speak the [Model Context Protocol](https://modelcontextprotocol.io)
+— Claude, Claude Code, Codex, Cursor and others — can use Eavesy directly. In
+the web app, open **Settings → AI assistants (MCP)**, select **New URL**, and
+add that URL to your agent as a remote MCP server. Treat it like a password:
+anyone with it can read your sessions. Revoke it there at any time.
+
+The server gives your agent these tools:
+
+| Tool | What it does |
+| --- | --- |
+| `search_meetings` | Search meetings by title or transcript, with an excerpt for each match |
+| `get_meeting` | Fetch one meeting with its summary and full transcript |
+| `recent_meetings` | List your most recent meetings |
+| `search_dictations` | Search your dictations |
+| `get_action_items` | List action items from your meetings, open or completed |
+| `send_to_my_devices` | Send text to your **Drop** inbox (see below) |
+
+### Send a handoff to your other computers
+
+`send_to_my_devices` puts text, up to 5 MB, straight into your **Drop** inbox,
+and it appears right away on every device where you have Eavesy open. It
+takes the `text` and an optional `title`, which becomes the first line. The
+drop is labelled with your MCP connection&rsquo;s name and kept for 7 days.
+
+It&rsquo;s built for the end of a long agent session: instead of copying a
+handoff doc and messaging it to yourself, ask the agent to send it.
+
+<Callout type="tip">
+Try *&ldquo;Write a handoff doc for this session and send it to my
+devices.&rdquo;* Then open the **Drop** button on your other computer and copy
+it into the next session.
+</Callout>
+
 ## Why this beats a raw transcript
 
 - **Structured, not a wall of text** — decisions and actions are already

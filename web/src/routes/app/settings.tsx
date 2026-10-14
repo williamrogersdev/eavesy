@@ -360,7 +360,7 @@ function SettingsPage() {
 
       <AppSection
         title="AI assistants (MCP)"
-        description="A read-only URL that lets Claude, Codex or another assistant search your recordings. It’s shown once."
+        description="A URL that lets Claude, Codex or another assistant search your recordings and send text to your Drop inbox. It’s shown once."
         action={
           <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
             {mcpBusy ? 'Creating…' : 'New URL'}
