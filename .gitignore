@@ -54,3 +54,6 @@ web/test-results/
 web/playwright-report/
 
 /Recordings/
+
+__pycache__/
+*.pyc

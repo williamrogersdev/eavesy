@@ -10,7 +10,7 @@
 
 ## How it works
 1. Hit record — capture your voice, your screen, or both, from a hotkey or your browser.
-2. Eavesy transcribes and tracks the session in real time.
+2. Eavesy transcribes the session in the background, a few minutes behind live.
 3. Stop, and copy an AI-ready Markdown brief into your agent — or save it to disk.
 
 ## Where it works
