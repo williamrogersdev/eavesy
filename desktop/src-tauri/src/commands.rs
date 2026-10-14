@@ -393,6 +393,18 @@ pub fn open_web_app(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn set_panel_pinned(pinned: bool) { panel::set_pinned(pinned); }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    signed_out: bool,
+}
+
+/// Whether uploads are paused because the server rejected this Mac's credential.
+#[tauri::command]
+pub fn sync_status() -> SyncStatus {
+    SyncStatus { signed_out: crate::sync::signed_out() }
+}
+
 #[tauri::command]
 pub fn get_hud_state() -> crate::hud::HudState { crate::hud::current() }
 

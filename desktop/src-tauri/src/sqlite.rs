@@ -43,6 +43,20 @@ pub struct PendingSession {
     pub next_part_number: i64,
     pub next_archive_offset: i64,
     pub ended_at: Option<i64>,
+    /// Set when the continuous archive was lost; the meeting is finished from its
+    /// uploaded segments instead.
+    pub archive_missing: bool,
+}
+
+/// What launch or stop recovery needs to know about a capture that did not finish.
+#[derive(Debug, Clone)]
+pub struct InterruptedSession {
+    pub id: String,
+    pub archive_path: PathBuf,
+    pub segment_dir: Option<PathBuf>,
+    pub title: String,
+    pub source: String,
+    pub started_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,13 +101,37 @@ fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Direct access to the local database for tests that set up or inspect state.
+#[cfg(test)]
+pub(crate) fn with_conn<R: Runtime, T>(app: &AppHandle<R>, f: impl FnOnce(&Connection) -> T) -> T {
+    f(&open(app).unwrap())
+}
+
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let conn = open(app)?;
     migrate(&conn)?;
     retry_context_rejections(&conn)?;
+    retry_unauthorized_segments(&conn)?;
     drop(conn);
     recover_interrupted(app)
 }
+
+/// Older builds counted 401s as ordinary failures and gave up on segments after
+/// the attempt limit; put those back in the queue now that a 401 pauses sync.
+fn retry_unauthorized_segments(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        &format!(
+            "UPDATE recording_segments SET status='pending', gave_up=0, attempts=0, next_attempt_at=0
+             WHERE gave_up=1 AND last_error LIKE '%{UNAUTHORIZED_MARKER}%'"
+        ),
+        [],
+    )
+    .map_err(|error| format!("requeue segments refused while signed out: {error}"))?;
+    Ok(())
+}
+
+/// Part of the message the sync loop records for a 401 response.
+pub const UNAUTHORIZED_MARKER: &str = "device is not paired or its credential was revoked";
 
 fn retry_context_rejections(conn: &Connection) -> Result<(), String> {
     conn.execute(
@@ -111,6 +149,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("initialize local database: {e}"))?;
     add_column_if_missing(conn, "recording_sessions", "segment_dir", "TEXT")?;
     add_column_if_missing(conn, "recording_sessions", "next_attempt_at", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "recording_sessions", "archive_missing", "INTEGER NOT NULL DEFAULT 0")?;
     migrate_segments(conn)
 }
 
@@ -177,94 +216,108 @@ fn mixed_track() -> String {
 }
 
 fn recover_interrupted<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let conn = open(app)?;
-    let mut statement = conn
-        .prepare(
-            "SELECT id, archive_path, segment_dir, title, source, started_at
-             FROM recording_sessions WHERE status='recording'",
-        )
-        .map_err(|e| format!("prepare interrupted recording recovery: {e}"))?;
-    let sessions = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                PathBuf::from(row.get::<_, String>(1)?),
-                row.get::<_, Option<String>>(2)?.map(PathBuf::from),
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
+    let ids = open(app)?
+        .prepare("SELECT id FROM recording_sessions WHERE status='recording'")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
         })
-        .map_err(|e| format!("read interrupted recordings: {e}"))?
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-    drop(statement);
-    drop(conn);
-
-    for (id, archive_path, segment_dir, title, source, started_at_ms) in sessions {
-        if let Some(segment_dir) = segment_dir {
-            if let Ok(entries) = std::fs::read_dir(segment_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                        continue;
-                    }
-                    let Some(manifest) = std::fs::read_to_string(&path)
-                        .ok()
-                        .and_then(|raw| serde_json::from_str::<SegmentManifest>(&raw).ok())
-                    else {
-                        continue;
-                    };
-                    record_segment(app, &id, &manifest)?;
-                }
-            }
-        }
-
-        if let Ok(metadata) = std::fs::metadata(&archive_path) {
-            let duration_ms: i64 = open(app)?
-                .query_row(
-                    "SELECT COALESCE(max(start_ms + duration_ms), 0) FROM recording_segments WHERE session_id=?1",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            let mut recording = crate::store::load_all(app)
-                .into_iter()
-                .find(|recording| recording.id == id);
-            if recording.is_none() {
-                let recovered = crate::store::StoredRecording {
-                    id: id.clone(),
-                    title,
-                    started_at_ms,
-                    duration_sec: duration_ms / 1_000,
-                    source,
-                    status: "processing".to_string(),
-                    summary: None,
-                    transcript: None,
-                    notes: None,
-                    has_audio: true,
-                    has_video: false,
-                    folder_path: archive_path
-                        .parent()
-                        .and_then(|path| path.to_str())
-                        .map(str::to_string),
-                };
-                crate::store::append(app, recovered.clone())?;
-                recording = Some(recovered);
-            }
-
-            if let (Some(recording), Some(folder)) = (recording.as_ref(), archive_path.parent()) {
-                crate::fs_writer::persist_recording_artifacts(
-                    Some(app),
-                    folder,
-                    recording,
-                    None,
-                    recording.notes.as_deref(),
-                )?;
-            }
-            finish_recording(app, &id, &archive_path, duration_ms, metadata.len() as i64)?;
-        }
+        .map_err(|e| format!("read interrupted recordings: {e}"))?;
+    for id in ids {
+        // One damaged capture must not stop the app from launching or block the rest.
+        crate::recovery::recover_or_defer(app, &id, "the app quit while recording");
     }
+    Ok(())
+}
+
+/// Captures whose recovery could not finish (for example, their folder is on a
+/// disk that is not mounted); `recovery::retry_deferred` tries them again.
+pub fn deferred_recoveries<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
+    open(app)?
+        .prepare("SELECT id FROM recording_sessions WHERE status='recording' AND last_error LIKE ?1")
+        .and_then(|mut statement| {
+            statement
+                .query_map(params![format!("{}%", crate::recovery::DEFERRED_NOTE)], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|e| format!("read deferred recoveries: {e}"))
+}
+
+pub fn interrupted_session<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<Option<InterruptedSession>, String> {
+    open(app)?
+        .query_row(
+            "SELECT id, archive_path, segment_dir, title, source, started_at
+             FROM recording_sessions WHERE id=?1",
+            params![id],
+            |row| {
+                Ok(InterruptedSession {
+                    id: row.get(0)?,
+                    archive_path: PathBuf::from(row.get::<_, String>(1)?),
+                    segment_dir: row.get::<_, Option<String>>(2)?.map(PathBuf::from),
+                    title: row.get(3)?,
+                    source: row.get(4)?,
+                    started_at: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("read interrupted recording: {e}"))
+}
+
+pub fn recorded_duration_ms<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<i64, String> {
+    open(app)?
+        .query_row(
+            "SELECT COALESCE(max(start_ms + duration_ms), 0) FROM recording_segments WHERE session_id=?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("measure recorded segments: {e}"))
+}
+
+/// Segments that are uploaded or still worth uploading.
+pub fn usable_segment_count<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<i64, String> {
+    open(app)?
+        .query_row(
+            "SELECT count(*) FROM recording_segments WHERE session_id=?1 AND gave_up=0",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("count recorded segments: {e}"))
+}
+
+pub fn uploaded_segment_count<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<i64, String> {
+    open(app)?
+        .query_row(
+            "SELECT count(*) FROM recording_segments WHERE session_id=?1 AND status='uploaded'",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("count uploaded segments: {e}"))
+}
+
+/// Ends a capture whose archive is unusable: it keeps syncing its segments and is
+/// then finalized without an archive.
+pub fn finish_from_segments<R: Runtime>(app: &AppHandle<R>, id: &str, duration_ms: i64, note: &str) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    open(app)?
+        .execute(
+            "UPDATE recording_sessions SET ended_at=COALESCE(ended_at, ?2), duration_ms=?3, archive_bytes=0,
+             archive_missing=1, status='uploading', next_attempt_at=0, last_error=?4, updated_at=?2
+             WHERE id=?1",
+            params![id, now, duration_ms, note],
+        )
+        .map_err(|e| format!("finish recording from segments: {e}"))?;
+    Ok(())
+}
+
+pub fn mark_archive_missing<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    open(app)?
+        .execute(
+            "UPDATE recording_sessions SET archive_missing=1, updated_at=?2 WHERE id=?1",
+            params![id, chrono::Utc::now().timestamp_millis()],
+        )
+        .map_err(|e| format!("mark archive missing: {e}"))?;
     Ok(())
 }
 
@@ -317,7 +370,8 @@ pub fn finish_recording<R: Runtime>(
     open(app)?
         .execute(
             "UPDATE recording_sessions SET archive_path=?2, ended_at=?3, duration_ms=?4,
-             archive_bytes=?5, status='uploading', updated_at=?3 WHERE id=?1",
+             archive_bytes=?5, archive_missing=0, status='uploading', next_attempt_at=0,
+             last_error=NULL, updated_at=?3 WHERE id=?1",
             params![id, archive_path.to_string_lossy(), now, duration_ms, archive_bytes],
         )
         .map_err(|e| format!("finalize local recording: {e}"))?;
@@ -328,7 +382,7 @@ pub fn next_session<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PendingSess
     next_session_on(&open(app)?, chrono::Utc::now().timestamp_millis())
 }
 
-pub fn defer_session(app: &AppHandle, id: &str, delay_ms: i64, error: Option<&str>) -> Result<(), String> {
+pub fn defer_session<R: Runtime>(app: &AppHandle<R>, id: &str, delay_ms: i64, error: Option<&str>) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
     open(app)?
         .execute(
@@ -340,7 +394,7 @@ pub fn defer_session(app: &AppHandle, id: &str, delay_ms: i64, error: Option<&st
     Ok(())
 }
 
-pub fn mark_session_failed(app: &AppHandle, id: &str, error: &str) -> Result<(), String> {
+pub fn mark_session_failed<R: Runtime>(app: &AppHandle<R>, id: &str, error: &str) -> Result<(), String> {
     open(app)?
         .execute(
             "UPDATE recording_sessions SET status='failed', last_error=?2, updated_at=?3 WHERE id=?1",
@@ -350,7 +404,7 @@ pub fn mark_session_failed(app: &AppHandle, id: &str, error: &str) -> Result<(),
     Ok(())
 }
 
-pub fn attach_remote(app: &AppHandle, id: &str, remote_id: &str) -> Result<(), String> {
+pub fn attach_remote<R: Runtime>(app: &AppHandle<R>, id: &str, remote_id: &str) -> Result<(), String> {
     open(app)?
         .execute(
             "UPDATE recording_sessions SET remote_meeting_id=?2, updated_at=?3 WHERE id=?1",
@@ -398,7 +452,7 @@ pub fn mark_segment_uploaded<R: Runtime>(app: &AppHandle<R>, segment: &PendingSe
     Ok(())
 }
 
-pub fn mark_segment_failed(app: &AppHandle, segment: &PendingSegment, error: &str) -> Result<(), String> {
+pub fn mark_segment_failed<R: Runtime>(app: &AppHandle<R>, segment: &PendingSegment, error: &str) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
     open(app)?
         .execute(
@@ -424,8 +478,7 @@ pub fn all_segments_uploaded<R: Runtime>(app: &AppHandle<R>, session_id: &str) -
     Ok(remaining == 0)
 }
 
-pub fn advance_archive(
-    app: &AppHandle,
+pub fn advance_archive<R: Runtime>(app: &AppHandle<R>,
     id: &str,
     next_part_number: i64,
     next_offset: i64,
@@ -440,7 +493,7 @@ pub fn advance_archive(
     Ok(())
 }
 
-pub fn mark_processing(app: &AppHandle, id: &str) -> Result<(), String> {
+pub fn mark_processing<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
     open(app)?
         .execute(
             "UPDATE recording_sessions SET status='processing', last_error=NULL, updated_at=?2
@@ -451,7 +504,7 @@ pub fn mark_processing(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn mark_complete(app: &AppHandle, id: &str) -> Result<(), String> {
+pub fn mark_complete<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
     open(app)?
         .execute(
             "UPDATE recording_sessions SET status='complete', last_error=NULL, updated_at=?2
@@ -636,7 +689,7 @@ pub fn next_file_edit<R: Runtime>(
     .transpose()
 }
 
-pub fn remote_meeting_id(app: &AppHandle, local_session_id: &str) -> Result<Option<String>, String> {
+pub fn remote_meeting_id<R: Runtime>(app: &AppHandle<R>, local_session_id: &str) -> Result<Option<String>, String> {
     open(app)?
         .query_row(
             "SELECT remote_meeting_id FROM recording_sessions WHERE id=?1",
@@ -662,8 +715,7 @@ pub fn mark_operation_done<R: Runtime>(
     Ok(())
 }
 
-pub fn mark_operation_failed(
-    app: &AppHandle,
+pub fn mark_operation_failed<R: Runtime>(app: &AppHandle<R>,
     operation_id: &str,
     error: &str,
 ) -> Result<(), String> {
@@ -864,7 +916,7 @@ mod recovery_tests {
         )
         .unwrap();
 
-        std::fs::write(&archive, b"finalized continuous audio").unwrap();
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
         for (index, start_ms) in [(0, 0), (1, 240_000)] {
           for track in ["mic", "system"] {
             let segment = segment_dir.join(format!("segment-{index:06}-{track}.m4a"));
@@ -895,6 +947,7 @@ mod recovery_tests {
             .expect("recovered capture should remain queued");
         assert_eq!(session.status, "uploading");
         assert_eq!(session.archive_path, archive);
+        assert!(!session.archive_missing);
         assert_eq!(
             next_segment(restarted.handle(), "meeting-1")
                 .unwrap()
@@ -941,6 +994,214 @@ mod recovery_tests {
 
         drop(second_restart);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    struct Fixture {
+        root: PathBuf,
+        app: tauri::App<tauri::test::MockRuntime>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("eavesy-recovery-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let app = isolated_mock_app(&root);
+            initialize(app.handle()).unwrap();
+            Self { root, app }
+        }
+
+        fn handle(&self) -> &AppHandle<tauri::test::MockRuntime> {
+            self.app.handle()
+        }
+
+        /// Starts a capture with `segments` sealed segments on disk (manifests only;
+        /// the sync loop is not involved).
+        fn capture(&self, id: &str, segments: i64) -> PathBuf {
+            let folder = self.root.join(id);
+            let segment_dir = self.root.join("capture").join(id);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::create_dir_all(&segment_dir).unwrap();
+            let archive = folder.join("audio.m4a");
+            begin_recording(self.handle(), id, &archive, &segment_dir, "mic", "Memo", None, 1_000).unwrap();
+            for index in 0..segments {
+                let segment = segment_dir.join(format!("segment-{index:06}-mixed.m4a"));
+                std::fs::write(&segment, b"segment").unwrap();
+                let manifest = serde_json::json!({
+                    "path": segment, "index": index, "startMs": index * 240_000,
+                    "durationMs": 240_000, "bytes": 7,
+                });
+                std::fs::write(
+                    format!("{}.json", segment.to_string_lossy()),
+                    serde_json::to_vec(&manifest).unwrap(),
+                )
+                .unwrap();
+            }
+            archive
+        }
+
+        fn status(&self, id: &str) -> (String, bool, Option<String>) {
+            with_conn(self.handle(), |conn| {
+                conn.query_row(
+                    "SELECT status, archive_missing, last_error FROM recording_sessions WHERE id=?1",
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap()
+            })
+        }
+
+        fn restart(&mut self) {
+            let app = isolated_mock_app(&self.root);
+            initialize(app.handle()).unwrap();
+            self.app = app;
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn a_stopped_capture_is_due_at_once_even_if_it_was_deferred_while_recording() {
+        let fixture = Fixture::new();
+        let archive = fixture.capture("dictation", 0);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+        // While recording, the sync loop parks the session between result polls.
+        defer_session(fixture.handle(), "dictation", 10_000, Some("waiting")).unwrap();
+        assert!(next_session(fixture.handle()).unwrap().is_none());
+
+        finish_recording(fixture.handle(), "dictation", &archive, 3_000, 10).unwrap();
+
+        let due = next_session(fixture.handle()).unwrap().expect("stopped dictation should be due now");
+        assert_eq!(due.id, "dictation");
+        assert_eq!(fixture.status("dictation").2, None);
+    }
+
+    #[test]
+    fn launch_recovery_finishes_from_segments_when_the_archive_is_missing() {
+        let mut fixture = Fixture::new();
+        fixture.capture("lost-archive", 2);
+        fixture.restart();
+
+        assert_eq!(fixture.status("lost-archive").0, "uploading");
+        assert!(fixture.status("lost-archive").1, "archive should be flagged missing");
+        let session = next_session(fixture.handle()).unwrap().unwrap();
+        assert!(session.archive_missing);
+        assert_eq!(next_segment(fixture.handle(), "lost-archive").unwrap().unwrap().idx, 0);
+        let recording = &crate::store::load_all(fixture.handle())[0];
+        assert_eq!((recording.status.as_str(), recording.has_audio), ("processing", false));
+        assert_eq!(recording.duration_sec, 480);
+    }
+
+    #[test]
+    fn launch_recovery_does_not_upload_an_unfinished_archive() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("killed", 1);
+        // What a capture killed mid-write leaves: data without the moov index.
+        std::fs::write(&archive, crate::recovery::mp4_box(b"ftyp", b"M4A ")).unwrap();
+        fixture.restart();
+        assert_eq!(fixture.status("killed").0, "uploading");
+        assert!(fixture.status("killed").1);
+    }
+
+    #[test]
+    fn launch_recovery_fails_a_capture_with_nothing_saved_instead_of_polling_it() {
+        let mut fixture = Fixture::new();
+        fixture.capture("empty", 0);
+        fixture.restart();
+
+        let (status, _, error) = fixture.status("empty");
+        assert_eq!(status, "failed");
+        assert!(error.unwrap().contains("no audio was captured"));
+        assert!(next_session(fixture.handle()).unwrap().is_none());
+        assert_eq!(crate::store::load_all(fixture.handle())[0].status, "failed");
+    }
+
+    #[test]
+    fn launch_recovery_waits_for_an_unmounted_recording_folder() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("external-disk", 2);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+        let folder = archive.parent().unwrap().to_path_buf();
+        let parked = fixture.root.join("unmounted");
+        std::fs::rename(&folder, &parked).unwrap();
+
+        fixture.restart();
+
+        let (status, missing, note) = fixture.status("external-disk");
+        assert_eq!((status.as_str(), missing), ("recording", false), "must not be failed or marked lost");
+        assert!(note.unwrap().starts_with(crate::recovery::DEFERRED_NOTE));
+        assert_eq!(next_segment(fixture.handle(), "external-disk").unwrap().unwrap().idx, 0);
+
+        std::fs::rename(&parked, &folder).unwrap();
+        crate::recovery::retry_deferred(fixture.handle());
+        assert_eq!(fixture.status("external-disk"), ("uploading".to_string(), false, None));
+    }
+
+    #[test]
+    fn recovery_updates_the_queue_even_if_the_recording_folder_cannot_be_written() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("read-only", 1);
+        let folder = archive.parent().unwrap().to_path_buf();
+        let mut permissions = std::fs::metadata(&folder).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o500);
+        std::fs::set_permissions(&folder, permissions.clone()).unwrap();
+
+        fixture.restart();
+
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o700);
+        std::fs::set_permissions(&folder, permissions).unwrap();
+        assert_eq!(fixture.status("read-only").0, "uploading");
+        assert!(fixture.status("read-only").1);
+    }
+
+    #[test]
+    fn salvaging_a_failed_stop_leaves_other_captures_recording() {
+        let fixture = Fixture::new();
+        fixture.capture("failed-stop", 1);
+        fixture.capture("still-going", 1);
+
+        let outcome = crate::recovery::salvage(fixture.handle(), "failed-stop", "stop timed out").unwrap();
+
+        assert_eq!(outcome, crate::recovery::Salvage::Segments(1));
+        assert_eq!(fixture.status("failed-stop").0, "uploading");
+        assert_eq!(fixture.status("still-going").0, "recording");
+        assert!(fixture.status("failed-stop").2.unwrap().contains("stop timed out"));
+    }
+
+    #[test]
+    fn salvaging_a_failed_stop_keeps_a_playable_archive() {
+        let fixture = Fixture::new();
+        let archive = fixture.capture("late-error", 1);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+        let outcome = crate::recovery::salvage(fixture.handle(), "late-error", "registry write failed").unwrap();
+        assert_eq!(outcome, crate::recovery::Salvage::Archive);
+        assert_eq!(fixture.status("late-error"), ("uploading".to_string(), false, None));
+    }
+
+    #[test]
+    fn segments_dropped_while_signed_out_are_queued_again() {
+        let mut fixture = Fixture::new();
+        fixture.capture("signed-out", 1);
+        fixture.restart();
+        with_conn(fixture.handle(), |conn| {
+            conn.execute(
+                &format!(
+                    "UPDATE recording_segments SET status='failed', gave_up=1, attempts=200,
+                     last_error='upload transcript segment: {UNAUTHORIZED_MARKER}'"
+                ),
+                [],
+            )
+            .unwrap();
+        });
+        assert!(next_segment(fixture.handle(), "signed-out").unwrap().is_none());
+
+        fixture.restart();
+
+        let segment = next_segment(fixture.handle(), "signed-out").unwrap();
+        assert_eq!(segment.map(|segment| segment.idx), Some(0));
     }
 
     #[test]
@@ -1057,7 +1318,7 @@ fn next_session_on(conn: &Connection, now: i64) -> Result<Option<PendingSession>
     conn
         .query_row(
             "SELECT id, remote_meeting_id, archive_path, title, context_blurb,
-                    status, next_part_number, next_archive_offset, ended_at
+                    status, next_part_number, next_archive_offset, ended_at, archive_missing
              FROM recording_sessions
              WHERE status IN ('recording','uploading','finalizing','processing')
                AND next_attempt_at <= ?1
@@ -1074,6 +1335,7 @@ fn next_session_on(conn: &Connection, now: i64) -> Result<Option<PendingSession>
                     next_part_number: row.get(6)?,
                     next_archive_offset: row.get(7)?,
                     ended_at: row.get(8)?,
+                    archive_missing: row.get(9)?,
                 })
             },
         )

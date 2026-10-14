@@ -19,19 +19,31 @@ export const Route = createFileRoute('/api/sessions/$id/finalize/')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
 
+        // The desktop app sends `?archive=none` when its continuous archive could not be
+        // saved: the meeting is then finished from the segments it already uploaded.
+        const segmentsOnly = new URL(request.url).searchParams.get('archive') === 'none';
         const finalBytes = new Uint8Array(await request.arrayBuffer());
-        if (finalBytes.byteLength === 0 || finalBytes.byteLength > ARCHIVE_PART_SIZE) {
+        const badFinalPart = segmentsOnly
+          ? finalBytes.byteLength !== 0
+          : finalBytes.byteLength === 0 || finalBytes.byteLength > ARCHIVE_PART_SIZE;
+        if (badFinalPart) {
           return Response.json({ error: 'invalid_final_part' }, { status: 400 });
         }
 
         const db = getDb();
         const meeting = await ownedMeeting(db, params.id, actor);
         if (!meeting) return Response.json({ error: 'not_found' }, { status: 404 });
-        if (meeting.audioR2Key && ['processing', 'complete'].includes(meeting.status)) {
+        if ((segmentsOnly || meeting.audioR2Key) && ['processing', 'complete'].includes(meeting.status)) {
           if (meeting.status === 'processing') {
             await enqueue({ kind: 'summarize', meetingId: meeting.id });
           }
           return Response.json({ ok: true, idempotent: true, status: meeting.status });
+        }
+        if (segmentsOnly) {
+          if (meeting.status === 'failed') {
+            return Response.json({ error: 'session_failed' }, { status: 409 });
+          }
+          return finalizeFromSegments(db, meeting.id);
         }
 
         let state = await loadOrCreateMultipart(db, {
@@ -117,3 +129,24 @@ export const Route = createFileRoute('/api/sessions/$id/finalize/')({
     },
   },
 });
+
+async function finalizeFromSegments(db: ReturnType<typeof getDb>, meetingId: string) {
+  const uploaded = await db
+    .select({
+      count: sql<number>`count(*)`,
+      durationMs: sql<number>`coalesce(max(${meetingSegments.offsetMs} + ${meetingSegments.durationMs}), 0)`,
+    })
+    .from(meetingSegments)
+    .where(eq(meetingSegments.meetingId, meetingId));
+  if (!uploaded[0]?.count) {
+    return Response.json({ error: 'no_segments' }, { status: 409 });
+  }
+  const durationSec = Math.round(uploaded[0].durationMs / 1_000);
+  const now = Date.now();
+  await db
+    .update(meetings)
+    .set({ endedAt: now, durationSec, status: 'processing', updatedAt: now })
+    .where(eq(meetings.id, meetingId));
+  await enqueue({ kind: 'summarize', meetingId });
+  return Response.json({ ok: true, status: 'processing', audioBytes: 0 });
+}
