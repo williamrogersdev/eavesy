@@ -1,4 +1,4 @@
--- Kept apart from 0016: activity_log is the largest table, so these are the
+-- Kept apart from 0020: activity_log is the largest table, so these are the
 -- slowest to build and add a write to every logged event. Only what the daily
 -- rollup needs: the day's events by type, and a meeting's events. Per-user
 -- look-backs use the existing activity_user_created_idx.
