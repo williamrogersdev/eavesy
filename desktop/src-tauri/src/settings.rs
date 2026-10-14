@@ -109,6 +109,34 @@ pub fn load(app: &AppHandle) -> Settings {
 
 const DEVICE_TOKEN_SERVICE: &str = "com.eavesy.desktop.device-token";
 
+/// The device credential as last read from or written to the Keychain. The sync
+/// loop asks for it on every pass; reading the Keychain each time cost a process
+/// spawn (and settings.json read) per iteration.
+static TOKEN_CACHE: TokenCache = TokenCache::new();
+
+struct TokenCache(std::sync::Mutex<Option<(String, Option<String>)>>);
+
+impl TokenCache {
+    const fn new() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+
+    fn get(&self, account: impl FnOnce() -> String, read: impl FnOnce(&str) -> Option<String>) -> Option<String> {
+        let mut cached = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, token)) = cached.as_ref() {
+            return token.clone();
+        }
+        let account = account();
+        let token = read(&account);
+        *cached = Some((account, token.clone()));
+        token
+    }
+
+    fn set(&self, account: &str, token: Option<String>) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((account.to_string(), token));
+    }
+}
+
 pub fn device_token(app: &AppHandle) -> Option<String> {
     #[cfg(debug_assertions)]
     if let Ok(token) = std::env::var("EAVESY_DEVICE_TOKEN") {
@@ -116,23 +144,10 @@ pub fn device_token(app: &AppHandle) -> Option<String> {
             return Some(token);
         }
     }
-    let account = load(app).device_id;
-    let output = std::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            DEVICE_TOKEN_SERVICE,
-            "-a",
-            &account,
-            "-w",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    (!token.is_empty()).then_some(token)
+    TOKEN_CACHE.get(|| load(app).device_id, |account| keychain::read(account).unwrap_or_else(|error| {
+        eprintln!("could not read the device credential: {error}");
+        None
+    }))
 }
 
 pub fn save_device_token(app: &AppHandle, token: &str) -> Result<(), String> {
@@ -140,36 +155,104 @@ pub fn save_device_token(app: &AppHandle, token: &str) -> Result<(), String> {
         return Err("device token cannot be empty".to_string());
     }
     let account = load(app).device_id;
-    let status = std::process::Command::new("security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            DEVICE_TOKEN_SERVICE,
-            "-a",
-            &account,
-            "-w",
-            token,
-        ])
-        .status()
-        .map_err(|e| format!("could not open Keychain: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("could not save the Eavesy device credential in Keychain".to_string())
-    }
+    keychain::write(&account, token)?;
+    TOKEN_CACHE.set(&account, Some(token.to_string()));
+    Ok(())
 }
 
 pub fn delete_device_token(app: &AppHandle) -> Result<(), String> {
     let account = load(app).device_id;
-    let output = std::process::Command::new("security")
-        .args(["delete-generic-password", "-s", DEVICE_TOKEN_SERVICE, "-a", &account])
-        .output()
-        .map_err(|e| format!("could not open Keychain: {e}"))?;
-    if output.status.success() || output.status.code() == Some(44) {
+    keychain::delete(&account)?;
+    TOKEN_CACHE.set(&account, None);
+    Ok(())
+}
+
+/// Keychain access through the Security framework, so the credential is never
+/// passed on a command line (visible to every user in `ps`).
+#[cfg(target_os = "macos")]
+mod keychain {
+    use super::DEVICE_TOKEN_SERVICE;
+    use security_framework::passwords;
+
+    const ITEM_NOT_FOUND: i32 = -25300;
+
+    pub fn read(account: &str) -> Result<Option<String>, String> {
+        migrate_legacy_item(account);
+        match passwords::get_generic_password(DEVICE_TOKEN_SERVICE, account) {
+            Ok(bytes) => {
+                let token = String::from_utf8(bytes).map_err(|_| "the stored credential is not text".to_string())?;
+                let token = token.trim().to_string();
+                Ok((!token.is_empty()).then_some(token))
+            }
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+            Err(error) => Err(format!("Keychain read failed: {error}")),
+        }
+    }
+
+    pub fn write(account: &str, token: &str) -> Result<(), String> {
+        passwords::set_generic_password(DEVICE_TOKEN_SERVICE, account, token.as_bytes())
+            .map_err(|error| format!("could not save the Eavesy device credential in Keychain: {error}"))
+    }
+
+    pub fn delete(account: &str) -> Result<(), String> {
+        match passwords::delete_generic_password(DEVICE_TOKEN_SERVICE, account) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(()),
+            Err(error) => Err(format!("could not remove the Eavesy device credential from Keychain: {error}")),
+        }
+    }
+
+    /// Builds before this one stored the credential with the `security` tool, so
+    /// the item's access list trusts only that tool and a direct read would show a
+    /// Keychain prompt. Re-create it as this app's own item once. The token only
+    /// travels over the tool's stdout, never its arguments.
+    fn migrate_legacy_item(account: &str) {
+        let marker = legacy_marker(account);
+        if marker.as_ref().is_some_and(|marker| marker.exists()) {
+            return;
+        }
+        let legacy = std::process::Command::new("security")
+            .args(["find-generic-password", "-s", DEVICE_TOKEN_SERVICE, "-a", account, "-w"])
+            .output();
+        if let Some(output) = legacy.ok().filter(|output| output.status.success()) {
+            let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let deleted = std::process::Command::new("security")
+                .args(["delete-generic-password", "-s", DEVICE_TOKEN_SERVICE, "-a", account])
+                .output()
+                .is_ok_and(|output| output.status.success());
+            if token.is_empty() || !deleted {
+                eprintln!("could not move the device credential to a Keychain item owned by Eavesy");
+                return;
+            }
+            if let Err(error) = write(account, &token) {
+                eprintln!("{error}");
+                return;
+            }
+        }
+        if let Some(marker) = marker {
+            if let Err(error) = std::fs::write(&marker, b"") {
+                eprintln!("could not record the Keychain migration: {error}");
+            }
+        }
+    }
+
+    fn legacy_marker(account: &str) -> Option<std::path::PathBuf> {
+        let dir = dirs::data_dir()?.join("com.eavesy.desktop");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir.join(format!(".keychain-migrated-{account}")))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod keychain {
+    pub fn read(_account: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    pub fn write(_account: &str, _token: &str) -> Result<(), String> {
+        Err("the device credential can only be stored on macOS".to_string())
+    }
+    pub fn delete(_account: &str) -> Result<(), String> {
         Ok(())
-    } else {
-        Err("could not remove the Eavesy device credential from Keychain".to_string())
     }
 }
 
@@ -183,4 +266,35 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
         .map_err(|e| format!("could not serialize settings: {e}"))?;
     std::fs::write(&path, json).map_err(|e| format!("could not write settings: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn the_credential_is_read_from_the_keychain_once() {
+        let cache = TokenCache::new();
+        let reads = Cell::new(0);
+        let read = |_: &str| {
+            reads.set(reads.get() + 1);
+            Some("token".to_string())
+        };
+        for _ in 0..5 {
+            assert_eq!(cache.get(|| "device".to_string(), read), Some("token".to_string()));
+        }
+        assert_eq!(reads.get(), 1);
+    }
+
+    #[test]
+    fn pairing_and_disconnecting_update_the_cached_credential() {
+        let cache = TokenCache::new();
+        let never = |_: &str| -> Option<String> { panic!("cached state should be used") };
+        assert_eq!(cache.get(|| "device".to_string(), |_| None), None);
+        cache.set("device", Some("new".to_string()));
+        assert_eq!(cache.get(|| "device".to_string(), never), Some("new".to_string()));
+        cache.set("device", None);
+        assert_eq!(cache.get(|| "device".to_string(), never), None);
+    }
 }

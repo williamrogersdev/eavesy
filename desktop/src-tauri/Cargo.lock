@@ -1109,6 +1109,7 @@ dependencies = [
  "png 0.17.16",
  "reqwest 0.12.28",
  "rusqlite",
+ "security-framework",
  "sentry",
  "serde",
  "serde_json",

@@ -60,6 +60,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "18ffb9a201fbf6fedfaa382fd4b92315ea30ab1a" }
+security-framework = "3"
 
 [features]
 default = ["custom-protocol"]
