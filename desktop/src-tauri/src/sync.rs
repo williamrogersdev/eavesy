@@ -243,7 +243,11 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
         Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
         Err(error) => eprintln!("desktop file edit sync: {error:#}"),
     }
-    let session = match sqlite::next_session(app) {
+    let next = {
+        let app = app.clone();
+        blocking(move || sqlite::next_session(&app)).await
+    };
+    let session = match next {
         Ok(Some(session)) => session,
         Ok(None) => return Pass::Idle,
         Err(error) => {
@@ -418,37 +422,44 @@ async fn poll_result<R: Runtime>(
         .summary_override_md
         .clone()
         .or_else(|| result.summary.as_ref().map(render_summary));
-    crate::store::set_result(
-        app,
-        &session.id,
-        &result.title,
-        transcript.clone(),
-        summary,
-        Some(result.notes_md),
-        match result.status.as_str() {
-            "complete" => "complete",
-            "failed" => "transcript_failed",
-            _ => "processing",
-        },
-    )
-    .map_err(|e| anyhow!(e))?;
-    if let Some(recording) = crate::store::load_all(app)
-        .into_iter()
-        .find(|recording| recording.id == session.id)
-    {
-        if let Some(folder) = session.archive_path.parent() {
-            fs_writer::persist_recording_artifacts(
-                Some(app),
-                folder,
-                &recording,
-                Some(remote_id),
-                recording.notes.as_deref(),
-            )
-            .map_err(|error| anyhow!(error))?;
+    let status = match result.status.as_str() {
+        "complete" => "complete",
+        "failed" => "transcript_failed",
+        _ => "processing",
+    };
+    // The registry and the recording folder are plain file IO: keep it off the
+    // async runtime, and skip it entirely when the poll brought nothing new.
+    let changed = blocking({
+        let app = app.clone();
+        let id = session.id.clone();
+        let folder = session.archive_path.parent().map(std::path::PathBuf::from);
+        let remote_id = remote_id.to_string();
+        let title = result.title.clone();
+        let transcript = transcript.clone();
+        let notes = result.notes_md.clone();
+        move || -> Result<bool, String> {
+            let Some(recording) =
+                crate::store::set_result(&app, &id, &title, transcript, summary, Some(notes), status)?
+            else {
+                return Ok(false);
+            };
+            if let Some(folder) = folder {
+                fs_writer::persist_recording_artifacts(
+                    Some(&app),
+                    &folder,
+                    &recording,
+                    Some(&remote_id),
+                    recording.notes.as_deref(),
+                )?;
+            }
+            Ok(true)
         }
-    }
-    if let Err(error) = app.emit("recordings:updated", ()) {
-        eprintln!("desktop ingest: could not announce refreshed transcript: {error}");
+    })
+    .await?;
+    if changed {
+        if let Err(error) = app.emit("recordings:updated", ()) {
+            eprintln!("desktop ingest: could not announce refreshed transcript: {error}");
+        }
     }
     if result.status == "complete" {
         if let Some(app) = crate::ui::wry(app) {
@@ -488,6 +499,14 @@ async fn upload_file_edit(
     } else {
         Err(http_error("sync external recording-file edit", response).await)
     }
+}
+
+/// Runs blocking file or database work on tokio's blocking pool.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("local sync work stopped")?
+        .map_err(|error| anyhow!(error))
 }
 
 fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {

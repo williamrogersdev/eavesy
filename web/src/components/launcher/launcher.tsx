@@ -185,6 +185,7 @@ export function Launcher() {
   const [account, setAccount] = useState<AccountState>(undefined);
   const [connecting, setConnecting] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [withComputerAudio, setWithComputerAudio] = useState(false);
   useEffect(() => {
     setWithComputerAudio(includeComputerAudio());
@@ -231,6 +232,16 @@ export function Launcher() {
     },
     [flash],
   );
+
+  /** Reloads the list; on failure keeps what is shown and says the list is stale. */
+  const refreshRecordings = useCallback(async () => {
+    try {
+      setRecordings(await loadRecordings(now));
+      setLoadError(null);
+    } catch (error) {
+      setLoadError(errMsg(error, 'Could not load recordings'));
+    }
+  }, [now]);
 
   const pasteFromClipboard = useCallback(() => {
     runTask(async () => {
@@ -373,14 +384,13 @@ export function Launcher() {
       await stopCapture(id);
       setRecording(null);
       flash('Recording saved');
-      const fresh = await loadRecordings(now);
-      setRecordings(fresh);
+      await refreshRecordings();
       setQuery('');
       setSelected(0);
     } catch (e) {
       flash(errMsg(e, 'Could not save recording'), 8000);
     } finally { captureBusy.current = false; }
-  }, [recording, flash, now]);
+  }, [recording, flash, refreshRecordings]);
 
   useEffect(() => {
     let disposed = false;
@@ -439,7 +449,7 @@ export function Launcher() {
 
   useEffect(() => {
     runTask(async () => {
-      setRecordings(await loadRecordings(now));
+      await refreshRecordings();
     }, 'Could not load recordings');
     runTask(async () => {
       const settings = await getSettings();
@@ -447,7 +457,7 @@ export function Launcher() {
       if (settings?.dictation_hotkey) setDictationHotkey(prettyAccel(settings.dictation_hotkey));
     }, 'Could not load desktop settings');
     runTask(() => refreshSetup(true), 'Could not load setup status');
-  }, [now, refreshSetup, runTask]);
+  }, [refreshRecordings, refreshSetup, runTask]);
 
   useEffect(() => {
     let disposed = false;
@@ -455,7 +465,7 @@ export function Launcher() {
     runTask(async () => {
       const stopListening = await onRecordingsUpdated(() => {
         runTask(async () => {
-          setRecordings(await loadRecordings(now));
+          await refreshRecordings();
         }, 'Could not refresh recordings');
       });
       if (disposed) stopListening();
@@ -465,7 +475,7 @@ export function Launcher() {
       disposed = true;
       unlisten?.();
     };
-  }, [now, runTask]);
+  }, [refreshRecordings, runTask]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -1134,6 +1144,12 @@ export function Launcher() {
           />
         ) : desktop ? (
           <div ref={historyRef} data-capture-history className="min-h-0 flex-1 overflow-y-auto p-4 [overflow-anchor:none]">
+            {loadError && (
+              <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
+                <span>Couldn’t load your recordings: {loadError}</span>
+                <button type="button" onClick={() => runTask(refreshRecordings)} className="shrink-0 rounded-md px-2 py-1 hover:bg-[var(--lr-hover)]">Retry</button>
+              </div>
+            )}
             <CaptureHistory signedIn={account !== null} onSignIn={() => runTask(connectAccount, 'Could not connect account')} recordings={recordings} onPaste={pasteFromClipboard} onCopied={(message) => flash(message)} onError={(error) => flash(errMsg(error, 'Could not copy'), 5000)} />
           </div>
         ) : (

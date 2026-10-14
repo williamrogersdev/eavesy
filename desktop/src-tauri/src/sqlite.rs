@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -90,8 +91,31 @@ fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(dir.join("eavesy.sqlite3"))
 }
 
-fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Connection, String> {
-    let conn = Connection::open(db_path(app)?).map_err(|e| format!("open local database: {e}"))?;
+/// One connection per database file for the life of the process, shared behind a
+/// mutex. Opening (and re-running the pragmas) on every call cost a file open and
+/// several syscalls per query on the sync loop's hot path.
+///
+/// Never call `open` while holding the guard it returns: the mutex is not reentrant.
+fn open<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, Connection>, String> {
+    static CONNECTIONS: Mutex<Vec<(PathBuf, &'static Mutex<Connection>)>> = Mutex::new(Vec::new());
+    let path = db_path(app)?;
+    let shared = {
+        let mut connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        match connections.iter().find(|(open_path, _)| *open_path == path) {
+            Some((_, shared)) => *shared,
+            None => {
+                // Leaked deliberately: the app has one database; tests have one per run.
+                let shared: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(connect(&path)?)));
+                connections.push((path, shared));
+                shared
+            }
+        }
+    };
+    Ok(shared.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+fn connect(path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| format!("open local database: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("configure local database: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL")
@@ -104,7 +128,7 @@ fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Connection, String> {
 /// Direct access to the local database for tests that set up or inspect state.
 #[cfg(test)]
 pub(crate) fn with_conn<R: Runtime, T>(app: &AppHandle<R>, f: impl FnOnce(&Connection) -> T) -> T {
-    f(&open(app).unwrap())
+    f(&*open(app).unwrap())
 }
 
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -112,6 +136,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     migrate(&conn)?;
     retry_context_rejections(&conn)?;
     retry_unauthorized_segments(&conn)?;
+    prune_done_operations(&conn, chrono::Utc::now().timestamp_millis())?;
     drop(conn);
     recover_interrupted(app)
 }
@@ -127,6 +152,18 @@ fn retry_unauthorized_segments(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|error| format!("requeue segments refused while signed out: {error}"))?;
+    Ok(())
+}
+
+/// Synced external edits are only kept for a week, for diagnostics.
+const DONE_OPERATION_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+
+fn prune_done_operations(conn: &Connection, now: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM pending_operations WHERE status='done' AND COALESCE(last_attempt_at, created_at) < ?1",
+        params![now - DONE_OPERATION_RETENTION_MS],
+    )
+    .map_err(|error| format!("prune synced edits: {error}"))?;
     Ok(())
 }
 
@@ -356,7 +393,7 @@ pub fn begin_recording<R: Runtime>(
 }
 
 pub fn record_segment<R: Runtime>(app: &AppHandle<R>, session_id: &str, segment: &SegmentManifest) -> Result<(), String> {
-    record_segment_on(&open(app)?, session_id, segment, chrono::Utc::now().timestamp_millis())
+    record_segment_on(&*open(app)?, session_id, segment, chrono::Utc::now().timestamp_millis())
 }
 
 pub fn finish_recording<R: Runtime>(
@@ -379,7 +416,7 @@ pub fn finish_recording<R: Runtime>(
 }
 
 pub fn next_session<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PendingSession>, String> {
-    next_session_on(&open(app)?, chrono::Utc::now().timestamp_millis())
+    next_session_on(&*open(app)?, chrono::Utc::now().timestamp_millis())
 }
 
 pub fn defer_session<R: Runtime>(app: &AppHandle<R>, id: &str, delay_ms: i64, error: Option<&str>) -> Result<(), String> {
@@ -449,7 +486,21 @@ pub fn mark_segment_uploaded<R: Runtime>(app: &AppHandle<R>, segment: &PendingSe
             params![segment.session_id, segment.idx, segment.track, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|e| format!("mark segment uploaded: {e}"))?;
+    remove_segment_files(&segment.file_path);
     Ok(())
+}
+
+/// The cloud has the segment and the continuous archive has the same audio, so
+/// the local copy and its manifest are no longer needed.
+fn remove_segment_files(file: &Path) {
+    let manifest = PathBuf::from(format!("{}.json", file.to_string_lossy()));
+    for path in [file, manifest.as_path()] {
+        if let Err(error) = std::fs::remove_file(path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("could not remove uploaded segment {}: {error}", path.display());
+            }
+        }
+    }
 }
 
 pub fn mark_segment_failed<R: Runtime>(app: &AppHandle<R>, segment: &PendingSegment, error: &str) -> Result<(), String> {
@@ -512,6 +563,25 @@ pub fn mark_complete<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), Str
             params![id, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|e| format!("mark session complete: {e}"))?;
+    let segment_dir: Option<String> = open(app)?
+        .query_row("SELECT segment_dir FROM recording_sessions WHERE id=?1", params![id], |row| row.get(0))
+        .optional()
+        .map_err(|e| format!("find completed session's segments: {e}"))?
+        .flatten();
+    // Only a folder laid out as `<captures>/<id>/segments` is removed, whole.
+    let capture_dir = segment_dir
+        .as_deref()
+        .map(Path::new)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == "segments"))
+        .and_then(Path::parent)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == id));
+    if let Some(capture_dir) = capture_dir {
+        if let Err(error) = std::fs::remove_dir_all(capture_dir) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("could not remove capture folder {}: {error}", capture_dir.display());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1076,7 +1146,7 @@ mod recovery_tests {
         /// the sync loop is not involved).
         fn capture(&self, id: &str, segments: i64) -> PathBuf {
             let folder = self.root.join(id);
-            let segment_dir = self.root.join("capture").join(id);
+            let segment_dir = self.root.join("capture").join(id).join("segments");
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::create_dir_all(&segment_dir).unwrap();
             let archive = folder.join("audio.m4a");
@@ -1260,6 +1330,48 @@ mod recovery_tests {
 
         let segment = next_segment(fixture.handle(), "signed-out").unwrap();
         assert_eq!(segment.map(|segment| segment.idx), Some(0));
+    }
+
+    #[test]
+    fn uploaded_segments_and_completed_captures_are_removed_from_disk() {
+        let mut fixture = Fixture::new();
+        fixture.capture("meeting", 2);
+        fixture.restart();
+        let capture_dir = fixture.root.join("capture").join("meeting");
+        let first = next_segment(fixture.handle(), "meeting").unwrap().unwrap();
+        let manifest = PathBuf::from(format!("{}.json", first.file_path.to_string_lossy()));
+        assert!(first.file_path.exists() && manifest.exists());
+
+        mark_segment_uploaded(fixture.handle(), &first).unwrap();
+
+        assert!(!first.file_path.exists() && !manifest.exists());
+        assert!(capture_dir.join("segments").join("segment-000001-mixed.m4a").exists());
+        mark_complete(fixture.handle(), "meeting").unwrap();
+        assert!(!capture_dir.exists());
+    }
+
+    #[test]
+    fn synced_edits_are_pruned_after_a_week() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let day = 24 * 60 * 60 * 1_000;
+        for (id, status, at) in [("old", "done", 0), ("recent", "done", 6 * day), ("stuck", "failed", 0)] {
+            conn.execute(
+                "INSERT INTO pending_operations (id, operation_type, payload_json, attempts, last_attempt_at, created_at, status)
+                 VALUES (?1, 'file-edit', '{}', 0, ?2, ?2, ?3)",
+                params![id, at, status],
+            )
+            .unwrap();
+        }
+        prune_done_operations(&conn, 8 * day).unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT id FROM pending_operations ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, ["recent", "stuck"]);
     }
 
     #[test]

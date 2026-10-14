@@ -236,15 +236,19 @@ fn write_generated<R: Runtime>(
     meeting_id: &str,
     role: &str,
 ) -> Result<(), String> {
+    let hash = sha256_hex(bytes);
     if let Some(app) = app {
         if let Ok(current) = std::fs::read(path) {
             let current_hash = sha256_hex(&current);
             if sqlite::file_was_edited(app, path, &current_hash)? {
                 return Ok(());
             }
+            // Ours and already up to date: no write, no watcher event.
+            if current_hash == hash {
+                return Ok(());
+            }
         }
     }
-    let hash = sha256_hex(bytes);
     // Register the new content as observed before it lands, so the watcher never
     // sees our own write as an external edit if it fires before record_file_write.
     if let Some(app) = app {

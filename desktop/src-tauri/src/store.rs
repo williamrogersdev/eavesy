@@ -8,7 +8,12 @@ use tauri::{AppHandle, Manager, Runtime};
 
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The last registry read or written, so polls and list refreshes do not re-read
+/// and re-parse recordings.json (transcripts included). Only touched under
+/// `REGISTRY_LOCK`; every write goes through `write_registry`.
+static CACHE: Mutex<Option<(PathBuf, Vec<StoredRecording>)>> = Mutex::new(None);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredRecording {
     pub id: String,
     pub title: String,
@@ -86,6 +91,8 @@ pub fn set_transcript<R: Runtime>(
     })
 }
 
+/// Applies a cloud result; returns the recording if anything about it changed, so
+/// callers can skip rewriting files and notifying the UI on an unchanged poll.
 pub fn set_result<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -94,7 +101,8 @@ pub fn set_result<R: Runtime>(
     summary: Option<String>,
     notes: Option<String>,
     status: &str,
-) -> Result<(), String> {
+) -> Result<Option<StoredRecording>, String> {
+    let mut updated = None;
     mutate(app, |list| {
         let Some(recording) = list.iter_mut().find(|recording| recording.id == id) else {
             return Ok(false);
@@ -113,6 +121,7 @@ pub fn set_result<R: Runtime>(
             .transpose()?
             .unwrap_or(false);
 
+        let before = recording.clone();
         recording.title = title.to_string();
         if !transcript_is_local {
             recording.transcript = Some(transcript);
@@ -124,8 +133,13 @@ pub fn set_result<R: Runtime>(
             recording.notes = notes;
         }
         recording.status = status.to_string();
+        if *recording == before {
+            return Ok(false);
+        }
+        updated = Some(recording.clone());
         Ok(true)
-    })
+    })?;
+    Ok(updated)
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -194,6 +208,18 @@ fn registry_guard() -> MutexGuard<'static, ()> {
 }
 
 fn read_registry(path: &Path) -> Result<Vec<StoredRecording>, String> {
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((cached_path, list)) = cache.as_ref() {
+        if cached_path == path {
+            return Ok(list.clone());
+        }
+    }
+    let list = read_registry_file(path)?;
+    *cache = Some((path.to_path_buf(), list.clone()));
+    Ok(list)
+}
+
+fn read_registry_file(path: &Path) -> Result<Vec<StoredRecording>, String> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -212,7 +238,12 @@ fn write_registry(path: &Path, list: &[StoredRecording]) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(list)
         .map_err(|e| format!("could not serialize recordings: {e}"))?;
-    atomic_write(path, json.as_bytes())
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Drop the cache first: if the write fails, the next read goes back to disk.
+    *cache = None;
+    atomic_write(path, json.as_bytes())?;
+    *cache = Some((path.to_path_buf(), list.to_vec()));
+    Ok(())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -295,6 +326,23 @@ mod tests {
         assert_eq!(list.len(), 16);
         assert_eq!(list.first().unwrap().id, "meeting-15");
         assert!(!path.parent().unwrap().join(".recordings.tmp").exists());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn an_unchanged_mutation_does_not_rewrite_the_registry() {
+        let path = temp_registry();
+        let _guard = registry_guard();
+        mutate_path(&path, |list| {
+            list.push(sample("a", 1));
+            Ok(true)
+        })
+        .unwrap();
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        mutate_path(&path, |_| Ok(false)).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), written);
+        assert_eq!(read_registry(&path).unwrap().len(), 1);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
