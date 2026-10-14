@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in Eavesy isn't working as it should
+title: "[Bug]: "
+labels: ["type: bug", "status: needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please don't include secrets,
+        API keys, or recording contents. If this is a security issue, don't
+        file it here. Use the [private advisory form](https://github.com/williamrogersdev/eavesy/security/advisories/new).
+  - type: input
+    id: app-version
+    attributes:
+      label: Eavesy version
+      description: "Mac app: Eavesy menu → About. Web: the version in the footer or the page you hit."
+      placeholder: "e.g. 0.1.9"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac. Leave blank if you are not on a Mac.
+      placeholder: "e.g. 15.4"
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Mac app
+        - Browser (web app)
+        - Dictation
+        - MCP (hosted or local MCP server)
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that triggers the problem.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Include error text verbatim if you have it.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste any diagnostics output you have. If the Mac app shows a diagnostics
+        or "copy" action in the failing screen, paste that here. Review it first
+        and remove anything private, such as transcript text or file paths you
+        don't want public.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Mac app logs may appear in Console.app (search for "Eavesy") or under
+        ~/Library/Logs. Paste only the lines around the failure, with
+        private content removed.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Screenshots (drag them in), what changed recently, workarounds you tried.
