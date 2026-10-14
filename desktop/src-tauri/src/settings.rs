@@ -47,6 +47,9 @@ pub struct Settings {
     pub hud_hidden: bool,
     #[serde(default)]
     pub panel_size: Option<PanelSize>,
+    /// Self-hosting: origin of your own Eavesy server (e.g. `https://eavesy.example.com`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base_url: Option<String>,
 }
 
 fn new_device_id() -> String {
@@ -65,6 +68,7 @@ impl Default for Settings {
             hud_frame: None,
             hud_hidden: false,
             panel_size: None,
+            api_base_url: None,
         }
     }
 }
@@ -78,6 +82,12 @@ pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn load(app: &AppHandle) -> Settings {
+    let settings = load_unapplied(app);
+    crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    settings
+}
+
+fn load_unapplied(app: &AppHandle) -> Settings {
     let path = match settings_path(app) {
         Ok(p) => p,
         Err(_) => return Settings::default(),

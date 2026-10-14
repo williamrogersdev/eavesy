@@ -1,6 +1,7 @@
 mod telemetry;
 mod api;
 mod audio;
+mod base_url;
 mod visual;
 mod commands;
 mod fs_writer;

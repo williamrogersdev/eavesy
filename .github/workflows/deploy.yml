@@ -20,7 +20,12 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
-      CLOUDFLARE_ACCOUNT_ID: 5bc563d42299762f9b48f5dec0531954
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      EAVESY_D1_DATABASE_ID: ${{ vars.EAVESY_D1_DATABASE_ID }}
+      EAVESY_KV_CACHE_ID: ${{ vars.EAVESY_KV_CACHE_ID }}
+      EAVESY_APP_DOMAIN: ${{ vars.EAVESY_APP_DOMAIN }}
+      EAVESY_WWW_DOMAIN: ${{ vars.EAVESY_WWW_DOMAIN }}
+      EAVESY_MCP_DOMAIN: ${{ vars.EAVESY_MCP_DOMAIN }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - name: Check deploy configuration
@@ -29,6 +34,9 @@ jobs:
         run: |
           missing=0
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::Secret CLOUDFLARE_API_TOKEN is not set (docs/DEPLOY.md)"; missing=1; fi
+          for v in CLOUDFLARE_ACCOUNT_ID EAVESY_D1_DATABASE_ID EAVESY_KV_CACHE_ID EAVESY_APP_DOMAIN; do
+            if [ -z "$(printenv $v)" ]; then echo "::error::Variable $v is not set (docs/SELF_HOSTING.md)"; missing=1; fi
+          done
           if [ -z "$CLERK_PK" ]; then echo "::error::Variable VITE_CLERK_PUBLISHABLE_KEY is not set (docs/DEPLOY.md)"; missing=1; fi
           exit $missing
 
@@ -41,6 +49,9 @@ jobs:
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
 
+      - name: Render Wrangler configs
+        run: node scripts/render-wrangler.mjs
+
       - name: Write web/.env.production
         env:
           CLERK_PK: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
@@ -48,7 +59,7 @@ jobs:
         run: |
           {
             echo "VITE_CLERK_PUBLISHABLE_KEY=$CLERK_PK"
-            echo "VITE_APP_URL=https://eavesy.com"
+            echo "VITE_APP_URL=https://$EAVESY_APP_DOMAIN"
             echo "VITE_CLERK_SIGN_IN_URL=/sign-in"
             echo "VITE_CLERK_SIGN_UP_URL=/sign-up"
             echo "VITE_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app"
@@ -103,11 +114,12 @@ jobs:
             echo "::error::$url returned $status"
             return 1
           }
-          check https://eavesy.com
-          check https://www.eavesy.com
-          check https://mcp.eavesy.com
-          check https://eavesy.com/download/mac
-          check https://eavesy.com/sign-in
+          APP=https://$EAVESY_APP_DOMAIN
+          check $APP
+          if [ -n "$EAVESY_WWW_DOMAIN" ]; then check https://$EAVESY_WWW_DOMAIN; fi
+          if [ -n "$EAVESY_MCP_DOMAIN" ]; then check https://$EAVESY_MCP_DOMAIN; fi
+          check $APP/download/mac
+          check $APP/sign-in
           if grep -q "Authentication isn" /tmp/body; then
             echo "::error::/sign-in says authentication isn't configured"
             exit 1

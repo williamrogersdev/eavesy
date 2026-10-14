@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_BASE: &str = "https://eavesy.com";
-
 pub struct Client {
     base: String,
     session_token: Option<String>,
@@ -9,7 +7,7 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Self {
-        let base = std::env::var("EAVESY_API_BASE").unwrap_or_else(|_| DEFAULT_BASE.to_string());
+        let base = crate::base_url::api_base();
         Self {
             base,
             session_token: None,

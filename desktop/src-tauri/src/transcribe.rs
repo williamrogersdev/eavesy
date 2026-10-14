@@ -5,14 +5,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::{fs_writer, settings, store};
 
-const DEFAULT_BASE: &str = "https://eavesy.com";
-
 fn api_base() -> String {
-    #[cfg(debug_assertions)]
-    if let Ok(base) = std::env::var("EAVESY_API_BASE") {
-        return base;
-    }
-    DEFAULT_BASE.to_string()
+    crate::base_url::api_base()
 }
 
 pub fn spawn(

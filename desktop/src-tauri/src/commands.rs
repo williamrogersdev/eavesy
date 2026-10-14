@@ -268,11 +268,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
     let cancelled = || PAIR_GENERATION.load(Ordering::SeqCst) != generation;
     let config = settings::load(app);
     let recordings_root = crate::fs_writer::recordings_root(app)?;
-    #[cfg(debug_assertions)]
-    let base = std::env::var("EAVESY_API_BASE")
-        .unwrap_or_else(|_| "https://eavesy.com".to_string());
-    #[cfg(not(debug_assertions))]
-    let base = "https://eavesy.com".to_string();
+    let base = crate::base_url::api_base();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()

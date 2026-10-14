@@ -7,6 +7,8 @@
     "dev": "cd web && bun dev",
     "build": "cd web && bun run build",
     "deploy": "cd web && bun run deploy",
+    "cf:render": "node scripts/render-wrangler.mjs",
+    "cf:restore": "node scripts/render-wrangler.mjs --restore",
     "deploy:processing": "cd workers/processing && ../../scripts/cf bunx wrangler deploy",
     "deploy:mcp": "cd workers/mcp && ../../scripts/cf bunx wrangler deploy",
     "lint": "cd web && bun run lint",

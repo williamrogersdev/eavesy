@@ -9,15 +9,10 @@ use tokio::time::sleep;
 
 use crate::{fs_writer, settings, sqlite};
 
-const DEFAULT_BASE: &str = "https://eavesy.com";
 const PART_SIZE: usize = 8 * 1024 * 1024;
 
 pub(crate) fn api_base() -> String {
-    #[cfg(debug_assertions)]
-    if let Ok(base) = std::env::var("EAVESY_API_BASE") {
-        return base.trim_end_matches('/').to_string();
-    }
-    DEFAULT_BASE.to_string()
+    crate::base_url::api_base()
 }
 
 #[derive(Deserialize)]
