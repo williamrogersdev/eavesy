@@ -141,6 +141,20 @@
       "when": 1792015277146,
       "tag": "0019_mcp_token_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792011699679,
+      "tag": "0020_cron_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792011699679,
+      "tag": "0021_activity_indexes",
+      "breakpoints": true
     }
   ]
 }

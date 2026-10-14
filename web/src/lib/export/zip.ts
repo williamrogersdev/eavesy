@@ -21,47 +21,47 @@ export interface ZipBundleInput {
   notesMd: string;
   summaryOverrideMd?: string | null;
   transcriptOverrideMd?: string | null;
-  audioOriginal?: { filename: string; data: Uint8Array; contentType: string };
+  /** `data` is omitted when the caller streams the audio itself. */
+  audioOriginal?: { filename: string; data?: Uint8Array; contentType: string };
   audioMp3?: { filename: string; data: Uint8Array };
 }
 
-export async function buildMeetingZip(input: ZipBundleInput): Promise<Uint8Array> {
-  const zip = new JSZip();
-  addMeetingFolder(zip, input);
-  return await zip.generateAsync({ type: 'uint8array' });
+export function addMeetingFolder(zip: JSZip, input: ZipBundleInput, parent = '') {
+  for (const file of meetingFolderFiles(input, parent)) zip.file(file.name, file.content);
 }
 
-export function addMeetingFolder(zip: JSZip, input: ZipBundleInput, parent = '') {
-  const folder = zip.folder(`${parent}${folderName(input.meeting)}`);
-  if (!folder) throw new Error('Failed to create zip folder');
-
-  folder.file(
-    'summary.md',
-    input.summaryOverrideMd ?? renderSummaryMd(input.meeting, input.summary),
-  );
-  folder.file(
-    'transcript.md',
-    input.transcriptOverrideMd ?? renderTranscriptMd(input.meeting, input.segments, { speakerNames: input.speakerNames, chapters: input.chapters }),
-  );
-  folder.file('notes.md', renderNotesMd(input.meeting, input.notesMd));
-  folder.file(
-    'meeting.json',
-    renderMeetingJson({
-      meeting: input.meeting,
-      summary: input.summary,
-      segments: input.segments,
-      notesMd: input.notesMd,
-      summaryOverrideMd: input.summaryOverrideMd,
-      transcriptOverrideMd: input.transcriptOverrideMd,
-    }),
-  );
-
-  if (input.audioMp3) {
-    folder.file('audio.mp3', input.audioMp3.data);
+/** The files of one meeting's export folder, named with their full path. */
+export function meetingFolderFiles(
+  input: ZipBundleInput,
+  parent = '',
+): { name: string; content: string | Uint8Array }[] {
+  const folder = `${parent}${folderName(input.meeting)}`;
+  const files: { name: string; content: string | Uint8Array }[] = [
+    { name: `${folder}/summary.md`, content: input.summaryOverrideMd ?? renderSummaryMd(input.meeting, input.summary) },
+    {
+      name: `${folder}/transcript.md`,
+      content:
+        input.transcriptOverrideMd ??
+        renderTranscriptMd(input.meeting, input.segments, { speakerNames: input.speakerNames, chapters: input.chapters }),
+    },
+    { name: `${folder}/notes.md`, content: renderNotesMd(input.meeting, input.notesMd) },
+    {
+      name: `${folder}/meeting.json`,
+      content: renderMeetingJson({
+        meeting: input.meeting,
+        summary: input.summary,
+        segments: input.segments,
+        notesMd: input.notesMd,
+        summaryOverrideMd: input.summaryOverrideMd,
+        transcriptOverrideMd: input.transcriptOverrideMd,
+      }),
+    },
+  ];
+  if (input.audioMp3) files.push({ name: `${folder}/audio.mp3`, content: input.audioMp3.data });
+  if (input.audioOriginal?.data) {
+    files.push({ name: `${folder}/${input.audioOriginal.filename}`, content: input.audioOriginal.data });
   }
-  if (input.audioOriginal) {
-    folder.file(input.audioOriginal.filename, input.audioOriginal.data);
-  }
+  return files;
 }
 
 type FullMeeting = NonNullable<Awaited<ReturnType<typeof getFull>>>;
