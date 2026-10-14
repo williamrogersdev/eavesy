@@ -43,7 +43,7 @@ export async function consumeDailyBudget(opts: {
   name: string;
   limit: number;
   failMode: FailMode;
-}): Promise<{ allowed: boolean }> {
+}): Promise<RateLimitResult> {
   return consumeRateLimit(db(), { key: `budget:${opts.name}`, limit: opts.limit, windowSec: DAY_SEC, failMode: opts.failMode });
 }
 
@@ -71,11 +71,25 @@ export async function guardSpend(
   if (!rl.allowed) return tooMany('Too many requests. Please slow down and try again shortly.', rl.retryAfterSec);
 
   const budget = await consumeDailyBudget({ name: scope, limit: perDay, failMode: 'closed' });
+  if (budget.allowed) warnAtSpendThresholds(scope, perDay - budget.remaining, perDay);
   if (!budget.allowed) {
     return tooMany('Daily free transcription capacity has been reached. Please try again tomorrow.', 3600);
   }
 
   return null;
+}
+
+const SPEND_WARNING_PERCENTS = [50, 80, 100] as const;
+
+/**
+ * The global budget locks every user out until midnight UTC once it runs out,
+ * so log a structured line as it fills up for alerting. The counter is exact
+ * and moves by one, so each threshold is crossed (and logged) once a day.
+ */
+function warnAtSpendThresholds(scope: string, used: number, limit: number) {
+  const percent = SPEND_WARNING_PERCENTS.find((p) => used === Math.ceil((limit * p) / 100));
+  if (percent === undefined) return;
+  console.warn(JSON.stringify({ message: 'spend budget threshold reached', scope, percent, used, limit }));
 }
 
 /**

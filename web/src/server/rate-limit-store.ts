@@ -70,13 +70,22 @@ export async function consumeRateLimit(
   }
 }
 
-/** Drops expired windows; called from the hourly cron. */
-export async function pruneRateLimits(db: D1Database, now = Date.now()): Promise<void> {
-  await db
-    .prepare(
-      `DELETE FROM rate_limits
-        WHERE key IN (SELECT key FROM rate_limits WHERE expires_at < ? LIMIT 10000)`,
-    )
-    .bind(now)
-    .run();
+const PRUNE_BATCH = 10_000;
+const PRUNE_MAX_PASSES = 100;
+
+/**
+ * Drops expired windows in batches until a pass comes up short; called from
+ * the hourly cron. The pass cap bounds one run; anything left waits an hour.
+ */
+export async function pruneRateLimits(db: D1Database, now = Date.now(), batch = PRUNE_BATCH): Promise<void> {
+  for (let pass = 0; pass < PRUNE_MAX_PASSES; pass++) {
+    const result = await db
+      .prepare(
+        `DELETE FROM rate_limits
+          WHERE key IN (SELECT key FROM rate_limits WHERE expires_at < ? LIMIT ?)`,
+      )
+      .bind(now, batch)
+      .run();
+    if (result.meta.changes < batch) return;
+  }
 }

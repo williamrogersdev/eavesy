@@ -118,6 +118,23 @@ Override a default without a deploy by setting a Worker variable:
 `RL_<SCOPE>_PER_WINDOW` (for example `RL_SESSION_CREATE_PER_WINDOW`),
 `RL_TRANSCRIBE_PER_MIN`, or `BUDGET_TRANSCRIBE_PER_DAY`.
 
+### Global spend budget alerts
+
+The transcribe and process day budgets are shared by every user. They are the
+owner's cap on AI spend, and once one runs out, **every** caller of that route
+gets a 429 until midnight UTC. The counter is exact, so the cap really bites.
+As it fills, the Worker logs one structured warning per threshold per day:
+
+```json
+{"message":"spend budget threshold reached","scope":"transcribe","percent":80,"used":4000,"limit":5000}
+```
+
+`percent` is 50, 80, or 100. Alert on `percent >= 80`. At that point, decide
+whether to raise `BUDGET_<SCOPE>_PER_DAY` for the rest of the day.
+
+The hourly cron deletes expired windows 10,000 at a time until a pass deletes
+fewer, capped at 100 passes per run.
+
 ## Recovery
 
 1. Identify the failed job from Worker logs and aggregate failed/stuck metrics

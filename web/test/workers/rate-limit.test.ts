@@ -1,9 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import type { D1Database } from '@cloudflare/workers-types';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consumeRateLimit, pruneRateLimits } from '../../src/server/rate-limit-store';
-import { guardUserQuota } from '../../src/server/rate-limit';
+import { guardSpend, guardUserQuota } from '../../src/server/rate-limit';
 import { Route as SessionsRoute } from '../../src/routes/api/sessions/index';
 
 interface TestEnv {
@@ -109,6 +109,40 @@ describe('rate limiting', () => {
     await pruneRateLimits(testEnv.DB, now);
     const keys = await testEnv.DB.prepare('SELECT key FROM rate_limits').all<{ key: string }>();
     expect(keys.results.map((row) => row.key)).toEqual(['live:1']);
+  });
+
+  it('keeps pruning until a pass deletes less than a full batch', async () => {
+    const now = Date.now();
+    await testEnv.DB.batch(
+      Array.from({ length: 25 }, (_, i) =>
+        testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1, ?)').bind(`old:${i}`, now - 1),
+      ),
+    );
+    await pruneRateLimits(testEnv.DB, now, 10);
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM rate_limits').first<{ n: number }>()).toEqual({ n: 0 });
+  });
+
+  it('warns once each at 50%, 80% and 100% of the global spend budget', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 11; i++) {
+        const request = new Request('https://eavesy.test/api/transcribe', { headers: { 'cf-connecting-ip': `10.0.0.${i}` } });
+        statuses.push((await guardSpend(request, 'transcribe', { perMin: 5, perDay: 10 }))?.status ?? 200);
+      }
+      expect(statuses.filter((status) => status === 200)).toHaveLength(10);
+      expect(statuses[10]).toBe(429);
+      const logged = warn.mock.calls
+        .map(([line]) => (typeof line === 'string' ? (JSON.parse(line) as Record<string, unknown>) : null))
+        .filter((line) => line?.message === 'spend budget threshold reached');
+      expect(logged).toEqual([
+        { message: 'spend budget threshold reached', scope: 'transcribe', percent: 50, used: 5, limit: 10 },
+        { message: 'spend budget threshold reached', scope: 'transcribe', percent: 80, used: 8, limit: 10 },
+        { message: 'spend budget threshold reached', scope: 'transcribe', percent: 100, used: 10, limit: 10 },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
