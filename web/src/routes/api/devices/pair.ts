@@ -8,7 +8,7 @@ import { sha256Hex } from '@/server/device-auth';
 import { registerDevice } from '@/server/pair-device';
 import { sameNetwork } from '@/lib/http/same-network';
 import { pairingOrigin } from '@/server/pairing-origin';
-import { clientIp } from '@/server/rate-limit';
+import { clientIp, guardBurst } from '@/server/rate-limit';
 import * as activityRepo from '@/db/repo/activity';
 
 const pairSchema = z.union([
@@ -24,11 +24,14 @@ export const Route = createFileRoute('/api/devices/pair')({
   server: {
     handlers: {
       GET: async ({ request }) => {
+        let actor;
         try {
-          await resolveActor();
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'device-pair-check');
+        if (limited) return limited;
         const code = new URL(request.url).searchParams.get('code')?.trim() ?? '';
         if (code.length < 6 || code.length > 20) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const codeHash = await sha256Hex(code.toUpperCase());
@@ -61,6 +64,8 @@ export const Route = createFileRoute('/api/devices/pair')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'device-pair');
+        if (limited) return limited;
         const parsed = pairSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });

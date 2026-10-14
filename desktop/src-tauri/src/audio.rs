@@ -273,6 +273,7 @@ fn spawn_capture(
     };
 
     let log = captures_dir(app).ok().and_then(|dir| {
+        rotate_log(&dir.join("capture.log"));
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -469,6 +470,7 @@ fn stream_events(
                         if let Err(error) = crate::sqlite::record_segment(&app, &session_id, &segment) {
                             eprintln!("could not queue segment {index}: {error}");
                         } else {
+                            crate::sync::wake();
                             let _ = app.emit("recording:segment", index);
                         }
                     }
@@ -646,6 +648,7 @@ fn salvage_after_failed_stop(app: &AppHandle, session_id: &str, error: String) -
         }
         Err(()) => format!("{error}. Eavesy will finish saving it as soon as it can."),
     };
+    crate::sync::wake();
     if let Err(emit_error) = app.emit("recordings:updated", ()) {
         eprintln!("could not announce recovered recording: {emit_error}");
     }
@@ -739,6 +742,7 @@ fn finish_stopped_capture(
             (duration_sec * 1000.0).round() as i64,
             archive_bytes,
         )?;
+        crate::sync::wake();
     }
 
     crate::commands::show_launcher(app.clone());
@@ -867,6 +871,18 @@ pub fn capture_state(state: State<'_, Captures>) -> CaptureState {
     }
 }
 
+/// The capture engine appends its stderr to capture.log for every recording; keep
+/// one previous generation once it passes `CAPTURE_LOG_LIMIT` instead of growing forever.
+const CAPTURE_LOG_LIMIT: u64 = 5 * 1024 * 1024;
+
+fn rotate_log(path: &std::path::Path) {
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > CAPTURE_LOG_LIMIT) {
+        if let Err(error) = std::fs::rename(path, path.with_extension("log.1")) {
+            eprintln!("could not rotate {}: {error}", path.display());
+        }
+    }
+}
+
 fn default_title(source: &str, is_screen: bool) -> String {
     if is_screen {
         "Screen recording".to_string()
@@ -897,6 +913,21 @@ fn reap_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_log_is_rotated_once_it_is_large() {
+        let dir = std::env::temp_dir().join(format!("eavesy-log-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("capture.log");
+        std::fs::write(&log, b"small").unwrap();
+        rotate_log(&log);
+        assert!(log.exists());
+        std::fs::write(&log, vec![b'x'; CAPTURE_LOG_LIMIT as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert!(!log.exists());
+        assert!(dir.join("capture.log.1").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn stop_timeout_is_an_error_not_an_empty_success() {

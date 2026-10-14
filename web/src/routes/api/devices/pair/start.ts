@@ -27,6 +27,7 @@ export const Route = createFileRoute('/api/devices/pair/start')({
           key: `device-pair:${clientIp(request)}`,
           limit: 10,
           windowSec: 60,
+          failMode: 'closed',
         });
         if (!limited.allowed) {
           return Response.json(

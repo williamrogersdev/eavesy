@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { meetings } from '@/db/schema';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { resolveIngestActor } from '@/server/device-auth';
+import { guardBurst } from '@/server/rate-limit';
 
 const createSessionSchema = z.object({
   clientSessionId: z.string().uuid(),
@@ -25,6 +26,8 @@ export const Route = createFileRoute('/api/sessions/')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'session-create');
+        if (limited) return limited;
 
         const parsed = createSessionSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {

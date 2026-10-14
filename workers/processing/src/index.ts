@@ -19,6 +19,7 @@ import {
   type ProcessingEnv,
   type ProcessingMessage,
 } from '../../../web/src/server/processing-worker';
+import { pruneRateLimits } from '../../../web/src/server/rate-limit-store';
 
 export interface Env extends ProcessingEnv {
   DB: D1Database;
@@ -132,6 +133,7 @@ export const worker = {
     }
     await recoverStaleSegments(env, now);
     await purgeDeleted(env, now);
+    await pruneRateLimits(env.DB, now);
     await sealLegacyKeys(env);
     await rollupOperationalMetrics(env, now);
   },

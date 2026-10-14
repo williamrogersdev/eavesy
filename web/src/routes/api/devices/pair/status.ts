@@ -16,6 +16,7 @@ export const Route = createFileRoute('/api/devices/pair/status')({
           key: `device-pair-status:${clientIp(request)}`,
           limit: 60,
           windowSec: 60,
+          failMode: 'closed',
         });
         if (!limited.allowed) return Response.json({ error: 'rate_limited' }, { status: 429 });
         const parsed = bodySchema.safeParse(await request.json().catch(() => null));

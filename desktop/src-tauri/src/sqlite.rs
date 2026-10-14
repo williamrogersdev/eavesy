@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -90,8 +91,31 @@ fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(dir.join("eavesy.sqlite3"))
 }
 
-fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Connection, String> {
-    let conn = Connection::open(db_path(app)?).map_err(|e| format!("open local database: {e}"))?;
+/// One connection per database file for the life of the process, shared behind a
+/// mutex. Opening (and re-running the pragmas) on every call cost a file open and
+/// several syscalls per query on the sync loop's hot path.
+///
+/// Never call `open` while holding the guard it returns: the mutex is not reentrant.
+fn open<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, Connection>, String> {
+    static CONNECTIONS: Mutex<Vec<(PathBuf, &'static Mutex<Connection>)>> = Mutex::new(Vec::new());
+    let path = db_path(app)?;
+    let shared = {
+        let mut connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        match connections.iter().find(|(open_path, _)| *open_path == path) {
+            Some((_, shared)) => *shared,
+            None => {
+                // Leaked deliberately: the app has one database; tests have one per run.
+                let shared: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(connect(&path)?)));
+                connections.push((path, shared));
+                shared
+            }
+        }
+    };
+    Ok(shared.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+fn connect(path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| format!("open local database: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("configure local database: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL")
@@ -104,7 +128,7 @@ fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Connection, String> {
 /// Direct access to the local database for tests that set up or inspect state.
 #[cfg(test)]
 pub(crate) fn with_conn<R: Runtime, T>(app: &AppHandle<R>, f: impl FnOnce(&Connection) -> T) -> T {
-    f(&open(app).unwrap())
+    f(&*open(app).unwrap())
 }
 
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -112,6 +136,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     migrate(&conn)?;
     retry_context_rejections(&conn)?;
     retry_unauthorized_segments(&conn)?;
+    prune_done_operations(&conn, chrono::Utc::now().timestamp_millis())?;
     drop(conn);
     recover_interrupted(app)
 }
@@ -127,6 +152,18 @@ fn retry_unauthorized_segments(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|error| format!("requeue segments refused while signed out: {error}"))?;
+    Ok(())
+}
+
+/// Synced external edits are only kept for a week, for diagnostics.
+const DONE_OPERATION_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+
+fn prune_done_operations(conn: &Connection, now: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM pending_operations WHERE status='done' AND COALESCE(last_attempt_at, created_at) < ?1",
+        params![now - DONE_OPERATION_RETENTION_MS],
+    )
+    .map_err(|error| format!("prune synced edits: {error}"))?;
     Ok(())
 }
 
@@ -356,7 +393,7 @@ pub fn begin_recording<R: Runtime>(
 }
 
 pub fn record_segment<R: Runtime>(app: &AppHandle<R>, session_id: &str, segment: &SegmentManifest) -> Result<(), String> {
-    record_segment_on(&open(app)?, session_id, segment, chrono::Utc::now().timestamp_millis())
+    record_segment_on(&*open(app)?, session_id, segment, chrono::Utc::now().timestamp_millis())
 }
 
 pub fn finish_recording<R: Runtime>(
@@ -379,7 +416,7 @@ pub fn finish_recording<R: Runtime>(
 }
 
 pub fn next_session<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PendingSession>, String> {
-    next_session_on(&open(app)?, chrono::Utc::now().timestamp_millis())
+    next_session_on(&*open(app)?, chrono::Utc::now().timestamp_millis())
 }
 
 pub fn defer_session<R: Runtime>(app: &AppHandle<R>, id: &str, delay_ms: i64, error: Option<&str>) -> Result<(), String> {
@@ -512,6 +549,34 @@ pub fn mark_complete<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), Str
             params![id, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|e| format!("mark session complete: {e}"))?;
+    let session: Option<(Option<String>, bool)> = open(app)?
+        .query_row(
+            "SELECT segment_dir, archive_missing FROM recording_sessions WHERE id=?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("find completed session's segments: {e}"))?;
+    // Segments are the only local audio of a session finished without its archive:
+    // keep them. Otherwise the archive (validated before upload) holds the same
+    // audio, so the per-capture folder `<captures>/<id>/segments` is removed whole.
+    let segment_dir = match session {
+        Some((segment_dir, false)) => segment_dir,
+        _ => None,
+    };
+    let capture_dir = segment_dir
+        .as_deref()
+        .map(Path::new)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == "segments"))
+        .and_then(Path::parent)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == id));
+    if let Some(capture_dir) = capture_dir {
+        if let Err(error) = std::fs::remove_dir_all(capture_dir) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("could not remove capture folder {}: {error}", capture_dir.display());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -556,6 +621,64 @@ mod tests {
         session(&conn, "old", "processing", 1, 0);
         session(&conn, "new", "uploading", 2, 0);
         assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "new");
+    }
+
+    fn segment(conn: &Connection, session_id: &str, idx: i64) {
+        let manifest: SegmentManifest = serde_json::from_value(serde_json::json!({
+            "path": format!("/{session_id}-{idx}.m4a"), "index": idx,
+            "startMs": idx * 240_000, "durationMs": 240_000, "bytes": 10,
+        }))
+        .unwrap();
+        record_segment_on(conn, session_id, &manifest, 0).unwrap();
+    }
+
+    fn archive(conn: &Connection, id: &str, bytes: i64, offset: i64) {
+        conn.execute(
+            "UPDATE recording_sessions SET archive_bytes=?2, next_archive_offset=?3 WHERE id=?1",
+            params![id, bytes, offset],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_live_segment_goes_before_an_older_sessions_archive_parts() {
+        let conn = db();
+        session(&conn, "old-meeting", "uploading", 1, 0);
+        archive(&conn, "old-meeting", 900 * 1024 * 1024, 8 * 1024 * 1024);
+        session(&conn, "live", "recording", 2, 0);
+        segment(&conn, "live", 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+
+        conn.execute("UPDATE recording_segments SET status='uploaded'", []).unwrap();
+        // With nothing to upload, the live session's result poll still goes first.
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+    }
+
+    #[test]
+    fn a_just_stopped_note_is_not_queued_behind_a_long_archive() {
+        let conn = db();
+        session(&conn, "old-meeting", "uploading", 1, 0);
+        archive(&conn, "old-meeting", 900 * 1024 * 1024, 16 * 1024 * 1024);
+        session(&conn, "dictation", "uploading", 2, 0);
+        archive(&conn, "dictation", 40 * 1024, 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "dictation");
+    }
+
+    #[test]
+    fn a_new_segment_wakes_a_parked_live_session() {
+        let conn = db();
+        session(&conn, "live", "recording", 1, 10_000);
+        assert!(next_session_on(&conn, 100).unwrap().is_none());
+        segment(&conn, "live", 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+    }
+
+    #[test]
+    fn a_new_segment_does_not_reopen_a_finished_session() {
+        let conn = db();
+        session(&conn, "done", "uploading", 1, 10_000);
+        segment(&conn, "done", 0);
+        assert!(next_session_on(&conn, 100).unwrap().is_none());
     }
 
     #[test]
@@ -1018,7 +1141,7 @@ mod recovery_tests {
         /// the sync loop is not involved).
         fn capture(&self, id: &str, segments: i64) -> PathBuf {
             let folder = self.root.join(id);
-            let segment_dir = self.root.join("capture").join(id);
+            let segment_dir = self.root.join("capture").join(id).join("segments");
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::create_dir_all(&segment_dir).unwrap();
             let archive = folder.join("audio.m4a");
@@ -1205,6 +1328,62 @@ mod recovery_tests {
     }
 
     #[test]
+    fn segments_are_kept_until_a_session_completes_with_its_archive() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("meeting", 2);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+        fixture.restart();
+        let capture_dir = fixture.root.join("capture").join("meeting");
+        let first = next_segment(fixture.handle(), "meeting").unwrap().unwrap();
+
+        mark_segment_uploaded(fixture.handle(), &first).unwrap();
+        assert!(first.file_path.exists(), "uploaded segments stay until the session completes");
+
+        mark_complete(fixture.handle(), "meeting").unwrap();
+        assert!(!capture_dir.exists());
+    }
+
+    #[test]
+    fn segments_of_a_session_without_its_archive_are_never_removed() {
+        let mut fixture = Fixture::new();
+        fixture.capture("lost-archive", 2);
+        fixture.restart();
+        assert!(fixture.status("lost-archive").1);
+        let capture_dir = fixture.root.join("capture").join("lost-archive");
+        let first = next_segment(fixture.handle(), "lost-archive").unwrap().unwrap();
+
+        mark_segment_uploaded(fixture.handle(), &first).unwrap();
+        mark_complete(fixture.handle(), "lost-archive").unwrap();
+
+        assert!(first.file_path.exists());
+        assert!(capture_dir.join("segments").join("segment-000001-mixed.m4a").exists());
+    }
+
+    #[test]
+    fn synced_edits_are_pruned_after_a_week() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let day = 24 * 60 * 60 * 1_000;
+        for (id, status, at) in [("old", "done", 0), ("recent", "done", 6 * day), ("stuck", "failed", 0)] {
+            conn.execute(
+                "INSERT INTO pending_operations (id, operation_type, payload_json, attempts, last_attempt_at, created_at, status)
+                 VALUES (?1, 'file-edit', '{}', 0, ?2, ?2, ?3)",
+                params![id, at, status],
+            )
+            .unwrap();
+        }
+        prune_done_operations(&conn, 8 * day).unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT id FROM pending_operations ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, ["recent", "stuck"]);
+    }
+
+    #[test]
     fn unknown_existing_file_is_compared_with_legacy_baseline() {
         assert_eq!(
             classify_observation(None, "generated", Some("generated")),
@@ -1311,6 +1490,12 @@ fn record_segment_on(conn: &Connection, session_id: &str, segment: &SegmentManif
         ],
     )
     .map_err(|e| format!("persist recording segment: {e}"))?;
+    // A live session parked between result polls has new work now.
+    conn.execute(
+        "UPDATE recording_sessions SET next_attempt_at=0 WHERE id=?1 AND status='recording'",
+        params![session_id],
+    )
+    .map_err(|e| format!("wake recording session: {e}"))?;
     Ok(())
 }
 
@@ -1322,7 +1507,19 @@ fn next_session_on(conn: &Connection, now: i64) -> Result<Option<PendingSession>
              FROM recording_sessions
              WHERE status IN ('recording','uploading','finalizing','processing')
                AND next_attempt_at <= ?1
-             ORDER BY status = 'processing', started_at LIMIT 1",
+             ORDER BY
+               -- Segments first: they feed the live transcript and are small.
+               EXISTS (SELECT 1 FROM recording_segments s
+                       WHERE s.session_id = recording_sessions.id
+                         AND s.status IN ('pending','failed') AND s.gave_up = 0
+                         AND s.next_attempt_at <= ?1) DESC,
+               status = 'recording' DESC,
+               status = 'processing',
+               -- Then the archive with the least left to send, so a short note that
+               -- just stopped is not queued behind an old meeting's 8 MiB parts.
+               max(COALESCE(archive_bytes, 0) - next_archive_offset, 0),
+               started_at
+             LIMIT 1",
             params![now],
             |row| {
                 Ok(PendingSession {
