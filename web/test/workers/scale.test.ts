@@ -136,7 +136,7 @@ describe('hourly cron', () => {
         .all<{ detail: string }>();
       for (const { detail } of plan.results) {
         // A scan of a partial index only visits the rows it covers.
-        if (/USING (COVERING )?INDEX \w+_(deleted|byo_keys)_idx/.test(detail)) continue;
+        if (/USING (COVERING )?INDEX \w+_(deleted|byo_keys|processing)_idx/.test(detail)) continue;
         const scanned = /^SCAN (\w+)/.exec(detail)?.[1];
         if (scanned && BIG_TABLES.includes(scanned)) scans.push(`${detail}\n    in: ${sql.replace(/\s+/g, ' ').slice(0, 160)}`);
       }
