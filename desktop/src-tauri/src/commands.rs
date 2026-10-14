@@ -338,6 +338,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         if status.status == "paired" {
             let token = status.token.ok_or("pairing completed without a credential")?;
             settings::save_device_token(app, &token)?;
+            crate::sync::wake();
             return Ok(());
         }
     }

@@ -558,6 +558,64 @@ mod tests {
         assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "new");
     }
 
+    fn segment(conn: &Connection, session_id: &str, idx: i64) {
+        let manifest: SegmentManifest = serde_json::from_value(serde_json::json!({
+            "path": format!("/{session_id}-{idx}.m4a"), "index": idx,
+            "startMs": idx * 240_000, "durationMs": 240_000, "bytes": 10,
+        }))
+        .unwrap();
+        record_segment_on(conn, session_id, &manifest, 0).unwrap();
+    }
+
+    fn archive(conn: &Connection, id: &str, bytes: i64, offset: i64) {
+        conn.execute(
+            "UPDATE recording_sessions SET archive_bytes=?2, next_archive_offset=?3 WHERE id=?1",
+            params![id, bytes, offset],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_live_segment_goes_before_an_older_sessions_archive_parts() {
+        let conn = db();
+        session(&conn, "old-meeting", "uploading", 1, 0);
+        archive(&conn, "old-meeting", 900 * 1024 * 1024, 8 * 1024 * 1024);
+        session(&conn, "live", "recording", 2, 0);
+        segment(&conn, "live", 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+
+        conn.execute("UPDATE recording_segments SET status='uploaded'", []).unwrap();
+        // With nothing to upload, the live session's result poll still goes first.
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+    }
+
+    #[test]
+    fn a_just_stopped_note_is_not_queued_behind_a_long_archive() {
+        let conn = db();
+        session(&conn, "old-meeting", "uploading", 1, 0);
+        archive(&conn, "old-meeting", 900 * 1024 * 1024, 16 * 1024 * 1024);
+        session(&conn, "dictation", "uploading", 2, 0);
+        archive(&conn, "dictation", 40 * 1024, 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "dictation");
+    }
+
+    #[test]
+    fn a_new_segment_wakes_a_parked_live_session() {
+        let conn = db();
+        session(&conn, "live", "recording", 1, 10_000);
+        assert!(next_session_on(&conn, 100).unwrap().is_none());
+        segment(&conn, "live", 0);
+        assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "live");
+    }
+
+    #[test]
+    fn a_new_segment_does_not_reopen_a_finished_session() {
+        let conn = db();
+        session(&conn, "done", "uploading", 1, 10_000);
+        segment(&conn, "done", 0);
+        assert!(next_session_on(&conn, 100).unwrap().is_none());
+    }
+
     #[test]
     fn deferred_session_steps_aside_until_due() {
         let conn = db();
@@ -1311,6 +1369,12 @@ fn record_segment_on(conn: &Connection, session_id: &str, segment: &SegmentManif
         ],
     )
     .map_err(|e| format!("persist recording segment: {e}"))?;
+    // A live session parked between result polls has new work now.
+    conn.execute(
+        "UPDATE recording_sessions SET next_attempt_at=0 WHERE id=?1 AND status='recording'",
+        params![session_id],
+    )
+    .map_err(|e| format!("wake recording session: {e}"))?;
     Ok(())
 }
 
@@ -1322,7 +1386,19 @@ fn next_session_on(conn: &Connection, now: i64) -> Result<Option<PendingSession>
              FROM recording_sessions
              WHERE status IN ('recording','uploading','finalizing','processing')
                AND next_attempt_at <= ?1
-             ORDER BY status = 'processing', started_at LIMIT 1",
+             ORDER BY
+               -- Segments first: they feed the live transcript and are small.
+               EXISTS (SELECT 1 FROM recording_segments s
+                       WHERE s.session_id = recording_sessions.id
+                         AND s.status IN ('pending','failed') AND s.gave_up = 0
+                         AND s.next_attempt_at <= ?1) DESC,
+               status = 'recording' DESC,
+               status = 'processing',
+               -- Then the archive with the least left to send, so a short note that
+               -- just stopped is not queued behind an old meeting's 8 MiB parts.
+               max(COALESCE(archive_bytes, 0) - next_archive_offset, 0),
+               started_at
+             LIMIT 1",
             params![now],
             |row| {
                 Ok(PendingSession {
