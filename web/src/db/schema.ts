@@ -385,6 +385,8 @@ export const mcpTokens = sqliteTable(
     createdAt: integer('created_at').notNull(),
     lastUsedAt: integer('last_used_at'),
     revokedAt: integer('revoked_at'),
+    expiresAt: integer('expires_at'),
+    pathAuthUsedAt: integer('path_auth_used_at'),
   },
   (t) => [
     index('mcp_tokens_user_idx').on(t.userId),
