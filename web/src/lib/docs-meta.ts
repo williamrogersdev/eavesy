@@ -1,7 +1,7 @@
 import {
   BookOpen,
   Bot,
-  CreditCard,
+  ShieldCheck,
   LifeBuoy,
   Plug,
   Rocket,
@@ -31,9 +31,9 @@ const CATEGORY_META: Record<string, CategoryMeta> = {
     icon: Plug,
     blurb: 'Use Eavesy with your calls, notes apps, and in-person conversations.',
   },
-  'Accounts & billing': {
-    icon: CreditCard,
-    blurb: 'Plans, the data you own, and the controls you have over it.',
+  'Account & data': {
+    icon: ShieldCheck,
+    blurb: 'Fair-use limits, the data you own, and the controls you have over it.',
   },
   Help: {
     icon: LifeBuoy,

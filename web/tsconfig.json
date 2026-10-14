@@ -19,5 +19,5 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
-  "exclude": ["node_modules", "dist", ".wrangler", "**/*.test.ts", "src/**/testing/**", "bench/**"]
+  "exclude": ["node_modules", "dist", ".wrangler", "**/*.test.ts", "src/**/testing/**", "test/workers/**", "bench/**"]
 }
