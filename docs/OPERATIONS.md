@@ -80,6 +80,44 @@ Suggested launch thresholds:
   `processing_ms_max`;
 - investigate a rise in `average_first_transcript_ms`: live notes are late.
 
+## Rate limits and quotas
+
+Every limit is a fixed-window counter in the D1 `rate_limits` table
+(`web/src/server/rate-limit-store.ts`). One `INSERT … ON CONFLICT DO UPDATE …
+WHERE count < limit RETURNING count` statement admits and counts each request,
+so concurrent requests cannot over-admit. The old KV counter could, because it
+read, then wrote. The hourly cron deletes expired windows.
+
+D1 was chosen over a Durable Object because every Worker that needs a limit
+(web, MCP) is already bound to it, the limit stays atomic without a new class,
+binding, or Wrangler migration, self-hosters get it for free, and the worker
+tests exercise it against real D1. The cost is one D1 write per limited request.
+If that write volume ever competes with app traffic, move
+`consumeRateLimit` onto a Durable Object keyed by the limit key; callers don't
+change.
+
+When the counter can't be reached, each limit either fails **open** (allows the
+request) or **closed** (returns 429). Failures are logged as
+`rate limit store unavailable`.
+
+| Limit | Window | Default | Fails | Why |
+|---|---|---|---|---|
+| Segment uploads (per user) | day | 600 | open | Live recording audio; the desktop app retries anyway |
+| Session create / part / finalize (per user) | minute | 30 / 120 / 30 | open | Same: refusing ingest during an outage drops recordings |
+| Transcribe, process (per IP + global day budget) | minute / day | 20 & 5000, 10 & 2000 | closed | AI spend |
+| Transcribe, process, dictation, capture, chat, regenerate, search (per user) | day | 300, 100, 500, 300, 300, 60, 1000 | closed | AI spend |
+| Account export (per user) | day | 10 | closed | Large downloads |
+| Meeting zip export (per user) | minute / day | 10 / 200 | closed | Large downloads |
+| Device pairing claim / code check (per user) | minute | 10 / 30 | closed | Stops pairing codes from being guessed |
+| Pairing start / status (per IP) | minute | 10 / 60 | closed | Same |
+| Contact form (per IP) | 10 minutes | 5 | closed | Spam |
+| MCP requests (per token) | minute | 120 | open | Read-only and authenticated; D1 down means MCP is down anyway |
+
+Override a default without a deploy by setting a Worker variable:
+`QUOTA_<SCOPE>_PER_DAY` (for example `QUOTA_MEETING_EXPORT_PER_DAY`),
+`RL_<SCOPE>_PER_WINDOW` (for example `RL_SESSION_CREATE_PER_WINDOW`),
+`RL_TRANSCRIBE_PER_MIN`, or `BUDGET_TRANSCRIBE_PER_DAY`.
+
 ## Recovery
 
 1. Identify the failed job from Worker logs and aggregate failed/stuck metrics

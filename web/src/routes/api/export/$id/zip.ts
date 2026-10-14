@@ -6,6 +6,7 @@ import { buildMeetingZip, zipInputFor } from '@/lib/export/zip';
 import { folderName } from '@/lib/export/meeting-folder';
 import { resolveActor } from '@/server/auth';
 import { getAudio } from '@/server/r2';
+import { guardBurst, guardUserQuota } from '@/server/rate-limit';
 
 export const Route = createFileRoute('/api/export/$id/zip')({
   server: {
@@ -29,6 +30,11 @@ export const Route = createFileRoute('/api/export/$id/zip')({
           userId: actor.userId,
         });
         if (!data) return Response.json({ error: 'not found' }, { status: 404 });
+
+        const limited =
+          (await guardBurst(actor.userId, 'meeting-export')) ??
+          (await guardUserQuota(actor.userId, 'meeting-export'));
+        if (limited) return limited;
 
         const { meeting } = data;
 

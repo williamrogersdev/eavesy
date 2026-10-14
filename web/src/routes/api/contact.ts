@@ -16,7 +16,7 @@ export const Route = createFileRoute('/api/contact')({
   server: {
     handlers: {
       POST: async ({ request }): Promise<Response> => {
-        const limited = await rateLimit({ key: `contact:${clientIp(request)}`, limit: 5, windowSec: 600 });
+        const limited = await rateLimit({ key: `contact:${clientIp(request)}`, limit: 5, windowSec: 600, failMode: 'closed' });
         if (!limited.allowed) {
           return Response.json(
             { ok: false, error: 'Too many messages. Please try again later.' },

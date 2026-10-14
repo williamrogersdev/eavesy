@@ -518,3 +518,13 @@ export const productMetricsDaily = sqliteTable('product_metrics_daily', {
   estimatedAiCostMicrousd: integer('estimated_ai_cost_microusd').notNull().default(0),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const rateLimits = sqliteTable(
+  'rate_limits',
+  {
+    key: text('key').primaryKey(),
+    count: integer('count').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [index('rate_limits_expires_idx').on(t.expiresAt)],
+);
