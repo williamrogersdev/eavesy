@@ -15,12 +15,14 @@ mod dictation;
 mod make_room;
 mod panel;
 mod placement;
+mod recovery;
 mod settings;
 mod store;
 mod sync;
 mod sqlite;
 mod transcribe;
 mod tray;
+mod ui;
 mod updates;
 
 use tauri::Manager;
@@ -79,6 +81,7 @@ pub fn run() {
             commands::open_keyboard_settings,
             commands::set_panel_pinned,
             commands::get_hud_state,
+            commands::sync_status,
             commands::show_settings,
             commands::pair_device,
             commands::show_launcher,

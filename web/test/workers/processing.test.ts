@@ -876,6 +876,62 @@ describe('desktop ingest replay safety', () => {
     const replayedArchive = await testEnv.AUDIO_BUCKET.get(archiveKey);
     expect(Array.from(new Uint8Array(await replayedArchive!.arrayBuffer()))).toEqual([4, 5, 6, 7, 8]);
   });
+
+  it('finalizes from uploaded segments when the desktop archive was lost', async () => {
+    const rawToken = await insertDeviceActor('user_segments_only', 'device_segments_only');
+    await insertMeeting({ id: 'meet_segments_only', userId: 'user_segments_only', status: 'uploading' });
+    await insertSegment({ id: 'mseg_so_0', meetingId: 'meet_segments_only', idx: 0, offsetMs: 0 });
+    await insertSegment({ id: 'mseg_so_1', meetingId: 'meet_segments_only', idx: 1, offsetMs: 3_000 });
+
+    const first = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_only', rawToken),
+      params: { id: 'meet_segments_only' },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ ok: true, status: 'processing' });
+    const meeting = await row<{ status: string; audio_r2_key: string | null; ended_at: number | null }>(
+      'SELECT status, audio_r2_key, ended_at FROM meetings WHERE id = ?',
+      'meet_segments_only',
+    );
+    expect(meeting?.status).toBe('processing');
+    expect(meeting?.audio_r2_key).toBeNull();
+    expect(meeting?.ended_at).toBeGreaterThan(0);
+    expect(
+      await row<{ count: number }>(
+        'SELECT count(*) AS count FROM meeting_uploads WHERE meeting_id = ?',
+        'meet_segments_only',
+      ),
+    ).toEqual({ count: 0 });
+
+    const replay = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_only', rawToken),
+      params: { id: 'meet_segments_only' },
+    });
+    expect(await replay.json()).toMatchObject({ ok: true, idempotent: true, status: 'processing' });
+  });
+
+  it('refuses a segments-only finalize with nothing uploaded or with a body', async () => {
+    const rawToken = await insertDeviceActor('user_segments_none', 'device_segments_none');
+    await insertMeeting({ id: 'meet_segments_none', userId: 'user_segments_none', status: 'recording' });
+
+    const empty = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_none', rawToken),
+      params: { id: 'meet_segments_none' },
+    });
+    expect(empty.status).toBe(409);
+    expect(await empty.json()).toEqual({ error: 'no_segments' });
+
+    const withBody = new Request('https://eavesy.test/api/sessions/meet_segments_none/finalize?archive=none', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${rawToken}` },
+      body: requestBody(new Uint8Array([1])),
+    });
+    const rejected = await finalizePost({ request: withBody, params: { id: 'meet_segments_none' } });
+    expect(rejected.status).toBe(400);
+    expect(
+      await row<{ status: string }>('SELECT status FROM meetings WHERE id = ?', 'meet_segments_none'),
+    ).toEqual({ status: 'recording' });
+  });
 });
 
 type RouteHandler = (args: {
@@ -986,6 +1042,13 @@ function finalizeRequest(meetingId: string, token: string, body: Uint8Array): Re
       'content-type': 'audio/mp4',
     },
     body: requestBody(body),
+  });
+}
+
+function segmentsOnlyFinalizeRequest(meetingId: string, token: string): Request {
+  return new Request(`https://eavesy.test/api/sessions/${meetingId}/finalize?archive=none`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
   });
 }
 

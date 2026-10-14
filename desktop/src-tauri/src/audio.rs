@@ -605,19 +605,75 @@ fn stop_capture_inner(
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
 
-    let (duration_sec, path_override) = match await_done(events, STOP_TIMEOUT) {
-        Ok(v) => v,
+    let result = match await_done(events, STOP_TIMEOUT) {
+        Ok(done) => finish_stopped_capture(
+            &app,
+            &session_id,
+            &mut child,
+            done,
+            out_path,
+            started_at_ms,
+            &mode,
+            &source,
+            reserved_audio_folder,
+        ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
             let _ = child.kill();
             let _ = child.wait();
-            return Err(msg);
+            Err(msg)
         }
     };
+    match result {
+        Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
+        result => result,
+    }
+}
+
+/// A stop that failed still leaves sealed segments, and sometimes a usable archive.
+/// Keep whatever can be kept now instead of waiting for the next launch, and say
+/// what happened in the error the HUD shows.
+fn salvage_after_failed_stop(app: &AppHandle, session_id: &str, error: String) -> String {
+    let message = match crate::recovery::salvage(app, session_id, &error) {
+        Ok(crate::recovery::Salvage::Archive) => {
+            format!("{error}. The saved audio will still be uploaded and transcribed.")
+        }
+        Ok(crate::recovery::Salvage::Segments(_)) => format!(
+            "{error}. The final audio file was lost, but the parts already recorded will be transcribed."
+        ),
+        Ok(crate::recovery::Salvage::Nothing) => {
+            format!("{error}. No audio could be saved from this recording.")
+        }
+        Err(recovery_error) => {
+            crate::telemetry::capture("capture.stop_recovery", &recovery_error);
+            format!("{error}. It will be recovered the next time Eavesy opens.")
+        }
+    };
+    if let Err(emit_error) = app.emit("recordings:updated", ()) {
+        eprintln!("could not announce recovered recording: {emit_error}");
+    }
+    message
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_stopped_capture(
+    app: &AppHandle,
+    session_id: &str,
+    child: &mut Child,
+    (duration_sec, path_override): (f64, Option<String>),
+    out_path: PathBuf,
+    started_at_ms: i64,
+    mode: &str,
+    source: &str,
+    reserved_audio_folder: Option<PathBuf>,
+) -> Result<StoredRecording, String> {
+    let app = app.clone();
+    let session_id = session_id.to_string();
+    let source = source.to_string();
     let final_src = path_override
         .map(PathBuf::from)
         .unwrap_or_else(|| out_path.clone());
-    reap_child(&mut child);
+    reap_child(child);
 
     let is_screen = mode == "screen";
     let title = default_title(&source, is_screen);
