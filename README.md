@@ -107,11 +107,9 @@ build and signing steps are in [desktop/BUILD.md](desktop/BUILD.md).
 
 ## License
 
-Eavesy is [Fair Source](https://fair.io/) under the
-[Functional Source License 1.1, Apache 2.0 Future License](LICENSE.md)
-(`FSL-1.1-ALv2`). You may use, modify and self-host it for any purpose except
-offering a competing commercial product or service. Each release becomes
-available under Apache 2.0 two years after it is published.
+Eavesy is licensed under the [Apache License 2.0](LICENSE). Versions released
+before the switch to Apache-2.0 remain available under their original
+[FSL-1.1-ALv2](https://fsl.software/) terms.
 
 Contributions are accepted under the same license; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

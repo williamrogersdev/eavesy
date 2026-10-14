@@ -5,7 +5,7 @@ than a small fix, open an issue first so we can agree on the approach.
 
 ## License of contributions
 
-Eavesy is licensed under [FSL-1.1-ALv2](LICENSE.md). By submitting a
+Eavesy is licensed under the [Apache License 2.0](LICENSE). By submitting a
 contribution you agree that it is licensed under the same terms
 (inbound = outbound), and that you have the right to submit it. Please sign off
 your commits (`git commit -s`) to certify the
