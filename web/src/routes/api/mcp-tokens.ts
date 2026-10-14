@@ -29,7 +29,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
       POST: async ({ request }) => {
         try {
           const actor = await resolveActor();
-          const body = createSchema.parse(await request.json());
+          const body = createSchema.parse(await request.json().catch(() => null));
           const token = await mcpRepo.mintToken(getDb(), {
             userId: actor.userId,
             name: body.name,
@@ -47,7 +47,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
       DELETE: async ({ request }) => {
         try {
           const actor = await resolveActor();
-          const body = revokeSchema.parse(await request.json());
+          const body = revokeSchema.parse(await request.json().catch(() => null));
           await mcpRepo.revoke(getDb(), { userId: actor.userId, id: body.id });
           return Response.json({ ok: true });
         } catch (error) {

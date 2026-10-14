@@ -49,7 +49,6 @@ const PROCESSORS = [
   { name: 'Clerk', role: 'Authentication' },
   { name: 'OpenRouter', role: 'Optional bring-your-own AI connection' },
   { name: 'Stripe', role: 'Billing when paid plans are enabled' },
-  { name: 'PostHog', role: 'Product usage events; never recording content' },
   { name: 'Sentry (optional)', role: 'Sanitized operational errors when enabled' },
 ];
 
