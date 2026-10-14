@@ -29,6 +29,17 @@ interface McpToken {
   name: string;
   createdAt: number;
   lastUsedAt?: number | null;
+  expiresAt: number | null;
+  usesLegacyUrl: boolean;
+}
+
+/** A client config with the token in the Authorization header, not the URL. */
+function mcpClientConfig(serverUrl: string, token: string): string {
+  return JSON.stringify(
+    { mcpServers: { eavesy: { type: 'http', url: serverUrl, headers: { Authorization: `Bearer ${token}` } } } },
+    null,
+    2,
+  );
 }
 
 
@@ -44,7 +55,7 @@ function SettingsPage() {
   const [pairing, setPairing] = useState(false);
   const [pairResult, setPairResult] = useState<string | null>(null);
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
-  const [newMcpUrl, setNewMcpUrl] = useState<string | null>(null);
+  const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
   const [pairCode] = useState(() => {
@@ -159,9 +170,10 @@ function SettingsPage() {
       });
       if (!response.ok) throw new Error('Could not create MCP connection');
       const created: unknown = await response.json();
-      const createdUrl = isRecord(created) ? optionalString(created.url) : undefined;
-      if (!createdUrl) throw new Error('Server returned an invalid MCP connection');
-      setNewMcpUrl(createdUrl);
+      const serverUrl = isRecord(created) ? optionalString(created.serverUrl) : undefined;
+      const token = isRecord(created) ? optionalString(created.token) : undefined;
+      if (!serverUrl || !token) throw new Error('Server returned an invalid MCP connection');
+      setNewMcpConfig(mcpClientConfig(serverUrl, token));
       setMcpCopyStatus('idle');
       const refreshResponse = await fetch('/api/mcp-tokens');
       if (!refreshResponse.ok) throw new Error('Could not refresh MCP connections');
@@ -182,17 +194,17 @@ function SettingsPage() {
     });
     if (!response.ok) throw new Error('Could not revoke MCP connection');
     setMcpTokens((tokens) => tokens.filter((token) => token.id !== id));
-      setNewMcpUrl(null);
-      setMcpCopyStatus('idle');
+    setNewMcpConfig(null);
+    setMcpCopyStatus('idle');
   };
 
-  const copyMcpUrl = async () => {
-    if (!newMcpUrl) return;
+  const copyMcpConfig = async () => {
+    if (!newMcpConfig) return;
     try {
-      await navigator.clipboard.writeText(newMcpUrl);
+      await navigator.clipboard.writeText(newMcpConfig);
       setMcpCopyStatus('copied');
     } catch {
-      setError('Could not copy the MCP URL. Select the URL and copy it manually.');
+      setError('Could not copy the MCP configuration. Select it and copy it manually.');
     }
   };
 
@@ -333,29 +345,33 @@ function SettingsPage() {
 
       <AppSection
         title="AI assistants (MCP)"
-        description="A read-only URL that lets Claude, Codex or another assistant search your recordings. It’s shown once."
+        description="A read-only connection that lets Claude, Codex or another assistant search your recordings. Connections last 90 days."
         action={
           <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
-            {mcpBusy ? 'Creating…' : 'New URL'}
+            {mcpBusy ? 'Creating…' : 'New connection'}
           </button>
         }
       >
-        {newMcpUrl ? (
+        {newMcpConfig ? (
           <AppAlert tone="success">
-            <p className="text-xs font-medium">Copy this URL now — it won’t be shown again.</p>
-            <div className="mt-2 flex gap-2">
-              <input
+            <p className="text-xs font-medium">
+              Add this to your assistant’s MCP settings now. The token won’t be shown again.
+            </p>
+            <div className="mt-2 flex items-start gap-2">
+              <textarea
                 readOnly
-                value={newMcpUrl}
-                aria-label="New MCP URL"
-                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground"
+                value={newMcpConfig}
+                rows={newMcpConfig.split('\n').length}
+                wrap="off"
+                aria-label="New MCP configuration"
+                className="min-w-0 flex-1 resize-none rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
               />
-              <button type="button" onClick={() => void copyMcpUrl()} className={appButton('secondary', 'sm')}>
+              <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
               </button>
             </div>
             <p aria-live="polite" className="sr-only">
-              {mcpCopyStatus === 'copied' ? 'MCP URL copied to clipboard.' : ''}
+              {mcpCopyStatus === 'copied' ? 'MCP configuration copied to clipboard.' : ''}
             </p>
           </AppAlert>
         ) : null}
@@ -363,11 +379,23 @@ function SettingsPage() {
           <ul className="divide-y divide-border rounded-md border border-border">
             {mcpTokens.map((token) => (
               <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                <span className="min-w-0 truncate">
-                  {token.name}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
+                <span className="min-w-0">
+                  <span className="block truncate">
+                    {token.name}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
+                      {token.expiresAt
+                        ? token.expiresAt <= Date.now()
+                          ? ' · expired'
+                          : ` · expires ${new Date(token.expiresAt).toLocaleDateString()} if unused`
+                        : null}
+                    </span>
                   </span>
+                  {token.usesLegacyUrl ? (
+                    <span className="block text-xs text-danger">
+                      Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"
@@ -436,6 +464,8 @@ function parseMcpTokens(value: unknown): McpToken[] {
       name: item.name,
       createdAt: item.createdAt,
       lastUsedAt: nullableNumber(item.lastUsedAt),
+      expiresAt: nullableNumber(item.expiresAt),
+      usesLegacyUrl: item.usesLegacyUrl === true,
     }];
   });
 }

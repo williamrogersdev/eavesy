@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a98868b2-68bc-4573-8376-e22134b0a669",
+  "id": "81db038a-2926-434e-95c7-88d51e738936",
   "prevId": "d41e90af-f758-46a3-ad92-dda6728df391",
   "tables": {
     "activity_log": {
@@ -1239,6 +1239,20 @@
         },
         "revoked_at": {
           "name": "revoked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "path_auth_used_at": {
+          "name": "path_auth_used_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
