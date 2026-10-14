@@ -33,6 +33,12 @@ enum EventEmitter {
         emit(["event": "error", "message": message])
     }
 
+    /// A single segment could not be written. The capture and the archive carry on,
+    /// so this must not be reported as `error`, which the host treats as fatal.
+    static func segmentError(_ message: String) {
+        emit(["event": "segment_error", "message": message])
+    }
+
     static func segment(
         path: String, index: Int, track: String, startMs: Int64, durationMs: Int64,
         bytes: Int64, peakRms: Double, activeMs: Int64
