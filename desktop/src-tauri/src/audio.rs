@@ -273,6 +273,7 @@ fn spawn_capture(
     };
 
     let log = captures_dir(app).ok().and_then(|dir| {
+        rotate_log(&dir.join("capture.log"));
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -870,6 +871,18 @@ pub fn capture_state(state: State<'_, Captures>) -> CaptureState {
     }
 }
 
+/// The capture engine appends its stderr to capture.log for every recording; keep
+/// one previous generation once it passes `CAPTURE_LOG_LIMIT` instead of growing forever.
+const CAPTURE_LOG_LIMIT: u64 = 5 * 1024 * 1024;
+
+fn rotate_log(path: &std::path::Path) {
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > CAPTURE_LOG_LIMIT) {
+        if let Err(error) = std::fs::rename(path, path.with_extension("log.1")) {
+            eprintln!("could not rotate {}: {error}", path.display());
+        }
+    }
+}
+
 fn default_title(source: &str, is_screen: bool) -> String {
     if is_screen {
         "Screen recording".to_string()
@@ -900,6 +913,21 @@ fn reap_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_log_is_rotated_once_it_is_large() {
+        let dir = std::env::temp_dir().join(format!("eavesy-log-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("capture.log");
+        std::fs::write(&log, b"small").unwrap();
+        rotate_log(&log);
+        assert!(log.exists());
+        std::fs::write(&log, vec![b'x'; CAPTURE_LOG_LIMIT as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert!(!log.exists());
+        assert!(dir.join("capture.log.1").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn stop_timeout_is_an_error_not_an_empty_success() {
