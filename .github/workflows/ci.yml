@@ -45,7 +45,7 @@ jobs:
           (cd workers/mcp && bunx tsc --noEmit)
       - name: Lint
         working-directory: web
-        run: bunx eslint .
+        run: bunx eslint . --max-warnings 0
       - name: Test
         working-directory: web
         run: bun test src
