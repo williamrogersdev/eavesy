@@ -106,14 +106,6 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     },
   },
   '/api/authcheck': { GET: { public: 'Sign-in diagnostic: reports only whether the caller’s own session is valid' } },
-  // Billing is being removed; until then checkout validates its body first, so send a valid one.
-  '/api/billing/checkout': {
-    POST: {
-      unauthenticated: { status: 401, call: { path: '/api/billing/checkout', body: { plan: 'pro' } } },
-      scopedToCaller: 'bills only the caller',
-    },
-  },
-  '/api/billing/portal': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'opens only the caller’s portal' } },
   '/api/captures': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/captures' }, excludes: [CAPTURE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a capture owned by the caller' },
@@ -318,7 +310,6 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   },
   '/api/transcribe': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'transcribes the caller’s upload; nothing is stored' } },
   '/api/updates/$target/$arch/$version': { GET: { public: 'Public updater manifest' } },
-  '/api/webhooks/stripe': { POST: { unauthenticated: { status: 400 }, scopedToCaller: 'Stripe signature, not a user' } },
 };
 
 function lineCall(body?: unknown): Call {
