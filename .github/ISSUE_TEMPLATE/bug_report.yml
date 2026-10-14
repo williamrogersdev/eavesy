@@ -13,10 +13,8 @@ body:
     id: app-version
     attributes:
       label: Eavesy version
-      description: "Mac app: Eavesy menu → About. Web: the version in the footer or the page you hit."
+      description: If you know it, the Mac app version (for example 0.1.9). The web app doesn't show a version, so leave this blank there.
       placeholder: "e.g. 0.1.9"
-    validations:
-      required: true
   - type: input
     id: macos-version
     attributes:
@@ -62,21 +60,13 @@ body:
   - type: textarea
     id: diagnostics
     attributes:
-      label: Diagnostics
+      label: Diagnostics (Mac app)
       description: |
-        Paste any diagnostics output you have. If the Mac app shows a diagnostics
-        or "copy" action in the failing screen, paste that here. Review it first
-        and remove anything private, such as transcript text or file paths you
-        don't want public.
-      render: text
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs
-      description: |
-        Mac app logs may appear in Console.app (search for "Eavesy") or under
-        ~/Library/Logs. Paste only the lines around the failure, with
-        private content removed.
+        In recent Mac app builds, the menu bar menu has a **Copy Diagnostics**
+        item. It copies a scrubbed log tail to the clipboard. Paste it here.
+        Review it first, and remove anything private.
+        If your build doesn't have that item, paste the error text from the
+        failing screen instead, or leave this blank.
       render: text
   - type: textarea
     id: context

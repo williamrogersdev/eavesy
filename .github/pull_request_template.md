@@ -18,6 +18,6 @@
 
 ## Checklist
 
-- [ ] Commits are signed off with `git commit -s` (DCO, see [CONTRIBUTING.md](CONTRIBUTING.md))
+- [ ] Commits are signed off with `git commit -s` (DCO, see [CONTRIBUTING.md](https://github.com/williamrogersdev/eavesy/blob/main/CONTRIBUTING.md))
 - [ ] CI is green, or I've explained any failure that's unrelated to this change
 - [ ] Docs or the CHANGELOG are updated where behavior changed

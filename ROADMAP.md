@@ -1,15 +1,16 @@
 # Roadmap
 
-This is where Eavesy is headed, in rough order. It changes as we learn, so
-treat dates as absent on purpose. Work in progress and upcoming items live on
-the [project board](https://github.com/williamrogersdev/eavesy/projects). If
-something here matters to you, say so on an issue or in
-[Discussions](https://github.com/williamrogersdev/eavesy/discussions).
+This is the order we expect to work in. It changes as we learn, so treat it as
+direction rather than dates. If something here matters to you, say so on an
+issue or in [Discussions](https://github.com/williamrogersdev/eavesy/discussions).
 
-Eavesy's core is an AI-first local assistant: drop in messages, text,
+**Today**, Eavesy ships as a Mac app for recording and dictation, a web app
+with a browser recorder, a hosted MCP server, and Markdown export of sessions.
+
+**Where it's heading** is an AI-first local assistant: drop in messages, text,
 instructions, and screenshots, and get context that's quick to paste into an AI
-agent. Meeting recording is one of the inputs, and it's an important one, but
-it isn't the whole product.
+agent. Meeting recording is one of the inputs, and an important one, but not the
+whole product. The phases below move toward that.
 
 ## Phases
 
@@ -32,7 +33,7 @@ Remove code and dependencies that no longer earn their place, tighten lint and
 type checks, and keep the test suite fast. A smaller codebase is easier to
 contribute to, so this comes before we open the doors wider.
 
-### 4. Open the doors
+### 4. Open the doors (in progress)
 
 Outside contributors can find work, report problems, and get a review:
 contribution guidelines, issue and pull request templates, CODEOWNERS, a
