@@ -9,13 +9,13 @@
     "deploy": "../../scripts/cf wrangler deploy"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.65.0",
-    "drizzle-orm": "^0.45.2"
+    "@sentry/cloudflare": "11.4.0",
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260515.0",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@types/node": "^20",
-    "typescript": "^5.9.0",
-    "wrangler": "^4.91.0"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.0"
   }
 }

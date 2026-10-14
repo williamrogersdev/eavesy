@@ -65,11 +65,14 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
     if (starting) return;
     setStarting(true);
     setError(null);
+    // The upload exists before recording starts so the first chunk, which can
+    // arrive before start() resolves, is never dropped.
+    const upload = new SessionUpload(null);
     const capture = new BrowserAudioCapture({
       captureSystemAudio,
       segmentMs: SEGMENT_MS,
-      onSegment: (segment) => uploadRef.current?.addSegment(segment),
-      onChunk: (chunk) => uploadRef.current?.addArchiveChunk(chunk),
+      onSegment: (segment) => upload.addSegment(segment),
+      onChunk: (chunk) => upload.addArchiveChunk(chunk),
       onLevel: (mic, sys) => {
         setMicLevel(mic);
         setSystemLevel(sys);
@@ -85,13 +88,15 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
       capture.startPreflight();
       await new Promise((r) => setTimeout(r, 800));
       await capture.start();
-      uploadRef.current = new SessionUpload(capture.mimeType);
+      upload.begin(capture.mimeType);
+      uploadRef.current = upload;
       startedAtRef.current = Date.now();
       setElapsed(0);
       tickElapsed();
     } catch (err) {
       capture.dispose();
       captureRef.current = null;
+      void upload.discard();
       setError(err instanceof Error ? err : new Error('Could not start recording'));
     } finally {
       setStarting(false);

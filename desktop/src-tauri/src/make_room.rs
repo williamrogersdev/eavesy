@@ -107,7 +107,7 @@ mod tests {
     #[ignore = "needs a window server; run by hand"]
     fn reads_a_real_window_frame() {
         let frame = frontmost_window_of(&["Claude"]).expect("Claude window on screen");
-        eprintln!("Claude window: {frame:?}");
+        tracing::debug!("Claude window: {frame:?}");
         assert!(frame.2 > 100.0 && frame.3 > 100.0);
     }
 

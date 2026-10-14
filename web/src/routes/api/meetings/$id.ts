@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
+import { folders } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
@@ -47,17 +49,25 @@ export const Route = createFileRoute('/api/meetings/$id')({
 
       PATCH: async ({ request, params }) => {
         const { id } = params;
-        const parsed = patchSchema.safeParse(await request.json());
-        if (!parsed.success) {
-          return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
-        }
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsed = patchSchema.safeParse(await request.json().catch(() => null));
+        if (!parsed.success) {
+          return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
+        }
         const { speakerNames, ...fields } = parsed.data;
+        if (fields.folderId) {
+          const folder = await getDb()
+            .select({ id: folders.id })
+            .from(folders)
+            .where(and(eq(folders.id, fields.folderId), eq(folders.userId, actor.userId)))
+            .limit(1);
+          if (folder.length === 0) return Response.json({ error: 'folder not found' }, { status: 404 });
+        }
         let speakerNamesJson: string | undefined;
         if (speakerNames) {
           const meeting = await meetingsRepo.get(getDb(), { meetingId: id, userId: actor.userId });
@@ -69,7 +79,8 @@ export const Route = createFileRoute('/api/meetings/$id')({
           }
           speakerNamesJson = JSON.stringify(merged);
         }
-        await meetingsRepo.update(getDb(), { meetingId: id, userId: actor.userId, ...fields, speakerNamesJson });
+        const updated = await meetingsRepo.update(getDb(), { meetingId: id, userId: actor.userId, ...fields, speakerNamesJson });
+        if (!updated) return Response.json({ error: 'not found' }, { status: 404 });
         return Response.json({ ok: true });
       },
 
@@ -81,7 +92,8 @@ export const Route = createFileRoute('/api/meetings/$id')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        await meetingsRepo.softDelete(getDb(), { meetingId: id, userId: actor.userId });
+        const deleted = await meetingsRepo.softDelete(getDb(), { meetingId: id, userId: actor.userId });
+        if (!deleted) return Response.json({ error: 'not found' }, { status: 404 });
         await activityRepo.log(getDb(), {
           userId: actor.userId,
           eventType: 'meeting.delete',

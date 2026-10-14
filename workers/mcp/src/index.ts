@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { and, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
-import type { Ai, D1Database, DurableObjectNamespace, KVNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
+import type { Ai, D1Database, DurableObjectNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
@@ -8,6 +8,12 @@ import { createTextDrop, DropTooLargeError } from '../../../web/src/server/creat
 import { MAX_TEXT_BYTES } from '../../../web/src/server/drops';
 import { guardUserQuota } from '../../../web/src/server/rate-limit';
 import { captureMessage, sentryOptions, withSentry } from '../../../web/src/server/observability';
+import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
+import {
+  mcpTokenExpiresAt,
+  pathTokensAllowed,
+  renewedMcpTokenExpiry,
+} from '../../../web/src/server/mcp-token-policy';
 
 interface Env {
   DB: D1Database;
@@ -15,9 +21,10 @@ interface Env {
   VECTORIZE: VectorizeIndex;
   // Drops: shared web helpers reach these through `cloudflare:workers` env.
   AUDIO_BUCKET: R2Bucket;
-  CACHE: KVNamespace;
   DROPS_HUB: DurableObjectNamespace;
   SENTRY_DSN?: string;
+  /** Set to `false` to stop accepting tokens in the URL path. */
+  MCP_ALLOW_PATH_TOKENS?: string;
 }
 
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
@@ -30,8 +37,11 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
+const MCP_REQUESTS_PER_MINUTE = 120;
 
-async function resolveToken(env: Env, rawToken: string) {
+type TokenRow = typeof schema.mcpTokens.$inferSelect;
+
+async function resolveToken(env: Env, rawToken: string, viaPath: boolean): Promise<TokenRow | 'expired' | null> {
   const db = drizzle(env.DB, { schema });
   const tokenHash = await sha256Hex(rawToken);
   const rows = await db
@@ -42,106 +52,151 @@ async function resolveToken(env: Env, rawToken: string) {
   const row = rows[0];
   if (!row || row.revokedAt) return null;
   const now = Date.now();
-  if (!row.lastUsedAt || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS) {
-    await db.update(schema.mcpTokens).set({ lastUsedAt: now }).where(eq(schema.mcpTokens.id, row.id));
+  if (mcpTokenExpiresAt(row) <= now) return 'expired';
+  const stale = !row.lastUsedAt || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS;
+  const pathStale = viaPath && (!row.pathAuthUsedAt || now - row.pathAuthUsedAt > LAST_USED_RESOLUTION_MS);
+  const expiresAt = renewedMcpTokenExpiry(row, now);
+  if (stale || pathStale || expiresAt) {
+    await db
+      .update(schema.mcpTokens)
+      .set({
+        lastUsedAt: now,
+        ...(viaPath ? { pathAuthUsedAt: now } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+      })
+      .where(eq(schema.mcpTokens.id, row.id));
   }
   return row;
 }
 
-const worker = {
+function jsonError(status: number, error: string, extra: Record<string, string> = {}) {
+  return new Response(JSON.stringify({ error, ...extra }), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+export const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.split('/').filter(Boolean);
-    const authorization = request.headers.get('authorization') ?? '';
-    const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1] ?? '';
+    const viaPath = !bearer && Boolean(path[0]);
     const rawToken = bearer || path[0];
     if (!rawToken) {
       return new Response('Eavesy MCP server', { status: 200 });
     }
-    const token = await resolveToken(env, rawToken);
-    if (!token) {
-      return new Response(JSON.stringify({ error: 'invalid token' }), {
-        status: 401,
-        headers: { 'content-type': 'application/json' },
+    if (viaPath && !pathTokensAllowed(env.MCP_ALLOW_PATH_TOKENS)) {
+      return jsonError(401, 'token must be sent in the Authorization header', {
+        hint: 'Create a new connection in Eavesy settings and use the configuration it shows.',
       });
     }
-    const userId = token.userId;
-    const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
-    if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
-      return new Response(JSON.stringify({ error: 'unsupported MCP protocol version' }), {
-        status: 400,
-        headers: { 'content-type': 'application/json' },
-      });
+    const token = await resolveToken(env, rawToken, viaPath);
+    if (token === 'expired') {
+      return jsonError(401, 'token expired', { hint: 'Create a new connection in Eavesy settings.' });
     }
-
-    if (request.method === 'GET') {
-      return new Response(
-        JSON.stringify({
-          name: 'eavesy',
-          version: '0.1.0',
-          tools: TOOL_DEFS,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
-    }
-
-    if (request.method !== 'POST') {
-      return new Response('method not allowed', { status: 405 });
-    }
-
-    let body: any;
-    try {
-      body = await request.json();
-    } catch {
-      return new Response(JSON.stringify({ error: 'invalid json' }), { status: 400 });
-    }
-
-    if (body.method === 'initialize') {
-      const requested = body.params?.protocolVersion;
-      const protocolVersion = MCP_VERSIONS.includes(requested) ? requested : MCP_VERSIONS[0];
-      return jsonRpc(body.id, {
-        protocolVersion,
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'eavesy', version: '0.1.0' },
-        instructions:
-          'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items, ' +
-          'and send text (such as a session handoff doc) to their other devices with send_to_my_devices.',
-      });
-    }
-    if (body.method === 'notifications/initialized') {
-      return new Response(null, { status: 202 });
-    }
-    if (body.method === 'ping') {
-      return jsonRpc(body.id, {});
-    }
-    if (body.method === 'tools/list') {
-      return jsonRpc(body.id, { tools: TOOL_DEFS });
-    }
-    if (body.method === 'tools/call') {
-      const { name, arguments: args } = body.params ?? {};
-      try {
-        const result = await callTool(env, { userId, tokenName: token.name }, name, args ?? {});
-        return jsonRpc(body.id, {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        });
-      } catch (err) {
-        captureMessage('MCP tool call failed', {
-          level: 'error',
-          tags: { mcp_tool: typeof name === 'string' ? name : 'unknown' },
-        });
-        return jsonRpc(body.id, undefined, {
-          code: -32000,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    return jsonRpc(body.id, undefined, {
-      code: -32601,
-      message: `method not supported: ${body.method}`,
+    if (!token) return jsonError(401, 'invalid token');
+    // Per token, after the token is known to be valid, failing open: every call
+    // is already authenticated, the only write (send_to_my_devices) has its own
+    // fail-closed daily quota, and an unreachable counter means D1 is down anyway.
+    const limited = await consumeRateLimit(env.DB, {
+      key: `mcp:${token.id}`,
+      limit: MCP_REQUESTS_PER_MINUTE,
+      windowSec: 60,
+      failMode: 'open',
     });
+    if (!limited.allowed) {
+      return new Response(JSON.stringify({ error: 'rate limited' }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': String(limited.retryAfterSec) },
+      });
+    }
+    if (viaPath) {
+      // Logged by token id only; the path itself is the secret.
+      console.warn(JSON.stringify({ message: 'mcp token sent in URL path', tokenId: token.id }));
+    }
+    const response = await serve(request, env, { userId: token.userId, tokenName: token.name });
+    if (viaPath) response.headers.set('deprecation', 'true');
+    return response;
   },
 } satisfies ExportedHandler<Env>;
+
+async function serve(request: Request, env: Env, caller: Caller): Promise<Response> {
+  const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
+  if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
+    return new Response(JSON.stringify({ error: 'unsupported MCP protocol version' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  if (request.method === 'GET') {
+    return new Response(
+      JSON.stringify({
+        name: 'eavesy',
+        version: '0.1.0',
+        tools: TOOL_DEFS,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  }
+
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405 });
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'invalid json' }), { status: 400 });
+  }
+
+  if (body.method === 'initialize') {
+    const requested = body.params?.protocolVersion;
+    const protocolVersion = MCP_VERSIONS.includes(requested) ? requested : MCP_VERSIONS[0];
+    return jsonRpc(body.id, {
+      protocolVersion,
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: 'eavesy', version: '0.1.0' },
+      instructions:
+        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items, ' +
+        'and send text (such as a session handoff doc) to their other devices with send_to_my_devices.',
+    });
+  }
+  if (body.method === 'notifications/initialized') {
+    return new Response(null, { status: 202 });
+  }
+  if (body.method === 'ping') {
+    return jsonRpc(body.id, {});
+  }
+  if (body.method === 'tools/list') {
+    return jsonRpc(body.id, { tools: TOOL_DEFS });
+  }
+  if (body.method === 'tools/call') {
+    const { name, arguments: args } = body.params ?? {};
+    try {
+      const result = await callTool(env, caller, name, args ?? {});
+      return jsonRpc(body.id, {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      });
+    } catch (err) {
+      captureMessage('MCP tool call failed', {
+        level: 'error',
+        tags: { mcp_tool: typeof name === 'string' ? name : 'unknown' },
+      });
+      return jsonRpc(body.id, undefined, {
+        code: -32000,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return jsonRpc(body.id, undefined, {
+    code: -32601,
+    message: `method not supported: ${body.method}`,
+  });
+}
 
 
 export default withSentry<Env>(
@@ -229,12 +284,12 @@ const TOOL_DEFS = [
   },
 ];
 
-async function callTool(
-  env: Env,
-  caller: { userId: string; tokenName: string },
-  name: string,
-  args: Record<string, any>,
-) {
+interface Caller {
+  userId: string;
+  tokenName: string;
+}
+
+async function callTool(env: Env, caller: Caller, name: string, args: Record<string, any>) {
   const { userId } = caller;
   const db = drizzle(env.DB, { schema });
   switch (name) {
@@ -337,7 +392,13 @@ async function callTool(
         await db
           .select()
           .from(schema.meetings)
-          .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId)))
+          .where(
+            and(
+              eq(schema.meetings.id, id),
+              eq(schema.meetings.userId, userId),
+              isNull(schema.meetings.deletedAt),
+            ),
+          )
           .limit(1)
       )[0];
       if (!m) throw new Error('not found');

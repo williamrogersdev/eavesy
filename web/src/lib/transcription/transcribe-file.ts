@@ -1,5 +1,6 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { TranscriptSegment } from './types';
+import { audioBase64 } from './base64';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -27,7 +28,7 @@ export async function transcribeAudioFile(opts: {
   const bytes = opts.audio instanceof Uint8Array ? opts.audio : new Uint8Array(opts.audio);
 
   const result = await ai.run(WHISPER_MODEL, {
-    audio: toBase64(bytes),
+    audio: audioBase64(bytes),
     task: 'transcribe',
     language: opts.language ?? 'en',
   });
@@ -94,13 +95,4 @@ function finiteNumber(value: unknown): number | undefined {
 
 function secondsToMilliseconds(value: unknown): number {
   return Math.round((finiteNumber(value) ?? 0) * 1000);
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }

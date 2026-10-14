@@ -2,6 +2,8 @@ import type { ErrorComponentProps } from '@tanstack/react-router';
 import { AlertTriangle, ArrowLeft, RefreshCw } from 'lucide-react';
 import { BrandMark } from '@/components/brand-mark';
 import { Link } from '@/components/ui/app-link';
+import { reportClientError } from '@/lib/observability/browser';
+import { useEffect } from 'react';
 
 function FallbackShell({ children }: { children: React.ReactNode }) {
   return (
@@ -14,6 +16,7 @@ function FallbackShell({ children }: { children: React.ReactNode }) {
 }
 
 export function RootError({ error, reset }: ErrorComponentProps) {
+  useEffect(() => reportClientError(error), [error]);
   return (
     <FallbackShell>
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-danger-soft text-danger">

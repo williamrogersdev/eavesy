@@ -22,6 +22,10 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: 5bc563d42299762f9b48f5dec0531954
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # One release id for the web, processing and MCP Workers and the browser
+      # bundle, so a Sentry issue maps straight to a commit.
+      SENTRY_RELEASE: ${{ github.sha }}
+      VITE_SENTRY_RELEASE: ${{ github.sha }}
     steps:
       - name: Check deploy configuration
         env:
@@ -32,8 +36,8 @@ jobs:
           if [ -z "$CLERK_PK" ]; then echo "::error::Variable VITE_CLERK_PUBLISHABLE_KEY is not set (docs/DEPLOY.md)"; missing=1; fi
           exit $missing
 
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install
         run: |
@@ -45,6 +49,7 @@ jobs:
         env:
           CLERK_PK: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
           MAC_DMG_URL: ${{ vars.VITE_MAC_DMG_URL }}
+          BROWSER_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
         run: |
           {
             echo "VITE_CLERK_PUBLISHABLE_KEY=$CLERK_PK"
@@ -54,6 +59,7 @@ jobs:
             echo "VITE_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app"
             echo "VITE_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app"
             if [ -n "$MAC_DMG_URL" ]; then echo "VITE_MAC_DMG_URL=$MAC_DMG_URL"; fi
+            if [ -n "$BROWSER_SENTRY_DSN" ]; then echo "VITE_SENTRY_DSN=$BROWSER_SENTRY_DSN"; fi
           } > web/.env.production
 
       - name: Build
@@ -66,7 +72,7 @@ jobs:
           (cd workers/mcp && bunx tsc --noEmit)
       - name: Lint
         working-directory: web
-        run: bunx eslint .
+        run: bunx eslint . --max-warnings 0
       - name: Test
         working-directory: web
         run: bun test src

@@ -5,7 +5,6 @@ import { getSettings, isDesktop } from '@/lib/desktop/bridge';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
-import { PLAN_DEFS } from '@/lib/plans';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 
@@ -17,9 +16,6 @@ interface Me {
   role?: string | null;
   phoneNumber?: string | null;
   isAnonymous: boolean;
-  plan: 'free' | 'pro' | 'team';
-  subscriptionStatus: string;
-  hasBilling: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
   hasAnthropicKey: boolean;
@@ -33,9 +29,19 @@ interface McpToken {
   name: string;
   createdAt: number;
   lastUsedAt?: number | null;
+  expiresAt: number | null;
+  usesLegacyUrl: boolean;
 }
 
-const PLAN_LABEL: Record<Me['plan'], string> = { free: 'Free', pro: 'Pro', team: 'Team' };
+/** A client config with the token in the Authorization header, not the URL. */
+function mcpClientConfig(serverUrl: string, token: string): string {
+  return JSON.stringify(
+    { mcpServers: { eavesy: { type: 'http', url: serverUrl, headers: { Authorization: `Bearer ${token}` } } } },
+    null,
+    2,
+  );
+}
+
 
 export const Route = createFileRoute('/app/settings')({
   component: SettingsPage,
@@ -49,7 +55,7 @@ function SettingsPage() {
   const [pairing, setPairing] = useState(false);
   const [pairResult, setPairResult] = useState<string | null>(null);
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
-  const [newMcpUrl, setNewMcpUrl] = useState<string | null>(null);
+  const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
   const [pairCode] = useState(() => {
@@ -58,7 +64,6 @@ function SettingsPage() {
   });
   const [toggleHotkey, setToggleHotkey] = useState('Cmd+Shift+Space');
   const [dictationHotkey, setDictationHotkey] = useState('Cmd+Shift+D');
-  const [billingBusy, setBillingBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
@@ -165,9 +170,10 @@ function SettingsPage() {
       });
       if (!response.ok) throw new Error('Could not create MCP connection');
       const created: unknown = await response.json();
-      const createdUrl = isRecord(created) ? optionalString(created.url) : undefined;
-      if (!createdUrl) throw new Error('Server returned an invalid MCP connection');
-      setNewMcpUrl(createdUrl);
+      const serverUrl = isRecord(created) ? optionalString(created.serverUrl) : undefined;
+      const token = isRecord(created) ? optionalString(created.token) : undefined;
+      if (!serverUrl || !token) throw new Error('Server returned an invalid MCP connection');
+      setNewMcpConfig(mcpClientConfig(serverUrl, token));
       setMcpCopyStatus('idle');
       const refreshResponse = await fetch('/api/mcp-tokens');
       if (!refreshResponse.ok) throw new Error('Could not refresh MCP connections');
@@ -188,17 +194,17 @@ function SettingsPage() {
     });
     if (!response.ok) throw new Error('Could not revoke MCP connection');
     setMcpTokens((tokens) => tokens.filter((token) => token.id !== id));
-      setNewMcpUrl(null);
-      setMcpCopyStatus('idle');
+    setNewMcpConfig(null);
+    setMcpCopyStatus('idle');
   };
 
-  const copyMcpUrl = async () => {
-    if (!newMcpUrl) return;
+  const copyMcpConfig = async () => {
+    if (!newMcpConfig) return;
     try {
-      await navigator.clipboard.writeText(newMcpUrl);
+      await navigator.clipboard.writeText(newMcpConfig);
       setMcpCopyStatus('copied');
     } catch {
-      setError('Could not copy the MCP URL. Select the URL and copy it manually.');
+      setError('Could not copy the MCP configuration. Select it and copy it manually.');
     }
   };
 
@@ -213,26 +219,6 @@ function SettingsPage() {
     setMe(fresh);
   };
 
-  const openBilling = async () => {
-    setBillingBusy(true);
-    try {
-      const endpoint = me?.hasBilling ? '/api/billing/portal' : '/api/billing/checkout';
-      const body = me?.hasBilling ? undefined : JSON.stringify({ plan: 'pro' });
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-      });
-      const data: unknown = await res.json();
-      const url = isRecord(data) ? optionalString(data.url) : undefined;
-      if (!res.ok || !url) throw new Error('Could not open billing');
-      window.location.assign(url);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not open billing.');
-      setBillingBusy(false);
-    }
-  };
-
   if (!me && error) {
     return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
   }
@@ -240,7 +226,6 @@ function SettingsPage() {
     return <AppPage width="compact"><p role="status" className="text-sm text-muted-foreground">Loading settings…</p></AppPage>;
   }
 
-  const proComingSoon = PLAN_DEFS.find((plan) => plan.id === 'pro')?.comingSoon ?? false;
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
   const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
 
@@ -360,29 +345,33 @@ function SettingsPage() {
 
       <AppSection
         title="AI assistants (MCP)"
-        description="A URL that lets Claude, Codex or another assistant search your recordings and send text to your Drop inbox. It’s shown once."
+        description="A connection that lets Claude, Codex or another assistant search your recordings and send text to your Drop inbox. Connections last 90 days."
         action={
           <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
-            {mcpBusy ? 'Creating…' : 'New URL'}
+            {mcpBusy ? 'Creating…' : 'New connection'}
           </button>
         }
       >
-        {newMcpUrl ? (
+        {newMcpConfig ? (
           <AppAlert tone="success">
-            <p className="text-xs font-medium">Copy this URL now — it won’t be shown again.</p>
-            <div className="mt-2 flex gap-2">
-              <input
+            <p className="text-xs font-medium">
+              Add this to your assistant’s MCP settings now. The token won’t be shown again.
+            </p>
+            <div className="mt-2 flex items-start gap-2">
+              <textarea
                 readOnly
-                value={newMcpUrl}
-                aria-label="New MCP URL"
-                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground"
+                value={newMcpConfig}
+                rows={newMcpConfig.split('\n').length}
+                wrap="off"
+                aria-label="New MCP configuration"
+                className="min-w-0 flex-1 resize-none rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
               />
-              <button type="button" onClick={() => void copyMcpUrl()} className={appButton('secondary', 'sm')}>
+              <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
               </button>
             </div>
             <p aria-live="polite" className="sr-only">
-              {mcpCopyStatus === 'copied' ? 'MCP URL copied to clipboard.' : ''}
+              {mcpCopyStatus === 'copied' ? 'MCP configuration copied to clipboard.' : ''}
             </p>
           </AppAlert>
         ) : null}
@@ -390,11 +379,23 @@ function SettingsPage() {
           <ul className="divide-y divide-border rounded-md border border-border">
             {mcpTokens.map((token) => (
               <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                <span className="min-w-0 truncate">
-                  {token.name}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
+                <span className="min-w-0">
+                  <span className="block truncate">
+                    {token.name}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
+                      {token.expiresAt
+                        ? token.expiresAt <= Date.now()
+                          ? ' · expired'
+                          : ` · expires ${new Date(token.expiresAt).toLocaleDateString()} if unused`
+                        : null}
+                    </span>
                   </span>
+                  {token.usesLegacyUrl ? (
+                    <span className="block text-xs text-danger">
+                      Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"
@@ -411,19 +412,6 @@ function SettingsPage() {
         ) : null}
       </AppSection>
 
-      <AppSection title="Plan">
-        <Row
-          label={`${PLAN_LABEL[me.plan]}${me.plan !== 'free' ? ` · ${me.subscriptionStatus}` : ''}`}
-          hint={me.hasBilling ? 'Update payment, change plan, or cancel.' : proComingSoon ? 'Paid plans aren’t open yet.' : 'Upgrade for semantic search, templates and sync.'}
-        >
-          {me.hasBilling || !proComingSoon ? (
-            <button type="button" onClick={() => void openBilling()} disabled={billingBusy} className={appButton('secondary', 'sm')}>
-              {billingBusy ? 'Opening…' : me.hasBilling ? 'Manage' : 'Upgrade'}
-            </button>
-          ) : null}
-        </Row>
-      </AppSection>
-
       <AppSection title="Your data">
         <AccountData email={me.email} />
       </AppSection>
@@ -433,13 +421,9 @@ function SettingsPage() {
 
 function parseMe(value: unknown): Me | null {
   if (!isRecord(value)) return null;
-  const plan = value.plan;
   if (
     typeof value.id !== 'string' ||
-    (plan !== 'free' && plan !== 'pro' && plan !== 'team') ||
     typeof value.isAnonymous !== 'boolean' ||
-    typeof value.subscriptionStatus !== 'string' ||
-    typeof value.hasBilling !== 'boolean' ||
     value.defaultTranscriptionEngine !== 'whisper' ||
     typeof value.defaultLanguage !== 'string' ||
     typeof value.hasAnthropicKey !== 'boolean' ||
@@ -455,9 +439,6 @@ function parseMe(value: unknown): Me | null {
     role: nullableString(value.role),
     phoneNumber: nullableString(value.phoneNumber),
     isAnonymous: value.isAnonymous,
-    plan,
-    subscriptionStatus: value.subscriptionStatus,
-    hasBilling: value.hasBilling,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
     hasAnthropicKey: value.hasAnthropicKey,
@@ -483,6 +464,8 @@ function parseMcpTokens(value: unknown): McpToken[] {
       name: item.name,
       createdAt: item.createdAt,
       lastUsedAt: nullableNumber(item.lastUsedAt),
+      expiresAt: nullableNumber(item.expiresAt),
+      usesLegacyUrl: item.usesLegacyUrl === true,
     }];
   });
 }

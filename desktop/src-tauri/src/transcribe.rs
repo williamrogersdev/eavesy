@@ -63,7 +63,6 @@ pub fn spawn(
                 }
             }
             Err(e) => {
-                eprintln!("transcription failed for {id}: {e}");
                 crate::telemetry::capture("transcription.run", &e);
                 let current = crate::hud::current();
                 if current.session_id.as_deref() == Some(id.as_str())

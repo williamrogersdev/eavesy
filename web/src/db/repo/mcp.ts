@@ -3,6 +3,7 @@ import type { AppDb } from '../client';
 import { decode, encode } from '../codec';
 import { pid } from '../ids';
 import { mcpTokens } from '../schema';
+import { MCP_TOKEN_TTL_MS, mcpTokenExpiresAt, renewedMcpTokenExpiry } from '@/server/mcp-token-policy';
 
 export type Scope = 'read' | 'write';
 
@@ -19,7 +20,7 @@ async function sha256Hex(input: string): Promise<string> {
 export async function mintToken(
   db: AppDb,
   args: { userId: string; name: string; scopes?: Scope[] },
-): Promise<{ id: string; rawToken: string }> {
+): Promise<{ id: string; rawToken: string; expiresAt: number }> {
   const buf = new Uint8Array(32);
   crypto.getRandomValues(buf);
   const rawToken =
@@ -30,15 +31,18 @@ export async function mintToken(
   const tokenHash = await sha256Hex(rawToken);
 
   const id = pid('mcp');
+  const createdAt = Date.now();
+  const expiresAt = createdAt + MCP_TOKEN_TTL_MS;
   await db.insert(mcpTokens).values({
     id,
     userId: args.userId,
     tokenHash,
     name: args.name,
     scopesJson: encode(args.scopes ?? ['read']),
-    createdAt: Date.now(),
+    createdAt,
+    expiresAt,
   });
-  return { id, rawToken };
+  return { id, rawToken, expiresAt };
 }
 
 export async function listForUser(db: AppDb, userId: string) {
@@ -64,10 +68,14 @@ export async function resolveToken(db: AppDb, rawToken: string) {
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  if (row.revokedAt) return null;
+  if (row.revokedAt || mcpTokenExpiresAt(row) <= Date.now()) return null;
   const now = Date.now();
-  if (!row.lastUsedAt || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS) {
-    await db.update(mcpTokens).set({ lastUsedAt: now }).where(eq(mcpTokens.id, row.id));
+  const expiresAt = renewedMcpTokenExpiry(row, now);
+  if (!row.lastUsedAt || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS || expiresAt) {
+    await db
+      .update(mcpTokens)
+      .set(expiresAt ? { lastUsedAt: now, expiresAt } : { lastUsedAt: now })
+      .where(eq(mcpTokens.id, row.id));
   }
   return {
     tokenId: row.id,
