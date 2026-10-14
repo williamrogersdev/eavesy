@@ -469,6 +469,7 @@ fn stream_events(
                         if let Err(error) = crate::sqlite::record_segment(&app, &session_id, &segment) {
                             eprintln!("could not queue segment {index}: {error}");
                         } else {
+                            crate::sync::wake();
                             let _ = app.emit("recording:segment", index);
                         }
                     }
@@ -646,6 +647,7 @@ fn salvage_after_failed_stop(app: &AppHandle, session_id: &str, error: String) -
         }
         Err(()) => format!("{error}. Eavesy will finish saving it as soon as it can."),
     };
+    crate::sync::wake();
     if let Err(emit_error) = app.emit("recordings:updated", ()) {
         eprintln!("could not announce recovered recording: {emit_error}");
     }
@@ -739,6 +741,7 @@ fn finish_stopped_capture(
             (duration_sec * 1000.0).round() as i64,
             archive_bytes,
         )?;
+        crate::sync::wake();
     }
 
     crate::commands::show_launcher(app.clone());

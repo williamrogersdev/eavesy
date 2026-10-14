@@ -98,6 +98,22 @@ fn is_unauthorized(error: &anyhow::Error) -> bool {
 /// How long a rejected credential is left alone before sync probes it again.
 const SIGNED_OUT_RETRY: Duration = Duration::from_secs(5 * 60);
 
+static WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Ends the sync loop's current pause early: call when new work was queued (a
+/// segment was sealed, a capture stopped, the device was paired).
+pub fn wake() {
+    WAKE.notify_one();
+}
+
+/// Sleeps for `duration` or until `wake` is called, whichever comes first.
+async fn idle(duration: Duration) {
+    tokio::select! {
+        () = sleep(duration) => {}
+        () = WAKE.notified() => {}
+    }
+}
+
 static SIGNED_OUT: AtomicBool = AtomicBool::new(false);
 
 /// True while uploads are paused because the server rejected this Mac's credential.
@@ -190,12 +206,12 @@ pub async fn run(app: AppHandle) -> Result<()> {
             }
         }
         let Some(token) = settings::device_token(&app) else {
-            sleep(Duration::from_secs(5)).await;
+            idle(Duration::from_secs(5)).await;
             continue;
         };
         if let Some((rejected_token, since)) = &rejected {
             if *rejected_token == token && since.elapsed() < SIGNED_OUT_RETRY {
-                sleep(Duration::from_secs(5)).await;
+                idle(Duration::from_secs(5)).await;
                 continue;
             }
         }
@@ -208,8 +224,11 @@ pub async fn run(app: AppHandle) -> Result<()> {
                 if rejected.take().is_some() {
                     set_signed_out(&app, false);
                 }
-                let pause = if outcome == Pass::Idle { 2_000 } else { 250 };
-                sleep(Duration::from_millis(pause)).await;
+                if outcome == Pass::Idle {
+                    idle(Duration::from_secs(2)).await;
+                } else {
+                    sleep(Duration::from_millis(250)).await;
+                }
             }
         }
     }
@@ -702,6 +721,16 @@ mod tests {
             rendered,
             "# Sync\n\n## Transcript\n\n**[00:00:01] You:** Morning. I can present first.\n\n**[00:01:05] Them:** Go ahead.\n\n"
         );
+    }
+
+    #[tokio::test]
+    async fn wake_ends_an_idle_pause_early() {
+        let started = std::time::Instant::now();
+        let waiter = tokio::spawn(idle(Duration::from_secs(30)));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        wake();
+        tokio::time::timeout(Duration::from_secs(2), waiter).await.unwrap().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     mod state_machine {
