@@ -34,6 +34,23 @@ vi.mock('../../src/server/auth', () => ({
   tryResolveActor: async () => (actor.userId ? { userId: actor.userId, isAnonymous: false } : null),
 }));
 
+// Owners' calls get through to the model; answer locally instead of calling out.
+vi.mock('../../src/lib/ai/chat-meeting', () => ({ chatWithMeeting: async () => 'Stub reply' }));
+vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  summarizeMeeting: async () => ({
+    title: 'Stub',
+    description: '',
+    tldr: 'Stub',
+    decisions: [],
+    actionItems: [],
+    followUps: [],
+    openQuestions: [],
+    topics: [],
+    mentions: [],
+  }),
+}));
+
 const routeModules = import.meta.glob<{ Route: { options: unknown } }>('../../src/routes/api/**/*.ts', { eager: true });
 
 const OWNER = 'user_owner';
@@ -44,6 +61,7 @@ const LINE = 'line_owner';
 const CAPTURE = 'cap_owner';
 const TEMPLATE = 'tpl_owner';
 const MCP_TOKEN = 'mcp_owner';
+const DICTATION = 'dict_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -131,7 +149,7 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     POST: { public: 'Polled by the unpaired Mac; needs the code and its device id, rate limited per IP' },
   },
   '/api/dictations': {
-    GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'lists only the caller’s dictations' },
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/dictations' }, excludes: [DICTATION] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a dictation owned by the caller' },
   },
   '/api/downloads/mac/latest': { GET: { public: 'Public app download' } },
@@ -154,8 +172,14 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     },
   },
   '/api/me': {
-    GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'returns the caller' },
-    PATCH: { unauthenticated: SIGNED_IN, scopedToCaller: 'updates the caller' },
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/me' }, excludes: [OWNER] } },
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/me', body: json({ displayName: 'Renamed' }) },
+        unchanged: () => row('SELECT display_name FROM users WHERE id = ?', OWNER),
+      },
+    },
   },
   '/api/media/$': {
     GET: {
@@ -210,7 +234,13 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/process-recording': {
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a meeting owned by the caller' },
   },
-  '/api/search': { GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'searches only the caller’s vectors' } },
+  '/api/search': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      // Matches the seeded meeting's title lexically; vectors are filtered by userId.
+      crossUser: { call: { path: '/api/search?q=Test' }, excludes: [MEETING] },
+    },
+  },
   '/api/sessions/$id/files': {
     PATCH: {
       unauthenticated: SIGNED_IN,
@@ -353,6 +383,7 @@ beforeEach(async () => {
     'summaries',
     'user_notes',
     'captures',
+    'dictations',
     'prompt_templates',
     'mcp_tokens',
     'activity_log',
@@ -385,6 +416,10 @@ async function seedOwner() {
       `INSERT INTO prompt_templates (id, user_id, name, system_prompt, applies_to, sort_order)
        VALUES (?, ?, 'Owner template', 'Owner prompt', 'meeting', 0)`,
     ).bind(TEMPLATE, OWNER),
+    testEnv.DB.prepare(
+      `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at)
+       VALUES (?, ?, 'Owner dictation', 'Owner words', 3, ?)`,
+    ).bind(DICTATION, OWNER, now),
     testEnv.DB.prepare(
       `INSERT INTO mcp_tokens (id, user_id, token_hash, name, created_at) VALUES (?, ?, 'hash_owner', 'Owner', ?)`,
     ).bind(MCP_TOKEN, OWNER, now),
@@ -430,6 +465,20 @@ describe.each(discovered.filter(({ routeId, method }) => POLICIES[routeId]?.[met
 
     const crossUser = policy.crossUser;
     if (!crossUser) return;
+
+    // Positive control: the owner making the same call gets through, so the
+    // other user's 404 comes from ownership, not from a fixture that doesn't fit.
+    it('lets the owner make the same call', async () => {
+      const before = 'unchanged' in crossUser ? await crossUser.unchanged() : null;
+      actor.userId = OWNER;
+      const response = await handler({ request: request(method, crossUser.call), params: crossUser.call.params ?? {} });
+      const text = 'excludes' in crossUser ? await response.text() : (await response.arrayBuffer(), '');
+      expect({ status: response.status, body: text.slice(0, 300) }).toMatchObject({
+        status: expect.toSatisfy((status: number) => status >= 200 && status < 300) as number,
+      });
+      if ('unchanged' in crossUser) expect(await crossUser.unchanged()).not.toEqual(before);
+      if ('excludes' in crossUser) for (const id of crossUser.excludes) expect(text).toContain(id);
+    });
     it('does not expose or change another user’s data', async () => {
       const before = 'unchanged' in crossUser ? await crossUser.unchanged() : null;
       actor.userId = OTHER;
