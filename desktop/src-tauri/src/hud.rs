@@ -1,3 +1,7 @@
+// tauri-nspanel re-exports the legacy `cocoa`/`objc` crates: their APIs are deprecated and
+// their `msg_send!` macros trip `unexpected_cfgs`. Moving to objc2 is a separate migration.
+#![allow(deprecated, unexpected_cfgs)]
+
 use serde::Serialize;
 use crate::settings::{self, HudFrame, Settings};
 use tauri::{AppHandle, Emitter, Manager};
@@ -8,6 +12,8 @@ pub enum Phase {
     Idle,
     Saved,
     Recording,
+    // Not produced by the Rust side today, but launcher-ui renders this phase.
+    #[allow(dead_code)]
     Transcribing,
     Done,
     Failed,

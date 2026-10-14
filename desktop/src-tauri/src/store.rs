@@ -183,7 +183,7 @@ fn mutate_path(
     if !update(&mut list)? {
         return Ok(());
     }
-    list.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    list.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
     write_registry(path, &list)
 }
 
@@ -201,7 +201,7 @@ fn read_registry(path: &Path) -> Result<Vec<StoredRecording>, String> {
     };
     let mut list: Vec<StoredRecording> = serde_json::from_str(&raw)
         .map_err(|error| format!("recordings registry is malformed and was preserved: {error}"))?;
-    list.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    list.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
     Ok(list)
 }
 

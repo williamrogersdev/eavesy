@@ -372,6 +372,8 @@ pub async fn hotkey_conflict(accelerator: String) -> Option<crate::shortcut_conf
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     let url = if input_monitoring {
@@ -381,6 +383,8 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_web_app(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     app.shell().open(format!("{}/app", crate::sync::api_base()), None).map_err(|e| e.to_string())
@@ -404,6 +408,8 @@ pub fn show_setup(app: AppHandle) {
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     let anchor = match pane.as_str() {
