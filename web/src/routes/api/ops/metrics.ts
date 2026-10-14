@@ -36,6 +36,10 @@ export const Route = createFileRoute('/api/ops/metrics')({
                   CASE WHEN processing_samples > 0
                     THEN processing_ms_total / processing_samples
                     ELSE 0 END AS average_processing_ms,
+                  first_transcript_samples, first_transcript_ms_max,
+                  CASE WHEN first_transcript_samples > 0
+                    THEN first_transcript_ms_total / first_transcript_samples
+                    ELSE 0 END AS average_first_transcript_ms,
                   audio_seconds,
                   estimated_ai_cost_microusd AS estimated_platform_ai_cost_microusd,
                   updated_at

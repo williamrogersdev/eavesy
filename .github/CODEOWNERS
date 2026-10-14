@@ -1,0 +1,7 @@
+# Default owner for anything not listed below.
+*                   @williamrogersdev
+
+desktop/            @williamrogersdev
+web/                @williamrogersdev
+workers/            @williamrogersdev
+.github/            @williamrogersdev

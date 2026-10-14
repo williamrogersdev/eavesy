@@ -113,7 +113,7 @@ export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reaso
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`summary was not valid JSON: ${text.slice(0, 200)}`);
+    throw new Error(`summary was not valid JSON (len=${text.length})`);
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('summary was not a JSON object');
