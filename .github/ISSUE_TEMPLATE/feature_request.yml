@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest something Eavesy should do
+title: "[Feature]: "
+labels: ["type: feature", "status: needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, a quick check: is there already an
+        [open idea](https://github.com/williamrogersdev/eavesy/issues?q=is%3Aissue+label%3A%22type%3A+feature%22)
+        or a [Discussion](https://github.com/williamrogersdev/eavesy/discussions/categories/ideas)
+        for it? If you want to float an idea before it's concrete, the Ideas
+        Discussion category is the better place.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen? A sketch of the UI or the API is helpful.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Area
+      options:
+        - Mac app
+        - Browser (web app)
+        - Dictation
+        - MCP
+        - Summaries / AI output
+        - Other / not sure
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to open a pull request for this
+          required: false
