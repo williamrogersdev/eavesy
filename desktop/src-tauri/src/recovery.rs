@@ -84,6 +84,41 @@ pub fn ingest_segment_manifests<R: Runtime>(
     Ok(count)
 }
 
+/// Prefix of `last_error` on a capture whose recovery is waiting to be retried.
+pub const DEFERRED_NOTE: &str = "recovery deferred: ";
+
+/// Salvages a capture, or leaves it queued with a note when that is not possible
+/// yet. It is never failed here: its segments keep uploading meanwhile and
+/// `retry_deferred` tries again.
+pub fn recover_or_defer<R: Runtime>(app: &AppHandle<R>, session_id: &str, reason: &str) -> Option<Salvage> {
+    match salvage(app, session_id, reason) {
+        Ok(outcome) => {
+            eprintln!("recovered interrupted recording {session_id}: {outcome:?}");
+            Some(outcome)
+        }
+        Err(error) => {
+            eprintln!("could not recover recording {session_id} yet: {error}");
+            crate::telemetry::capture("recording recovery deferred", &error);
+            if let Err(error) = sqlite::defer_session(app, session_id, 0, Some(&format!("{DEFERRED_NOTE}{error}"))) {
+                eprintln!("could not note deferred recovery for {session_id}: {error}");
+            }
+            None
+        }
+    }
+}
+
+/// Retries every capture whose recovery was deferred.
+pub fn retry_deferred<R: Runtime>(app: &AppHandle<R>) {
+    match sqlite::deferred_recoveries(app) {
+        Ok(ids) => {
+            for id in ids {
+                recover_or_defer(app, &id, "it could not be finished when the recording ended");
+            }
+        }
+        Err(error) => eprintln!("{error}"),
+    }
+}
+
 /// Decides what can be kept of an interrupted capture and moves its local session
 /// out of `recording`, so the sync loop never polls it forever.
 pub fn salvage<R: Runtime>(app: &AppHandle<R>, session_id: &str, reason: &str) -> Result<Salvage, String> {
@@ -95,35 +130,47 @@ pub fn salvage<R: Runtime>(app: &AppHandle<R>, session_id: &str, reason: &str) -
     }
     let duration_ms = sqlite::recorded_duration_ms(app, session_id)?;
     let folder = session.archive_path.parent().map(PathBuf::from);
+    // A recordings root on a disk that is not mounted yet looks exactly like a lost
+    // archive. Leave the session alone; it is salvaged once the folder is back.
+    if folder.as_deref().is_some_and(|folder| !folder.is_dir()) {
+        return Err(format!(
+            "the recording folder {} is not available",
+            folder.as_deref().unwrap_or(Path::new("")).display()
+        ));
+    }
 
-    let outcome = if archive_is_playable(&session.archive_path) {
+    // The database decides what happens to the capture, so it is updated first.
+    // The registry entry and the recording folder are conveniences that the
+    // result poll rewrites later; failing to write them must not lose the upload.
+    let (outcome, has_audio, status) = if archive_is_playable(&session.archive_path) {
         let archive_bytes = std::fs::metadata(&session.archive_path)
             .map(|metadata| metadata.len() as i64)
             .unwrap_or(0);
-        save_local_recording(app, &session, folder.as_deref(), duration_ms, true, "processing")?;
         sqlite::finish_recording(app, session_id, &session.archive_path, duration_ms, archive_bytes)?;
-        Salvage::Archive
+        (Salvage::Archive, true, "processing")
     } else {
         let segments = sqlite::usable_segment_count(app, session_id)?;
         if segments > 0 {
-            save_local_recording(app, &session, folder.as_deref(), duration_ms, false, "processing")?;
             sqlite::finish_from_segments(
                 app,
                 session_id,
                 duration_ms,
                 &format!("the audio file could not be saved ({reason}); finishing from recorded segments"),
             )?;
-            Salvage::Segments(segments)
+            (Salvage::Segments(segments), false, "processing")
         } else {
-            save_local_recording(app, &session, folder.as_deref(), 0, false, "failed")?;
             sqlite::mark_session_failed(
                 app,
                 session_id,
                 &format!("the recording could not be saved and no audio was captured ({reason})"),
             )?;
-            Salvage::Nothing
+            (Salvage::Nothing, false, "failed")
         }
     };
+    if let Err(error) = save_local_recording(app, &session, folder.as_deref(), duration_ms, has_audio, status) {
+        eprintln!("recovered {session_id} but could not update its local files: {error}");
+        crate::telemetry::capture("recording recovery files not written", &error);
+    }
     Ok(outcome)
 }
 

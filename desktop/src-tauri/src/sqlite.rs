@@ -226,18 +226,22 @@ fn recover_interrupted<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .map_err(|e| format!("read interrupted recordings: {e}"))?;
     for id in ids {
         // One damaged capture must not stop the app from launching or block the rest.
-        match crate::recovery::salvage(app, &id, "the app quit while recording") {
-            Ok(outcome) => eprintln!("recovered interrupted recording {id}: {outcome:?}"),
-            Err(error) => {
-                eprintln!("could not recover interrupted recording {id}: {error}");
-                crate::telemetry::capture("recording recovery failed", &error);
-                if let Err(error) = mark_session_failed(app, &id, &format!("recovery failed: {error}")) {
-                    eprintln!("could not mark {id} failed: {error}");
-                }
-            }
-        }
+        crate::recovery::recover_or_defer(app, &id, "the app quit while recording");
     }
     Ok(())
+}
+
+/// Captures whose recovery could not finish (for example, their folder is on a
+/// disk that is not mounted); `recovery::retry_deferred` tries them again.
+pub fn deferred_recoveries<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
+    open(app)?
+        .prepare("SELECT id FROM recording_sessions WHERE status='recording' AND last_error LIKE ?1")
+        .and_then(|mut statement| {
+            statement
+                .query_map(params![format!("{}%", crate::recovery::DEFERRED_NOTE)], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|e| format!("read deferred recoveries: {e}"))
 }
 
 pub fn interrupted_session<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<Option<InterruptedSession>, String> {
@@ -1113,6 +1117,44 @@ mod recovery_tests {
         assert!(error.unwrap().contains("no audio was captured"));
         assert!(next_session(fixture.handle()).unwrap().is_none());
         assert_eq!(crate::store::load_all(fixture.handle())[0].status, "failed");
+    }
+
+    #[test]
+    fn launch_recovery_waits_for_an_unmounted_recording_folder() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("external-disk", 2);
+        std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+        let folder = archive.parent().unwrap().to_path_buf();
+        let parked = fixture.root.join("unmounted");
+        std::fs::rename(&folder, &parked).unwrap();
+
+        fixture.restart();
+
+        let (status, missing, note) = fixture.status("external-disk");
+        assert_eq!((status.as_str(), missing), ("recording", false), "must not be failed or marked lost");
+        assert!(note.unwrap().starts_with(crate::recovery::DEFERRED_NOTE));
+        assert_eq!(next_segment(fixture.handle(), "external-disk").unwrap().unwrap().idx, 0);
+
+        std::fs::rename(&parked, &folder).unwrap();
+        crate::recovery::retry_deferred(fixture.handle());
+        assert_eq!(fixture.status("external-disk"), ("uploading".to_string(), false, None));
+    }
+
+    #[test]
+    fn recovery_updates_the_queue_even_if_the_recording_folder_cannot_be_written() {
+        let mut fixture = Fixture::new();
+        let archive = fixture.capture("read-only", 1);
+        let folder = archive.parent().unwrap().to_path_buf();
+        let mut permissions = std::fs::metadata(&folder).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o500);
+        std::fs::set_permissions(&folder, permissions.clone()).unwrap();
+
+        fixture.restart();
+
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o700);
+        std::fs::set_permissions(&folder, permissions).unwrap();
+        assert_eq!(fixture.status("read-only").0, "uploading");
+        assert!(fixture.status("read-only").1);
     }
 
     #[test]

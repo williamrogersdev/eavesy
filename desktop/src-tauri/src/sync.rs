@@ -68,6 +68,8 @@ struct ResultResponse {
 
 const POLL_INTERVAL_MS: i64 = 10_000;
 const ERROR_BACKOFF_MS: i64 = 15_000;
+/// Retry interval while the server does not support segments-only finalize yet.
+const SEGMENTS_ONLY_RETRY_MS: i64 = 10 * 60 * 1_000;
 
 #[derive(Debug)]
 struct Permanent(String);
@@ -171,11 +173,22 @@ pub(crate) enum Pass {
     SignedOut,
 }
 
+/// How often captures whose recovery was deferred are tried again.
+const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
+
 pub async fn run(app: AppHandle) -> Result<()> {
     let api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
+    let mut recovery_retried = Instant::now();
 
     loop {
+        if recovery_retried.elapsed() >= RECOVERY_RETRY {
+            recovery_retried = Instant::now();
+            let app = app.clone();
+            if let Err(error) = tokio::task::spawn_blocking(move || crate::recovery::retry_deferred(&app)).await {
+                eprintln!("desktop ingest: deferred recovery stopped: {error}");
+            }
+        }
         let Some(token) = settings::device_token(&app) else {
             sleep(Duration::from_secs(5)).await;
             continue;
@@ -560,6 +573,16 @@ async fn finalize_from_segments<R: Runtime>(
         .send()
         .await
         .context("finish recording from its segments")?;
+    if response.status() == StatusCode::BAD_REQUEST {
+        // A server from before segments-only finalize rejects the empty body. That
+        // is not this recording's fault: wait for the server to be updated rather
+        // than failing it, so the desktop and server can ship in either order.
+        let error = http_error("finish recording from its segments", response).await;
+        eprintln!("desktop ingest: server cannot finish {} from segments yet: {error:#}", session.id);
+        sqlite::defer_session(app, &session.id, SEGMENTS_ONLY_RETRY_MS, Some(&format!("{error:#}")))
+            .map_err(|e| anyhow!(e))?;
+        return Ok(());
+    }
     if !response.status().is_success() {
         return Err(http_error("finish recording from its segments", response).await);
     }
@@ -840,6 +863,32 @@ mod tests {
             assert_eq!(harness.pass().await, Pass::Busy);
 
             assert_eq!(harness.session_state("meeting"), ("processing".to_string(), 1));
+        }
+
+        #[tokio::test]
+        async fn an_older_server_refusing_segments_only_finalize_is_retried_later() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            sqlite::finish_from_segments(harness.handle(), "meeting", 1_000, "stop timed out").unwrap();
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_segments SET status='uploaded'", []).unwrap();
+            });
+            Mock::given(method("POST"))
+                .and(path("/api/sessions/remote-meeting/finalize"))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": "invalid_final_part" })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            assert_eq!(harness.session_state("meeting"), ("uploading".to_string(), 1));
+            let next_attempt_at: i64 = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row("SELECT next_attempt_at FROM recording_sessions WHERE id='meeting'", [], |row| row.get(0))
+                    .unwrap()
+            });
+            assert!(next_attempt_at > chrono::Utc::now().timestamp_millis() + 5 * 60 * 1_000);
+            assert_eq!(harness.pass().await, Pass::Idle);
         }
 
         #[tokio::test]

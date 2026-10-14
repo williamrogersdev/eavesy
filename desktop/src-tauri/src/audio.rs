@@ -634,7 +634,7 @@ fn stop_capture_inner(
 /// Keep whatever can be kept now instead of waiting for the next launch, and say
 /// what happened in the error the HUD shows.
 fn salvage_after_failed_stop(app: &AppHandle, session_id: &str, error: String) -> String {
-    let message = match crate::recovery::salvage(app, session_id, &error) {
+    let message = match crate::recovery::recover_or_defer(app, session_id, &error).ok_or(()) {
         Ok(crate::recovery::Salvage::Archive) => {
             format!("{error}. The saved audio will still be uploaded and transcribed.")
         }
@@ -644,10 +644,7 @@ fn salvage_after_failed_stop(app: &AppHandle, session_id: &str, error: String) -
         Ok(crate::recovery::Salvage::Nothing) => {
             format!("{error}. No audio could be saved from this recording.")
         }
-        Err(recovery_error) => {
-            crate::telemetry::capture("capture.stop_recovery", &recovery_error);
-            format!("{error}. It will be recovered the next time Eavesy opens.")
-        }
+        Err(()) => format!("{error}. Eavesy will finish saving it as soon as it can."),
     };
     if let Err(emit_error) = app.emit("recordings:updated", ()) {
         eprintln!("could not announce recovered recording: {emit_error}");
