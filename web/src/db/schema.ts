@@ -131,7 +131,6 @@ export const meetings = sqliteTable(
   },
   (t) => [
     index('meetings_user_started_idx').on(t.userId, t.startedAt),
-    index('meetings_status_idx').on(t.status),
     index('meetings_status_updated_idx').on(t.status, t.updatedAt),
     index('meetings_created_idx').on(t.createdAt),
     index('meetings_started_idx').on(t.startedAt),
@@ -428,8 +427,7 @@ export const activityLog = sqliteTable(
   (t) => [
     index('activity_user_created_idx').on(t.userId, t.createdAt),
     index('activity_event_created_idx').on(t.eventType, t.createdAt),
-    index('activity_meeting_event_idx').on(t.meetingId, t.eventType, t.createdAt),
-    index('activity_user_event_created_idx').on(t.userId, t.eventType, t.createdAt),
+    index('activity_meeting_idx').on(t.meetingId),
   ],
 );
 

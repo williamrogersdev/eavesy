@@ -83,11 +83,12 @@ export const Route = createFileRoute('/api/export/$id/zip')({
           startedAt: meeting.startedAt,
         })}.zip`;
 
-        return new Response(archive.stream, {
+        // FixedLengthStream gives the response its Content-Length and errors
+        // the download if the archive comes out a different size.
+        return new Response(archive.stream.pipeThrough(new FixedLengthStream(archive.length)), {
           status: 200,
           headers: {
             'Content-Type': 'application/zip',
-            'Content-Length': String(archive.length),
             'Content-Disposition': `attachment; filename="${filename}"`,
             'Cache-Control': 'no-store',
           },

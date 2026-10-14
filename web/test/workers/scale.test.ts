@@ -11,7 +11,8 @@ import JSZip from 'jszip';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { worker, type Env } from '../../../workers/processing/src/index';
 import type { ProcessingMessage } from '../../src/server/processing-worker';
-import { Route as TranscribeRoute } from '../../src/routes/api/transcribe';
+import { capBody, Route as TranscribeRoute } from '../../src/routes/api/transcribe';
+import { guardSpend, guardUserQuota } from '../../src/server/rate-limit';
 import { Route as ZipRoute } from '../../src/routes/api/export/$id/zip';
 
 interface TestEnv {
@@ -34,12 +35,20 @@ vi.mock('../../src/server/auth', () => ({
   tryResolveActor: async () => (actor.userId ? { userId: actor.userId, isAnonymous: false } : null),
 }));
 
+// Pass-through spies: tests check that refused uploads never reach the counters.
+vi.mock('../../src/server/rate-limit', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/server/rate-limit')>();
+  return { ...original, guardSpend: vi.fn(original.guardSpend), guardUserQuota: vi.fn(original.guardUserQuota) };
+});
+
 beforeAll(async () => {
   await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
 });
 
 beforeEach(async () => {
   actor.userId = null;
+  vi.mocked(guardSpend).mockClear();
+  vi.mocked(guardUserQuota).mockClear();
   await testEnv.DB.batch(
     ['transcript_segments', 'meeting_segments', 'summaries', 'activity_log', 'meetings', 'device_tokens', 'devices', 'users'].map(
       (table) => testEnv.DB.prepare(`DELETE FROM ${table}`),
@@ -163,7 +172,7 @@ describe('transcript writes', () => {
 });
 
 describe('/api/transcribe', () => {
-  it('refuses an oversized upload from its declared length without reading it', async () => {
+  it('refuses an oversized upload from its declared length without reading it or spending quota', async () => {
     const token = await deviceToken('user_big');
     let pulled = 0;
     const body = new ReadableStream<Uint8Array>({
@@ -176,7 +185,7 @@ describe('/api/transcribe', () => {
     const response = await route(TranscribeRoute, 'POST')({
       request: new Request('https://eavesy.test/api/transcribe', {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-length': String(26 * 1024 * 1024) },
+        headers: { authorization: `Bearer ${token}`, 'content-length': String(101 * 1024 * 1024) },
         body,
         duplex: 'half',
       } as RequestInit),
@@ -184,30 +193,47 @@ describe('/api/transcribe', () => {
     });
     expect(response.status).toBe(413);
     expect(pulled).toBeLessThan(2);
+    expect(guardUserQuota).not.toHaveBeenCalled();
+    expect(guardSpend).not.toHaveBeenCalled();
   });
 
-  it('stops reading a body that runs past the cap even without a length', async () => {
-    const token = await deviceToken('user_chunked');
+  it('does not spend quota on an empty or malformed upload', async () => {
+    const token = await deviceToken('user_empty');
+    const send = (body: BodyInit, contentType: string) =>
+      route(TranscribeRoute, 'POST')({
+        request: new Request('https://eavesy.test/api/transcribe', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, ...(contentType ? { 'content-type': contentType } : {}) },
+          body,
+        }),
+        params: {},
+      });
+    expect((await send(new Uint8Array(0), 'audio/wav')).status).toBe(400);
+    expect((await send('not a form', 'multipart/form-data; boundary=x')).status).toBe(400);
+    const form = new FormData();
+    form.set('other', 'field');
+    expect((await send(form, '')).status).toBe(400);
+    expect(guardUserQuota).not.toHaveBeenCalled();
+    expect(guardSpend).not.toHaveBeenCalled();
+  });
+
+  it('cuts off a body that runs past the cap even without a length', async () => {
     let sent = 0;
-    const chunk = new Uint8Array(1024 * 1024);
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        sent += chunk.byteLength;
-        if (sent > 64 * 1024 * 1024) controller.close();
-        else controller.enqueue(chunk);
+        sent += 1024;
+        if (sent > 64 * 1024) controller.close();
+        else controller.enqueue(new Uint8Array(1024));
       },
     });
-    const response = await route(TranscribeRoute, 'POST')({
-      request: new Request('https://eavesy.test/api/transcribe', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
-        body,
-        duplex: 'half',
-      } as RequestInit),
-      params: {},
-    });
-    expect(response.status).toBe(413);
-    expect(sent).toBeLessThanOrEqual(27 * 1024 * 1024);
+    const capped = capBody(body, 8 * 1024);
+    await expect(new Response(capped.stream).arrayBuffer()).rejects.toThrow();
+    expect(capped.overflowed()).toBe(true);
+    expect(sent).toBeLessThanOrEqual(12 * 1024);
+
+    const small = capBody(new Response(new Uint8Array(4 * 1024)).body!, 8 * 1024);
+    expect((await new Response(small.stream).arrayBuffer()).byteLength).toBe(4 * 1024);
+    expect(small.overflowed()).toBe(false);
   });
 });
 
@@ -230,10 +256,12 @@ describe('meeting zip export', () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/zip');
-    expect(Number(response.headers.get('content-length'))).toBeGreaterThan(audio.byteLength);
 
+    // The body runs through a FixedLengthStream sized from zipLength(), which
+    // errors the read if the archive comes out any other size, so a complete
+    // read means the Content-Length the runtime sends is exact.
     const bytes = new Uint8Array(await response.arrayBuffer());
-    expect(bytes.byteLength).toBe(Number(response.headers.get('content-length')));
+    expect(bytes.byteLength).toBeGreaterThan(audio.byteLength);
     const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
     const names = Object.keys(zip.files);
     const audioEntry = names.find((name) => name.endsWith('/audio.m4a'));
@@ -242,6 +270,11 @@ describe('meeting zip export', () => {
     const transcript = names.find((name) => name.endsWith('/transcript.md'))!;
     expect(await zip.file(transcript)!.async('string')).toContain('Hello from the zip');
   }, 20_000);
+
+  it('fails the download if the archive comes out a different size than declared', async () => {
+    const short = new Response(new Uint8Array(10)).body!.pipeThrough(new FixedLengthStream(11));
+    await expect(new Response(short).arrayBuffer()).rejects.toThrow();
+  });
 
   it('is not found for another user', async () => {
     await insertUser('user_zip_owner');
