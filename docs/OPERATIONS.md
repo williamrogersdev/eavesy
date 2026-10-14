@@ -135,6 +135,51 @@ whether to raise `BUDGET_<SCOPE>_PER_DAY` for the rest of the day.
 The hourly cron deletes expired windows 10,000 at a time until a pass deletes
 fewer, capped at 100 passes per run.
 
+## MCP tokens
+
+Connections created in **Settings → AI assistants (MCP)** issue a token that
+goes in the `Authorization` header and expires after 90 days **without use**.
+Each use slides the expiry to 90 days out, with at most one write per token per
+day. Settings shows the current expiry date.
+
+```json
+{
+  "mcpServers": {
+    "eavesy": {
+      "type": "http",
+      "url": "https://mcp.eavesy.com",
+      "headers": { "Authorization": "Bearer nt_…" }
+    }
+  }
+}
+```
+
+Earlier tokens were embedded in the URL (`https://mcp.eavesy.com/<token>`),
+which leaks them into client configs, proxy logs, and shell history. Some MCP
+clients can only be given a URL, so the migration path keeps them working:
+
+- Migration `0019` gives every existing token an expiry 90 days after it
+  runs. Because expiry slides, a token that keeps being used never expires.
+  Tokens minted by code that predates the column expire 90 days after
+  creation unless used.
+- URL-path tokens keep working until the MCP Worker variable
+  `MCP_ALLOW_PATH_TOKENS` is set to `false`. Each use is logged as
+  `mcp token sent in URL path` with the token id (never the token), records
+  `mcp_tokens.path_auth_used_at`, and gets a `Deprecation: true` response
+  header. Settings marks those connections as needing replacement.
+- With the flag off, a URL-path token gets `401` with
+  `"token must be sent in the Authorization header"`. A token past its expiry
+  gets `401` with `"token expired"`. Both responses tell the user to create a
+  new connection.
+
+Before turning the flag off, check who still uses URL-path tokens, and make
+sure the clients they use can send headers (or that OAuth exists):
+
+```sql
+SELECT count(*) FROM mcp_tokens
+ WHERE revoked_at IS NULL AND path_auth_used_at > (strftime('%s','now') - 7 * 86400) * 1000;
+```
+
 ## Recovery
 
 1. Identify the failed job from Worker logs and aggregate failed/stuck metrics

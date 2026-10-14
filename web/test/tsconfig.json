@@ -8,7 +8,9 @@
     ],
     "paths": {
       "@/*": ["../src/*"],
-      "@cloudflare/workers-types": ["../node_modules/@cloudflare/workers-types"]
+      "@cloudflare/workers-types": ["../node_modules/@cloudflare/workers-types"],
+      "drizzle-orm": ["../node_modules/drizzle-orm"],
+      "drizzle-orm/*": ["../node_modules/drizzle-orm/*"]
     }
   },
   "include": ["./**/*.ts", "../src/routeTree.gen.ts", "../src/types/**/*.d.ts"],
