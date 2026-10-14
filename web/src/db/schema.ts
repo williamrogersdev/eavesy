@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -43,6 +44,9 @@ export const users = sqliteTable(
   ],
 );
 
+// Retained for history and unused: billing was removed and nothing reads or writes
+// this table. Rows are kept; account deletion still clears them because of the
+// user_id foreign key.
 export const subscriptions = sqliteTable(
   'subscriptions',
   {
@@ -146,11 +150,15 @@ export const meetingSegments = sqliteTable(
     })
       .notNull()
       .default('pending'),
+    transcribeClaimedAt: integer('transcribe_claimed_at'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
     uniqueIndex('meeting_segments_meeting_idx_track_uq').on(t.meetingId, t.idx, t.track),
     index('meeting_segments_meeting_idx').on(t.meetingId, t.idx),
+    index('meeting_segments_processing_idx')
+      .on(t.transcribeClaimedAt)
+      .where(sql`${t.transcribeStatus} = 'processing'`),
   ],
 );
 

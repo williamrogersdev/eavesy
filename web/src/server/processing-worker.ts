@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type {
   D1Database,
@@ -60,6 +60,16 @@ type Db = ReturnType<typeof drizzle<typeof schema>>;
 export const MAX_ATTEMPTS = 5;
 export const SUMMARY_WAIT_LIMIT_MS = 6 * 60 * 60 * 1_000;
 export const DEAD_LETTER_QUEUE = 'eavesy-processing-dlq';
+// A queue consumer can run for at most 15 minutes, so a claim older than that
+// belongs to a worker that died without releasing it.
+export const SEGMENT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+const SEGMENT_BUSY_RETRY_SECONDS = 300;
+
+class SegmentBusyError extends Error {
+  constructor() {
+    super('segment is being transcribed by another job');
+  }
+}
 
 export interface TerminalProcessingFailure {
   kind: ProcessingMessage['kind'];
@@ -78,6 +88,28 @@ export async function queue(batch: MessageBatch<ProcessingMessage>, env: Process
       await handle(message.body, env);
       message.ack();
     } catch (error) {
+      if (error instanceof SegmentBusyError) {
+        // Another job holds the claim. Check back after it should have finished;
+        // by then the segment is complete or the claim is stale and reclaimable.
+        if (message.attempts < MAX_ATTEMPTS) {
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          continue;
+        }
+        // Out of retries, but the claim may belong to a worker that died and
+        // won't go stale for a few more minutes. Start a fresh message rather
+        // than drop the segment; the cron sweep is the backstop if this fails.
+        try {
+          await env.PROCESSING_QUEUE.send(message.body, { delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          console.warn(
+            JSON.stringify({ message: 'segment busy past retry budget; requeued', job: message.body }),
+          );
+          message.ack();
+        } catch (sendError) {
+          reportError('could not requeue busy segment', sendError, { job: message.body });
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+        }
+        continue;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       const terminal = message.attempts >= MAX_ATTEMPTS;
       if (terminal) {
@@ -404,10 +436,43 @@ async function handleTranscribeSegment(
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting) return;
 
-  await db
+  // Queue delivery is at-least-once and segment retries re-enqueue, so two jobs
+  // can arrive together. Only the one whose conditional update lands transcribes.
+  const claimedAt = Date.now();
+  const claimed = await db
     .update(meetingSegments)
-    .set({ transcribeStatus: 'processing' })
-    .where(eq(meetingSegments.id, segment.id));
+    .set({ transcribeStatus: 'processing', transcribeClaimedAt: claimedAt })
+    .where(
+      and(
+        eq(meetingSegments.id, segment.id),
+        or(
+          inArray(meetingSegments.transcribeStatus, ['pending', 'failed']),
+          and(
+            eq(meetingSegments.transcribeStatus, 'processing'),
+            or(
+              isNull(meetingSegments.transcribeClaimedAt),
+              lt(meetingSegments.transcribeClaimedAt, claimedAt - SEGMENT_CLAIM_TTL_MS),
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: meetingSegments.id });
+  if (claimed.length === 0) {
+    const current = (
+      await db
+        .select({ status: meetingSegments.transcribeStatus })
+        .from(meetingSegments)
+        .where(eq(meetingSegments.id, segment.id))
+        .limit(1)
+    )[0];
+    if (!current || current.status === 'complete') return;
+    throw new SegmentBusyError();
+  }
+  const ownClaim = and(
+    eq(meetingSegments.id, segment.id),
+    eq(meetingSegments.transcribeClaimedAt, claimedAt),
+  );
   try {
     if (!isSilentTrack(track, segment.activeMs)) {
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
@@ -465,7 +530,7 @@ async function handleTranscribeSegment(
     await db
       .update(meetingSegments)
       .set({ transcribeStatus: 'complete' })
-      .where(eq(meetingSegments.id, segment.id));
+      .where(ownClaim);
 
     if (track !== 'mixed') {
       await removeEcho(db, meetingId, {
@@ -491,8 +556,8 @@ async function handleTranscribeSegment(
   } catch (error) {
     await db
       .update(meetingSegments)
-      .set({ transcribeStatus: 'pending' })
-      .where(eq(meetingSegments.id, segment.id));
+      .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+      .where(ownClaim);
     throw error;
   }
 }
@@ -883,6 +948,61 @@ async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
   }
   await env.DB.prepare('DELETE FROM device_pairing_codes WHERE claimed_by_user_id = ?').bind(userId).run();
   await db.delete(users).where(eq(users.id, userId));
+}
+
+const STALE_SEGMENT_SWEEP_LIMIT = 100;
+
+/**
+ * Queue segments whose transcription claim outlived any possible consumer.
+ * Without this, a segment whose worker died after its queue message gave up
+ * would stay 'processing' and leave a gap in the transcript.
+ *
+ * Each row is sent first and reset to 'pending' only after its send succeeds,
+ * so a failed send leaves the row stale for the next sweep. Failures are
+ * reported, never thrown: the rest of the cron must still run.
+ */
+export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now()) {
+  const db = drizzle(env.DB, { schema });
+  const stale = and(
+    eq(meetingSegments.transcribeStatus, 'processing'),
+    or(isNull(meetingSegments.transcribeClaimedAt), lt(meetingSegments.transcribeClaimedAt, now - SEGMENT_CLAIM_TTL_MS)),
+  );
+  let candidates;
+  try {
+    candidates = await db
+      .select({
+        id: meetingSegments.id,
+        meetingId: meetingSegments.meetingId,
+        idx: meetingSegments.idx,
+        track: meetingSegments.track,
+      })
+      .from(meetingSegments)
+      .where(stale)
+      .limit(STALE_SEGMENT_SWEEP_LIMIT);
+  } catch (error) {
+    reportError('could not look up stale segment claims', error);
+    return;
+  }
+  let requeued = 0;
+  for (const { id, ...segment } of candidates) {
+    try {
+      await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
+      // Conditional on still being stale: if the message was already picked up
+      // and claimed, the fresh claim is left alone.
+      await db
+        .update(meetingSegments)
+        .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+        .where(and(eq(meetingSegments.id, id), stale));
+      requeued += 1;
+    } catch (error) {
+      reportError('could not requeue stale segment claim', error, { segment });
+    }
+  }
+  if (candidates.length > 0) {
+    console.warn(
+      JSON.stringify({ message: 'requeued stale segment claims', count: requeued, failed: candidates.length - requeued }),
+    );
+  }
 }
 
 export async function sealLegacyKeys(env: ProcessingEnv) {

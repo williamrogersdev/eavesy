@@ -5,7 +5,6 @@ const publicRoutes = [
   '/',
   '/features',
   '/how-it-works',
-  '/pricing',
   '/security',
   '/docs',
   '/docs/getting-started',
@@ -74,7 +73,7 @@ test('mobile navigation exposes the core product range', async ({ page }) => {
   await page.getByRole('button', { name: 'Open menu' }).click();
   const mobileNav = page.getByRole('navigation', { name: 'Mobile navigation' });
 
-  for (const label of ['Features', 'How it works', 'Pricing', 'Docs', 'Sign in']) {
+  for (const label of ['Features', 'How it works', 'Docs', 'Sign in']) {
     await expect(mobileNav.getByRole('link', { name: label, exact: true })).toBeVisible();
   }
   await expect(mobileNav.getByRole('link', { name: 'Download for Mac' })).toBeVisible();

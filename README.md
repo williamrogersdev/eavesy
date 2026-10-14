@@ -8,8 +8,9 @@ The macOS app is the long-form recorder: it captures microphone and system
 audio continuously, uploads recoverable segments, and mirrors completed audio,
 transcript, and summary files to `~/Eavesy/Recordings`.
 
-The current launch target is a free beta. Paid plans remain marked **Coming
-soon** until Stripe is configured and explicitly enabled.
+Eavesy is free to use. Everyone gets the same daily limits; see
+[Fair-use limits](web/src/content/docs/fair-use-limits.mdx) for the numbers and
+how to change them when self-hosting.
 
 ## Production architecture
 
