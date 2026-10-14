@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { devices, subscriptions, users } from '@/db/schema';
+import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
 import { openUserKeys } from '@/server/secret-box';
@@ -29,10 +29,9 @@ export const Route = createFileRoute('/api/me')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const db = getDb();
-        const [u, [subRows, macDevice]] = await Promise.all([
+        const [u, [macDevice]] = await Promise.all([
           actor.user ? openUserKeys(actor.user) : usersRepo.getById(db, actor.userId),
           db.batch([
-            db.select().from(subscriptions).where(eq(subscriptions.userId, actor.userId)).limit(1),
             db
               .select({ id: devices.id })
               .from(devices)
@@ -41,7 +40,6 @@ export const Route = createFileRoute('/api/me')({
           ]),
         ]);
         if (!u) return Response.json({ error: 'not found' }, { status: 404 });
-        const sub = subRows[0];
         return Response.json({
           id: u.id,
           email: u.email,
@@ -51,9 +49,6 @@ export const Route = createFileRoute('/api/me')({
           phoneNumber: u.phoneNumber,
           isAnonymous: u.isAnonymous,
           onboardingCompleted: !!u.onboardingCompletedAt,
-          plan: sub?.plan ?? 'free',
-          subscriptionStatus: sub?.status ?? 'none',
-          hasBilling: !!sub?.stripeCustomerId,
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
           hasAnthropicKey: !!u.byoAnthropicKey,

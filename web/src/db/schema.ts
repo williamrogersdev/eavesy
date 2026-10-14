@@ -44,6 +44,9 @@ export const users = sqliteTable(
   ],
 );
 
+// Retained for history and unused: billing was removed and nothing reads or writes
+// this table. Rows are kept; account deletion still clears them because of the
+// user_id foreign key.
 export const subscriptions = sqliteTable(
   'subscriptions',
   {

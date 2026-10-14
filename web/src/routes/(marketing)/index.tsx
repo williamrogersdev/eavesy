@@ -8,9 +8,8 @@ import {
   Hero,
   HowItWorks,
   Marquee,
-  Pricing,
 } from '@/components/marketing';
-import { FAQS, PLANS } from '@/components/marketing/content';
+import { FAQS } from '@/components/marketing/content';
 import {
   JsonLd,
   faqSchema,
@@ -34,12 +33,7 @@ function LandingPage() {
     <main className="flex flex-1 flex-col">
       <JsonLd
         schema={[
-          softwareApplicationSchema(
-            PLANS.filter((p) => p.price.startsWith('$')).map((p) => ({
-              name: p.name,
-              price: p.price,
-            })),
-          ),
+          softwareApplicationSchema(),
           faqSchema(FAQS.map((f) => ({ q: f.q, a: f.a }))),
         ]}
       />
@@ -49,7 +43,6 @@ function LandingPage() {
       <Bento />
       <HowItWorks />
       <Comparison />
-      <Pricing />
       <Faq />
       <DownloadCTA />
     </main>

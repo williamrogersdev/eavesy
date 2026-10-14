@@ -62,6 +62,20 @@ export async function onRecordingsUpdated(cb: () => void): Promise<UnlistenFn> {
   return t.event.listen<unknown>('recordings:updated', () => cb());
 }
 
+export type SyncStatus = { signedOut: boolean };
+
+/** Whether uploads are paused because the server rejected this Mac's credential. */
+export async function getSyncStatus(): Promise<SyncStatus | null> {
+  if (!isDesktop()) return null;
+  return invoke<SyncStatus>('sync_status').catch(() => null);
+}
+
+export async function onSyncStatus(cb: (status: SyncStatus) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<SyncStatus>('sync:status', (event) => cb(event.payload));
+}
+
 export async function hidePanel(): Promise<void> {
   if (!isDesktop()) return;
   await invoke('hide_panel');

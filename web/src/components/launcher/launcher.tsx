@@ -60,6 +60,8 @@ import {
   onLauncherRecordings,
   onCaptureState,
   onRecordingsUpdated,
+  getSyncStatus,
+  onSyncStatus,
   pairDevice,
   pasteClip,
   pasteToFrontmost,
@@ -182,6 +184,7 @@ export function Launcher() {
   const [setupPaired, setSetupPaired] = useState(false);
   const [account, setAccount] = useState<AccountState>(undefined);
   const [connecting, setConnecting] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [withComputerAudio, setWithComputerAudio] = useState(false);
   useEffect(() => {
     setWithComputerAudio(includeComputerAudio());
@@ -463,6 +466,23 @@ export function Launcher() {
       unlisten?.();
     };
   }, [now, runTask]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    runTask(async () => {
+      const stopListening = await onSyncStatus((status) => setSignedOut(status.signedOut));
+      const initial = await getSyncStatus();
+      if (!disposed && initial) setSignedOut(initial.signedOut);
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }, 'Could not watch sync status');
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [desktop, runTask]);
 
   useEffect(() => {
     focusPanel();
@@ -1052,6 +1072,12 @@ export function Launcher() {
           <button type="button" aria-label="Take screenshot" disabled={starting || !!recording} onClick={() => runTask(async () => { if (captureBusy.current) return; captureBusy.current = true; setStarting(true); try { await captureScreenshot(); } finally { captureBusy.current = false; setStarting(false); } })} className="flex items-center gap-1.5 rounded-full px-2 py-1 hover:bg-[var(--lr-hover)] disabled:opacity-40"><Camera className="h-3.5 w-3.5" /> Screenshot</button>
           <button type="button" aria-label="Record screen video" disabled={starting || !!recording} onClick={() => runTask(() => beginRecording('screen', { mic: true }))} className="flex items-center gap-1.5 rounded-full px-2 py-1 hover:bg-[var(--lr-hover)] disabled:opacity-40"><Video className="h-3.5 w-3.5" /> Video</button>
         </div>}
+        {desktop && view === 'list' && signedOut && (
+          <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--lr-brand-soft)] px-4 py-2 text-xs">
+            <span>Eavesy is signed out. Recordings stay on this Mac and upload once you reconnect.</span>
+            <button type="button" disabled={connecting} onClick={() => runTask(connectAccount, 'Could not connect account')} className="shrink-0 rounded-md bg-[var(--lr-brand)] px-2 py-1 text-white disabled:opacity-50">Reconnect</button>
+          </div>
+        )}
         {desktop && !setupKnown ? (
           <div className="min-h-0 flex-1" aria-busy="true" />
         ) : view === 'setup' && !recording ? (

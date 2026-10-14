@@ -87,7 +87,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       { title: 'Recoverable rolling segments', body: 'Long Mac sessions are sealed to disk in segments and processed during capture, limiting how much work a crash or network interruption can affect.' },
       { title: 'Multi-language', body: 'Transcribes dozens of languages automatically, with no setup or language picker required.' },
       { title: 'Portable output', body: 'Copy or export the transcript as Markdown; Mac sessions also keep the source files in a normal folder.' },
-      { title: 'Always included', body: 'Every plan gives you the complete transcript. It’s never paywalled behind a “summary-only” tier.' },
+      { title: 'Always included', body: 'You always get the complete transcript, never just a summary.' },
     ],
     related: ['live-summary', 'semantic-search', 'files-you-own'],
   },

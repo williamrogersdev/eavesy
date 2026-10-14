@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from '@tanstack/react-router';
+import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
 import { getAllDocs, getDoc } from '@/lib/content';
 import { extractToc } from '@/lib/toc';
 import { Breadcrumbs } from '@/components/marketing/page-chrome';
@@ -9,6 +9,9 @@ import { seoHead } from '@/lib/seo-head';
 
 export const Route = createFileRoute('/(marketing)/docs/$slug')({
   loader: ({ params }) => {
+    if (params.slug === 'plans-and-billing') {
+      throw redirect({ to: '/docs/$slug', params: { slug: 'fair-use-limits' }, statusCode: 301 });
+    }
     const doc = getDoc(params.slug);
     if (!doc) throw notFound();
 
