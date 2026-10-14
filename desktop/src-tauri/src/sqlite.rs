@@ -268,6 +268,8 @@ fn recover_interrupted<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     Ok(())
 }
 
+// Mirrors the recordings table columns one-to-one.
+#[allow(clippy::too_many_arguments)]
 pub fn begin_recording<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,

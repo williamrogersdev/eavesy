@@ -29,6 +29,3 @@ export async function enqueue(message: QueueMessage, opts?: { delaySeconds?: num
   await getQueue().send(message, opts ? { delaySeconds: opts.delaySeconds } : undefined);
 }
 
-export async function enqueueBatch(messages: QueueMessage[]) {
-  await getQueue().sendBatch(messages.map((body) => ({ body })));
-}

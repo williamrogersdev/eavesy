@@ -216,6 +216,11 @@ describe('processing queue orchestration', () => {
         'mseg_transcribe',
       ),
     ).toEqual({ transcribe_status: 'complete' });
+    const stamped = await row<{ first_transcript_at: number | null; started_at: number }>(
+      'SELECT first_transcript_at, started_at FROM meetings WHERE id = ?',
+      'meet_transcribe',
+    );
+    expect(stamped?.first_transcript_at).toBeGreaterThanOrEqual(stamped?.started_at ?? Infinity);
     expect(queue.send).toHaveBeenCalledWith({
       kind: 'rolling-summarize',
       meetingId: 'meet_transcribe',
@@ -321,6 +326,54 @@ describe('processing queue orchestration', () => {
       ),
     ).toEqual({ event_type: 'meeting.complete' });
     expect(queue.send).toHaveBeenCalledWith({ kind: 'embed', meetingId: 'meet_summary' });
+  });
+
+  it("bills the user's own Anthropic key for the meeting summary", async () => {
+    await insertUser('user_byo');
+    await testEnv.DB.prepare(`UPDATE users SET byo_anthropic_key = 'sk-ant-user' WHERE id = ?`)
+      .bind('user_byo')
+      .run();
+    await insertMeeting({ id: 'meet_byo', userId: 'user_byo', status: 'processing' });
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments
+        (id, meeting_id, start_ms, end_ms, text, is_edited, is_final)
+       VALUES ('tseg_byo', 'meet_byo', 0, 1000, 'Final transcript', 0, 1)`,
+    ).run();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              title: 'BYO',
+              description: '',
+              tldr: 'Done.',
+              decisions: [],
+              actionItems: [],
+              followUps: [],
+              openQuestions: [],
+              topics: [],
+              mentions: [],
+            }),
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const queue = mockQueue();
+    const batch = createMessageBatch<ProcessingMessage>('eavesy-processing', [
+      queueMessage('summary-byo', { kind: 'summarize', meetingId: 'meet_byo' }),
+    ]);
+    await worker.queue(batch, runtimeEnv(queue.binding));
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('x-api-key')).toBe('sk-ant-user');
+    expect(
+      await row<{ generated_by_model: string }>(
+        'SELECT generated_by_model FROM summaries WHERE meeting_id = ?',
+        'meet_byo',
+      ),
+    ).toEqual({ generated_by_model: 'byo-anthropic:claude-sonnet-4-6' });
   });
 
   it('processes a browser recording asynchronously and makes replay a no-op', async () => {
@@ -473,6 +526,16 @@ describe('processing cron recovery', () => {
     });
     await insertSegment({ id: 'mseg_abandoned', meetingId: 'meet_abandoned', idx: 0 });
     await insertSegment({ id: 'mseg_fresh', meetingId: 'meet_fresh', idx: 0 });
+    // Streamed recordings with a first transcript line 4s and 2s after start;
+    // meet_expired has no segments, so its latency is excluded.
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('UPDATE meetings SET started_at = ?, first_transcript_at = ? WHERE id = ?')
+        .bind(now - 5_000, now - 1_000, 'meet_abandoned'),
+      testEnv.DB.prepare('UPDATE meetings SET started_at = ?, first_transcript_at = ? WHERE id = ?')
+        .bind(now - 4_000, now - 2_000, 'meet_fresh'),
+      testEnv.DB.prepare('UPDATE meetings SET first_transcript_at = ? WHERE id = ?')
+        .bind(now - 1_000, 'meet_expired'),
+    ]);
     await testEnv.DB.batch([
       testEnv.DB.prepare(
         `INSERT INTO activity_log
@@ -553,6 +616,9 @@ describe('processing cron recovery', () => {
         processing_samples: number;
         processing_ms_total: number;
         processing_ms_max: number;
+        first_transcript_samples: number;
+        first_transcript_ms_total: number;
+        first_transcript_ms_max: number;
         audio_seconds: number;
         estimated_ai_cost_microusd: number;
       }>(
@@ -560,7 +626,9 @@ describe('processing cron recovery', () => {
                 users_first_brief_use, meetings_started, meetings_completed,
                 users_first_return_7d, meetings_brief_used, meetings_failed,
                 meetings_stuck, processing_samples, processing_ms_total,
-                processing_ms_max, audio_seconds, estimated_ai_cost_microusd
+                processing_ms_max, first_transcript_samples,
+                first_transcript_ms_total, first_transcript_ms_max,
+                audio_seconds, estimated_ai_cost_microusd
            FROM product_metrics_daily
           WHERE date = ?`,
         new Date(now).toISOString().slice(0, 10),
@@ -579,6 +647,9 @@ describe('processing cron recovery', () => {
       processing_samples: 1,
       processing_ms_total: 5_000,
       processing_ms_max: 5_000,
+      first_transcript_samples: 2,
+      first_transcript_ms_total: 6_000,
+      first_transcript_ms_max: 4_000,
       audio_seconds: 0,
       estimated_ai_cost_microusd: 0,
     });
@@ -618,6 +689,8 @@ describe('private operational metrics', () => {
         meetings_brief_used: 0,
         processing_samples: 0,
         average_processing_ms: 0,
+        first_transcript_samples: 0,
+        average_first_transcript_ms: 0,
       }],
       pricingAssumptions: { whisperUsdPerMinute: 0.00051 },
     });

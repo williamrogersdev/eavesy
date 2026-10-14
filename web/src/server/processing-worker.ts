@@ -45,6 +45,7 @@ import {
 } from '@/lib/transcription/two-track';
 import { reportError } from '@/server/observability';
 import { isSealed, openUserKeys, sealSecret } from '@/server/secret-box';
+import { recordFirstTranscript } from '@/server/transcript-latency';
 import type { QueueMessage } from '@/server/queue';
 
 export interface ProcessingEnv {
@@ -316,6 +317,8 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
       });
   }
 
+  if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
+
   const fullText = transcription.segments
     .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
     .join('\n');
@@ -418,6 +421,7 @@ async function handleTranscribeSegment(
         contextBlurb: meeting.contextBlurb,
       });
       const speakerId = speakerForTrack(track);
+      let stored = 0;
 
       for (const relative of transcription.segments) {
         if (isHallucination(relative)) continue;
@@ -455,7 +459,9 @@ async function handleTranscribeSegment(
               isFinal: true,
             },
           });
+        stored += 1;
       }
+      if (stored > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
     await db
@@ -626,7 +632,9 @@ async function handleSummarize(
     priorSummary = `${priorSummary}\n\nThe transcript below is the final tail of the session.`;
   }
 
-  const parsed = await requestMeetingSummary(anthropicForUser(env.ANTHROPIC_API_KEY), {
+  const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
+  const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
+  const parsed = await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), {
     transcript,
     contextBlurb: meeting.contextBlurb,
     priorSummary,
@@ -634,6 +642,9 @@ async function handleSummarize(
     recorderName: rendered.recorderName,
     chapters: wantChapters,
   });
+  const generatedByModel = plan.summary.apiKey
+    ? `byo-anthropic:${MEETING_SUMMARY_MODEL}`
+    : MEETING_SUMMARY_MODEL;
   const now = Date.now();
   const values = {
     ...summaryValues(parsed),
@@ -651,12 +662,12 @@ async function handleSummarize(
       id: ulid(),
       meetingId,
       ...values,
-      generatedByModel: MEETING_SUMMARY_MODEL,
+      generatedByModel,
       generatedAt: now,
     })
     .onConflictDoUpdate({
       target: summaries.meetingId,
-      set: { ...values, generatedByModel: MEETING_SUMMARY_MODEL, generatedAt: now },
+      set: { ...values, generatedByModel, generatedAt: now },
       setWhere: mode.final
         ? undefined
         : sql`(select status from meetings where id = ${meetingId}) in ('recording', 'uploading')`,

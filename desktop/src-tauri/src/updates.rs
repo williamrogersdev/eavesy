@@ -10,7 +10,6 @@ pub fn check_in_background(app: &AppHandle) {
         let updater = match app.updater() {
             Ok(u) => u,
             Err(e) => {
-                eprintln!("updater unavailable: {e}");
                 crate::telemetry::capture("updater.initialize", &e.to_string());
                 return;
             }
@@ -29,7 +28,6 @@ pub fn check_in_background(app: &AppHandle) {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("update check failed: {e}");
                     crate::telemetry::capture("updater.check", &e.to_string());
                 }
             }

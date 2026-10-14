@@ -36,8 +36,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open_item = MenuItem::with_id(app, "open", "Open Eavesy", true, menu_accel(&settings.toggle_hotkey))?;
     let control_item = MenuItem::with_id(app, "show_control", "Show Capture Control", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let diagnostics_item = MenuItem::with_id(app, "copy_diagnostics", "Copy Diagnostics", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit Eavesy", true, None::<&str>)?;
-    Menu::with_items(app, &[&record_item, &open_item, &control_item, &settings_item, &quit_item])
+    Menu::with_items(
+        app,
+        &[&record_item, &open_item, &control_item, &settings_item, &diagnostics_item, &quit_item],
+    )
 }
 
 pub fn refresh(app: &AppHandle) {
@@ -58,6 +62,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "open" => hotkeys::show_launcher(app),
             "show_control" => crate::hud::set_hidden_on_main(app, false),
             "settings" => { let _ = crate::commands::show_settings(app.clone()); },
+            "copy_diagnostics" => crate::diagnostics::copy(app),
             "quit" => app.exit(0),
             _ => {}
         })

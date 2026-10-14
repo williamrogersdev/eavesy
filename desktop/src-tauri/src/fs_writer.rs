@@ -376,10 +376,6 @@ fn started_at(started_at_ms: i64) -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp_millis(started_at_ms).unwrap_or_else(Utc::now)
 }
 
-pub fn meeting_folder_slug(title: &str, started_at: DateTime<Utc>) -> String {
-    slug_with_date(title, &started_at.format("%Y-%m-%d").to_string())
-}
-
 fn slug_with_date(title: &str, date_part: &str) -> String {
     let mut safe = String::with_capacity(title.len());
     let mut last_was_space = false;
@@ -528,15 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn folder_slug_is_safe_and_stable() {
-        let started = DateTime::<Utc>::from_timestamp_millis(1_751_808_600_000).unwrap();
-        assert_eq!(
-            meeting_folder_slug("  Design / review: v2  ", started),
-            "2025-07-06 Design review v2"
-        );
-    }
-
-    #[test]
     fn atomically_allocates_unique_folders_for_same_title_and_day() {
         let root = std::env::temp_dir().join(format!("eavesy-allocate-{}", uuid::Uuid::new_v4()));
         let started = DateTime::<Utc>::from_timestamp_millis(1_751_808_600_000).unwrap();
@@ -602,47 +589,3 @@ mod tests {
     }
 }
 
-pub fn claim_recording_folder(
-    root: &std::path::Path,
-    title: &str,
-    started_at: chrono::DateTime<chrono::Utc>,
-) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
-    let local = started_at.with_timezone(&chrono::Local);
-    let base = meeting_folder_slug(title, started_at);
-    let title_part = base.split_once(' ').map(|(_, rest)| rest).unwrap_or("Recording");
-    let stem = format!("{} {}", local.format("%Y-%m-%d %H%M"), title_part);
-    for n in 1..1000 {
-        let name = if n == 1 { stem.clone() } else { format!("{stem} {n}") };
-        let candidate = root.join(name);
-        match std::fs::create_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("could not create {}: {e}", candidate.display())),
-        }
-    }
-    Err(format!("could not find a free folder name for {stem}"))
-}
-
-#[cfg(test)]
-mod recovery_tests {
-    use super::*;
-
-    #[test]
-    fn claim_never_reuses_a_folder() {
-        let root = std::env::temp_dir().join(format!("eavesy-claim-{}", uuid::Uuid::new_v4()));
-        let t = chrono::Utc::now();
-        let a = claim_recording_folder(&root, "Meeting recording", t).unwrap();
-        let b = claim_recording_folder(&root, "Meeting recording", t).unwrap();
-        assert_ne!(a, b);
-        assert!(b.file_name().unwrap().to_string_lossy().ends_with(" 2"));
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn slug_strips_unsafe_characters() {
-        let t = chrono::DateTime::parse_from_rfc3339("2026-09-25T10:00:00Z").unwrap().with_timezone(&chrono::Utc);
-        assert_eq!(meeting_folder_slug("a/b: \"c\"", t), "2026-09-25 ab c");
-        assert_eq!(meeting_folder_slug("   ", t), "2026-09-25 Recording");
-    }
-}

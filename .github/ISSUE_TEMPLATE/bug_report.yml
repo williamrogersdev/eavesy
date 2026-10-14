@@ -1,0 +1,75 @@
+name: Bug report
+description: Something in Eavesy isn't working as it should
+title: "[Bug]: "
+labels: ["type: bug", "status: needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please don't include secrets,
+        API keys, or recording contents. If this is a security issue, don't
+        file it here. Use the [private advisory form](https://github.com/williamrogersdev/eavesy/security/advisories/new).
+  - type: input
+    id: app-version
+    attributes:
+      label: Eavesy version
+      description: If you know it, the Mac app version (for example 0.1.9). The web app doesn't show a version, so leave this blank there.
+      placeholder: "e.g. 0.1.9"
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac. Leave blank if you are not on a Mac.
+      placeholder: "e.g. 15.4"
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Mac app
+        - Browser (web app)
+        - Dictation
+        - MCP (hosted or local MCP server)
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that triggers the problem.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Include error text verbatim if you have it.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (Mac app)
+      description: |
+        In recent Mac app builds, the menu bar menu has a **Copy Diagnostics**
+        item. It copies a scrubbed log tail to the clipboard. Paste it here.
+        Review it first, and remove anything private.
+        If your build doesn't have that item, paste the error text from the
+        failing screen instead, or leave this blank.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Screenshots (drag them in), what changed recently, workarounds you tried.

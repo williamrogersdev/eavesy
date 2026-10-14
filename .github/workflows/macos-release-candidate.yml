@@ -90,6 +90,7 @@ jobs:
           APPLE_ID: ""
           APPLE_PASSWORD: ""
           APPLE_TEAM_ID: ""
+          SENTRY_DSN: ${{ secrets.DESKTOP_SENTRY_DSN }}
         run: desktop/scripts/build-macos-release.sh
 
       - name: Notarize and validate release candidate

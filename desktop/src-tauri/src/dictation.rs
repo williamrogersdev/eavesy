@@ -64,10 +64,8 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
             let _ = rx.recv_timeout(Duration::from_secs(1));
             std::thread::sleep(Duration::from_millis(150));
         }
-        if focused_text_target() == Some(target) {
-            if crate::commands::paste_text(&app, &text).is_ok() {
-                return;
-            }
+        if focused_text_target() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
+            return;
         }
         use tauri_plugin_clipboard_manager::ClipboardExt;
         if app.clipboard().write_text(text).is_ok() {

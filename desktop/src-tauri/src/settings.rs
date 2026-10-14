@@ -6,6 +6,8 @@ use tauri::{AppHandle, Manager};
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
 
+// Variant names are persisted as snake_case settings values; renaming would break saved settings.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LauncherPosition {
