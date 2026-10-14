@@ -90,16 +90,19 @@ export function CaptureBar() {
   }, [stopTicking]);
 
   const startAudioOneShot = useCallback(async () => {
+    // Created before start() so a first chunk emitted while starting is kept.
+    const session = new SessionUpload(null);
+    sessionRef.current = session;
     const cap = new BrowserAudioCapture({
       captureSystemAudio: false,
       segmentMs: SEGMENT_MS,
-      onSegment: (segment) => sessionRef.current?.addSegment(segment),
-      onChunk: (chunk) => sessionRef.current?.addArchiveChunk(chunk),
+      onSegment: (segment) => session.addSegment(segment),
+      onChunk: (chunk) => session.addArchiveChunk(chunk),
     });
     audioRef.current = cap;
     await cap.requestPermissions();
     await cap.start();
-    sessionRef.current = new SessionUpload(cap.mimeType);
+    session.begin(cap.mimeType);
     setMode('audio');
     setPhase('recording');
     startTimer();

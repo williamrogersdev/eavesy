@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { devicePairingCodes } from '@/db/schema';
@@ -34,12 +34,17 @@ export const Route = createFileRoute('/api/devices/pair')({
         const codeHash = await sha256Hex(code.toUpperCase());
         const pairing = (
           await getDb()
-            .select({ createdAt: devicePairingCodes.createdAt, expiresAt: devicePairingCodes.expiresAt, rawToken: devicePairingCodes.rawToken })
+            .select({
+              createdAt: devicePairingCodes.createdAt,
+              expiresAt: devicePairingCodes.expiresAt,
+              rawToken: devicePairingCodes.rawToken,
+              claimedByUserId: devicePairingCodes.claimedByUserId,
+            })
             .from(devicePairingCodes)
             .where(eq(devicePairingCodes.codeHash, codeHash))
             .limit(1)
         )[0];
-        if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken) {
+        if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken || pairing.claimedByUserId) {
           return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
         }
         const origin = await pairingOrigin(codeHash);
@@ -64,10 +69,23 @@ export const Route = createFileRoute('/api/devices/pair')({
         const db = getDb();
         if ('code' in parsed.data) {
           const codeHash = await sha256Hex(parsed.data.code.toUpperCase());
+          // Claim the code before minting anything, so a double submit or two
+          // accounts racing for one code produce exactly one device token.
           const pairing = (
-            await db.select().from(devicePairingCodes).where(eq(devicePairingCodes.codeHash, codeHash)).limit(1)
+            await db
+              .update(devicePairingCodes)
+              .set({ claimedByUserId: actor.userId })
+              .where(
+                and(
+                  eq(devicePairingCodes.codeHash, codeHash),
+                  isNull(devicePairingCodes.claimedByUserId),
+                  isNull(devicePairingCodes.rawToken),
+                  gt(devicePairingCodes.expiresAt, Date.now()),
+                ),
+              )
+              .returning()
           )[0];
-          if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken) {
+          if (!pairing) {
             return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
           }
           try {
@@ -80,7 +98,7 @@ export const Route = createFileRoute('/api/devices/pair')({
             });
             await db
               .update(devicePairingCodes)
-              .set({ rawToken, claimedByUserId: actor.userId })
+              .set({ rawToken })
               .where(eq(devicePairingCodes.codeHash, codeHash));
             await activityRepo.log(db, {
               userId: actor.userId,
@@ -89,6 +107,16 @@ export const Route = createFileRoute('/api/devices/pair')({
             });
             return Response.json({ ok: true, deviceId: pairing.deviceId });
           } catch (error) {
+            await db
+              .update(devicePairingCodes)
+              .set({ claimedByUserId: null })
+              .where(
+                and(
+                  eq(devicePairingCodes.codeHash, codeHash),
+                  eq(devicePairingCodes.claimedByUserId, actor.userId),
+                  isNull(devicePairingCodes.rawToken),
+                ),
+              );
             if (error instanceof Error && error.message === 'device_already_registered') {
               return Response.json({ error: error.message }, { status: 409 });
             }

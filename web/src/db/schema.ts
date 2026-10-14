@@ -146,6 +146,7 @@ export const meetingSegments = sqliteTable(
     })
       .notNull()
       .default('pending'),
+    transcribeClaimedAt: integer('transcribe_claimed_at'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [

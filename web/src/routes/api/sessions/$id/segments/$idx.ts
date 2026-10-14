@@ -85,7 +85,9 @@ export const Route = createFileRoute('/api/sessions/$id/segments/$idx')({
         const r2Key = meetingSegmentKey(actor.userId, meeting.id, idx, track);
         await putAudio(r2Key, audio, request.headers.get('content-type') ?? 'audio/mp4');
 
-        await db.insert(meetingSegments).values({
+        // A concurrent retry of the same segment may have won the race between the
+        // lookup above and here; the unique (meeting, idx, track) index decides.
+        const inserted = await db.insert(meetingSegments).values({
           id: pid('mseg'),
           meetingId: meeting.id,
           idx,
@@ -97,7 +99,10 @@ export const Route = createFileRoute('/api/sessions/$id/segments/$idx')({
           durationMs,
           transcribeStatus: 'pending',
           createdAt: Date.now(),
-        });
+        }).onConflictDoNothing().returning({ id: meetingSegments.id });
+        if (inserted.length === 0) {
+          return Response.json({ ok: true, idempotent: true, nextSegmentIdx: idx + 1 });
+        }
         await db
           .update(meetings)
           .set({ status: 'uploading', updatedAt: Date.now() })
