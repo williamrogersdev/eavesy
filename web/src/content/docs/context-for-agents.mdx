@@ -5,13 +5,15 @@ category: For AI agents
 order: 20
 ---
 
-Eavesy exists to solve one problem: your AI agent didn&rsquo;t see the call,
-the walkthrough, or the hallway decision — so it&rsquo;s working blind. Every
-session becomes context your agent can actually use.
+Eavesy exists to solve one problem: your AI agent didn&rsquo;t see the
+message, the screenshot, the call, or the hallway decision — so it&rsquo;s working
+blind. Whatever you drop into Eavesy becomes context your agent can actually
+use. There are three ways to hand it over: paste it, point at the files, or
+connect over [MCP](/docs/connect-mcp).
 
 ## Paste the brief
 
-The fastest path. After any session, copy the Markdown brief and paste it into
+The fastest path. After any recording, copy the Markdown brief and paste it into
 Claude, Cursor, ChatGPT, or any agent. Because it&rsquo;s clean Markdown with a
 TL;DR, decisions, and action items, the model gets the full picture in one shot —
 no copy-pasting raw transcript and hoping it sorts it out.
@@ -22,9 +24,15 @@ the design team — draft the follow-up tasks as a checklist.&rdquo;* The struct
 in the brief does the heavy lifting.
 </Callout>
 
+## Connect over MCP
+
+Signed-in accounts can connect an MCP-capable agent to the hosted, read-only
+server and let it search recordings and dictations itself. See
+[Connect an agent over MCP](/docs/connect-mcp).
+
 ## Point an agent at the folder
 
-With the Mac app, every session is a folder of plain files on your disk
+With the Mac app, every recording is a folder of plain files on your disk
 ([the session folder format](/docs/session-folder-format)). That means an agent
 with filesystem access can read them directly:
 
@@ -60,6 +68,7 @@ directly.
 
 ## Next
 
+- [Connect an agent over MCP](/docs/connect-mcp)
 - [The session folder format](/docs/session-folder-format)
 - [Custom templates](/docs/templates)
 - [Finding past sessions](/docs/finding-past-sessions)

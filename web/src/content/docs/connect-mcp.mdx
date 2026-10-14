@@ -1,0 +1,60 @@
+---
+title: Connect an agent over MCP
+description: Give an MCP-capable agent read-only access to your Eavesy recordings and dictations.
+category: For AI agents
+order: 22
+---
+
+Eavesy runs a hosted, **read-only** [MCP](https://modelcontextprotocol.io)
+server at `https://mcp.eavesy.com`. An agent that speaks MCP can search your
+recordings and dictations and pull the Markdown summary and transcript into its
+own context, with nothing to copy and paste.
+
+## Create a connection
+
+1. Sign in to the web app and open **Settings**.
+2. Create an MCP connection. Eavesy shows a ready-made client configuration once.
+3. Paste it into your agent's MCP settings.
+
+The configuration looks like this (the token is shown only when you create it):
+
+```json
+{
+  "mcpServers": {
+    "eavesy": {
+      "type": "http",
+      "url": "https://mcp.eavesy.com",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+Tokens go in the `Authorization` header. A token expires 90 days after it was
+last used. Older URL-path tokens (`https://mcp.eavesy.com/YOUR_TOKEN`) still work
+for clients that can only be given a URL, but they are deprecated and can be
+turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `search_meetings` | Search recordings by title or transcript. Returns matches with an excerpt. |
+| `get_meeting` | Get one recording by ID, with its summary and full transcript. |
+| `recent_meetings` | List the most recent recordings. |
+| `search_dictations` | Search your dictations. |
+| `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
+
+The tool names say "meetings" because that is the name of a recording in the
+data model. Clipboard notes, images, and screenshots saved only in the Mac app
+are not exposed over MCP yet.
+
+<Callout type="note">
+Requests are rate limited per token. The server never writes: it cannot create,
+edit, or delete anything.
+</Callout>
+
+## Next
+
+- [Context for AI agents](/docs/context-for-agents)
+- [The session folder format](/docs/session-folder-format)

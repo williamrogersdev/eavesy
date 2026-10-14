@@ -12,7 +12,7 @@ export const Route = createFileRoute('/(marketing)/docs/')({
     seoHead({
       title: 'Documentation',
       description:
-        'Learn how to record, transcribe, summarize, and export sessions with Eavesy, plus what is planned for custom templates.',
+        'Learn how to drop text, screenshots, dictation, and recordings into Eavesy and paste the Markdown into any AI agent or connect over MCP.',
       path: '/docs',
     }),
   component: DocsHomePage,
@@ -28,13 +28,13 @@ const QUICK_LINKS = [
   {
     href: '/docs/context-for-agents',
     title: 'Context for AI agents',
-    desc: 'Turn any session into context you can paste into Claude, Cursor, or ChatGPT.',
+    desc: 'Paste Markdown into Claude, Cursor, or ChatGPT, or connect over MCP.',
     icon: Bot,
   },
   {
     href: '/download/mac',
     title: 'Install the Mac app',
-    desc: 'Capture screen + system audio with full fidelity and unlimited length.',
+    desc: 'Paste, screenshot, dictate, or record, with files saved straight to your disk.',
     icon: Download,
   },
 ];
@@ -61,11 +61,12 @@ function DocsHomePage() {
             Documentation
           </div>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Everything you need to run Eavesy
+            Everything you need to use Eavesy
           </h1>
           <p className="mt-3 max-w-2xl text-white/55">
-            From your first recording to exporting a full archive you own — plus
-            how to turn any session into clean context for your AI agents.
+            Eavesy is a local assistant for AI context. Learn how to drop things
+            in, copy clean Markdown into any agent, connect over MCP, and keep
+            every file you own.
           </p>
         </div>
       </div>

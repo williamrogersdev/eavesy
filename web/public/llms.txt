@@ -1,23 +1,78 @@
 # Eavesy
 
-> Eavesy is context capture for AI agents. Record your screen and voice on your Mac, and Eavesy turns the session into a clean Markdown brief — TL;DR, key decisions, the steps you took, and the full transcript — that you paste straight into Claude, Cursor, ChatGPT, or any agent. Everything is also saved as a real folder of Markdown, JSON, and audio that you own.
+> Eavesy is a local, AI-first assistant for your Mac. You drop things into it (text or images from your clipboard, screenshots, dictation, and recordings) and it turns them into clean, structured Markdown context that is quick to copy into any AI agent or reach over MCP. It is local-first: files live on your disk as Markdown and JSON.
 
-## What makes Eavesy different
-- **Eyes and ears:** It captures your screen plus system audio and your microphone — what you saw and what was said. No bot joins the call and no "recording" banner appears, so it works on any call and in person.
-- **AI-ready brief:** Stop recording and get a structured Markdown brief built to paste into an AI agent. One click and your agent has the context it was missing.
-- **Context you own:** Every session is written to a folder on your disk as Markdown + JSON + audio. Point an agent at it, open it in Obsidian, or grep it from the terminal. No lock-in.
-- **Private by default:** Anonymous browser recordings auto-delete within 24 hours. AI providers run with no-train flags. Deletion actually deletes.
+Meeting recording is one capability, not the headline. Eavesy is free; everyone gets the same fair-use limits: https://eavesy.com/docs/fair-use-limits
 
-## How it works
-1. Hit record — capture your voice, your screen, or both, from a hotkey or your browser.
-2. Eavesy transcribes the session in the background, a few minutes behind live.
-3. Stop, and copy an AI-ready Markdown brief into your agent — or save it to disk.
+## What you can drop in (shipping today)
+- Clipboard text or an image: open the launcher (global hotkey), press Cmd+V. Saved as a note (`note.md`) or `image.png`.
+- Screenshots: from the launcher (macOS 14+).
+- Dictation: speak, get cleaned-up text with a transcript.
+- Recordings: screen, system audio, and microphone on the Mac app, or microphone/screen in the browser recorder. Get a transcript and a Markdown summary (title, TL;DR, decisions, action items). No bot joins calls.
 
-## Where it works
-Any Mac app or call — Zoom, Google Meet, Microsoft Teams, Webex, Slack huddles — screen walkthroughs, and in-person conversations. Briefs export to Obsidian, Notion, and Apple Notes, or paste into any AI agent.
+Not available yet: forwarding messages or orders straight from other apps, live captions, reading text out of screenshots in the Mac app, and cross-device drops. Do not assume these exist.
 
-## Cost
-Eavesy is free to use, with the same daily fair-use limits for everyone: https://eavesy.com/docs/fair-use-limits
+## Where the files live
+The Mac app writes each capture to a folder under `~/Eavesy/Recordings/` (location is configurable in Settings > Files):
+
+```text
+~/Eavesy/Recordings/2026-06-15 Design review/
+├── summary.md       # structured brief (recordings)
+├── transcript.md    # full transcript
+├── notes.md         # the user's own notes
+├── meeting.json     # metadata (id, title, date, durationSeconds, files)
+├── audio.m4a
+└── screen.mp4       # when screen capture was on
+```
+
+Clipboard and screenshot captures hold `note.md` / `image.png` / `screenshot.png` plus `capture.json`. All formats are open; read them directly with filesystem access, no API needed. Format: https://eavesy.com/docs/session-folder-format
+
+## Connect over MCP (read-only)
+Server: `https://mcp.eavesy.com` (streamable HTTP). Create a connection in the web app under Settings; the token is shown once. Send it in the Authorization header. Tokens expire 90 days after last use. URL-path tokens (`https://mcp.eavesy.com/<token>`) are deprecated and work only while the server flag `MCP_ALLOW_PATH_TOKENS` is not `false`.
+
+```json
+{
+  "mcpServers": {
+    "eavesy": {
+      "type": "http",
+      "url": "https://mcp.eavesy.com",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+Tools (names say "meeting" because that is the recording type in the data model):
+- `search_meetings` (query, limit): search recordings by title or transcript; returns excerpts.
+- `get_meeting` (id): summary and full transcript.
+- `recent_meetings` (limit): newest recordings.
+- `search_dictations` (query, limit): search dictations.
+- `get_action_items` (status: open|completed|all, owner): action items across recordings.
+
+Clipboard notes, images, and screenshots stored only in the Mac app are not exposed over MCP yet. Docs: https://eavesy.com/docs/connect-mcp
+
+## Copy-paste examples
+Paste into an agent after copying a summary from Eavesy:
+
+```text
+Here is the context from my call (Markdown below). Draft the follow-up tasks as a checklist.
+<paste summary.md>
+```
+
+Ask an MCP-connected agent:
+
+```text
+Use Eavesy to find the recording where we discussed the pricing change, then list the open action items.
+```
+
+Point a coding agent at the folder:
+
+```bash
+grep -ril "pricing" ~/Eavesy/Recordings/*/transcript.md
+```
+
+## Bring your own keys
+In the web app Settings you can connect your own OpenRouter account so AI usage runs on your credits. Otherwise the hosted service handles transcription and summaries.
 
 ## Key pages
 - Home: https://eavesy.com/
@@ -25,8 +80,10 @@ Eavesy is free to use, with the same daily fair-use limits for everyone: https:/
 - How it works: https://eavesy.com/how-it-works
 - Integrations: https://eavesy.com/integrations
 - Docs: https://eavesy.com/docs
-- Blog: https://eavesy.com/blog
+- Context for AI agents: https://eavesy.com/docs/context-for-agents
+- Privacy and data: https://eavesy.com/docs/privacy-and-data
 - Security: https://eavesy.com/security
+- Source: https://github.com/williamrogersdev/eavesy
 
 ## Contact
 hello@eavesy.com

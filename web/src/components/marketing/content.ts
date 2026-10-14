@@ -31,8 +31,7 @@ export const PRIMARY_NAV: NavItem[] = [
 ];
 
 export const INTEGRATIONS = [
-  'Zoom', 'Google Meet', 'Microsoft Teams', 'Webex', 'Slack huddles',
-  'Obsidian', 'Notion', 'Apple Notes', 'In-person',
+  'Claude', 'Cursor', 'ChatGPT', 'Any MCP client', 'Obsidian', 'VS Code', 'Terminal', 'Plain Markdown',
 ];
 
 export type ShowcaseVisual = 'capture' | 'summary' | 'files';
@@ -50,28 +49,28 @@ export interface Showcase {
 export const SHOWCASES: Showcase[] = [
   {
     icon: Radio,
-    eyebrow: 'Eyes and ears',
-    title: 'Capture the whole workflow',
-    body: 'Eavesy records the screen you are walking through, system audio, and your microphone. Use it for product demos, bug reproductions, calls, interviews, or in-person conversations—without adding a bot to the participant list.',
-    points: ['Screen + system audio + mic', 'No meeting bot', 'You control when capture starts'],
+    eyebrow: 'Drop things in',
+    title: 'Everything you would paste into an AI, in one place',
+    body: 'Paste text or an image from your clipboard, take a screenshot, dictate a thought, or record your screen and voice. Eavesy saves each one as a capture on your Mac, so the context is ready when you are.',
+    points: ['Clipboard text and images', 'Screenshots, screen recording, dictation', 'Open the launcher with a global hotkey'],
     flip: false,
     visual: 'capture',
   },
   {
     icon: Brain,
-    eyebrow: 'AI-ready brief',
-    title: 'Get one clear, portable result',
-    body: 'When you stop, Eavesy creates a structured Markdown brief with the goal, what happened, decisions, next steps, and the transcript. Copy it into any agent instead of rewriting the context from memory.',
-    points: ['Copy into any AI agent', 'Summary + decisions + steps', 'Full transcript stays attached'],
+    eyebrow: 'Fast to paste',
+    title: 'Clean Markdown, one copy away from your agent',
+    body: 'Recordings and dictation become a transcript and a structured Markdown summary. Copy it into Claude, Cursor, ChatGPT, or any agent instead of re-typing the context from memory, or let an MCP-capable agent fetch it itself.',
+    points: ['Copy into any AI agent', 'Summary, decisions, action items', 'Read-only MCP server for agents'],
     flip: true,
     visual: 'summary',
   },
   {
     icon: FolderTree,
-    eyebrow: 'Context you own',
-    title: 'Keep the source files and control',
-    body: 'The Mac app writes every session to a normal folder with Markdown and audio. Use the files directly, index them in your own tools, or keep a private cloud copy for processing, search, and recovery.',
-    points: ['Summary + transcript + audio', 'Normal files on your Mac', 'Private cloud sync is explicit'],
+    eyebrow: 'Local-first',
+    title: 'Plain files on your disk, in formats every tool reads',
+    body: 'The Mac app writes each capture to a normal folder as Markdown, JSON, and media. Point an agent at the folder, open it in Obsidian, or grep it. Cloud processing is optional and explicit, and you can bring your own OpenRouter account for the AI work.',
+    points: ['Markdown + JSON + media', 'Normal files on your Mac', 'Bring your own OpenRouter key'],
     flip: false,
     visual: 'files',
   },
@@ -86,12 +85,12 @@ export interface BentoItem {
 }
 
 export const BENTO: BentoItem[] = [
-  { icon: Zap, title: 'Workflow walkthroughs', body: 'Explain a setup, design, or code path while the screen supplies the missing visual context.', span: true, highlight: true },
-  { icon: Search, title: 'Bug reproductions', body: 'Capture the exact clicks, state, and explanation an engineer or coding agent needs.' },
-  { icon: Languages, title: 'Meetings & interviews', body: 'Turn system audio and your mic into decisions, next steps, and a searchable transcript.' },
-  { icon: Lock, title: 'Sensitive conversations', body: 'Start capture deliberately, keep local source files, and stay in control of what gets shared.' },
-  { icon: ListChecks, title: 'Quick dictation', body: 'Speak a rough thought and get clean text ready to paste where you are working.' },
-  { icon: Cloud, title: 'Reusable context library', body: 'Find a past session, copy the brief, or connect a read-only AI assistant.', span: true },
+  { icon: Zap, title: 'Paste what you are looking at', body: 'Open the launcher with your global hotkey and press ⌘V to save the text or image on your clipboard as a capture you can find and copy again later.', span: true, highlight: true },
+  { icon: Search, title: 'Screenshots', body: 'Grab the screen and keep it next to the rest of your context for a bug report or a coding agent.' },
+  { icon: ListChecks, title: 'Dictation', body: 'Speak a rough thought and get clean text ready to paste where you are working.' },
+  { icon: Languages, title: 'Recordings', body: 'Record your screen, system audio, and mic. Get a transcript and a Markdown summary when you stop.' },
+  { icon: Lock, title: 'Sensitive material', body: 'Capture starts only when you start it, files stay on your disk, and you decide what gets shared.' },
+  { icon: Cloud, title: 'A library your agents can read', body: 'Find a past capture, copy it, or connect a read-only MCP server so your agent can search it.', span: true },
 ];
 
 export interface Step {
@@ -102,9 +101,9 @@ export interface Step {
 }
 
 export const STEPS: Step[] = [
-  { n: '01', icon: Mic, title: 'Choose what to capture', body: 'Press your Mac hotkey, then choose voice, system audio, screen, or a quick capture.' },
-  { n: '02', icon: Radio, title: 'Talk through the work', body: 'Eavesy records recoverable segments while you explain what matters and move through the workflow.' },
-  { n: '03', icon: FileText, title: 'Use the finished brief', body: 'Copy structured Markdown into any AI agent, export the source files, or find the session later.' },
+  { n: '01', icon: Mic, title: 'Drop it in', body: 'Open the launcher with a hotkey, then paste your clipboard, take a screenshot, dictate, or start a recording.' },
+  { n: '02', icon: Radio, title: 'Eavesy cleans it up', body: 'Audio becomes a transcript and a structured Markdown summary. Text and images are saved as they are.' },
+  { n: '03', icon: FileText, title: 'Hand it to your agent', body: 'Copy the Markdown into any AI agent, point it at the folder, or let it read your library over MCP.' },
 ];
 
 export interface CompareRow {
@@ -114,11 +113,11 @@ export interface CompareRow {
 }
 
 export const COMPARISON: CompareRow[] = [
-  { label: 'Built for', them: 'Human meeting notes', us: 'Briefing your AI agent' },
-  { label: 'Captures your screen', them: 'No — audio only', us: 'Yes — screen + voice' },
+  { label: 'Built for', them: 'Human meeting notes', us: 'Feeding context to your AI agent' },
+  { label: 'What you can drop in', them: 'Call audio only', us: 'Clipboard text and images, screenshots, dictation, recordings' },
   { label: 'What you get', them: 'A summary in their app', us: 'Markdown you paste into any agent' },
-  { label: 'Your context data', them: 'Locked in their app', us: 'Local files plus a private cloud copy' },
-  { label: 'Joins your call', them: 'A bot everyone sees', us: 'Captures directly on your Mac' },
+  { label: 'Your data', them: 'Locked in their app', us: 'Markdown + JSON files on your disk' },
+  { label: 'Joins your call', them: 'A bot everyone sees', us: 'Never. It captures on your Mac' },
 ];
 
 export interface Faq {
@@ -127,12 +126,13 @@ export interface Faq {
 }
 
 export const FAQS: Faq[] = [
-  { q: 'How do I get the context into my AI agent?', a: 'When you stop recording, Eavesy gives you a clean Markdown brief — TL;DR, key points, the steps you took, and the full transcript. Copy it with one click and paste it into Claude, Cursor, ChatGPT, or any agent. With the Mac app it’s also saved as a file you can point an agent straight at.' },
-  { q: 'Does it record my screen?', a: 'The Mac app captures your screen alongside system audio and your mic, so the brief reflects what you saw and did, not just what was said.' },
-  { q: 'Does it join my meetings like a bot?', a: 'No. Eavesy captures from your Mac, so it never appears in the participant list. You remain responsible for following applicable consent rules and telling people when a conversation is being recorded.' },
-  { q: 'Do I have to create an account?', a: 'You can record on your Mac straight away. Signing in, which takes one click from the app, adds transcription, briefs, search, and recovery.' },
-  { q: 'Where does my data live?', a: 'With the Mac app, every session is written to a folder on your disk with M4A audio, summary, transcript, notes, and a meeting manifest. A private cloud copy powers transcription, search, and recovery.' },
-  { q: 'Which platforms are supported?', a: 'The initial native release supports Apple Silicon Macs on macOS 13 or later. Intel Mac, iOS, and Windows support are on the roadmap.' },
+  { q: 'What is Eavesy?', a: 'A local, AI-first assistant for your Mac. You drop things into it (clipboard text and images, screenshots, dictation, and recordings) and it saves them as clean Markdown context that is quick to paste into Claude, Cursor, ChatGPT, or any agent, or to reach over MCP.' },
+  { q: 'How do I get the context into my AI agent?', a: 'Copy the Markdown for a capture and paste it into any agent. Recordings and dictation include a transcript and a structured summary. You can also point an agent at the capture folder on your disk, or connect the read-only MCP server so a compatible agent can search your library itself.' },
+  { q: 'Can I drop in text, messages, or orders?', a: 'You can paste any text or image from your clipboard into the Mac app and it is saved as a note or image capture. A dedicated flow for forwarding messages and orders from other apps is not available yet.' },
+  { q: 'Does it still record meetings?', a: 'Yes. The Mac app records your screen, system audio, and microphone with no bot joining the call, and the web app has a browser recorder. Recording is one of the inputs, not the whole product. Live captions are not available yet; transcripts arrive shortly after audio is processed. You remain responsible for following consent rules.' },
+  { q: 'Do I have to create an account?', a: 'Capturing on your Mac works without one. Signing in, which takes one click from the app, adds transcription, summaries, search, and the MCP server.' },
+  { q: 'Where does my data live?', a: 'With the Mac app, each capture is a folder on your disk containing Markdown, JSON, and media files. Recordings are also processed in a private cloud copy for transcription, search, and recovery. You can connect your own OpenRouter account to run the AI on your own credits.' },
+  { q: 'Which platforms are supported?', a: 'The Mac app supports Apple Silicon Macs on macOS 13 or later (screenshots need macOS 14). The web app and browser recorder work in a modern browser. Other platforms are not available yet.' },
 ];
 
 export interface FooterColumn {

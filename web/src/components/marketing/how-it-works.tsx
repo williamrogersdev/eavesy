@@ -9,7 +9,7 @@ export function HowItWorks({ showHeader = true }: { showHeader?: boolean } = {})
       {showHeader && (
         <div className="mx-auto max-w-2xl text-center">
           <SectionLabel><Command className="h-3.5 w-3.5 text-accent" /> How it works</SectionLabel>
-          <h2 className="mt-5 text-4xl font-bold tracking-tight sm:text-5xl">Three steps. Zero busywork.</h2>
+          <h2 className="mt-5 text-4xl font-bold tracking-tight sm:text-5xl">Drop it in. Copy it out.</h2>
         </div>
       )}
       <div className={cn('relative mx-auto grid max-w-5xl gap-5 md:grid-cols-3', showHeader && 'mt-16')}>

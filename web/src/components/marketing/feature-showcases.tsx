@@ -12,11 +12,11 @@ export function FeatureShowcases() {
           <Sparkles className="h-3.5 w-3.5 text-accent" /> Built for AI agents
         </SectionLabel>
         <h2 className="mt-5 text-balance text-4xl font-bold tracking-tight sm:text-5xl">
-          The fastest way from <span className="text-brand-gradient">capture</span> to context.
+          The fastest way from <span className="text-brand-gradient">anything</span> to context.
         </h2>
         <p className="mx-auto mt-4 max-w-lg text-white/55">
-          A native Mac app that watches, listens, and writes — so your agent gets
-          the full story instead of a vague prompt.
+          A native Mac app that keeps what you save as plain Markdown, so your
+          agent gets the full story instead of a vague prompt.
         </p>
       </div>
 
