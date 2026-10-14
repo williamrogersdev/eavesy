@@ -381,7 +381,7 @@ final class AudioRecorder: NSObject, Recorder {
                     as? NSNumber)?.int64Value ?? 0
                 guard open.writer.status == .completed, bytes > 0 else {
                     let message = open.writer.error?.localizedDescription ?? "segment finalization failed"
-                    EventEmitter.error(message)
+                    EventEmitter.segmentError(message)
                     return
                 }
                 let manifest: [String: Any] = [

@@ -15,6 +15,7 @@ use crate::store::{self, StoredRecording};
 
 const START_TIMEOUT: Duration = Duration::from_secs(150);
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const NO_ACTIVE_CAPTURE: &str = "no active capture with that id";
 
 #[derive(Default)]
 pub struct Captures(pub Mutex<HashMap<String, Session>>, pub AtomicUsize);
@@ -473,6 +474,12 @@ fn stream_events(
                     }
                     continue;
                 }
+                if ev.event == "segment_error" {
+                    let message = ev.message.unwrap_or_else(|| "segment finalization failed".to_string());
+                    eprintln!("segment could not be written: {message}");
+                    crate::telemetry::capture("capture.segment_failed", &message);
+                    continue;
+                }
                 if ev.event == "warning" {
                     let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
                     crate::telemetry::capture("capture.stopped_early", &message);
@@ -516,18 +523,9 @@ fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>
     let reason = warning.unwrap_or_else(|| "the capture engine stopped unexpectedly".to_string());
     let (title, body) = match stop_capture_inner(app.clone(), captures, session_id.to_string()) {
         Ok(_) => ("Recording stopped early", format!("Everything up to that point was saved. Reason: {reason}")),
-        Err(error) if error == "no active capture with that id" => return,
+        Err(error) if error == NO_ACTIVE_CAPTURE => return,
         Err(error) => {
-            crate::hud::set_state(
-                app,
-                crate::hud::HudState {
-                    phase: crate::hud::Phase::Failed,
-                    session_id: Some(session_id.to_string()),
-                    mode: None,
-                    started_at_ms: None,
-                    message: Some(error.clone()),
-                },
-            );
+            show_stop_failed(app, session_id, &error);
             ("Recording failed", error)
         }
     };
@@ -542,7 +540,10 @@ fn await_done(
     match events.recv_timeout(timeout) {
         Ok(ev) if ev.event == "done" => Ok((ev.duration_sec.unwrap_or(0.0), ev.path)),
         Ok(ev) => Err(ev.message.unwrap_or_else(|| "capture failed".to_string())),
-        Err(mpsc::RecvTimeoutError::Timeout) => Ok((0.0, None)),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "the capture engine did not finish saving within {}s",
+            timeout.as_secs()
+        )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Ok((0.0, None)),
     }
 }
@@ -553,11 +554,27 @@ pub fn stop_capture(
     state: State<'_, Captures>,
     session_id: String,
 ) -> Result<StoredRecording, String> {
-    let result = stop_capture_inner(app, state, session_id);
+    let result = stop_capture_inner(app.clone(), state, session_id.clone());
     if let Err(error) = &result {
         crate::telemetry::capture("capture.stop", error);
+        if error != NO_ACTIVE_CAPTURE {
+            show_stop_failed(&app, &session_id, error);
+        }
     }
     result
+}
+
+fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) {
+    crate::hud::set_state(
+        app,
+        crate::hud::HudState {
+            phase: crate::hud::Phase::Failed,
+            session_id: Some(session_id.to_string()),
+            mode: None,
+            started_at_ms: None,
+            message: Some(error.to_string()),
+        },
+    );
 }
 
 fn stop_capture_inner(
@@ -570,7 +587,7 @@ fn stop_capture_inner(
         .lock()
         .unwrap()
         .remove(&session_id)
-        .ok_or("no active capture with that id")?;
+        .ok_or(NO_ACTIVE_CAPTURE)?;
     let Session {
         mut child,
         mut stdin,
@@ -827,6 +844,13 @@ fn reap_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_timeout_is_an_error_not_an_empty_success() {
+        let (_tx, rx) = mpsc::channel::<CaptureEvent>();
+        let result = await_done(rx, Duration::from_millis(10));
+        assert!(result.unwrap_err().contains("did not finish saving"));
+    }
 
     fn sample_recording(folder: &std::path::Path, has_video: bool) -> StoredRecording {
         StoredRecording {

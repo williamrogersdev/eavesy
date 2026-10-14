@@ -244,9 +244,15 @@ fn write_generated<R: Runtime>(
             }
         }
     }
+    let hash = sha256_hex(bytes);
+    // Register the new content as observed before it lands, so the watcher never
+    // sees our own write as an external edit if it fires before record_file_write.
+    if let Some(app) = app {
+        sqlite::record_file_observation(app, path, meeting_id, role, &hash)?;
+    }
     atomic_write(path, bytes)?;
     if let Some(app) = app {
-        sqlite::record_file_write(app, path, meeting_id, role, &sha256_hex(bytes))?;
+        sqlite::record_file_write(app, path, meeting_id, role, &hash)?;
     }
     Ok(())
 }
