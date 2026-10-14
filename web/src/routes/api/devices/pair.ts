@@ -56,7 +56,7 @@ export const Route = createFileRoute('/api/devices/pair')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const parsed = pairSchema.safeParse(await request.json());
+        const parsed = pairSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
         }

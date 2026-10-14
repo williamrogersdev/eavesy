@@ -308,7 +308,13 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         await db
           .select()
           .from(schema.meetings)
-          .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId)))
+          .where(
+            and(
+              eq(schema.meetings.id, id),
+              eq(schema.meetings.userId, userId),
+              isNull(schema.meetings.deletedAt),
+            ),
+          )
           .limit(1)
       )[0];
       if (!m) throw new Error('not found');

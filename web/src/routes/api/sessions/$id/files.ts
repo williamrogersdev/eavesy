@@ -30,7 +30,9 @@ export const Route = createFileRoute('/api/sessions/$id/files')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const body = editSchema.parse(await request.json());
+        const parsedBody = editSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         const db = getDb();
         const meeting = await ownedMeeting(db, params.id, actor);
         if (!meeting) return Response.json({ error: 'not_found' }, { status: 404 });

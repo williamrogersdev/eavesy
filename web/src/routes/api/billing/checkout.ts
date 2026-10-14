@@ -13,7 +13,9 @@ export const Route = createFileRoute('/api/billing/checkout')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { plan } = schema.parse(await request.json());
+        const parsedBody = schema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const { plan } = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
