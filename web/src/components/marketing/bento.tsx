@@ -5,13 +5,13 @@ export function Bento() {
   return (
     <section className="px-6 py-20 sm:py-24">
       <div className="mx-auto mb-12 max-w-2xl text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">What you can capture</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">What you can drop in</p>
         <h2 className="mt-4 text-balance text-3xl font-bold tracking-tight sm:text-5xl">
-          One context layer for the work your AI cannot see.
+          One place for everything your AI needs to see.
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-white/55 sm:text-base">
-          Eavesy covers the moments where a text prompt loses the screen, the conversation,
-          or the sequence of events.
+          Eavesy holds the text, images, and recordings your prompt would otherwise
+          lose, as Markdown you can copy in a second.
         </p>
       </div>
       <div className="mx-auto grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3">

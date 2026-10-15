@@ -47,10 +47,19 @@ export function softwareApplicationSchema(): Schema {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     name: siteConfig.name,
-    applicationCategory: 'BusinessApplication',
+    applicationCategory: 'ProductivityApplication',
     operatingSystem: 'macOS, Web',
     description: siteConfig.description,
     url: siteConfig.url,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    featureList: [
+      'Clipboard text and image capture on Mac',
+      'Screenshots and screen recordings',
+      'Dictation and audio recording with transcripts',
+      'AI-ready Markdown summaries and transcripts',
+      'Files stored locally as Markdown and JSON',
+      'Read-only hosted MCP server',
+    ],
   };
 }
 
