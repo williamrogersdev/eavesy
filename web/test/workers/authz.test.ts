@@ -184,6 +184,10 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
+  '/api/oauth/authorize': {
+    GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'describes an OAuth client registration; reads no user data' },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'mints an authorization code for the caller only' },
+  },
   '/api/me': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/me' }, excludes: [OWNER] } },
     PATCH: {

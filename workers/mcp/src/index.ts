@@ -12,6 +12,15 @@ import {
   renewedMcpTokenExpiry,
 } from '../../../web/src/server/mcp-token-policy';
 import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/server/mcp-scopes';
+import {
+  authorizationParams,
+  authorizationServerMetadata,
+  exchangeToken,
+  protectedResourceMetadata,
+  registerClient,
+  validateAuthorization,
+  withQuery,
+} from '../../../web/src/server/mcp-oauth';
 
 interface Env {
   DB: D1Database;
@@ -20,6 +29,8 @@ interface Env {
   SENTRY_DSN?: string;
   /** Set to `false` to stop accepting tokens in the URL path. */
   MCP_ALLOW_PATH_TOKENS?: string;
+  /** The web app, which shows the OAuth consent screen. Defaults to https://eavesy.com. */
+  APP_URL?: string;
 }
 
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
@@ -33,6 +44,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 const MCP_REQUESTS_PER_MINUTE = 120;
+const CLIENT_REGISTRATIONS_PER_HOUR = 20;
 
 type TokenRow = typeof schema.mcpTokens.$inferSelect;
 
@@ -50,7 +62,8 @@ async function resolveToken(env: Env, rawToken: string, viaPath: boolean): Promi
   if (mcpTokenExpiresAt(row) <= now) return 'expired';
   const stale = !row.lastUsedAt || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS;
   const pathStale = viaPath && (!row.pathAuthUsedAt || now - row.pathAuthUsedAt > LAST_USED_RESOLUTION_MS);
-  const expiresAt = renewedMcpTokenExpiry(row, now);
+  // OAuth access tokens are short-lived and renewed with a refresh token, not by use.
+  const expiresAt = row.clientId ? null : renewedMcpTokenExpiry(row, now);
   if (stale || pathStale || expiresAt) {
     await db
       .update(schema.mcpTokens)
@@ -71,26 +84,139 @@ function jsonError(status: number, error: string, extra: Record<string, string> 
   });
 }
 
+/**
+ * A 401 that tells an MCP client where to start OAuth (RFC 9728 §5.1), so it
+ * can be added by URL alone.
+ */
+function unauthorized(origin: string, error: string, extra: Record<string, string> = {}, tokenSent = true) {
+  const response = jsonError(401, error, extra);
+  const challenge = [`resource_metadata="${origin}/.well-known/oauth-protected-resource"`];
+  if (tokenSent) challenge.push('error="invalid_token"');
+  response.headers.set('www-authenticate', `Bearer ${challenge.join(', ')}`);
+  return response;
+}
+
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, content-type, mcp-protocol-version',
+  'access-control-max-age': '86400',
+};
+
+function oauthJson(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS_HEADERS },
+  });
+}
+
+/** Whether `resource`, when a client sends one (RFC 8707), names this server. */
+function isThisResource(resource: string | null, origin: string): boolean {
+  if (resource === null) return true;
+  try {
+    return new URL(resource).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+/** The OAuth endpoints. Null for any other path. */
+async function routeOAuth(request: Request, env: Env, url: URL, path: string[]): Promise<Response | null> {
+  const origin = url.origin;
+  const isWellKnown = path[0] === '.well-known';
+  const endpoint = path.length === 1 ? path[0] : null;
+  if (!isWellKnown && endpoint !== 'authorize' && endpoint !== 'token' && endpoint !== 'register') return null;
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+
+  if (isWellKnown) {
+    if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+    // Clients may append the MCP endpoint's path (RFC 9728 §3.1, RFC 8414 §3.1).
+    if (path[1] === 'oauth-protected-resource') return oauthJson(protectedResourceMetadata(origin));
+    if (path[1] === 'oauth-authorization-server') return oauthJson(authorizationServerMetadata(origin));
+    return new Response('not found', { status: 404 });
+  }
+
+  const db = drizzle(env.DB, { schema });
+  if (endpoint === 'register') {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const limited = await consumeRateLimit(env.DB, {
+      key: `mcp-register:${request.headers.get('cf-connecting-ip') ?? 'unknown'}`,
+      limit: CLIENT_REGISTRATIONS_PER_HOUR,
+      windowSec: 3600,
+      failMode: 'closed',
+    });
+    if (!limited.allowed) {
+      const response = oauthJson({ error: 'rate_limited' }, 429);
+      response.headers.set('retry-after', String(limited.retryAfterSec));
+      return response;
+    }
+    const body: unknown = await request.json().catch(() => null);
+    const result = await registerClient(db, body);
+    return oauthJson(result, 'error' in result ? 400 : 201);
+  }
+
+  if (endpoint === 'authorize') {
+    if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+    const validated = await validateAuthorization(db, authorizationParams(url.searchParams));
+    if (!validated.ok && !validated.redirect) {
+      return new Response(`Eavesy can't connect this app: ${validated.error.error_description ?? validated.error.error}.`, {
+        status: 400,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      });
+    }
+    if (!validated.ok) return Response.redirect(validated.redirectTo, 302);
+    if (!isThisResource(url.searchParams.get('resource'), origin)) {
+      return Response.redirect(
+        withQuery(validated.redirectUri, { error: 'invalid_target', state: validated.state, iss: origin }),
+        302,
+      );
+    }
+    // The web app has the user's session: it signs them in, asks, and mints the code.
+    const consent = new URL('/connect/mcp', env.APP_URL ?? 'https://eavesy.com');
+    consent.search = url.search;
+    return Response.redirect(consent.href, 302);
+  }
+
+  // endpoint === 'token'
+  if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+  const data = request.headers.get('content-type')?.includes('application/x-www-form-urlencoded')
+    ? await request.formData().catch(() => null)
+    : null;
+  const form = data ? new URLSearchParams() : null;
+  for (const [key, value] of data ?? []) if (typeof value === 'string') form?.set(key, value);
+  if (!form) return oauthJson({ error: 'invalid_request', error_description: 'expected a form-encoded body' }, 400);
+  if (!isThisResource(form.get('resource'), origin)) return oauthJson({ error: 'invalid_target' }, 400);
+  const result = await exchangeToken(db, form);
+  return oauthJson(result, 'error' in result ? (result.error === 'invalid_client' ? 401 : 400) : 200);
+}
+
 export const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.split('/').filter(Boolean);
+    const oauth = await routeOAuth(request, env, url, path);
+    if (oauth) return oauth;
     const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1] ?? '';
     const viaPath = !bearer && Boolean(path[0]);
     const rawToken = bearer || path[0];
     if (!rawToken) {
-      return new Response('Eavesy MCP server', { status: 200 });
+      // A browser visiting the bare URL gets a name; an MCP client gets the
+      // 401 that starts OAuth.
+      if (request.method === 'GET' && !request.headers.get('accept')?.includes('text/event-stream')) {
+        return new Response('Eavesy MCP server', { status: 200 });
+      }
+      return unauthorized(url.origin, 'authorization required', {}, false);
     }
     if (viaPath && !pathTokensAllowed(env.MCP_ALLOW_PATH_TOKENS)) {
-      return jsonError(401, 'token must be sent in the Authorization header', {
+      return unauthorized(url.origin, 'token must be sent in the Authorization header', {
         hint: 'Create a new connection in Eavesy settings and use the configuration it shows.',
       });
     }
     const token = await resolveToken(env, rawToken, viaPath);
     if (token === 'expired') {
-      return jsonError(401, 'token expired', { hint: 'Create a new connection in Eavesy settings.' });
+      return unauthorized(url.origin, 'token expired', { hint: 'Create a new connection in Eavesy settings.' });
     }
-    if (!token) return jsonError(401, 'invalid token');
+    if (!token) return unauthorized(url.origin, 'invalid token');
     // Per token, after the token is known to be valid, failing open: the server
     // is read-only, every call is already authenticated, and an unreachable
     // counter means D1 is down anyway.
