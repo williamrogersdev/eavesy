@@ -4,6 +4,7 @@ import type { ProcessingMessage } from '@/server/processing-worker';
 mock.module('cloudflare:workers', () => ({ env: {} }));
 const {
   crossesRollingNotesBoundary,
+  DROP_TTL_MS,
   MAX_ATTEMPTS,
   PURGE_AFTER_MS,
   purgeDeleted,
@@ -472,10 +473,21 @@ describe('purging deleted data', () => {
       [now, now, now - PURGE_AFTER_MS - 1],
     );
     fake.objects.set('users/u1/captures/c1.png', new Uint8Array([1]));
+    fake.sqlite.run(
+      `INSERT INTO drops (id, user_id, kind, r2_key, filename, bytes, created_at)
+       VALUES ('d-old', 'u1', 'file', 'users/u1/drops/d-old/notes.docx', 'notes.docx', 1, ?),
+              ('d-new', 'u1', 'file', 'users/u1/drops/d-new/notes.docx', 'notes.docx', 1, ?)`,
+      [now - DROP_TTL_MS - 1, now - 60_000],
+    );
+    fake.objects.set('users/u1/drops/d-old/notes.docx', new Uint8Array([1]));
+    fake.objects.set('users/u1/drops/d-new/notes.docx', new Uint8Array([1]));
 
     const purged = await purgeDeleted(fake.env, now);
 
-    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0 });
+    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0, drops: 1 });
+    expect(fake.sqlite.query(`SELECT id FROM drops`).all()).toEqual([{ id: 'd-new' }]);
+    expect(fake.objects.has('users/u1/drops/d-old/notes.docx')).toBe(false);
+    expect(fake.objects.has('users/u1/drops/d-new/notes.docx')).toBe(true);
     expect(fake.sent.map((s) => s.body)).toEqual([{ kind: 'purge-meeting', meetingId: 'm1' }]);
     expect(fake.sqlite.query(`SELECT id FROM captures`).all()).toHaveLength(0);
     expect(fake.objects.has('users/u1/captures/c1.png')).toBe(false);

@@ -104,6 +104,7 @@ export const USER_DAILY_QUOTAS = {
   process: { limit: 100, failMode: 'closed' },
   dictation: { limit: 500, failMode: 'closed' },
   capture: { limit: 300, failMode: 'closed' },
+  drop: { limit: 500, failMode: 'closed' },
   chat: { limit: 300, failMode: 'closed' },
   regenerate: { limit: 60, failMode: 'closed' },
   search: { limit: 1_000, failMode: 'closed' },

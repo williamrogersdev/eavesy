@@ -512,6 +512,14 @@ async fn poll_result<R: Runtime>(
             }
         }
         sqlite::mark_complete(app, &session.id).map_err(|e| anyhow!(e))?;
+        if let Ok(Some(latency)) = sqlite::with_open(app, |conn| crate::live_transcript::latency(conn, &session.id)) {
+            tracing::info!(
+                session_id = %session.id,
+                first_caption_ms = ?latency.first_caption_ms,
+                first_cloud_line_ms = ?latency.first_cloud_line_ms,
+                "live transcription latency"
+            );
+        }
         if let Err(error) = sqlite::with_open(app, |conn| crate::live_transcript::forget(conn, &session.id)).and_then(|r| r) {
             eprintln!("desktop ingest: {error}");
         }

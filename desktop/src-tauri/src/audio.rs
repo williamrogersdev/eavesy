@@ -443,6 +443,11 @@ fn spawn_capture(
             return Err(error);
         }
     }
+    if let Err(error) = crate::sqlite::with_open(app, |conn| crate::live_transcript::begin_metrics(conn, &id, now_ms()))
+        .and_then(|r| r)
+    {
+        eprintln!("{error}");
+    }
     let captions = Arc::new(Mutex::new(CaptionLog::default()));
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
     state.0.lock().unwrap().insert(
@@ -536,6 +541,7 @@ fn stream_events(
     std::thread::spawn(move || {
     let mut warning: Option<String> = None;
     let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
+    let mut captioned = false;
     loop {
         let mut line = String::new();
         match reader.read_line(&mut line) {
@@ -572,6 +578,14 @@ fn stream_events(
                     continue;
                 }
                 if let Some(caption) = ev.caption(&session_id) {
+                    if !captioned {
+                        captioned = true;
+                        // Off this thread: it must never wait on the database.
+                        let (app, session_id) = (app.clone(), session_id.clone());
+                        std::thread::spawn(move || {
+                            crate::live_transcript::report_first(&app, &session_id, crate::live_transcript::Milestone::Caption);
+                        });
+                    }
                     captions.lock().unwrap_or_else(|e| e.into_inner()).record(&caption);
                     if caption.is_final && !writer.push(caption.clone()) && writer.dropped() == 1 {
                         eprintln!("live captions: storing is behind; dropping finals until it catches up");

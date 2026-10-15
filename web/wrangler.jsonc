@@ -32,6 +32,12 @@
     "producers": [{ "queue": "eavesy-processing", "binding": "PROCESSING_QUEUE" }]
   },
 
+  "durable_objects": {
+    "bindings": [{ "name": "DROPS_HUB", "class_name": "DropsHub" }]
+  },
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DropsHub"] }],
+
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "eavesy-embeddings" }],
 
   "ai": { "binding": "AI" },
