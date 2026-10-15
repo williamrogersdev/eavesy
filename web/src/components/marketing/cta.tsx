@@ -10,7 +10,7 @@ export function DownloadCTA() {
           Stop re-explaining. Start with <span className="text-brand-gradient">full context</span>.
         </h2>
         <p className="mx-auto mt-4 max-w-md text-white/60">
-          Press a hotkey, talk through the work, and get a brief and transcript you can hand to any AI. Free for Mac.
+          Open the launcher, drop in what matters, and get Markdown you can hand to any AI. Free for Mac.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <DownloadButton className="px-5 py-3" />

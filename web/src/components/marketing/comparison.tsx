@@ -9,7 +9,7 @@ export function Comparison() {
     <section className="px-6 py-24">
       <div className="mx-auto max-w-2xl text-center">
         <SectionLabel><ShieldCheck className="h-3.5 w-3.5 text-accent" /> The difference</SectionLabel>
-        <h2 className="mt-5 text-4xl font-bold tracking-tight sm:text-5xl">No bots. No lock-in.</h2>
+        <h2 className="mt-5 text-4xl font-bold tracking-tight sm:text-5xl">Local files. No bots. No lock-in.</h2>
       </div>
       <div className="mx-auto mt-12 max-w-3xl overflow-hidden rounded-2xl border border-white/10">
         <div className="hidden grid-cols-3 border-b border-white/10 bg-white/[0.03] text-sm font-semibold sm:grid">

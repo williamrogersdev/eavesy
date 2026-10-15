@@ -13,19 +13,20 @@ export function Hero() {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--signal)] opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--signal)]" />
           </span>
-          Screen + voice → structured context for any AI
+          A local assistant for your AI agents
         </span>
 
         <h1 className="animate-fade-up mt-6 text-balance text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl md:text-7xl">
-          Record the work.
+          Drop it in.
           <br />
-          <span className="text-brand-gradient">Brief your AI.</span>
+          <span className="text-brand-gradient">Paste it to your AI.</span>
         </h1>
 
         <p className="animate-fade-up mt-6 max-w-xl text-pretty text-lg text-white/60">
-          Capture a walkthrough, meeting, or bug reproduction once. Eavesy turns
-          the screen and conversation into a concise Markdown brief, transcript,
-          and source files you can use with Claude, Cursor, ChatGPT, or any agent.
+          Eavesy is a local assistant that turns what you drop into it (clipboard
+          text and images, screenshots, dictation, recordings) into clean Markdown
+          context. Copy it into Claude, Cursor, ChatGPT, or any agent, or reach it
+          over MCP.
         </p>
 
         <div className="animate-fade-up mt-9 flex flex-col items-center gap-3 sm:flex-row">
@@ -37,7 +38,7 @@ export function Hero() {
         </div>
 
         <div className="animate-fade-up mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-white/55">
-          {['Free', 'macOS 13+ on Apple Silicon', 'No meeting bot'].map((item) => (
+          {['Free', 'Local-first Markdown + JSON', 'macOS 13+ on Apple Silicon'].map((item) => (
             <span key={item} className="inline-flex items-center gap-1.5">
               <Check className="h-3.5 w-3.5 text-white/60" /> {item}
             </span>

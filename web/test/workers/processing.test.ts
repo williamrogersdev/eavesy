@@ -12,7 +12,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { worker, type Env } from '../../../workers/processing/src/index';
 import * as templatesRepo from '../../src/db/repo/templates';
 import * as dbSchema from '../../src/db/schema';
-import type { ProcessingMessage } from '../../src/server/processing-worker';
+import { claimRollingNotes, type ProcessingMessage } from '../../src/server/processing-worker';
 import { Route as MetricsRoute } from '../../src/routes/api/ops/metrics';
 import { Route as TranscribeRoute } from '../../src/routes/api/transcribe';
 import { Route as SegmentRoute } from '../../src/routes/api/sessions/$id/segments/$idx';
@@ -228,6 +228,16 @@ describe('processing queue orchestration', () => {
       throughIdx: 2,
       throughMs: 241_000,
     });
+  });
+
+  it('lets only one track of a segment schedule rolling notes', async () => {
+    await insertUser('user_claim');
+    await insertMeeting({ id: 'meet_claim', userId: 'user_claim', status: 'recording' });
+    const db = drizzle(testEnv.DB, { schema: dbSchema });
+    const both = await Promise.all([claimRollingNotes(db, 'meet_claim', 4), claimRollingNotes(db, 'meet_claim', 4)]);
+    expect(both.filter(Boolean)).toHaveLength(1);
+    expect(await claimRollingNotes(db, 'meet_claim', 3)).toBe(false);
+    expect(await claimRollingNotes(db, 'meet_claim', 8)).toBe(true);
   });
 
   it('marks a meeting failed before acknowledging a terminal DLQ message', async () => {

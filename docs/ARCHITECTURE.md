@@ -57,6 +57,13 @@ macOS capture ──device token──► web session API ──► R2 audio
    `summary.md`. The full `audio.m4a` archive already resides in the same local
    recording folder.
 
+While a meeting is live, the web meeting view streams transcript changes from
+`GET /api/meetings/:id/transcript` (server-sent events, resumed by cursor) and
+falls back to polling when the stream can't open. Each change is a set of
+time ranges plus every line now in them, so lines removed as echo disappear
+too. The cursor is the latest `meeting_segments.transcribed_at` the client
+has seen.
+
 The archive remains in R2 as the durable cloud audio copy. D1 state replaces
 the old per-meeting Durable Object design.
 

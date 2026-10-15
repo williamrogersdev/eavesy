@@ -142,6 +142,9 @@ export const BURST_LIMITS = {
   'device-pair': { limit: 10, windowSec: 60, failMode: 'closed' },
   'device-pair-check': { limit: 30, windowSec: 60, failMode: 'closed' },
   'meeting-export': { limit: 10, windowSec: 60, failMode: 'closed' },
+  // Live transcript polls and stream (re)connects: a web tab streaming plus a
+  // Mac polling every 5 s is about 15 a minute, so this allows a few of each.
+  'live-transcript': { limit: 60, windowSec: 60, failMode: 'open' },
 } as const satisfies Record<string, { limit: number; windowSec: number; failMode: FailMode }>;
 
 export type BurstScope = keyof typeof BURST_LIMITS;
