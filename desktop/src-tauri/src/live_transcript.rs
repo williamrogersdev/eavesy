@@ -365,7 +365,8 @@ pub fn live_transcript(app: AppHandle, session_id: String) -> Result<Vec<LiveLin
 }
 
 /// Polls each recording in progress for cloud lines and swaps them in.
-pub async fn run(app: AppHandle, api: crate::sync::Api) {
+pub async fn run(app: AppHandle) {
+    let mut api: Option<crate::sync::Api> = None;
     let mut route_missing_since: Option<Instant> = None;
     let mut gone: HashSet<String> = HashSet::new();
     loop {
@@ -373,7 +374,15 @@ pub async fn run(app: AppHandle, api: crate::sync::Api) {
         if route_missing_since.is_some_and(|since| since.elapsed() < MISSING_ROUTE_BACKOFF) {
             continue;
         }
-        let Some(token) = crate::settings::device_token(&app) else { continue };
+        let Some(credential) = crate::settings::device_credential(&app) else { continue };
+        let token = credential.token;
+        let api = match crate::sync::Api::ensure(&mut api, &credential.base) {
+            Ok(api) => api,
+            Err(error) => {
+                eprintln!("live transcript: {error:#}");
+                continue;
+            }
+        };
         let live = match crate::sqlite::with_open(&app, recording_now) {
             Ok(Ok(live)) => live,
             Ok(Err(error)) | Err(error) => {

@@ -1,5 +1,6 @@
 mod telemetry;
 mod audio;
+mod base_url;
 mod captions;
 mod live_transcript;
 mod visual;
@@ -179,9 +180,7 @@ pub fn run() {
             #[cfg(desktop)]
             updates::check_in_background(&handle);
 
-            if let Ok(api) = sync::Api::new(sync::api_base()) {
-                tauri::async_runtime::spawn(live_transcript::run(handle.clone(), api));
-            }
+            tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
             let sync_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sync::run(sync_handle).await {
