@@ -5,6 +5,7 @@ setvbuf(stdout, nil, _IONBF, 0)
 if CommandLine.arguments.contains("--preflight") {
     Preflight.run(
         needScreen: CommandLine.arguments.contains("--need-screen"),
+        needSpeech: CommandLine.arguments.contains("--need-speech"),
         prompt: !CommandLine.arguments.contains("--no-prompt"))
 }
 

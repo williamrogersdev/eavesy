@@ -10,6 +10,8 @@ import {
   getSettings,
   isDesktop,
   setLauncherPosition,
+  setLiveCaptions,
+  checkPermissions,
   type AccountInfo,
   type LauncherPosition,
   type Permissions,
@@ -194,6 +196,22 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [positionError, setPositionError] = useState<string | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
   const [folderStatus, setFolderStatus] = useState<string | null>(null);
+  const [captionsBusy, setCaptionsBusy] = useState(false);
+  const [speech, setSpeech] = useState<boolean | undefined>(permissions?.speech);
+  const captionsOn = settings?.live_captions ?? true;
+
+  const toggleCaptions = () => {
+    const next = !captionsOn;
+    setCaptionsBusy(true);
+    void setLiveCaptions(next)
+      .then(async () => {
+        setSettings((current) => current ? { ...current, live_captions: next } : current);
+        // Turning captions on is when Speech Recognition is asked for.
+        if (next) setSpeech((await checkPermissions({ needScreen: false, needSpeech: true }))?.speech);
+      })
+      .catch(() => {})
+      .finally(() => setCaptionsBusy(false));
+  };
 
   useEffect(() => {
     void getSettings()
@@ -267,6 +285,34 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
                 onOpenSettings={() => onOpenPrivacy('accessibility')}
               />
             </div>
+          </Section>
+        )}
+
+        {isDesktop() && (
+          <Section title="Live captions">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] text-foreground">Show captions while recording</p>
+                <p className="text-[11px] text-muted-foreground">Transcribed on this Mac as you speak. The cloud transcript replaces them.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={captionsOn}
+                aria-label="Live captions"
+                disabled={!settings || captionsBusy}
+                onClick={toggleCaptions}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${captionsOn ? 'bg-[var(--lr-brand)]' : 'bg-[var(--lr-selected)]'}`}
+              >
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${captionsOn ? 'left-[18px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            {captionsOn && (speech ?? permissions?.speech) === false && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Speech Recognition is off for Eavesy, so there are no captions and dictation waits for the cloud.{' '}
+                <button type="button" onClick={() => onOpenPrivacy('speech')} className="underline">Open System Settings</button>
+              </p>
+            )}
           </Section>
         )}
 

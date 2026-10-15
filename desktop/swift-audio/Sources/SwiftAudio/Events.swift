@@ -65,8 +65,8 @@ enum EventEmitter {
         emit(["event": "done", "path": path, "durationSec": durationSec])
     }
 
-    static func permissions(mic: Bool, micAsked: Bool, screen: Bool) {
-        emit(["event": "permissions", "mic": mic, "micAsked": micAsked, "screen": screen])
+    static func permissions(mic: Bool, micAsked: Bool, screen: Bool, speech: Bool) {
+        emit(["event": "permissions", "mic": mic, "micAsked": micAsked, "screen": screen, "speech": speech])
     }
 }
 

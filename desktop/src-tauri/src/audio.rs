@@ -179,6 +179,9 @@ pub struct Permissions {
     pub mic_asked: bool,
     pub screen: bool,
     pub accessibility: bool,
+    /// Speech Recognition, for live captions and the dictation paste.
+    #[serde(default)]
+    pub speech: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -199,17 +202,31 @@ pub fn check_permissions(
     app: AppHandle,
     need_screen: Option<bool>,
     prompt: Option<bool>,
+    need_speech: Option<bool>,
 ) -> Result<Permissions, String> {
-    let result = check_permissions_inner(app, need_screen.unwrap_or(true), prompt.unwrap_or(true));
+    let result = check_permissions_inner(
+        app,
+        need_screen.unwrap_or(true),
+        prompt.unwrap_or(true),
+        need_speech.unwrap_or(false),
+    );
     if let Err(error) = &result {
         crate::telemetry::capture("capture.permissions", error);
     }
     result
 }
 
-fn check_permissions_inner(app: AppHandle, need_screen: bool, prompt: bool) -> Result<Permissions, String> {
+fn check_permissions_inner(
+    app: AppHandle,
+    need_screen: bool,
+    prompt: bool,
+    need_speech: bool,
+) -> Result<Permissions, String> {
     let bin = capture_bin(&app)?;
     let mut args = vec!["--preflight"];
+    if need_speech && prompt {
+        args.push("--need-speech");
+    }
     if need_screen && prompt {
         args.push("--need-screen");
     }
@@ -222,6 +239,7 @@ fn check_permissions_inner(app: AppHandle, need_screen: bool, prompt: bool) -> R
         if let Ok(again) = run_preflight(&bin, &["--preflight", "--no-prompt"]) {
             permissions.screen = again.screen;
             permissions.mic |= again.mic;
+            permissions.speech |= again.speech;
         }
     }
     permissions.accessibility = accessibility_granted();
@@ -244,6 +262,8 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, St
         mic_asked: bool,
         #[serde(default)]
         screen: bool,
+        #[serde(default)]
+        speech: bool,
     }
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -254,6 +274,7 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, St
                     mic_asked: parsed.mic_asked,
                     screen: parsed.screen,
                     accessibility: false,
+                    speech: parsed.speech,
                 });
             }
         }
@@ -356,10 +377,13 @@ fn spawn_capture(
     if mode == "screen" {
         cmd.arg("--mic").arg(if mic { "true" } else { "false" });
     } else {
+        // Captions run in the system language; on-device recognition either
+        // supports it or says it doesn't. Dictation always runs them for its
+        // paste; meetings and voice notes only with the Live captions setting.
         if dictation {
-            // In the system language: on-device recognition either supports it
-            // or says it doesn't, and the paste falls back to Whisper.
             cmd.arg("--captions").arg("mic");
+        } else if crate::settings::load(app).live_captions() {
+            cmd.arg("--captions").arg("all");
         }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
@@ -511,6 +535,7 @@ fn stream_events(
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
     let mut warning: Option<String> = None;
+    let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
     loop {
         let mut line = String::new();
         match reader.read_line(&mut line) {
@@ -548,6 +573,9 @@ fn stream_events(
                 }
                 if let Some(caption) = ev.caption(&session_id) {
                     captions.lock().unwrap_or_else(|e| e.into_inner()).record(&caption);
+                    if caption.is_final && !writer.push(caption.clone()) && writer.dropped() == 1 {
+                        eprintln!("live captions: storing is behind; dropping finals until it catches up");
+                    }
                     let _ = app.emit("recording:caption", &caption);
                     continue;
                 }

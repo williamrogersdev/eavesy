@@ -20,6 +20,7 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
         if (command === 'get_setup_status') result = { paired: true, completed };
         if (command === 'check_permissions') result = { mic: true, screen: true };
         if (command === 'start_capture') result = { session_id: 'shortcut-test' };
+        if (command === 'live_transcript') result = [{ startMs: 0, endMs: 2000, track: null, text: 'Cloud line.', provisional: false }];
         if (command === 'hotkey_conflict') result = { title: 'Fn / Globe may also trigger macOS', detail: 'Set Press Fn/Globe key to Do Nothing.' };
         return result as T;
       } },
@@ -59,6 +60,31 @@ test('native dictation event starts mic capture and second press saves', async (
   expect(calls.find((call) => call.command === 'start_capture')?.args?.source).toBe('mic');
   expect(calls.find((call) => call.command === 'start_capture')?.args?.dictation).toBe(true);
   expect(calls.some((call) => call.command === 'stop_capture')).toBe(true);
+});
+
+test('live captions can be turned off, and turning them on asks for Speech Recognition', async ({ page }) => {
+  await nativeLauncher(page);
+  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
+  const toggle = page.getByRole('switch', { name: 'Live captions' });
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
+  expect(calls.filter((call) => call.command === 'set_live_captions').map((call) => call.args?.enabled)).toEqual([false, true]);
+  expect(calls.some((call) => call.command === 'check_permissions' && call.args?.needSpeech === true)).toBe(true);
+});
+
+test('a recording shows its live captions, cloud lines first', async ({ page }) => {
+  await nativeLauncher(page);
+  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
+  const captions = page.getByRole('region', { name: 'Live captions' });
+  await expect(captions).toContainText('Cloud line.');
+  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string, payload?: unknown) => void } }).__shortcutTest.emit('recording:caption', {
+    sessionId: 'shortcut-test', track: 'mic', text: 'still talking', isFinal: false, startMs: 3000, endMs: 3500,
+  }));
+  await expect(captions).toContainText('still talking');
 });
 
 test('recording control can open Settings and stopping clears the launcher timer', async ({ page }) => {
