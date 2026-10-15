@@ -111,6 +111,15 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
         .map_err(|error| format!("could not reposition Eavesy: {error}"))
 }
 
+/// Turns live captions on or off. Speech Recognition permission is asked for
+/// by the launcher when they are turned on, never by a recording.
+#[tauri::command]
+pub fn set_live_captions(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut config = settings::load(&app);
+    config.live_captions = Some(enabled);
+    settings::save(&app, &config)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SetupStatus {
     pub paired: bool,
@@ -430,6 +439,7 @@ pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String>
         "microphone" => "Privacy_Microphone",
         "screen" => "Privacy_ScreenCapture",
         "accessibility" => "Privacy_Accessibility",
+        "speech" => "Privacy_SpeechRecognition",
         other => return Err(format!("unknown privacy pane '{other}'")),
     };
     app.shell()

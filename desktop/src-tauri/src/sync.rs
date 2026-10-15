@@ -176,6 +176,32 @@ impl Api {
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
+
+    /// Cloud transcript changes since `since`.
+    pub(crate) async fn transcript_delta(
+        &self,
+        token: &str,
+        remote_id: &str,
+        since: i64,
+    ) -> Result<crate::live_transcript::Fetched> {
+        use crate::live_transcript::Fetched;
+        let response = self
+            .client
+            .get(self.url(&format!("/api/sessions/{remote_id}/transcript?since={since}")))
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .context("fetch live transcript")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            let body = response.text().await.unwrap_or_default();
+            return Ok(crate::live_transcript::not_found(&body));
+        }
+        if !response.status().is_success() {
+            return Err(http_error("fetch live transcript", response).await);
+        }
+        Ok(Fetched::Delta(response.json().await.context("decode live transcript")?))
+    }
 }
 
 /// What one pass of the sync loop did.
@@ -475,6 +501,9 @@ async fn poll_result<R: Runtime>(
             }
         }
         sqlite::mark_complete(app, &session.id).map_err(|e| anyhow!(e))?;
+        if let Err(error) = sqlite::with_open(app, |conn| crate::live_transcript::forget(conn, &session.id)).and_then(|r| r) {
+            eprintln!("desktop ingest: {error}");
+        }
     } else if result.status == "failed" {
         return Err(anyhow!(Permanent("the cloud could not process this recording".to_string())));
     }

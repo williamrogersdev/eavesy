@@ -67,6 +67,33 @@ has seen.
 The archive remains in R2 as the durable cloud audio copy. D1 state replaces
 the old per-meeting Durable Object design.
 
+## Live captions
+
+With the **Live captions** setting on (the default), the sidecar also runs the
+on-device recognizer (same engines as dictation, below) on the mic and system
+tracks while a meeting or voice note records (`--captions all`):
+
+- **Permission:** Speech Recognition is asked for at first launch (with the
+  mic) and when captions are turned on, never by a recording. Without it,
+  recordings behave as before, minus the captions.
+- **Display:** Rust forwards every caption as the `recording:caption` Tauri
+  event. The HUD shows the newest words of each track on its own labelled line
+  ("You", "Others"), and the launcher shows the last few lines.
+- **Storage:** caption finals are stored in the local `live_lines` table as
+  provisional lines. A writer thread does this behind a bounded queue that
+  drops on overflow, so the sidecar's stdout reader never waits on the
+  database.
+- **Replacement:** every 5 s, Rust asks `/api/sessions/:id/transcript?since=`
+  for the cloud's transcript changes: time ranges, with every cloud line in
+  them. Locally it removes cloud lines that overlap a range and provisional
+  lines whose midpoint falls inside one, then stores the cloud's lines. A
+  caption therefore stays until the cloud has covered that moment, and the
+  cloud transcript is still the record.
+- **Expiry:** provisional lines more than 5 minutes (of recording time) behind
+  the newest cloud range were never replaced, so they are dropped.
+- **Cleanup:** the table is cleared when the recording completes or fails. A
+  deleted meeting (`meeting_not_found`) stops the polling for that recording.
+
 ## Dictation
 
 Dictation (the dictation hotkey, the launcher's Dictate button and the "Start

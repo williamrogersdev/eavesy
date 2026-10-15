@@ -4,8 +4,9 @@ import Speech
 
 /// Picks the best on-device recognizer for a locale: SpeechAnalyzer where the
 /// OS and its model are ready, otherwise SFSpeechRecognizer forced on-device.
-/// Never prompts in a way that blocks capture: authorization is asked for
-/// asynchronously and audio is held until the answer comes back.
+/// Never prompts: Speech Recognition is asked for up front (setup, or turning
+/// captions on, through `--preflight --need-speech`), so a recording that has
+/// no answer yet simply runs without captions.
 enum CaptionEngines {
     static func make(
         locale: Locale,
@@ -44,8 +45,6 @@ enum CaptionEngines {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized:
             next(true)
-        case .notDetermined:
-            SFSpeechRecognizer.requestAuthorization { next($0 == .authorized) }
         default:
             next(false)
         }
