@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::captions::{Caption, CaptionLog, CaptionStatus};
+use crate::captions::{Caption, CaptionLog, CaptionStatus, CaptionsDone, Paste};
 use crate::fs_writer;
 use crate::store::{self, StoredRecording};
 
@@ -38,12 +38,10 @@ pub struct Session {
     source: String,
     /// Settled on-device captions, when the engine was asked for them.
     captions: Arc<Mutex<CaptionLog>>,
-    /// Dictation skips the segment pipeline and pastes the on-device text.
+    /// Dictation pastes its on-device text as soon as it stops; the recording
+    /// still uploads like any other and the cloud transcript is its record.
     dictation: bool,
 }
-
-/// The language the cloud transcribes in, so captions match it.
-const CAPTION_LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureSession {
@@ -95,6 +93,12 @@ struct CaptureEvent {
     engine: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    dropped: Option<i64>,
+    #[serde(default, rename = "timedOut")]
+    timed_out: Option<bool>,
+    #[serde(default)]
+    failed: Option<bool>,
 }
 
 impl CaptureEvent {
@@ -118,6 +122,15 @@ impl CaptureEvent {
             track: self.track.clone().unwrap_or_else(|| "mic".to_string()),
             live,
             detail: if live { self.engine.clone() } else { self.reason.clone() },
+        })
+    }
+
+    fn captions_done(&self) -> Option<CaptionsDone> {
+        (self.event == "captions_done").then_some(())?;
+        Some(CaptionsDone {
+            dropped: self.dropped.unwrap_or(0),
+            timed_out: self.timed_out.unwrap_or(false),
+            failed: self.failed.unwrap_or(false),
         })
     }
 }
@@ -342,14 +355,12 @@ fn spawn_capture(
         });
     if mode == "screen" {
         cmd.arg("--mic").arg(if mic { "true" } else { "false" });
-    } else if dictation {
-        cmd.arg("--source")
-            .arg(source)
-            .arg("--captions")
-            .arg("mic")
-            .arg("--language")
-            .arg(CAPTION_LANGUAGE);
     } else {
+        if dictation {
+            // In the system language: on-device recognition either supports it
+            // or says it doesn't, and the paste falls back to Whisper.
+            cmd.arg("--captions").arg("mic");
+        }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
             return Err(format!("could not create segment queue: {e}"));
@@ -390,7 +401,7 @@ fn spawn_capture(
         }
     };
 
-    if mode == "audio" && !dictation {
+    if mode == "audio" {
         if let Err(error) = crate::sqlite::begin_recording(
             app,
             &id,
@@ -548,6 +559,10 @@ fn stream_events(
                     let _ = app.emit("recording:captions_status", &status);
                     continue;
                 }
+                if let Some(done) = ev.captions_done() {
+                    captions.lock().unwrap_or_else(|e| e.into_inner()).finish(done);
+                    continue;
+                }
                 if ev.event == "segment_error" {
                     let message = ev.message.unwrap_or_else(|| "segment finalization failed".to_string());
                     eprintln!("segment could not be written: {message}");
@@ -694,7 +709,7 @@ fn stop_capture_inner(
         }
     };
     match result {
-        Err(error) if mode == "audio" && !dictation => Err(salvage_after_failed_stop(&app, &session_id, error)),
+        Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
         result => result,
     }
 }
@@ -799,13 +814,6 @@ fn finish_stopped_capture(
             Some(folder.clone()),
             false,
         );
-    } else if let Some(captions) = dictation {
-        let pasting = crate::dictation::is_armed(&rec.id);
-        finish_dictation(&app, &rec.id, audio_dest, folder, &captions);
-        if pasting {
-            // The text goes back into the app the user was in; don't take focus from it.
-            return Ok(rec);
-        }
     } else {
         let archive_bytes = std::fs::metadata(&audio_dest)
             .map(|m| m.len() as i64)
@@ -818,34 +826,45 @@ fn finish_stopped_capture(
             archive_bytes,
         )?;
         crate::sync::wake();
+        if let Some(captions) = dictation {
+            let pasting = crate::dictation::is_armed(&rec.id);
+            paste_dictation(&app, &rec.id, audio_dest, &captions);
+            if pasting {
+                // The text goes back into the app the user was in; don't take focus from it.
+                return Ok(rec);
+            }
+        }
     }
 
     crate::commands::show_launcher(app.clone());
     Ok(rec)
 }
 
-/// Pastes what the Mac heard on-device straight away. When there is nothing
-/// (no permission, unsupported language, older macOS, silence), the clip goes
-/// to cloud Whisper instead, and that result is pasted when it comes back.
-fn finish_dictation(
-    app: &AppHandle,
-    session_id: &str,
-    audio: PathBuf,
-    folder: PathBuf,
-    captions: &Mutex<CaptionLog>,
-) {
-    let (text, unavailable) = {
-        let log = captions.lock().unwrap_or_else(|e| e.into_inner());
-        (log.text(), log.unavailable().map(str::to_string))
-    };
-    if text.is_empty() {
-        if let Some(reason) = unavailable {
-            crate::telemetry::capture("dictation.on_device_unavailable", &reason);
+/// Pastes a dictation the moment it stops: the on-device text when it can be
+/// trusted, otherwise a quick cloud Whisper pass on the clip. Either way the
+/// recording is already queued to upload, and the cloud transcript stays its
+/// record; if both of these fail, that transcript is pasted when it is ready.
+fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: &Mutex<CaptionLog>) {
+    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
+    match decision {
+        Paste::OnDevice(text) => {
+            crate::dictation::deliver(app, session_id, &text);
+            crate::hud::set_state(
+                app,
+                crate::hud::HudState {
+                    phase: crate::hud::Phase::Done,
+                    session_id: Some(session_id.to_string()),
+                    mode: None,
+                    started_at_ms: None,
+                    message: Some(text),
+                },
+            );
         }
-        crate::transcribe::spawn(app.clone(), session_id.to_string(), audio, Some(folder), false);
-        return;
+        Paste::Whisper(reason) => {
+            eprintln!("dictation: using Whisper for the paste ({reason})");
+            crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio);
+        }
     }
-    crate::transcribe::complete(app, session_id, Some(&folder), text);
 }
 
 fn finalize_recording_folder(
@@ -1054,6 +1073,16 @@ mod tests {
     }
 
     #[test]
+    fn captions_done_lines_say_how_captions_ended() {
+        let ev: CaptureEvent = serde_json::from_str(
+            r#"{"dropped":2,"event":"captions_done","failed":false,"timedOut":true,"track":"mic"}"#,
+        )
+        .unwrap();
+        assert_eq!(ev.captions_done(), Some(CaptionsDone { dropped: 2, timed_out: true, failed: false }));
+        assert_eq!(ev.caption("rec"), None);
+    }
+
+    #[test]
     fn caption_status_lines_say_whether_captions_run() {
         let live: CaptureEvent = serde_json::from_str(
             r#"{"engine":"speech-analyzer","event":"captions_status","status":"live","track":"mic"}"#,
@@ -1070,7 +1099,8 @@ mod tests {
         assert!(!off.live);
         let mut log = CaptionLog::default();
         log.note_status(&off);
-        assert_eq!(log.unavailable(), Some("speech recognition not authorized"));
+        log.finish(CaptionsDone { dropped: 0, timed_out: false, failed: false });
+        assert_eq!(log.paste(), Paste::Whisper("captions unavailable: speech recognition not authorized".into()));
     }
 
     #[test]

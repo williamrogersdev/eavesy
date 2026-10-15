@@ -31,8 +31,36 @@ pub fn spawn(
             .and_then(|token| run(&media_path, is_video, &token));
         match result {
             Ok(text) => {
-                complete(&app, &id, folder.as_deref(), text);
-                return;
+                let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
+                if let Some(dir) = &folder {
+                    if let Some(recording) = store::load_all(&app)
+                        .into_iter()
+                        .find(|recording| recording.id == id)
+                    {
+                        let _ = fs_writer::persist_recording_artifacts(
+                            Some(&app),
+                            dir,
+                            &recording,
+                            None,
+                            None,
+                        );
+                    }
+                }
+                let current = crate::hud::current();
+                if current.session_id.as_deref() == Some(id.as_str())
+                    && current.phase != crate::hud::Phase::Recording
+                    && !store::load_all(&app).iter().any(|rec| rec.id == id && rec.has_video) {
+                    crate::hud::set_state(
+                        &app,
+                        crate::hud::HudState {
+                            phase: crate::hud::Phase::Done,
+                            session_id: Some(id.clone()),
+                            mode: None,
+                            started_at_ms: None,
+                            message: Some(text),
+                        },
+                    );
+                }
             }
             Err(e) => {
                 crate::telemetry::capture("transcription.run", &e);
@@ -67,36 +95,17 @@ pub fn spawn(
     });
 }
 
-/// Stores a finished transcript, pastes it if the recording was a dictation
-/// into another app, and shows it in the HUD.
-pub fn complete(app: &AppHandle, id: &str, folder: Option<&Path>, text: String) {
-    let _ = store::set_transcript(app, id, Some(text.clone()), "complete");
-    if let Some(dir) = folder {
-        if let Some(recording) = store::load_all(app)
-            .into_iter()
-            .find(|recording| recording.id == id)
-        {
-            let _ = fs_writer::persist_recording_artifacts(Some(app), dir, &recording, None, None);
+/// Transcribes a dictation clip for its paste only. The recording uploads
+/// separately and its cloud transcript is what gets stored; if this fails,
+/// that transcript is pasted once it is ready instead.
+pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
+    std::thread::spawn(move || {
+        let Some(token) = settings::device_token(&app) else { return };
+        match run(&audio, false, &token) {
+            Ok(text) => crate::dictation::deliver(&app, &id, &text),
+            Err(error) => crate::telemetry::capture("dictation.whisper_paste", &error),
         }
-    }
-    crate::dictation::deliver(app, id, &text);
-    let current = crate::hud::current();
-    if current.session_id.as_deref() == Some(id)
-        && current.phase != crate::hud::Phase::Recording
-        && !store::load_all(app).iter().any(|rec| rec.id == id && rec.has_video)
-    {
-        crate::hud::set_state(
-            app,
-            crate::hud::HudState {
-                phase: crate::hud::Phase::Done,
-                session_id: Some(id.to_string()),
-                mode: None,
-                started_at_ms: None,
-                message: Some(text),
-            },
-        );
-    }
-    let _ = app.emit("recordings:updated", ());
+    });
 }
 
 const CHUNK_SECS: usize = 4 * 60;

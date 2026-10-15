@@ -148,8 +148,9 @@ export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
 }
 
 /**
- * `dictation` records one mic clip that is transcribed on this Mac and pasted
- * as soon as it stops, instead of going through the meeting pipeline.
+ * `dictation` also transcribes the mic on this Mac and pastes that text as soon
+ * as recording stops. It still uploads like any recording; the cloud transcript
+ * is its record.
  */
 export async function startAudioCapture(
   source: 'mixed' | 'system' | 'mic',

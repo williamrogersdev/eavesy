@@ -172,4 +172,60 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(Arguments.captionLocale(language: "en", current: Locale(identifier: "fr_FR")).identifier, "en")
         XCTAssertEqual(Arguments.captionLocale(language: nil, current: gb).identifier, "en_GB")
     }
+
+    func testAudioHeldBeforeTheEngineIsReadyKeepsOnlyTheLatestTenSeconds() {
+        let events = Events()
+        let engine = FakeEngine()
+        var ready: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { ready = $0 }
+        let second = [Float](repeating: 0.1, count: 48_000)
+        for s in 0..<30 { captions.feed(second, atMs: Int64(s) * 1_000) }
+        ready?(.success(engine))
+        captions.finish(timeout: 1)
+        XCTAssertEqual(engine.appended, (20..<30).map { Int64($0) * 1_000 }, "oldest audio goes first")
+        let done = events.named("captions_done").first
+        XCTAssertEqual(done?["dropped"] as? Int, 20)
+        XCTAssertEqual(done?["timedOut"] as? Bool, false)
+        XCTAssertEqual(done?["failed"] as? Bool, false)
+    }
+
+    func testFinishReportsATimeoutAndAFailure() {
+        final class Stuck: SpeechEngine {
+            let name = "stuck"
+            func start(sink: CaptionSink) throws {}
+            func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {}
+            func finish(_ done: @escaping () -> Void) {}
+        }
+        let stuckEvents = Events()
+        let stuck = LiveCaptions(track: "mic", emit: stuckEvents.emit) { $0(.success(Stuck())) }
+        stuck.feed(samples, atMs: 0)
+        stuck.finish(timeout: 0.2)
+        XCTAssertEqual(stuckEvents.named("captions_done").first?["timedOut"] as? Bool, true)
+
+        let brokenEvents = Events()
+        let broken = FakeEngine()
+        broken.failOnAppend = 1
+        let failing = LiveCaptions(track: "mic", emit: brokenEvents.emit) { $0(.success(broken)) }
+        failing.feed(samples, atMs: 0)
+        failing.finish(timeout: 1)
+        XCTAssertEqual(brokenEvents.named("captions_done").first?["failed"] as? Bool, true)
+    }
+
+    func testSummaryEncodes() throws {
+        let line = try XCTUnwrap(
+            EventEmitter.line(CaptionSummary(dropped: 3, timedOut: false, failed: true).json(track: "mic")))
+        XCTAssertEqual(
+            String(decoding: line, as: UTF8.self),
+            #"{"dropped":3,"event":"captions_done","failed":true,"timedOut":false,"track":"mic"}"# + "\n")
+    }
+
+    /// CI's log says which engines its toolchain compiled; the macOS 26 one
+    /// needs Swift 6.2 (Xcode 26).
+    func testReportsWhichEnginesThisToolchainBuilds() {
+        #if compiler(>=6.2)
+            print("caption engines compiled: speech-analyzer, sfspeech")
+        #else
+            print("caption engines compiled: sfspeech only (compiler older than 6.2)")
+        #endif
+    }
 }

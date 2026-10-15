@@ -63,18 +63,25 @@ the old per-meeting Durable Object design.
 ## Dictation
 
 Dictation (the dictation hotkey, the launcher's Dictate button and the "Start
-dictation" command) skips the segment pipeline. The sidecar records one mic
-clip with `--captions mic` and feeds it to on-device Apple Speech as it goes:
-SpeechAnalyzer on macOS 26 when the language model is installed (otherwise it
-starts the download and uses the fallback), and SFSpeechRecognizer with
-`requiresOnDeviceRecognition` on older systems. Caption events (`caption`,
-`captions_status`) go out on stdout beside the usual events; a recognizer
-failure only turns captions off and never stops capture. On stop, the sidecar
-waits up to 3 s for the last finals, and Rust pastes the text into the app that
-had focus and saves it with the recording. If there is no on-device text (no
-permission, an unsupported language, or silence), the clip goes to cloud
-Whisper (`/api/transcribe`) and that result is pasted instead. Voice notes and
-meetings keep the cloud pipeline above.
+dictation" command) records and uploads like any voice note, so it appears in
+web history and search, and crash recovery covers it. It also runs on-device
+Apple Speech on the mic, in the system language, with `--captions mic`:
+
+- **Engines:** SpeechAnalyzer on macOS 26 when the language model is installed
+  (otherwise it starts the download and uses the fallback), and
+  SFSpeechRecognizer with `requiresOnDeviceRecognition` on older systems.
+  Neither runs without Speech Recognition permission.
+- **Events:** `caption`, `captions_status` and, at stop, `captions_done` go out
+  on stdout beside the usual events. A recognizer failure only turns captions
+  off and never stops capture. Audio held while the recognizer starts is capped
+  at about 10 s, and anything dropped is counted.
+- **Paste on stop:** the sidecar waits up to 3 s for the last finals, then Rust
+  pastes the on-device text (the last partial if no final arrived) into the app
+  that had focus. If captions were unavailable, failed, dropped audio or timed
+  out, or heard nothing, Rust sends the clip to cloud Whisper
+  (`/api/transcribe`) and pastes that instead.
+- **The record:** the cloud transcript of the upload is the dictation's record
+  either way. If both pastes fail, it is pasted once ready.
 
 ## Authentication
 

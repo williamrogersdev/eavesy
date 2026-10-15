@@ -17,6 +17,12 @@ enum CaptionEngines {
             return
         }
         authorize { authorized in
+            // Both engines are speech recognition as far as the user is
+            // concerned, so neither runs without their permission.
+            guard authorized else {
+                completion(.failure(CaptionUnavailable(reason: "speech recognition not authorized")))
+                return
+            }
             Task {
                 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
@@ -29,10 +35,6 @@ enum CaptionEngines {
                         }
                     }
                 #endif
-                guard authorized else {
-                    completion(.failure(CaptionUnavailable(reason: "speech recognition not authorized")))
-                    return
-                }
                 completion(SFSpeechEngine.make(locale: locale))
             }
         }

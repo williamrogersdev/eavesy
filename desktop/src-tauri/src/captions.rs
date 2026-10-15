@@ -25,17 +25,77 @@ pub struct CaptionStatus {
     pub detail: Option<String>,
 }
 
-/// The settled captions of one recording.
+/// How a track's captions ended (`captions_done`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptionsDone {
+    pub dropped: i64,
+    pub timed_out: bool,
+    pub failed: bool,
+}
+
+/// What to paste when a dictation stops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Paste {
+    OnDevice(String),
+    /// Transcribe the clip with cloud Whisper instead, for this reason.
+    Whisper(String),
+}
+
+/// The captions of one recording, and how they ended.
 #[derive(Debug, Default)]
 pub struct CaptionLog {
     finals: Vec<Caption>,
+    last_partial: Option<Caption>,
     unavailable: Option<String>,
+    done: Option<CaptionsDone>,
 }
 
 impl CaptionLog {
     pub fn record(&mut self, caption: &Caption) {
-        if caption.is_final && !caption.text.trim().is_empty() {
+        if caption.text.trim().is_empty() {
+            return;
+        }
+        if caption.is_final {
             self.finals.push(caption.clone());
+            self.last_partial = None;
+        } else {
+            self.last_partial = Some(caption.clone());
+        }
+    }
+
+    pub fn finish(&mut self, done: CaptionsDone) {
+        self.done = Some(done);
+    }
+
+    /// The on-device text, if every bit of the clip reached the recognizer and
+    /// it finished; otherwise why Whisper should do it. With no final, the last
+    /// partial is the text: it is what the recognizer had heard at the end.
+    pub fn paste(&self) -> Paste {
+        if let Some(reason) = &self.unavailable {
+            return Paste::Whisper(format!("captions unavailable: {reason}"));
+        }
+        let Some(done) = self.done else {
+            return Paste::Whisper("captions did not report finishing".to_string());
+        };
+        if done.failed {
+            return Paste::Whisper("the recognizer failed".to_string());
+        }
+        if done.timed_out {
+            return Paste::Whisper("the recognizer did not finish in time".to_string());
+        }
+        if done.dropped > 0 {
+            return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
+        }
+        let text = self.text();
+        let text = if text.is_empty() {
+            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
+        } else {
+            text
+        };
+        if text.is_empty() {
+            Paste::Whisper("no words recognized on device".to_string())
+        } else {
+            Paste::OnDevice(text)
         }
     }
 
@@ -43,11 +103,6 @@ impl CaptionLog {
         if !status.live {
             self.unavailable = status.detail.clone().or_else(|| Some("unavailable".to_string()));
         }
-    }
-
-    /// Why captions did not run, if they didn't.
-    pub fn unavailable(&self) -> Option<&str> {
-        self.unavailable.as_deref()
     }
 
     /// The finals in spoken order, as one paragraph.
@@ -94,12 +149,60 @@ mod tests {
         assert_eq!(log.text(), "");
     }
 
+    const CLEAN: CaptionsDone = CaptionsDone { dropped: 0, timed_out: false, failed: false };
+
+    fn finished(log: &mut CaptionLog, done: CaptionsDone) -> Paste {
+        log.finish(done);
+        log.paste()
+    }
+
+    #[test]
+    fn a_clean_finish_pastes_the_on_device_text() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Hello there.", true, 0));
+        assert_eq!(finished(&mut log, CLEAN), Paste::OnDevice("Hello there.".into()));
+    }
+
+    #[test]
+    fn with_no_final_the_last_partial_is_pasted() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("hel", false, 0));
+        log.record(&caption("hello wor", false, 0));
+        assert_eq!(finished(&mut log, CLEAN), Paste::OnDevice("hello wor".into()));
+    }
+
+    #[test]
+    fn a_partial_after_the_last_final_does_not_replace_the_finals() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("First.", true, 0));
+        log.record(&caption("and the", false, 2_000));
+        assert_eq!(finished(&mut log, CLEAN), Paste::OnDevice("First.".into()));
+    }
+
+    #[test]
+    fn anything_short_of_a_clean_finish_goes_to_whisper() {
+        let whisper = |paste: Paste| matches!(paste, Paste::Whisper(_));
+        let heard = || {
+            let mut log = CaptionLog::default();
+            log.record(&caption("Some words.", true, 0));
+            log
+        };
+        assert!(whisper(heard().paste()), "never finished");
+        assert!(whisper(finished(&mut heard(), CaptionsDone { timed_out: true, ..CLEAN })));
+        assert!(whisper(finished(&mut heard(), CaptionsDone { failed: true, ..CLEAN })));
+        assert!(whisper(finished(&mut heard(), CaptionsDone { dropped: 3, ..CLEAN })));
+        let mut unavailable = heard();
+        unavailable.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: Some("locale unsupported".into()) });
+        assert_eq!(finished(&mut unavailable, CLEAN), Paste::Whisper("captions unavailable: locale unsupported".into()));
+        assert!(whisper(finished(&mut CaptionLog::default(), CLEAN)), "silence");
+    }
+
     #[test]
     fn remembers_why_captions_did_not_run() {
         let mut log = CaptionLog::default();
         log.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: true, detail: Some("sfspeech".into()) });
-        assert_eq!(log.unavailable(), None);
+        assert_eq!(log.unavailable, None);
         log.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: Some("locale unsupported".into()) });
-        assert_eq!(log.unavailable(), Some("locale unsupported"));
+        assert_eq!(log.unavailable.as_deref(), Some("locale unsupported"));
     }
 }

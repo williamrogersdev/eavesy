@@ -37,6 +37,18 @@ enum CaptionStatus: Equatable {
     }
 }
 
+/// How a track's captions ended, sent once when the recording stops. The host
+/// trusts the text only when nothing was dropped and the engine finished in time.
+struct CaptionSummary: Equatable {
+    let dropped: Int
+    let timedOut: Bool
+    let failed: Bool
+
+    func json(track: String) -> [String: Any] {
+        ["event": "captions_done", "track": track, "dropped": dropped, "timedOut": timedOut, "failed": failed]
+    }
+}
+
 struct CaptionUnavailable: Error {
     let reason: String
 }
@@ -59,11 +71,16 @@ protocol SpeechEngine: AnyObject {
 
 /// Live captions for one track, running beside the recording and never in its
 /// way: feeding is a copy and a hop to a private queue, every engine call is
-/// caught, a failure turns captions off for the rest of the recording, and a
-/// backlog is dropped rather than buffered without bound.
+/// caught, and a failure turns captions off for the rest of the recording.
+/// Memory is bounded twice: buffers queued for the engine are capped at
+/// `maxBacklog`, and audio held while the engine is not ready yet (say, while
+/// the permission prompt is up) at `maxWaitingFrames`, oldest dropped first.
+/// Every dropped buffer is counted and reported in `captions_done`.
 final class LiveCaptions: CaptionSink {
-    /// About ten seconds of capture buffers; past that the engine is not keeping up.
+    /// Buffers queued for the engine; past this it is not keeping up.
     static let maxBacklog = 500
+    /// About ten seconds of 48 kHz audio held before the engine is ready.
+    static let maxWaitingFrames = 480_000
 
     let track: String
     private let queue: DispatchQueue
@@ -71,12 +88,14 @@ final class LiveCaptions: CaptionSink {
     private let lock = NSLock()
     private var engine: SpeechEngine?
     private var waiting: [(AVAudioPCMBuffer, Int64)] = []
+    private var waitingFrames = 0
+    private var dropped = 0
     private var failed = false
     private var finishing = false
     private var backlog = 0
 
     /// `makeEngine` may answer later (authorization and model checks are async);
-    /// audio fed meanwhile is held, up to the backlog limit.
+    /// audio fed meanwhile is held, up to `maxWaitingFrames`.
     init(
         track: String,
         emit: @escaping ([String: Any]) -> Void,
@@ -100,6 +119,7 @@ final class LiveCaptions: CaptionSink {
         guard !samples.isEmpty, !isOff else { return }
         lock.lock()
         if backlog >= Self.maxBacklog {
+            dropped += 1
             lock.unlock()
             return
         }
@@ -115,13 +135,14 @@ final class LiveCaptions: CaptionSink {
             if let engine = self.engine {
                 self.guarded { try engine.append(buffer, atMs: atMs) }
             } else if !self.isOff {
-                self.waiting.append((buffer, atMs))
+                self.hold(buffer, atMs: atMs)
             }
         }
     }
 
-    /// Waits up to `timeout` for the engine's last finals. Safe to call once
-    /// from any thread except this track's queue.
+    /// Waits up to `timeout` for the engine's last finals, then reports how
+    /// captions ended (`captions_done`). Call once, from any thread except this
+    /// track's queue.
     func finish(timeout: TimeInterval) {
         let done = DispatchSemaphore(value: 0)
         queue.async { [weak self] in
@@ -132,14 +153,43 @@ final class LiveCaptions: CaptionSink {
             self.lock.lock()
             self.finishing = true
             self.lock.unlock()
-            self.waiting.removeAll()
+            self.dropWaiting()
             guard let engine = self.engine, !self.failed else {
                 done.signal()
                 return
             }
             engine.finish { done.signal() }
         }
-        _ = done.wait(timeout: .now() + timeout)
+        let timedOut = done.wait(timeout: .now() + timeout) == .timedOut
+        lock.lock()
+        let summary = CaptionSummary(dropped: dropped, timedOut: timedOut, failed: failed)
+        lock.unlock()
+        emit(summary.json(track: track))
+    }
+
+    /// Called on `queue`.
+    private func hold(_ buffer: AVAudioPCMBuffer, atMs: Int64) {
+        waiting.append((buffer, atMs))
+        waitingFrames += Int(buffer.frameLength)
+        var shed = 0
+        while waitingFrames > Self.maxWaitingFrames, !waiting.isEmpty {
+            waitingFrames -= Int(waiting.removeFirst().0.frameLength)
+            shed += 1
+        }
+        if shed > 0 { countDropped(shed) }
+    }
+
+    /// Called on `queue`: audio held for an engine that will never take it.
+    private func dropWaiting() {
+        if !waiting.isEmpty { countDropped(waiting.count) }
+        waiting.removeAll()
+        waitingFrames = 0
+    }
+
+    private func countDropped(_ count: Int) {
+        lock.lock()
+        dropped += count
+        lock.unlock()
     }
 
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {
@@ -158,6 +208,7 @@ final class LiveCaptions: CaptionSink {
             emit(CaptionStatus.live(engine: engine.name).json(track: track))
             let held = waiting
             waiting.removeAll()
+            waitingFrames = 0
             for (buffer, atMs) in held {
                 guarded { try engine.append(buffer, atMs: atMs) }
             }
@@ -185,6 +236,7 @@ final class LiveCaptions: CaptionSink {
         lock.unlock()
         engine = nil
         waiting.removeAll()
+        waitingFrames = 0
         if first { emit(CaptionStatus.unavailable(reason: reason).json(track: track)) }
     }
 
