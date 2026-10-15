@@ -1,0 +1,356 @@
+import { and, eq, gte, inArray, isNull, lt, lte, ne, or } from 'drizzle-orm';
+import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
+import { encode } from '@/db/codec';
+import { MODELS } from '@/lib/ai/client';
+import { summarizeMeeting } from '@/lib/ai/summarize';
+import { resolveModelPlan } from '@/lib/providers/router';
+import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
+import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
+import {
+  ECHO_WINDOW_MS,
+  findEchoLines,
+  isHallucination,
+  isSilentTrack,
+  speakerForTrack,
+} from '@/lib/transcription/two-track';
+import { openUserKeys } from '@/server/secret-box';
+import { recordFirstTranscript } from '@/server/transcript-latency';
+import {
+  type Db,
+  type ProcessingEnv,
+  SEGMENT_CLAIM_TTL_MS,
+  SegmentBusyError,
+  runBatched,
+} from './shared';
+import { logMeetingComplete } from './summarize';
+
+/** Rolling notes refresh each time the transcribed audio crosses another interval. */
+export const ROLLING_NOTES_EVERY_MS = 4 * 60 * 1_000;
+/** Each refresh also rereads this much from before the interval, for continuity. */
+export const ROLLING_NOTES_OVERLAP_MS = 60 * 1_000;
+
+/**
+ * Whether this segment's audio crosses a rolling-notes boundary. It depends only
+ * on where the segment sits, so it fires once per boundary whatever the segment
+ * length and in whatever order segments finish.
+ */
+export function crossesRollingNotesBoundary(segment: { offsetMs: number; durationMs: number }) {
+  const end = segment.offsetMs + segment.durationMs;
+  return Math.floor(end / ROLLING_NOTES_EVERY_MS) > Math.floor(segment.offsetMs / ROLLING_NOTES_EVERY_MS);
+}
+
+export async function handleProcessRecording(meetingId: string, db: Db, env: ProcessingEnv) {
+  const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+  if (!meeting) return;
+  const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
+  const user = userRow ? await openUserKeys(userRow) : undefined;
+  if (meeting.status === 'complete') {
+    if (!user?.isAnonymous) await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    return;
+  }
+  if (!meeting.audioR2Key) throw new Error('recording has no audio object');
+
+  const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
+  if (!object) throw new Error('recording audio object is missing');
+  const transcription = await transcribeAudioFile({
+    audio: new Uint8Array(await object.arrayBuffer()),
+    language: meeting.language,
+    ai: env.AI,
+  });
+
+  await runBatched(db, transcription.segments.map((segment, index) => {
+    const id = `web_${meetingId}_${index}_${segment.startMs}`;
+    return db
+      .insert(transcriptSegments)
+      .values({
+        id,
+        meetingId,
+        startMs: segment.startMs,
+        endMs: segment.endMs,
+        speakerId: segment.speakerId,
+        text: segment.text,
+        confidence: segment.confidence,
+        isEdited: false,
+        isFinal: true,
+      })
+      .onConflictDoUpdate({
+        target: transcriptSegments.id,
+        set: {
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+          text: segment.text,
+          confidence: segment.confidence,
+          isFinal: true,
+        },
+      });
+  }));
+
+  if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
+
+  const fullText = transcription.segments
+    .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
+    .join('\n');
+  const now = Date.now();
+  if (fullText.trim()) {
+    const plan = resolveModelPlan(user);
+    const summary = await summarizeMeeting({
+      transcript: fullText,
+      contextBlurb: meeting.contextBlurb ?? undefined,
+      openRouter: plan.openRouter,
+      byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
+    });
+    const generatedByModel = plan.openRouter
+      ? 'openrouter:anthropic/claude-sonnet-4.6'
+      : plan.summary.apiKey
+        ? `byo-anthropic:${MODELS.summary}`
+        : MODELS.summary;
+    const values = {
+      tldr: summary.tldr,
+      decisionsJson: encode(summary.decisions),
+      actionItemsJson: encode(summary.actionItems),
+      followUpsJson: encode(summary.followUps),
+      openQuestionsJson: encode(summary.openQuestions),
+      topicsJson: encode(summary.topics),
+      mentionsJson: encode(summary.mentions),
+      generatedByModel,
+      generatedAt: now,
+    };
+    await db
+      .insert(summaries)
+      .values({ id: `summary_${meetingId}`, meetingId, ...values })
+      .onConflictDoUpdate({ target: summaries.meetingId, set: values });
+    await db
+      .update(meetings)
+      .set({
+        title: summary.title,
+        description: summary.description,
+        status: 'complete',
+        statusError: null,
+        audioDurationSec: transcription.durationSec,
+        updatedAt: now,
+      })
+      .where(eq(meetings.id, meetingId));
+  } else {
+    await db
+      .update(meetings)
+      .set({
+        title: 'Empty recording',
+        status: 'complete',
+        statusError: null,
+        audioDurationSec: transcription.durationSec,
+        updatedAt: now,
+      })
+      .where(eq(meetings.id, meetingId));
+  }
+
+  await logMeetingComplete(db, meeting.userId, meetingId, now);
+
+  if (!user?.isAnonymous) {
+    await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+  }
+}
+
+export async function handleTranscribeSegment(
+  meetingId: string,
+  idx: number,
+  track: 'mixed' | 'mic' | 'system',
+  db: Db,
+  env: ProcessingEnv,
+) {
+  const segment = (
+    await db
+      .select()
+      .from(meetingSegments)
+      .where(
+        and(
+          eq(meetingSegments.meetingId, meetingId),
+          eq(meetingSegments.idx, idx),
+          eq(meetingSegments.track, track),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!segment || segment.transcribeStatus === 'complete') return;
+  const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+  if (!meeting) return;
+
+  // Queue delivery is at-least-once and segment retries re-enqueue, so two jobs
+  // can arrive together. Only the one whose conditional update lands transcribes.
+  const claimedAt = Date.now();
+  const claimed = await db
+    .update(meetingSegments)
+    .set({ transcribeStatus: 'processing', transcribeClaimedAt: claimedAt })
+    .where(
+      and(
+        eq(meetingSegments.id, segment.id),
+        or(
+          inArray(meetingSegments.transcribeStatus, ['pending', 'failed']),
+          and(
+            eq(meetingSegments.transcribeStatus, 'processing'),
+            or(
+              isNull(meetingSegments.transcribeClaimedAt),
+              lt(meetingSegments.transcribeClaimedAt, claimedAt - SEGMENT_CLAIM_TTL_MS),
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: meetingSegments.id });
+  if (claimed.length === 0) {
+    const current = (
+      await db
+        .select({ status: meetingSegments.transcribeStatus })
+        .from(meetingSegments)
+        .where(eq(meetingSegments.id, segment.id))
+        .limit(1)
+    )[0];
+    if (!current || current.status === 'complete') return;
+    throw new SegmentBusyError();
+  }
+  const ownClaim = and(
+    eq(meetingSegments.id, segment.id),
+    eq(meetingSegments.transcribeClaimedAt, claimedAt),
+  );
+  try {
+    if (!isSilentTrack(track, segment.activeMs)) {
+      const object = await env.AUDIO_BUCKET.get(segment.r2Key);
+      if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
+      const audio = new Uint8Array(await object.arrayBuffer());
+      const transcription = await new WorkersAiSegmentTranscriber(env.AI).transcribe({
+        audio,
+        language: meeting.language,
+        contextBlurb: meeting.contextBlurb,
+      });
+      const speakerId = speakerForTrack(track);
+      const lines = transcription.segments.filter((relative) => !isHallucination(relative));
+
+      await runBatched(db, lines.map((relative) => {
+        const relativeStart = Math.max(0, relative.startMs);
+        const absoluteStart = segment.offsetMs + relativeStart;
+        const absoluteEnd = Math.max(
+          absoluteStart,
+          segment.offsetMs + (relative.endMs || segment.durationMs),
+        );
+        const id =
+          track === 'mixed'
+            ? `seg_${meetingId}_${idx}_${relativeStart}`
+            : `seg_${meetingId}_${idx}_${track}_${relativeStart}`;
+        return db
+          .insert(transcriptSegments)
+          .values({
+            id,
+            meetingId,
+            startMs: absoluteStart,
+            endMs: absoluteEnd,
+            speakerId,
+            text: relative.text,
+            confidence: relative.confidence,
+            isFinal: true,
+            isEdited: false,
+          })
+          .onConflictDoUpdate({
+            target: transcriptSegments.id,
+            set: {
+              startMs: absoluteStart,
+              endMs: absoluteEnd,
+              speakerId,
+              text: relative.text,
+              confidence: relative.confidence,
+              isFinal: true,
+            },
+          });
+      }));
+      if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
+    }
+
+    if (track !== 'mixed') {
+      await removeEcho(db, meetingId, {
+        fromMs: segment.offsetMs - ECHO_WINDOW_MS,
+        toMs: segment.offsetMs + segment.durationMs + ECHO_WINDOW_MS,
+      });
+    }
+
+    // Stamped after echo removal, so a live client that reads this range sees
+    // it already cleaned up.
+    await db
+      .update(meetingSegments)
+      .set({ transcribeStatus: 'complete', transcribedAt: Date.now() })
+      .where(ownClaim);
+
+    const siblingsPending = await db
+      .select({ id: meetingSegments.id })
+      .from(meetingSegments)
+      .where(
+        and(
+          eq(meetingSegments.meetingId, meetingId),
+          eq(meetingSegments.idx, idx),
+          ne(meetingSegments.transcribeStatus, 'complete'),
+        ),
+      )
+      .limit(1);
+    if (
+      siblingsPending.length === 0 &&
+      crossesRollingNotesBoundary(segment) &&
+      (await claimRollingNotes(db, meetingId, idx))
+    ) {
+      await env.PROCESSING_QUEUE.send({
+        kind: 'rolling-summarize',
+        meetingId,
+        throughIdx: idx,
+        throughMs: segment.offsetMs + segment.durationMs,
+      });
+    }
+  } catch (error) {
+    await db
+      .update(meetingSegments)
+      .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+      .where(ownClaim);
+    throw error;
+  }
+}
+
+/**
+ * Both tracks of a segment can finish together and each see no sibling still
+ * pending; only the one whose conditional update lands enqueues the notes.
+ * D1 runs writes one at a time, so exactly one claim per segment index wins.
+ */
+export async function claimRollingNotes(db: Db, meetingId: string, idx: number): Promise<boolean> {
+  const claimed = await db
+    .update(meetings)
+    .set({ rollingNotesAt: idx })
+    .where(
+      and(
+        eq(meetings.id, meetingId),
+        or(isNull(meetings.rollingNotesAt), lt(meetings.rollingNotesAt, idx)),
+      ),
+    )
+    .returning({ id: meetings.id });
+  return claimed.length > 0;
+}
+
+export async function removeEcho(db: Db, meetingId: string, range?: { fromMs: number; toMs: number }) {
+  const lines = await db
+    .select({
+      id: transcriptSegments.id,
+      speakerId: transcriptSegments.speakerId,
+      startMs: transcriptSegments.startMs,
+      endMs: transcriptSegments.endMs,
+      text: transcriptSegments.text,
+      isEdited: transcriptSegments.isEdited,
+    })
+    .from(transcriptSegments)
+    .where(
+      range
+        ? and(
+            eq(transcriptSegments.meetingId, meetingId),
+            gte(transcriptSegments.endMs, range.fromMs),
+            lte(transcriptSegments.startMs, range.toMs),
+          )
+        : eq(transcriptSegments.meetingId, meetingId),
+    );
+  const echoes = new Set(findEchoLines(lines));
+  const doomed = lines.filter((line) => echoes.has(line.id) && !line.isEdited).map((line) => line.id);
+  for (let i = 0; i < doomed.length; i += 50) {
+    await db.delete(transcriptSegments).where(inArray(transcriptSegments.id, doomed.slice(i, i + 50)));
+  }
+}
