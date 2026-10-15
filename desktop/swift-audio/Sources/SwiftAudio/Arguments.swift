@@ -12,6 +12,10 @@ enum AudioSource: String {
 }
 
 struct Arguments {
+    /// Segments never close sooner than this, whatever --segment-sec asks for.
+    static let minSegmentSec: Double = 30
+    static let defaultSegmentSec: Double = 60
+
     let mode: CaptureMode
     let outPath: String
     let source: AudioSource
@@ -59,7 +63,8 @@ struct Arguments {
 
         let includeMic = (dict["mic"]?.lowercased() == "true")
         let segmentDir = dict["segment-dir"].flatMap { $0.isEmpty ? nil : $0 }
-        let segmentSec = dict["segment-sec"].flatMap(Double.init).map { max($0, 30) } ?? 240
+        let segmentSec = dict["segment-sec"].flatMap(Double.init).map { max($0, minSegmentSec) }
+            ?? defaultSegmentSec
 
         return Arguments(
             mode: mode,
@@ -69,4 +74,11 @@ struct Arguments {
             segmentDir: segmentDir,
             segmentSec: segmentSec)
     }
+}
+
+/// A segment closes at the first quiet moment after `segmentSec`, and no later
+/// than this. The slack is half the target, capped at a minute, so short
+/// segments stay short and four-minute ones still seal at five.
+func hardCapSec(forSegmentSec segmentSec: Double) -> Double {
+    segmentSec + min(60, segmentSec / 2)
 }
