@@ -578,7 +578,11 @@ async function handleTranscribeSegment(
         ),
       )
       .limit(1);
-    if (siblingsPending.length === 0 && crossesRollingNotesBoundary(segment)) {
+    if (
+      siblingsPending.length === 0 &&
+      crossesRollingNotesBoundary(segment) &&
+      (await claimRollingNotes(db, meetingId, idx))
+    ) {
       await env.PROCESSING_QUEUE.send({
         kind: 'rolling-summarize',
         meetingId,
@@ -593,6 +597,25 @@ async function handleTranscribeSegment(
       .where(ownClaim);
     throw error;
   }
+}
+
+/**
+ * Both tracks of a segment can finish together and each see no sibling still
+ * pending; only the one whose conditional update lands enqueues the notes.
+ * D1 runs writes one at a time, so exactly one claim per segment index wins.
+ */
+export async function claimRollingNotes(db: Db, meetingId: string, idx: number): Promise<boolean> {
+  const claimed = await db
+    .update(meetings)
+    .set({ rollingNotesAt: idx })
+    .where(
+      and(
+        eq(meetings.id, meetingId),
+        or(isNull(meetings.rollingNotesAt), lt(meetings.rollingNotesAt, idx)),
+      ),
+    )
+    .returning({ id: meetings.id });
+  return claimed.length > 0;
 }
 
 async function removeEcho(db: Db, meetingId: string, range?: { fromMs: number; toMs: number }) {
