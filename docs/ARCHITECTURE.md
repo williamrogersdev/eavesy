@@ -34,7 +34,9 @@ macOS capture ──device token──► web session API ──► R2 audio
 
 1. The launcher asks for optional meeting context and starts the Swift sidecar.
 2. Swift captures microphone and system audio into one continuous archive and
-   rolling AAC/M4A segments. It targets four minutes and seals at five minutes.
+   rolling AAC/M4A segments. It targets one minute (the `segment_sec` desktop
+   setting, 30 seconds at least), closing at the first quiet moment after
+   that and no later than half as long again.
 3. Every sealed segment has an atomic JSON manifest. Rust records it in SQLite
    before scheduling an upload, so app termination or network loss is
    recoverable.
@@ -43,13 +45,14 @@ macOS capture ──device token──► web session API ──► R2 audio
    and records its capture offset so sleep/wake gaps are retained.
 5. The web Worker stores bytes in R2, writes session/segment state in D1, and
    enqueues processing.
-6. The processing Worker transcribes each segment. It periodically refreshes
-   rolling notes without diarization and includes the supplied context blurb.
-   Rolling notes are streamed from Claude Haiku 5.5 at low effort; the final
-   summary uses the summary model. Both bill the user's own Anthropic key when
-   they have one.
+6. The processing Worker transcribes each segment. Each time the transcribed
+   audio crosses another four minutes it refreshes rolling notes without
+   diarization and includes the supplied context blurb. Rolling notes are
+   streamed from Claude Haiku 5.5 at low effort; the final summary uses the
+   summary model. Both bill the user's own Anthropic key when they have one.
 7. Stop seals the final segment, waits for durable uploads, and finalizes the
-   cloud session. Final processing creates the title, summary, and embedding.
+   cloud session. Final processing waits for the last segments (checking every
+   10 seconds at first), then creates the title, summary, and embedding.
 8. Rust polls the session result, then atomically writes `transcript.md` and
    `summary.md`. The full `audio.m4a` archive already resides in the same local
    recording folder.

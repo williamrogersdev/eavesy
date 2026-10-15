@@ -184,7 +184,8 @@ describe('processing queue orchestration', () => {
       meetingId: 'meet_transcribe',
       idx: 2,
       r2Key: key,
-      offsetMs: 10_000,
+      // Ends at 4:01, crossing the first rolling-notes boundary.
+      offsetMs: 238_000,
     });
     await testEnv.AUDIO_BUCKET.put(key, new Uint8Array([1, 2, 3]));
 
@@ -209,7 +210,7 @@ describe('processing queue orchestration', () => {
         'SELECT start_ms, end_ms, text FROM transcript_segments WHERE meeting_id = ?',
         'meet_transcribe',
       ),
-    ).toEqual({ start_ms: 11_000, end_ms: 13_000, text: 'A durable transcript' });
+    ).toEqual({ start_ms: 239_000, end_ms: 241_000, text: 'A durable transcript' });
     expect(
       await row<{ transcribe_status: string }>(
         'SELECT transcribe_status FROM meeting_segments WHERE id = ?',
@@ -225,6 +226,7 @@ describe('processing queue orchestration', () => {
       kind: 'rolling-summarize',
       meetingId: 'meet_transcribe',
       throughIdx: 2,
+      throughMs: 241_000,
     });
   });
 

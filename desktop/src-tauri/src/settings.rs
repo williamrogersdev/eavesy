@@ -5,6 +5,12 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
+/// Recording segment length. Each sealed segment is uploaded and transcribed on
+/// its own, so this bounds how stale the cloud transcript is while recording.
+pub const DEFAULT_SEGMENT_SEC: u32 = 60;
+/// The capture sidecar refuses anything shorter.
+const MIN_SEGMENT_SEC: u32 = 30;
+const MAX_SEGMENT_SEC: u32 = 600;
 
 // Variant names are persisted as snake_case settings values; renaming would break saved settings.
 #[allow(clippy::enum_variant_names)]
@@ -52,6 +58,18 @@ pub struct Settings {
     /// Self-hosting: origin of your own Eavesy server (e.g. `https://eavesy.example.com`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_base_url: Option<String>,
+    /// Unset means the current default, so a future default change reaches
+    /// people who never chose a length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segment_sec: Option<u32>,
+}
+
+impl Settings {
+    pub fn segment_sec(&self) -> u32 {
+        self.segment_sec
+            .unwrap_or(DEFAULT_SEGMENT_SEC)
+            .clamp(MIN_SEGMENT_SEC, MAX_SEGMENT_SEC)
+    }
 }
 
 fn new_device_id() -> String {
@@ -71,6 +89,7 @@ impl Default for Settings {
             hud_hidden: false,
             panel_size: None,
             api_base_url: None,
+            segment_sec: None,
         }
     }
 }
@@ -401,6 +420,24 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn segment_length_defaults_to_a_minute_and_respects_the_sidecar_floor() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.segment_sec(), 60);
+        settings.segment_sec = Some(5);
+        assert_eq!(settings.segment_sec(), 30);
+        settings.segment_sec = Some(240);
+        assert_eq!(settings.segment_sec(), 240);
+    }
+
+    #[test]
+    fn an_unchosen_segment_length_is_not_written_to_disk() {
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!json.contains("segment_sec"));
+        let saved: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","segment_sec":120}"#).unwrap();
+        assert_eq!(saved.segment_sec(), 120);
+    }
 
     #[derive(Default)]
     struct FakeKeychain {
