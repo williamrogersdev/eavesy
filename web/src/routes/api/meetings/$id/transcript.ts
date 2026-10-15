@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { resolveActor } from '@/server/auth';
+import { guardBurst } from '@/server/rate-limit';
 import {
   liveTranscriptJson,
   liveTranscriptStream,
@@ -28,6 +29,8 @@ export const Route = createFileRoute('/api/meetings/$id/transcript')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'live-transcript');
+        if (limited) return limited;
         const db = getDb();
         const meeting = await meetingsRepo.get(db, { meetingId: params.id, userId: actor.userId });
         if (!meeting) return Response.json({ error: 'not_found' }, { status: 404 });

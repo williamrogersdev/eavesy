@@ -51,7 +51,10 @@ async function snapshot(db: AppDb, meetingId: string) {
 
 /** One JSON read of the changes since `since`, for clients that poll. */
 export async function liveTranscriptJson(db: AppDb, meetingId: string, since: number) {
-  const [state, delta] = await Promise.all([snapshot(db, meetingId), transcriptDelta(db, meetingId, since)]);
+  const [state, { stamps: _stamps, ...delta }] = await Promise.all([
+    snapshot(db, meetingId),
+    transcriptDelta(db, meetingId, since),
+  ]);
   if (!state) return Response.json({ error: 'not_found' }, { status: 404 });
   return Response.json({ status: state.status, summaryAt: state.summaryAt, ...delta });
 }
@@ -80,6 +83,8 @@ export function liveTranscriptStream(
   const encoder = new TextEncoder();
   const startedAt = Date.now();
   let cursor = since;
+  // What this stream already sent, so the overlap window is not sent again.
+  const sent = new Set<string>();
   let lastStatus: string | null = null;
   let lastSummaryAt: number | null | undefined;
   let lastWriteAt = startedAt;
@@ -88,7 +93,10 @@ export function liveTranscriptStream(
   let cancelled = false;
 
   async function tick(): Promise<string> {
-    const [state, delta] = await Promise.all([snapshot(db, meetingId), transcriptDelta(db, meetingId, cursor)]);
+    const [state, { stamps, ...delta }] = await Promise.all([
+      snapshot(db, meetingId),
+      transcriptDelta(db, meetingId, cursor, sent),
+    ]);
     if (!state) {
       finished = true;
       return event('done', { status: 'deleted' });
@@ -96,6 +104,7 @@ export function liveTranscriptStream(
     let out = '';
     if (delta.ranges.length > 0) {
       cursor = delta.cursor;
+      stamps.forEach((stamp) => sent.add(stamp));
       out += event('lines', delta, cursor);
     }
     if (lastStatus !== null && state.status !== lastStatus) out += event('status', { status: state.status });

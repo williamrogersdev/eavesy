@@ -25,7 +25,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   actor.userId = 'user_live';
-  await resetTables('transcript_segments', 'meeting_segments', 'summaries', 'meetings', 'users');
+  await resetTables('transcript_segments', 'meeting_segments', 'summaries', 'meetings', 'users', 'rate_limits');
   await insertUser('user_live');
   await insertUser('user_other');
   await insertMeeting({ id: MEETING, userId: 'user_live', status: 'recording' });
@@ -82,6 +82,24 @@ describe('transcript since a cursor', () => {
     expect(none).toMatchObject({ cursor: t0 + 60_000 + CURSOR_OVERLAP_MS, ranges: [], lines: [] });
   });
 
+  it('polling an idle meeting at its cursor sends nothing, even inside the overlap', async () => {
+    await transcribed(0, 2_000_000, [[1_000, 'Only line.']]);
+    const first = await delta(0);
+    expect(first.lines).toHaveLength(1);
+    const again = await delta(first.cursor);
+    expect(again).toMatchObject({ cursor: first.cursor, ranges: [], lines: [] });
+  });
+
+  it('a segment stamped behind the cursor comes along with the next new one', async () => {
+    await transcribed(0, 3_000_000, [[1_000, 'First.']]);
+    const first = await delta(0);
+    await transcribed(1, 3_000_000 - 5_000, [[61_000, 'Late stamp.']]);
+    expect((await delta(first.cursor)).lines).toEqual([]);
+    await transcribed(2, 3_000_000 + 60_000, [[121_000, 'Next.']]);
+    const next = await delta(first.cursor);
+    expect(next.lines.map((line) => line.text)).toEqual(['First.', 'Late stamp.', 'Next.']);
+  });
+
   it('a range whose echo was removed comes back without it', async () => {
     await transcribed(0, 5_000_000, [[1_000, 'Kept.']]);
     await testEnv.DB.prepare(`DELETE FROM transcript_segments WHERE id = 'line_1000'`).run();
@@ -97,6 +115,19 @@ describe('transcript since a cursor', () => {
       params: { id: MEETING },
     });
     expect(response.status).toBe(404);
+  });
+
+  it('limits how often one user can poll or reconnect', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 61; i++) {
+      const response = await get({
+        request: new Request(`https://eavesy.test/api/meetings/${MEETING}/transcript?since=0`),
+        params: { id: MEETING },
+      });
+      statuses.push(response.status);
+    }
+    expect(statuses.slice(0, 60).every((status) => status === 200)).toBe(true);
+    expect(statuses[60]).toBe(429);
   });
 
   it('streams as server-sent events when asked', async () => {
@@ -138,6 +169,20 @@ describe('live transcript stream', () => {
     expect(end).toContain('event: status');
     expect(end).toContain('"status":"complete"');
     expect((await reader.read()).done).toBe(true);
+  });
+
+  it('sends each segment once, including one stamped behind the cursor', async () => {
+    const response = liveTranscriptStream(db, MEETING, 0, { pollMs: 2, keepAliveMs: 60_000, lifetimeMs: 400 });
+    const text = new Response(response.body).text();
+    await transcribed(0, 8_000_000, [[2_000, 'One.']]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await transcribed(1, 8_000_000 - 10_000, [[62_000, 'Two, stamped late.']]);
+    const body = await text;
+    const events = body.split('\n\n').filter((chunk) => chunk.includes('event: lines'));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('One.');
+    expect(events[1]).toContain('Two, stamped late.');
+    expect(events[1]).not.toContain('"text":"One."');
   });
 
   it('sends nothing already covered by the cursor it resumed from', async () => {
