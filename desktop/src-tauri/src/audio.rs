@@ -4,12 +4,13 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::captions::{Caption, CaptionLog, CaptionStatus};
 use crate::fs_writer;
 use crate::store::{self, StoredRecording};
 
@@ -35,7 +36,14 @@ pub struct Session {
     started_at_ms: i64,
     mode: String,
     source: String,
+    /// Settled on-device captions, when the engine was asked for them.
+    captions: Arc<Mutex<CaptionLog>>,
+    /// Dictation skips the segment pipeline and pastes the on-device text.
+    dictation: bool,
 }
+
+/// The language the cloud transcribes in, so captions match it.
+const CAPTION_LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureSession {
@@ -52,7 +60,7 @@ pub enum CaptureState {
     Recording { count: usize },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct CaptureEvent {
     event: String,
     #[serde(default)]
@@ -75,6 +83,43 @@ struct CaptureEvent {
     peak_rms: Option<f64>,
     #[serde(default, rename = "activeMs")]
     active_ms: Option<i64>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default, rename = "final")]
+    is_final: Option<bool>,
+    #[serde(default, rename = "endMs")]
+    end_ms: Option<i64>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    engine: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+impl CaptureEvent {
+    fn caption(&self, session_id: &str) -> Option<Caption> {
+        (self.event == "caption").then_some(())?;
+        Some(Caption {
+            session_id: session_id.to_string(),
+            track: self.track.clone().unwrap_or_else(|| "mic".to_string()),
+            text: self.text.clone()?,
+            is_final: self.is_final.unwrap_or(false),
+            start_ms: self.start_ms.unwrap_or(0),
+            end_ms: self.end_ms.or(self.start_ms).unwrap_or(0),
+        })
+    }
+
+    fn caption_status(&self, session_id: &str) -> Option<CaptionStatus> {
+        (self.event == "captions_status").then_some(())?;
+        let live = self.status.as_deref() == Some("live");
+        Some(CaptionStatus {
+            session_id: session_id.to_string(),
+            track: self.track.clone().unwrap_or_else(|| "mic".to_string()),
+            live,
+            detail: if live { self.engine.clone() } else { self.reason.clone() },
+        })
+    }
 }
 
 pub(crate) fn capture_bin(app: &AppHandle) -> Result<PathBuf, String> {
@@ -213,9 +258,11 @@ pub fn start_capture(
     state: State<'_, Captures>,
     source: Option<String>,
     context_blurb: Option<String>,
+    dictation: Option<bool>,
 ) -> Result<CaptureSession, String> {
     let source = source.unwrap_or_else(|| "mixed".to_string());
-    let result = spawn_capture(&app, &state, "audio", &source, false, context_blurb.as_deref());
+    let dictation = dictation.unwrap_or(false) && source == "mic";
+    let result = spawn_capture(&app, &state, "audio", &source, false, context_blurb.as_deref(), dictation);
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_audio", error);
     }
@@ -228,7 +275,7 @@ pub fn start_screen_capture(
     state: State<'_, Captures>,
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
-    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None);
+    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None, false);
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_screen", error);
     }
@@ -242,6 +289,7 @@ fn spawn_capture(
     source: &str,
     mic: bool,
     context_blurb: Option<&str>,
+    dictation: bool,
 ) -> Result<CaptureSession, String> {
     let bin = capture_bin(app)?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -294,6 +342,13 @@ fn spawn_capture(
         });
     if mode == "screen" {
         cmd.arg("--mic").arg(if mic { "true" } else { "false" });
+    } else if dictation {
+        cmd.arg("--source")
+            .arg(source)
+            .arg("--captions")
+            .arg("mic")
+            .arg("--language")
+            .arg(CAPTION_LANGUAGE);
     } else {
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
@@ -335,7 +390,7 @@ fn spawn_capture(
         }
     };
 
-    if mode == "audio" {
+    if mode == "audio" && !dictation {
         if let Err(error) = crate::sqlite::begin_recording(
             app,
             &id,
@@ -353,7 +408,8 @@ fn spawn_capture(
             return Err(error);
         }
     }
-    let events = stream_events(app.clone(), id.clone(), reader);
+    let captions = Arc::new(Mutex::new(CaptionLog::default()));
+    let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
     state.0.lock().unwrap().insert(
         id.clone(),
         Session {
@@ -364,6 +420,8 @@ fn spawn_capture(
             started_at_ms,
             mode: mode.to_string(),
             source: source.to_string(),
+            captions,
+            dictation,
         },
     );
     state.1.fetch_sub(1, Ordering::SeqCst);
@@ -437,6 +495,7 @@ fn stream_events(
     app: AppHandle,
     session_id: String,
     mut reader: BufReader<ChildStdout>,
+    captions: Arc<Mutex<CaptionLog>>,
 ) -> mpsc::Receiver<CaptureEvent> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -476,6 +535,19 @@ fn stream_events(
                     }
                     continue;
                 }
+                if let Some(caption) = ev.caption(&session_id) {
+                    captions.lock().unwrap_or_else(|e| e.into_inner()).record(&caption);
+                    let _ = app.emit("recording:caption", &caption);
+                    continue;
+                }
+                if let Some(status) = ev.caption_status(&session_id) {
+                    if !status.live {
+                        eprintln!("live captions off: {}", status.detail.as_deref().unwrap_or("unavailable"));
+                    }
+                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_status(&status);
+                    let _ = app.emit("recording:captions_status", &status);
+                    continue;
+                }
                 if ev.event == "segment_error" {
                     let message = ev.message.unwrap_or_else(|| "segment finalization failed".to_string());
                     eprintln!("segment could not be written: {message}");
@@ -497,15 +569,7 @@ fn stream_events(
                 let _ = tx.send(CaptureEvent {
                     event: "error".to_string(),
                     message: Some(format!("capture engine read failed: {error}")),
-                    path: None,
-                    duration_sec: None,
-                    index: None,
-                    start_ms: None,
-                    duration_ms: None,
-                    bytes: None,
-                    track: None,
-                    peak_rms: None,
-                    active_ms: None,
+                    ..Default::default()
                 });
                 break;
             }
@@ -598,6 +662,8 @@ fn stop_capture_inner(
         started_at_ms,
         mode,
         source,
+        captions,
+        dictation,
     } = session;
 
     let reserved_audio_folder = (mode == "audio")
@@ -618,6 +684,7 @@ fn stop_capture_inner(
             &mode,
             &source,
             reserved_audio_folder,
+            dictation.then_some(captions),
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -627,7 +694,7 @@ fn stop_capture_inner(
         }
     };
     match result {
-        Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
+        Err(error) if mode == "audio" && !dictation => Err(salvage_after_failed_stop(&app, &session_id, error)),
         result => result,
     }
 }
@@ -666,6 +733,7 @@ fn finish_stopped_capture(
     mode: &str,
     source: &str,
     reserved_audio_folder: Option<PathBuf>,
+    dictation: Option<Arc<Mutex<CaptionLog>>>,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -731,6 +799,13 @@ fn finish_stopped_capture(
             Some(folder.clone()),
             false,
         );
+    } else if let Some(captions) = dictation {
+        let pasting = crate::dictation::is_armed(&rec.id);
+        finish_dictation(&app, &rec.id, audio_dest, folder, &captions);
+        if pasting {
+            // The text goes back into the app the user was in; don't take focus from it.
+            return Ok(rec);
+        }
     } else {
         let archive_bytes = std::fs::metadata(&audio_dest)
             .map(|m| m.len() as i64)
@@ -747,6 +822,30 @@ fn finish_stopped_capture(
 
     crate::commands::show_launcher(app.clone());
     Ok(rec)
+}
+
+/// Pastes what the Mac heard on-device straight away. When there is nothing
+/// (no permission, unsupported language, older macOS, silence), the clip goes
+/// to cloud Whisper instead, and that result is pasted when it comes back.
+fn finish_dictation(
+    app: &AppHandle,
+    session_id: &str,
+    audio: PathBuf,
+    folder: PathBuf,
+    captions: &Mutex<CaptionLog>,
+) {
+    let (text, unavailable) = {
+        let log = captions.lock().unwrap_or_else(|e| e.into_inner());
+        (log.text(), log.unavailable().map(str::to_string))
+    };
+    if text.is_empty() {
+        if let Some(reason) = unavailable {
+            crate::telemetry::capture("dictation.on_device_unavailable", &reason);
+        }
+        crate::transcribe::spawn(app.clone(), session_id.to_string(), audio, Some(folder), false);
+        return;
+    }
+    crate::transcribe::complete(app, session_id, Some(&folder), text);
 }
 
 fn finalize_recording_folder(
@@ -927,6 +1026,51 @@ mod tests {
         assert!(!log.exists());
         assert!(dir.join("capture.log.1").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn caption_lines_from_the_engine_become_captions() {
+        let line = r#"{"endMs":2050,"event":"caption","final":true,"startMs":1200,"text":"hello","track":"mic"}"#;
+        let ev: CaptureEvent = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            ev.caption("rec"),
+            Some(Caption {
+                session_id: "rec".into(),
+                track: "mic".into(),
+                text: "hello".into(),
+                is_final: true,
+                start_ms: 1200,
+                end_ms: 2050,
+            })
+        );
+        assert_eq!(ev.caption_status("rec"), None);
+        let partial: CaptureEvent =
+            serde_json::from_str(r#"{"event":"caption","startMs":0,"text":"hel","track":"system"}"#).unwrap();
+        let partial = partial.caption("rec").unwrap();
+        assert!(!partial.is_final);
+        assert_eq!(partial.track, "system");
+        let segment: CaptureEvent = serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
+        assert_eq!(segment.caption("rec"), None);
+    }
+
+    #[test]
+    fn caption_status_lines_say_whether_captions_run() {
+        let live: CaptureEvent = serde_json::from_str(
+            r#"{"engine":"speech-analyzer","event":"captions_status","status":"live","track":"mic"}"#,
+        )
+        .unwrap();
+        let live = live.caption_status("rec").unwrap();
+        assert!(live.live);
+        assert_eq!(live.detail.as_deref(), Some("speech-analyzer"));
+        let off: CaptureEvent = serde_json::from_str(
+            r#"{"event":"captions_status","reason":"speech recognition not authorized","status":"unavailable","track":"mic"}"#,
+        )
+        .unwrap();
+        let off = off.caption_status("rec").unwrap();
+        assert!(!off.live);
+        let mut log = CaptionLog::default();
+        log.note_status(&off);
+        assert_eq!(log.unavailable(), Some("speech recognition not authorized"));
     }
 
     #[test]

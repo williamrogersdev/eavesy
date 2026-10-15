@@ -1,5 +1,6 @@
 mod telemetry;
 mod audio;
+mod captions;
 mod visual;
 mod commands;
 mod diagnostics;

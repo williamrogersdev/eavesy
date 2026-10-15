@@ -147,15 +147,20 @@ export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
   await invoke('open_privacy_settings', { pane });
 }
 
+/**
+ * `dictation` records one mic clip that is transcribed on this Mac and pasted
+ * as soon as it stops, instead of going through the meeting pipeline.
+ */
 export async function startAudioCapture(
   source: 'mixed' | 'system' | 'mic',
   contextBlurb?: string,
+  dictation = false,
 ): Promise<CaptureSession | null> {
   if (!isDesktop()) {
     window.location.href = '/app/record';
     return null;
   }
-  return invoke<CaptureSession>('start_capture', { source, contextBlurb });
+  return invoke<CaptureSession>('start_capture', { source, contextBlurb, dictation });
 }
 
 export async function startScreenCapture(

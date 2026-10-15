@@ -60,6 +60,22 @@ macOS capture ──device token──► web session API ──► R2 audio
 The archive remains in R2 as the durable cloud audio copy. D1 state replaces
 the old per-meeting Durable Object design.
 
+## Dictation
+
+Dictation (the dictation hotkey, the launcher's Dictate button and the "Start
+dictation" command) skips the segment pipeline. The sidecar records one mic
+clip with `--captions mic` and feeds it to on-device Apple Speech as it goes:
+SpeechAnalyzer on macOS 26 when the language model is installed (otherwise it
+starts the download and uses the fallback), and SFSpeechRecognizer with
+`requiresOnDeviceRecognition` on older systems. Caption events (`caption`,
+`captions_status`) go out on stdout beside the usual events; a recognizer
+failure only turns captions off and never stops capture. On stop, the sidecar
+waits up to 3 s for the last finals, and Rust pastes the text into the app that
+had focus and saves it with the recording. If there is no on-device text (no
+permission, an unsupported language, or silence), the clip goes to cloud
+Whisper (`/api/transcribe`) and that result is pasted instead. Voice notes and
+meetings keep the cloud pipeline above.
+
 ## Authentication
 
 Browser requests use Clerk. Desktop long-form requests use a random device
