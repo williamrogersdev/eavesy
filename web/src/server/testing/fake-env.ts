@@ -122,12 +122,36 @@ export function stubAnthropic(reply: (body: Record<string, unknown>) => { status
     const body = JSON.parse(init?.body ?? '{}');
     calls.push(body);
     const { status = 200, json } = reply(body);
+    if (body.stream === true && status === 200) return streamedReply(json as StubMessage);
     return new Response(JSON.stringify(json), {
       status,
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
   return { calls, restore: () => void (globalThis.fetch = original) };
+}
+
+interface StubMessage {
+  stop_reason: string;
+  content: { type: 'text'; text: string }[];
+  [key: string]: unknown;
+}
+
+/** The same message as the server-sent events a streamed request receives. */
+function streamedReply(message: StubMessage) {
+  const { content, stop_reason, ...rest } = message;
+  const events: [string, unknown][] = [
+    ['message_start', { type: 'message_start', message: { ...rest, content: [], stop_reason: null } }],
+    ...content.flatMap((block, index): [string, unknown][] => [
+      ['content_block_start', { type: 'content_block_start', index, content_block: { type: 'text', text: '' } }],
+      ['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } }],
+      ['content_block_stop', { type: 'content_block_stop', index }],
+    ]),
+    ['message_delta', { type: 'message_delta', delta: { stop_reason, stop_sequence: null }, usage: { output_tokens: 1 } }],
+    ['message_stop', { type: 'message_stop' }],
+  ];
+  const sse = events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
 export function summaryReply(summary: Record<string, unknown>, stop_reason = 'end_turn') {

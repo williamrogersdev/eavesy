@@ -45,6 +45,9 @@ macOS capture ──device token──► web session API ──► R2 audio
    enqueues processing.
 6. The processing Worker transcribes each segment. It periodically refreshes
    rolling notes without diarization and includes the supplied context blurb.
+   Rolling notes are streamed from Claude Haiku 5.5 at low effort; the final
+   summary uses the summary model. Both bill the user's own Anthropic key when
+   they have one.
 7. Stop seals the final segment, waits for durable uploads, and finalizes the
    cloud session. Final processing creates the title, summary, and embedding.
 8. Rust polls the session result, then atomically writes `transcript.md` and
