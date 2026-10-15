@@ -147,15 +147,21 @@ export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
   await invoke('open_privacy_settings', { pane });
 }
 
+/**
+ * `dictation` also transcribes the mic on this Mac and pastes that text as soon
+ * as recording stops. It still uploads like any recording; the cloud transcript
+ * is its record.
+ */
 export async function startAudioCapture(
   source: 'mixed' | 'system' | 'mic',
   contextBlurb?: string,
+  dictation = false,
 ): Promise<CaptureSession | null> {
   if (!isDesktop()) {
     window.location.href = '/app/record';
     return null;
   }
-  return invoke<CaptureSession>('start_capture', { source, contextBlurb });
+  return invoke<CaptureSession>('start_capture', { source, contextBlurb, dictation });
 }
 
 export async function startScreenCapture(

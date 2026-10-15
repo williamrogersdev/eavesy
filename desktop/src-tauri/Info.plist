@@ -8,6 +8,9 @@
     <key>NSScreenCaptureUsageDescription</key>
     <string>Eavesy captures system audio from your meetings so it can transcribe everyone on the call.</string>
 
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Eavesy shows live captions and pastes dictation using speech recognition on this Mac.</string>
+
     <key>NSAppleEventsUsageDescription</key>
     <string>Eavesy pastes your transcript into the app you're using.</string>
 </dict>

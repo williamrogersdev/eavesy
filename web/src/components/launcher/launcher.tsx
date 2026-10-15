@@ -336,6 +336,7 @@ export function Launcher() {
         source?: 'mixed' | 'system' | 'mic';
         mic?: boolean;
         contextBlurb?: string;
+        dictation?: boolean;
       },
     ) => {
       if (captureBusy.current) return;
@@ -351,7 +352,7 @@ export function Launcher() {
         const session =
           mode === 'screen'
             ? await startScreenCapture(opts?.mic ?? false)
-            : await startAudioCapture(source, opts?.contextBlurb);
+            : await startAudioCapture(source, opts?.contextBlurb, opts?.dictation);
         if (session) {
           setRecording({ session, mode });
           setView('list');
@@ -399,7 +400,7 @@ export function Launcher() {
       const stopListening = await onDictationHotkey(() => {
         if (starting) return;
         if (recording) runTask(stopRecording);
-        else runTask(() => beginRecording('audio', { source: 'mic' }));
+        else runTask(() => beginRecording('audio', { source: 'mic', dictation: true }));
       });
       if (disposed) stopListening(); else unlisten = stopListening;
     });
@@ -655,7 +656,7 @@ export function Launcher() {
         keywords: 'dictate voice type speech',
         run: () =>
           runTask(
-            () => beginRecording('audio', { source: 'mic' }),
+            () => beginRecording('audio', { source: 'mic', dictation: true }),
             'Could not start dictation',
           ),
       },
@@ -1157,7 +1158,7 @@ export function Launcher() {
         {!query && (
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
             <RecordButton icon={<Radio className="h-4 w-4" />} label="Record meeting" primary onClick={beginMeetingRecording} />
-            <RecordButton icon={<Mic className="h-4 w-4" />} label="Dictate" onClick={() => runTask(() => beginRecording('audio', { source: 'mic' }))} />
+            <RecordButton icon={<Mic className="h-4 w-4" />} label="Dictate" onClick={() => runTask(() => beginRecording('audio', { source: 'mic', dictation: true }))} />
             <span className="ml-auto text-[11px] text-muted-foreground">{desktop ? (setupPaired ? 'Cloud connected' : 'Local only · Connect in Settings') : 'Record, find, and reuse your conversations'}</span>
           </div>
         )}

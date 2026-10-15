@@ -14,6 +14,16 @@ if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 <
 
 let args = Arguments.parse(CommandLine.arguments)
 
+let captions = Dictionary(
+    uniqueKeysWithValues: args.captions.map { track in
+        (
+            track,
+            LiveCaptions(track: track.rawValue, emit: EventEmitter.emit) { ready in
+                CaptionEngines.make(locale: args.locale, completion: ready)
+            }
+        )
+    })
+
 let recorder: Recorder
 switch args.mode {
 case .audio:
@@ -21,7 +31,8 @@ case .audio:
         outPath: args.outPath,
         source: args.source,
         segmentDir: args.segmentDir,
-        segmentSec: args.segmentSec)
+        segmentSec: args.segmentSec,
+        captions: captions)
 case .screen:
     recorder = ScreenRecorder(outPath: args.outPath, includeMic: args.includeMic)
 }

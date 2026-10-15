@@ -22,6 +22,10 @@ struct Arguments {
     let includeMic: Bool
     let segmentDir: String?
     let segmentSec: Double
+    /// Tracks to caption live on-device; empty when captions are off.
+    let captions: Set<Track>
+    /// Locale for captions: the user's own region when it speaks `--language`.
+    let locale: Locale
 
     static func parse(_ argv: [String]) -> Arguments {
         var dict: [String: String] = [:]
@@ -66,13 +70,41 @@ struct Arguments {
         let segmentSec = dict["segment-sec"].flatMap(Double.init).map { max($0, minSegmentSec) }
             ?? defaultSegmentSec
 
+        let captions = mode == .audio ? parseCaptions(dict["captions"], source: source) : []
+        let locale = captionLocale(language: dict["language"], current: Locale.current)
+
         return Arguments(
             mode: mode,
             outPath: out,
             source: source,
             includeMic: includeMic,
             segmentDir: segmentDir,
-            segmentSec: segmentSec)
+            segmentSec: segmentSec,
+            captions: captions,
+            locale: locale)
+    }
+
+    /// The cloud transcribes in one language; caption in the same one, keeping
+    /// the user's regional variant (en-GB, en-AU) when the system already speaks it.
+    static func captionLocale(language: String?, current: Locale) -> Locale {
+        guard let language, !language.isEmpty else { return current }
+        if current.language.languageCode?.identifier == language { return current }
+        return Locale(identifier: language)
+    }
+
+    /// `--captions mic|system|all`, limited to the tracks the source records.
+    static func parseCaptions(_ raw: String?, source: AudioSource) -> Set<Track> {
+        let recorded: Set<Track>
+        switch source {
+        case .mic: recorded = [.mic]
+        case .system: recorded = [.system]
+        case .mixed: recorded = [.mic, .system]
+        }
+        switch raw?.lowercased() {
+        case "all", "true": return recorded
+        case let name?: return recorded.intersection(Track(rawValue: name).map { [$0] } ?? [])
+        case nil: return []
+        }
     }
 }
 
