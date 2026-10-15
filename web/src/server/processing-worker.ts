@@ -65,6 +65,31 @@ export const DEAD_LETTER_QUEUE = 'eavesy-processing-dlq';
 // belongs to a worker that died without releasing it.
 export const SEGMENT_CLAIM_TTL_MS = 15 * 60 * 1_000;
 const SEGMENT_BUSY_RETRY_SECONDS = 300;
+/** Rolling notes refresh each time the transcribed audio crosses another interval. */
+export const ROLLING_NOTES_EVERY_MS = 4 * 60 * 1_000;
+/** Each refresh also rereads this much from before the interval, for continuity. */
+const ROLLING_NOTES_OVERLAP_MS = 60 * 1_000;
+
+/**
+ * Whether this segment's audio crosses a rolling-notes boundary. It depends only
+ * on where the segment sits, so it fires once per boundary whatever the segment
+ * length and in whatever order segments finish.
+ */
+export function crossesRollingNotesBoundary(segment: { offsetMs: number; durationMs: number }) {
+  const end = segment.offsetMs + segment.durationMs;
+  return Math.floor(end / ROLLING_NOTES_EVERY_MS) > Math.floor(segment.offsetMs / ROLLING_NOTES_EVERY_MS);
+}
+
+/**
+ * How long the final summary waits before checking segments again. Right after
+ * stop usually only the last segment or two are left and Whisper takes seconds,
+ * so check back quickly at first instead of always adding a minute.
+ */
+export function summaryRetryDelaySeconds(inFlight: number, waitedMs: number) {
+  if (inFlight <= 4 && waitedMs < 2 * 60 * 1_000) return 10;
+  if (waitedMs < 5 * 60 * 1_000) return 30;
+  return 60;
+}
 
 class SegmentBusyError extends Error {
   constructor() {
@@ -272,7 +297,11 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       await handleTranscribeSegment(message.meetingId, message.idx, message.track ?? 'mixed', db, env);
       return;
     case 'rolling-summarize':
-      await handleSummarize(message.meetingId, db, env, { final: false, throughIdx: message.throughIdx });
+      await handleSummarize(message.meetingId, db, env, {
+        final: false,
+        throughIdx: message.throughIdx,
+        throughMs: message.throughMs,
+      });
       return;
     case 'summarize':
       await handleSummarize(message.meetingId, db, env, {
@@ -549,8 +578,13 @@ async function handleTranscribeSegment(
         ),
       )
       .limit(1);
-    if (siblingsPending.length === 0 && (idx + 1) % 3 === 0) {
-      await env.PROCESSING_QUEUE.send({ kind: 'rolling-summarize', meetingId, throughIdx: idx });
+    if (siblingsPending.length === 0 && crossesRollingNotesBoundary(segment)) {
+      await env.PROCESSING_QUEUE.send({
+        kind: 'rolling-summarize',
+        meetingId,
+        throughIdx: idx,
+        throughMs: segment.offsetMs + segment.durationMs,
+      });
     }
   } catch (error) {
     await db
@@ -609,7 +643,7 @@ async function handleSummarize(
   meetingId: string,
   db: Db,
   env: ProcessingEnv,
-  mode: { final: boolean; throughIdx?: number; waitingSince?: number },
+  mode: { final: boolean; throughIdx?: number; throughMs?: number; waitingSince?: number },
 ) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting) return;
@@ -631,7 +665,7 @@ async function handleSummarize(
     if (inFlight > 0 && Date.now() - waitingSince < SUMMARY_WAIT_LIMIT_MS) {
       await env.PROCESSING_QUEUE.send(
         { kind: 'summarize', meetingId, waitingSince },
-        { delaySeconds: 60 },
+        { delaySeconds: summaryRetryDelaySeconds(inFlight, Date.now() - waitingSince) },
       );
       return;
     }
@@ -648,7 +682,11 @@ async function handleSummarize(
     await db.select().from(summaries).where(eq(summaries.meetingId, meetingId)).limit(1)
   )[0];
 
-  if (!mode.final && mode.throughIdx !== undefined) {
+  if (!mode.final && mode.throughMs !== undefined) {
+    const from = mode.throughMs - ROLLING_NOTES_EVERY_MS - ROLLING_NOTES_OVERLAP_MS;
+    segments = segments.filter((segment) => segment.startMs >= from);
+  } else if (!mode.final && mode.throughIdx !== undefined) {
+    // Jobs queued before time-based notes: the window is the last three segments.
     const firstWindowSegment = (
       await db
         .select()

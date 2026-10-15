@@ -2,7 +2,15 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
 mock.module('cloudflare:workers', () => ({ env: {} }));
-const { MAX_ATTEMPTS, PURGE_AFTER_MS, purgeDeleted, queue, SUMMARY_WAIT_LIMIT_MS } = await import('@/server/processing-worker');
+const {
+  crossesRollingNotesBoundary,
+  MAX_ATTEMPTS,
+  PURGE_AFTER_MS,
+  purgeDeleted,
+  queue,
+  summaryRetryDelaySeconds,
+  SUMMARY_WAIT_LIMIT_MS,
+} = await import('@/server/processing-worker');
 import { createFakeEnv, delivery, stubAnthropic, summaryReply } from '@/server/testing/fake-env';
 
 const SUMMARY = {
@@ -84,8 +92,15 @@ describe('final summary', () => {
     expect(outcome.acked).toBe(true);
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0].body.kind).toBe('summarize');
-    expect(t.sent[0].delaySeconds).toBe(60);
+    expect(t.sent[0].delaySeconds).toBe(10);
     expect(t.meeting().status).toBe('processing');
+  });
+
+  test('checks back quickly at first, then backs off', () => {
+    expect(summaryRetryDelaySeconds(2, 0)).toBe(10);
+    expect(summaryRetryDelaySeconds(30, 0)).toBe(30);
+    expect(summaryRetryDelaySeconds(2, 3 * 60_000)).toBe(30);
+    expect(summaryRetryDelaySeconds(2, 10 * 60_000)).toBe(60);
   });
 
   test('does not wait forever on a segment that permanently failed', async () => {
@@ -200,6 +215,52 @@ describe('segment transcription', () => {
 });
 
 describe('rolling summary', () => {
+  test('fires each time the audio crosses another four minutes, whatever the segment length', () => {
+    const minute = 60_000;
+    const fired = (lengthMs: number, totalMs: number) => {
+      const ends: number[] = [];
+      for (let offset = 0; offset < totalMs; offset += lengthMs) {
+        if (crossesRollingNotesBoundary({ offsetMs: offset, durationMs: lengthMs })) ends.push(offset + lengthMs);
+      }
+      return ends;
+    };
+    expect(fired(minute, 12 * minute)).toEqual([4, 8, 12].map((m) => m * minute));
+    expect(fired(4 * minute, 12 * minute)).toEqual([4, 8, 12].map((m) => m * minute));
+    expect(fired(75_000, 10 * minute)).toEqual([300_000, 525_000]);
+  });
+
+  test('one-minute segments only queue notes at the boundary', async () => {
+    const t = setup({ transcribe: () => ({ text: 'hi', segments: [{ start: 1, end: 2, text: 'hi' }] }) });
+    t.sqlite.run(`UPDATE meetings SET status = 'recording'`);
+    const addMinute = (idx: number) =>
+      t.sqlite.run(
+        `INSERT INTO meeting_segments (id, meeting_id, idx, track, r2_key, bytes, offset_ms, duration_ms, transcribe_status, created_at)
+         VALUES (?, 'm1', ?, 'mixed', ?, 3, ?, 60000, 'pending', 0)`,
+        [`s${idx}`, idx, `seg/${idx}`, idx * 60_000],
+      );
+    for (const idx of [0, 1, 2, 3]) {
+      addMinute(idx);
+      t.objects.set(`seg/${idx}`, new Uint8Array([0, idx]));
+      await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx });
+    }
+    expect(t.sent.map((m) => m.body)).toEqual([
+      { kind: 'rolling-summarize', meetingId: 'm1', throughIdx: 3, throughMs: 240_000 },
+    ]);
+  });
+
+  test('summarizes the last interval of audio', async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE meetings SET status = 'recording'`);
+    t.addLine(30_000, 'Old news from the start.');
+    t.addLine(400_000, 'Budget is approved.');
+    t.addLine(470_000, 'Ship Friday.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'rolling-summarize', meetingId: 'm1', throughIdx: 7, throughMs: 480_000 });
+    const request = api.calls[0] as { messages: { content: string }[] };
+    expect(request.messages[0].content).toBe('Budget is approved.\nShip Friday.');
+  });
+
   test('is dropped once the meeting has ended, so it cannot overwrite the final summary', async () => {
     const t = setup();
     t.addSegment(0, 'complete');

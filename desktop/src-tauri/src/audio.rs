@@ -304,7 +304,7 @@ fn spawn_capture(
             .arg("--segment-dir")
             .arg(&segment_dir)
             .arg("--segment-sec")
-            .arg("240");
+            .arg(crate::settings::load(app).segment_sec().to_string());
     }
 
     let mut child = match cmd.spawn() {
