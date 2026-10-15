@@ -13,9 +13,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useMeeting } from '@/lib/api/use-meeting';
+import { useLiveTranscript, useMeeting } from '@/lib/api/use-meeting';
 import { copyText, isDesktop, revealInFinder } from '@/lib/desktop/bridge';
 import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
+import { applyTranscriptDelta } from '@/lib/transcription/live-transcript';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { cn, formatDuration } from '@/lib/utils';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
@@ -57,13 +58,29 @@ interface MeetingData {
   summary: Summary | null;
   segments: Segment[];
   notes: { contentMd: string } | null;
+  /** Where the live transcript stream resumes from; absent from older servers. */
+  transcriptCursor?: number;
 }
 
 export function MeetingView({ meetingId, firstRun = false }: { meetingId: string; firstRun?: boolean }) {
-  const { data, loading, error, refresh } = useMeeting<MeetingData>(meetingId, {
-    pollMs: 5_000,
-    shouldPoll: isMeetingProcessing,
+  // Polling is the fallback for when the live stream can't be opened.
+  const [streamDown, setStreamDown] = useState(false);
+  const { data, loading, error, refresh, mutate } = useMeeting<MeetingData>(meetingId, {
+    pollMs: streamDown ? 5_000 : undefined,
+    shouldPoll: isMeetingLive,
   });
+  const streaming = useLiveTranscript<Segment>(meetingId, {
+    enabled: data !== null && isMeetingLive(data),
+    since: data?.transcriptCursor ?? 0,
+    onDelta: (delta) =>
+      mutate((current) => ({
+        ...current,
+        transcriptCursor: delta.cursor,
+        segments: applyTranscriptDelta(current.segments, delta),
+      })),
+    onChange: refresh,
+  });
+  useEffect(() => setStreamDown(!streaming), [streaming]);
 
   if (loading && !data) {
     return <Centered>Loading…</Centered>;
@@ -86,8 +103,8 @@ export function MeetingView({ meetingId, firstRun = false }: { meetingId: string
   );
 }
 
-function isMeetingProcessing(data: MeetingData): boolean {
-  return data.meeting.status === 'processing';
+function isMeetingLive(data: MeetingData): boolean {
+  return ['recording', 'uploading', 'processing'].includes(data.meeting.status);
 }
 
 function Loaded({
