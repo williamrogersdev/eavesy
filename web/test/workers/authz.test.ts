@@ -62,6 +62,7 @@ const CAPTURE = 'cap_owner';
 const TEMPLATE = 'tpl_owner';
 const MCP_TOKEN = 'mcp_owner';
 const DICTATION = 'dict_owner';
+const DROP = 'drp_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -119,6 +120,26 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       unauthenticated: SIGNED_IN,
       crossUser: { call: { path: `/api/captures/${CAPTURE}`, params: { id: CAPTURE } }, status: 404 },
     },
+  },
+  '/api/drops': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/drops' }, excludes: [DROP] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a drop owned by the caller' },
+  },
+  '/api/drops/$id': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/drops/${DROP}`, params: { id: DROP } }, status: 404 },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/drops/${DROP}`, params: { id: DROP } }, status: 404 },
+    },
+  },
+  '/api/drops/ticket': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'mints a live-sync ticket for the caller’s own hub' },
+  },
+  '/api/drops/upload': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a drop owned by the caller' },
   },
   '/api/connections/openrouter': {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts OAuth for the caller' },
@@ -380,6 +401,7 @@ beforeEach(async () => {
     'summaries',
     'user_notes',
     'captures',
+    'drops',
     'dictations',
     'prompt_templates',
     'mcp_tokens',
@@ -409,6 +431,10 @@ async function seedOwner() {
       `INSERT INTO captures (id, user_id, kind, capture_mode, title, r2_key, content_type, bytes, created_at, updated_at)
        VALUES (?, ?, 'image', 'screenshot', 'Owner capture', ?, 'image/png', 3, ?, ?)`,
     ).bind(CAPTURE, OWNER, `users/${OWNER}/captures/${CAPTURE}.png`, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO drops (id, user_id, kind, text, preview, content_type, bytes, created_at)
+       VALUES (?, ?, 'text', 'Owner drop', 'Owner drop', 'text/plain', 10, ?)`,
+    ).bind(DROP, OWNER, now),
     testEnv.DB.prepare(
       `INSERT INTO prompt_templates (id, user_id, name, system_prompt, applies_to, sort_order)
        VALUES (?, ?, 'Owner template', 'Owner prompt', 'meeting', 0)`,

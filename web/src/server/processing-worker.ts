@@ -13,6 +13,7 @@ import {
   activityLog,
   captures,
   dictations,
+  drops,
   embeddings,
   meetings,
   meetingSegments,
@@ -23,6 +24,7 @@ import {
 } from '@/db/schema';
 import { encode } from '@/db/codec';
 import { ulid } from '@/db/ids';
+import { DROP_TTL_MS } from '@/db/repo/drops';
 import { clock, MIN_CHAPTER_MEETING_MS, validateChapters } from '@/lib/ai/chapters';
 import { anthropicForUser } from '@/lib/ai/client';
 import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
@@ -994,6 +996,7 @@ async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
     'embeddings',
     'captures',
     'dictations',
+    'drops',
     'calendar_events',
     'calendar_connections',
     'speakers',
@@ -1100,6 +1103,7 @@ export async function sealLegacyKeys(env: ProcessingEnv) {
 }
 
 export const PURGE_AFTER_MS = 24 * 60 * 60 * 1_000;
+export { DROP_TTL_MS };
 
 export async function purgeDeleted(env: ProcessingEnv, now = Date.now()) {
   const db = drizzle(env.DB, { schema });
@@ -1135,10 +1139,21 @@ export async function purgeDeleted(env: ProcessingEnv, now = Date.now()) {
     await db.delete(dictations).where(eq(dictations.id, dictation.id));
   }
 
+  const expiredDrops = await db
+    .select({ id: drops.id, r2Key: drops.r2Key })
+    .from(drops)
+    .where(lte(drops.createdAt, now - DROP_TTL_MS))
+    .limit(500);
+  for (const drop of expiredDrops) {
+    if (drop.r2Key) await env.AUDIO_BUCKET.delete(drop.r2Key);
+    await db.delete(drops).where(eq(drops.id, drop.id));
+  }
+
   return {
     meetings: deletedMeetings.length,
     captures: deletedCaptures.length,
     dictations: deletedDictations.length,
+    drops: expiredDrops.length,
   };
 }
 
