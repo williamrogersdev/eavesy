@@ -12,7 +12,7 @@ export const Route = createFileRoute('/(marketing)/how-it-works/')({
     seoHead({
       title: 'How it works',
       description:
-        'From hitting record to a brief you paste into your agent: how Eavesy captures long sessions, transcribes rolling segments, and saves AI-ready context to your disk.',
+        'How Eavesy works: drop in clipboard text, screenshots, dictation, or recordings, get clean Markdown, and paste it into any AI agent or reach it over MCP.',
       path: '/how-it-works',
     }),
   component: HowItWorksPage,
@@ -21,23 +21,23 @@ export const Route = createFileRoute('/(marketing)/how-it-works/')({
 const STAGES = [
   {
     n: '01',
-    title: 'Capture your screen and voice — no bot required',
-    body: 'Eavesy records your Mac’s screen, system audio, and microphone. That covers a Zoom call, a product walkthrough, a bug reproduction, or an in-person conversation. No bot joins the call; you choose when capture starts and remain responsible for participant consent.',
+    title: 'Drop something in',
+    body: 'In the Mac app, open the launcher with a hotkey, then press ⌘V to save text or an image from your clipboard, or take a screenshot, dictate, or record your screen, system audio, and microphone. Each one is saved as a capture. Dropping in messages or orders from other apps directly is not available yet; for now, copy and paste them.',
   },
   {
     n: '02',
-    title: 'Transcribe in recoverable rolling segments',
-    body: 'As you talk, Eavesy seals and uploads short segments while capture continues. Each segment is durable on disk first, so a network interruption or app restart does not sacrifice the whole session.',
+    title: 'Eavesy turns it into Markdown',
+    body: 'Text and images are saved as they are. Audio is transcribed and summarized into structured Markdown with a title, TL;DR, decisions, and action items. Long recordings are sealed into recoverable segments, so a network interruption or restart does not lose the session. Transcripts arrive a little after the audio is processed, not as live captions.',
   },
   {
     n: '03',
-    title: 'Finalize an AI-ready brief after you stop',
-    body: 'Eavesy distills the session into a clean Markdown brief: a title, TL;DR, key points, and the steps you took, sitting on top of the full transcript. Copy it straight into your agent, edit it, or regenerate it with a purpose-built format.',
+    title: 'Copy it into any agent',
+    body: 'Copy the Markdown and paste it into Claude, Cursor, ChatGPT, or any agent. You can edit it first, or regenerate a summary with a coding, research, customer, or meeting format.',
   },
   {
     n: '04',
-    title: 'Keep the context as a file you own',
-    body: 'Every session is written to a real folder on your disk: summary Markdown, full transcript Markdown, and M4A audio. Point an agent at it, open it in Obsidian, or search it later.',
+    title: 'Or let your agent come get it',
+    body: 'Captures live in a folder on your disk as Markdown and JSON, so an agent with filesystem access can read them directly. Signed-in accounts can also connect the hosted, read-only MCP server and let an agent search recordings and dictations.',
   },
 ];
 
@@ -46,8 +46,8 @@ function HowItWorksPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="How it works"
-        title="From “hit record” to context your AI can use"
-        description="Four steps, none of which involve you typing context by hand. Here’s exactly what happens between starting a recording and pasting a brief into your agent."
+        title="From “drop it in” to context your AI can use"
+        description="Four steps, none of which involve you retyping context by hand. Here’s what happens between dropping something into Eavesy and pasting it into your agent."
       >
         <Breadcrumbs
           items={[
