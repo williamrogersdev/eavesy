@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createResource } from './shared-resource';
+import type { TranscriptRange } from '@/lib/transcription/live-transcript';
 import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 
 export interface UseMeetingResult<T> {
@@ -9,6 +10,8 @@ export interface UseMeetingResult<T> {
   loading: boolean;
   error: Error | null;
   refresh: () => void;
+  /** Changes the loaded data in place, e.g. to apply a live transcript delta. */
+  mutate: (update: (current: T) => T) => void;
 }
 
 interface UseMeetingOptions<T> {
@@ -44,14 +47,7 @@ export function useMeeting<T = unknown>(
       setError(null);
     }
 
-    const token =
-      typeof window !== 'undefined'
-        ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY)
-        : null;
-    const url = new URL(`/api/meetings/${meetingId}`, window.location.origin);
-    if (token) url.searchParams.set('anonymousSessionToken', token);
-
-    fetch(url.toString())
+    fetch(meetingUrl(meetingId).toString())
       .then(async (r) => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
@@ -92,7 +88,86 @@ export function useMeeting<T = unknown>(
     };
   }, []);
 
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
+  const mutate = useCallback((update: (current: T) => T) => {
+    if (dataRef.current === null) return;
+    const next = update(dataRef.current);
+    dataRef.current = next;
+    setData(next);
+  }, []);
+
+  return { data, loading, error, refresh: () => setTick((t) => t + 1), mutate };
+}
+
+function meetingUrl(meetingId: string, suffix = '') {
+  const token =
+    typeof window !== 'undefined'
+      ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY)
+      : null;
+  const url = new URL(`/api/meetings/${meetingId}${suffix}`, window.location.origin);
+  if (token) url.searchParams.set('anonymousSessionToken', token);
+  return url;
+}
+
+export interface LiveTranscriptDelta<L> {
+  cursor: number;
+  ranges: TranscriptRange[];
+  lines: L[];
+}
+
+interface LiveTranscriptHandlers<L> {
+  /** New or replaced lines; apply with `applyTranscriptDelta`. */
+  onDelta: (delta: LiveTranscriptDelta<L>) => void;
+  /** The meeting's status or notes changed; reload the meeting. */
+  onChange: () => void;
+}
+
+/**
+ * Streams transcript changes for a meeting that is still being recorded or
+ * processed, starting from the cursor of the last full read. Returns whether
+ * the stream is healthy; when it isn't, the caller should fall back to polling.
+ */
+export function useLiveTranscript<L>(
+  meetingId: string,
+  opts: { enabled: boolean; since: number } & LiveTranscriptHandlers<L>,
+): boolean {
+  const { enabled } = opts;
+  // The stream tracks its own position once open, so neither a new cursor nor
+  // new handler identities reopen it.
+  const latest = useRef(opts);
+  latest.current = opts;
+  const [healthy, setHealthy] = useState(true);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (typeof EventSource === 'undefined') {
+      setHealthy(false);
+      return;
+    }
+    const url = meetingUrl(meetingId, '/transcript');
+    url.searchParams.set('since', String(latest.current.since));
+    const source = new EventSource(url.toString());
+    source.onopen = () => setHealthy(true);
+    // EventSource retries dropped connections itself; it only gives up (CLOSED)
+    // when the server refuses the stream, which is when polling takes over.
+    source.onerror = () => setHealthy(source.readyState !== EventSource.CLOSED);
+    source.addEventListener('lines', (message) => {
+      try {
+        latest.current.onDelta(JSON.parse((message as MessageEvent<string>).data) as LiveTranscriptDelta<L>);
+      } catch {
+        latest.current.onChange();
+      }
+    });
+    const changed = () => latest.current.onChange();
+    source.addEventListener('status', changed);
+    source.addEventListener('summary', changed);
+    source.addEventListener('done', () => {
+      source.close();
+      changed();
+    });
+    return () => source.close();
+  }, [meetingId, enabled]);
+
+  return enabled ? healthy : true;
 }
 
 export interface MeetingListItem {

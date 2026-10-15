@@ -3,7 +3,7 @@ name = "eavesy"
 version = "0.1.9"
 description = "Eavesy desktop shell"
 authors = ["Eavesy contributors"]
-license = "FSL-1.1-ALv2"
+license = "Apache-2.0"
 publish = false
 edition = "2021"
 

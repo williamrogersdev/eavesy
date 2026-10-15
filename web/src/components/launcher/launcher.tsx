@@ -76,6 +76,7 @@ import {
   openWebApp,
 } from '@/lib/desktop/bridge';
 import { CaptureHistory, plainTranscript } from '@/components/launcher/capture-history';
+import { LiveCaptions } from '@/components/launcher/live-captions';
 import { includeComputerAudio, onCapturePrefsChanged, setIncludeComputerAudio } from '@/lib/desktop/capture-prefs';
 import { PermissionRow } from '@/components/launcher/permission-row';
 import { SettingsView, accountInitial, type AccountState } from '@/components/launcher/settings-view';
@@ -336,6 +337,7 @@ export function Launcher() {
         source?: 'mixed' | 'system' | 'mic';
         mic?: boolean;
         contextBlurb?: string;
+        dictation?: boolean;
       },
     ) => {
       if (captureBusy.current) return;
@@ -351,7 +353,7 @@ export function Launcher() {
         const session =
           mode === 'screen'
             ? await startScreenCapture(opts?.mic ?? false)
-            : await startAudioCapture(source, opts?.contextBlurb);
+            : await startAudioCapture(source, opts?.contextBlurb, opts?.dictation);
         if (session) {
           setRecording({ session, mode });
           setView('list');
@@ -399,7 +401,7 @@ export function Launcher() {
       const stopListening = await onDictationHotkey(() => {
         if (starting) return;
         if (recording) runTask(stopRecording);
-        else runTask(() => beginRecording('audio', { source: 'mic' }));
+        else runTask(() => beginRecording('audio', { source: 'mic', dictation: true }));
       });
       if (disposed) stopListening(); else unlisten = stopListening;
     });
@@ -552,7 +554,9 @@ export function Launcher() {
   const requestSetupPermission = useCallback(async (kind: 'mic' | 'screen') => {
     setCheckingSetupPermissions(kind);
     try {
-      setSetupPermissions(await checkPermissions({ needScreen: kind === 'screen' }));
+      // First launch is when Speech Recognition is asked for (with the mic),
+      // so live captions never prompt in the middle of a meeting.
+      setSetupPermissions(await checkPermissions({ needScreen: kind === 'screen', needSpeech: kind === 'mic' }));
     } catch (error) {
       flash(errMsg(error, 'Could not check permissions'), 8000);
     } finally {
@@ -655,7 +659,7 @@ export function Launcher() {
         keywords: 'dictate voice type speech',
         run: () =>
           runTask(
-            () => beginRecording('audio', { source: 'mic' }),
+            () => beginRecording('audio', { source: 'mic', dictation: true }),
             'Could not start dictation',
           ),
       },
@@ -1150,6 +1154,7 @@ export function Launcher() {
                 <button type="button" onClick={() => runTask(refreshRecordings)} className="shrink-0 rounded-md px-2 py-1 hover:bg-[var(--lr-hover)]">Retry</button>
               </div>
             )}
+            {recording && <LiveCaptions sessionId={recording.session.session_id} />}
             <CaptureHistory signedIn={account !== null} onSignIn={() => runTask(connectAccount, 'Could not connect account')} recordings={recordings} onPaste={pasteFromClipboard} onCopied={(message) => flash(message)} onError={(error) => flash(errMsg(error, 'Could not copy'), 5000)} />
           </div>
         ) : (
@@ -1157,7 +1162,7 @@ export function Launcher() {
         {!query && (
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
             <RecordButton icon={<Radio className="h-4 w-4" />} label="Record meeting" primary onClick={beginMeetingRecording} />
-            <RecordButton icon={<Mic className="h-4 w-4" />} label="Dictate" onClick={() => runTask(() => beginRecording('audio', { source: 'mic' }))} />
+            <RecordButton icon={<Mic className="h-4 w-4" />} label="Dictate" onClick={() => runTask(() => beginRecording('audio', { source: 'mic', dictation: true }))} />
             <span className="ml-auto text-[11px] text-muted-foreground">{desktop ? (setupPaired ? 'Cloud connected' : 'Local only · Connect in Settings') : 'Record, find, and reuse your conversations'}</span>
           </div>
         )}

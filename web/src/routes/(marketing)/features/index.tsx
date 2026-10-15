@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(marketing)/features/')({
     seoHead({
       title: 'Features',
       description:
-        'Everything Eavesy does today: screen + voice capture, AI-ready Markdown briefs, durable transcription, semantic search, and files you own—plus what is coming next.',
+        'Save clipboard text, screenshots, dictation and recordings as Markdown context for any AI agent, with search, MCP access and files you own.',
       path: '/features',
     }),
   component: FeaturesPage,
@@ -26,8 +26,8 @@ function FeaturesPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="Features"
-        title="Everything you need to brief your AI"
-        description="Eavesy captures the room and your screen, writes the transcript, and structures an AI-ready brief — then saves it all as files you own. Here's how each piece works."
+        title="Everything you need to give your AI context"
+        description="Eavesy is a local assistant: you drop in text, screenshots, dictation, and recordings, and it keeps them as clean Markdown you can paste into any agent, all in files you own. Here's how each piece works."
       >
         <Breadcrumbs
           items={[

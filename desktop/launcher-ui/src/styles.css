@@ -211,6 +211,17 @@ body {
   gap: 6px;
   white-space: nowrap;
 }
+/* Clips from the start, so the newest words stay in view. */
+.ctl-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.ctl-caption { flex: 1 1 0; }
+.ctl-caption > bdi { direction: ltr; }
+.ctl-caption-label { margin-right: 4px; color: rgb(255 255 255 / 0.5); font-weight: 600; }
 .ctl-actions,
 .ctl-tools { display: flex; align-items: center; gap: 1px; }
 .ctl-actions { grid-area: actions; }

@@ -1,3 +1,4 @@
+import type { LiveCaption, LiveLine } from './live-captions';
 export { errMsg } from './errors';
 
 type UnlistenFn = () => void;
@@ -60,6 +61,25 @@ export async function onRecordingsUpdated(cb: () => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<unknown>('recordings:updated', () => cb());
+}
+
+/** On-device captions while recording; partials replace each other, finals settle. */
+export async function onLiveCaption(cb: (caption: LiveCaption) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<LiveCaption>('recording:caption', (event) => cb(event.payload));
+}
+
+/** The stored live transcript of a recording changed; read it with `liveTranscript`. */
+export async function onLiveTranscript(cb: (sessionId: string) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<string>('recording:live_transcript', (event) => cb(event.payload));
+}
+
+export async function liveTranscript(sessionId: string): Promise<LiveLine[]> {
+  if (!isDesktop()) return [];
+  return invoke<LiveLine[]>('live_transcript', { sessionId });
 }
 
 export type SyncStatus = { signedOut: boolean };
@@ -128,34 +148,49 @@ export interface Permissions {
   micAsked?: boolean;
   screen: boolean;
   accessibility?: boolean;
+  /** Speech Recognition, for live captions and the instant dictation paste. */
+  speech?: boolean;
 }
 
 export async function checkPermissions(opts?: {
   needScreen?: boolean;
   prompt?: boolean;
+  /** Also ask for Speech Recognition if it has not been answered yet. */
+  needSpeech?: boolean;
 }): Promise<Permissions | null> {
   if (!isDesktop()) return null;
   return invoke<Permissions>('check_permissions', {
     needScreen: opts?.needScreen ?? true,
     prompt: opts?.prompt ?? true,
+    needSpeech: opts?.needSpeech ?? false,
   });
 }
 
-export type PrivacyPane = 'microphone' | 'screen' | 'accessibility';
+export async function setLiveCaptions(enabled: boolean): Promise<void> {
+  await invoke('set_live_captions', { enabled });
+}
+
+export type PrivacyPane = 'microphone' | 'screen' | 'accessibility' | 'speech';
 export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
   if (!isDesktop()) return;
   await invoke('open_privacy_settings', { pane });
 }
 
+/**
+ * `dictation` also transcribes the mic on this Mac and pastes that text as soon
+ * as recording stops. It still uploads like any recording; the cloud transcript
+ * is its record.
+ */
 export async function startAudioCapture(
   source: 'mixed' | 'system' | 'mic',
   contextBlurb?: string,
+  dictation = false,
 ): Promise<CaptureSession | null> {
   if (!isDesktop()) {
     window.location.href = '/app/record';
     return null;
   }
-  return invoke<CaptureSession>('start_capture', { source, contextBlurb });
+  return invoke<CaptureSession>('start_capture', { source, contextBlurb, dictation });
 }
 
 export async function startScreenCapture(
@@ -180,6 +215,8 @@ export interface Settings {
   setup_completed: boolean;
   recordings_root?: string | null;
   launcher_position?: LauncherPosition;
+  /** Absent means on. */
+  live_captions?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right';

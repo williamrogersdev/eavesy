@@ -162,6 +162,8 @@ export const meetingSegments = sqliteTable(
       .notNull()
       .default('pending'),
     transcribeClaimedAt: integer('transcribe_claimed_at'),
+    /** Set each time this segment's lines are written; the live transcript cursor. */
+    transcribedAt: integer('transcribed_at'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
@@ -170,6 +172,9 @@ export const meetingSegments = sqliteTable(
     index('meeting_segments_processing_idx')
       .on(t.transcribeClaimedAt)
       .where(sql`${t.transcribeStatus} = 'processing'`),
+    index('meeting_segments_transcribed_idx')
+      .on(t.meetingId, t.transcribedAt)
+      .where(sql`${t.transcribedAt} IS NOT NULL`),
   ],
 );
 
