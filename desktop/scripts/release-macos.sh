@@ -189,6 +189,22 @@ echo "▸ Verifying updater signature before the first remote write"
 
 echo "▸ Publishing notarized DMG to R2"
 cd "$REPO/web"
+VERSIONED_DMG_NAME="Eavesy_${VERSION}_${ARCH}.dmg"
+VERSIONED_DMG_URL="https://eavesy.com/api/downloads/mac/$VERSIONED_DMG_NAME"
+# Versioned DMGs are immutable: the Homebrew cask pins their sha256. Refuse to
+# overwrite one that already exists with different bytes.
+EXISTING_SHA="$(curl --fail --silent --location "$VERSIONED_DMG_URL" | shasum -a 256 | awk '{print $1}' || true)"
+EMPTY_SHA="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+if [[ -n "$EXISTING_SHA" && "$EXISTING_SHA" != "$EMPTY_SHA" && "$EXISTING_SHA" != "$LOCAL_SHA" ]]; then
+  echo "$VERSIONED_DMG_NAME is already published with different bytes ($EXISTING_SHA)." >&2
+  echo "Bump the version in $TAURI_CONF instead of replacing a released DMG." >&2
+  exit 1
+fi
+bunx wrangler r2 object put \
+  "eavesy-audio/downloads/mac/$VERSIONED_DMG_NAME" \
+  --file "$DMG" \
+  --content-type application/x-apple-diskimage \
+  --remote
 bunx wrangler r2 object put \
   eavesy-audio/downloads/mac/eavesy-latest.dmg \
   --file "$DMG" \
@@ -206,6 +222,11 @@ rm -f "$DOWNLOADED_DMG"
 
 if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
   echo "Published DMG hash mismatch: local=$LOCAL_SHA remote=$REMOTE_SHA" >&2
+  exit 1
+fi
+VERSIONED_REMOTE_SHA="$(curl --fail --silent --show-error --location "$VERSIONED_DMG_URL" | shasum -a 256 | awk '{print $1}')"
+if [[ "$LOCAL_SHA" != "$VERSIONED_REMOTE_SHA" ]]; then
+  echo "Versioned DMG hash mismatch: local=$LOCAL_SHA remote=$VERSIONED_REMOTE_SHA" >&2
   exit 1
 fi
 
@@ -248,3 +269,4 @@ fi
 echo "▸ Updater endpoint reports: $OFFERED"
 
 echo "▸ Published DMG verified: $REMOTE_SHA"
+echo "▸ Next: scripts/publish-github-release.sh, then bump packaging/homebrew/Casks/eavesy.rb to $VERSION"
