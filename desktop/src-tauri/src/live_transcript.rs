@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS live_cursors (
   session_id TEXT PRIMARY KEY,
   cursor INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS live_metrics (
+  session_id TEXT PRIMARY KEY,
+  started_at INTEGER NOT NULL,
+  first_caption_at INTEGER,
+  first_cloud_line_at INTEGER
+);
 ";
 
 /// Provisional lines this far (in recording time) behind the newest cloud range
@@ -84,6 +90,93 @@ impl CaptionWriter {
     pub fn dropped(&self) -> usize {
         self.dropped.load(Ordering::Relaxed)
     }
+}
+
+/// Latency is kept this long, for diagnostics.
+const METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+
+/// Which first the latency is measured to, from the moment audio started flowing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Milestone {
+    /// The first on-device caption, partial or final.
+    Caption,
+    /// The first transcript line back from the cloud.
+    CloudLine,
+}
+
+impl Milestone {
+    fn column(self) -> &'static str {
+        match self {
+            Milestone::Caption => "first_caption_at",
+            Milestone::CloudLine => "first_cloud_line_at",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Milestone::Caption => "first live caption",
+            Milestone::CloudLine => "first cloud line",
+        }
+    }
+}
+
+/// Starts the latency clock for a recording, when the capture engine is ready.
+pub fn begin_metrics(conn: &Connection, session_id: &str, started_at: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM live_metrics WHERE started_at < ?1", params![started_at - METRICS_RETENTION_MS])
+        .and_then(|_| {
+            conn.execute(
+                "INSERT OR IGNORE INTO live_metrics (session_id, started_at) VALUES (?1, ?2)",
+                params![session_id, started_at],
+            )
+        })
+        .map_err(|e| format!("start latency metrics: {e}"))?;
+    Ok(())
+}
+
+/// Records `milestone` the first time it happens and returns its latency in ms;
+/// `None` when it was already recorded (or the recording has no clock).
+pub fn note_first(conn: &Connection, session_id: &str, milestone: Milestone, at: i64) -> Option<i64> {
+    let column = milestone.column();
+    let updated = conn
+        .execute(
+            &format!("UPDATE live_metrics SET {column}=?2 WHERE session_id=?1 AND {column} IS NULL"),
+            params![session_id, at],
+        )
+        .ok()?;
+    if updated == 0 {
+        return None;
+    }
+    conn.query_row(
+        "SELECT ?2 - started_at FROM live_metrics WHERE session_id=?1",
+        params![session_id, at],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Records and logs a milestone; the app log goes into copied diagnostics.
+pub fn report_first<R: tauri::Runtime>(app: &tauri::AppHandle<R>, session_id: &str, milestone: Milestone) {
+    let at = chrono::Utc::now().timestamp_millis();
+    if let Ok(Some(latency_ms)) = crate::sqlite::with_open(app, |conn| note_first(conn, session_id, milestone, at)) {
+        tracing::info!(session_id, latency_ms, "{} after {latency_ms} ms", milestone.label());
+    }
+}
+
+/// Both latencies of a recording, logged when it completes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Latency {
+    pub first_caption_ms: Option<i64>,
+    pub first_cloud_line_ms: Option<i64>,
+}
+
+pub fn latency(conn: &Connection, session_id: &str) -> Option<Latency> {
+    conn.query_row(
+        "SELECT first_caption_at - started_at, first_cloud_line_at - started_at
+         FROM live_metrics WHERE session_id=?1",
+        params![session_id],
+        |row| Ok(Latency { first_caption_ms: row.get(0)?, first_cloud_line_ms: row.get(1)? }),
+    )
+    .ok()
 }
 
 /// How often a recording's cloud lines are checked for.
@@ -293,6 +386,9 @@ pub async fn run(app: AppHandle, api: crate::sync::Api) {
             let since = crate::sqlite::with_open(&app, |conn| cursor(conn, &session_id)).unwrap_or(0);
             match api.transcript_delta(&token, &remote_id, since).await {
                 Ok(Fetched::Delta(delta)) => {
+                    if !delta.lines.is_empty() {
+                        report_first(&app, &session_id, Milestone::CloudLine);
+                    }
                     let changed = crate::sqlite::with_open_mut(&app, |conn| apply_delta(conn, &session_id, &delta));
                     match changed {
                         Ok(Ok(true)) => {
@@ -454,6 +550,33 @@ mod tests {
         assert!(matches!(not_found(r#"{"error":"meeting_not_found"}"#), Fetched::MeetingGone));
         assert!(matches!(not_found(r#"{"error":"not_found"}"#), Fetched::RouteMissing));
         assert!(matches!(not_found("<html>Not Found</html>"), Fetched::RouteMissing));
+    }
+
+    #[test]
+    fn each_first_is_measured_once_from_when_audio_started() {
+        let conn = db();
+        assert_eq!(note_first(&conn, "rec", Milestone::Caption, 5_000), None, "no clock, no metric");
+        begin_metrics(&conn, "rec", 1_000).unwrap();
+        assert_eq!(note_first(&conn, "rec", Milestone::Caption, 1_800), Some(800));
+        assert_eq!(note_first(&conn, "rec", Milestone::Caption, 2_500), None);
+        assert_eq!(note_first(&conn, "rec", Milestone::CloudLine, 76_000), Some(75_000));
+        assert_eq!(
+            latency(&conn, "rec"),
+            Some(Latency { first_caption_ms: Some(800), first_cloud_line_ms: Some(75_000) })
+        );
+        begin_metrics(&conn, "rec", 9_000).unwrap();
+        assert_eq!(latency(&conn, "rec").unwrap().first_caption_ms, Some(800), "a restart keeps the first clock");
+    }
+
+    #[test]
+    fn old_metrics_are_pruned_and_forget_keeps_them() {
+        let conn = db();
+        begin_metrics(&conn, "old", 0).unwrap();
+        forget(&conn, "old").unwrap();
+        assert!(latency(&conn, "old").is_some());
+        begin_metrics(&conn, "new", METRICS_RETENTION_MS + 1).unwrap();
+        assert!(latency(&conn, "old").is_none());
+        assert_eq!(latency(&conn, "new"), Some(Latency { first_caption_ms: None, first_cloud_line_ms: None }));
     }
 
     #[test]
