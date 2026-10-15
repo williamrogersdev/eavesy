@@ -12,7 +12,7 @@ export const Route = createFileRoute('/(marketing)/about/')({
     seoHead({
       title: 'About',
       description:
-        'Why we built Eavesy: context capture for AI agents that leaves you with files you own, not transcripts locked in someone else’s cloud.',
+        'Why we built Eavesy: a local, AI-first assistant that keeps your context as Markdown files you own, not locked in someone else’s cloud.',
       path: '/about',
     }),
   component: AboutPage,
@@ -21,11 +21,11 @@ export const Route = createFileRoute('/(marketing)/about/')({
 const PRINCIPLES = [
   {
     title: 'Your context, your disk',
-    body: 'Sessions are written as summary Markdown, transcript Markdown, and M4A audio to a folder you control. Feed them to any agent and keep the local copy even if you leave.',
+    body: 'Captures are written as Markdown, JSON, and media files to a folder you control. Feed them to any agent and keep the local copy even if you leave.',
   },
   {
     title: 'Capture from your own device',
-    body: 'No bot joins the participant list. Eavesy records from your Mac when you start it, whether the work is a call, a walkthrough, or an in-person conversation.',
+    body: 'No bot joins the participant list. Eavesy captures from your Mac when you start it, whether the work is a call, a walkthrough, or a screenshot.',
   },
   {
     title: 'Private by default',
@@ -58,10 +58,11 @@ function AboutPage() {
           <div className="prose">
             <p>
               We build Eavesy for people who work alongside AI agents but keep
-              hitting the same wall: the agent wasn’t there. It captures your
-              screen and your voice, distills the session into a brief your agent
-              can read, and saves all of it as files on your disk, in formats any
-              tool can open.
+              hitting the same wall: the agent wasn’t there. Eavesy is a local
+              assistant you drop things into: clipboard text and images,
+              screenshots, dictation, and recordings. It turns them into
+              Markdown your agent can read and saves all of it as files on your
+              disk, in formats any tool can open.
             </p>
             <p>
               The product keeps local source files while using a private cloud copy
