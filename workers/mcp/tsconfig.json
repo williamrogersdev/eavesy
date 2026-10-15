@@ -4,7 +4,7 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "node"],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -13,6 +13,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
+      "@/*": ["../../web/src/*"],
       "drizzle-orm": ["../../web/node_modules/drizzle-orm"],
       "drizzle-orm/*": ["../../web/node_modules/drizzle-orm/*"]
     }
@@ -20,6 +21,7 @@
   "include": [
     "src/**/*",
     "../../web/src/db/schema.ts",
-    "../../web/src/lib/ai/embed.ts"
+    "../../web/src/lib/ai/embed.ts",
+    "../../web/src/server/create-drop.ts"
   ]
 }

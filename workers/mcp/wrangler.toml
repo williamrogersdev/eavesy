@@ -19,3 +19,14 @@ index_name = "eavesy-embeddings"
 
 [ai]
 binding = "AI"
+
+# Drops (send_to_my_devices): same bucket as the web app, and the web app's
+# per-user DropsHub Durable Object for live delivery.
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "eavesy-audio"
+
+[[durable_objects.bindings]]
+name = "DROPS_HUB"
+class_name = "DropsHub"
+script_name = "eavesy"

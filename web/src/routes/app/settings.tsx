@@ -345,7 +345,7 @@ function SettingsPage() {
 
       <AppSection
         title="AI assistants (MCP)"
-        description="A read-only connection that lets Claude, Codex or another assistant search your recordings. Connections last 90 days."
+        description="A connection that lets Claude, Codex or another assistant search your recordings and send text to your Drop inbox. Connections last 90 days."
         action={
           <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
             {mcpBusy ? 'Creating…' : 'New connection'}

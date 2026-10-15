@@ -1,9 +1,12 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { and, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
-import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
+import type { Ai, D1Database, DurableObjectNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
+import { createTextDrop, DropTooLargeError } from '../../../web/src/server/create-drop';
+import { MAX_TEXT_BYTES } from '../../../web/src/server/drops';
+import { guardUserQuota } from '../../../web/src/server/rate-limit';
 import { captureMessage, sentryOptions, withSentry } from '../../../web/src/server/observability';
 import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
 import {
@@ -16,6 +19,9 @@ interface Env {
   DB: D1Database;
   AI: Ai;
   VECTORIZE: VectorizeIndex;
+  // Drops: shared web helpers reach these through `cloudflare:workers` env.
+  AUDIO_BUCKET: R2Bucket;
+  DROPS_HUB: DurableObjectNamespace;
   SENTRY_DSN?: string;
   /** Set to `false` to stop accepting tokens in the URL path. */
   MCP_ALLOW_PATH_TOKENS?: string;
@@ -90,9 +96,9 @@ export const worker = {
       return jsonError(401, 'token expired', { hint: 'Create a new connection in Eavesy settings.' });
     }
     if (!token) return jsonError(401, 'invalid token');
-    // Per token, after the token is known to be valid, failing open: the server
-    // is read-only, every call is already authenticated, and an unreachable
-    // counter means D1 is down anyway.
+    // Per token, after the token is known to be valid, failing open: every call
+    // is already authenticated, the only write (send_to_my_devices) has its own
+    // fail-closed daily quota, and an unreachable counter means D1 is down anyway.
     const limited = await consumeRateLimit(env.DB, {
       key: `mcp:${token.id}`,
       limit: MCP_REQUESTS_PER_MINUTE,
@@ -109,13 +115,13 @@ export const worker = {
       // Logged by token id only; the path itself is the secret.
       console.warn(JSON.stringify({ message: 'mcp token sent in URL path', tokenId: token.id }));
     }
-    const response = await serve(request, env, token.userId);
+    const response = await serve(request, env, { userId: token.userId, tokenName: token.name });
     if (viaPath) response.headers.set('deprecation', 'true');
     return response;
   },
 } satisfies ExportedHandler<Env>;
 
-async function serve(request: Request, env: Env, userId: string): Promise<Response> {
+async function serve(request: Request, env: Env, caller: Caller): Promise<Response> {
   const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
   if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
     return new Response(JSON.stringify({ error: 'unsupported MCP protocol version' }), {
@@ -154,7 +160,8 @@ async function serve(request: Request, env: Env, userId: string): Promise<Respon
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'eavesy', version: '0.1.0' },
       instructions:
-        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items.',
+        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items, ' +
+        'and send text (such as a session handoff doc) to their other devices with send_to_my_devices.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -169,7 +176,7 @@ async function serve(request: Request, env: Env, userId: string): Promise<Respon
   if (body.method === 'tools/call') {
     const { name, arguments: args } = body.params ?? {};
     try {
-      const result = await callTool(env, userId, name, args ?? {});
+      const result = await callTool(env, caller, name, args ?? {});
       return jsonRpc(body.id, {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       });
@@ -260,9 +267,30 @@ const TOOL_DEFS = [
       },
     },
   },
+  {
+    name: 'send_to_my_devices',
+    description:
+      "Send text to the user's Eavesy Drops inbox. It appears instantly on every device where they have Eavesy open, " +
+      'ready to copy. Use it to hand off long output such as a session handoff doc, a plan, or a snippet the user ' +
+      'wants on another computer. Drops are kept for 7 days.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: `The text to send (Markdown is fine), up to ${MAX_TEXT_BYTES / 1024 / 1024} MB.` },
+        title: { type: 'string', description: 'Optional heading, added as the first line of the drop.' },
+      },
+      required: ['text'],
+    },
+  },
 ];
 
-async function callTool(env: Env, userId: string, name: string, args: Record<string, any>) {
+interface Caller {
+  userId: string;
+  tokenName: string;
+}
+
+async function callTool(env: Env, caller: Caller, name: string, args: Record<string, any>) {
+  const { userId } = caller;
   const db = drizzle(env.DB, { schema });
   switch (name) {
     case 'search_meetings': {
@@ -477,6 +505,29 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         }
       }
       return out;
+    }
+    case 'send_to_my_devices': {
+      const body = typeof args.text === 'string' ? args.text : '';
+      if (!body.trim()) throw new Error('text is required');
+      const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
+      const text = title ? `# ${title}\n\n${body}` : body;
+
+      const overQuota = await guardUserQuota(userId, 'drop');
+      if (overQuota) throw new Error('daily drop limit reached; it resets at midnight UTC');
+      try {
+        const drop = await createTextDrop(db, {
+          userId,
+          text,
+          deviceLabel: `${caller.tokenName} (MCP)`.slice(0, 60),
+          origin: null,
+        });
+        return { id: drop.id, bytes: drop.bytes };
+      } catch (error) {
+        if (error instanceof DropTooLargeError) {
+          throw new Error(`text too large: the limit is ${MAX_TEXT_BYTES / 1024 / 1024} MB`);
+        }
+        throw error;
+      }
     }
     default:
       throw new Error(`unknown tool: ${name}`);
