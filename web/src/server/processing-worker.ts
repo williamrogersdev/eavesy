@@ -27,7 +27,7 @@ import { clock, MIN_CHAPTER_MEETING_MS, validateChapters } from '@/lib/ai/chapte
 import { anthropicForUser } from '@/lib/ai/client';
 import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
 import { MODELS } from '@/lib/ai/client';
-import { MEETING_SUMMARY_MODEL, requestMeetingSummary } from '@/lib/ai/meeting-summary';
+import { requestMeetingSummary, summaryModel } from '@/lib/ai/meeting-summary';
 import { summarizeMeeting } from '@/lib/ai/summarize';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
@@ -704,9 +704,8 @@ async function handleSummarize(
     recorderName: rendered.recorderName,
     chapters: wantChapters,
   });
-  const generatedByModel = plan.summary.apiKey
-    ? `byo-anthropic:${MEETING_SUMMARY_MODEL}`
-    : MEETING_SUMMARY_MODEL;
+  const model = summaryModel(!mode.final);
+  const generatedByModel = plan.summary.apiKey ? `byo-anthropic:${model}` : model;
   const now = Date.now();
   const values = {
     ...summaryValues(parsed),

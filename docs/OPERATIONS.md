@@ -64,8 +64,8 @@ pricing snapshot dated 2026-07-17: Workers AI Whisper at $0.00051/minute and
 Claude Sonnet 4.6 at $3/M estimated input tokens plus $15/M estimated output
 tokens, with four characters per token. Anthropic BYO and OpenRouter summaries
 are excluded; Workers AI transcription is always platform-billed. Rolling
-summary calls make the estimate conservative, so Cloudflare and Anthropic
-billing remain the source of truth.
+notes run on Claude Haiku 5.5 but are counted at Sonnet prices, so the estimate
+is conservative; Cloudflare and Anthropic billing remain the source of truth.
 
 Suggested launch thresholds:
 
