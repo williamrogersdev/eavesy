@@ -69,7 +69,7 @@ export const SHOWCASES: Showcase[] = [
     icon: FolderTree,
     eyebrow: 'Local-first',
     title: 'Plain files on your disk, in formats every tool reads',
-    body: 'The Mac app writes each capture to a normal folder as Markdown, JSON, and media. Point an agent at the folder, open it in Obsidian, or grep it. Cloud processing is optional and explicit, and you can bring your own OpenRouter account for the AI work.',
+    body: 'The Mac app writes each capture to a normal folder as Markdown, JSON, and media. Point an agent at the folder, open it in Obsidian, or grep it. Dictation and recordings are sent to the cloud for transcription once you sign in; clipboard notes, images, and screenshots stay on your Mac. You can bring your own OpenRouter account for the AI work.',
     points: ['Markdown + JSON + media', 'Normal files on your Mac', 'Bring your own OpenRouter key'],
     flip: false,
     visual: 'files',
@@ -87,8 +87,8 @@ export interface BentoItem {
 export const BENTO: BentoItem[] = [
   { icon: Zap, title: 'Paste what you are looking at', body: 'Open the launcher with your global hotkey and press ⌘V to save the text or image on your clipboard as a capture you can find and copy again later.', span: true, highlight: true },
   { icon: Search, title: 'Screenshots', body: 'Grab the screen and keep it next to the rest of your context for a bug report or a coding agent.' },
-  { icon: ListChecks, title: 'Dictation', body: 'Speak a rough thought and get clean text ready to paste where you are working.' },
-  { icon: Languages, title: 'Recordings', body: 'Record your screen, system audio, and mic. Get a transcript and a Markdown summary when you stop.' },
+  { icon: ListChecks, title: 'Dictation', body: 'Speak a rough thought and, once you are signed in, get clean text ready to paste where you are working.' },
+  { icon: Languages, title: 'Recordings', body: 'Record your screen, system audio, and mic. Sign in to get a transcript and a Markdown summary when you stop.' },
   { icon: Lock, title: 'Sensitive material', body: 'Capture starts only when you start it, files stay on your disk, and you decide what gets shared.' },
   { icon: Cloud, title: 'A library your agents can read', body: 'Find a past capture, copy it, or connect a read-only MCP server so your agent can search it.', span: true },
 ];
@@ -130,8 +130,8 @@ export const FAQS: Faq[] = [
   { q: 'How do I get the context into my AI agent?', a: 'Copy the Markdown for a capture and paste it into any agent. Recordings and dictation include a transcript and a structured summary. You can also point an agent at the capture folder on your disk, or connect the read-only MCP server so a compatible agent can search your library itself.' },
   { q: 'Can I drop in text, messages, or orders?', a: 'You can paste any text or image from your clipboard into the Mac app and it is saved as a note or image capture. A dedicated flow for forwarding messages and orders from other apps is not available yet.' },
   { q: 'Does it still record meetings?', a: 'Yes. The Mac app records your screen, system audio, and microphone with no bot joining the call, and the web app has a browser recorder. Recording is one of the inputs, not the whole product. Live captions are not available yet; transcripts arrive shortly after audio is processed. You remain responsible for following consent rules.' },
-  { q: 'Do I have to create an account?', a: 'Capturing on your Mac works without one. Signing in, which takes one click from the app, adds transcription, summaries, search, and the MCP server.' },
-  { q: 'Where does my data live?', a: 'With the Mac app, each capture is a folder on your disk containing Markdown, JSON, and media files. Recordings are also processed in a private cloud copy for transcription, search, and recovery. You can connect your own OpenRouter account to run the AI on your own credits.' },
+  { q: 'Do I have to create an account?', a: 'Pasting clipboard text or images and taking screenshots on your Mac works without one. Dictation and recordings need you to sign in (one click from the app) so they can be transcribed and summarized; signing in also adds search and the MCP server.' },
+  { q: 'Where does my data live?', a: 'With the Mac app, each capture is a folder on your disk containing Markdown, JSON, and media files. Dictation and recordings are also uploaded to a private cloud copy for transcription, search, and recovery; clipboard notes, images, and screenshots are not uploaded. You can connect your own OpenRouter account to run the AI on your own credits.' },
   { q: 'Which platforms are supported?', a: 'The Mac app supports Apple Silicon Macs on macOS 13 or later (screenshots need macOS 14). The web app and browser recorder work in a modern browser. Other platforms are not available yet.' },
 ];
 

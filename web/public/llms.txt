@@ -1,19 +1,19 @@
 # Eavesy
 
-> Eavesy is a local, AI-first assistant for your Mac. You drop things into it (text or images from your clipboard, screenshots, dictation, and recordings) and it turns them into clean, structured Markdown context that is quick to copy into any AI agent or reach over MCP. It is local-first: files live on your disk as Markdown and JSON.
+> Eavesy is a local, AI-first assistant for your Mac (Apple Silicon). You drop things into it (text or images from your clipboard, screenshots, dictation, and recordings) and it turns them into clean, structured Markdown context that is quick to copy into any AI agent or reach over MCP. It is local-first: files live on your disk as Markdown and JSON.
 
 Meeting recording is one capability, not the headline. Eavesy is free; everyone gets the same fair-use limits: https://eavesy.com/docs/fair-use-limits
 
 ## What you can drop in (shipping today)
 - Clipboard text or an image: open the launcher (global hotkey), press Cmd+V. Saved as a note (`note.md`) or `image.png`.
 - Screenshots: from the launcher (macOS 14+).
-- Dictation: speak, get cleaned-up text with a transcript.
-- Recordings: screen, system audio, and microphone on the Mac app, or microphone/screen in the browser recorder. Get a transcript and a Markdown summary (title, TL;DR, decisions, action items). No bot joins calls.
+- Dictation: speak, get cleaned-up text with a transcript (requires signing in).
+- Recordings: screen, system audio, and microphone on the Mac app, or microphone/screen in the browser recorder. Get a transcript and a Markdown summary (title, TL;DR, decisions, action items); transcription requires signing in. Browser-recorder sessions live in the web app, not on disk. No bot joins calls.
 
 Not available yet: forwarding messages or orders straight from other apps, live captions, reading text out of screenshots in the Mac app, and cross-device drops. Do not assume these exist.
 
 ## Where the files live
-The Mac app writes each capture to a folder under `~/Eavesy/Recordings/` (location is configurable in Settings > Files):
+The Mac app (not the browser recorder) writes each capture to a folder under `~/Eavesy/Recordings/` (change it with Settings > Recordings folder in the launcher):
 
 ```text
 ~/Eavesy/Recordings/2026-06-15 Design review/
@@ -49,7 +49,7 @@ Tools (names say "meeting" because that is the recording type in the data model)
 - `search_dictations` (query, limit): search dictations.
 - `get_action_items` (status: open|completed|all, owner): action items across recordings.
 
-Clipboard notes, images, and screenshots stored only in the Mac app are not exposed over MCP yet. Docs: https://eavesy.com/docs/connect-mcp
+Clipboard notes, images, and screenshots are never uploaded (they stay on the Mac), so they are not available over MCP. Docs: https://eavesy.com/docs/connect-mcp
 
 ## Copy-paste examples
 Paste into an agent after copying a summary from Eavesy:

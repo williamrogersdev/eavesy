@@ -9,7 +9,8 @@ MCP. It is local-first: your captures live on your disk as Markdown and JSON.
 What ships today:
 
 - **Mac app** (`desktop/`): from the launcher, press ⌘V to save text or an image
-  from your clipboard, take a screenshot, dictate, or record your screen,
+  from your clipboard, take a screenshot (these stay on your Mac), or dictate
+  and record (these upload for transcription once you sign in) your screen,
   system audio, and microphone. Everything is mirrored to
   `~/Eavesy/Recordings` as Markdown, JSON, and media files.
 - **Web app** (`web/`): dashboard, browser recorder, search, summaries and

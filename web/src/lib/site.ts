@@ -3,7 +3,7 @@ export const siteConfig = {
   tagline: 'A local assistant for AI context.',
   url: 'https://eavesy.com',
   description:
-    'Eavesy is a local, AI-first assistant for your Mac. Drop in text, screenshots, dictation, and recordings and get clean Markdown context to paste into Claude, Cursor, ChatGPT, or any agent, or reach over MCP. Files stay on your disk as Markdown and JSON.',
+    'Eavesy is a local, AI-first assistant for Mac. Drop in text, screenshots, dictation and recordings; paste clean Markdown into any AI agent or use it over MCP.',
   shortDescription:
     'Drop in text, screenshots, dictation, and recordings; get clean Markdown context for any AI agent.',
   twitter: '@eavesy',

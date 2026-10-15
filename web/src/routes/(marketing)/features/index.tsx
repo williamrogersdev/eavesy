@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(marketing)/features/')({
     seoHead({
       title: 'Features',
       description:
-        'What Eavesy does today: save clipboard text, screenshots, dictation, and recordings as Markdown context for any AI agent, with search, MCP access, and files you own.',
+        'Save clipboard text, screenshots, dictation and recordings as Markdown context for any AI agent, with search, MCP access and files you own.',
       path: '/features',
     }),
   component: FeaturesPage,
