@@ -294,6 +294,10 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         .await
         .map_err(|e| format!("invalid pairing response: {e}"))?;
 
+    if !crate::base_url::same_origin(&pairing.verification_url, &base) {
+        return Err("The server returned a sign-in link on a different site, so it was not opened.".to_string());
+    }
+
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
         .arg(&pairing.verification_url)
@@ -333,7 +337,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
             .map_err(|e| format!("invalid pairing status: {e}"))?;
         if status.status == "paired" {
             let token = status.token.ok_or("pairing completed without a credential")?;
-            settings::save_device_token(app, &token)?;
+            settings::save_device_token(app, &base, &token)?;
             crate::sync::wake();
             return Ok(());
         }

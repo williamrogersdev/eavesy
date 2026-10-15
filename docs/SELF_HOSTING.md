@@ -30,9 +30,12 @@ just before a deploy:
 | `CLOUDFLARE_API_TOKEN` | yes | API token (see [DEPLOY.md](DEPLOY.md) for permissions) |
 | `EAVESY_D1_DATABASE_ID` | yes | UUID of your D1 database |
 | `EAVESY_KV_CACHE_ID` | yes | ID of your `CACHE` KV namespace |
-| `EAVESY_APP_DOMAIN` | no | Custom domain for the web Worker, e.g. `eavesy.example.com`. Unset = `*.workers.dev` |
+| `EAVESY_APP_DOMAIN` | no* | Custom domain for the web Worker, e.g. `eavesy.example.com`. Unset or `none` = `*.workers.dev` |
 | `EAVESY_WWW_DOMAIN` | no | Extra custom domain for the web Worker |
 | `EAVESY_MCP_DOMAIN` | no | Custom domain for the MCP Worker, e.g. `mcp.example.com` |
+
+\* The GitHub Actions deploy requires all three domain variables to be set so a
+missing one can never silently drop a route; use the value `none` for "no domain".
 
 ## 1. Create the Cloudflare resources
 
@@ -69,8 +72,9 @@ export EAVESY_APP_DOMAIN=eavesy.example.com      # optional
 export EAVESY_MCP_DOMAIN=mcp.example.com         # optional
 ```
 
-Render the Wrangler configs. This edits three tracked files in place; run
-`bun run cf:restore` afterwards so you do not commit your IDs:
+Render the Wrangler configs. This edits three tracked files in place (originals
+are saved in `.eavesy-render/`); run `bun run cf:restore` afterwards so you do
+not commit your IDs. Restore refuses if you edited those files after rendering:
 
 ```bash
 bun install
@@ -144,8 +148,12 @@ precedence:
 1. `EAVESY_API_BASE` environment variable (debug builds only).
 2. `"api_base_url": "https://eavesy.example.com"` in the app's `settings.json`
    (`~/Library/Application Support/com.eavesy.desktop/settings.json`), in any
-   build. Quit the app first. Must be `https` (or `http://localhost` for dev).
-3. `EAVESY_API_BASE=https://eavesy.example.com` set when compiling.
+   build. Quit the app first. Must be `https` (`http://localhost` is accepted in
+   debug builds only). The device credential is stored in Keychain bound to the
+   server that issued it and is never sent anywhere else, so after changing the
+   server you must pair again.
+3. `EAVESY_API_BASE=https://eavesy.example.com` set when compiling (the release
+   build script rejects anything but an `https` origin).
 4. `https://eavesy.com`.
 
 Also set, when building your own bundle:

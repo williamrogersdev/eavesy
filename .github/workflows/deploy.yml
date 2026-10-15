@@ -38,8 +38,8 @@ jobs:
         run: |
           missing=0
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::Secret CLOUDFLARE_API_TOKEN is not set (docs/DEPLOY.md)"; missing=1; fi
-          for v in CLOUDFLARE_ACCOUNT_ID EAVESY_D1_DATABASE_ID EAVESY_KV_CACHE_ID EAVESY_APP_DOMAIN; do
-            if [ -z "$(printenv $v)" ]; then echo "::error::Variable $v is not set (docs/SELF_HOSTING.md)"; missing=1; fi
+          for v in CLOUDFLARE_ACCOUNT_ID EAVESY_D1_DATABASE_ID EAVESY_KV_CACHE_ID EAVESY_APP_DOMAIN EAVESY_WWW_DOMAIN EAVESY_MCP_DOMAIN; do
+            if [ -z "$(printenv $v)" ]; then echo "::error::Variable $v is not set; a missing domain would drop its route. Use the value none to deliberately have no domain (docs/SELF_HOSTING.md)"; missing=1; fi
           done
           if [ -z "$CLERK_PK" ]; then echo "::error::Variable VITE_CLERK_PUBLISHABLE_KEY is not set (docs/DEPLOY.md)"; missing=1; fi
           exit $missing
@@ -122,8 +122,8 @@ jobs:
           }
           APP=https://$EAVESY_APP_DOMAIN
           check $APP
-          if [ -n "$EAVESY_WWW_DOMAIN" ]; then check https://$EAVESY_WWW_DOMAIN; fi
-          if [ -n "$EAVESY_MCP_DOMAIN" ]; then check https://$EAVESY_MCP_DOMAIN; fi
+          if [ "$EAVESY_WWW_DOMAIN" != none ]; then check https://$EAVESY_WWW_DOMAIN; fi
+          if [ "$EAVESY_MCP_DOMAIN" != none ]; then check https://$EAVESY_MCP_DOMAIN; fi
           check $APP/download/mac
           check $APP/sign-in
           if grep -q "Authentication isn" /tmp/body; then

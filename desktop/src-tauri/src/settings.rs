@@ -238,20 +238,43 @@ pub fn device_token(app: &AppHandle) -> Option<String> {
             return Some(token);
         }
     }
-    TOKEN_CACHE.get(|| {
+    let stored = TOKEN_CACHE.get(|| {
         let account = load(app).device_id;
-        let token = load_token(&keychain::System, &account)?;
-        Ok((account, token))
-    })
+        let stored = load_token(&keychain::System, &account)?;
+        Ok((account, stored))
+    })?;
+    token_for_base(&stored, &crate::base_url::api_base())
 }
 
-pub fn save_device_token(app: &AppHandle, token: &str) -> Result<(), String> {
-    if token.trim().is_empty() {
-        return Err("device token cannot be empty".to_string());
+/// The Keychain value is `<base>\n<token>`, so a credential is bound to the server
+/// that issued it. A value without a base predates self-hosting and belongs to eavesy.com.
+fn bind_token(base: &str, token: &str) -> String {
+    format!("{base}\n{token}")
+}
+
+fn split_bound(stored: &str) -> (&str, &str) {
+    match stored.split_once('\n') {
+        Some((base, token)) => (base, token),
+        None => (crate::base_url::DEFAULT_BASE, stored),
+    }
+}
+
+/// The token, but only when it was issued by `current_base`. Never hand a credential
+/// to a different server, whatever settings.json says.
+fn token_for_base(stored: &str, current_base: &str) -> Option<String> {
+    let (bound, token) = split_bound(stored);
+    (bound == current_base && !token.is_empty()).then(|| token.to_string())
+}
+
+/// Stores the credential bound to `base`, the server that issued it.
+pub fn save_device_token(app: &AppHandle, base: &str, token: &str) -> Result<(), String> {
+    if token.trim().is_empty() || token.contains('\n') {
+        return Err("invalid device token".to_string());
     }
     let account = load(app).device_id;
-    keychain::System.write(&account, token)?;
-    TOKEN_CACHE.set(&account, Some(token.to_string()));
+    let stored = bind_token(base, token);
+    keychain::System.write(&account, &stored)?;
+    TOKEN_CACHE.set(&account, Some(stored));
     Ok(())
 }
 
@@ -501,5 +524,19 @@ mod tests {
         });
         assert_eq!(token, None);
         assert_eq!(cache.get(|| panic!("cached")), Some("paired".into()));
+    }
+
+    #[test]
+    fn a_token_is_only_released_to_the_server_that_issued_it() {
+        let stored = bind_token("https://eavesy.example.com", "tok");
+        assert_eq!(token_for_base(&stored, "https://eavesy.example.com"), Some("tok".into()));
+        assert_eq!(token_for_base(&stored, "https://eavesy.com"), None);
+        assert_eq!(token_for_base(&stored, "https://evil.example"), None);
+    }
+
+    #[test]
+    fn a_legacy_unbound_token_belongs_to_eavesy_com() {
+        assert_eq!(token_for_base("legacy", "https://eavesy.com"), Some("legacy".into()));
+        assert_eq!(token_for_base("legacy", "https://evil.example"), None);
     }
 }
