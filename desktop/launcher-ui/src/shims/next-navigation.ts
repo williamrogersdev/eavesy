@@ -1,4 +1,6 @@
-const WEB_ORIGIN = 'https://eavesy.com';
+/// <reference types="vite/client" />
+// Build-time override for self-hosted deployments: VITE_EAVESY_WEB_ORIGIN=https://eavesy.example.com
+const WEB_ORIGIN = (import.meta.env.VITE_EAVESY_WEB_ORIGIN as string | undefined)?.replace(/\/+$/, '') || 'https://eavesy.com';
 
 interface TauriGlobal {
   core?: { invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> };

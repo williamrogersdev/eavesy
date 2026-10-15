@@ -189,6 +189,19 @@ run_tauri_build() {
   return "$status"
 }
 
+# EAVESY_API_BASE is compiled into the app. A leftover dev value (e.g. a localhost
+# URL) must never ship in a signed release: only the production URL is accepted,
+# or a self-hosted origin you confirm by exporting EAVESY_ALLOW_API_BASE with the
+# same value.
+if [[ -n "${EAVESY_API_BASE:-}" && "$EAVESY_API_BASE" != "https://eavesy.com" && "$EAVESY_API_BASE" != "${EAVESY_ALLOW_API_BASE:-}" ]]; then
+  echo "EAVESY_API_BASE is set to '$EAVESY_API_BASE'. Release builds use https://eavesy.com. Unset it, or for a self-hosted build also set EAVESY_ALLOW_API_BASE to the same https URL." >&2
+  exit 1
+fi
+if [[ -n "${EAVESY_API_BASE:-}" && ! "$EAVESY_API_BASE" =~ ^https://[^/[:space:]]+$ ]]; then
+  echo "EAVESY_API_BASE must be an https origin with no path." >&2
+  exit 1
+fi
+
 if [[ -z "${SENTRY_DSN:-}" ]]; then
   if [[ "${EAVESY_ALLOW_NO_SENTRY:-}" == "1" ]]; then
     echo "⚠ SENTRY_DSN is not set and EAVESY_ALLOW_NO_SENTRY=1: this build will not report crashes or errors" >&2
