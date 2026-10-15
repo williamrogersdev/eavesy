@@ -5,24 +5,25 @@ if [ "$#" -eq 0 ]; then
   echo 'Usage: scripts/cf <command> [args...]' >&2
   exit 2
 fi
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  echo 'Set CLOUDFLARE_ACCOUNT_ID to your Cloudflare account ID; see docs/SELF_HOSTING.md.' >&2
+  exit 1
+fi
 if [ "$(uname -s)" = Darwin ]; then
   if ! eavesy_token=$(/usr/bin/security find-generic-password -a "$(id -un)" -s eavesy-cloudflare -w); then
     echo 'Store the Eavesy token in macOS Keychain as eavesy-cloudflare first; see docs/DEPLOY.md.' >&2
     exit 1
   fi
 else
-  if [ "${CLOUDFLARE_ACCOUNT_ID:-}" != 5bc563d42299762f9b48f5dec0531954 ]; then
-    echo 'Set CLOUDFLARE_ACCOUNT_ID to the Eavesy account for CI deployment.' >&2
-    exit 1
-  fi
   eavesy_token=${CLOUDFLARE_API_TOKEN:-}
 fi
 if [ -z "$eavesy_token" ]; then
   echo 'The Eavesy API token is empty.' >&2
   exit 1
 fi
+eavesy_account=$CLOUDFLARE_ACCOUNT_ID
 unset CLOUDFLARE_API_KEY CLOUDFLARE_EMAIL CF_API_KEY CF_EMAIL CF_API_TOKEN CF_ACCOUNT_ID
 export CLOUDFLARE_API_TOKEN="$eavesy_token"
-export CLOUDFLARE_ACCOUNT_ID=5bc563d42299762f9b48f5dec0531954
-unset eavesy_token
+export CLOUDFLARE_ACCOUNT_ID="$eavesy_account"
+unset eavesy_token eavesy_account
 exec "$@"

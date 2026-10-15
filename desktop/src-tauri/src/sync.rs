@@ -11,15 +11,10 @@ use tokio::time::sleep;
 
 use crate::{fs_writer, settings, sqlite};
 
-const DEFAULT_BASE: &str = "https://eavesy.com";
 const PART_SIZE: usize = 8 * 1024 * 1024;
 
 pub(crate) fn api_base() -> String {
-    #[cfg(debug_assertions)]
-    if let Ok(base) = std::env::var("EAVESY_API_BASE") {
-        return base.trim_end_matches('/').to_string();
-    }
-    DEFAULT_BASE.to_string()
+    crate::base_url::api_base()
 }
 
 #[derive(Deserialize)]
@@ -173,6 +168,16 @@ impl Api {
         Ok(Self { client, base })
     }
 
+    /// Keeps `slot` pointing at `base`, rebuilding the client when the server changed.
+    /// A long-lived client must never keep talking to a server its credential was not
+    /// issued for.
+    pub(crate) fn ensure<'a>(slot: &'a mut Option<Api>, base: &str) -> Result<&'a Api> {
+        if slot.as_ref().is_none_or(|api| api.base != base) {
+            *slot = Some(Api::new(base.to_string())?);
+        }
+        Ok(slot.as_ref().expect("just set"))
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
@@ -219,7 +224,7 @@ pub(crate) enum Pass {
 const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
 
 pub async fn run(app: AppHandle) -> Result<()> {
-    let api = Api::new(api_base())?;
+    let mut api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
     let mut recovery_retried = Instant::now();
 
@@ -231,10 +236,16 @@ pub async fn run(app: AppHandle) -> Result<()> {
                 eprintln!("desktop ingest: deferred recovery stopped: {error}");
             }
         }
-        let Some(token) = settings::device_token(&app) else {
+        let Some(credential) = settings::device_credential(&app) else {
             idle(Duration::from_secs(5)).await;
             continue;
         };
+        let token = credential.token;
+        // The token only goes to the server that issued it: rebuild the client when
+        // the configured server (and with it the credential) changes while running.
+        if api.base != credential.base {
+            api = Api::new(credential.base)?;
+        }
         if let Some((rejected_token, since)) = &rejected {
             if *rejected_token == token && since.elapsed() < SIGNED_OUT_RETRY {
                 idle(Duration::from_secs(5)).await;
@@ -762,6 +773,16 @@ async fn http_error(operation: &str, response: reqwest::Response) -> anyhow::Err
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_long_lived_client_follows_the_credentials_server() {
+        let mut slot = None;
+        let first = Api::ensure(&mut slot, "https://old.example").unwrap().base.clone();
+        assert_eq!(first, "https://old.example");
+        // Same base: kept. New base (re-paired elsewhere): rebuilt, never reused.
+        assert_eq!(Api::ensure(&mut slot, "https://old.example").unwrap().base, "https://old.example");
+        assert_eq!(Api::ensure(&mut slot, "https://new.example").unwrap().base, "https://new.example");
+    }
+
     use super::*;
 
     fn line(start_ms: i64, speaker: Option<&str>, text: &str) -> ResultSegment {
