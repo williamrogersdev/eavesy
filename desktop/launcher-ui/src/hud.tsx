@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
 import { Camera, History, Mic, Square, Video, X } from 'lucide-react';
 import { includeComputerAudio } from '@/lib/desktop/capture-prefs';
 import { errMsg } from '@/lib/desktop/errors';
+import { captionTail, trackLabel, type LiveCaption } from '@/lib/desktop/live-captions';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -65,6 +66,8 @@ function Hud() {
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [shortcut, setShortcut] = useState('');
+  // The newest caption of each track, so the mic and the call never replace each other.
+  const [captions, setCaptions] = useState<Record<string, LiveCaption>>({});
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -88,6 +91,22 @@ function Hud() {
       const initial = await invoke('get_hud_state');
       if (!disposed && !received && initial) setState(initial as HudState);
     })().catch(() => setActionError('Status unavailable'));
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const off = await tauri()?.event?.listen('recording:caption', (e) => {
+        const caption = e.payload as LiveCaption;
+        setCaptions((current) => {
+          const sameSession = Object.values(current).every((c) => c.sessionId === caption.sessionId);
+          return { ...(sameSession ? current : {}), [caption.track]: caption };
+        });
+      });
+      if (disposed) off?.(); else unlisten = off;
+    })().catch(() => {});
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
@@ -152,6 +171,12 @@ function Hud() {
   if (!state) return null;
 
   const recording = state.phase === 'recording';
+  const liveCaptions = recording
+    ? ['mic', 'system']
+        .map((track) => captions[track])
+        .filter((c): c is LiveCaption => !!c && c.sessionId === state.sessionId && !!c.text.trim())
+    : [];
+  const labelled = liveCaptions.length > 1;
   const closable = !recording && state.phase !== 'transcribing';
   const busy = starting || recording || state.phase === 'transcribing';
 
@@ -183,6 +208,11 @@ function Hud() {
         </button>
         <div className="ctl-title" title={actionError ?? undefined}>
           {recording && <span className="font-mono tabular-nums text-white/75">{elapsedLabel(state.startedAtMs, now)}</span>}
+          {liveCaptions.map((c) => (
+            <span key={c.track} aria-live="polite" title={c.text} className={`ctl-caption ${c.isFinal ? 'text-white/90' : 'text-white/65'}`}>
+              <bdi>{labelled && <span className="ctl-caption-label">{trackLabel(c.track)}</span>}{captionTail(c.text, 120)}</bdi>
+            </span>
+          ))}
           {state.phase === 'transcribing' && <span className="text-white/60">Transcribing…</span>}
           {actionError && <span role="alert" title={actionError} className="line-clamp-2 min-w-0 whitespace-normal leading-tight text-[#ffc9b5]">{actionError}</span>}
         </div>

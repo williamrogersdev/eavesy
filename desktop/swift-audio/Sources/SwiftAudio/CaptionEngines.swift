@@ -1,0 +1,302 @@
+import AVFoundation
+import Foundation
+import Speech
+
+/// Picks the best on-device recognizer for a locale: SpeechAnalyzer where the
+/// OS and its model are ready, otherwise SFSpeechRecognizer forced on-device.
+/// Never prompts: Speech Recognition is asked for up front (setup, or turning
+/// captions on, through `--preflight --need-speech`), so a recording that has
+/// no answer yet simply runs without captions.
+enum CaptionEngines {
+    static func make(
+        locale: Locale,
+        completion: @escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void
+    ) {
+        // Asking without a usage description kills the process (TCC), so check first.
+        guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+            completion(.failure(CaptionUnavailable(reason: "speech recognition usage description missing")))
+            return
+        }
+        authorize { authorized in
+            // Both engines are speech recognition as far as the user is
+            // concerned, so neither runs without their permission.
+            guard authorized else {
+                completion(.failure(CaptionUnavailable(reason: "speech recognition not authorized")))
+                return
+            }
+            Task {
+                #if compiler(>=6.2)
+                    if #available(macOS 26.0, *) {
+                        switch await AnalyzerEngine.make(locale: locale) {
+                        case .success(let engine):
+                            completion(.success(engine))
+                            return
+                        case .failure(let unavailable):
+                            EventEmitter.warning("speech analyzer unavailable: \(unavailable.reason)")
+                        }
+                    }
+                #endif
+                completion(SFSpeechEngine.make(locale: locale))
+            }
+        }
+    }
+
+    private static func authorize(_ next: @escaping (Bool) -> Void) {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            next(true)
+        default:
+            next(false)
+        }
+    }
+}
+
+/// SFSpeechRecognizer with on-device recognition required. A request only
+/// settles its text when its audio ends, so the request is rolled over every
+/// `rolloverMs` of audio to turn partials into finals as the recording goes.
+final class SFSpeechEngine: SpeechEngine {
+    static let rolloverMs: Int64 = 30_000
+
+    let name = "sfspeech"
+    private let recognizer: SFSpeechRecognizer
+    private let lock = NSLock()
+    private weak var sink: CaptionSink?
+    private var current: Window?
+    private var finishing: (() -> Void)?
+    private var open = 0
+
+    private final class Window {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        var task: SFSpeechRecognitionTask?
+        let startMs: Int64
+        var lastMs: Int64
+        var settled = false
+
+        init(startMs: Int64) {
+            self.startMs = startMs
+            self.lastMs = startMs
+            request.requiresOnDeviceRecognition = true
+            request.shouldReportPartialResults = true
+            request.addsPunctuation = true
+            request.taskHint = .dictation
+        }
+    }
+
+    static func make(locale: Locale) -> Result<SpeechEngine, CaptionUnavailable> {
+        guard let recognizer = SFSpeechRecognizer(locale: locale) else {
+            return .failure(CaptionUnavailable(reason: "no recognizer for \(locale.identifier)"))
+        }
+        guard recognizer.supportsOnDeviceRecognition else {
+            return .failure(CaptionUnavailable(reason: "on-device recognition unsupported for \(locale.identifier)"))
+        }
+        return .success(SFSpeechEngine(recognizer: recognizer))
+    }
+
+    private init(recognizer: SFSpeechRecognizer) {
+        self.recognizer = recognizer
+    }
+
+    func start(sink: CaptionSink) throws {
+        self.sink = sink
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if let window = current, atMs - window.startMs >= Self.rolloverMs {
+            window.request.endAudio()
+            current = nil
+        }
+        let window = current ?? openWindow(atMs: atMs)
+        window.request.append(buffer)
+        window.lastMs = atMs + Int64(Double(buffer.frameLength) / buffer.format.sampleRate * 1000)
+    }
+
+    func finish(_ done: @escaping () -> Void) {
+        lock.lock()
+        current?.request.endAudio()
+        current = nil
+        if open == 0 {
+            lock.unlock()
+            done()
+            return
+        }
+        finishing = done
+        lock.unlock()
+    }
+
+    /// Called with `lock` held.
+    private func openWindow(atMs: Int64) -> Window {
+        let window = Window(startMs: atMs)
+        open += 1
+        window.task = recognizer.recognitionTask(with: window.request) { [weak self, weak window] result, error in
+            guard let self, let window else { return }
+            self.handle(window: window, result: result, error: error)
+        }
+        current = window
+        return window
+    }
+
+    private func handle(window: Window, result: SFSpeechRecognitionResult?, error: Error?) {
+        if let result {
+            let text = result.bestTranscription.formattedString
+            let segments = result.bestTranscription.segments
+            let startMs = window.startMs + Int64((segments.first?.timestamp ?? 0) * 1000)
+            let endMs =
+                segments.last.map { window.startMs + Int64(($0.timestamp + $0.duration) * 1000) }
+                ?? window.lastMs
+            sink?.recognized(text: text, isFinal: result.isFinal, startMs: startMs, endMs: max(endMs, startMs))
+        }
+        if let error, !Self.isBenign(error) {
+            sink?.engineFailed(error.localizedDescription)
+        }
+        if result?.isFinal == true || error != nil {
+            settle(window)
+        }
+    }
+
+    private func settle(_ window: Window) {
+        lock.lock()
+        guard !window.settled else {
+            lock.unlock()
+            return
+        }
+        window.settled = true
+        open -= 1
+        let done = open == 0 ? finishing : nil
+        if done != nil { finishing = nil }
+        lock.unlock()
+        done?()
+    }
+
+    /// "No speech detected" and cancellation end a window without anything wrong.
+    static func isBenign(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == "kAFAssistantErrorDomain" && [203, 216, 1110].contains(ns.code)
+            || ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError
+    }
+}
+
+#if compiler(>=6.2)
+    /// macOS 26 SpeechAnalyzer + SpeechTranscriber: on-device, volatile results
+    /// within a few hundred ms, finals as it settles phrases. Times come back on
+    /// the recording clock because every buffer is stamped with its offset.
+    @available(macOS 26.0, *)
+    final class AnalyzerEngine: SpeechEngine {
+        let name = "speech-analyzer"
+        private let transcriber: SpeechTranscriber
+        private let format: AVAudioFormat
+        private var analyzer: SpeechAnalyzer?
+        private var converter: AVAudioConverter?
+        private let input: AsyncStream<AnalyzerInput>
+        private let feed: AsyncStream<AnalyzerInput>.Continuation
+        private var results: Task<Void, Never>?
+        private var running: Task<Void, Never>?
+
+        static func make(locale: Locale) async -> Result<SpeechEngine, CaptionUnavailable> {
+            guard SpeechTranscriber.isAvailable else {
+                return .failure(CaptionUnavailable(reason: "transcriber unavailable on this Mac"))
+            }
+            guard let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+                return .failure(CaptionUnavailable(reason: "locale \(locale.identifier) unsupported"))
+            }
+            let transcriber = SpeechTranscriber(
+                locale: supported,
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults, .fastResults],
+                attributeOptions: [.audioTimeRange])
+            switch await AssetInventory.status(forModules: [transcriber]) {
+            case .installed:
+                break
+            case .unsupported:
+                return .failure(CaptionUnavailable(reason: "no model for \(supported.identifier)"))
+            default:
+                // Fetch it for next time; this recording falls back.
+                Task.detached {
+                    try? await AssetInventory.assetInstallationRequest(supporting: [transcriber])?
+                        .downloadAndInstall()
+                }
+                return .failure(CaptionUnavailable(reason: "model for \(supported.identifier) downloading"))
+            }
+            guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+                return .failure(CaptionUnavailable(reason: "no compatible audio format"))
+            }
+            return .success(AnalyzerEngine(transcriber: transcriber, format: format))
+        }
+
+        private init(transcriber: SpeechTranscriber, format: AVAudioFormat) {
+            self.transcriber = transcriber
+            self.format = format
+            (input, feed) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
+        }
+
+        func start(sink: CaptionSink) throws {
+            let analyzer = SpeechAnalyzer(modules: [transcriber])
+            self.analyzer = analyzer
+            converter = AVAudioConverter(from: AudioRecorder.mixFormat, to: format)
+            let transcriber = self.transcriber
+            results = Task { [weak sink] in
+                do {
+                    for try await result in transcriber.results {
+                        let start = result.range.start.seconds
+                        let end = result.range.end.seconds
+                        sink?.recognized(
+                            text: String(result.text.characters),
+                            isFinal: result.isFinal,
+                            startMs: start.isFinite ? Int64(start * 1000) : 0,
+                            endMs: end.isFinite ? Int64(end * 1000) : 0)
+                    }
+                } catch {
+                    sink?.engineFailed(error.localizedDescription)
+                }
+            }
+            let input = self.input
+            running = Task { [weak sink] in
+                do {
+                    try await analyzer.start(inputSequence: input)
+                } catch {
+                    sink?.engineFailed(error.localizedDescription)
+                }
+            }
+        }
+
+        func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
+            guard let converted = convert(buffer) else { return }
+            feed.yield(AnalyzerInput(buffer: converted, bufferStartTime: CMTime(value: atMs, timescale: 1000)))
+        }
+
+        func finish(_ done: @escaping () -> Void) {
+            feed.finish()
+            let analyzer = self.analyzer
+            let running = self.running
+            let results = self.results
+            Task {
+                await running?.value
+                try? await analyzer?.finalizeAndFinishThroughEndOfInput()
+                await results?.value
+                done()
+            }
+        }
+
+        private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+            if buffer.format == format { return buffer }
+            guard let converter else { return nil }
+            let ratio = format.sampleRate / buffer.format.sampleRate
+            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1)
+            guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+            var fed = false
+            var error: NSError?
+            let status = converter.convert(to: out, error: &error) { _, status in
+                if fed {
+                    status.pointee = .noDataNow
+                    return nil
+                }
+                fed = true
+                status.pointee = .haveData
+                return buffer
+            }
+            guard status != .error, error == nil else { return nil }
+            return out
+        }
+    }
+#endif

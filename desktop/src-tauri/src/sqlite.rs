@@ -114,6 +114,15 @@ fn open<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, Connection
     Ok(shared.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
+/// Runs `f` on the shared connection.
+pub fn with_open<R: Runtime, T>(app: &AppHandle<R>, f: impl FnOnce(&Connection) -> T) -> Result<T, String> {
+    Ok(f(&*open(app)?))
+}
+
+pub fn with_open_mut<R: Runtime, T>(app: &AppHandle<R>, f: impl FnOnce(&mut Connection) -> T) -> Result<T, String> {
+    Ok(f(&mut *open(app)?))
+}
+
 fn connect(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("open local database: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
@@ -187,6 +196,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     add_column_if_missing(conn, "recording_sessions", "segment_dir", "TEXT")?;
     add_column_if_missing(conn, "recording_sessions", "next_attempt_at", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "recording_sessions", "archive_missing", "INTEGER NOT NULL DEFAULT 0")?;
+    conn.execute_batch(crate::live_transcript::SCHEMA)
+        .map_err(|e| format!("initialize live transcript: {e}"))?;
     migrate_segments(conn)
 }
 
@@ -432,13 +443,14 @@ pub fn defer_session<R: Runtime>(app: &AppHandle<R>, id: &str, delay_ms: i64, er
 }
 
 pub fn mark_session_failed<R: Runtime>(app: &AppHandle<R>, id: &str, error: &str) -> Result<(), String> {
-    open(app)?
-        .execute(
-            "UPDATE recording_sessions SET status='failed', last_error=?2, updated_at=?3 WHERE id=?1",
-            params![id, error, chrono::Utc::now().timestamp_millis()],
-        )
-        .map_err(|e| format!("mark session failed: {e}"))?;
-    Ok(())
+    let conn = open(app)?;
+    conn.execute(
+        "UPDATE recording_sessions SET status='failed', last_error=?2, updated_at=?3 WHERE id=?1",
+        params![id, error, chrono::Utc::now().timestamp_millis()],
+    )
+    .map_err(|e| format!("mark session failed: {e}"))?;
+    // A failed recording gets no cloud lines; its captions would linger forever.
+    crate::live_transcript::forget(&conn, id)
 }
 
 pub fn attach_remote<R: Runtime>(app: &AppHandle<R>, id: &str, remote_id: &str) -> Result<(), String> {

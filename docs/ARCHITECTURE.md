@@ -57,8 +57,65 @@ macOS capture ──device token──► web session API ──► R2 audio
    `summary.md`. The full `audio.m4a` archive already resides in the same local
    recording folder.
 
+While a meeting is live, the web meeting view streams transcript changes from
+`GET /api/meetings/:id/transcript` (server-sent events, resumed by cursor) and
+falls back to polling when the stream can't open. Each change is a set of
+time ranges plus every line now in them, so lines removed as echo disappear
+too. The cursor is the latest `meeting_segments.transcribed_at` the client
+has seen.
+
 The archive remains in R2 as the durable cloud audio copy. D1 state replaces
 the old per-meeting Durable Object design.
+
+## Live captions
+
+With the **Live captions** setting on (the default), the sidecar also runs the
+on-device recognizer (same engines as dictation, below) on the mic and system
+tracks while a meeting or voice note records (`--captions all`):
+
+- **Permission:** Speech Recognition is asked for at first launch (with the
+  mic) and when captions are turned on, never by a recording. Without it,
+  recordings behave as before, minus the captions.
+- **Display:** Rust forwards every caption as the `recording:caption` Tauri
+  event. The HUD shows the newest words of each track on its own labelled line
+  ("You", "Others"), and the launcher shows the last few lines.
+- **Storage:** caption finals are stored in the local `live_lines` table as
+  provisional lines. A writer thread does this behind a bounded queue that
+  drops on overflow, so the sidecar's stdout reader never waits on the
+  database.
+- **Replacement:** every 5 s, Rust asks `/api/sessions/:id/transcript?since=`
+  for the cloud's transcript changes: time ranges, with every cloud line in
+  them. Locally it removes cloud lines that overlap a range and provisional
+  lines whose midpoint falls inside one, then stores the cloud's lines. A
+  caption therefore stays until the cloud has covered that moment, and the
+  cloud transcript is still the record.
+- **Expiry:** provisional lines more than 5 minutes (of recording time) behind
+  the newest cloud range were never replaced, so they are dropped.
+- **Cleanup:** the table is cleared when the recording completes or fails. A
+  deleted meeting (`meeting_not_found`) stops the polling for that recording.
+
+## Dictation
+
+Dictation (the dictation hotkey, the launcher's Dictate button and the "Start
+dictation" command) records and uploads like any voice note, so it appears in
+web history and search, and crash recovery covers it. It also runs on-device
+Apple Speech on the mic, in the system language, with `--captions mic`:
+
+- **Engines:** SpeechAnalyzer on macOS 26 when the language model is installed
+  (otherwise it starts the download and uses the fallback), and
+  SFSpeechRecognizer with `requiresOnDeviceRecognition` on older systems.
+  Neither runs without Speech Recognition permission.
+- **Events:** `caption`, `captions_status` and, at stop, `captions_done` go out
+  on stdout beside the usual events. A recognizer failure only turns captions
+  off and never stops capture. Audio held while the recognizer starts is capped
+  at about 10 s, and anything dropped is counted.
+- **Paste on stop:** the sidecar waits up to 3 s for the last finals, then Rust
+  pastes the on-device text (the last partial if no final arrived) into the app
+  that had focus. If captions were unavailable, failed, dropped audio or timed
+  out, or heard nothing, Rust sends the clip to cloud Whisper
+  (`/api/transcribe`) and pastes that instead.
+- **The record:** the cloud transcript of the upload is the dictation's record
+  either way. If both pastes fail, it is pasted once ready.
 
 ## Authentication
 

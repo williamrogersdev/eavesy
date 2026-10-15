@@ -1,7 +1,7 @@
-import { and, desc, eq, isNull, lt } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, max } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { meetings, transcriptSegments, summaries, userNotes } from '../schema';
+import { meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
 import {
   decode,
   type ActionItem,
@@ -166,7 +166,7 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
 }
 
 export async function getFull(db: AppDb, args: { meetingId: string; userId: string }) {
-  const [meetingRows, summaryRow, notesRow, segments] = await db.batch([
+  const [meetingRows, summaryRow, notesRow, segments, segmentStamp] = await db.batch([
     db
       .select()
       .from(meetings)
@@ -193,6 +193,10 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
       .from(transcriptSegments)
       .where(eq(transcriptSegments.meetingId, args.meetingId))
       .orderBy(transcriptSegments.startMs),
+    db
+      .select({ at: max(meetingSegments.transcribedAt) })
+      .from(meetingSegments)
+      .where(eq(meetingSegments.meetingId, args.meetingId)),
   ]);
   const meeting = meetingRows[0];
   if (!meeting) return null;
@@ -220,6 +224,8 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
     summary,
     notes: notesRow[0] ?? null,
     segments,
+    // Where a live transcript stream should resume from after this read.
+    transcriptCursor: segmentStamp[0]?.at ?? 0,
   };
 }
 

@@ -33,6 +33,15 @@ fn pick_target(pressed: Option<(Instant, Target)>, now: impl FnOnce() -> Option<
         .or_else(now)
 }
 
+/// Whether this recording will paste into the app the user was in.
+pub fn is_armed(session_id: &str) -> bool {
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|(id, armed, _)| id == session_id && armed.elapsed() < DELIVER_WINDOW)
+}
+
 fn take_pending(session_id: &str) -> Option<Target> {
     let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
     match pending.as_ref() {
