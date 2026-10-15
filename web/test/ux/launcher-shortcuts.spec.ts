@@ -57,6 +57,7 @@ test('native dictation event starts mic capture and second press saves', async (
   await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
   const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
   expect(calls.find((call) => call.command === 'start_capture')?.args?.source).toBe('mic');
+  expect(calls.find((call) => call.command === 'start_capture')?.args?.dictation).toBe(true);
   expect(calls.some((call) => call.command === 'stop_capture')).toBe(true);
 });
 

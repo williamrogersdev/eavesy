@@ -3,15 +3,20 @@ import Foundation
 enum EventEmitter {
     private static let lock = NSLock()
 
-    private static func emit(_ object: [String: Any]) {
+    /// One protocol line: sorted-key JSON and a newline.
+    static func line(_ object: [String: Any]) -> Data? {
+        guard
+            var data = try? JSONSerialization.data(
+                withJSONObject: object, options: [.sortedKeys])
+        else { return nil }
+        data.append(0x0A)
+        return data
+    }
+
+    static func emit(_ object: [String: Any]) {
+        guard let line = line(object) else { return }
         lock.lock()
         defer { lock.unlock() }
-        guard
-            let data = try? JSONSerialization.data(
-                withJSONObject: object, options: [.sortedKeys])
-        else { return }
-        var line = data
-        line.append(0x0A)
         FileHandle.standardOutput.write(line)
     }
 

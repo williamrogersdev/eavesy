@@ -10,6 +10,7 @@ final class AudioRecorder: NSObject, Recorder {
     private let segmentDir: String?
     private let segmentSec: Double
     private let segmentHardCapSec: Double
+    private let captions: [Track: LiveCaptions]
 
     private let writerQueue = DispatchQueue(label: "com.eavesy.swiftaudio.writer")
 
@@ -67,7 +68,11 @@ final class AudioRecorder: NSObject, Recorder {
         return chunk
     }
 
-    init(outPath: String, source: AudioSource, segmentDir: String?, segmentSec: Double) {
+    init(
+        outPath: String, source: AudioSource, segmentDir: String?, segmentSec: Double,
+        captions: [Track: LiveCaptions] = [:]
+    ) {
+        self.captions = captions
         self.outPath = outPath
         self.source = source
         self.segmentDir = segmentDir
@@ -305,6 +310,12 @@ final class AudioRecorder: NSObject, Recorder {
             }
 
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            if !self.captions.isEmpty {
+                let atMs = Int64(CMTimeGetSeconds(CMTimeSubtract(pts, self.firstPTS)) * 1000)
+                for (track, _, samples) in tracks {
+                    self.captions[track]?.feed(samples, atMs: atMs)
+                }
+            }
             self.ensureSegmentWriters(at: pts, tracks: tracks.map(\.0))
             if !self.segments.isEmpty {
                 for (track, buffer, samples) in tracks {
@@ -468,11 +479,29 @@ final class AudioRecorder: NSObject, Recorder {
         return (sumSquares / Double(sampleCount)).squareRoot()
     }
 
-    func stop(completion: @escaping (_ durationSec: Double) -> Void) {
+    /// Captions settle their last words while the files finish; `done` waits
+    /// for both, but captions never hold it up for more than a few seconds.
+    static let captionFinishTimeout: TimeInterval = 3
+
+    func stop(completion outerCompletion: @escaping (_ durationSec: Double) -> Void) {
         stopCaptureSources()
         removeSleepWakeObservers()
 
+        let settled = DispatchGroup()
+        let completion: (Double) -> Void = { duration in
+            settled.notify(queue: .global()) { outerCompletion(duration) }
+        }
+
         writerQueue.async { [weak self] in
+            if let captions = self?.captions.values {
+                for caption in captions {
+                    settled.enter()
+                    DispatchQueue.global().async {
+                        caption.finish(timeout: Self.captionFinishTimeout)
+                        settled.leave()
+                    }
+                }
+            }
             guard let self else {
                 completion(0)
                 return
