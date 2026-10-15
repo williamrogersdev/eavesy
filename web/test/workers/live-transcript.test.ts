@@ -5,9 +5,16 @@ import * as dbSchema from '../../src/db/schema';
 import { liveTranscriptStream } from '../../src/server/live-transcript';
 import { CURSOR_OVERLAP_MS } from '../../src/server/transcript-delta';
 import { Route as transcriptRoute } from '../../src/routes/api/meetings/$id/transcript';
+import { Route as sessionTranscriptRoute } from '../../src/routes/api/sessions/$id/transcript';
 import { handler, insertMeeting, insertUser, resetTables, testEnv } from './support';
 
 const actor = vi.hoisted(() => ({ userId: 'user_live' as string | null }));
+vi.mock('../../src/server/device-auth', () => ({
+  resolveIngestActor: async () => {
+    if (!actor.userId) throw new Error('not_authenticated');
+    return { userId: actor.userId, isAnonymous: false };
+  },
+}));
 vi.mock('../../src/server/auth', () => ({
   resolveActor: async () => {
     if (!actor.userId) throw new Error('not_authenticated');
@@ -18,6 +25,7 @@ vi.mock('../../src/server/auth', () => ({
 const MEETING = 'meet_live';
 const db = drizzle(testEnv.DB, { schema: dbSchema });
 const get = handler(transcriptRoute, 'GET');
+const getForDevice = handler(sessionTranscriptRoute, 'GET');
 
 beforeAll(async () => {
   await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
@@ -139,6 +147,42 @@ describe('transcript since a cursor', () => {
     });
     expect(response.headers.get('content-type')).toContain('text/event-stream');
     await response.body?.cancel();
+  });
+});
+
+describe('transcript since a cursor, for the desktop app', () => {
+  it('answers with the same delta as the web route', async () => {
+    await transcribed(0, 1_000, [[0, 'Before.']]);
+    await transcribed(1, 100_000, [[60_500, 'After.']]);
+    const response = await getForDevice({
+      request: new Request(`https://eavesy.test/api/sessions/${MEETING}/transcript?since=50000`),
+      params: { id: MEETING },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { cursor: number; lines: { text: string }[] };
+    expect(body.cursor).toBe(100_000);
+    expect(body.lines.map((line) => line.text)).toEqual(['After.']);
+    expect(body).toEqual(await delta(50_000));
+  });
+
+  it('is not available to another user', async () => {
+    actor.userId = 'user_other';
+    const response = await getForDevice({
+      request: new Request(`https://eavesy.test/api/sessions/${MEETING}/transcript?since=0`),
+      params: { id: MEETING },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'meeting_not_found' });
+  });
+
+  it('says a deleted meeting is gone, distinctly from a missing route', async () => {
+    await testEnv.DB.prepare(`UPDATE meetings SET deleted_at = 1 WHERE id = ?`).bind(MEETING).run();
+    const response = await getForDevice({
+      request: new Request(`https://eavesy.test/api/sessions/${MEETING}/transcript?since=0`),
+      params: { id: MEETING },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'meeting_not_found' });
   });
 });
 
