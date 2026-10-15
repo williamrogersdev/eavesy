@@ -3,9 +3,13 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as mcpRepo from '@/db/repo/mcp';
 import { resolveActor } from '@/server/auth';
+import { MCP_SCOPES, normalizeMcpScopes, parseMcpScopes } from '@/server/mcp-scopes';
 import { MCP_SERVER_URL, mcpTokenExpiresAt } from '@/server/mcp-token-policy';
 
-const createSchema = z.object({ name: z.string().trim().min(1).max(100) });
+const createSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  scopes: z.array(z.enum(MCP_SCOPES)).max(MCP_SCOPES.length).optional(),
+});
 const revokeSchema = z.object({ id: z.string().min(1).max(100) });
 
 export const Route = createFileRoute('/api/mcp-tokens')({
@@ -22,6 +26,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
               createdAt: row.createdAt,
               lastUsedAt: row.lastUsedAt,
               expiresAt: mcpTokenExpiresAt(row),
+              scopes: parseMcpScopes(row.scopesJson),
               usesLegacyUrl: row.pathAuthUsedAt !== null,
             })),
           );
@@ -36,7 +41,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
           const token = await mcpRepo.mintToken(getDb(), {
             userId: actor.userId,
             name: body.name,
-            scopes: ['read'],
+            scopes: normalizeMcpScopes(body.scopes),
           });
           return Response.json(
             {
@@ -44,6 +49,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
               serverUrl: MCP_SERVER_URL,
               token: token.rawToken,
               expiresAt: token.expiresAt,
+              scopes: normalizeMcpScopes(body.scopes),
             },
             { status: 201 },
           );
