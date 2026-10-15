@@ -172,6 +172,17 @@ describe('transcript since a cursor, for the desktop app', () => {
       params: { id: MEETING },
     });
     expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'meeting_not_found' });
+  });
+
+  it('says a deleted meeting is gone, distinctly from a missing route', async () => {
+    await testEnv.DB.prepare(`UPDATE meetings SET deleted_at = 1 WHERE id = ?`).bind(MEETING).run();
+    const response = await getForDevice({
+      request: new Request(`https://eavesy.test/api/sessions/${MEETING}/transcript?since=0`),
+      params: { id: MEETING },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'meeting_not_found' });
   });
 });
 
