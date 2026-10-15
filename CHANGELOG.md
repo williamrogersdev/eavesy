@@ -15,6 +15,9 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 ### Changed
 
 - Merges to `main` deploy to production from GitHub Actions.
+- Mac releases run from GitHub Actions: a `desktop-vX.Y.Z` tag builds, notarizes
+  and drafts a GitHub Release, and an approved publish job updates R2, the
+  updater and the Homebrew cask. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
