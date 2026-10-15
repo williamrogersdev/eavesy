@@ -143,14 +143,14 @@ pub struct AccountInfo {
 
 #[tauri::command]
 pub async fn account_info(app: AppHandle) -> Option<AccountInfo> {
-    let token = settings::device_token(&app)?;
+    let credential = settings::device_credential(&app)?;
     let unknown = AccountInfo { email: None, name: None };
     let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build() else {
         return Some(unknown);
     };
     match client
-        .get(format!("{}/api/devices/me", crate::sync::api_base()))
-        .bearer_auth(token)
+        .get(format!("{}/api/devices/me", credential.base))
+        .bearer_auth(credential.token)
         .send()
         .await
     {
@@ -162,11 +162,11 @@ pub async fn account_info(app: AppHandle) -> Option<AccountInfo> {
 
 #[tauri::command]
 pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
-    if let Some(token) = settings::device_token(&app) {
+    if let Some(credential) = settings::device_credential(&app) {
         if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build() {
             let _ = client
-                .delete(format!("{}/api/devices/me", crate::sync::api_base()))
-                .bearer_auth(token)
+                .delete(format!("{}/api/devices/me", credential.base))
+                .bearer_auth(credential.token)
                 .send()
                 .await;
         }
@@ -277,11 +277,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
     let cancelled = || PAIR_GENERATION.load(Ordering::SeqCst) != generation;
     let config = settings::load(app);
     let recordings_root = crate::fs_writer::recordings_root(app)?;
-    #[cfg(debug_assertions)]
-    let base = std::env::var("EAVESY_API_BASE")
-        .unwrap_or_else(|_| "https://eavesy.com".to_string());
-    #[cfg(not(debug_assertions))]
-    let base = "https://eavesy.com".to_string();
+    let base = crate::base_url::api_base();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()
@@ -306,6 +302,10 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         .json()
         .await
         .map_err(|e| format!("invalid pairing response: {e}"))?;
+
+    if !crate::base_url::same_origin(&pairing.verification_url, &base) {
+        return Err("The server returned a sign-in link on a different site, so it was not opened.".to_string());
+    }
 
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
@@ -346,7 +346,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
             .map_err(|e| format!("invalid pairing status: {e}"))?;
         if status.status == "paired" {
             let token = status.token.ok_or("pairing completed without a credential")?;
-            settings::save_device_token(app, &token)?;
+            settings::save_device_token(app, &base, &token)?;
             crate::sync::wake();
             return Ok(());
         }

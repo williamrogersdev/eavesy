@@ -57,3 +57,4 @@ web/playwright-report/
 
 __pycache__/
 *.pyc
+.eavesy-render/

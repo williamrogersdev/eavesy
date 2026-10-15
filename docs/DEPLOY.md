@@ -5,9 +5,12 @@ and Workers AI resources. Commands are run from the repository root unless noted
 
 ## Account and authentication
 
-All three Wrangler configs pin account `5bc563d42299762f9b48f5dec0531954`
-(the maintainer's personal Cloudflare account). It also hosts other projects;
-account-scoped permissions are not restricted to Eavesy Workers alone.
+The account is selected with `CLOUDFLARE_ACCOUNT_ID` (the Wrangler configs
+no longer pin one) and D1/KV IDs and domains come from `EAVESY_*` variables
+rendered into the configs by `scripts/render-wrangler.mjs`. See
+[SELF_HOSTING.md](SELF_HOSTING.md) for the full variable list. Production uses
+the same mechanism via repository variables. If your account hosts other
+projects, account-scoped permissions are not restricted to Eavesy Workers alone.
 
 Create a user API token named `eavesy-cloudflare` with account permissions:
 Workers Scripts Edit, Workers KV Storage Edit, Workers R2 Storage Edit,
@@ -23,12 +26,12 @@ security add-generic-password -a "$(id -un)" -s eavesy-cloudflare -w
 ```
 
 The password prompt accepts the token without echoing it. The `scripts/cf`
-wrapper reads that Keychain item, supplies the token and pinned account to
-its child command, and fails if the token is missing. It does not change
+wrapper reads that Keychain item, supplies the token and
+`CLOUDFLARE_ACCOUNT_ID` to its child command, and fails if either is missing. It does not change
 your saved Wrangler login or parent shell. Allow Keychain access when prompted.
 On non-macOS CI runners, supply `CLOUDFLARE_API_TOKEN` through the CI secret
-store and set `CLOUDFLARE_ACCOUNT_ID` to the pinned Eavesy account. The wrapper
-rejects a missing or different account and never falls back to OAuth.
+store and set `CLOUDFLARE_ACCOUNT_ID`. The wrapper rejects a missing account
+and never falls back to OAuth.
 
 Deploy scripts and remote migrations use the wrapper automatically. For
 other authenticated commands, prefix Wrangler with `../scripts/cf` from
@@ -39,13 +42,16 @@ cd web
 ../scripts/cf bunx wrangler d1 migrations list eavesy --remote
 ```
 
-A config pin prevents accidental default-account selection; it is not a
-security boundary against explicitly overriding config or account settings.
+Requiring an explicit `CLOUDFLARE_ACCOUNT_ID` prevents accidental
+default-account selection; it is not a security boundary against explicitly
+overriding settings.
 
 ## Required resources
 
-The committed Wrangler configs contain the production IDs. For a new account
-or environment, create equivalent resources and replace those IDs:
+The committed Wrangler configs contain placeholder IDs; run
+`bun run cf:render` (with `EAVESY_D1_DATABASE_ID`, `EAVESY_KV_CACHE_ID` and
+optional domains exported) before deploying, and `bun run cf:restore` after.
+To create the resources:
 
 ```bash
 cd web
@@ -158,7 +164,8 @@ processing → MCP → web, and smoke-tests the live domains. If the smoke test
 fails it rolls the web Worker back; the processing and MCP Workers and
 migrations are left as they are.
 
-The job is skipped until it is configured. One-time setup:
+The job is skipped until `VITE_CLERK_PUBLISHABLE_KEY` is set; once it is, the
+job fails loudly if any other variable is missing. One-time setup:
 
 ```bash
 gh api -X PUT repos/williamrogersdev/eavesy/environments/production \
@@ -168,6 +175,12 @@ gh api -X POST repos/williamrogersdev/eavesy/environments/production/deployment-
   -f name=main
 gh secret set CLOUDFLARE_API_TOKEN --env production --repo williamrogersdev/eavesy
 gh variable set VITE_CLERK_PUBLISHABLE_KEY --repo williamrogersdev/eavesy
+gh variable set CLOUDFLARE_ACCOUNT_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_D1_DATABASE_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_KV_CACHE_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_APP_DOMAIN --body eavesy.com --repo williamrogersdev/eavesy
+gh variable set EAVESY_WWW_DOMAIN --body www.eavesy.com --repo williamrogersdev/eavesy
+gh variable set EAVESY_MCP_DOMAIN --body mcp.eavesy.com --repo williamrogersdev/eavesy
 ```
 
 The token is the Cloudflare API token described above; it lives in the
@@ -185,9 +198,11 @@ for a deploy from your Mac.
 ## Deploy
 
 ```bash
+bun run cf:render
 bun run deploy:processing
 bun run deploy:mcp
 bun run deploy
+bun run cf:restore
 ```
 
 Order matters operationally: deploy the processing consumer before the web

@@ -62,21 +62,24 @@ eavesy/
 │   └── swift-audio/     # macOS microphone + system-audio capture sidecar
 └── docs/
     ├── ARCHITECTURE.md  # How the services fit together
+    ├── SELF_HOSTING.md  # Run your own instance; local dev mode
     ├── DEPLOY.md        # Cloudflare deploy runbook
     └── OPERATIONS.md    # Alerts, metrics and recovery
 ```
 
 ## Local development
 
-Prerequisites: Bun, Rust stable, Xcode Command Line Tools, and Wrangler logged
-into the intended Cloudflare account.
+Prerequisites: Bun, Rust stable and Xcode Command Line Tools. No Cloudflare or
+Clerk account is needed to run the web app locally:
 
 ```bash
-bun install
 cd web && bun install
-cp .env.example .env.local
-bun dev
+bunx wrangler d1 migrations apply eavesy --local
+EAVESY_LOCAL_TEST=1 bun run dev
 ```
+
+See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for what the local mode stubs
+and how to deploy your own instance on Cloudflare.
 
 Useful checks from the repository root:
 
