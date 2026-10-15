@@ -10,22 +10,19 @@
 
 ## How it works
 1. Hit record — capture your voice, your screen, or both, from a hotkey or your browser.
-2. Eavesy transcribes and tracks the session in real time.
+2. Eavesy transcribes the session in the background, a few minutes behind live.
 3. Stop, and copy an AI-ready Markdown brief into your agent — or save it to disk.
 
 ## Where it works
 Any Mac app or call — Zoom, Google Meet, Microsoft Teams, Webex, Slack huddles — screen walkthroughs, and in-person conversations. Briefs export to Obsidian, Notion, and Apple Notes, or paste into any AI agent.
 
-## Pricing
-- Free — capture in your browser, 30-minute sessions, AI transcript + Markdown brief, copy to any agent.
-- Pro ($12/mo) — Mac app with screen + system audio, unlimited length, semantic search, templates, and sync.
-- Team ($20/user/mo) — shared workspace, SSO, and admin controls.
+## Cost
+Eavesy is free to use, with the same daily fair-use limits for everyone: https://eavesy.com/docs/fair-use-limits
 
 ## Key pages
 - Home: https://eavesy.com/
 - Features: https://eavesy.com/features
 - How it works: https://eavesy.com/how-it-works
-- Pricing: https://eavesy.com/pricing
 - Integrations: https://eavesy.com/integrations
 - Docs: https://eavesy.com/docs
 - Blog: https://eavesy.com/blog

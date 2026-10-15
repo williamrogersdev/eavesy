@@ -1,4 +1,5 @@
-import { and, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { drizzle } from 'drizzle-orm/d1';
 import type {
   D1Database,
@@ -26,7 +27,7 @@ import { clock, MIN_CHAPTER_MEETING_MS, validateChapters } from '@/lib/ai/chapte
 import { anthropicForUser } from '@/lib/ai/client';
 import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
 import { MODELS } from '@/lib/ai/client';
-import { MEETING_SUMMARY_MODEL, requestMeetingSummary } from '@/lib/ai/meeting-summary';
+import { requestMeetingSummary, summaryModel } from '@/lib/ai/meeting-summary';
 import { summarizeMeeting } from '@/lib/ai/summarize';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
@@ -43,6 +44,7 @@ import {
 } from '@/lib/transcription/two-track';
 import { reportError } from '@/server/observability';
 import { isSealed, openUserKeys, sealSecret } from '@/server/secret-box';
+import { recordFirstTranscript } from '@/server/transcript-latency';
 import type { QueueMessage } from '@/server/queue';
 
 export interface ProcessingEnv {
@@ -59,6 +61,16 @@ type Db = ReturnType<typeof drizzle<typeof schema>>;
 export const MAX_ATTEMPTS = 5;
 export const SUMMARY_WAIT_LIMIT_MS = 6 * 60 * 60 * 1_000;
 export const DEAD_LETTER_QUEUE = 'eavesy-processing-dlq';
+// A queue consumer can run for at most 15 minutes, so a claim older than that
+// belongs to a worker that died without releasing it.
+export const SEGMENT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+const SEGMENT_BUSY_RETRY_SECONDS = 300;
+
+class SegmentBusyError extends Error {
+  constructor() {
+    super('segment is being transcribed by another job');
+  }
+}
 
 export interface TerminalProcessingFailure {
   kind: ProcessingMessage['kind'];
@@ -77,6 +89,28 @@ export async function queue(batch: MessageBatch<ProcessingMessage>, env: Process
       await handle(message.body, env);
       message.ack();
     } catch (error) {
+      if (error instanceof SegmentBusyError) {
+        // Another job holds the claim. Check back after it should have finished;
+        // by then the segment is complete or the claim is stale and reclaimable.
+        if (message.attempts < MAX_ATTEMPTS) {
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          continue;
+        }
+        // Out of retries, but the claim may belong to a worker that died and
+        // won't go stale for a few more minutes. Start a fresh message rather
+        // than drop the segment; the cron sweep is the backstop if this fails.
+        try {
+          await env.PROCESSING_QUEUE.send(message.body, { delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+          console.warn(
+            JSON.stringify({ message: 'segment busy past retry budget; requeued', job: message.body }),
+          );
+          message.ack();
+        } catch (sendError) {
+          reportError('could not requeue busy segment', sendError, { job: message.body });
+          message.retry({ delaySeconds: SEGMENT_BUSY_RETRY_SECONDS });
+        }
+        continue;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       const terminal = message.attempts >= MAX_ATTEMPTS;
       if (terminal) {
@@ -287,9 +321,9 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
     ai: env.AI,
   });
 
-  for (const [index, segment] of transcription.segments.entries()) {
+  await runBatched(db, transcription.segments.map((segment, index) => {
     const id = `web_${meetingId}_${index}_${segment.startMs}`;
-    await db
+    return db
       .insert(transcriptSegments)
       .values({
         id,
@@ -312,7 +346,9 @@ async function handleProcessRecording(meetingId: string, db: Db, env: Processing
           isFinal: true,
         },
       });
-  }
+  }));
+
+  if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
 
   const fullText = transcription.segments
     .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
@@ -401,10 +437,43 @@ async function handleTranscribeSegment(
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting) return;
 
-  await db
+  // Queue delivery is at-least-once and segment retries re-enqueue, so two jobs
+  // can arrive together. Only the one whose conditional update lands transcribes.
+  const claimedAt = Date.now();
+  const claimed = await db
     .update(meetingSegments)
-    .set({ transcribeStatus: 'processing' })
-    .where(eq(meetingSegments.id, segment.id));
+    .set({ transcribeStatus: 'processing', transcribeClaimedAt: claimedAt })
+    .where(
+      and(
+        eq(meetingSegments.id, segment.id),
+        or(
+          inArray(meetingSegments.transcribeStatus, ['pending', 'failed']),
+          and(
+            eq(meetingSegments.transcribeStatus, 'processing'),
+            or(
+              isNull(meetingSegments.transcribeClaimedAt),
+              lt(meetingSegments.transcribeClaimedAt, claimedAt - SEGMENT_CLAIM_TTL_MS),
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: meetingSegments.id });
+  if (claimed.length === 0) {
+    const current = (
+      await db
+        .select({ status: meetingSegments.transcribeStatus })
+        .from(meetingSegments)
+        .where(eq(meetingSegments.id, segment.id))
+        .limit(1)
+    )[0];
+    if (!current || current.status === 'complete') return;
+    throw new SegmentBusyError();
+  }
+  const ownClaim = and(
+    eq(meetingSegments.id, segment.id),
+    eq(meetingSegments.transcribeClaimedAt, claimedAt),
+  );
   try {
     if (!isSilentTrack(track, segment.activeMs)) {
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
@@ -416,9 +485,9 @@ async function handleTranscribeSegment(
         contextBlurb: meeting.contextBlurb,
       });
       const speakerId = speakerForTrack(track);
+      const lines = transcription.segments.filter((relative) => !isHallucination(relative));
 
-      for (const relative of transcription.segments) {
-        if (isHallucination(relative)) continue;
+      await runBatched(db, lines.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
         const absoluteEnd = Math.max(
@@ -429,7 +498,7 @@ async function handleTranscribeSegment(
           track === 'mixed'
             ? `seg_${meetingId}_${idx}_${relativeStart}`
             : `seg_${meetingId}_${idx}_${track}_${relativeStart}`;
-        await db
+        return db
           .insert(transcriptSegments)
           .values({
             id,
@@ -453,13 +522,14 @@ async function handleTranscribeSegment(
               isFinal: true,
             },
           });
-      }
+      }));
+      if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
     await db
       .update(meetingSegments)
       .set({ transcribeStatus: 'complete' })
-      .where(eq(meetingSegments.id, segment.id));
+      .where(ownClaim);
 
     if (track !== 'mixed') {
       await removeEcho(db, meetingId, {
@@ -485,8 +555,8 @@ async function handleTranscribeSegment(
   } catch (error) {
     await db
       .update(meetingSegments)
-      .set({ transcribeStatus: 'pending' })
-      .where(eq(meetingSegments.id, segment.id));
+      .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+      .where(ownClaim);
     throw error;
   }
 }
@@ -634,9 +704,8 @@ async function handleSummarize(
     recorderName: rendered.recorderName,
     chapters: wantChapters,
   });
-  const generatedByModel = plan.summary.apiKey
-    ? `byo-anthropic:${MEETING_SUMMARY_MODEL}`
-    : MEETING_SUMMARY_MODEL;
+  const model = summaryModel(!mode.final);
+  const generatedByModel = plan.summary.apiKey ? `byo-anthropic:${model}` : model;
   const now = Date.now();
   const values = {
     ...summaryValues(parsed),
@@ -781,17 +850,17 @@ async function replaceEmbeddings(
     values,
     metadata: { userId: source.userId, sourceType: source.sourceType, sourceId: source.sourceId, chunkIdx },
   }));
-  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
-    await db.insert(embeddings).values({
+  await runBatched(db, chunks.map((chunk, chunkIdx) =>
+    db.insert(embeddings).values({
       id: vectorRows[chunkIdx].id,
       userId: source.userId,
       sourceType: source.sourceType,
       sourceId: source.sourceId,
       chunkIdx,
-      contentExcerpt: chunks[chunkIdx].slice(0, 280),
+      contentExcerpt: chunk.slice(0, 280),
       createdAt: now,
-    });
-  }
+    }),
+  ));
   await env.VECTORIZE.upsert(vectorRows);
 }
 
@@ -879,6 +948,61 @@ async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
   await db.delete(users).where(eq(users.id, userId));
 }
 
+const STALE_SEGMENT_SWEEP_LIMIT = 100;
+
+/**
+ * Queue segments whose transcription claim outlived any possible consumer.
+ * Without this, a segment whose worker died after its queue message gave up
+ * would stay 'processing' and leave a gap in the transcript.
+ *
+ * Each row is sent first and reset to 'pending' only after its send succeeds,
+ * so a failed send leaves the row stale for the next sweep. Failures are
+ * reported, never thrown: the rest of the cron must still run.
+ */
+export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now()) {
+  const db = drizzle(env.DB, { schema });
+  const stale = and(
+    eq(meetingSegments.transcribeStatus, 'processing'),
+    or(isNull(meetingSegments.transcribeClaimedAt), lt(meetingSegments.transcribeClaimedAt, now - SEGMENT_CLAIM_TTL_MS)),
+  );
+  let candidates;
+  try {
+    candidates = await db
+      .select({
+        id: meetingSegments.id,
+        meetingId: meetingSegments.meetingId,
+        idx: meetingSegments.idx,
+        track: meetingSegments.track,
+      })
+      .from(meetingSegments)
+      .where(stale)
+      .limit(STALE_SEGMENT_SWEEP_LIMIT);
+  } catch (error) {
+    reportError('could not look up stale segment claims', error);
+    return;
+  }
+  let requeued = 0;
+  for (const { id, ...segment } of candidates) {
+    try {
+      await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
+      // Conditional on still being stale: if the message was already picked up
+      // and claimed, the fresh claim is left alone.
+      await db
+        .update(meetingSegments)
+        .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
+        .where(and(eq(meetingSegments.id, id), stale));
+      requeued += 1;
+    } catch (error) {
+      reportError('could not requeue stale segment claim', error, { segment });
+    }
+  }
+  if (candidates.length > 0) {
+    console.warn(
+      JSON.stringify({ message: 'requeued stale segment claims', count: requeued, failed: candidates.length - requeued }),
+    );
+  }
+}
+
 export async function sealLegacyKeys(env: ProcessingEnv) {
   const db = drizzle(env.DB, { schema });
   const rows = await db
@@ -890,9 +1014,12 @@ export async function sealLegacyKeys(env: ProcessingEnv) {
     })
     .from(users)
     .where(
-      sql`(${users.byoAnthropicKey} IS NOT NULL AND ${users.byoAnthropicKey} NOT LIKE 'enc:%')
+      // The first term matches users_byo_keys_idx exactly, so only users who
+      // ever saved a key are read.
+      sql`(byo_anthropic_key IS NOT NULL OR byo_deepgram_key IS NOT NULL OR byo_openrouter_key IS NOT NULL)
+        AND ((${users.byoAnthropicKey} IS NOT NULL AND ${users.byoAnthropicKey} NOT LIKE 'enc:%')
         OR (${users.byoDeepgramKey} IS NOT NULL AND ${users.byoDeepgramKey} NOT LIKE 'enc:%')
-        OR (${users.byoOpenRouterKey} IS NOT NULL AND ${users.byoOpenRouterKey} NOT LIKE 'enc:%')`,
+        OR (${users.byoOpenRouterKey} IS NOT NULL AND ${users.byoOpenRouterKey} NOT LIKE 'enc:%'))`,
     )
     .limit(200);
   let sealed = 0;
@@ -950,6 +1077,16 @@ export async function purgeDeleted(env: ProcessingEnv, now = Date.now()) {
     captures: deletedCaptures.length,
     dictations: deletedDictations.length,
   };
+}
+
+const D1_BATCH_SIZE = 50;
+
+/** Sends row writes to D1 in batches: one round trip per 50 rows, not per row. */
+async function runBatched(db: Db, statements: BatchItem<'sqlite'>[]) {
+  for (let i = 0; i < statements.length; i += D1_BATCH_SIZE) {
+    const [first, ...rest] = statements.slice(i, i + D1_BATCH_SIZE);
+    await db.batch([first, ...rest]);
+  }
 }
 
 function chunkText(text: string, maxChars: number): string[] {

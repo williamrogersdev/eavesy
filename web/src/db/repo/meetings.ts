@@ -92,7 +92,7 @@ export async function update(
     platform?: (typeof meetings.$inferSelect)['platform'];
     speakerNamesJson?: string | null;
   },
-): Promise<void> {
+): Promise<boolean> {
   const patch: Partial<typeof meetings.$inferInsert> = { updatedAt: Date.now() };
   if (args.title !== undefined) patch.title = args.title;
   if (args.description !== undefined) patch.description = args.description;
@@ -102,17 +102,21 @@ export async function update(
   if (args.folderId !== undefined) patch.folderId = args.folderId;
   if (args.platform !== undefined) patch.platform = args.platform;
   if (args.speakerNamesJson !== undefined) patch.speakerNamesJson = args.speakerNamesJson;
-  await db
+  const updated = await db
     .update(meetings)
     .set(patch)
-    .where(and(eq(meetings.id, args.meetingId), eq(meetings.userId, args.userId)));
+    .where(and(eq(meetings.id, args.meetingId), eq(meetings.userId, args.userId)))
+    .returning({ id: meetings.id });
+  return updated.length > 0;
 }
 
-export async function softDelete(db: AppDb, args: { meetingId: string; userId: string }) {
-  await db
+export async function softDelete(db: AppDb, args: { meetingId: string; userId: string }): Promise<boolean> {
+  const deleted = await db
     .update(meetings)
     .set({ deletedAt: Date.now(), updatedAt: Date.now() })
-    .where(and(eq(meetings.id, args.meetingId), eq(meetings.userId, args.userId)));
+    .where(and(eq(meetings.id, args.meetingId), eq(meetings.userId, args.userId)))
+    .returning({ id: meetings.id });
+  return deleted.length > 0;
 }
 
 export async function get(db: AppDb, args: { meetingId: string; userId: string }) {

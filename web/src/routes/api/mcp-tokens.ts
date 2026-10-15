@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as mcpRepo from '@/db/repo/mcp';
 import { resolveActor } from '@/server/auth';
+import { MCP_SERVER_URL, mcpTokenExpiresAt } from '@/server/mcp-token-policy';
 
 const createSchema = z.object({ name: z.string().trim().min(1).max(100) });
 const revokeSchema = z.object({ id: z.string().min(1).max(100) });
@@ -20,6 +21,8 @@ export const Route = createFileRoute('/api/mcp-tokens')({
               name: row.name,
               createdAt: row.createdAt,
               lastUsedAt: row.lastUsedAt,
+              expiresAt: mcpTokenExpiresAt(row),
+              usesLegacyUrl: row.pathAuthUsedAt !== null,
             })),
           );
         } catch {
@@ -36,7 +39,12 @@ export const Route = createFileRoute('/api/mcp-tokens')({
             scopes: ['read'],
           });
           return Response.json(
-            { id: token.id, url: `https://mcp.eavesy.com/${token.rawToken}` },
+            {
+              id: token.id,
+              serverUrl: MCP_SERVER_URL,
+              token: token.rawToken,
+              expiresAt: token.expiresAt,
+            },
             { status: 201 },
           );
         } catch (error) {

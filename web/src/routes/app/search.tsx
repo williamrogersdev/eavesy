@@ -30,7 +30,7 @@ function SearchPage() {
     setError(null);
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(normalized)}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(`Search failed (${r.status})`);
       setItems(parseSearchItems(await r.json()));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -68,7 +68,7 @@ function SearchPage() {
           type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="What did Sarah say about pricing in May?"
+          placeholder="What did Sarah say about the launch in May?"
           autoFocus
           className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-9 text-sm outline-none focus:border-accent/50"
         />

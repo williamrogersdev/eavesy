@@ -12,12 +12,14 @@ import { captureMessage, sentryOptions, withSentry } from '../../../web/src/serv
 import {
   deadLetterQueue,
   purgeDeleted,
+  recoverStaleSegments,
   sealLegacyKeys,
   SUMMARY_WAIT_LIMIT_MS,
   queue as runQueue,
   type ProcessingEnv,
   type ProcessingMessage,
 } from '../../../web/src/server/processing-worker';
+import { pruneRateLimits } from '../../../web/src/server/rate-limit-store';
 
 export interface Env extends ProcessingEnv {
   DB: D1Database;
@@ -129,7 +131,9 @@ export const worker = {
       await env.DB.prepare('UPDATE meetings SET updated_at = ? WHERE id = ?').bind(now, meeting.id).run();
       await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
     }
+    await recoverStaleSegments(env, now);
     await purgeDeleted(env, now);
+    await pruneRateLimits(env.DB, now);
     await sealLegacyKeys(env);
     await rollupOperationalMetrics(env, now);
   },
@@ -159,6 +163,7 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
     transcriptChars,
     summaryChars,
     stuckMeetings,
+    firstTranscriptLatency,
   ] =
     await Promise.all([
       db.prepare(
@@ -217,43 +222,58 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
           processing_ms_total: number;
           processing_ms_max: number;
         }>(),
+      // The "first …" metrics start from the day's rows and look back per user
+      // through an index, instead of grouping every user's whole history.
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT user_id, min(created_at) AS first_at
-             FROM meetings
-            GROUP BY user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT m.user_id) AS count
+           FROM meetings m
+          WHERE m.created_at >= ? AND m.created_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM meetings earlier
+               WHERE earlier.user_id = m.user_id AND earlier.created_at < ?
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT user_id, min(created_at) AS first_at
-             FROM activity_log
-            WHERE event_type = 'meeting.complete'
-            GROUP BY user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT a.user_id) AS count
+           FROM activity_log a
+          WHERE a.event_type = 'meeting.complete'
+            AND a.created_at >= ? AND a.created_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM activity_log earlier
+               WHERE earlier.user_id = a.user_id
+                 AND earlier.event_type = 'meeting.complete'
+                 AND earlier.created_at < ?
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
-        `SELECT count(*) AS count FROM (
-           SELECT used.user_id, min(used.created_at) AS first_at
-             FROM activity_log used
-            WHERE used.event_type IN ('meeting.copy', 'meeting.export')
-              AND EXISTS (
-                SELECT 1 FROM activity_log completed
-                 WHERE completed.meeting_id = used.meeting_id
-                   AND completed.event_type = 'meeting.complete'
-                   AND completed.created_at <= used.created_at
-              )
-            GROUP BY used.user_id
-           HAVING first_at >= ? AND first_at < ?
-         )`,
+        `SELECT count(DISTINCT used.user_id) AS count
+           FROM activity_log used
+          WHERE used.event_type IN ('meeting.copy', 'meeting.export')
+            AND used.created_at >= ? AND used.created_at < ?
+            AND EXISTS (
+              SELECT 1 FROM activity_log completed
+               WHERE completed.meeting_id = used.meeting_id
+                 AND completed.event_type = 'meeting.complete'
+                 AND completed.created_at <= used.created_at
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM activity_log earlier
+               WHERE earlier.user_id = used.user_id
+                 AND earlier.event_type IN ('meeting.copy', 'meeting.export')
+                 AND earlier.created_at < ?
+                 AND EXISTS (
+                   SELECT 1 FROM activity_log completed
+                    WHERE completed.meeting_id = earlier.meeting_id
+                      AND completed.event_type = 'meeting.complete'
+                      AND completed.created_at <= earlier.created_at
+                 )
+            )`,
       )
-        .bind(start, end)
+        .bind(start, end, start)
         .first<{ count: number }>(),
       db.prepare(
         `SELECT count(DISTINCT used.meeting_id) AS count
@@ -269,24 +289,26 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
       )
         .bind(start, end)
         .first<{ count: number }>(),
+      // A return that happened today is a meeting started today, so only users
+      // with a meeting started today can count.
       db.prepare(
-        `WITH first_recordings AS (
-           SELECT user_id, min(started_at) AS first_at
-             FROM meetings
-            GROUP BY user_id
-         ), first_returns AS (
-           SELECT first_recordings.user_id, min(meetings.started_at) AS returned_at
-             FROM first_recordings
-             JOIN meetings ON meetings.user_id = first_recordings.user_id
-            WHERE meetings.started_at > first_recordings.first_at
-              AND meetings.started_at <= first_recordings.first_at + 7 * 24 * 60 * 60 * 1000
-            GROUP BY first_recordings.user_id
+        `WITH candidates AS (
+           SELECT DISTINCT m.user_id,
+                  (SELECT min(f.started_at) FROM meetings f WHERE f.user_id = m.user_id) AS first_at
+             FROM meetings m
+            WHERE m.started_at >= ? AND m.started_at < ?
+         ), returns AS (
+           SELECT (SELECT min(r.started_at) FROM meetings r
+                    WHERE r.user_id = candidates.user_id
+                      AND r.started_at > candidates.first_at
+                      AND r.started_at <= candidates.first_at + 7 * 24 * 60 * 60 * 1000) AS returned_at
+             FROM candidates
          )
          SELECT count(*) AS count
-           FROM first_returns
+           FROM returns
           WHERE returned_at >= ? AND returned_at < ?`,
       )
-        .bind(start, end)
+        .bind(start, end, start, end)
         .first<{ count: number }>(),
       db.prepare(
         `SELECT coalesce(sum(length(t.text)), 0) AS chars
@@ -328,6 +350,19 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
           )
             .bind(date)
             .first<{ count: number }>(),
+      // Streamed recordings only: an uploaded file's first line arrives after
+      // the whole recording, which would swamp the live-transcript signal.
+      db.prepare(
+        `SELECT count(*) AS samples,
+                coalesce(sum(first_transcript_at - started_at), 0) AS ms_total,
+                coalesce(max(first_transcript_at - started_at), 0) AS ms_max
+           FROM meetings m
+          WHERE m.first_transcript_at >= ? AND m.first_transcript_at < ?
+            AND m.first_transcript_at >= m.started_at
+            AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)`,
+      )
+        .bind(start, end)
+        .first<{ samples: number; ms_total: number; ms_max: number }>(),
     ]);
 
   const audioSeconds = meetingStarts?.audio_seconds ?? 0;
@@ -343,9 +378,10 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
        users_first_transcript, users_first_brief_use, users_first_return_7d,
        meetings_started, meetings_completed, meetings_brief_used,
        meetings_failed, meetings_stuck, processing_samples,
-       processing_ms_total, processing_ms_max, audio_seconds,
+       processing_ms_total, processing_ms_max, first_transcript_samples,
+       first_transcript_ms_total, first_transcript_ms_max, audio_seconds,
        estimated_ai_cost_microusd, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(date) DO UPDATE SET
        signups = excluded.signups,
        onboarded_users = excluded.onboarded_users,
@@ -362,6 +398,9 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
        processing_samples = excluded.processing_samples,
        processing_ms_total = excluded.processing_ms_total,
        processing_ms_max = excluded.processing_ms_max,
+       first_transcript_samples = excluded.first_transcript_samples,
+       first_transcript_ms_total = excluded.first_transcript_ms_total,
+       first_transcript_ms_max = excluded.first_transcript_ms_max,
        audio_seconds = excluded.audio_seconds,
        estimated_ai_cost_microusd = excluded.estimated_ai_cost_microusd,
        updated_at = excluded.updated_at`,
@@ -383,6 +422,9 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
       outcomes?.processing_samples ?? 0,
       outcomes?.processing_ms_total ?? 0,
       outcomes?.processing_ms_max ?? 0,
+      firstTranscriptLatency?.samples ?? 0,
+      firstTranscriptLatency?.ms_total ?? 0,
+      firstTranscriptLatency?.ms_max ?? 0,
       audioSeconds,
       estimatedAiCostMicrousd,
       observedAt,

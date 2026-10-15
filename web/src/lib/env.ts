@@ -8,10 +8,6 @@ const serverEnvSchema = z.object({
   R2_SECRET_ACCESS_KEY: z.string().optional(),
   R2_BUCKET: z.string().optional(),
   R2_PUBLIC_URL_BASE: z.string().optional(),
-  STRIPE_SECRET_KEY: z.string().min(1).optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
-  STRIPE_PRICE_PRO: z.string().optional(),
-  STRIPE_PRICE_TEAM: z.string().optional(),
 });
 
 type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -24,10 +20,6 @@ export const serverEnv: ServerEnv = serverEnvSchema.parse({
   R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
   R2_BUCKET: process.env.R2_BUCKET,
   R2_PUBLIC_URL_BASE: process.env.R2_PUBLIC_URL_BASE,
-  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
-  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
-  STRIPE_PRICE_PRO: process.env.STRIPE_PRICE_PRO,
-  STRIPE_PRICE_TEAM: process.env.STRIPE_PRICE_TEAM,
 });
 
 export function requireServerEnv<K extends keyof ServerEnv>(key: K): NonNullable<ServerEnv[K]> {

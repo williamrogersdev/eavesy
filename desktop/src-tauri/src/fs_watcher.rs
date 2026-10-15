@@ -33,6 +33,8 @@ pub struct WatcherManager {
 
 impl WatcherManager {
     pub fn replace(&self, app: AppHandle, root: PathBuf) -> Result<()> {
+        // Folder names under the root are meeting titles; reports must not carry them.
+        crate::telemetry::set_recordings_root(&root);
         let replacement = start(app, root)?;
         let mut handle = self
             .handle
@@ -45,7 +47,7 @@ impl WatcherManager {
 
 fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
     std::fs::create_dir_all(&root)
-        .with_context(|| format!("create recordings root {}", root.display()))?;
+        .context("create recordings root")?;
 
     let (sender, receiver) = mpsc::channel::<WatchMessage>();
     let callback_app = app.clone();
@@ -69,7 +71,6 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("recordings watcher: {error}");
                 crate::telemetry::capture("filesystem.watch", &error.to_string());
                 let _ = callback_app.emit("recordings:watch-error", ());
             }
@@ -78,10 +79,9 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
     .context("create recordings watcher")?;
     watcher
         .watch(&root, RecursiveMode::Recursive)
-        .with_context(|| format!("watch recordings root {}", root.display()))?;
+        .context("watch recordings root")?;
 
     if let Err(error) = reconcile_folder_locations(&app, &root) {
-        eprintln!("could not locate moved recording folders during startup: {error:#}");
         crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
     }
     seed_existing_files(&app);
@@ -125,13 +125,11 @@ fn reconcile_loop(
         }
         if rescan_folders {
             if let Err(error) = reconcile_folder_locations(&app, &root) {
-                eprintln!("could not reconcile moved recording folders: {error:#}");
                 crate::telemetry::capture("filesystem.folder-scan", &error.to_string());
             }
         }
         for path in paths {
             if let Err(error) = reconcile_path(&app, &path) {
-                eprintln!("could not reconcile {}: {error:#}", path.display());
                 crate::telemetry::capture("filesystem.reconcile", &error.to_string());
             }
         }
@@ -226,12 +224,12 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
         let entries = match std::fs::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if folder != root => {
-                eprintln!("could not inspect recording subfolder {}: {error}", folder.display());
+                tracing::warn!("could not inspect a recording subfolder: {}", error.kind());
                 continue;
             }
             Err(error) => {
                 return Err(error)
-                    .with_context(|| format!("scan recordings root {}", root.display()))
+                    .context("scan recordings root")
             }
         };
         for entry in entries.flatten() {
@@ -258,7 +256,6 @@ fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
         for filename in ["summary.md", "transcript.md", "notes.md"] {
             let path = folder.join(filename);
             if let Err(error) = reconcile_path(app, &path) {
-                eprintln!("could not reconcile {} during startup: {error:#}", path.display());
                 crate::telemetry::capture("filesystem.startup-reconcile", &error.to_string());
             }
         }
@@ -324,11 +321,16 @@ fn canonical(path: &Path) -> PathBuf {
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>> {
     let metadata = std::fs::metadata(path)
-        .with_context(|| format!("inspect edited file {}", path.display()))?;
+        .with_context(|| format!("inspect edited {}", file_label(path)))?;
     if metadata.len() > MAX_EDIT_BYTES {
         anyhow::bail!("edited file exceeds the 5 MiB safety limit");
     }
-    std::fs::read(path).with_context(|| format!("read edited file {}", path.display()))
+    std::fs::read(path).with_context(|| format!("read edited {}", file_label(path)))
+}
+
+/// The canonical file name only: the folder above it is the meeting title.
+fn file_label(path: &Path) -> &str {
+    path.file_name().and_then(|name| name.to_str()).unwrap_or("file")
 }
 
 fn file_role(path: &Path) -> Option<&'static str> {

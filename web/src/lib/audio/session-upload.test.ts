@@ -98,6 +98,36 @@ describe('SessionUpload', () => {
     expect(calls).toHaveLength(1);
   });
 
+  test('keeps audio that arrives before the recording has started', async () => {
+    const calls = fakeServer();
+    const upload = new SessionUpload(null, []);
+    upload.addArchiveChunk(new Blob([new Uint8Array(3)]));
+    upload.addSegment(segment(0));
+    await Promise.resolve();
+    expect(calls).toHaveLength(0);
+
+    upload.begin('audio/webm');
+    await upload.finish();
+    expect(calls.map((c) => `${c.method} ${c.path} ${c.bytes}`)).toEqual([
+      `POST /api/sessions ${calls[0].bytes}`,
+      'PUT /api/sessions/meet_1/segments/0 10',
+      'POST /api/sessions/meet_1/finalize 3',
+    ]);
+  });
+
+  test('never addresses a session that was not created', async () => {
+    const calls = fakeServer((call) => (call.path === '/api/sessions' ? 503 : null));
+    const upload = new SessionUpload('audio/webm', []);
+    upload.addSegment(segment(0));
+    await expect(upload.finish()).rejects.toThrow('status 503');
+    await upload.discard();
+    upload.addSegment(segment(1));
+    upload.addArchiveChunk(new Blob([new Uint8Array(9 * MiB)]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls.filter((c) => c.path.includes('null'))).toEqual([]);
+    expect(calls.every((c) => c.path === '/api/sessions')).toBe(true);
+  });
+
   test('discarding deletes the recording', async () => {
     const calls = fakeServer();
     const upload = new SessionUpload('audio/webm', []);

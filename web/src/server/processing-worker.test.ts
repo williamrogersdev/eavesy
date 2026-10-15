@@ -210,6 +210,44 @@ describe('rolling summary', () => {
     expect(api.calls).toHaveLength(0);
     expect(t.sqlite.query('SELECT count(*) n FROM summaries').get()).toEqual({ n: 0 });
   });
+
+  test('streams from Haiku with a small budget, on the user’s own key when they have one', async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE meetings SET status = 'recording'`);
+    t.sqlite.run(`UPDATE users SET byo_anthropic_key = 'sk-ant-mine'`);
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const keys: (string | null)[] = [];
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      keys.push(new Headers(init?.headers).get('x-api-key'));
+      return stubbed(input, init);
+    }) as typeof fetch;
+    restoreFetch = api.restore;
+
+    await deliver(t.env, { kind: 'rolling-summarize', meetingId: 'm1', throughIdx: 0 });
+
+    const request = api.calls[0] as { model: string; stream: boolean; max_tokens: number; output_config: { effort: string } };
+    expect(request).toMatchObject({ model: 'claude-haiku-5-5', stream: true, max_tokens: 8_000 });
+    expect(request.output_config.effort).toBe('low');
+    expect(keys).toEqual(['sk-ant-mine']);
+    expect(t.sqlite.query('SELECT tldr, generated_by_model m FROM summaries').get()).toEqual({
+      tldr: SUMMARY.tldr,
+      m: 'byo-anthropic:claude-haiku-5-5',
+    });
+  });
+
+  test('the final summary stays on the summary model', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect((api.calls[0] as { model: string; stream?: boolean })).toMatchObject({ model: 'claude-sonnet-4-6' });
+    expect((api.calls[0] as { stream?: boolean }).stream).toBeUndefined();
+  });
 });
 
 describe('dead-letter queue', () => {

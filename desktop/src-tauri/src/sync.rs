@@ -3,7 +3,9 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::time::sleep;
 
@@ -61,6 +63,8 @@ struct ResultResponse {
 
 const POLL_INTERVAL_MS: i64 = 10_000;
 const ERROR_BACKOFF_MS: i64 = 15_000;
+/// Retry interval while the server does not support segments-only finalize yet.
+const SEGMENTS_ONLY_RETRY_MS: i64 = 10 * 60 * 1_000;
 
 #[derive(Debug)]
 struct Permanent(String);
@@ -71,6 +75,76 @@ impl std::fmt::Display for Permanent {
 }
 impl std::error::Error for Permanent {}
 
+/// The server rejected the device credential. Nothing is counted against the
+/// upload: sync pauses until the user signs in again.
+#[derive(Debug)]
+struct Unauthorized(String);
+impl std::fmt::Display for Unauthorized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for Unauthorized {}
+
+fn is_unauthorized(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<Unauthorized>().is_some()
+}
+
+/// How long a rejected credential is left alone before sync probes it again.
+const SIGNED_OUT_RETRY: Duration = Duration::from_secs(5 * 60);
+
+static WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Ends the sync loop's current pause early: call when new work was queued (a
+/// segment was sealed, a capture stopped, the device was paired).
+pub fn wake() {
+    WAKE.notify_one();
+}
+
+/// Sleeps for `duration` or until `wake` is called, whichever comes first.
+async fn idle(duration: Duration) {
+    tokio::select! {
+        () = sleep(duration) => {}
+        () = WAKE.notified() => {}
+    }
+}
+
+static SIGNED_OUT: AtomicBool = AtomicBool::new(false);
+
+/// True while uploads are paused because the server rejected this Mac's credential.
+pub fn signed_out() -> bool {
+    SIGNED_OUT.load(Ordering::SeqCst)
+}
+
+fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
+    if SIGNED_OUT.swap(signed_out, Ordering::SeqCst) == signed_out {
+        return;
+    }
+    if let Err(error) = app.emit("sync:status", serde_json::json!({ "signedOut": signed_out })) {
+        eprintln!("desktop ingest: could not announce sign-in state: {error}");
+    }
+    if !signed_out {
+        return;
+    }
+    crate::telemetry::capture("recording upload paused", "device credential rejected");
+    if let Some(app) = crate::ui::wry(app) {
+        let message = "Eavesy is signed out. Recordings are kept on this Mac and will upload after you reconnect your account.";
+        if crate::hud::current().phase != crate::hud::Phase::Recording {
+            crate::hud::set_state(app, crate::hud::HudState {
+                phase: crate::hud::Phase::Failed,
+                session_id: None,
+                mode: None,
+                started_at_ms: None,
+                message: Some(message.to_string()),
+            });
+        }
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(error) = app.notification().builder().title("Sign in to keep syncing").body(message).show() {
+            eprintln!("desktop ingest: could not show sign-in notice: {error}");
+        }
+    }
+}
+
 fn is_permanent(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Permanent>().is_some()
         || error
@@ -78,65 +152,141 @@ fn is_permanent(error: &anyhow::Error) -> bool {
             .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
 }
 
-pub async fn run(app: AppHandle) -> Result<()> {
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .context("build ingest HTTP client")?;
+/// Where and how the sync loop talks to the server.
+pub(crate) struct Api {
+    client: Client,
+    base: String,
+}
 
-    loop {
-        let Some(token) = settings::device_token(&app) else {
-            sleep(Duration::from_secs(5)).await;
-            continue;
-        };
-        match sync_file_edit(&app, &client, &token).await {
-            Ok(true) => continue,
-            Ok(false) => {},
-            Err(error) => {
-                eprintln!("desktop file edit sync: {error:#}");
-                sleep(Duration::from_secs(2)).await;
-            }
-        }
-        let session = match sqlite::next_session(&app) {
-            Ok(Some(session)) => session,
-            Ok(None) => {
-                sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-            Err(error) => {
-                eprintln!("desktop ingest: {error}");
-                sleep(Duration::from_secs(5)).await;
-                continue;
-            }
-        };
+impl Api {
+    pub(crate) fn new(base: String) -> Result<Self> {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .context("build ingest HTTP client")?;
+        Ok(Self { client, base })
+    }
 
-        match sync_session(&app, &client, &token, session.clone()).await {
-            Ok(Step::Progressed) => {}
-            Ok(Step::Waiting) => {
-                let _ = sqlite::defer_session(&app, &session.id, POLL_INTERVAL_MS, None);
-            }
-            Err(error) if is_permanent(&error) => {
-                eprintln!("desktop ingest: giving up on {}: {error:#}", session.id);
-                crate::telemetry::capture("recording upload gave up", &format!("{error:#}"));
-                let _ = sqlite::mark_session_failed(&app, &session.id, &format!("{error:#}"));
-                let _ = crate::store::set_status(&app, &session.id, "transcript_failed");
-            }
-            Err(error) => {
-                eprintln!("desktop ingest paused for {}: {error:#}", session.id);
-                let _ = sqlite::defer_session(&app, &session.id, ERROR_BACKOFF_MS, Some(&format!("{error:#}")));
-            }
-        }
-        sleep(Duration::from_millis(250)).await;
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
     }
 }
 
-async fn sync_file_edit(app: &AppHandle, client: &Client, token: &str) -> Result<bool> {
+/// What one pass of the sync loop did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    /// Nothing was due.
+    Idle,
+    /// Work was done or attempted; run again soon.
+    Busy,
+    /// The server rejected the device credential.
+    SignedOut,
+}
+
+/// How often captures whose recovery was deferred are tried again.
+const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
+
+pub async fn run(app: AppHandle) -> Result<()> {
+    let api = Api::new(api_base())?;
+    let mut rejected: Option<(String, Instant)> = None;
+    let mut recovery_retried = Instant::now();
+
+    loop {
+        if recovery_retried.elapsed() >= RECOVERY_RETRY {
+            recovery_retried = Instant::now();
+            let app = app.clone();
+            if let Err(error) = tokio::task::spawn_blocking(move || crate::recovery::retry_deferred(&app)).await {
+                eprintln!("desktop ingest: deferred recovery stopped: {error}");
+            }
+        }
+        let Some(token) = settings::device_token(&app) else {
+            idle(Duration::from_secs(5)).await;
+            continue;
+        };
+        if let Some((rejected_token, since)) = &rejected {
+            if *rejected_token == token && since.elapsed() < SIGNED_OUT_RETRY {
+                idle(Duration::from_secs(5)).await;
+                continue;
+            }
+        }
+        match pass(&app, &api, &token).await {
+            Pass::SignedOut => {
+                set_signed_out(&app, true);
+                rejected = Some((token, Instant::now()));
+            }
+            outcome => {
+                if rejected.take().is_some() {
+                    set_signed_out(&app, false);
+                }
+                if outcome == Pass::Idle {
+                    idle(Duration::from_secs(2)).await;
+                } else {
+                    sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+    }
+}
+
+/// One turn of the loop: an external file edit, else one step of the most urgent
+/// recording session. Every state change it makes is persisted before it returns.
+pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Pass {
+    match sync_file_edit(app, api, token).await {
+        Ok(true) => return Pass::Busy,
+        Ok(false) => {}
+        Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
+        Err(error) => eprintln!("desktop file edit sync: {error:#}"),
+    }
+    let next = {
+        let app = app.clone();
+        blocking(move || sqlite::next_session(&app)).await
+    };
+    let session = match next {
+        Ok(Some(session)) => session,
+        Ok(None) => return Pass::Idle,
+        Err(error) => {
+            eprintln!("desktop ingest: {error}");
+            return Pass::Idle;
+        }
+    };
+
+    let outcome = sync_session(app, api, token, session.clone()).await;
+    let recorded = match outcome {
+        Ok(Step::Progressed) => Ok(()),
+        Ok(Step::Waiting) => sqlite::defer_session(app, &session.id, POLL_INTERVAL_MS, None),
+        Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
+        Err(error) if is_permanent(&error) => {
+            eprintln!("desktop ingest: giving up on {}: {error:#}", session.id);
+            crate::telemetry::capture("recording upload gave up", &format!("{error:#}"));
+            sqlite::mark_session_failed(app, &session.id, &format!("{error:#}"))
+                .and_then(|()| crate::store::set_status(app, &session.id, "transcript_failed"))
+                .map(|()| {
+                    if let Err(error) = app.emit("recordings:updated", ()) {
+                        eprintln!("desktop ingest: could not announce failed upload: {error}");
+                    }
+                })
+        }
+        Err(error) => {
+            eprintln!("desktop ingest paused for {}: {error:#}", session.id);
+            sqlite::defer_session(app, &session.id, ERROR_BACKOFF_MS, Some(&format!("{error:#}")))
+        }
+    };
+    if let Err(error) = recorded {
+        // The session stays where it was and is retried; say so instead of hiding it.
+        eprintln!("desktop ingest: could not record the outcome for {}: {error}", session.id);
+        crate::telemetry::capture("recording sync state not saved", &error);
+        return Pass::Idle;
+    }
+    Pass::Busy
+}
+
+async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<bool> {
     if let Some(edit) = sqlite::next_file_edit(app).map_err(|error| anyhow!(error))? {
         if let Some(remote_id) = sqlite::remote_meeting_id(app, &edit.local_session_id)
             .map_err(|error| anyhow!(error))?
         {
-            let result = upload_file_edit(client, token, &remote_id, &edit).await;
+            let result = upload_file_edit(api, token, &remote_id, &edit).await;
             match result {
                 Ok(()) => sqlite::mark_operation_done(app, &edit.operation_id)
                     .map_err(|error| anyhow!(error))?,
@@ -155,15 +305,16 @@ async fn sync_file_edit(app: &AppHandle, client: &Client, token: &str) -> Result
 
 enum Step { Progressed, Waiting }
 
-async fn sync_session(
-    app: &AppHandle,
-    client: &Client,
+async fn sync_session<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
     token: &str,
     mut session: sqlite::PendingSession,
 ) -> Result<Step> {
     if session.remote_meeting_id.is_none() {
-        let response = client
-            .post(format!("{}/api/sessions", api_base()))
+        let response = api
+            .client
+            .post(api.url("/api/sessions"))
             .bearer_auth(token)
             .json(&serde_json::json!({
                 "clientSessionId": session.id,
@@ -193,12 +344,12 @@ async fn sync_session(
                 "the transcript was not ready a day after the recording ended".to_string()
             )));
         }
-        poll_result(app, client, token, &remote_id, &session).await?;
+        poll_result(app, api, token, &remote_id, &session).await?;
         return Ok(Step::Waiting);
     }
 
     if let Some(segment) = sqlite::next_segment(app, &session.id).map_err(|e| anyhow!(e))? {
-        match upload_segment(client, token, &remote_id, &segment).await {
+        match upload_segment(api, token, &remote_id, &segment).await {
             Ok(()) => sqlite::mark_segment_uploaded(app, &segment).map_err(|e| anyhow!(e))?,
             Err(error) if is_permanent(&error) => {
                 eprintln!("desktop ingest: skipping segment {}: {error:#}", segment.idx);
@@ -206,6 +357,7 @@ async fn sync_session(
                 sqlite::give_up_segment(app, &segment, &format!("{error:#}"))
                     .map_err(|e| anyhow!(e))?;
             }
+            Err(error) if is_unauthorized(&error) => return Err(error),
             Err(error) => {
                 sqlite::mark_segment_failed(app, &segment, &format!("{error:#}"))
                     .map_err(|e| anyhow!(e))?;
@@ -216,26 +368,39 @@ async fn sync_session(
     }
 
     if session.status == "recording" {
-        poll_result(app, client, token, &remote_id, &session).await?;
+        poll_result(app, api, token, &remote_id, &session).await?;
         return Ok(Step::Waiting);
     }
     if !sqlite::all_segments_uploaded(app, &session.id).map_err(|e| anyhow!(e))? {
         return Ok(Step::Waiting);
     }
 
-    upload_archive(app, client, token, &remote_id, &session).await?;
+    if !session.archive_missing && !crate::recovery::archive_is_playable(&session.archive_path) {
+        eprintln!(
+            "desktop ingest: archive for {} is missing or unfinished; finishing from segments",
+            session.id
+        );
+        sqlite::mark_archive_missing(app, &session.id).map_err(|e| anyhow!(e))?;
+        session.archive_missing = true;
+    }
+    if session.archive_missing {
+        finalize_from_segments(app, api, token, &remote_id, &session).await?;
+    } else {
+        upload_archive(app, api, token, &remote_id, &session).await?;
+    }
     Ok(Step::Progressed)
 }
 
-async fn poll_result(
-    app: &AppHandle,
-    client: &Client,
+async fn poll_result<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
     token: &str,
     remote_id: &str,
     session: &sqlite::PendingSession,
 ) -> Result<()> {
-    let response = client
-        .get(format!("{}/api/sessions/{}/result", api_base(), remote_id))
+    let response = api
+        .client
+        .get(api.url(&format!("/api/sessions/{remote_id}/result")))
         .bearer_auth(token)
         .send()
         .await
@@ -252,41 +417,57 @@ async fn poll_result(
         .summary_override_md
         .clone()
         .or_else(|| result.summary.as_ref().map(render_summary));
-    crate::store::set_result(
-        app,
-        &session.id,
-        &result.title,
-        transcript.clone(),
-        summary,
-        Some(result.notes_md),
-        match result.status.as_str() {
-            "complete" => "complete",
-            "failed" => "transcript_failed",
-            _ => "processing",
-        },
-    )
-    .map_err(|e| anyhow!(e))?;
-    if let Some(recording) = crate::store::load_all(app)
-        .into_iter()
-        .find(|recording| recording.id == session.id)
-    {
-        if let Some(folder) = session.archive_path.parent() {
-            fs_writer::persist_recording_artifacts(
-                Some(app),
-                folder,
-                &recording,
-                Some(remote_id),
-                recording.notes.as_deref(),
-            )
-            .map_err(|error| anyhow!(error))?;
+    let status = match result.status.as_str() {
+        "complete" => "complete",
+        "failed" => "transcript_failed",
+        _ => "processing",
+    };
+    // The registry and the recording folder are plain file IO: keep it off the
+    // async runtime, and skip it entirely when the poll brought nothing new.
+    let changed = blocking({
+        let app = app.clone();
+        let id = session.id.clone();
+        let folder = session.archive_path.parent().map(std::path::PathBuf::from);
+        let remote_id = remote_id.to_string();
+        let title = result.title.clone();
+        let transcript = transcript.clone();
+        let notes = result.notes_md.clone();
+        move || -> Result<bool, String> {
+            let Some((recording, changed)) =
+                crate::store::set_result(&app, &id, &title, transcript, summary, Some(notes), status)?
+            else {
+                return Ok(false);
+            };
+            // The poll that completes the session always writes the folder, so a
+            // write that failed on an earlier poll is not skipped forever.
+            if !changed && status != "complete" {
+                return Ok(false);
+            }
+            if let Some(folder) = folder {
+                fs_writer::persist_recording_artifacts(
+                    Some(&app),
+                    &folder,
+                    &recording,
+                    Some(&remote_id),
+                    recording.notes.as_deref(),
+                )?;
+            }
+            Ok(changed)
+        }
+    })
+    .await?;
+    if changed {
+        if let Err(error) = app.emit("recordings:updated", ()) {
+            eprintln!("desktop ingest: could not announce refreshed transcript: {error}");
         }
     }
-    let _ = app.emit("recordings:updated", ());
     if result.status == "complete" {
-        crate::dictation::deliver(app, &session.id, &transcript);
-        let current = crate::hud::current();
-        if current.session_id.as_deref() == Some(session.id.as_str()) && current.phase != crate::hud::Phase::Recording {
-            crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message: Some(transcript) });
+        if let Some(app) = crate::ui::wry(app) {
+            crate::dictation::deliver(app, &session.id, &transcript);
+            let current = crate::hud::current();
+            if current.session_id.as_deref() == Some(session.id.as_str()) && current.phase != crate::hud::Phase::Recording {
+                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message: Some(transcript) });
+            }
         }
         sqlite::mark_complete(app, &session.id).map_err(|e| anyhow!(e))?;
     } else if result.status == "failed" {
@@ -296,13 +477,14 @@ async fn poll_result(
 }
 
 async fn upload_file_edit(
-    client: &Client,
+    api: &Api,
     token: &str,
     remote_id: &str,
     edit: &sqlite::PendingFileEdit,
 ) -> Result<()> {
-    let response = client
-        .patch(format!("{}/api/sessions/{}/files", api_base(), remote_id))
+    let response = api
+        .client
+        .patch(api.url(&format!("/api/sessions/{remote_id}/files")))
         .bearer_auth(token)
         .json(&serde_json::json!({
             "role": edit.role,
@@ -317,6 +499,14 @@ async fn upload_file_edit(
     } else {
         Err(http_error("sync external recording-file edit", response).await)
     }
+}
+
+/// Runs blocking file or database work on tokio's blocking pool.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("local sync work stopped")?
+        .map_err(|error| anyhow!(error))
 }
 
 fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {
@@ -370,7 +560,7 @@ fn timestamp(ms: i64) -> String {
 }
 
 async fn upload_segment(
-    client: &Client,
+    api: &Api,
     token: &str,
     remote_id: &str,
     segment: &sqlite::PendingSegment,
@@ -378,11 +568,9 @@ async fn upload_segment(
     let bytes = tokio::fs::read(&segment.file_path)
         .await
         .with_context(|| format!("read segment {}", segment.file_path.display()))?;
-    let request = client
-        .put(format!(
-            "{}/api/sessions/{}/segments/{}",
-            api_base(), remote_id, segment.idx
-        ))
+    let request = api
+        .client
+        .put(api.url(&format!("/api/sessions/{remote_id}/segments/{}", segment.idx)))
         .bearer_auth(token)
         .header("content-type", "audio/mp4")
         .header("x-segment-start-ms", segment.start_ms)
@@ -404,9 +592,45 @@ async fn upload_segment(
     }
 }
 
-async fn upload_archive(
-    app: &AppHandle,
-    client: &Client,
+async fn finalize_from_segments<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
+    token: &str,
+    remote_id: &str,
+    session: &sqlite::PendingSession,
+) -> Result<()> {
+    if sqlite::uploaded_segment_count(app, &session.id).map_err(|e| anyhow!(e))? == 0 {
+        return Err(anyhow!(Permanent(
+            "the audio file could not be saved and no part of the recording reached the cloud".to_string()
+        )));
+    }
+    let response = api
+        .client
+        .post(api.url(&format!("/api/sessions/{remote_id}/finalize?archive=none")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("finish recording from its segments")?;
+    if response.status() == StatusCode::BAD_REQUEST {
+        // A server from before segments-only finalize rejects the empty body. That
+        // is not this recording's fault: wait for the server to be updated rather
+        // than failing it, so the desktop and server can ship in either order.
+        let error = http_error("finish recording from its segments", response).await;
+        eprintln!("desktop ingest: server cannot finish {} from segments yet: {error:#}", session.id);
+        sqlite::defer_session(app, &session.id, SEGMENTS_ONLY_RETRY_MS, Some(&format!("{error:#}")))
+            .map_err(|e| anyhow!(e))?;
+        return Ok(());
+    }
+    if !response.status().is_success() {
+        return Err(http_error("finish recording from its segments", response).await);
+    }
+    sqlite::mark_processing(app, &session.id).map_err(|e| anyhow!(e))?;
+    Ok(())
+}
+
+async fn upload_archive<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
     token: &str,
     remote_id: &str,
     session: &sqlite::PendingSession,
@@ -423,11 +647,9 @@ async fn upload_archive(
 
     if remaining > PART_SIZE as i64 {
         let bytes = read_range(&session.archive_path, offset, PART_SIZE).await?;
-        let response = client
-            .put(format!(
-                "{}/api/sessions/{}/parts/{}",
-                api_base(), remote_id, session.next_part_number
-            ))
+        let response = api
+            .client
+            .put(api.url(&format!("/api/sessions/{remote_id}/parts/{}", session.next_part_number)))
             .bearer_auth(token)
             .header("content-type", "application/octet-stream")
             .body(bytes)
@@ -457,8 +679,9 @@ async fn upload_archive(
     }
 
     let bytes = read_range(&session.archive_path, offset, remaining as usize).await?;
-    let response = client
-        .post(format!("{}/api/sessions/{}/finalize", api_base(), remote_id))
+    let response = api
+        .client
+        .post(api.url(&format!("/api/sessions/{remote_id}/finalize")))
         .bearer_auth(token)
         .header("content-type", "audio/mp4")
         .body(bytes)
@@ -487,13 +710,11 @@ async fn read_range(path: &Path, offset: i64, length: usize) -> Result<Vec<u8>> 
 async fn http_error(operation: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    let message = if status == StatusCode::UNAUTHORIZED {
-        format!("{operation}: device is not paired or its credential was revoked")
-    } else {
-        format!("{operation}: HTTP {status}: {}", body.chars().take(500).collect::<String>())
-    };
-    let permanent = status.is_client_error()
-        && !matches!(status.as_u16(), 401 | 408 | 425 | 429);
+    if status == StatusCode::UNAUTHORIZED {
+        return anyhow!(Unauthorized(format!("{operation}: {}", sqlite::UNAUTHORIZED_MARKER)));
+    }
+    let message = format!("{operation}: HTTP {status}: {}", body.chars().take(500).collect::<String>());
+    let permanent = status.is_client_error() && !matches!(status.as_u16(), 408 | 425 | 429);
     if permanent { anyhow!(Permanent(message)) } else { anyhow!(message) }
 }
 
@@ -519,6 +740,334 @@ mod tests {
             rendered,
             "# Sync\n\n## Transcript\n\n**[00:00:01] You:** Morning. I can present first.\n\n**[00:01:05] Them:** Go ahead.\n\n"
         );
+    }
+
+    #[tokio::test]
+    async fn wake_ends_an_idle_pause_early() {
+        let started = std::time::Instant::now();
+        let waiter = tokio::spawn(idle(Duration::from_secs(30)));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        wake();
+        tokio::time::timeout(Duration::from_secs(2), waiter).await.unwrap().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    mod state_machine {
+        use super::super::*;
+        use std::path::PathBuf;
+        use tauri::test::MockRuntime;
+        use wiremock::matchers::{body_bytes, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TOKEN: &str = "device-token";
+
+        struct Harness {
+            root: PathBuf,
+            app: tauri::App<MockRuntime>,
+            server: MockServer,
+            api: Api,
+        }
+
+        impl Harness {
+            async fn new() -> Self {
+                let root = std::env::temp_dir().join(format!("eavesy-sync-{}", uuid::Uuid::new_v4()));
+                std::fs::create_dir_all(&root).unwrap();
+                let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+                context.config_mut().identifier = root.to_string_lossy().into_owned();
+                let app = tauri::test::mock_builder().build(context).unwrap();
+                sqlite::initialize(app.handle()).unwrap();
+                let server = MockServer::start().await;
+                let api = Api::new(server.uri()).unwrap();
+                Self { root, app, server, api }
+            }
+
+            fn handle(&self) -> &AppHandle<MockRuntime> {
+                self.app.handle()
+            }
+
+            /// A capture already attached to cloud meeting `remote-<id>`, with
+            /// `segments` queued segments.
+            fn session(&self, id: &str, status: &str, segments: i64) -> PathBuf {
+                let folder = self.root.join(id);
+                std::fs::create_dir_all(&folder).unwrap();
+                let archive = folder.join("audio.m4a");
+                sqlite::begin_recording(self.handle(), id, &archive, &folder, "mic", "Memo", None, 1).unwrap();
+                sqlite::attach_remote(self.handle(), id, &format!("remote-{id}")).unwrap();
+                for index in 0..segments {
+                    let file = folder.join(format!("segment-{index}.m4a"));
+                    std::fs::write(&file, b"segment").unwrap();
+                    let manifest: sqlite::SegmentManifest = serde_json::from_value(serde_json::json!({
+                        "path": file, "index": index, "startMs": index * 1_000, "durationMs": 1_000, "bytes": 7,
+                    }))
+                    .unwrap();
+                    sqlite::record_segment(self.handle(), id, &manifest).unwrap();
+                }
+                if status != "recording" {
+                    std::fs::write(&archive, crate::recovery::playable_m4a()).unwrap();
+                    sqlite::finish_recording(self.handle(), id, &archive, segments * 1_000, 96).unwrap();
+                }
+                archive
+            }
+
+            fn row(&self, sql: &str, id: &str) -> (String, i64) {
+                sqlite::with_conn(self.handle(), |conn| {
+                    conn.query_row(sql, [id], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
+                })
+            }
+
+            fn session_state(&self, id: &str) -> (String, i64) {
+                self.row("SELECT status, archive_missing FROM recording_sessions WHERE id=?1", id)
+            }
+
+            fn segment_state(&self, id: &str) -> (String, i64) {
+                self.row(
+                    "SELECT status || ':' || gave_up, attempts FROM recording_segments WHERE session_id=?1 AND idx=0",
+                    id,
+                )
+            }
+
+            async fn pass(&self) -> Pass {
+                pass(self.handle(), &self.api, TOKEN).await
+            }
+        }
+
+        impl Drop for Harness {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        fn result_body(status: &str) -> serde_json::Value {
+            serde_json::json!({ "status": status, "title": "Memo", "transcript": [] })
+        }
+
+        #[tokio::test]
+        async fn a_401_pauses_sync_without_spending_segment_attempts() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            Mock::given(method("PUT"))
+                .respond_with(ResponseTemplate::new(401))
+                .mount(&harness.server)
+                .await;
+
+            for _ in 0..3 {
+                assert_eq!(harness.pass().await, Pass::SignedOut);
+            }
+
+            assert_eq!(harness.segment_state("meeting"), ("pending:0".to_string(), 0));
+            assert_eq!(harness.session_state("meeting").0, "recording");
+        }
+
+        #[tokio::test]
+        async fn a_401_creating_the_cloud_session_does_not_fail_the_recording() {
+            let harness = Harness::new().await;
+            let folder = harness.root.join("new");
+            std::fs::create_dir_all(&folder).unwrap();
+            sqlite::begin_recording(harness.handle(), "new", &folder.join("audio.m4a"), &folder, "mic", "Memo", None, 1).unwrap();
+            Mock::given(method("POST"))
+                .and(path("/api/sessions"))
+                .respond_with(ResponseTemplate::new(401))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::SignedOut);
+            assert_eq!(harness.session_state("new").0, "recording");
+        }
+
+        #[tokio::test]
+        async fn other_client_errors_still_give_up_on_a_segment() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            Mock::given(method("PUT"))
+                .respond_with(ResponseTemplate::new(413))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.segment_state("meeting"), ("failed:1".to_string(), 1));
+        }
+
+        #[tokio::test]
+        async fn a_capture_without_its_archive_is_finished_from_segments() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            sqlite::finish_from_segments(harness.handle(), "meeting", 1_000, "stop timed out").unwrap();
+            Mock::given(method("PUT"))
+                .and(path("/api/sessions/remote-meeting/segments/0"))
+                .respond_with(ResponseTemplate::new(202))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/api/sessions/remote-meeting/finalize"))
+                .and(query_param("archive", "none"))
+                .and(body_bytes(Vec::<u8>::new()))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            assert_eq!(harness.session_state("meeting"), ("processing".to_string(), 1));
+        }
+
+        #[tokio::test]
+        async fn an_older_server_refusing_segments_only_finalize_is_retried_later() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            sqlite::finish_from_segments(harness.handle(), "meeting", 1_000, "stop timed out").unwrap();
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_segments SET status='uploaded'", []).unwrap();
+            });
+            Mock::given(method("POST"))
+                .and(path("/api/sessions/remote-meeting/finalize"))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": "invalid_final_part" })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            assert_eq!(harness.session_state("meeting"), ("uploading".to_string(), 1));
+            let next_attempt_at: i64 = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row("SELECT next_attempt_at FROM recording_sessions WHERE id='meeting'", [], |row| row.get(0))
+                    .unwrap()
+            });
+            assert!(next_attempt_at > chrono::Utc::now().timestamp_millis() + 5 * 60 * 1_000);
+            assert_eq!(harness.pass().await, Pass::Idle);
+        }
+
+        #[tokio::test]
+        async fn an_archive_deleted_before_upload_falls_back_to_segments() {
+            let harness = Harness::new().await;
+            let archive = harness.session("meeting", "uploading", 1);
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_segments SET status='uploaded'", []).unwrap();
+            });
+            std::fs::remove_file(archive).unwrap();
+            Mock::given(method("POST"))
+                .and(path("/api/sessions/remote-meeting/finalize"))
+                .and(query_param("archive", "none"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.session_state("meeting"), ("processing".to_string(), 1));
+        }
+
+        #[tokio::test]
+        async fn a_lost_archive_with_nothing_uploaded_fails_visibly() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            sqlite::finish_from_segments(harness.handle(), "meeting", 1_000, "stop timed out").unwrap();
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_segments SET status='failed', gave_up=1", []).unwrap();
+            });
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            let error: String = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row("SELECT last_error FROM recording_sessions WHERE id='meeting'", [], |row| row.get(0))
+                    .unwrap()
+            });
+            assert_eq!(harness.session_state("meeting").0, "failed");
+            assert!(error.contains("no part of the recording reached the cloud"), "{error}");
+        }
+
+        #[tokio::test]
+        async fn a_finished_session_uploads_its_archive_then_polls_to_complete() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "uploading", 0);
+            Mock::given(method("POST"))
+                .and(path("/api/sessions/remote-meeting/finalize"))
+                .and(body_bytes(crate::recovery::playable_m4a()))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/sessions/remote-meeting/result"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(result_body("complete")))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.session_state("meeting").0, "processing");
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.session_state("meeting").0, "complete");
+            assert_eq!(harness.pass().await, Pass::Idle);
+        }
+
+        #[tokio::test]
+        async fn files_that_failed_to_write_are_written_when_the_session_completes() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "uploading", 0);
+            sqlite::mark_processing(harness.handle(), "meeting").unwrap();
+            let folder = harness.root.join("meeting");
+            crate::store::append(harness.handle(), crate::store::StoredRecording {
+                id: "meeting".into(),
+                title: "Memo".into(),
+                started_at_ms: 1,
+                duration_sec: 0,
+                source: "mic".into(),
+                status: "processing".into(),
+                summary: None,
+                transcript: None,
+                notes: None,
+                has_audio: true,
+                has_video: false,
+                folder_path: Some(folder.to_string_lossy().into_owned()),
+            })
+            .unwrap();
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "status": "complete", "title": "Memo",
+                    "transcript": [{ "startMs": 0, "text": "Hello." }],
+                })))
+                .mount(&harness.server)
+                .await;
+            let set_mode = |mode: u32| {
+                let mut permissions = std::fs::metadata(&folder).unwrap().permissions();
+                std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, mode);
+                std::fs::set_permissions(&folder, permissions).unwrap();
+            };
+
+            // The completing poll updates the registry, then cannot write the folder.
+            set_mode(0o500);
+            assert_eq!(harness.pass().await, Pass::Busy);
+            set_mode(0o700);
+            assert_eq!(harness.session_state("meeting").0, "processing", "not complete until written");
+            assert!(!folder.join("transcript.md").exists());
+
+            // The same result again: unchanged in the registry, but still written.
+            sqlite::with_conn(harness.handle(), |conn| {
+                conn.execute("UPDATE recording_sessions SET next_attempt_at=0", []).unwrap();
+            });
+            assert_eq!(harness.pass().await, Pass::Busy);
+
+            assert_eq!(harness.session_state("meeting").0, "complete");
+            let transcript = std::fs::read_to_string(folder.join("transcript.md")).unwrap();
+            assert!(transcript.contains("Hello."), "{transcript}");
+        }
+
+        #[tokio::test]
+        async fn a_server_error_defers_the_session_and_keeps_the_segment() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            Mock::given(method("PUT"))
+                .respond_with(ResponseTemplate::new(503))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.segment_state("meeting"), ("failed:0".to_string(), 1));
+            // Deferred: nothing else is due until the backoff passes.
+            assert_eq!(harness.pass().await, Pass::Idle);
+        }
     }
 
     #[test]

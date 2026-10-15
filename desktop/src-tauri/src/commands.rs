@@ -334,6 +334,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         if status.status == "paired" {
             let token = status.token.ok_or("pairing completed without a credential")?;
             settings::save_device_token(app, &token)?;
+            crate::sync::wake();
             return Ok(());
         }
     }
@@ -342,7 +343,8 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
     ))
 }
 
-#[tauri::command]
+// Async so reading the registry never runs on the main (UI) thread.
+#[tauri::command(async)]
 pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingDto>, String> {
     let out = store::load_all(&app)
         .into_iter()
@@ -368,6 +370,8 @@ pub async fn hotkey_conflict(accelerator: String) -> Option<crate::shortcut_conf
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     let url = if input_monitoring {
@@ -377,6 +381,8 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_web_app(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     app.shell().open(format!("{}/app", crate::sync::api_base()), None).map_err(|e| e.to_string())
@@ -384,6 +390,18 @@ pub fn open_web_app(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_panel_pinned(pinned: bool) { panel::set_pinned(pinned); }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    signed_out: bool,
+}
+
+/// Whether uploads are paused because the server rejected this Mac's credential.
+#[tauri::command]
+pub fn sync_status() -> SyncStatus {
+    SyncStatus { signed_out: crate::sync::signed_out() }
+}
 
 #[tauri::command]
 pub fn get_hud_state() -> crate::hud::HudState { crate::hud::current() }
@@ -400,6 +418,8 @@ pub fn show_setup(app: AppHandle) {
 }
 
 #[tauri::command]
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+#[allow(deprecated)]
 pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     let anchor = match pane.as_str() {

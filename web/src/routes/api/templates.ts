@@ -37,43 +37,43 @@ export const Route = createFileRoute('/api/templates')({
       },
 
       POST: async ({ request }) => {
-        const parsedBody = createSchema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = createSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         const id = await templatesRepo.create(getDb(), { userId: actor.userId, ...body });
         return Response.json({ id });
       },
 
       PATCH: async ({ request }) => {
-        const parsedBody = updateSchema.safeParse(await request.json().catch(() => null));
-        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const body = parsedBody.data;
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const parsedBody = updateSchema.safeParse(await request.json().catch(() => null));
+        if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const body = parsedBody.data;
         await templatesRepo.update(getDb(), { userId: actor.userId, ...body });
         return Response.json({ ok: true });
       },
 
       DELETE: async ({ request }) => {
-        const url = new URL(request.url);
-        const id = url.searchParams.get('id');
-        if (!id) return Response.json({ error: 'missing id' }, { status: 400 });
         let actor;
         try {
           actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const url = new URL(request.url);
+        const id = url.searchParams.get('id');
+        if (!id) return Response.json({ error: 'missing id' }, { status: 400 });
         await templatesRepo.remove(getDb(), { id, userId: actor.userId });
         return Response.json({ ok: true });
       },
