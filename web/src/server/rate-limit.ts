@@ -98,7 +98,8 @@ function warnAtSpendThresholds(scope: string, used: number, limit: number) {
  * other scope spends AI capacity or produces large downloads and fails closed.
  */
 export const USER_DAILY_QUOTAS = {
-  segment: { limit: 600, failMode: 'open' },
+  // One-minute segments, two tracks: 2,400 is 20 hours of recording a day.
+  segment: { limit: 2_400, failMode: 'open' },
   transcribe: { limit: 300, failMode: 'closed' },
   process: { limit: 100, failMode: 'closed' },
   dictation: { limit: 500, failMode: 'closed' },
