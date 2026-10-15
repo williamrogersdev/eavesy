@@ -117,6 +117,39 @@ Apple Speech on the mic, in the system language, with `--captions mic`:
 - **The record:** the cloud transcript of the upload is the dictation's record
   either way. If both pastes fail, it is pasted once ready.
 
+## Live transcription latency
+
+For each recording, the Mac measures two latencies from the moment the capture
+engine reports `ready`:
+
+- **Time to first live caption:** the first on-device caption, partial or
+  final. The target is about 2 s or less after the first words.
+- **Time to first cloud line:** the first transcript line back from
+  `/api/sessions/:id/transcript`. This is bounded by the segment length (60 s),
+  plus upload, Whisper and the 5 s poll.
+
+Both are stored in the local `live_metrics` table, kept for 30 days. Each one
+is written to the app log the first time it happens (`first live caption after
+N ms`, `first cloud line after N ms`). One summary line, `live transcription
+latency`, is logged when the recording completes. The app log is part of
+**Copy diagnostics**, so a user's report carries the numbers. Audio and text
+are never logged. A recording without captions (no permission, an unsupported
+language, older macOS) has no first-caption value, and that is the signal that
+it fell back.
+
+How it fits together:
+
+1. Audio flows. The on-device recognizer shows words in the HUD within about
+   a second.
+2. Caption finals are saved as provisional lines.
+3. Each 60 s segment uploads, and the processing Worker transcribes it with
+   Whisper.
+4. The Mac's next poll replaces that time range with cloud lines.
+5. On stop, the cloud transcript becomes `transcript.md`, the record.
+
+Dictation stops after step 1 and pastes the on-device text, using Whisper only
+when there is none.
+
 ## Authentication
 
 Browser requests use Clerk. Desktop long-form requests use a random device
