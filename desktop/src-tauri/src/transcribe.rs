@@ -85,6 +85,19 @@ pub fn spawn(
     });
 }
 
+/// Transcribes a dictation clip for its paste only. The recording uploads
+/// separately and its cloud transcript is what gets stored; if this fails,
+/// that transcript is pasted once it is ready instead.
+pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
+    std::thread::spawn(move || {
+        let Some(credential) = settings::device_credential(&app) else { return };
+        match run(&audio, false, &credential) {
+            Ok(text) => crate::dictation::deliver(&app, &id, &text),
+            Err(error) => crate::telemetry::capture("dictation.whisper_paste", &error),
+        }
+    });
+}
+
 const CHUNK_SECS: usize = 4 * 60;
 const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 

@@ -62,6 +62,9 @@ pub struct Settings {
     /// people who never chose a length.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub segment_sec: Option<u32>,
+    /// On-device live captions for meetings and voice notes (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_captions: Option<bool>,
 }
 
 impl Settings {
@@ -69,6 +72,10 @@ impl Settings {
         self.segment_sec
             .unwrap_or(DEFAULT_SEGMENT_SEC)
             .clamp(MIN_SEGMENT_SEC, MAX_SEGMENT_SEC)
+    }
+
+    pub fn live_captions(&self) -> bool {
+        self.live_captions.unwrap_or(true)
     }
 }
 
@@ -90,6 +97,7 @@ impl Default for Settings {
             panel_size: None,
             api_base_url: None,
             segment_sec: None,
+            live_captions: None,
         }
     }
 }
@@ -457,6 +465,19 @@ mod tests {
         assert!(!json.contains("segment_sec"));
         let saved: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","segment_sec":120}"#).unwrap();
         assert_eq!(saved.segment_sec(), 120);
+    }
+
+    #[test]
+    fn live_captions_are_on_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.live_captions());
+        settings.live_captions = Some(false);
+        assert!(!settings.live_captions());
+        let saved: Settings = serde_json::from_str(
+            r#"{"toggle_hotkey":"Cmd+Shift+Space","dictation_hotkey":"Cmd+Shift+D"}"#,
+        )
+        .unwrap();
+        assert!(saved.live_captions(), "settings saved before this existed");
     }
 
     #[derive(Default)]

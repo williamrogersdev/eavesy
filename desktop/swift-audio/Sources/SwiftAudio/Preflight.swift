@@ -1,13 +1,14 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import Speech
 
 private let PROMPT_TIMEOUT_SEC: Double =
     ProcessInfo.processInfo.environment["EAVESY_PREFLIGHT_TIMEOUT_SEC"]
     .flatMap(Double.init) ?? 120
 
 enum Preflight {
-    static func run(needScreen: Bool, prompt: Bool) -> Never {
+    static func run(needScreen: Bool, needSpeech: Bool = false, prompt: Bool) -> Never {
         let screenBefore = CGPreflightScreenCaptureAccess()
         if prompt && needScreen && !screenBefore {
             _ = CGRequestScreenCaptureAccess()
@@ -29,10 +30,20 @@ enum Preflight {
         let micGranted = mic
         lock.unlock()
 
+        // Asked for here (setup, or turning captions on), never by a recording.
+        if prompt && needSpeech && SFSpeechRecognizer.authorizationStatus() == .notDetermined
+            && Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil
+        {
+            let semaphore = DispatchSemaphore(value: 0)
+            SFSpeechRecognizer.requestAuthorization { _ in semaphore.signal() }
+            _ = semaphore.wait(timeout: .now() + PROMPT_TIMEOUT_SEC)
+        }
+
         EventEmitter.permissions(
             mic: micGranted,
             micAsked: AVCaptureDevice.authorizationStatus(for: .audio) != .notDetermined,
-            screen: CGPreflightScreenCaptureAccess())
+            screen: CGPreflightScreenCaptureAccess(),
+            speech: SFSpeechRecognizer.authorizationStatus() == .authorized)
         fflush(stdout)
         exit(0)
     }

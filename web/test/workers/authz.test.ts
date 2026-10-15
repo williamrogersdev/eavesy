@@ -206,6 +206,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       crossUser: { call: lineCall({ startMs: 0, endMs: 1, speakerId: null, text: 'Restored' }), status: 404 },
     },
   },
+  '/api/meetings/$id/transcript': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/transcript'), status: 404 } },
+  },
   '/api/meetings/$id/regenerate': {
     POST: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/regenerate', {}), status: 404 } },
   },
@@ -274,6 +277,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   },
   '/api/sessions/$id/result': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/sessions/${MEETING}/result`, params: { id: MEETING } }, status: 404 } },
+  },
+  '/api/sessions/$id/transcript': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/sessions/${MEETING}/transcript`, params: { id: MEETING } }, status: 404 } },
   },
   '/api/sessions/$id/segments/$idx': {
     PUT: {

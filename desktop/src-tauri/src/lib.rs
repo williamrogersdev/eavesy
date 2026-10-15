@@ -1,6 +1,8 @@
 mod telemetry;
 mod audio;
 mod base_url;
+mod captions;
+mod live_transcript;
 mod visual;
 mod commands;
 mod diagnostics;
@@ -59,6 +61,8 @@ pub fn run() {
         .manage(audio::Captures::default())
         .invoke_handler(tauri::generate_handler![
             audio::start_capture,
+            live_transcript::live_transcript,
+            commands::set_live_captions,
             audio::start_screen_capture,
             audio::stop_capture,
             audio::capture_state,
@@ -176,6 +180,7 @@ pub fn run() {
             #[cfg(desktop)]
             updates::check_in_background(&handle);
 
+            tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
             let sync_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sync::run(sync_handle).await {
