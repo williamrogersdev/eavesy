@@ -98,15 +98,15 @@ queue handling. If enabled later, keep it as a Worker secret and use separate
 projects per environment. `OPS_METRICS_TOKEN` protects the aggregate-only
 operations endpoint and must be generated independently of user/device tokens.
 
-Stripe secrets are deliberately optional while paid plans are gated as
-**Coming soon**.
-
 ### Error reporting (optional, strongly recommended)
 
 All three Workers report to Sentry when `SENTRY_DSN` is set, and do nothing
 extra when it isn't. Queue jobs that fail permanently and anything that lands
-in the dead-letter queue are reported explicitly. Headers, cookies, bodies and
-query strings are never sent; the MCP Worker also drops the URL path.
+in the dead-letter queue are reported explicitly. Reports keep the scrubbed
+error message, route, method and release; headers, cookies, bodies, query
+strings, emails and tokens are never sent, and the MCP Worker also drops the
+URL path. The deploy workflow passes the commit SHA as `SENTRY_RELEASE`. See
+[OBSERVABILITY.md](OBSERVABILITY.md).
 
 ```bash
 cd web && bunx wrangler secret put SENTRY_DSN
@@ -114,9 +114,15 @@ cd ../workers/processing && bunx wrangler secret put SENTRY_DSN
 cd ../mcp && bunx wrangler secret put SENTRY_DSN
 ```
 
-The desktop app reads optional `SENTRY_DSN` at **compile time**. Export it
-before `tauri build` if error reporting is wanted; authentication uses the
-paired-device credential in Keychain.
+For browser errors, set the GitHub Actions variable `VITE_SENTRY_DSN` (a
+browser DSN is public by design); the deploy workflow writes it into
+`web/.env.production`. Leave it unset to ship no Sentry code to browsers.
+
+The desktop app reads `SENTRY_DSN` at **compile time**, and
+`build-macos-release.sh` refuses to build a release without it (set
+`EAVESY_ALLOW_NO_SENTRY=1` to opt out deliberately). In CI it comes from the
+`DESKTOP_SENTRY_DSN` secret; authentication uses the paired-device credential
+in Keychain.
 
 ## Database migrations
 

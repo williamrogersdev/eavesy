@@ -7,7 +7,8 @@ export type QueueMessage =
   | { kind: 'embed-dictation'; dictationId: string }
   /** `track` is absent on messages from before two-track capture; read as `mixed`. */
   | { kind: 'transcribe-segment'; meetingId: string; idx: number; track?: 'mixed' | 'mic' | 'system' }
-  | { kind: 'rolling-summarize'; meetingId: string; throughIdx: number }
+  /** `throughMs` is absent on messages from before time-based rolling notes. */
+  | { kind: 'rolling-summarize'; meetingId: string; throughIdx: number; throughMs?: number }
   /** `waitingSince` bounds how long the final summary waits on segment jobs. */
   | { kind: 'summarize'; meetingId: string; waitingSince?: number }
   | { kind: 'cleanup-anonymous'; meetingId: string }
@@ -29,6 +30,3 @@ export async function enqueue(message: QueueMessage, opts?: { delaySeconds?: num
   await getQueue().send(message, opts ? { delaySeconds: opts.delaySeconds } : undefined);
 }
 
-export async function enqueueBatch(messages: QueueMessage[]) {
-  await getQueue().sendBatch(messages.map((body) => ({ body })));
-}

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -40,9 +41,19 @@ export const users = sqliteTable(
     uniqueIndex('users_clerk_user_id_uq').on(t.clerkUserId),
     uniqueIndex('users_anonymous_token_uq').on(t.anonymousSessionToken),
     index('users_email_idx').on(t.email),
+    index('users_created_idx').on(t.createdAt),
+    index('users_onboarded_idx').on(t.onboardingCompletedAt),
+    index('users_byo_keys_idx')
+      .on(t.id)
+      .where(
+        sql`byo_anthropic_key IS NOT NULL OR byo_deepgram_key IS NOT NULL OR byo_openrouter_key IS NOT NULL`,
+      ),
   ],
 );
 
+// Retained for history and unused: billing was removed and nothing reads or writes
+// this table. Rows are kept; account deletion still clears them because of the
+// user_id foreign key.
 export const subscriptions = sqliteTable(
   'subscriptions',
   {
@@ -83,6 +94,8 @@ export const meetings = sqliteTable(
     contextBlurb: text('context_blurb'),
     startedAt: integer('started_at').notNull(),
     endedAt: integer('ended_at'),
+    // When the first transcript line was stored; drives the latency metric.
+    firstTranscriptAt: integer('first_transcript_at'),
     durationSec: integer('duration_sec'),
     source: text('source', {
       enum: ['desktop', 'web', 'public', 'ios', 'android', 'import'],
@@ -118,7 +131,11 @@ export const meetings = sqliteTable(
   },
   (t) => [
     index('meetings_user_started_idx').on(t.userId, t.startedAt),
-    index('meetings_status_idx').on(t.status),
+    index('meetings_status_updated_idx').on(t.status, t.updatedAt),
+    index('meetings_created_idx').on(t.createdAt),
+    index('meetings_started_idx').on(t.startedAt),
+    index('meetings_user_created_idx').on(t.userId, t.createdAt),
+    index('meetings_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
     uniqueIndex('meetings_client_session_uq').on(t.clientSessionId),
     index('meetings_expires_idx').on(t.expiresAt),
     uniqueIndex('meetings_share_slug_uq').on(t.shareSlug),
@@ -144,11 +161,15 @@ export const meetingSegments = sqliteTable(
     })
       .notNull()
       .default('pending'),
+    transcribeClaimedAt: integer('transcribe_claimed_at'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
     uniqueIndex('meeting_segments_meeting_idx_track_uq').on(t.meetingId, t.idx, t.track),
     index('meeting_segments_meeting_idx').on(t.meetingId, t.idx),
+    index('meeting_segments_processing_idx')
+      .on(t.transcribeClaimedAt)
+      .where(sql`${t.transcribeStatus} = 'processing'`),
   ],
 );
 
@@ -233,7 +254,10 @@ export const dictations = sqliteTable(
     createdAt: integer('created_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
-  (t) => [index('dictations_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('dictations_user_created_idx').on(t.userId, t.createdAt),
+    index('dictations_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+  ],
 );
 
 export const captures = sqliteTable(
@@ -269,7 +293,10 @@ export const captures = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
-  (t) => [index('captures_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('captures_user_created_idx').on(t.userId, t.createdAt),
+    index('captures_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+  ],
 );
 
 export const promptTemplates = sqliteTable(
@@ -375,6 +402,8 @@ export const mcpTokens = sqliteTable(
     createdAt: integer('created_at').notNull(),
     lastUsedAt: integer('last_used_at'),
     revokedAt: integer('revoked_at'),
+    expiresAt: integer('expires_at'),
+    pathAuthUsedAt: integer('path_auth_used_at'),
   },
   (t) => [
     index('mcp_tokens_user_idx').on(t.userId),
@@ -395,7 +424,11 @@ export const activityLog = sqliteTable(
     metadataJson: text('metadata_json').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('activity_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('activity_user_created_idx').on(t.userId, t.createdAt),
+    index('activity_event_created_idx').on(t.eventType, t.createdAt),
+    index('activity_meeting_idx').on(t.meetingId),
+  ],
 );
 
 export const devices = sqliteTable(
@@ -411,7 +444,7 @@ export const devices = sqliteTable(
     lastSeenAt: integer('last_seen_at').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('devices_user_idx').on(t.userId)],
+  (t) => [index('devices_user_idx').on(t.userId), index('devices_created_idx').on(t.createdAt)],
 );
 
 export const deviceTokens = sqliteTable(
@@ -501,7 +534,20 @@ export const productMetricsDaily = sqliteTable('product_metrics_daily', {
   processingSamples: integer('processing_samples').notNull().default(0),
   processingMsTotal: integer('processing_ms_total').notNull().default(0),
   processingMsMax: integer('processing_ms_max').notNull().default(0),
+  firstTranscriptSamples: integer('first_transcript_samples').notNull().default(0),
+  firstTranscriptMsTotal: integer('first_transcript_ms_total').notNull().default(0),
+  firstTranscriptMsMax: integer('first_transcript_ms_max').notNull().default(0),
   audioSeconds: integer('audio_seconds').notNull().default(0),
   estimatedAiCostMicrousd: integer('estimated_ai_cost_microusd').notNull().default(0),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const rateLimits = sqliteTable(
+  'rate_limits',
+  {
+    key: text('key').primaryKey(),
+    count: integer('count').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [index('rate_limits_expires_idx').on(t.expiresAt)],
+);

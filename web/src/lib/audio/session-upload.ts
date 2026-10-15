@@ -46,11 +46,26 @@ export class SessionUpload {
   private pending: Blob[] = [];
   private pendingBytes = 0;
   private nextPart = 1;
+  private started = false;
+  private discarded = false;
 
   meetingId: string | null = null;
 
-  constructor(mimeType: string, private readonly retryDelaysMs: readonly number[] = RETRY_DELAYS_MS) {
-    this.enqueue(async () => {
+  /**
+   * Pass the recorder's mime type to create the session immediately, or `null`
+   * to collect audio first and call `begin` once the recorder has started:
+   * MediaRecorder can emit its first chunk before `start()` resolves.
+   */
+  constructor(mimeType: string | null, private readonly retryDelaysMs: readonly number[] = RETRY_DELAYS_MS) {
+    if (mimeType) this.begin(mimeType);
+  }
+
+  private readonly clientSessionId = crypto.randomUUID();
+
+  begin(mimeType: string) {
+    if (this.started || this.discarded) return;
+    this.started = true;
+    this.queue.unshift(async () => {
       const res = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -65,16 +80,23 @@ export class SessionUpload {
       if (typeof body.meetingId !== 'string') throw new Error('Server returned an invalid recording');
       this.meetingId = body.meetingId;
     });
+    void this.drain();
   }
 
-  private readonly clientSessionId = crypto.randomUUID();
+  /** Every upload goes to the session the create request returned, never to `null`. */
+  private sessionPath(): string {
+    if (!this.meetingId) throw new PermanentUploadError('The recording was not created');
+    return `/api/sessions/${this.meetingId}`;
+  }
 
   private enqueue(task: () => Promise<void>) {
+    if (this.discarded) return;
     this.queue.push(task);
     void this.drain();
   }
 
   private drain(): Promise<void> {
+    if (!this.started) return Promise.resolve();
     this.draining ??= (async () => {
       await Promise.resolve();
       try {
@@ -94,7 +116,7 @@ export class SessionUpload {
 
   addSegment(segment: RecordedSegment) {
     this.enqueue(async () => {
-      const res = await fetch(`/api/sessions/${this.meetingId}/segments/${segment.idx}`, {
+      const res = await fetch(`${this.sessionPath()}/segments/${segment.idx}`, {
         method: 'PUT',
         headers: {
           'content-type': segment.blob.type || 'audio/webm',
@@ -120,24 +142,26 @@ export class SessionUpload {
       const partNumber = this.nextPart;
       this.nextPart += 1;
       this.enqueue(async () => {
-        const res = await fetch(`/api/sessions/${this.meetingId}/parts/${partNumber}`, { method: 'PUT', body: part });
+        const res = await fetch(`${this.sessionPath()}/parts/${partNumber}`, { method: 'PUT', body: part });
         if (!res.ok) throw await responseError(res);
       });
     }
   }
 
   async finish(): Promise<void> {
+    if (!this.started) throw new Error('The recording never started');
     await this.drain();
     if (this.failure) throw this.failure;
     const remainder = new Blob(this.pending);
     if (remainder.size === 0) throw new Error('Nothing was recorded');
     await withRetry(async () => {
-      const res = await fetch(`/api/sessions/${this.meetingId}/finalize`, { method: 'POST', body: remainder });
+      const res = await fetch(`${this.sessionPath()}/finalize`, { method: 'POST', body: remainder });
       if (!res.ok) throw await responseError(res);
     }, this.retryDelaysMs);
   }
 
   async discard(): Promise<void> {
+    this.discarded = true;
     this.queue = [];
     await this.draining;
     if (this.meetingId) {

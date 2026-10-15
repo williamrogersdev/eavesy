@@ -32,7 +32,7 @@ function ContactPage() {
       <PageHero
         eyebrow="Contact"
         title="Talk to us"
-        description="Questions about Eavesy, your team plan, or anything else? Send a note and we’ll get back to you."
+        description="Questions about Eavesy, your team, or anything else? Send a note and we’ll get back to you."
       >
         <Breadcrumbs
           items={[

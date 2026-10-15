@@ -113,6 +113,48 @@
       "when": 1790351318380,
       "tag": "0011_summary_chapters",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1792006789422,
+      "tag": "0016_first_transcript_latency",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1792011453338,
+      "tag": "0017_segment_transcribe_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792011590124,
+      "tag": "0018_rate_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792015277146,
+      "tag": "0019_mcp_token_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792011699679,
+      "tag": "0020_cron_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792011699679,
+      "tag": "0021_activity_indexes",
+      "breakpoints": true
     }
   ]
 }

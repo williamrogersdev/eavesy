@@ -72,7 +72,7 @@ final class AudioRecorder: NSObject, Recorder {
         self.source = source
         self.segmentDir = segmentDir
         self.segmentSec = segmentSec
-        self.segmentHardCapSec = segmentSec + 60
+        self.segmentHardCapSec = hardCapSec(forSegmentSec: segmentSec)
         super.init()
     }
 

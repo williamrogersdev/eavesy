@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetingUploads, meetings } from '@/db/schema';
 import { resolveIngestActor } from '@/server/device-auth';
+import { guardBurst } from '@/server/rate-limit';
 import { loadOrCreateMultipart, parseUploadedParts } from '@/server/multipart-state';
 import { archiveFormatOf, bucket, meetingArchiveKey } from '@/server/r2';
 import { ARCHIVE_PART_SIZE, boundedInteger, ownedMeeting } from '@/server/session-ingest';
@@ -17,6 +18,8 @@ export const Route = createFileRoute('/api/sessions/$id/parts/$n')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        const limited = await guardBurst(actor.userId, 'session-part');
+        if (limited) return limited;
 
         const partNumber = boundedInteger(params.n, { min: 1, max: 9_999 });
         const contentLength = boundedInteger(request.headers.get('content-length'), {

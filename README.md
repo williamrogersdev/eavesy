@@ -1,15 +1,31 @@
 # Eavesy
 
-> Record. Transcribe. Summarize. Get the meeting out of your head.
+> A local, AI-first assistant. Drop things in, paste clean Markdown into any AI agent.
 
-Eavesy is a meeting recorder and dictation workspace. The web app provides the
-dashboard, short browser recordings, search, settings, and account management.
-The macOS app is the long-form recorder: it captures microphone and system
-audio continuously, uploads recoverable segments, and mirrors completed audio,
-transcript, and summary files to `~/Eavesy/Recordings`.
+Eavesy turns what you drop into it into clean, structured Markdown context that
+is quick to copy into Claude, Cursor, ChatGPT, or any agent, or to reach over
+MCP. It is local-first: your captures live on your disk as Markdown and JSON.
 
-The current launch target is a free beta. Paid plans remain marked **Coming
-soon** until Stripe is configured and explicitly enabled.
+What ships today:
+
+- **Mac app** (`desktop/`): from the launcher, press ⌘V to save text or an image
+  from your clipboard, take a screenshot (these stay on your Mac), or dictate
+  and record (these upload for transcription once you sign in) your screen,
+  system audio, and microphone. Everything is mirrored to
+  `~/Eavesy/Recordings` as Markdown, JSON, and media files.
+- **Web app** (`web/`): dashboard, browser recorder, search, summaries and
+  transcripts you can copy or export as Markdown, and settings, including
+  connecting your own OpenRouter account.
+- **Hosted MCP server** (`workers/mcp`): read-only tools to search recordings
+  and dictations and fetch summaries, transcripts, and action items.
+
+Meeting recording is one capability, not the whole product. Not shipped yet:
+forwarding messages and orders from other apps, live captions, and the
+cross-device "drops" work. See the [roadmap](ROADMAP.md).
+
+Eavesy is free to use. Everyone gets the same daily limits; see
+[Fair-use limits](web/src/content/docs/fair-use-limits.mdx) for the numbers and
+how to change them when self-hosting.
 
 ## Production architecture
 

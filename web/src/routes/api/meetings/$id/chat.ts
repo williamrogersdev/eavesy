@@ -28,24 +28,21 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
       POST: async ({ request, params }) => {
         const { id } = params;
 
+        let actor;
+        try {
+          actor = await resolveActor();
+        } catch {
+          return Response.json({ error: 'unauthenticated' }, { status: 401 });
+        }
+
         let body: z.infer<typeof schema>;
         try {
-          body = schema.parse(await request.json());
+          body = schema.parse(await request.json().catch(() => null));
         } catch {
           return Response.json({ error: 'invalid_request' }, { status: 400 });
         }
         if (body.messages[body.messages.length - 1]?.role !== 'user') {
           return Response.json({ error: 'last_message_must_be_user' }, { status: 400 });
-        }
-
-        let actor;
-        try {
-          actor = await resolveActor({
-            anonymousSessionToken:
-              request.headers.get('x-anonymous-token') ?? body.anonymousSessionToken,
-          });
-        } catch {
-          return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const overQuota = await guardUserQuota(actor.userId, 'chat');
         if (overQuota) return overQuota;

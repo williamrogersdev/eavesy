@@ -8,7 +8,12 @@ use tauri::{AppHandle, Manager, Runtime};
 
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The last registry read or written, so polls and list refreshes do not re-read
+/// and re-parse recordings.json (transcripts included). Only touched under
+/// `REGISTRY_LOCK`; every write goes through `write_registry`.
+static CACHE: Mutex<Option<(PathBuf, Vec<StoredRecording>)>> = Mutex::new(None);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredRecording {
     pub id: String,
     pub title: String,
@@ -86,6 +91,9 @@ pub fn set_transcript<R: Runtime>(
     })
 }
 
+/// Applies a cloud result. Returns the recording (None if it is not in the
+/// registry) and whether anything changed, so an unchanged poll does not rewrite
+/// recordings.json or notify the UI.
 pub fn set_result<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -94,7 +102,8 @@ pub fn set_result<R: Runtime>(
     summary: Option<String>,
     notes: Option<String>,
     status: &str,
-) -> Result<(), String> {
+) -> Result<Option<(StoredRecording, bool)>, String> {
+    let mut updated = None;
     mutate(app, |list| {
         let Some(recording) = list.iter_mut().find(|recording| recording.id == id) else {
             return Ok(false);
@@ -113,6 +122,7 @@ pub fn set_result<R: Runtime>(
             .transpose()?
             .unwrap_or(false);
 
+        let before = recording.clone();
         recording.title = title.to_string();
         if !transcript_is_local {
             recording.transcript = Some(transcript);
@@ -124,8 +134,11 @@ pub fn set_result<R: Runtime>(
             recording.notes = notes;
         }
         recording.status = status.to_string();
-        Ok(true)
-    })
+        let changed = *recording != before;
+        updated = Some((recording.clone(), changed));
+        Ok(changed)
+    })?;
+    Ok(updated)
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -183,7 +196,7 @@ fn mutate_path(
     if !update(&mut list)? {
         return Ok(());
     }
-    list.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    list.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
     write_registry(path, &list)
 }
 
@@ -194,6 +207,18 @@ fn registry_guard() -> MutexGuard<'static, ()> {
 }
 
 fn read_registry(path: &Path) -> Result<Vec<StoredRecording>, String> {
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((cached_path, list)) = cache.as_ref() {
+        if cached_path == path {
+            return Ok(list.clone());
+        }
+    }
+    let list = read_registry_file(path)?;
+    *cache = Some((path.to_path_buf(), list.clone()));
+    Ok(list)
+}
+
+fn read_registry_file(path: &Path) -> Result<Vec<StoredRecording>, String> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -201,7 +226,7 @@ fn read_registry(path: &Path) -> Result<Vec<StoredRecording>, String> {
     };
     let mut list: Vec<StoredRecording> = serde_json::from_str(&raw)
         .map_err(|error| format!("recordings registry is malformed and was preserved: {error}"))?;
-    list.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    list.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
     Ok(list)
 }
 
@@ -212,7 +237,12 @@ fn write_registry(path: &Path, list: &[StoredRecording]) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(list)
         .map_err(|e| format!("could not serialize recordings: {e}"))?;
-    atomic_write(path, json.as_bytes())
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Drop the cache first: if the write fails, the next read goes back to disk.
+    *cache = None;
+    atomic_write(path, json.as_bytes())?;
+    *cache = Some((path.to_path_buf(), list.to_vec()));
+    Ok(())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -296,6 +326,28 @@ mod tests {
         assert_eq!(list.first().unwrap().id, "meeting-15");
         assert!(!path.parent().unwrap().join(".recordings.tmp").exists());
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn an_unchanged_result_poll_does_not_rewrite_the_registry() {
+        let root = std::env::temp_dir().join(format!("eavesy-store-app-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        append(app, sample("meeting", 1)).unwrap();
+        let path = registry_path(app).unwrap();
+        let poll = || set_result(app, "meeting", "Sync", "transcript".into(), None, None, "processing").unwrap();
+
+        assert!(poll().unwrap().1, "the first result changes the recording");
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let (recording, changed) = poll().unwrap();
+
+        assert!(!changed);
+        assert_eq!(recording.transcript.as_deref(), Some("transcript"));
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), written);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

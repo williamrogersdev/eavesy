@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and general help
+    url: https://github.com/williamrogersdev/eavesy/discussions/categories/q-a
+    about: Ask how to do something with Eavesy. Discussions keeps the answers searchable.
+  - name: Ideas and show and tell
+    url: https://github.com/williamrogersdev/eavesy/discussions
+    about: Share an idea, a workflow you built, or a template. Start a Discussion before filing a feature request.
+  - name: Report a security vulnerability
+    url: https://github.com/williamrogersdev/eavesy/security/advisories/new
+    about: Report vulnerabilities privately. Please don't open a public issue for them.

@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   Brain,
+  ClipboardPaste,
   FileText,
   FolderTree,
   Lock,
@@ -30,6 +31,27 @@ export interface FeaturePage {
 }
 
 export const FEATURE_PAGES: FeaturePage[] = [
+  {
+    slug: 'quick-capture',
+    icon: ClipboardPaste,
+    eyebrow: 'Drop things in',
+    name: 'Quick capture',
+    title: 'Drop text, images, and screenshots into your context library',
+    description:
+      'In the Mac app, press ⌘V to save clipboard text or an image, or take a screenshot. Each one is stored as a Markdown or image file you can copy into any AI agent.',
+    intro:
+      'Not everything your AI needs is a recording. Open the Eavesy launcher with your global hotkey and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window. Everything lands in a normal folder on your disk, next to your recordings.',
+    highlights: [
+      { title: 'Clipboard text and images', body: 'Press ⌘V in the launcher to save whatever you copied last, a message, an order, a snippet of code, or an image, as a capture.' },
+      { title: 'Screenshots', body: 'Take a screenshot of your display from the launcher (macOS 14 or later). Eavesy’s own window is left out of the image.' },
+      { title: 'Plain files', body: 'Text is stored as note.md and images as PNG files in a folder you can open, grep, or point an agent at.' },
+      { title: 'Still to come', body: 'Forwarding messages and orders straight from other apps, and reading text out of screenshots in the Mac app, are not available yet.' },
+    ],
+    faqs: [
+      { q: 'Can I drop in a message or an order?', a: 'Copy it and press ⌘V in the Eavesy launcher. It is saved as a Markdown note. Capturing directly from other apps is not available yet.' },
+    ],
+    related: ['files-you-own', 'dictation', 'live-summary'],
+  },
   {
     slug: 'bot-free-capture',
     icon: Radio,
@@ -87,7 +109,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       { title: 'Recoverable rolling segments', body: 'Long Mac sessions are sealed to disk in segments and processed during capture, limiting how much work a crash or network interruption can affect.' },
       { title: 'Multi-language', body: 'Transcribes dozens of languages automatically, with no setup or language picker required.' },
       { title: 'Portable output', body: 'Copy or export the transcript as Markdown; Mac sessions also keep the source files in a normal folder.' },
-      { title: 'Always included', body: 'Every plan gives you the complete transcript. It’s never paywalled behind a “summary-only” tier.' },
+      { title: 'Always included', body: 'You always get the complete transcript, never just a summary.' },
     ],
     related: ['live-summary', 'semantic-search', 'files-you-own'],
   },

@@ -16,9 +16,10 @@ export const Route = createFileRoute('/api/devices/pair/status')({
           key: `device-pair-status:${clientIp(request)}`,
           limit: 60,
           windowSec: 60,
+          failMode: 'closed',
         });
         if (!limited.allowed) return Response.json({ error: 'rate_limited' }, { status: 429 });
-        const parsed = bodySchema.safeParse(await request.json());
+        const parsed = bodySchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
 
         const db = getDb();
@@ -40,10 +41,13 @@ export const Route = createFileRoute('/api/devices/pair/status')({
         }
         if (!row.rawToken) return Response.json({ status: 'pending' });
 
-        await db
+        // Hand the token over once: only the poll that clears it may return it.
+        const handedOff = await db
           .update(devicePairingCodes)
           .set({ rawToken: null, expiresAt: Date.now() })
-          .where(eq(devicePairingCodes.codeHash, codeHash));
+          .where(and(eq(devicePairingCodes.codeHash, codeHash), eq(devicePairingCodes.rawToken, row.rawToken)))
+          .returning({ codeHash: devicePairingCodes.codeHash });
+        if (handedOff.length === 0) return Response.json({ status: 'expired' }, { status: 404 });
         return Response.json({ status: 'paired', token: row.rawToken });
       },
     },

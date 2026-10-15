@@ -43,9 +43,9 @@ for (const { name: size, width, height } of [
 
 test('library shows the seeded recordings and captures', async ({ page }) => {
   await page.goto('/app', { waitUntil: 'networkidle' });
-  await expect(page.getByRole('link', { name: /Pricing review with Sarah/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Launch review with Sarah/ })).toBeVisible();
   await page.getByRole('tab', { name: /Captures/ }).click();
   await expect(page).toHaveURL(/tab=captures/);
   await expect(page.getByRole('link', { name: /Checkout error/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Pricing review with Sarah/ })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /Launch review with Sarah/ })).toHaveCount(0);
 });

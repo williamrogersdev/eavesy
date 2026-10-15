@@ -34,7 +34,9 @@ macOS capture ──device token──► web session API ──► R2 audio
 
 1. The launcher asks for optional meeting context and starts the Swift sidecar.
 2. Swift captures microphone and system audio into one continuous archive and
-   rolling AAC/M4A segments. It targets four minutes and seals at five minutes.
+   rolling AAC/M4A segments. It targets one minute (the `segment_sec` desktop
+   setting, 30 seconds at least), closing at the first quiet moment after
+   that and no later than half as long again.
 3. Every sealed segment has an atomic JSON manifest. Rust records it in SQLite
    before scheduling an upload, so app termination or network loss is
    recoverable.
@@ -43,10 +45,14 @@ macOS capture ──device token──► web session API ──► R2 audio
    and records its capture offset so sleep/wake gaps are retained.
 5. The web Worker stores bytes in R2, writes session/segment state in D1, and
    enqueues processing.
-6. The processing Worker transcribes each segment. It periodically refreshes
-   rolling notes without diarization and includes the supplied context blurb.
+6. The processing Worker transcribes each segment. Each time the transcribed
+   audio crosses another four minutes it refreshes rolling notes without
+   diarization and includes the supplied context blurb. Rolling notes are
+   streamed from Claude Haiku 5.5 at low effort; the final summary uses the
+   summary model. Both bill the user's own Anthropic key when they have one.
 7. Stop seals the final segment, waits for durable uploads, and finalizes the
-   cloud session. Final processing creates the title, summary, and embedding.
+   cloud session. Final processing waits for the last segments (checking every
+   10 seconds at first), then creates the title, summary, and embedding.
 8. Rust polls the session result, then atomically writes `transcript.md` and
    `summary.md`. The full `audio.m4a` archive already resides in the same local
    recording folder.
@@ -95,10 +101,20 @@ tokens are not retained.
   audio.
 - Results are written through temporary files and atomic renames.
 
+## Observability
+
+Every surface (web, processing and MCP Workers, browser, Mac app) can report
+errors to Sentry. Reports keep the error message, stack, route, method and
+release; a shared scrubber removes bodies, headers, cookies, query strings,
+emails, IPs, API keys and tokens, and the Mac app replaces recording and
+home-directory paths (folder names are meeting titles). Audio, transcripts, notes and summaries are never sent. The Mac app
+also keeps a rotating local log and offers a scrubbed **Copy Diagnostics**
+bundle. See [OBSERVABILITY.md](OBSERVABILITY.md) for the exact rules.
+
 ## Deliberate launch boundaries
 
 - Long-form recording is macOS-only; the web live-streaming path was removed.
 - The browser recorder remains a short, one-shot experience.
 - No speaker diarization is promised.
 - Local Whisper is not part of this launch; cloud transcription is Workers AI.
-- Paid plans and mobile capture are deferred.
+- Mobile capture is deferred.

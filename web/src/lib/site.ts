@@ -1,11 +1,11 @@
 export const siteConfig = {
   name: 'Eavesy',
-  tagline: 'Turn real work into AI-ready context.',
+  tagline: 'A local assistant for AI context.',
   url: 'https://eavesy.com',
   description:
-    'Record a workflow, meeting, or bug reproduction. Eavesy turns screen and voice into a structured Markdown brief, transcript, and files you control—ready for Claude, Cursor, ChatGPT, or any AI agent.',
+    'Eavesy is a local, AI-first assistant for Mac. Drop in text, screenshots, dictation and recordings; paste clean Markdown into any AI agent or use it over MCP.',
   shortDescription:
-    'Capture screen and voice, then hand any AI agent a structured brief it can act on.',
+    'Drop in text, screenshots, dictation, and recordings; get clean Markdown context for any AI agent.',
   twitter: '@eavesy',
   github: 'https://github.com/williamrogersdev/eavesy',
   contactEmail: 'hello@eavesy.com',
@@ -31,7 +31,6 @@ export const MARKETING_ROUTES: RouteEntry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/features', changeFrequency: 'monthly', priority: 0.9 },
   { path: '/how-it-works', changeFrequency: 'monthly', priority: 0.8 },
-  { path: '/pricing', changeFrequency: 'monthly', priority: 0.9 },
   { path: '/integrations', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/docs', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/blog', changeFrequency: 'daily', priority: 0.7 },

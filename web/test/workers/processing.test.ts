@@ -184,7 +184,8 @@ describe('processing queue orchestration', () => {
       meetingId: 'meet_transcribe',
       idx: 2,
       r2Key: key,
-      offsetMs: 10_000,
+      // Ends at 4:01, crossing the first rolling-notes boundary.
+      offsetMs: 238_000,
     });
     await testEnv.AUDIO_BUCKET.put(key, new Uint8Array([1, 2, 3]));
 
@@ -209,17 +210,23 @@ describe('processing queue orchestration', () => {
         'SELECT start_ms, end_ms, text FROM transcript_segments WHERE meeting_id = ?',
         'meet_transcribe',
       ),
-    ).toEqual({ start_ms: 11_000, end_ms: 13_000, text: 'A durable transcript' });
+    ).toEqual({ start_ms: 239_000, end_ms: 241_000, text: 'A durable transcript' });
     expect(
       await row<{ transcribe_status: string }>(
         'SELECT transcribe_status FROM meeting_segments WHERE id = ?',
         'mseg_transcribe',
       ),
     ).toEqual({ transcribe_status: 'complete' });
+    const stamped = await row<{ first_transcript_at: number | null; started_at: number }>(
+      'SELECT first_transcript_at, started_at FROM meetings WHERE id = ?',
+      'meet_transcribe',
+    );
+    expect(stamped?.first_transcript_at).toBeGreaterThanOrEqual(stamped?.started_at ?? Infinity);
     expect(queue.send).toHaveBeenCalledWith({
       kind: 'rolling-summarize',
       meetingId: 'meet_transcribe',
       throughIdx: 2,
+      throughMs: 241_000,
     });
   });
 
@@ -321,6 +328,54 @@ describe('processing queue orchestration', () => {
       ),
     ).toEqual({ event_type: 'meeting.complete' });
     expect(queue.send).toHaveBeenCalledWith({ kind: 'embed', meetingId: 'meet_summary' });
+  });
+
+  it("bills the user's own Anthropic key for the meeting summary", async () => {
+    await insertUser('user_byo');
+    await testEnv.DB.prepare(`UPDATE users SET byo_anthropic_key = 'sk-ant-user' WHERE id = ?`)
+      .bind('user_byo')
+      .run();
+    await insertMeeting({ id: 'meet_byo', userId: 'user_byo', status: 'processing' });
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments
+        (id, meeting_id, start_ms, end_ms, text, is_edited, is_final)
+       VALUES ('tseg_byo', 'meet_byo', 0, 1000, 'Final transcript', 0, 1)`,
+    ).run();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              title: 'BYO',
+              description: '',
+              tldr: 'Done.',
+              decisions: [],
+              actionItems: [],
+              followUps: [],
+              openQuestions: [],
+              topics: [],
+              mentions: [],
+            }),
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const queue = mockQueue();
+    const batch = createMessageBatch<ProcessingMessage>('eavesy-processing', [
+      queueMessage('summary-byo', { kind: 'summarize', meetingId: 'meet_byo' }),
+    ]);
+    await worker.queue(batch, runtimeEnv(queue.binding));
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('x-api-key')).toBe('sk-ant-user');
+    expect(
+      await row<{ generated_by_model: string }>(
+        'SELECT generated_by_model FROM summaries WHERE meeting_id = ?',
+        'meet_byo',
+      ),
+    ).toEqual({ generated_by_model: 'byo-anthropic:claude-sonnet-4-6' });
   });
 
   it('processes a browser recording asynchronously and makes replay a no-op', async () => {
@@ -473,6 +528,16 @@ describe('processing cron recovery', () => {
     });
     await insertSegment({ id: 'mseg_abandoned', meetingId: 'meet_abandoned', idx: 0 });
     await insertSegment({ id: 'mseg_fresh', meetingId: 'meet_fresh', idx: 0 });
+    // Streamed recordings with a first transcript line 4s and 2s after start;
+    // meet_expired has no segments, so its latency is excluded.
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('UPDATE meetings SET started_at = ?, first_transcript_at = ? WHERE id = ?')
+        .bind(now - 5_000, now - 1_000, 'meet_abandoned'),
+      testEnv.DB.prepare('UPDATE meetings SET started_at = ?, first_transcript_at = ? WHERE id = ?')
+        .bind(now - 4_000, now - 2_000, 'meet_fresh'),
+      testEnv.DB.prepare('UPDATE meetings SET first_transcript_at = ? WHERE id = ?')
+        .bind(now - 1_000, 'meet_expired'),
+    ]);
     await testEnv.DB.batch([
       testEnv.DB.prepare(
         `INSERT INTO activity_log
@@ -553,6 +618,9 @@ describe('processing cron recovery', () => {
         processing_samples: number;
         processing_ms_total: number;
         processing_ms_max: number;
+        first_transcript_samples: number;
+        first_transcript_ms_total: number;
+        first_transcript_ms_max: number;
         audio_seconds: number;
         estimated_ai_cost_microusd: number;
       }>(
@@ -560,7 +628,9 @@ describe('processing cron recovery', () => {
                 users_first_brief_use, meetings_started, meetings_completed,
                 users_first_return_7d, meetings_brief_used, meetings_failed,
                 meetings_stuck, processing_samples, processing_ms_total,
-                processing_ms_max, audio_seconds, estimated_ai_cost_microusd
+                processing_ms_max, first_transcript_samples,
+                first_transcript_ms_total, first_transcript_ms_max,
+                audio_seconds, estimated_ai_cost_microusd
            FROM product_metrics_daily
           WHERE date = ?`,
         new Date(now).toISOString().slice(0, 10),
@@ -579,6 +649,9 @@ describe('processing cron recovery', () => {
       processing_samples: 1,
       processing_ms_total: 5_000,
       processing_ms_max: 5_000,
+      first_transcript_samples: 2,
+      first_transcript_ms_total: 6_000,
+      first_transcript_ms_max: 4_000,
       audio_seconds: 0,
       estimated_ai_cost_microusd: 0,
     });
@@ -618,6 +691,8 @@ describe('private operational metrics', () => {
         meetings_brief_used: 0,
         processing_samples: 0,
         average_processing_ms: 0,
+        first_transcript_samples: 0,
+        average_first_transcript_ms: 0,
       }],
       pricingAssumptions: { whisperUsdPerMinute: 0.00051 },
     });
@@ -828,6 +903,62 @@ describe('desktop ingest replay safety', () => {
     const replayedArchive = await testEnv.AUDIO_BUCKET.get(archiveKey);
     expect(Array.from(new Uint8Array(await replayedArchive!.arrayBuffer()))).toEqual([4, 5, 6, 7, 8]);
   });
+
+  it('finalizes from uploaded segments when the desktop archive was lost', async () => {
+    const rawToken = await insertDeviceActor('user_segments_only', 'device_segments_only');
+    await insertMeeting({ id: 'meet_segments_only', userId: 'user_segments_only', status: 'uploading' });
+    await insertSegment({ id: 'mseg_so_0', meetingId: 'meet_segments_only', idx: 0, offsetMs: 0 });
+    await insertSegment({ id: 'mseg_so_1', meetingId: 'meet_segments_only', idx: 1, offsetMs: 3_000 });
+
+    const first = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_only', rawToken),
+      params: { id: 'meet_segments_only' },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ ok: true, status: 'processing' });
+    const meeting = await row<{ status: string; audio_r2_key: string | null; ended_at: number | null }>(
+      'SELECT status, audio_r2_key, ended_at FROM meetings WHERE id = ?',
+      'meet_segments_only',
+    );
+    expect(meeting?.status).toBe('processing');
+    expect(meeting?.audio_r2_key).toBeNull();
+    expect(meeting?.ended_at).toBeGreaterThan(0);
+    expect(
+      await row<{ count: number }>(
+        'SELECT count(*) AS count FROM meeting_uploads WHERE meeting_id = ?',
+        'meet_segments_only',
+      ),
+    ).toEqual({ count: 0 });
+
+    const replay = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_only', rawToken),
+      params: { id: 'meet_segments_only' },
+    });
+    expect(await replay.json()).toMatchObject({ ok: true, idempotent: true, status: 'processing' });
+  });
+
+  it('refuses a segments-only finalize with nothing uploaded or with a body', async () => {
+    const rawToken = await insertDeviceActor('user_segments_none', 'device_segments_none');
+    await insertMeeting({ id: 'meet_segments_none', userId: 'user_segments_none', status: 'recording' });
+
+    const empty = await finalizePost({
+      request: segmentsOnlyFinalizeRequest('meet_segments_none', rawToken),
+      params: { id: 'meet_segments_none' },
+    });
+    expect(empty.status).toBe(409);
+    expect(await empty.json()).toEqual({ error: 'no_segments' });
+
+    const withBody = new Request('https://eavesy.test/api/sessions/meet_segments_none/finalize?archive=none', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${rawToken}` },
+      body: requestBody(new Uint8Array([1])),
+    });
+    const rejected = await finalizePost({ request: withBody, params: { id: 'meet_segments_none' } });
+    expect(rejected.status).toBe(400);
+    expect(
+      await row<{ status: string }>('SELECT status FROM meetings WHERE id = ?', 'meet_segments_none'),
+    ).toEqual({ status: 'recording' });
+  });
 });
 
 type RouteHandler = (args: {
@@ -938,6 +1069,13 @@ function finalizeRequest(meetingId: string, token: string, body: Uint8Array): Re
       'content-type': 'audio/mp4',
     },
     body: requestBody(body),
+  });
+}
+
+function segmentsOnlyFinalizeRequest(meetingId: string, token: string): Request {
+  return new Request(`https://eavesy.test/api/sessions/${meetingId}/finalize?archive=none`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
   });
 }
 

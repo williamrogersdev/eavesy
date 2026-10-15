@@ -3,6 +3,18 @@ import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
 import { MODELS } from './client';
 
 export const MEETING_SUMMARY_MODEL = MODELS.summary;
+export const ROLLING_NOTES_MODEL = MODELS.rollingNotes;
+/**
+ * Rolling notes cover a few minutes of transcript and come back as a small
+ * JSON object; this leaves room for Haiku's thinking at low effort while
+ * capping a runaway reply far below the final summary's budget.
+ */
+export const ROLLING_NOTES_MAX_TOKENS = 8_000;
+
+/** The model that writes this kind of summary. */
+export function summaryModel(rolling: boolean): string {
+  return rolling ? ROLLING_NOTES_MODEL : MEETING_SUMMARY_MODEL;
+}
 
 const item = {
   type: 'object',
@@ -113,7 +125,7 @@ export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reaso
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`summary was not valid JSON: ${text.slice(0, 200)}`);
+    throw new Error(`summary was not valid JSON (len=${text.length})`);
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('summary was not a JSON object');
@@ -126,6 +138,22 @@ export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reaso
 }
 
 export async function requestMeetingSummary(client: Anthropic, args: MeetingSummaryRequest) {
+  if (args.rolling) {
+    // Streamed so a slow reply never runs into the SDK's non-streaming timeout.
+    const message = await client.messages
+      .stream({
+        model: ROLLING_NOTES_MODEL,
+        max_tokens: ROLLING_NOTES_MAX_TOKENS,
+        system: meetingSummarySystemPrompt(args),
+        output_config: {
+          effort: 'low',
+          format: { type: 'json_schema', schema: schemaFor(args) },
+        },
+        messages: [{ role: 'user', content: args.transcript }],
+      })
+      .finalMessage();
+    return parseMeetingSummary(message);
+  }
   const message = await client.messages.create({
     model: MEETING_SUMMARY_MODEL,
     max_tokens: 16_000,
