@@ -555,17 +555,19 @@ async function handleTranscribeSegment(
       if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
-    await db
-      .update(meetingSegments)
-      .set({ transcribeStatus: 'complete' })
-      .where(ownClaim);
-
     if (track !== 'mixed') {
       await removeEcho(db, meetingId, {
         fromMs: segment.offsetMs - ECHO_WINDOW_MS,
         toMs: segment.offsetMs + segment.durationMs + ECHO_WINDOW_MS,
       });
     }
+
+    // Stamped after echo removal, so a live client that reads this range sees
+    // it already cleaned up.
+    await db
+      .update(meetingSegments)
+      .set({ transcribeStatus: 'complete', transcribedAt: Date.now() })
+      .where(ownClaim);
 
     const siblingsPending = await db
       .select({ id: meetingSegments.id })
