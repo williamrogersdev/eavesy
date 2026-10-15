@@ -5,10 +5,6 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::{fs_writer, settings, store};
 
-fn api_base() -> String {
-    crate::base_url::api_base()
-}
-
 pub fn spawn(
     app: AppHandle,
     id: String,
@@ -17,12 +13,12 @@ pub fn spawn(
     is_video: bool,
 ) {
     std::thread::spawn(move || {
-        let result = settings::device_token(&app)
+        let result = settings::device_credential(&app)
             .ok_or_else(|| {
                 "Pair this Mac with your Eavesy account before transcribing recordings."
                     .to_string()
             })
-            .and_then(|token| run(&media_path, is_video, &token));
+            .and_then(|credential| run(&media_path, is_video, &credential));
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
@@ -92,14 +88,14 @@ pub fn spawn(
 const CHUNK_SECS: usize = 4 * 60;
 const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 
-fn run(media_path: &Path, is_video: bool, device_token: &str) -> Result<String, String> {
+fn run(media_path: &Path, is_video: bool, credential: &settings::Credential) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(180))
         .build()
         .map_err(|e| e.to_string())?;
     let mut texts = Vec::new();
     for (bytes, filename, mime) in prepare(media_path, is_video)? {
-        let text = with_retry(|| transcribe_piece(&client, &bytes, &filename, &mime, device_token))?;
+        let text = with_retry(|| transcribe_piece(&client, &bytes, &filename, &mime, credential))?;
         if !text.trim().is_empty() {
             texts.push(text.trim().to_string());
         }
@@ -134,19 +130,19 @@ fn transcribe_piece(
     bytes: &[u8],
     filename: &str,
     mime: &str,
-    device_token: &str,
+    credential: &settings::Credential,
 ) -> Result<String, PieceError> {
     let part = reqwest::blocking::multipart::Part::bytes(bytes.to_vec())
         .file_name(filename.to_string())
         .mime_str(mime)
         .map_err(|e| PieceError::Fatal(e.to_string()))?;
     let form = reqwest::blocking::multipart::Form::new().part("audio", part);
-    let url = format!("{}/api/transcribe", api_base().trim_end_matches('/'));
+    let url = format!("{}/api/transcribe", credential.base.trim_end_matches('/'));
 
     let resp = client
         .post(&url)
         .multipart(form)
-        .bearer_auth(device_token)
+        .bearer_auth(&credential.token)
         .send()
         .map_err(|e| PieceError::Retry(format!("request failed: {e}")))?;
     let status = resp.status();

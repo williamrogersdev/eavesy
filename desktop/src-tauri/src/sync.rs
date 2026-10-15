@@ -188,7 +188,7 @@ pub(crate) enum Pass {
 const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
 
 pub async fn run(app: AppHandle) -> Result<()> {
-    let api = Api::new(api_base())?;
+    let mut api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
     let mut recovery_retried = Instant::now();
 
@@ -200,10 +200,16 @@ pub async fn run(app: AppHandle) -> Result<()> {
                 eprintln!("desktop ingest: deferred recovery stopped: {error}");
             }
         }
-        let Some(token) = settings::device_token(&app) else {
+        let Some(credential) = settings::device_credential(&app) else {
             idle(Duration::from_secs(5)).await;
             continue;
         };
+        let token = credential.token;
+        // The token only goes to the server that issued it: rebuild the client when
+        // the configured server (and with it the credential) changes while running.
+        if api.base != credential.base {
+            api = Api::new(credential.base)?;
+        }
         if let Some((rejected_token, since)) = &rejected {
             if *rejected_token == token && since.elapsed() < SIGNED_OUT_RETRY {
                 idle(Duration::from_secs(5)).await;

@@ -250,11 +250,24 @@ pub(crate) fn load_token(keychain: &impl Keychain, account: &str) -> Result<Opti
     Ok(Some(token))
 }
 
+/// A device token together with the server that issued it. Every request made with
+/// the token must go to `base`; never look the base up again separately, or a change
+/// of server between the two lookups would send the token to the wrong host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Credential {
+    pub base: String,
+    pub token: String,
+}
+
 pub fn device_token(app: &AppHandle) -> Option<String> {
+    device_credential(app).map(|c| c.token)
+}
+
+pub fn device_credential(app: &AppHandle) -> Option<Credential> {
     #[cfg(debug_assertions)]
     if let Ok(token) = std::env::var("EAVESY_DEVICE_TOKEN") {
         if !token.trim().is_empty() {
-            return Some(token);
+            return Some(Credential { base: crate::base_url::api_base(), token });
         }
     }
     let stored = TOKEN_CACHE.get(|| {
@@ -262,7 +275,14 @@ pub fn device_token(app: &AppHandle) -> Option<String> {
         let stored = load_token(&keychain::System, &account)?;
         Ok((account, stored))
     })?;
-    token_for_base(&stored, &crate::base_url::api_base())
+    credential_for(&stored, crate::base_url::api_base())
+}
+
+/// The credential for `base`, carrying that same base so callers cannot pair the token
+/// with a different server.
+fn credential_for(stored: &str, base: String) -> Option<Credential> {
+    let token = token_for_base(stored, &base)?;
+    Some(Credential { base, token })
 }
 
 /// The Keychain value is `<base>\n<token>`, so a credential is bound to the server
@@ -575,5 +595,16 @@ mod tests {
     fn a_legacy_unbound_token_belongs_to_eavesy_com() {
         assert_eq!(token_for_base("legacy", "https://eavesy.com"), Some("legacy".into()));
         assert_eq!(token_for_base("legacy", "https://evil.example"), None);
+    }
+
+    #[test]
+    fn a_credential_always_names_the_server_it_may_be_sent_to() {
+        let stored = bind_token("https://new.example", "tok");
+        // Paired to the new server while a long-lived client still points at the old one.
+        assert_eq!(credential_for(&stored, "https://old.example".into()), None);
+        assert_eq!(
+            credential_for(&stored, "https://new.example".into()),
+            Some(Credential { base: "https://new.example".into(), token: "tok".into() })
+        );
     }
 }

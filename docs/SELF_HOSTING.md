@@ -153,7 +153,8 @@ precedence:
    server that issued it and is never sent anywhere else, so after changing the
    server you must pair again.
 3. `EAVESY_API_BASE=https://eavesy.example.com` set when compiling (the release
-   build script rejects anything but an `https` origin).
+   build script rejects any value except `https://eavesy.com`, unless you also
+   export `EAVESY_ALLOW_API_BASE` with the same `https` URL).
 4. `https://eavesy.com`.
 
 Also set, when building your own bundle:

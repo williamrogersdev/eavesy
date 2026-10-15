@@ -134,14 +134,14 @@ pub struct AccountInfo {
 
 #[tauri::command]
 pub async fn account_info(app: AppHandle) -> Option<AccountInfo> {
-    let token = settings::device_token(&app)?;
+    let credential = settings::device_credential(&app)?;
     let unknown = AccountInfo { email: None, name: None };
     let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build() else {
         return Some(unknown);
     };
     match client
-        .get(format!("{}/api/devices/me", crate::sync::api_base()))
-        .bearer_auth(token)
+        .get(format!("{}/api/devices/me", credential.base))
+        .bearer_auth(credential.token)
         .send()
         .await
     {
@@ -153,11 +153,11 @@ pub async fn account_info(app: AppHandle) -> Option<AccountInfo> {
 
 #[tauri::command]
 pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
-    if let Some(token) = settings::device_token(&app) {
+    if let Some(credential) = settings::device_credential(&app) {
         if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build() {
             let _ = client
-                .delete(format!("{}/api/devices/me", crate::sync::api_base()))
-                .bearer_auth(token)
+                .delete(format!("{}/api/devices/me", credential.base))
+                .bearer_auth(credential.token)
                 .send()
                 .await;
         }
