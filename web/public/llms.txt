@@ -27,8 +27,20 @@ The Mac app (not the browser recorder) writes each capture to a folder under `~/
 
 Clipboard and screenshot captures hold `note.md` / `image.png` / `screenshot.png` plus `capture.json`. All formats are open; read them directly with filesystem access, no API needed. Format: https://eavesy.com/docs/session-folder-format
 
-## Connect over MCP (read-only)
-Server: `https://mcp.eavesy.com` (streamable HTTP). Create a connection in the web app under Settings; the token is shown once. Send it in the Authorization header. Tokens expire 90 days after last use. URL-path tokens (`https://mcp.eavesy.com/<token>`) are deprecated and work only while the server flag `MCP_ALLOW_PATH_TOKENS` is not `false`.
+## Connect over MCP
+Server: `https://mcp.eavesy.com` (streamable HTTP). Add it by URL: the server supports MCP authorization (OAuth 2.1, PKCE, dynamic client registration, metadata at `/.well-known/oauth-protected-resource`), so clients like Claude.ai, ChatGPT and Claude Code send the user to sign in to Eavesy and approve the connection. No token to paste.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http eavesy https://mcp.eavesy.com
+```
+
+Or the Claude Code plugin (adds the server plus a skill for when to use it): `/plugin marketplace add williamrogersdev/eavesy`, then `/plugin install eavesy@eavesy`.
+
+Scopes: `read` (default) and `write`. The user grants write only by ticking "Also let it write" on the approval page (or "Allow writes" for a pasted token). Tools a connection's scopes don't cover are hidden from `tools/list` and refused if called.
+
+Fallback for clients without OAuth: create a connection in the web app under Settings > AI assistants (MCP); the token is shown once. Send it in the Authorization header. Tokens expire 90 days after last use. URL-path tokens (`https://mcp.eavesy.com/<token>`) are deprecated and work only while the server flag `MCP_ALLOW_PATH_TOKENS` is not `false`.
 
 ```json
 {
@@ -42,7 +54,7 @@ Server: `https://mcp.eavesy.com` (streamable HTTP). Create a connection in the w
 }
 ```
 
-Tools (names say "meeting" because that is the recording type in the data model):
+Tools, all read-only (names say "meeting" because that is the recording type in the data model):
 - `search_meetings` (query, limit): search recordings by title or transcript; returns excerpts.
 - `get_meeting` (id): summary and full transcript.
 - `recent_meetings` (limit): newest recordings.
