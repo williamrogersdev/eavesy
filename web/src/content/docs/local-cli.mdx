@@ -1,0 +1,68 @@
+---
+title: The eavesy command and local MCP server
+description: Let agents search the notes, screenshots and recordings on your Mac, including ones that never upload.
+category: For AI agents
+order: 23
+---
+
+The [hosted MCP server](/docs/connect-mcp) reads what Eavesy has synced to the
+cloud. Some captures only ever live on your Mac: clipboard notes, pasted images
+and screenshots stay in your [Recordings folder](/docs/session-folder-format).
+The `eavesy` command reads that folder directly, and `eavesy mcp` serves it to
+any MCP client over stdio. Nothing is uploaded to do this.
+
+## Install
+
+**With the Mac app:** open **Settings → Command line** and turn on
+**Install the eavesy command**. Eavesy links its bundled copy to
+`~/.local/bin/eavesy` and keeps the link pointing at the app when it moves or
+updates. Turning it off removes the link. Eavesy never replaces a different
+`eavesy` that is already there.
+
+**Without the app** (for example on a machine where the Recordings folder is
+synced from your Mac), run it with Bun or Node:
+
+```bash
+bunx @eavesy/cli recent
+npx @eavesy/cli recent
+```
+
+## Add it to an agent
+
+```bash
+claude mcp add eavesy -- ~/.local/bin/eavesy mcp
+# or, without the app:
+claude mcp add eavesy -- bunx @eavesy/cli mcp
+```
+
+Any MCP client that can launch a stdio server works the same way. The server is
+read-only and exposes three tools:
+
+| Tool | What it does |
+|---|---|
+| `search_captures` | Finds captures where every query word appears in the title or a text file. Filters by `kind`. |
+| `recent_captures` | Lists the newest captures, optionally of one `kind`. |
+| `get_capture` | Returns one capture's metadata and Markdown files. Screenshots and pasted images are attached as images. |
+
+Kinds are `meeting`, `note`, `image`, `screenshot` and `file`.
+
+## Commands
+
+```bash
+eavesy search onboarding checklist     # every word must match
+eavesy recent --kind screenshot --limit 5
+eavesy get 5b9e1c7a                    # id, id prefix, or folder name
+eavesy recent --json                   # machine-readable output
+pbpaste | eavesy drop -                # send text to your devices
+eavesy drop ~/Desktop/whiteboard.png   # send a file
+```
+
+`eavesy drop` sends the text or file to your other devices through Eavesy when
+the Mac app is signed in. It reads the app's device credential from the
+Keychain, and macOS asks you once whether to allow that. Otherwise, or with
+`--local`, it saves the drop as a new capture in your Recordings folder, where
+`search` and `get` find it.
+
+The Recordings folder is the one chosen in the app's settings, or
+`~/Eavesy/Recordings`. Use `--root <dir>` or the `EAVESY_RECORDINGS`
+environment variable to point it somewhere else.

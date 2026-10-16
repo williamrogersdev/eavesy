@@ -1,0 +1,14 @@
+{
+  "id": "0c8f6c2e-1d9a-4f53-8a57-3b1f0e6d9a11",
+  "title": "Note",
+  "started_at_ms": 1782900000000,
+  "duration_sec": 0,
+  "source": "note",
+  "status": "complete",
+  "summary": null,
+  "transcript": "Rotate the staging webhook secret before Friday.\nChecklist lives in the ops wiki.",
+  "notes": null,
+  "has_audio": false,
+  "has_video": false,
+  "folder_path": "/Users/someone/Eavesy/Recordings/2026-07-01 Note"
+}

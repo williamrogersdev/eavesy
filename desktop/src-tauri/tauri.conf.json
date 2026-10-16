@@ -101,7 +101,8 @@
     ],
     "createUpdaterArtifacts": true,
     "externalBin": [
-      "binaries/SwiftAudio"
+      "binaries/SwiftAudio",
+      "binaries/eavesy-cli"
     ],
     "icon": [
       "icons/32x32.png",

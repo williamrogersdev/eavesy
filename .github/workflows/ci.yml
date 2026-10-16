@@ -22,6 +22,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd cli && bun install --frozen-lockfile)
       - name: Check migration numbering
         run: scripts/check-migrations.sh
       - name: Write placeholder env for the build
@@ -52,6 +53,13 @@ jobs:
       - name: Worker tests
         working-directory: web
         run: bun run test:workers
+      - name: CLI
+        working-directory: cli
+        run: |
+          bunx tsc --noEmit
+          bun test
+          bun run build
+          node dist/eavesy.js recent --root test/fixtures/Recordings
       - name: Two-track bench
         working-directory: web
         run: bun bench/score.ts --check

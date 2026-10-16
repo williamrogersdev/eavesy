@@ -25,3 +25,11 @@ DEST="$DESKTOP/src-tauri/binaries"
 mkdir -p "$DEST"
 cp -f "$DESKTOP/swift-audio/.build/release/SwiftAudio" "$DEST/SwiftAudio-$TRIPLE"
 echo "▸ Staged sidecar: src-tauri/binaries/SwiftAudio-$TRIPLE"
+
+# The `eavesy` command (cli/). Named eavesy-cli in the bundle because
+# Contents/MacOS/eavesy is the app itself; Settings links it to ~/.local/bin/eavesy.
+echo "▸ Compiling eavesy CLI"
+cd "$DESKTOP/../cli"
+bun install --frozen-lockfile
+bun build src/bin.ts --compile --minify --outfile "$DEST/eavesy-cli-$TRIPLE"
+echo "▸ Staged sidecar: src-tauri/binaries/eavesy-cli-$TRIPLE"

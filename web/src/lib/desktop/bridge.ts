@@ -170,6 +170,25 @@ export async function setLiveCaptions(enabled: boolean): Promise<void> {
   await invoke('set_live_captions', { enabled });
 }
 
+export interface CliStatus {
+  /** The app bundles the CLI (false in dev builds without the sidecar). */
+  available: boolean;
+  /** ~/.local/bin/eavesy links to this app's CLI. */
+  installed: boolean;
+  /** Something else is at the link path; Eavesy leaves it alone. */
+  conflict: boolean;
+  link_path: string;
+}
+
+export async function getCliStatus(): Promise<CliStatus | null> {
+  if (!isDesktop()) return null;
+  return invoke<CliStatus>('cli_status');
+}
+
+export async function setCliInstalled(enabled: boolean): Promise<CliStatus> {
+  return invoke<CliStatus>('set_cli_installed', { enabled });
+}
+
 export type PrivacyPane = 'microphone' | 'screen' | 'accessibility' | 'speech';
 export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
   if (!isDesktop()) return;
