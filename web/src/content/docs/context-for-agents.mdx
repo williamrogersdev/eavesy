@@ -26,9 +26,18 @@ in the brief does the heavy lifting.
 
 ## Connect over MCP
 
-Signed-in accounts can connect an MCP-capable agent to the hosted, read-only
-server and let it search recordings and dictations itself. See
-[Connect an agent over MCP](/docs/connect-mcp).
+Let the agent look things up itself. Add `https://mcp.eavesy.com` as a
+connector by URL in Claude.ai, ChatGPT or Claude Code, sign in to Eavesy and
+approve it, and the agent can search your recordings and dictations. There is
+no token to copy, and the connection is read-only unless you allow writes. In
+Claude Code it's one command:
+
+```bash
+claude mcp add --transport http eavesy https://mcp.eavesy.com
+```
+
+See [Connect an agent over MCP](/docs/connect-mcp) for each client, the
+Claude Code plugin, and pasted tokens for clients without OAuth.
 
 ## Point an agent at the folder
 

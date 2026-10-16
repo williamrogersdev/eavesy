@@ -1,0 +1,17 @@
+{
+  "name": "eavesy",
+  "owner": {
+    "name": "Eavesy",
+    "email": "hello@eavesy.com"
+  },
+  "metadata": {
+    "description": "Eavesy plugins for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "eavesy",
+      "source": "./plugins/eavesy",
+      "description": "Give Claude Code your Eavesy meetings, dictations and action items over MCP."
+    }
+  ]
+}

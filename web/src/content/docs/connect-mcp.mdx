@@ -1,22 +1,87 @@
 ---
 title: Connect an agent over MCP
-description: Give an MCP-capable agent read-only access to your Eavesy recordings and dictations.
+description: Add Eavesy to Claude, ChatGPT or Claude Code by URL so your agent can search your recordings and dictations.
 category: For AI agents
 order: 22
 ---
 
-Eavesy runs a hosted, **read-only** [MCP](https://modelcontextprotocol.io)
-server at `https://mcp.eavesy.com`. An agent that speaks MCP can search your
-recordings and dictations and pull the Markdown summary and transcript into its
-own context, with nothing to copy and paste.
+Eavesy runs a hosted [MCP](https://modelcontextprotocol.io) server at
+`https://mcp.eavesy.com`. An agent that speaks MCP can search your recordings
+and dictations and pull the Markdown summary and transcript into its own
+context, with nothing to copy and paste.
 
-## Create a connection
+You add it by URL. The agent sends you to Eavesy to sign in and approve the
+connection, then it connects. There is no token to copy.
 
-1. Sign in to the web app and open **Settings**.
-2. Create an MCP connection. Eavesy shows a ready-made client configuration once.
-3. Paste it into your agent's MCP settings.
+## Add it by URL
 
-The configuration looks like this (the token is shown only when you create it):
+The server URL is the same everywhere:
+
+```text
+https://mcp.eavesy.com
+```
+
+### Claude.ai and Claude Desktop
+
+1. Open **Settings → Connectors** and choose **Add custom connector**.
+2. Name it `Eavesy` and paste `https://mcp.eavesy.com` as the URL.
+3. Select **Connect**. Sign in to Eavesy and approve the connection.
+
+### ChatGPT
+
+1. Turn on developer mode under **Settings → Apps & Connectors → Advanced**.
+2. Create a connector with `https://mcp.eavesy.com` as the URL and OAuth as the
+   authentication.
+3. Sign in to Eavesy and approve the connection.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http eavesy https://mcp.eavesy.com
+```
+
+Then run `/mcp` in Claude Code, pick `eavesy` and authenticate. Your browser
+opens the Eavesy approval page.
+
+Or install the Eavesy plugin, which adds the same server plus a skill that
+tells Claude when to look up your meetings and dictations:
+
+```text
+/plugin marketplace add williamrogersdev/eavesy
+/plugin install eavesy@eavesy
+```
+
+### Other clients
+
+Any client that supports MCP authorization (OAuth 2.1 with dynamic client
+registration) can add `https://mcp.eavesy.com` by URL. Clients that can't do
+OAuth can use a [pasted token](#paste-a-token-instead).
+
+## What you approve
+
+The approval page shows which app is asking and where you'll be sent back.
+A connection is **read-only** by default: it can search and read your
+recordings, dictations and action items.
+
+If the app asks for write access, the page also shows **Also let it write**,
+unchecked. Tick it only if you want the agent to make changes, such as
+sending text to your devices. A read-only connection that tries a write tool
+is refused, and write tools don't show up in its tool list at all.
+
+Every approved app is listed in **Settings → AI assistants (MCP)**, where you
+can revoke it. Revoking cuts it off at once. An app you haven't used for
+90 days has to be approved again.
+
+## Paste a token instead
+
+For clients that can't sign in with OAuth, create a token by hand:
+
+1. Sign in to the web app and open **Settings → AI assistants (MCP)**.
+2. Tick **Allow writes** only if this connection should be able to write.
+3. Select **New connection**. Eavesy shows a ready-made client configuration
+   once. Paste it into your agent's MCP settings.
+
+The configuration looks like this:
 
 ```json
 {
@@ -30,10 +95,10 @@ The configuration looks like this (the token is shown only when you create it):
 }
 ```
 
-Tokens go in the `Authorization` header. A token expires 90 days after it was
-last used. Older URL-path tokens (`https://mcp.eavesy.com/YOUR_TOKEN`) still work
-for clients that can only be given a URL, but they are deprecated and can be
-turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
+Tokens go in the `Authorization` header and expire 90 days after they were
+last used. Older URL-path tokens (`https://mcp.eavesy.com/YOUR_TOKEN`) still
+work for clients that can only be given a URL, but they are deprecated and can
+be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 
 ## Tools
 
@@ -45,12 +110,12 @@ turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `search_dictations` | Search your dictations. |
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
 
-The tool names say "meetings" because that is the name of a recording in the
-data model. Clipboard notes, images, and screenshots stay on your Mac and are
-never uploaded, so they are not available over MCP.
+These tools only read. The tool names say "meetings" because that is the name
+of a recording in the data model. Clipboard notes, images, and screenshots
+stay on your Mac and are never uploaded, so they are not available over MCP.
 
 <Callout type="note">
-Requests are rate limited per token. The server never writes: it cannot create,
+Requests are rate limited per connection. A read-only connection can't create,
 edit, or delete anything.
 </Callout>
 

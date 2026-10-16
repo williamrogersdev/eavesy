@@ -37,7 +37,7 @@ const STAGES = [
   {
     n: '04',
     title: 'Or let your agent come get it',
-    body: 'Captures live in a folder on your disk as Markdown and JSON, so an agent with filesystem access can read them directly. Signed-in accounts can also connect the hosted, read-only MCP server and let an agent search recordings and dictations.',
+    body: 'Captures live in a folder on your disk as Markdown and JSON, so an agent with filesystem access can read them directly. Signed-in accounts can also add the hosted MCP server to Claude, ChatGPT or Claude Code by URL and let an agent search recordings and dictations.',
   },
 ];
 
