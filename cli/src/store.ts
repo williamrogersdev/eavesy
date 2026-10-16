@@ -2,7 +2,7 @@
 // web/src/content/docs/session-folder-format.mdx: one folder per capture, with
 // `meeting.json` for recorded sessions and `capture.json` for clipboard notes,
 // pasted images and screenshots (written by desktop/src-tauri/src/visual.rs).
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
 
@@ -92,6 +92,9 @@ function readJson(path: string): Record<string, unknown> | null {
 
 const str = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+/** The range `Date` can represent; anything outside it makes toISOString throw. */
+const MAX_DATE_MS = 8.64e15;
+const validTime = (value: number | null): value is number => value !== null && Number.isFinite(value) && Math.abs(value) <= MAX_DATE_MS;
 
 export function kindOf(source: string): Kind {
   switch (source) {
@@ -118,7 +121,8 @@ function listFiles(folder: string): CaptureFile[] {
     const path = join(folder, name);
     let stat;
     try {
-      stat = statSync(path);
+      // lstat: a symlink could point anywhere on disk, so it is not part of the capture.
+      stat = lstatSync(path);
     } catch {
       continue;
     }
@@ -146,7 +150,7 @@ export function readCapture(folder: string): Capture | null {
   } else {
     startedAtMs = num(manifest.started_at_ms);
   }
-  if (startedAtMs === null || Number.isNaN(startedAtMs)) {
+  if (!validTime(startedAtMs)) {
     try {
       startedAtMs = statSync(folder).mtimeMs;
     } catch {
@@ -181,8 +185,12 @@ export function listCaptures(root: string): Capture[] {
   for (const entry of entries) {
     if (captures.length >= MAX_FOLDERS) break;
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-    const capture = readCapture(join(root, entry.name));
-    if (capture) captures.push(capture);
+    try {
+      const capture = readCapture(join(root, entry.name));
+      if (capture) captures.push(capture);
+    } catch {
+      // One unreadable folder must not hide the rest.
+    }
   }
   return captures.sort((a, b) => b.startedAtMs - a.startedAtMs || a.id.localeCompare(b.id));
 }

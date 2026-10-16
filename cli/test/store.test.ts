@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appSettingsPath, getCapture, listCaptures, recent, resolveRoot, search } from '../src/store';
@@ -31,6 +31,19 @@ describe('listCaptures', () => {
       ['summary.md', 'text'],
       ['transcript.md', 'text'],
     ]);
+  });
+
+  test('a bad timestamp or a symlinked file does not break or leak', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eavesy-root-'));
+    cpSync(join(FIXTURE, '2026-07-01 Note'), join(root, 'Note'), { recursive: true });
+    mkdirSync(join(root, 'Bad'));
+    writeFileSync(join(root, 'Bad', 'capture.json'), JSON.stringify({ id: 'bad', title: 'Bad', started_at_ms: 1e20, source: 'note' }));
+    symlinkSync('/etc/hosts', join(root, 'Bad', 'hosts.md'));
+    const captures = listCaptures(root);
+    expect(captures.map((c) => c.id).sort()).toEqual(['bad', NOTE_ID].sort());
+    const bad = getCapture(root, 'bad')!;
+    expect(Number.isNaN(Date.parse(bad.date))).toBe(false);
+    expect(bad.files).toEqual([]);
   });
 
   test('a missing root is empty, not an error', () => {

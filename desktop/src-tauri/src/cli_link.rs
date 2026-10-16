@@ -45,11 +45,21 @@ fn existing(link: &Path) -> Existing {
     match std::fs::symlink_metadata(link) {
         Err(error) if error.kind() == ErrorKind::NotFound => Existing::Nothing,
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(link) {
-            Ok(target) if target.file_name().is_some_and(|name| name == SIDECAR) => Existing::Ours(target),
+            Ok(target) if is_bundled_sidecar(&target) => Existing::Ours(target),
             _ => Existing::Foreign,
         },
         _ => Existing::Foreign,
     }
+}
+
+/// `<something>.app/Contents/MacOS/eavesy-cli`: where the bundler puts the sidecar.
+/// The file name alone is not enough to claim a link as ours.
+fn is_bundled_sidecar(target: &Path) -> bool {
+    let mut parts = target.components().rev().map(|c| c.as_os_str().to_string_lossy());
+    parts.next().is_some_and(|name| name == SIDECAR)
+        && parts.next().is_some_and(|name| name == "MacOS")
+        && parts.next().is_some_and(|name| name == "Contents")
+        && parts.next().is_some_and(|name| name.ends_with(".app"))
 }
 
 fn status_for(link: &Path, target: Option<&Path>) -> CliStatus {
@@ -67,13 +77,17 @@ fn install(link: &Path, target: &Path) -> Result<(), String> {
             return Err(format!("{} already exists and is not Eavesy's. Remove it, then try again.", link.display()))
         }
         Existing::Ours(points_to) if points_to == target => return Ok(()),
-        Existing::Ours(_) => std::fs::remove_file(link).map_err(|e| format!("could not replace {}: {e}", link.display()))?,
-        Existing::Nothing => {}
+        Existing::Ours(_) | Existing::Nothing => {}
     }
-    if let Some(dir) = link.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    }
-    symlink(target, link).map_err(|e| format!("could not link {}: {e}", link.display()))
+    let dir = link.parent().ok_or_else(|| format!("{} has no parent folder", link.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    // Link beside it, then rename over: the command never disappears if this fails halfway.
+    let temp = dir.join(format!(".eavesy-link-{}", uuid::Uuid::new_v4()));
+    symlink(target, &temp).map_err(|e| format!("could not link {}: {e}", link.display()))?;
+    std::fs::rename(&temp, link).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        format!("could not link {}: {e}", link.display())
+    })
 }
 
 /// Removes the link only when it is Eavesy's; never deletes anything else.
@@ -137,7 +151,7 @@ mod tests {
     }
 
     fn sidecar(dir: &Path, app: &str) -> PathBuf {
-        let path = dir.join(app).join(SIDECAR);
+        let path = dir.join(app).join("Contents/MacOS").join(SIDECAR);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "#!/bin/sh\n").unwrap();
         path
@@ -154,6 +168,8 @@ mod tests {
         let status = status_for(&link, Some(&target));
         assert!(status.installed && status.available && !status.conflict);
         install(&link, &target).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(link.parent().unwrap()).unwrap().collect();
+        assert_eq!(leftovers.len(), 1, "no temporary links left behind");
         uninstall(&link).unwrap();
         assert!(std::fs::symlink_metadata(&link).is_err());
         uninstall(&link).unwrap();
@@ -181,8 +197,12 @@ mod tests {
         let other_link = dir.join("link/eavesy");
         std::fs::create_dir_all(other_link.parent().unwrap()).unwrap();
         symlink(Path::new("/usr/local/lib/node_modules/@eavesy/cli/dist/eavesy.js"), &other_link).unwrap();
+        // Same file name as the sidecar, but not inside an app bundle.
+        let lookalike = dir.join("lookalike/eavesy");
+        std::fs::create_dir_all(lookalike.parent().unwrap()).unwrap();
+        symlink(Path::new("/opt/tools/eavesy-cli"), &lookalike).unwrap();
 
-        for link in [&file, &other_link] {
+        for link in [&file, &other_link, &lookalike] {
             assert!(status_for(link, Some(&target)).conflict);
             assert!(install(link, &target).is_err());
             assert!(uninstall(link).is_err());

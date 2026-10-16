@@ -56,6 +56,12 @@ describe('eavesy', () => {
     expect(result.folder).toContain('From Claude');
   });
 
+  test('drop - on a terminal explains instead of waiting', async () => {
+    const res = await cli(['drop', '-'], { stdinIsTTY: true, readStdin: () => new Promise(() => {}) });
+    expect(res.code).toBe(2);
+    expect(res.err).toContain('pbpaste | eavesy drop -');
+  });
+
   test('usage errors exit 2; help and version exit 0', async () => {
     expect((await cli(['frobnicate'])).code).toBe(2);
     expect((await cli(['recent', '--kind', 'podcast'])).code).toBe(2);

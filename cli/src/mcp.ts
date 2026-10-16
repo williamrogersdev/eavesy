@@ -9,6 +9,8 @@ import { VERSION } from './version';
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
 /** Images larger than this are listed by path instead of inlined. */
 const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
+/** Total inlined per get_capture call; the rest are listed by path only. */
+const MAX_INLINE_TOTAL_BYTES = 12 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -118,11 +120,14 @@ export function callTool(root: string, name: string, args: Record<string, unknow
         },
       ];
       if (args.include_images !== false) {
+        let budget = MAX_INLINE_TOTAL_BYTES;
         for (const file of capture.files) {
           const mimeType = IMAGE_TYPES[extname(file.name).toLowerCase()];
-          if (!mimeType || file.bytes > MAX_INLINE_IMAGE_BYTES) continue;
+          if (!mimeType || file.bytes > MAX_INLINE_IMAGE_BYTES || file.bytes > budget) continue;
           try {
-            content.push({ type: 'image', data: readFileSync(file.path).toString('base64'), mimeType });
+            const data = readFileSync(file.path);
+            budget -= data.byteLength;
+            content.push({ type: 'image', data: data.toString('base64'), mimeType });
           } catch {
             // Listed above by path; skip what cannot be read.
           }

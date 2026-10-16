@@ -1,7 +1,7 @@
 // `eavesy drop`: send text or a file to your Eavesy devices through the cloud
 // when this Mac is signed in, otherwise save it as a local capture folder.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -40,7 +40,24 @@ export function parseStoredCredential(stored: string): Credential | null {
   if (!value) return null;
   const at = value.indexOf('\n');
   const [base, token] = at === -1 ? [DEFAULT_BASE, value] : [value.slice(0, at).trim(), value.slice(at + 1).trim()];
-  return base && token ? { base: base.replace(/\/+$/, ''), token } : null;
+  const safe = safeBase(base);
+  return safe && token ? { base: safe, token } : null;
+}
+
+/**
+ * The origin a token may be sent to: https, or plain http only to this machine
+ * (local development). Anything else would put the token on the wire in clear.
+ */
+export function safeBase(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
 export interface CredentialOptions {
@@ -58,7 +75,11 @@ export interface CredentialOptions {
 export function findCredential(opts: CredentialOptions = {}): Credential | null {
   const env = opts.env ?? process.env;
   const fromEnv = env.EAVESY_DEVICE_TOKEN?.trim();
-  if (fromEnv) return { base: (env.EAVESY_API_BASE?.trim() || DEFAULT_BASE).replace(/\/+$/, ''), token: fromEnv };
+  if (fromEnv) {
+    const base = safeBase(env.EAVESY_API_BASE?.trim() || DEFAULT_BASE);
+    if (!base) throw new Error('EAVESY_API_BASE must be an https:// URL (http:// only for localhost)');
+    return { base, token: fromEnv };
+  }
   if (env.EAVESY_NO_KEYCHAIN === '1') return null;
   const deviceId = readAppSettings(opts.home ?? env.HOME ?? homedir())?.device_id;
   if (typeof deviceId !== 'string' || !deviceId) return null;
@@ -97,6 +118,7 @@ export async function drop(input: DropInput, opts: DropOptions): Promise<DropRes
   let note: string | undefined;
   const credential = opts.local ? null : opts.credential;
   if (credential) {
+    // Any cloud failure saves locally: text piped on stdin cannot be read again.
     const sent = await sendToCloud(input, credential, opts.fetch ?? fetch);
     if (sent.ok) return { via: 'cloud', id: sent.id };
     note = sent.reason;
@@ -112,18 +134,24 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
     'x-drop-client': 'cli',
     'x-drop-device': 'Eavesy CLI',
   };
+  // Read before the request so a local I/O error is reported as itself.
+  const file = input.kind === 'file' ? readFileSync(input.path) : null;
+  if (file && file.byteLength > MAX_FILE_BYTES) throw new Error('file too large (100 MB max)');
   let response: Response;
   try {
+    // No redirects: the bearer token must only ever reach `credential.base`.
     if (input.kind === 'text') {
       response = await fetcher(`${credential.base}/api/drops`, {
         method: 'POST',
+        redirect: 'error',
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ text: input.text }),
       });
     } else {
-      const body = readFileSync(input.path);
+      const body = file!;
       response = await fetcher(`${credential.base}/api/drops/upload`, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           ...headers,
           'content-type': contentTypeFor(input.path),
@@ -141,7 +169,7 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
   }
   if (!response.ok) {
     const detail = await response.json().then((b: { error?: string }) => b?.error).catch(() => null);
-    throw new Error(`drop failed: HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
+    return { ok: false, reason: `${credential.base} refused the drop (HTTP ${response.status}${detail ? `: ${detail}` : ''})` };
   }
   const body = (await response.json().catch(() => null)) as { drop?: { id?: string } } | null;
   return { ok: true, id: body?.drop?.id ?? 'unknown' };
@@ -203,13 +231,27 @@ export function saveLocal(input: DropInput, root: string, now: Date): DropResult
   const title =
     input.title?.trim() || (input.kind === 'text' ? 'Note' : basename(input.path, extname(input.path)) || 'File');
   const folder = allocateFolder(root, title, now);
+  try {
+    return writeCapture(input, folder, { id, title, source, now });
+  } catch (error) {
+    rmSync(folder, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function writeCapture(
+  input: DropInput,
+  folder: string,
+  { id, title, source, now }: { id: string; title: string; source: string; now: Date },
+): DropResult {
   let fileName: string;
   if (input.kind === 'text') {
     fileName = 'note.md';
     writeFileSync(join(folder, fileName), input.text);
   } else {
     fileName = basename(input.path).replace(/^\.+/, '') || 'file';
-    if (fileName === 'capture.json' || fileName === 'meeting.json') fileName = `dropped-${fileName}`;
+    // APFS is case-insensitive by default, so CAPTURE.JSON would overwrite the manifest.
+    if (['capture.json', 'meeting.json'].includes(fileName.toLowerCase())) fileName = `dropped-${fileName}`;
     copyFileSync(input.path, join(folder, fileName));
   }
   const manifest = {
@@ -228,6 +270,9 @@ export function saveLocal(input: DropInput, root: string, now: Date): DropResult
     file: fileName,
     origin: 'cli',
   };
-  writeFileSync(join(folder, 'capture.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  // Written last and renamed into place, so a reader never sees a partial manifest.
+  const temp = join(folder, '.capture.json.tmp');
+  writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`);
+  renameSync(temp, join(folder, 'capture.json'));
   return { via: 'local', id, folder };
 }

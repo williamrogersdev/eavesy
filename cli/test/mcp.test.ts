@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleMessage } from '../src/mcp';
 
@@ -55,6 +57,18 @@ describe('handleMessage', () => {
 
     const textOnly = call('get_capture', { id: '5b9e1c7a-0d2f-4a8e-9c1b-2f6d3e4a5b6c', include_images: false });
     expect(textOnly.result.content).toHaveLength(1);
+  });
+
+  test('get_capture caps the total size of inlined images', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eavesy-root-'));
+    mkdirSync(join(root, 'Shots'));
+    writeFileSync(join(root, 'Shots', 'capture.json'), JSON.stringify({ id: 'shots', title: 'Shots', started_at_ms: 1, source: 'image' }));
+    for (const n of [1, 2, 3, 4]) writeFileSync(join(root, 'Shots', `${n}.png`), Buffer.alloc(3.5 * 1024 * 1024));
+    const res = handleMessage(root, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_capture', arguments: { id: 'shots' } } }) as {
+      result: { content: { type: string; text?: string }[] };
+    };
+    expect(res.result.content.filter((c) => c.type === 'image')).toHaveLength(3);
+    expect(JSON.parse(res.result.content[0].text!).files).toHaveLength(4);
   });
 
   test('get_capture returns meeting text', () => {

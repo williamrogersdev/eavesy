@@ -59,9 +59,9 @@ eavesy drop ~/Desktop/whiteboard.png   # send a file
 
 `eavesy drop` sends the text or file to your other devices through Eavesy when
 the Mac app is signed in. It reads the app's device credential from the
-Keychain, and macOS asks you once whether to allow that. Otherwise, or with
-`--local`, it saves the drop as a new capture in your Recordings folder, where
-`search` and `get` find it.
+Keychain, and macOS asks you once whether to allow that. When it isn't signed
+in, when the send fails, or with `--local`, it saves the drop as a new capture
+in your Recordings folder (and says why), where `search` and `get` find it.
 
 The Recordings folder is the one chosen in the app's settings, or
 `~/Eavesy/Recordings`. Use `--root <dir>` or the `EAVESY_RECORDINGS`

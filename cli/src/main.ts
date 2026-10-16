@@ -31,6 +31,8 @@ export interface Io {
   out: (text: string) => void;
   err: (text: string) => void;
   readStdin: () => Promise<string>;
+  /** stdin is a terminal, so `drop -` would wait for typing. */
+  stdinIsTTY?: boolean;
   env: Record<string, string | undefined>;
   /** Overrides the credential lookup (tests). */
   credential?: () => Credential | null;
@@ -162,12 +164,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
       case 'drop': {
         if (rest.length !== 1) throw new UsageError('drop needs one file path, or - to read text from stdin');
         const title = flagString(flags, 'title');
+        if (rest[0] === '-' && io.stdinIsTTY) throw new UsageError('drop - reads text from a pipe, e.g. pbpaste | eavesy drop -');
+        const local = flags.local === true;
+        // Before reading stdin, so a configuration error does not swallow piped text.
+        const credential = local ? null : (io.credential ?? (() => findCredential({ env: io.env })))();
         const input =
           rest[0] === '-'
             ? { kind: 'text' as const, text: await io.readStdin(), title }
             : { kind: 'file' as const, path: rest[0], title };
-        const local = flags.local === true;
-        const credential = local ? null : (io.credential ?? (() => findCredential({ env: io.env })))();
         const result = await drop(input, { root, local, credential, fetch: io.fetch });
         if (result.note) io.err(`${result.note}; saved locally instead.\n`);
         if (json) io.out(`${JSON.stringify(result, null, 2)}\n`);

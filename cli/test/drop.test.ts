@@ -29,6 +29,12 @@ describe('credentials', () => {
     expect(parseStoredCredential('  ')).toBeNull();
   });
 
+  test('tokens only go to https, or http on this machine', () => {
+    expect(parseStoredCredential('http://eavesy.example.com\ntok')).toBeNull();
+    expect(parseStoredCredential('http://localhost:3000\ntok')).toEqual({ base: 'http://localhost:3000', token: 'tok' });
+    expect(() => findCredential({ env: { EAVESY_DEVICE_TOKEN: 't', EAVESY_API_BASE: 'http://evil.example' } })).toThrow('https');
+  });
+
   test('env wins; otherwise the Keychain item for the app device id', () => {
     expect(findCredential({ env: { EAVESY_DEVICE_TOKEN: 't', EAVESY_API_BASE: 'http://localhost:3000/' } })).toEqual({
       base: 'http://localhost:3000',
@@ -92,10 +98,45 @@ describe('drop', () => {
     expect(getCapture(root, result.id)?.text['note.md']).toBe('offline idea');
   });
 
-  test('other server errors are reported, not hidden', async () => {
+  test('every cloud failure keeps the content locally and says why', async () => {
+    const credential = { base: 'https://eavesy.com', token: 't' };
+    const throwing = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+    const cases: [typeof fetch, string][] = [
+      [fakeFetch(403, { error: 'sign in to send drops' }), 'HTTP 403'],
+      [fakeFetch(429, { error: 'slow down' }), 'HTTP 429: slow down'],
+      [fakeFetch(500, 'oops'), 'HTTP 500'],
+      [throwing, 'could not reach https://eavesy.com (fetch failed)'],
+    ];
+    for (const [fetcher, why] of cases) {
+      const root = tmp('eavesy-root-');
+      const result = await drop({ kind: 'text', text: 'piped once' }, { root, credential, fetch: fetcher, now: NOW });
+      expect(result.via).toBe('local');
+      expect(result.note).toContain(why);
+      expect(getCapture(root, result.id)?.text['note.md']).toBe('piped once');
+    }
+  });
+
+  test('authenticated requests never follow redirects', async () => {
+    const calls: FetchCall[] = [];
+    await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: fakeFetch(201, { drop: { id: 'd' } }, calls) });
+    expect(calls[0].init.redirect).toBe('error');
+  });
+
+  test('an unreadable file is reported as itself, not as a network failure', async () => {
     await expect(
-      drop({ kind: 'text', text: 'x' }, { root: tmp('eavesy-root-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: fakeFetch(429, { error: 'slow down' }) }),
-    ).rejects.toThrow('HTTP 429 (slow down)');
+      drop({ kind: 'file', path: '/nonexistent/file.pdf' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: fakeFetch(201, {}) }),
+    ).rejects.toThrow('ENOENT');
+  });
+
+  test('a dropped file named like a manifest cannot replace it', async () => {
+    const src = tmp('eavesy-src-');
+    writeFileSync(join(src, 'CAPTURE.JSON'), '{"id":"evil"}');
+    const root = tmp('eavesy-root-');
+    const result = await drop({ kind: 'file', path: join(src, 'CAPTURE.JSON') }, { root, credential: null, now: NOW });
+    expect(getCapture(root, result.id)?.files.map((f) => f.name)).toEqual(['dropped-CAPTURE.JSON']);
+    expect(getCapture(root, 'evil')).toBeNull();
   });
 
   test('not signed in: text becomes a note capture the CLI can find', async () => {
