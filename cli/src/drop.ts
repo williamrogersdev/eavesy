@@ -26,8 +26,8 @@ export type DropInput = { kind: 'text'; text: string; title?: string } | { kind:
 
 export interface DropResult {
   via: 'cloud' | 'local';
-  /** Drop id (cloud) or capture id (local). */
-  id: string;
+  /** Drop id (cloud; absent if the server's reply had none) or capture id (local). */
+  id?: string;
   /** Local capture folder when saved locally. */
   folder?: string;
   /** Why a cloud send fell back to the local folder. */
@@ -132,7 +132,7 @@ export async function drop(input: DropInput, opts: DropOptions): Promise<DropRes
   return { ...saveLocal(input, opts.root, opts.now ?? new Date()), note };
 }
 
-type CloudOutcome = { ok: true; id: string } | { ok: false; reason: string };
+type CloudOutcome = { ok: true; id?: string } | { ok: false; reason: string };
 
 async function sendToCloud(
   input: DropInput,
@@ -149,6 +149,7 @@ async function sendToCloud(
   const file = input.kind === 'file' ? readFileSync(input.path) : null;
   if (file && file.byteLength > MAX_FILE_BYTES) throw new Error('file too large (100 MB max)');
   let response: Response;
+  let reply: string;
   try {
     // No redirects: the bearer token must only ever reach `credential.base`.
     if (input.kind === 'text') {
@@ -174,6 +175,9 @@ async function sendToCloud(
         body,
       });
     }
+    // Read the body inside the try: the timeout covers it too, and a stall here
+    // is the same "may have arrived" case as a stall before the headers.
+    reply = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
       // The server may have stored it before going quiet; say so rather than imply it failed.
@@ -187,12 +191,22 @@ async function sendToCloud(
   if (response.status === 401 || response.status === 403) {
     return { ok: false, reason: `${credential.base} did not accept this device's credential (HTTP ${response.status})` };
   }
+  const body = parseJson(reply) as { error?: unknown; drop?: { id?: unknown } } | null;
   if (!response.ok) {
-    const detail = await response.json().then((b: { error?: string }) => b?.error).catch(() => null);
+    const detail = typeof body?.error === 'string' ? body.error : null;
     return { ok: false, reason: `${credential.base} refused the drop (HTTP ${response.status}${detail ? `: ${detail}` : ''})` };
   }
-  const body = (await response.json().catch(() => null)) as { drop?: { id?: string } } | null;
-  return { ok: true, id: body?.drop?.id ?? 'unknown' };
+  // A 2xx means the server stored it, even if the reply is not what we expect.
+  const id = body?.drop?.id;
+  return { ok: true, id: typeof id === 'string' && id ? id : undefined };
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export function contentTypeFor(path: string): string {

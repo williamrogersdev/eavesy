@@ -41,13 +41,17 @@ enum Existing {
     Foreign,
 }
 
-/// `current` is this app's own sidecar: a link to it is ours even in a dev build
-/// that does not run from an app bundle.
+/// A link is ours when it points at this app's own sidecar (`current`, which also
+/// covers dev builds outside a bundle), or at an Eavesy bundle's sidecar that no
+/// longer exists: the app was moved or deleted, so nothing else is using it.
+/// A link into another bundle that still exists is left alone.
 fn existing(link: &Path, current: Option<&Path>) -> Existing {
     match std::fs::symlink_metadata(link) {
         Err(error) if error.kind() == ErrorKind::NotFound => Existing::Nothing,
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(link) {
-            Ok(target) if is_bundled_sidecar(&target) || current == Some(target.as_path()) => Existing::Ours(target),
+            Ok(target) if current == Some(target.as_path()) || (is_bundled_sidecar(&target) && !target.exists()) => {
+                Existing::Ours(target)
+            }
             _ => Existing::Foreign,
         },
         _ => Existing::Foreign,
@@ -185,7 +189,13 @@ mod tests {
         let new = sidecar(&dir, "Applications/Eavesy.app");
         let link = dir.join("eavesy");
         install(&link, &old).unwrap();
-        assert!(!status_for(&link, Some(&new)).installed);
+        // While the old copy still exists it belongs to that copy, not this one.
+        let status = status_for(&link, Some(&new));
+        assert!(!status.installed && status.conflict);
+        assert!(install(&link, &new).is_err());
+        // Once it has moved away, the dangling link is repointed.
+        std::fs::remove_dir_all(dir.join("Downloads")).unwrap();
+        assert!(!status_for(&link, Some(&new)).conflict);
         install(&link, &new).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), new);
     }

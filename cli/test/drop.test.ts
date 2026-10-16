@@ -95,7 +95,7 @@ describe('drop', () => {
     );
     expect(result.via).toBe('local');
     expect(result.note).toContain('HTTP 401');
-    expect(getCapture(root, result.id)?.text['note.md']).toBe('offline idea');
+    expect(getCapture(root, result.id!)?.text['note.md']).toBe('offline idea');
   });
 
   test('every cloud failure keeps the content locally and says why', async () => {
@@ -119,8 +119,46 @@ describe('drop', () => {
       const result = await drop({ kind: 'text', text: 'piped once' }, { root, credential, fetch: fetcher, now: NOW });
       expect(result.via).toBe('local');
       expect(result.note).toContain(why);
-      expect(getCapture(root, result.id)?.text['note.md']).toBe('piped once');
+      expect(getCapture(root, result.id!)?.text['note.md']).toBe('piped once');
     }
+  });
+
+  test('an upload uses its own, longer timeout', async () => {
+    const stalled = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+    const src = tmp('eavesy-src-');
+    writeFileSync(join(src, 'deck.pdf'), 'PDF');
+    const started = Date.now();
+    const result = await drop(
+      { kind: 'file', path: join(src, 'deck.pdf') },
+      { root: tmp('eavesy-root-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: stalled, now: NOW, timeoutMs: { text: 10, upload: 150 } },
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+    expect(result.note).toContain('did not answer in time');
+  });
+
+  test('a 2xx without a drop id is still a success, with no made-up id', async () => {
+    const odd = (async () => new Response('ok', { status: 201 })) as unknown as typeof fetch;
+    const result = await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: odd });
+    expect(result).toEqual({ via: 'cloud', id: undefined });
+  });
+
+  test('a stall while reading the reply counts as a timeout, not a success', async () => {
+    const slowBody = ((_url: string, init: RequestInit) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          init.signal!.addEventListener('abort', () => controller.error(init.signal!.reason));
+        },
+      });
+      return Promise.resolve(new Response(stream, { status: 201 }));
+    }) as unknown as typeof fetch;
+    const root = tmp('eavesy-root-');
+    const result = await drop(
+      { kind: 'text', text: 'half sent' },
+      { root, credential: { base: 'https://eavesy.com', token: 't' }, fetch: slowBody, now: NOW, timeoutMs: { text: 20, upload: 20 } },
+    );
+    expect(result.via).toBe('local');
+    expect(result.note).toContain('may also have reached your devices');
   });
 
   test('authenticated requests never follow redirects', async () => {
@@ -139,7 +177,7 @@ describe('drop', () => {
     );
     expect(result.via).toBe('local');
     expect(result.note).toContain('may also have reached your devices');
-    expect(getCapture(root, result.id)?.text['note.md']).toBe('slow network idea');
+    expect(getCapture(root, result.id!)?.text['note.md']).toBe('slow network idea');
   });
 
   test('an unreadable file is reported as itself, not as a network failure', async () => {
@@ -153,7 +191,7 @@ describe('drop', () => {
     writeFileSync(join(src, 'CAPTURE.JSON'), '{"id":"evil"}');
     const root = tmp('eavesy-root-');
     const result = await drop({ kind: 'file', path: join(src, 'CAPTURE.JSON') }, { root, credential: null, now: NOW });
-    expect(getCapture(root, result.id)?.files.map((f) => f.name)).toEqual(['dropped-CAPTURE.JSON']);
+    expect(getCapture(root, result.id!)?.files.map((f) => f.name)).toEqual(['dropped-CAPTURE.JSON']);
     expect(getCapture(root, 'evil')).toBeNull();
   });
 
@@ -165,7 +203,7 @@ describe('drop', () => {
     expect(second.folder).toBe(join(root, '2026-10-16 Note (09-05)'));
     const manifest = JSON.parse(readFileSync(join(first.folder!, 'capture.json'), 'utf8'));
     expect(manifest).toMatchObject({ id: first.id, source: 'note', title: 'Note', started_at_ms: NOW.getTime(), origin: 'cli' });
-    expect(search(root, 'oat milk').map((h) => h.capture.id).sort()).toEqual([first.id, second.id].sort());
+    expect(search(root, 'oat milk').map((h) => h.capture.id).sort()).toEqual([first.id!, second.id!].sort());
   });
 
   test('not signed in: an image keeps its name and is an image capture', async () => {
@@ -173,7 +211,7 @@ describe('drop', () => {
     writeFileSync(join(src, 'whiteboard.png'), 'png');
     const root = tmp('eavesy-root-');
     const result = await drop({ kind: 'file', path: join(src, 'whiteboard.png') }, { root, local: true, credential: { base: 'x', token: 'y' }, now: NOW });
-    const capture = getCapture(root, result.id)!;
+    const capture = getCapture(root, result.id!)!;
     expect(capture).toMatchObject({ kind: 'image', title: 'whiteboard' });
     expect(capture.files.map((f) => f.name)).toEqual(['whiteboard.png']);
   });

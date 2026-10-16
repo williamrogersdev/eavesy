@@ -175,7 +175,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         const result = await drop(input, { root, local, credential, fetch: io.fetch });
         if (result.note) io.err(`${result.note}; saved locally instead.\n`);
         if (json) io.out(`${JSON.stringify(result, null, 2)}\n`);
-        else if (result.via === 'cloud') io.out(`Sent to your devices (${result.id}).\n`);
+        else if (result.via === 'cloud') io.out(result.id ? `Sent to your devices (${result.id}).\n` : 'Sent to your devices.\n');
         else io.out(`Saved to ${result.folder}\n`);
         return 0;
       }
