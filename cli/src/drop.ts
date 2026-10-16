@@ -107,6 +107,8 @@ export interface DropOptions {
   credential?: Credential | null;
   fetch?: typeof fetch;
   now?: Date;
+  /** Overrides the request timeouts (tests). */
+  timeoutMs?: { text: number; upload: number };
 }
 
 export async function drop(input: DropInput, opts: DropOptions): Promise<DropResult> {
@@ -122,7 +124,8 @@ export async function drop(input: DropInput, opts: DropOptions): Promise<DropRes
   const credential = opts.local ? null : opts.credential;
   if (credential) {
     // Any cloud failure saves locally: text piped on stdin cannot be read again.
-    const sent = await sendToCloud(input, credential, opts.fetch ?? fetch);
+    const timeouts = opts.timeoutMs ?? { text: TEXT_TIMEOUT_MS, upload: UPLOAD_TIMEOUT_MS };
+    const sent = await sendToCloud(input, credential, opts.fetch ?? fetch, timeouts);
     if (sent.ok) return { via: 'cloud', id: sent.id };
     note = sent.reason;
   }
@@ -131,7 +134,12 @@ export async function drop(input: DropInput, opts: DropOptions): Promise<DropRes
 
 type CloudOutcome = { ok: true; id: string } | { ok: false; reason: string };
 
-async function sendToCloud(input: DropInput, credential: Credential, fetcher: typeof fetch): Promise<CloudOutcome> {
+async function sendToCloud(
+  input: DropInput,
+  credential: Credential,
+  fetcher: typeof fetch,
+  timeouts: { text: number; upload: number },
+): Promise<CloudOutcome> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${credential.token}`,
     'x-drop-client': 'cli',
@@ -147,7 +155,7 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
       response = await fetcher(`${credential.base}/api/drops`, {
         method: 'POST',
         redirect: 'error',
-        signal: AbortSignal.timeout(TEXT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeouts.text),
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ text: input.text }),
       });
@@ -156,7 +164,7 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
       response = await fetcher(`${credential.base}/api/drops/upload`, {
         method: 'POST',
         redirect: 'error',
-        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeouts.upload),
         headers: {
           ...headers,
           'content-type': contentTypeFor(input.path),
@@ -167,6 +175,13 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
       });
     }
   } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      // The server may have stored it before going quiet; say so rather than imply it failed.
+      return {
+        ok: false,
+        reason: `${credential.base} did not answer in time, so the drop may also have reached your devices`,
+      };
+    }
     return { ok: false, reason: `could not reach ${credential.base} (${error instanceof Error ? error.message : String(error)})` };
   }
   if (response.status === 401 || response.status === 403) {

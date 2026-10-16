@@ -112,8 +112,7 @@ describe('drop', () => {
       [fakeFetch(413, { error: 'text too large' }), 'HTTP 413: text too large'],
       [fakeFetch(500, 'oops'), 'HTTP 500'],
       [throwing, 'could not reach https://eavesy.com (fetch failed)'],
-      // What fetch rejects with when the AbortSignal.timeout fires on a stalled server.
-      [timedOut, 'could not reach https://eavesy.com (The operation timed out.)'],
+      [timedOut, 'did not answer in time'],
     ];
     for (const [fetcher, why] of cases) {
       const root = tmp('eavesy-root-');
@@ -124,12 +123,23 @@ describe('drop', () => {
     }
   });
 
-  test('authenticated requests never follow redirects and give up on a stalled server', async () => {
+  test('authenticated requests never follow redirects', async () => {
     const calls: FetchCall[] = [];
     await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: fakeFetch(201, { drop: { id: 'd' } }, calls) });
     expect(calls[0].init.redirect).toBe('error');
-    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
 
+  test('a stalled server times out, keeps the text locally and says it may have arrived', async () => {
+    const stalled = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+    const root = tmp('eavesy-root-');
+    const result = await drop(
+      { kind: 'text', text: 'slow network idea' },
+      { root, credential: { base: 'https://eavesy.com', token: 't' }, fetch: stalled, now: NOW, timeoutMs: { text: 20, upload: 20 } },
+    );
+    expect(result.via).toBe('local');
+    expect(result.note).toContain('may also have reached your devices');
+    expect(getCapture(root, result.id)?.text['note.md']).toBe('slow network idea');
   });
 
   test('an unreadable file is reported as itself, not as a network failure', async () => {
