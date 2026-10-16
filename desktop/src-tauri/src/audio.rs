@@ -466,8 +466,11 @@ fn spawn_capture(
     );
     state.1.fetch_sub(1, Ordering::SeqCst);
 
-    // Every recording pastes its transcript at the cursor when it stops.
-    crate::dictation::arm(&id);
+    // A voice note pastes back into the box it started in. Meetings and screen
+    // recordings run too long for that: they target the box focused at stop.
+    if mode == "audio" && source == "mic" {
+        crate::dictation::arm(&id);
+    }
 
     crate::hud::set_state(
         app,
@@ -832,10 +835,15 @@ fn finish_stopped_capture(
         has_video: is_screen,
         folder_path: folder.to_str().map(|s| s.to_string()),
     };
-    crate::dictation::rearm_at_stop(&rec.id);
-    let pasting = crate::dictation::is_armed(&rec.id);
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
     store::append(&app, rec.clone())?;
+    // Only a recording that was stored gets a paste target.
+    crate::dictation::rearm_at_stop(&rec.id);
+    let armed = crate::dictation::is_armed(&rec.id);
+    // Plain text for the paste: speaker labels belong in the transcript, not
+    // in whatever box the user is typing in.
+    let on_device_paste = Some(captions.lock().unwrap_or_else(|e| e.into_inner()).spoken_text())
+        .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
     crate::hud::set_state(
@@ -878,9 +886,13 @@ fn finish_stopped_capture(
         }
     }
     // Dictation chose its own text above. Anything else pastes what the Mac
-    // heard on device now; with none, the cloud transcript pastes when ready.
+    // heard on device now, and that paste is final: the better cloud transcript
+    // replaces it in History, but pasting again minutes later would land in
+    // whatever the user has moved on to. With no on-device text, the cloud
+    // transcript pastes when it is ready instead.
+    let pasting = armed && (dictation || on_device_paste.is_some());
     if !dictation {
-        if let Some(text) = &rec.transcript {
+        if let Some(text) = &on_device_paste {
             crate::dictation::deliver(&app, &rec.id, text);
         }
     }

@@ -70,7 +70,8 @@ pub fn spawn(
                         },
                     );
                 }
-                let _ = store::set_transcript(&app, &id, None, "transcript_failed");
+                // Keep any on-device transcript stored at stop: it beats none.
+                let _ = store::set_status(&app, &id, "transcript_failed");
                 let _ = app
                     .notification()
                     .builder()

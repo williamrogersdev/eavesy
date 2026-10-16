@@ -505,7 +505,13 @@ async fn poll_result<R: Runtime>(
     }
     if result.status == "complete" {
         if let Some(app) = crate::ui::wry(app) {
-            crate::dictation::deliver(app, &session.id, &transcript);
+            // Paste the words alone: the markdown headings, timestamps and
+            // speaker labels are for the transcript file, not a text box.
+            // A transcript the user edited is pasted as they wrote it.
+            let spoken = result.transcript_override_md.clone().unwrap_or_else(|| {
+                result.transcript.iter().map(|segment| segment.text.trim()).collect::<Vec<_>>().join(" ")
+            });
+            crate::dictation::deliver(app, &session.id, &spoken);
             let current = crate::hud::current();
             if current.session_id.as_deref() == Some(session.id.as_str()) && current.phase != crate::hud::Phase::Recording {
                 crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message: Some(transcript) });

@@ -86,12 +86,7 @@ impl CaptionLog {
         if done.dropped > 0 {
             return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
         }
-        let text = self.text();
-        let text = if text.is_empty() {
-            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
-        } else {
-            text
-        };
+        let text = self.spoken_text();
         if text.is_empty() {
             Paste::Whisper("no words recognized on device".to_string())
         } else {
@@ -105,11 +100,29 @@ impl CaptionLog {
         }
     }
 
-    /// The finals in spoken order, as one paragraph.
-    pub fn text(&self) -> String {
+    fn sorted_finals(&self) -> Vec<&Caption> {
         let mut finals: Vec<&Caption> = self.finals.iter().collect();
         finals.sort_by_key(|c| (c.start_ms, c.end_ms));
         finals
+    }
+
+    /// With no final, the last partial: what the recognizer had heard at the end.
+    fn or_last_partial(&self, text: String) -> String {
+        if text.is_empty() {
+            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
+        } else {
+            text
+        }
+    }
+
+    /// Everything heard, as one plain paragraph: the text to paste.
+    pub fn spoken_text(&self) -> String {
+        self.or_last_partial(self.text())
+    }
+
+    /// The finals in spoken order, as one paragraph.
+    pub fn text(&self) -> String {
+        self.sorted_finals()
             .iter()
             .map(|c| c.text.trim())
             .collect::<Vec<_>>()
@@ -121,8 +134,7 @@ impl CaptionLog {
     /// heard even if it did not finish cleanly: some text now beats none. With
     /// both sides captioned, each turn is labelled the way the cloud labels it.
     pub fn transcript(&self) -> Option<String> {
-        let mut finals: Vec<&Caption> = self.finals.iter().collect();
-        finals.sort_by_key(|c| (c.start_ms, c.end_ms));
+        let finals = self.sorted_finals();
         let both_sides = finals.iter().any(|c| c.track == "mic") && finals.iter().any(|c| c.track == "system");
         let mut turns: Vec<(&str, String)> = Vec::new();
         for caption in finals {
@@ -144,11 +156,7 @@ impl CaptionLog {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        let text = if text.is_empty() {
-            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
-        } else {
-            text
-        };
+        let text = self.or_last_partial(text);
         (!text.is_empty()).then_some(text)
     }
 }
@@ -208,6 +216,14 @@ mod tests {
             log.transcript().as_deref(),
             Some("You: Hi there. How are you?\n\nThem: Good, thanks.\n\nYou: Great."),
         );
+    }
+
+    #[test]
+    fn the_paste_text_has_no_speaker_labels() {
+        let mut log = CaptionLog::default();
+        log.record(&on_track("Hi there.", "mic", 0));
+        log.record(&on_track("Good, thanks.", "system", 3_000));
+        assert_eq!(log.spoken_text(), "Hi there. Good, thanks.");
     }
 
     #[test]

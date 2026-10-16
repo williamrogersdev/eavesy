@@ -187,18 +187,17 @@ function CaptureRow({ rec, now, signedIn, onSignIn, onCopied, onError }: {
     }
   };
 
+  // Text while the cloud is still working is the on-device first pass.
+  const refining = signedIn && rec.status === 'processing' && (
+    <p className="mt-1 text-[11px] text-muted-foreground">On-device transcript · refining in the cloud…</p>
+  );
   let body: ReactNode;
   if (image) body = <Visual id={rec.id} video={false} />;
   else if (video) body = <>
     <Visual id={rec.id} video />
-    {text && <div className="mt-2"><Text>{text}</Text></div>}
+    {text && <div className="mt-2"><Text>{text}</Text>{refining}</div>}
   </>;
-  else if (text) body = <>
-    <Text>{text}</Text>
-    {signedIn && rec.status === 'processing' && (
-      <p className="mt-1 text-[11px] text-muted-foreground">On-device transcript · refining in the cloud…</p>
-    )}
-  </>;
+  else if (text) body = <><Text>{text}</Text>{refining}</>;
   else if (!signedIn && rec.status !== 'complete' && rec.status !== 'recording') body = (
     <p className="text-[13px] text-muted-foreground">
       Saved on this Mac.{' '}
