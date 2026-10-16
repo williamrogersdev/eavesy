@@ -1,6 +1,40 @@
 # Eavesy
 
-> A local, AI-first assistant. Drop things in, paste clean Markdown into any AI agent.
+> Drop anything in, get clean Markdown context out for Claude, Cursor, ChatGPT, or any AI agent.
+
+## Install
+
+**Mac app** (Apple silicon, macOS 13 Ventura or later):
+
+```bash
+brew install --cask williamrogersdev/eavesy/eavesy
+```
+
+Or [download the DMG](https://eavesy.com/api/downloads/mac/latest), open it,
+and drag Eavesy into Applications. The app updates itself.
+
+**Web app**: [eavesy.com](https://eavesy.com) works in any browser, no install.
+
+**Connect your agent**: create an MCP connection in the web app's
+**Settings**, then paste the config it shows into your agent:
+
+```json
+{
+  "mcpServers": {
+    "eavesy": {
+      "type": "http",
+      "url": "https://mcp.eavesy.com",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+See [Installing the Mac app](https://eavesy.com/docs/installing-the-mac-app)
+and [Connect an agent over MCP](https://eavesy.com/docs/connect-mcp) for
+permissions and the available tools.
+
+## What it is
 
 Eavesy turns what you drop into it into clean, structured Markdown context that
 is quick to copy into Claude, Cursor, ChatGPT, or any agent, or to reach over
@@ -27,7 +61,9 @@ Eavesy is free to use. Everyone gets the same daily limits; see
 [Fair-use limits](web/src/content/docs/fair-use-limits.mdx) for the numbers and
 how to change them when self-hosting.
 
-## Production architecture
+## Develop
+
+### Production architecture
 
 | Concern | Implementation |
 |---|---|
@@ -48,7 +84,7 @@ The processing worker transcribes segments asynchronously, periodically updates
 rolling notes, and generates the final summary and embedding after recording
 stops. D1 stores session state; no live-recording Durable Object is required.
 
-## Repository
+### Repository
 
 ```text
 eavesy/
@@ -67,7 +103,7 @@ eavesy/
     └── OPERATIONS.md    # Alerts, metrics and recovery
 ```
 
-## Local development
+### Local development
 
 Prerequisites: Bun, Rust stable and Xcode Command Line Tools. No Cloudflare or
 Clerk account is needed to run the web app locally:
@@ -103,7 +139,7 @@ cd src-tauri
 bunx @tauri-apps/cli build --debug --no-bundle
 ```
 
-## Deploy
+### Deploy
 
 Apply D1 migrations before deploying code, then deploy the processing worker,
 MCP worker, and web worker in that order:
@@ -118,6 +154,17 @@ bun run deploy
 See [docs/DEPLOY.md](docs/DEPLOY.md) for resource provisioning, secrets,
 metadata indexes, smoke tests, rollback, and desktop publishing. Desktop
 build and signing steps are in [desktop/BUILD.md](desktop/BUILD.md).
+
+### Release the Mac app
+
+```bash
+desktop/scripts/build-macos-release.sh
+desktop/scripts/release-macos.sh --publish   # notarize, upload to eavesy.com
+scripts/publish-github-release.sh            # tag desktop-vX.Y.Z + GitHub Release
+packaging/homebrew/bump-cask.sh              # then copy the cask to the tap repo
+```
+
+The Homebrew tap's source lives in [packaging/homebrew/](packaging/homebrew/).
 
 ## Acknowledgements
 
