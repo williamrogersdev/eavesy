@@ -30,6 +30,7 @@ interface McpToken {
   createdAt: number;
   lastUsedAt?: number | null;
   expiresAt: number | null;
+  canWrite: boolean;
   usesLegacyUrl: boolean;
 }
 
@@ -58,6 +59,7 @@ function SettingsPage() {
   const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
+  const [mcpAllowWrite, setMcpAllowWrite] = useState(false);
   const [pairCode] = useState(() => {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('pair');
@@ -166,7 +168,7 @@ function SettingsPage() {
       const response = await fetch('/api/mcp-tokens', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'AI assistant' }),
+        body: JSON.stringify({ name: 'AI assistant', scopes: mcpAllowWrite ? ['read', 'write'] : ['read'] }),
       });
       if (!response.ok) throw new Error('Could not create MCP connection');
       const created: unknown = await response.json();
@@ -345,11 +347,21 @@ function SettingsPage() {
 
       <AppSection
         title="AI assistants (MCP)"
-        description="A read-only connection that lets Claude, Codex or another assistant search your recordings. Connections last 90 days."
+        description="A connection that lets Claude, Codex or another assistant search your recordings. Connections are read-only unless you allow writes, and last 90 days."
         action={
-          <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
-            {mcpBusy ? 'Creating…' : 'New connection'}
-          </button>
+          <span className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={mcpAllowWrite}
+                onChange={(event) => setMcpAllowWrite(event.target.checked)}
+              />
+              Allow writes
+            </label>
+            <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
+              {mcpBusy ? 'Creating…' : 'New connection'}
+            </button>
+          </span>
         }
       >
         {newMcpConfig ? (
@@ -383,6 +395,7 @@ function SettingsPage() {
                   <span className="block truncate">
                     {token.name}
                     <span className="ml-2 text-xs text-muted-foreground">
+                      {token.canWrite ? 'read & write · ' : 'read-only · '}
                       {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
                       {token.expiresAt
                         ? token.expiresAt <= Date.now()
@@ -465,6 +478,7 @@ function parseMcpTokens(value: unknown): McpToken[] {
       createdAt: item.createdAt,
       lastUsedAt: nullableNumber(item.lastUsedAt),
       expiresAt: nullableNumber(item.expiresAt),
+      canWrite: Array.isArray(item.scopes) && item.scopes.includes('write'),
       usesLegacyUrl: item.usesLegacyUrl === true,
     }];
   });

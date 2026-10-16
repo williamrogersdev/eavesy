@@ -52,12 +52,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function mint(): Promise<{ id: string; token: string; serverUrl: string; expiresAt: number }> {
+async function mint(
+  scopes?: string[],
+): Promise<{ id: string; token: string; serverUrl: string; expiresAt: number; scopes: string[] }> {
   const response = await tokensRoute('POST')({
     request: new Request('https://eavesy.test/api/mcp-tokens', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Claude' }),
+      body: JSON.stringify({ name: 'Claude', ...(scopes ? { scopes } : {}) }),
     }),
     params: {},
   });
@@ -163,5 +165,72 @@ describe('MCP tokens', () => {
       .bind(Date.now() - MCP_TOKEN_TTL_MS - 1)
       .run();
     expect((await call('https://mcp.eavesy.com/', { authorization: `Bearer ${token}` })).status).toBe(401);
+  });
+});
+
+describe('MCP scopes', () => {
+  const rpc = async (token: string, method: string, params?: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { tools?: { name: string; scope?: string }[]; isError?: boolean; content?: { text: string }[] } }>();
+  const storedScopes = async () =>
+    (await testEnv.DB.prepare('SELECT scopes_json FROM mcp_tokens').first<{ scopes_json: string }>())?.scopes_json;
+
+  it('are read-only unless writes are asked for, and read is always included', async () => {
+    const readOnly = await mint();
+    expect(readOnly.scopes).toEqual(['read']);
+    expect(await storedScopes()).toBe('["read"]');
+
+    await testEnv.DB.prepare('DELETE FROM mcp_tokens').run();
+    const writer = await mint(['write']);
+    expect(writer.scopes).toEqual(['read', 'write']);
+    expect(await storedScopes()).toBe('["read","write"]');
+    const listed = await (await tokensRoute('GET')({ request: new Request('https://eavesy.test/api/mcp-tokens'), params: {} })).json();
+    expect(listed).toEqual([expect.objectContaining({ id: writer.id, scopes: ['read', 'write'] })]);
+  });
+
+  it('reject unknown scopes when minting', async () => {
+    const response = await tokensRoute('POST')({
+      request: new Request('https://eavesy.test/api/mcp-tokens', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Claude', scopes: ['admin'] }),
+      }),
+      params: {},
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('list the tools a read connection may call, without the scope field', async () => {
+    const { token } = await mint();
+    const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'search_meetings',
+      'get_meeting',
+      'recent_meetings',
+      'search_dictations',
+      'get_action_items',
+    ]);
+    expect(tools.every((tool) => tool.scope === undefined)).toBe(true);
+  });
+
+  it('hide and refuse tools outside the connection’s scopes', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
+    expect((await rpc(token, 'tools/list')).result?.tools).toEqual([]);
+    const refused = (await rpc(token, 'tools/call', { name: 'recent_meetings', arguments: {} })).result;
+    expect(refused?.isError).toBe(true);
+    expect(refused?.content?.[0]?.text).toContain('needs read access');
+  });
+
+  it('treat an unreadable scopes value as read-only', async () => {
+    const { token } = await mint(['write']);
+    await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(5);
   });
 });
