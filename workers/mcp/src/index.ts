@@ -11,6 +11,7 @@ import {
   pathTokensAllowed,
   renewedMcpTokenExpiry,
 } from '../../../web/src/server/mcp-token-policy';
+import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/server/mcp-scopes';
 
 interface Env {
   DB: D1Database;
@@ -109,13 +110,14 @@ export const worker = {
       // Logged by token id only; the path itself is the secret.
       console.warn(JSON.stringify({ message: 'mcp token sent in URL path', tokenId: token.id }));
     }
-    const response = await serve(request, env, token.userId);
+    const response = await serve(request, env, token.userId, parseMcpScopes(token.scopesJson));
     if (viaPath) response.headers.set('deprecation', 'true');
     return response;
   },
 } satisfies ExportedHandler<Env>;
 
-async function serve(request: Request, env: Env, userId: string): Promise<Response> {
+async function serve(request: Request, env: Env, userId: string, scopes: McpScope[]): Promise<Response> {
+  const tools = toolsForScopes(TOOL_DEFS, scopes).map(({ scope: _scope, ...tool }) => tool);
   const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
   if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
     return new Response(JSON.stringify({ error: 'unsupported MCP protocol version' }), {
@@ -129,7 +131,7 @@ async function serve(request: Request, env: Env, userId: string): Promise<Respon
       JSON.stringify({
         name: 'eavesy',
         version: '0.1.0',
-        tools: TOOL_DEFS,
+        tools,
       }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     );
@@ -164,10 +166,21 @@ async function serve(request: Request, env: Env, userId: string): Promise<Respon
     return jsonRpc(body.id, {});
   }
   if (body.method === 'tools/list') {
-    return jsonRpc(body.id, { tools: TOOL_DEFS });
+    return jsonRpc(body.id, { tools });
   }
   if (body.method === 'tools/call') {
     const { name, arguments: args } = body.params ?? {};
+    const def = TOOL_DEFS.find((tool) => tool.name === name);
+    if (def && !scopes.includes(def.scope)) {
+      return jsonRpc(body.id, {
+        content: [{
+          type: 'text',
+          text: `${name} needs ${def.scope} access, and this connection doesn't have it. ` +
+            'Create a connection with write access in Eavesy settings to use it.',
+        }],
+        isError: true,
+      });
+    }
     try {
       const result = await callTool(env, userId, name, args ?? {});
       return jsonRpc(body.id, {
@@ -207,7 +220,15 @@ function jsonRpc(id: unknown, result?: unknown, error?: { code: number; message:
   });
 }
 
-const TOOL_DEFS = [
+interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  /** The scope a connection needs to see and call this tool. */
+  scope: McpScope;
+}
+
+const TOOL_DEFS: ToolDef[] = [
   {
     name: 'search_meetings',
     description: "Search the user's meetings by title or transcript content. Returns matching meetings with an excerpt.",
@@ -219,6 +240,7 @@ const TOOL_DEFS = [
       },
       required: ['query'],
     },
+    scope: 'read',
   },
   {
     name: 'get_meeting',
@@ -228,6 +250,7 @@ const TOOL_DEFS = [
       properties: { id: { type: 'string' } },
       required: ['id'],
     },
+    scope: 'read',
   },
   {
     name: 'recent_meetings',
@@ -236,6 +259,7 @@ const TOOL_DEFS = [
       type: 'object',
       properties: { limit: { type: 'number', default: 10 } },
     },
+    scope: 'read',
   },
   {
     name: 'search_dictations',
@@ -248,6 +272,7 @@ const TOOL_DEFS = [
       },
       required: ['query'],
     },
+    scope: 'read',
   },
   {
     name: 'get_action_items',
@@ -259,6 +284,7 @@ const TOOL_DEFS = [
         owner: { type: 'string' },
       },
     },
+    scope: 'read',
   },
 ];
 

@@ -165,9 +165,19 @@ hardened-runtime flags, and the permissions declared in `entitlements.plist`.
 
 ## Publish
 
+The wrangler configs no longer name an account, so set the production
+Cloudflare account before publishing. Without it, Wrangler refuses to pick one
+when your login can see several accounts:
+
 ```bash
+export CLOUDFLARE_ACCOUNT_ID=<production account id>
 desktop/scripts/release-macos.sh --publish
 ```
+
+If the build fails linking `aws-lc-sys` with `tapi error: malformed file` /
+`unknown architecture arm64e`, the Command Line Tools SDK is newer than the
+active Xcode's linker. Point `SDKROOT` at Xcode's own SDK, for example
+`export SDKROOT="$(xcrun --sdk macosx --show-sdk-platform-path)/Developer/SDKs/MacOSX.sdk"`.
 
 Verify `https://eavesy.com/download/mac` from a clean browser. Keep the exact
 DMG used for the smoke test so the published bytes are the tested artifact.

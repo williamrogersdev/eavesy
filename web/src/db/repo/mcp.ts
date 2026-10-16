@@ -1,11 +1,12 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { decode, encode } from '../codec';
+import { encode } from '../codec';
 import { pid } from '../ids';
 import { mcpTokens } from '../schema';
+import { type McpScope, parseMcpScopes } from '@/server/mcp-scopes';
 import { MCP_TOKEN_TTL_MS, mcpTokenExpiresAt, renewedMcpTokenExpiry } from '@/server/mcp-token-policy';
 
-export type Scope = 'read' | 'write';
+export type Scope = McpScope;
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 
@@ -80,6 +81,6 @@ export async function resolveToken(db: AppDb, rawToken: string) {
   return {
     tokenId: row.id,
     userId: row.userId,
-    scopes: decode<Scope[]>(row.scopesJson, ['read']),
+    scopes: parseMcpScopes(row.scopesJson),
   };
 }
