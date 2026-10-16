@@ -124,7 +124,7 @@ pub fn set_result<R: Runtime>(
 
         let before = recording.clone();
         recording.title = title.to_string();
-        if !transcript_is_local {
+        if !transcript_is_local && takes_cloud_transcript(recording.transcript.as_deref(), &transcript, status) {
             recording.transcript = Some(transcript);
         }
         if !summary_is_local {
@@ -139,6 +139,20 @@ pub fn set_result<R: Runtime>(
         Ok(changed)
     })?;
     Ok(updated)
+}
+
+/// Whether a cloud transcript should replace the one a recording has. A
+/// finished one always does. Until then the cloud has only part of the
+/// recording, so it must not swap the fuller on-device text that was stored at
+/// stop for a shorter partial; it takes over once it says at least as much.
+/// A failed one never wipes text the recording already has.
+fn takes_cloud_transcript(current: Option<&str>, cloud: &str, status: &str) -> bool {
+    let words = |text: &str| text.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)).count();
+    match status {
+        "complete" => true,
+        "transcript_failed" => current.is_none_or(|text| text.trim().is_empty()),
+        _ => words(cloud) >= current.map_or(0, words),
+    }
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -277,6 +291,28 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_cloud_transcript_does_not_replace_fuller_on_device_text() {
+        let on_device = Some("Hello there, this is the whole recording.");
+        let partial = "# Recording\n\n## Transcript\n\n[00:00:00] Hello there,";
+        assert!(!takes_cloud_transcript(on_device, partial, "processing"));
+        let caught_up = "# Recording\n\n## Transcript\n\n[00:00:00] Hello there, this is the whole recording now.";
+        assert!(takes_cloud_transcript(on_device, caught_up, "processing"));
+        assert!(takes_cloud_transcript(None, partial, "processing"));
+    }
+
+    #[test]
+    fn a_finished_cloud_transcript_always_replaces_the_on_device_one() {
+        assert!(takes_cloud_transcript(Some("much longer on device text than the cloud"), "# R\n\nshort", "complete"));
+    }
+
+    #[test]
+    fn a_failed_cloud_transcript_keeps_the_on_device_text() {
+        let empty = "# Recording\n\n## Transcript\n\n";
+        assert!(!takes_cloud_transcript(Some("What the Mac heard."), empty, "transcript_failed"));
+        assert!(takes_cloud_transcript(None, empty, "transcript_failed"));
+    }
     use std::sync::Arc;
 
     fn sample(id: &str, started_at_ms: i64) -> StoredRecording {
