@@ -187,9 +187,10 @@ function CaptureRow({ rec, now, signedIn, onSignIn, onCopied, onError }: {
     }
   };
 
-  // Text while the cloud is still working is the on-device first pass.
+  // Text while the cloud is still working is a first pass: what the Mac heard
+  // on device, or the cloud's transcript so far.
   const refining = signedIn && rec.status === 'processing' && (
-    <p className="mt-1 text-[11px] text-muted-foreground">On-device transcript · refining in the cloud…</p>
+    <p className="mt-1 text-[11px] text-muted-foreground">First pass · refining in the cloud…</p>
   );
   let body: ReactNode;
   if (image) body = <Visual id={rec.id} video={false} />;

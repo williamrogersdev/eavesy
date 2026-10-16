@@ -68,6 +68,17 @@ fn take_pending(session_id: &str) -> Option<Target> {
 }
 
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
+    deliver_then(app, session_id, text, false);
+}
+
+/// `deliver` for a recording that just stopped, which skipped the launcher to
+/// leave focus in the user's app: if the paste falls back to the clipboard, the
+/// launcher opens after all, so the recording is not left with neither.
+pub fn deliver_at_stop(app: &AppHandle, session_id: &str, text: &str) {
+    deliver_then(app, session_id, text, true);
+}
+
+fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
     let Some(target) = take_pending(session_id) else { return };
     if text.trim().is_empty() {
         return;
@@ -98,6 +109,9 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
                 .title("Transcript copied")
                 .body("The text box you were in lost focus. Press ⌘V to paste it.")
                 .show();
+        }
+        if launcher_on_fallback {
+            crate::commands::show_launcher(app);
         }
     });
 }

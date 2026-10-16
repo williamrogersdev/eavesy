@@ -890,10 +890,10 @@ fn finish_stopped_capture(
     // replaces it in History, but pasting again minutes later would land in
     // whatever the user has moved on to. With no on-device text, the cloud
     // transcript pastes when it is ready instead.
-    let pasting = armed && (dictation || on_device_paste.is_some());
+    let pasting = pastes_at_stop(dictation, armed, on_device_paste.is_some());
     if !dictation {
         if let Some(text) = &on_device_paste {
-            crate::dictation::deliver(&app, &rec.id, text);
+            crate::dictation::deliver_at_stop(&app, &rec.id, text);
         }
     }
     if pasting {
@@ -905,6 +905,14 @@ fn finish_stopped_capture(
     Ok(rec)
 }
 
+/// Whether a recording that just stopped pastes now, and so leaves the launcher
+/// closed to keep focus in the user's app. It needs a text box to paste into,
+/// and text: dictation always has some (on device or a quick Whisper pass);
+/// anything else only if the Mac heard words on device.
+fn pastes_at_stop(dictation: bool, armed: bool, on_device_text: bool) -> bool {
+    armed && (dictation || on_device_text)
+}
+
 /// Pastes a dictation the moment it stops: the on-device text when it can be
 /// trusted, otherwise a quick cloud Whisper pass on the clip. Either way the
 /// recording is already queued to upload, and the cloud transcript stays its
@@ -913,7 +921,7 @@ fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: 
     let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
     match decision {
         Paste::OnDevice(text) => {
-            crate::dictation::deliver(app, session_id, &text);
+            crate::dictation::deliver_at_stop(app, session_id, &text);
             crate::hud::set_state(
                 app,
                 crate::hud::HudState {
@@ -1166,6 +1174,18 @@ mod tests {
         log.note_status(&off);
         log.finish(CaptionsDone { dropped: 0, timed_out: false, failed: false });
         assert_eq!(log.paste(), Paste::Whisper("captions unavailable: speech recognition not authorized".into()));
+    }
+
+    #[test]
+    fn only_a_recording_with_a_box_and_text_pastes_at_stop() {
+        // Dictation always has text to paste, so a box is enough.
+        assert!(pastes_at_stop(true, true, false));
+        // A voice note, meeting or screen recording needs on-device words.
+        assert!(pastes_at_stop(false, true, true));
+        assert!(!pastes_at_stop(false, true, false));
+        // With no text box to paste into, the launcher opens instead.
+        assert!(!pastes_at_stop(true, false, true));
+        assert!(!pastes_at_stop(false, false, true));
     }
 
     #[test]
