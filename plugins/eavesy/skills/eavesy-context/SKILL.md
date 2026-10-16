@@ -44,7 +44,7 @@ Say which recording you used (title and date) so the user can check it.
   `capture.json`) and you can read them with filesystem access.
 - The connection is read-only unless the user allowed writes when they
   approved it. If a tool is refused as read-only, tell the user; they can
-  reconnect and tick "Also let it write".
+  approve the connection again and grant write access on the approval page.
 - The first call opens a browser to sign in to Eavesy and approve the
   connection. If the server isn't connected, ask the user to run `/mcp` and
   authenticate `eavesy`.

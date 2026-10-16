@@ -27,12 +27,18 @@ https://mcp.eavesy.com
 2. Name it `Eavesy` and paste `https://mcp.eavesy.com` as the URL.
 3. Select **Connect**. Sign in to Eavesy and approve the connection.
 
+If the menus have moved, follow Anthropic's guide to
+[custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
 ### ChatGPT
 
 1. Turn on developer mode under **Settings → Apps & Connectors → Advanced**.
 2. Create a connector with `https://mcp.eavesy.com` as the URL and OAuth as the
    authentication.
 3. Sign in to Eavesy and approve the connection.
+
+OpenAI moves these settings from time to time, and developer mode depends on
+your plan. If you can't find them, search ChatGPT's help for "developer mode".
 
 ### Claude Code
 
@@ -64,9 +70,10 @@ A connection is **read-only** by default: it can search and read your
 recordings, dictations and action items.
 
 If the app asks for write access, the page also shows **Also let it write**,
-unchecked. Tick it only if you want the agent to make changes, such as
-sending text to your devices. A read-only connection that tries a write tool
-is refused, and write tools don't show up in its tool list at all.
+unchecked. Tick it only if you want the agent to make changes. Every tool
+available today only reads, so this matters once write tools ship. A
+read-only connection never sees write tools in its tool list, and calling one
+is refused.
 
 Every approved app is listed in **Settings → AI assistants (MCP)**, where you
 can revoke it. Revoking cuts it off at once. An app you haven't used for

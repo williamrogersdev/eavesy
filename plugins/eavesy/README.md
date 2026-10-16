@@ -31,14 +31,24 @@ claude mcp add --transport http eavesy https://mcp.eavesy.com
 
 A local stdio server that reads `~/Eavesy/Recordings` directly (including
 clipboard notes and screenshots, which never leave your Mac) is planned as
-part of the Eavesy CLI. JSON has no comments, so this is the slot: once the
-CLI ships, add this entry next to `eavesy` in `.mcp.json`:
+part of the Eavesy CLI. JSON has no comments, so this is the slot.
+
+Don't add it yet: the `eavesy` command doesn't exist until the CLI ships, and
+Claude Code would show a failing server. Once it does, `.mcp.json` becomes:
 
 ```json
-"eavesy-local": {
-  "type": "stdio",
-  "command": "eavesy",
-  "args": ["mcp"]
+{
+  "mcpServers": {
+    "eavesy": {
+      "type": "http",
+      "url": "https://mcp.eavesy.com"
+    },
+    "eavesy-local": {
+      "type": "stdio",
+      "command": "eavesy",
+      "args": ["mcp"]
+    }
+  }
 }
 ```
 
