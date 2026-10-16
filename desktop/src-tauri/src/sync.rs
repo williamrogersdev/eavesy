@@ -575,10 +575,13 @@ fn spoken_words(markdown: &str) -> String {
     static PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"^(?:\*\*\[\d{2}:\d{2}:\d{2}\] [^\n]*?:\*\* |\[\d{2}:\d{2}:\d{2}\] )").unwrap()
     });
+    static HEADING: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^#{1,6}\s").unwrap());
     markdown
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        // Markdown headings only: an edited line like "#1 priority" is words.
+        .filter(|line| !line.is_empty() && !HEADING.is_match(line))
         .map(|line| PREFIX.replace(line, "").trim().to_string())
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
@@ -807,6 +810,8 @@ mod tests {
         assert_eq!(super::spoken_words(&markdown), "Hi there. How are you? Good, thanks.");
         let unlabelled = "# Note\n\n## Transcript\n\n[00:00:05] Just me talking.\n\nAn added line.\n";
         assert_eq!(super::spoken_words(unlabelled), "Just me talking. An added line.");
+        let hashes = "# Note\n\n#1 priority is shipping.\n\n#launch day\n";
+        assert_eq!(super::spoken_words(hashes), "#1 priority is shipping. #launch day");
     }
 
     #[test]
