@@ -25,7 +25,8 @@ export const Route = createFileRoute('/api/mcp-tokens')({
               name: row.name,
               createdAt: row.createdAt,
               lastUsedAt: row.lastUsedAt,
-              expiresAt: mcpTokenExpiresAt(row),
+              // An OAuth connection lives as long as its refresh token.
+              expiresAt: row.refreshExpiresAt ?? mcpTokenExpiresAt(row),
               scopes: parseMcpScopes(row.scopesJson),
               usesLegacyUrl: row.pathAuthUsedAt !== null,
             })),

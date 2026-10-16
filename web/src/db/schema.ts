@@ -432,11 +432,43 @@ export const mcpTokens = sqliteTable(
     revokedAt: integer('revoked_at'),
     expiresAt: integer('expires_at'),
     pathAuthUsedAt: integer('path_auth_used_at'),
+    /** Set when the connection came from OAuth: its access token is short-lived and doesn't slide. */
+    clientId: text('client_id'),
+    refreshHash: text('refresh_hash'),
+    refreshExpiresAt: integer('refresh_expires_at'),
   },
   (t) => [
     index('mcp_tokens_user_idx').on(t.userId),
     uniqueIndex('mcp_tokens_hash_uq').on(t.tokenHash),
+    uniqueIndex('mcp_tokens_refresh_hash_uq').on(t.refreshHash),
   ],
+);
+
+/** MCP clients registered through OAuth dynamic client registration. All are public (PKCE, no secret). */
+export const oauthClients = sqliteTable('oauth_clients', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  redirectUrisJson: text('redirect_uris_json').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+
+/** One-time OAuth authorization codes, stored hashed. */
+export const oauthCodes = sqliteTable(
+  'oauth_codes',
+  {
+    codeHash: text('code_hash').primaryKey(),
+    clientId: text('client_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    redirectUri: text('redirect_uri').notNull(),
+    codeChallenge: text('code_challenge').notNull(),
+    scopesJson: text('scopes_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    usedAt: integer('used_at'),
+  },
+  (t) => [index('oauth_codes_expires_idx').on(t.expiresAt)],
 );
 
 export const activityLog = sqliteTable(
