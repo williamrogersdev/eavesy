@@ -26,6 +26,20 @@ pub fn arm(session_id: &str) {
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
+/// Points a recording's paste at where the cursor is as it stops, when that is
+/// a text box: a meeting can run long after the box it started in. Otherwise it
+/// keeps the box it started in. Either way the paste window runs from now.
+pub fn rearm_at_stop(session_id: &str) {
+    let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let now = pick_target(pressed, focused_text_target);
+    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    let started_in = pending
+        .as_ref()
+        .filter(|(id, _, _)| id == session_id)
+        .map(|(_, _, target)| *target);
+    *pending = now.or(started_in).map(|t| (session_id.to_string(), Instant::now(), t));
+}
+
 fn pick_target(pressed: Option<(Instant, Target)>, now: impl FnOnce() -> Option<Target>) -> Option<Target> {
     pressed
         .filter(|(at, _)| at.elapsed() < PRESS_WINDOW)
@@ -54,6 +68,17 @@ fn take_pending(session_id: &str) -> Option<Target> {
 }
 
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
+    deliver_then(app, session_id, text, false);
+}
+
+/// `deliver` for a recording that just stopped, which skipped the launcher to
+/// leave focus in the user's app: if the paste falls back to the clipboard, the
+/// launcher opens after all, so the recording is not left with neither.
+pub fn deliver_at_stop(app: &AppHandle, session_id: &str, text: &str) {
+    deliver_then(app, session_id, text, true);
+}
+
+fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
     let Some(target) = take_pending(session_id) else { return };
     if text.trim().is_empty() {
         return;
@@ -84,6 +109,9 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
                 .title("Transcript copied")
                 .body("The text box you were in lost focus. Press ⌘V to paste it.")
                 .show();
+        }
+        if launcher_on_fallback {
+            crate::commands::show_launcher(app);
         }
     });
 }

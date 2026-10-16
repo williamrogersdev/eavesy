@@ -505,7 +505,14 @@ async fn poll_result<R: Runtime>(
     }
     if result.status == "complete" {
         if let Some(app) = crate::ui::wry(app) {
-            crate::dictation::deliver(app, &session.id, &transcript);
+            // Paste the words alone: the markdown headings, timestamps and
+            // speaker labels are for the transcript file, not a text box. A
+            // transcript the user edited pastes their words, without its markdown.
+            let spoken = match &result.transcript_override_md {
+                Some(edited) => spoken_words(edited),
+                None => result.transcript.iter().map(|segment| segment.text.trim()).collect::<Vec<_>>().join(" "),
+            };
+            crate::dictation::deliver(app, &session.id, &spoken);
             let current = crate::hud::current();
             if current.session_id.as_deref() == Some(session.id.as_str()) && current.phase != crate::hud::Phase::Recording {
                 crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message: Some(transcript) });
@@ -560,6 +567,25 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
         .await
         .context("local sync work stopped")?
         .map_err(|error| anyhow!(error))
+}
+
+/// The words of a transcript in the markdown `render_transcript` writes, for
+/// pasting: no headings, timestamps or speaker labels.
+fn spoken_words(markdown: &str) -> String {
+    static PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(?:\*\*\[\d{2}:\d{2}:\d{2}\] [^\n]*?:\*\* |\[\d{2}:\d{2}:\d{2}\] )").unwrap()
+    });
+    static HEADING: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^#{1,6}\s").unwrap());
+    markdown
+        .lines()
+        .map(str::trim)
+        // Markdown headings only: an edited line like "#1 priority" is words.
+        .filter(|line| !line.is_empty() && !HEADING.is_match(line))
+        .map(|line| PREFIX.replace(line, "").trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {
@@ -773,6 +799,21 @@ async fn http_error(operation: &str, response: reqwest::Response) -> anyhow::Err
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_edited_transcript_pastes_its_words_without_markdown() {
+        let segments = [
+            super::ResultSegment { start_ms: 0, text: "Hi there.".into(), speaker: Some("You".into()) },
+            super::ResultSegment { start_ms: 1_000, text: "How are you?".into(), speaker: Some("You".into()) },
+            super::ResultSegment { start_ms: 3_000, text: "Good, thanks.".into(), speaker: Some("Them".into()) },
+        ];
+        let markdown = super::render_transcript("Standup", &segments);
+        assert_eq!(super::spoken_words(&markdown), "Hi there. How are you? Good, thanks.");
+        let unlabelled = "# Note\n\n## Transcript\n\n[00:00:05] Just me talking.\n\nAn added line.\n";
+        assert_eq!(super::spoken_words(unlabelled), "Just me talking. An added line.");
+        let hashes = "# Note\n\n#1 priority is shipping.\n\n#launch day\n";
+        assert_eq!(super::spoken_words(hashes), "#1 priority is shipping. #launch day");
+    }
+
     #[test]
     fn a_long_lived_client_follows_the_credentials_server() {
         let mut slot = None;

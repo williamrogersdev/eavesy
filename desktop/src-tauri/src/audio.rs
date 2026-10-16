@@ -466,6 +466,8 @@ fn spawn_capture(
     );
     state.1.fetch_sub(1, Ordering::SeqCst);
 
+    // A voice note pastes back into the box it started in. Meetings and screen
+    // recordings run too long for that: they target the box focused at stop.
     if mode == "audio" && source == "mic" {
         crate::dictation::arm(&id);
     }
@@ -741,7 +743,8 @@ fn stop_capture_inner(
             &mode,
             &source,
             reserved_audio_folder,
-            dictation.then_some(captions),
+            &captions,
+            dictation,
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -790,7 +793,8 @@ fn finish_stopped_capture(
     mode: &str,
     source: &str,
     reserved_audio_folder: Option<PathBuf>,
-    dictation: Option<Arc<Mutex<CaptionLog>>>,
+    captions: &Mutex<CaptionLog>,
+    dictation: bool,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -823,7 +827,9 @@ fn finish_stopped_capture(
         },
         status: "processing".to_string(),
         summary: None,
-        transcript: None,
+        // What the Mac heard on device, so the recording is readable and
+        // pasteable the moment it stops. The cloud transcript replaces it.
+        transcript: captions.lock().unwrap_or_else(|e| e.into_inner()).transcript(),
         notes: None,
         has_audio: true,
         has_video: is_screen,
@@ -831,6 +837,13 @@ fn finish_stopped_capture(
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
     store::append(&app, rec.clone())?;
+    // Only a recording that was stored gets a paste target.
+    crate::dictation::rearm_at_stop(&rec.id);
+    let armed = crate::dictation::is_armed(&rec.id);
+    // Plain text for the paste: speaker labels belong in the transcript, not
+    // in whatever box the user is typing in.
+    let on_device_paste = Some(captions.lock().unwrap_or_else(|e| e.into_inner()).spoken_text())
+        .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
     crate::hud::set_state(
@@ -868,18 +881,36 @@ fn finish_stopped_capture(
             archive_bytes,
         )?;
         crate::sync::wake();
-        if let Some(captions) = dictation {
-            let pasting = crate::dictation::is_armed(&rec.id);
-            paste_dictation(&app, &rec.id, audio_dest, &captions);
-            if pasting {
-                // The text goes back into the app the user was in; don't take focus from it.
-                return Ok(rec);
-            }
+        if dictation {
+            paste_dictation(&app, &rec.id, audio_dest, captions);
         }
+    }
+    // Dictation chose its own text above. Anything else pastes what the Mac
+    // heard on device now, and that paste is final: the better cloud transcript
+    // replaces it in History, but pasting again minutes later would land in
+    // whatever the user has moved on to. With no on-device text, the cloud
+    // transcript pastes when it is ready instead.
+    let pasting = pastes_at_stop(dictation, armed, on_device_paste.is_some());
+    if !dictation {
+        if let Some(text) = &on_device_paste {
+            crate::dictation::deliver_at_stop(&app, &rec.id, text);
+        }
+    }
+    if pasting {
+        // The text goes back into the app the user was in; don't take focus from it.
+        return Ok(rec);
     }
 
     crate::commands::show_launcher(app.clone());
     Ok(rec)
+}
+
+/// Whether a recording that just stopped pastes now, and so leaves the launcher
+/// closed to keep focus in the user's app. It needs a text box to paste into,
+/// and text: dictation always has some (on device or a quick Whisper pass);
+/// anything else only if the Mac heard words on device.
+fn pastes_at_stop(dictation: bool, armed: bool, on_device_text: bool) -> bool {
+    armed && (dictation || on_device_text)
 }
 
 /// Pastes a dictation the moment it stops: the on-device text when it can be
@@ -890,7 +921,7 @@ fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: 
     let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
     match decision {
         Paste::OnDevice(text) => {
-            crate::dictation::deliver(app, session_id, &text);
+            crate::dictation::deliver_at_stop(app, session_id, &text);
             crate::hud::set_state(
                 app,
                 crate::hud::HudState {
@@ -1143,6 +1174,18 @@ mod tests {
         log.note_status(&off);
         log.finish(CaptionsDone { dropped: 0, timed_out: false, failed: false });
         assert_eq!(log.paste(), Paste::Whisper("captions unavailable: speech recognition not authorized".into()));
+    }
+
+    #[test]
+    fn only_a_recording_with_a_box_and_text_pastes_at_stop() {
+        // Dictation always has text to paste, so a box is enough.
+        assert!(pastes_at_stop(true, true, false));
+        // A voice note, meeting or screen recording needs on-device words.
+        assert!(pastes_at_stop(false, true, true));
+        assert!(!pastes_at_stop(false, true, false));
+        // With no text box to paste into, the launcher opens instead.
+        assert!(!pastes_at_stop(true, false, true));
+        assert!(!pastes_at_stop(false, false, true));
     }
 
     #[test]

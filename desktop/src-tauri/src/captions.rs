@@ -86,12 +86,7 @@ impl CaptionLog {
         if done.dropped > 0 {
             return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
         }
-        let text = self.text();
-        let text = if text.is_empty() {
-            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
-        } else {
-            text
-        };
+        let text = self.spoken_text();
         if text.is_empty() {
             Paste::Whisper("no words recognized on device".to_string())
         } else {
@@ -105,15 +100,64 @@ impl CaptionLog {
         }
     }
 
-    /// The finals in spoken order, as one paragraph.
-    pub fn text(&self) -> String {
+    fn sorted_finals(&self) -> Vec<&Caption> {
         let mut finals: Vec<&Caption> = self.finals.iter().collect();
         finals.sort_by_key(|c| (c.start_ms, c.end_ms));
         finals
+    }
+
+    /// With no final, the last partial: what the recognizer had heard at the end.
+    fn or_last_partial(&self, text: String) -> String {
+        if text.is_empty() {
+            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
+        } else {
+            text
+        }
+    }
+
+    /// Everything heard, as one plain paragraph: the text to paste.
+    pub fn spoken_text(&self) -> String {
+        self.or_last_partial(self.text())
+    }
+
+    /// The finals in spoken order, as one paragraph.
+    pub fn text(&self) -> String {
+        self.sorted_finals()
             .iter()
             .map(|c| c.text.trim())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// A provisional transcript to show the moment a recording stops, until the
+    /// cloud one replaces it. Unlike `paste`, it takes whatever the recognizer
+    /// heard even if it did not finish cleanly: some text now beats none. With
+    /// both sides captioned, each turn is labelled the way the cloud labels it.
+    pub fn transcript(&self) -> Option<String> {
+        let finals = self.sorted_finals();
+        let both_sides = finals.iter().any(|c| c.track == "mic") && finals.iter().any(|c| c.track == "system");
+        let mut turns: Vec<(&str, String)> = Vec::new();
+        for caption in finals {
+            let text = caption.text.trim();
+            match turns.last_mut() {
+                Some((track, line)) if !both_sides || *track == caption.track => {
+                    line.push(' ');
+                    line.push_str(text);
+                }
+                _ => turns.push((caption.track.as_str(), text.to_string())),
+            }
+        }
+        let text = turns
+            .into_iter()
+            .map(|(track, line)| match (both_sides, track) {
+                (true, "mic") => format!("You: {line}"),
+                (true, "system") => format!("Them: {line}"),
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let text = self.or_last_partial(text);
+        (!text.is_empty()).then_some(text)
     }
 }
 
@@ -147,6 +191,55 @@ mod tests {
         let mut log = CaptionLog::default();
         log.record(&caption("partial only", false, 0));
         assert_eq!(log.text(), "");
+    }
+
+    fn on_track(text: &str, track: &str, start_ms: i64) -> Caption {
+        Caption { track: track.into(), ..caption(text, true, start_ms) }
+    }
+
+    #[test]
+    fn a_one_sided_transcript_is_plain_text() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("world.", true, 2_000));
+        log.record(&caption("Hello", true, 0));
+        assert_eq!(log.transcript().as_deref(), Some("Hello world."));
+    }
+
+    #[test]
+    fn a_two_sided_transcript_labels_each_turn() {
+        let mut log = CaptionLog::default();
+        log.record(&on_track("Hi there.", "mic", 0));
+        log.record(&on_track("How are you?", "mic", 1_000));
+        log.record(&on_track("Good, thanks.", "system", 3_000));
+        log.record(&on_track("Great.", "mic", 5_000));
+        assert_eq!(
+            log.transcript().as_deref(),
+            Some("You: Hi there. How are you?\n\nThem: Good, thanks.\n\nYou: Great."),
+        );
+    }
+
+    #[test]
+    fn the_paste_text_has_no_speaker_labels() {
+        let mut log = CaptionLog::default();
+        log.record(&on_track("Hi there.", "mic", 0));
+        log.record(&on_track("Good, thanks.", "system", 3_000));
+        assert_eq!(log.spoken_text(), "Hi there. Good, thanks.");
+    }
+
+    #[test]
+    fn the_transcript_does_not_wait_for_a_clean_finish() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Kept anyway.", true, 0));
+        log.finish(CaptionsDone { dropped: 3, timed_out: true, failed: false });
+        assert_eq!(log.transcript().as_deref(), Some("Kept anyway."));
+    }
+
+    #[test]
+    fn no_words_means_no_transcript() {
+        assert_eq!(CaptionLog::default().transcript(), None);
+        let mut log = CaptionLog::default();
+        log.record(&caption("still talk", false, 0));
+        assert_eq!(log.transcript().as_deref(), Some("still talk"));
     }
 
     const CLEAN: CaptionsDone = CaptionsDone { dropped: 0, timed_out: false, failed: false };

@@ -6,6 +6,15 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+### Changed
+
+- Mac app: a recording has a transcript the moment you stop it. The on-device
+  captions taken while recording fill History right away, and the cloud
+  transcript replaces them when it is ready. Every recording (voice note,
+  meeting, screen) now pastes its transcript as plain text into the text box
+  your cursor is in when you stop.
+  ([#63](https://github.com/williamrogersdev/eavesy/pull/63))
+
 ## [0.2.0] - 2026-10-15 - desktop
 
 ### Added
