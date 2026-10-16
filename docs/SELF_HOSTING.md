@@ -111,7 +111,11 @@ Processing Worker (`cd workers/processing`):
 bunx wrangler secret put ANTHROPIC_API_KEY
 ```
 
-The MCP Worker needs no secrets. `SENTRY_DSN` is optional on all three. Stripe
+The MCP Worker needs no secrets. If your web app isn't at `https://eavesy.com`,
+set the MCP Worker's `APP_URL` variable to its origin (for example
+`bunx wrangler deploy --var APP_URL:https://app.example.com`), because MCP
+OAuth sends people there to sign in and approve a connection. `SENTRY_DSN` is
+optional on all three. Stripe
 variables are only relevant if you enable paid plans.
 
 Secrets must exist before first use; `wrangler secret put` requires the Worker

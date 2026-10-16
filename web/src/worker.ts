@@ -29,9 +29,16 @@ const worker = {
           executionContext: ExecutionContext,
         ) => Response | Promise<Response>
       )(request, env, ctx);
-    return url.pathname.startsWith('/api/')
-      ? withRequestTiming(request, handle)
-      : handle();
+    if (url.pathname.startsWith('/api/')) return withRequestTiming(request, handle);
+    const response = await handle();
+    if (url.pathname.startsWith('/connect/')) {
+      // Consent pages grant access with one click: never inside someone else's frame.
+      const framed = new Response(response.body, response);
+      framed.headers.set('x-frame-options', 'DENY');
+      framed.headers.set('content-security-policy', "frame-ancestors 'none'");
+      return framed;
+    }
+    return response;
   },
 };
 
