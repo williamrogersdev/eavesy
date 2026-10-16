@@ -66,7 +66,16 @@ fn is_bundled_sidecar(target: &Path) -> bool {
     parts.next().is_some_and(|name| name == SIDECAR)
         && parts.next().is_some_and(|name| name == "MacOS")
         && parts.next().is_some_and(|name| name == "Contents")
-        && parts.next().is_some_and(|name| name.starts_with("Eavesy") && name.ends_with(".app"))
+        && parts.next().is_some_and(|name| is_eavesy_bundle_name(&name))
+}
+
+/// `Eavesy.app`, or a Finder copy such as `Eavesy 2.app`.
+fn is_eavesy_bundle_name(name: &str) -> bool {
+    match name.strip_prefix("Eavesy").and_then(|rest| rest.strip_suffix(".app")) {
+        Some("") => true,
+        Some(copy) => copy.strip_prefix(' ').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())),
+        None => false,
+    }
 }
 
 fn status_for(link: &Path, target: Option<&Path>) -> CliStatus {
@@ -239,6 +248,15 @@ mod tests {
         assert!(status_for(&link, Some(&dev)).installed);
         uninstall(&link, Some(&dev)).unwrap();
         assert!(std::fs::symlink_metadata(&link).is_err());
+    }
+
+    #[test]
+    fn only_eavesy_bundle_names_count() {
+        assert!(is_eavesy_bundle_name("Eavesy.app"));
+        assert!(is_eavesy_bundle_name("Eavesy 2.app"));
+        for name in ["Eavesy-Free.app", "EavesyPro.app", "Eavesy .app", "Eavesy 2b.app", "Other.app", "Eavesy"] {
+            assert!(!is_eavesy_bundle_name(name), "{name}");
+        }
     }
 
     #[test]

@@ -143,8 +143,8 @@ describe('drop', () => {
     expect(result).toEqual({ via: 'cloud', id: undefined });
   });
 
-  test('a stall while reading the reply counts as a timeout, not a success', async () => {
-    const slowBody = ((_url: string, init: RequestInit) => {
+  test('once a 2xx has arrived, a reply that stalls or breaks off is still a success', async () => {
+    const replyThatNeverEnds = ((_url: string, init: RequestInit) => {
       const stream = new ReadableStream({
         start(controller) {
           init.signal!.addEventListener('abort', () => controller.error(init.signal!.reason));
@@ -152,13 +152,28 @@ describe('drop', () => {
       });
       return Promise.resolve(new Response(stream, { status: 201 }));
     }) as unknown as typeof fetch;
-    const root = tmp('eavesy-root-');
-    const result = await drop(
-      { kind: 'text', text: 'half sent' },
-      { root, credential: { base: 'https://eavesy.com', token: 't' }, fetch: slowBody, now: NOW, timeoutMs: { text: 20, upload: 20 } },
-    );
+    const replyThatBreaks = (async () =>
+      new Response(new ReadableStream({ start: (c) => c.error(new TypeError('socket hang up')) }), { status: 201 })) as unknown as typeof fetch;
+    const credential = { base: 'https://eavesy.com', token: 't' };
+    const src = tmp('eavesy-src-');
+    writeFileSync(join(src, 'deck.pdf'), 'PDF');
+
+    // The upload path uses its own timeout: 150 ms here, not the text one.
+    const started = Date.now();
+    const upload = await drop({ kind: 'file', path: join(src, 'deck.pdf') }, { root: tmp('r-'), credential, fetch: replyThatNeverEnds, timeoutMs: { text: 10, upload: 150 } });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+    expect(upload).toEqual({ via: 'cloud', id: undefined });
+
+    const text = await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential, fetch: replyThatBreaks });
+    expect(text).toEqual({ via: 'cloud', id: undefined });
+  });
+
+  test('a non-2xx reply that breaks off is still a refusal', async () => {
+    const broken = (async () =>
+      new Response(new ReadableStream({ start: (c) => c.error(new TypeError('socket hang up')) }), { status: 500 })) as unknown as typeof fetch;
+    const result = await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: broken, now: NOW });
     expect(result.via).toBe('local');
-    expect(result.note).toContain('may also have reached your devices');
+    expect(result.note).toContain('HTTP 500');
   });
 
   test('authenticated requests never follow redirects', async () => {

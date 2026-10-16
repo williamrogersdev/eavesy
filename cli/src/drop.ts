@@ -149,7 +149,6 @@ async function sendToCloud(
   const file = input.kind === 'file' ? readFileSync(input.path) : null;
   if (file && file.byteLength > MAX_FILE_BYTES) throw new Error('file too large (100 MB max)');
   let response: Response;
-  let reply: string;
   try {
     // No redirects: the bearer token must only ever reach `credential.base`.
     if (input.kind === 'text') {
@@ -175,9 +174,6 @@ async function sendToCloud(
         body,
       });
     }
-    // Read the body inside the try: the timeout covers it too, and a stall here
-    // is the same "may have arrived" case as a stall before the headers.
-    reply = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
       // The server may have stored it before going quiet; say so rather than imply it failed.
@@ -190,6 +186,14 @@ async function sendToCloud(
   }
   if (response.status === 401 || response.status === 403) {
     return { ok: false, reason: `${credential.base} did not accept this device's credential (HTTP ${response.status})` };
+  }
+  // The timeout also covers reading the reply. Once a 2xx status has arrived the
+  // server has stored the drop, so a reply that breaks off is still a success.
+  let reply = '';
+  try {
+    reply = await response.text();
+  } catch {
+    if (response.ok) return { ok: true };
   }
   const body = parseJson(reply) as { error?: unknown; drop?: { id?: unknown } } | null;
   if (!response.ok) {
