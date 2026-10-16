@@ -152,7 +152,8 @@ export function readCapture(folder: string): Capture | null {
   }
   if (!validTime(startedAtMs)) {
     try {
-      startedAtMs = statSync(folder).mtimeMs;
+      const mtime = statSync(folder).mtimeMs;
+      startedAtMs = validTime(mtime) ? mtime : 0;
     } catch {
       startedAtMs = 0;
     }

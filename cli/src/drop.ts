@@ -12,6 +12,9 @@ export const DEFAULT_BASE = 'https://eavesy.com';
 export const KEYCHAIN_SERVICE = 'com.eavesy.desktop.device-token.v2';
 /** Matches MAX_FILE_BYTES in web/src/server/drops.ts. */
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
+/** A stalled server must not hold piped text hostage: give up and save locally. */
+const TEXT_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic']);
 
 export interface Credential {
@@ -144,6 +147,7 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
       response = await fetcher(`${credential.base}/api/drops`, {
         method: 'POST',
         redirect: 'error',
+        signal: AbortSignal.timeout(TEXT_TIMEOUT_MS),
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ text: input.text }),
       });
@@ -152,6 +156,7 @@ async function sendToCloud(input: DropInput, credential: Credential, fetcher: ty
       response = await fetcher(`${credential.base}/api/drops/upload`, {
         method: 'POST',
         redirect: 'error',
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
         headers: {
           ...headers,
           'content-type': contentTypeFor(input.path),

@@ -41,29 +41,32 @@ enum Existing {
     Foreign,
 }
 
-fn existing(link: &Path) -> Existing {
+/// `current` is this app's own sidecar: a link to it is ours even in a dev build
+/// that does not run from an app bundle.
+fn existing(link: &Path, current: Option<&Path>) -> Existing {
     match std::fs::symlink_metadata(link) {
         Err(error) if error.kind() == ErrorKind::NotFound => Existing::Nothing,
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(link) {
-            Ok(target) if is_bundled_sidecar(&target) => Existing::Ours(target),
+            Ok(target) if is_bundled_sidecar(&target) || current == Some(target.as_path()) => Existing::Ours(target),
             _ => Existing::Foreign,
         },
         _ => Existing::Foreign,
     }
 }
 
-/// `<something>.app/Contents/MacOS/eavesy-cli`: where the bundler puts the sidecar.
-/// The file name alone is not enough to claim a link as ours.
+/// `Eavesy….app/Contents/MacOS/eavesy-cli`: where the bundler puts the sidecar
+/// (the bundle may be renamed, e.g. `Eavesy 2.app`). The file name alone is not
+/// enough to claim a link as ours.
 fn is_bundled_sidecar(target: &Path) -> bool {
     let mut parts = target.components().rev().map(|c| c.as_os_str().to_string_lossy());
     parts.next().is_some_and(|name| name == SIDECAR)
         && parts.next().is_some_and(|name| name == "MacOS")
         && parts.next().is_some_and(|name| name == "Contents")
-        && parts.next().is_some_and(|name| name.ends_with(".app"))
+        && parts.next().is_some_and(|name| name.starts_with("Eavesy") && name.ends_with(".app"))
 }
 
 fn status_for(link: &Path, target: Option<&Path>) -> CliStatus {
-    let (installed, conflict) = match existing(link) {
+    let (installed, conflict) = match existing(link, target) {
         Existing::Nothing => (false, false),
         Existing::Ours(points_to) => (target.is_some_and(|t| t == points_to), false),
         Existing::Foreign => (false, true),
@@ -72,7 +75,7 @@ fn status_for(link: &Path, target: Option<&Path>) -> CliStatus {
 }
 
 fn install(link: &Path, target: &Path) -> Result<(), String> {
-    match existing(link) {
+    match existing(link, Some(target)) {
         Existing::Foreign => {
             return Err(format!("{} already exists and is not Eavesy's. Remove it, then try again.", link.display()))
         }
@@ -91,8 +94,8 @@ fn install(link: &Path, target: &Path) -> Result<(), String> {
 }
 
 /// Removes the link only when it is Eavesy's; never deletes anything else.
-fn uninstall(link: &Path) -> Result<(), String> {
-    match existing(link) {
+fn uninstall(link: &Path, current: Option<&Path>) -> Result<(), String> {
+    match existing(link, current) {
         Existing::Ours(_) => std::fs::remove_file(link).map_err(|e| format!("could not remove {}: {e}", link.display())),
         Existing::Nothing => Ok(()),
         Existing::Foreign => Err(format!("{} is not Eavesy's, so it was left alone.", link.display())),
@@ -122,7 +125,7 @@ pub fn set_cli_installed(enabled: bool) -> Result<CliStatus, String> {
         let target = target.as_deref().ok_or("This build of Eavesy does not include the eavesy command.")?;
         install(&link, target)?;
     } else {
-        uninstall(&link)?;
+        uninstall(&link, target.as_deref())?;
     }
     Ok(status_for(&link, target.as_deref()))
 }
@@ -131,7 +134,7 @@ pub fn set_cli_installed(enabled: bool) -> Result<CliStatus, String> {
 /// updated, point the link at this copy so it does not dangle.
 pub fn repair_link() {
     let (Ok(link), Some(target)) = (link_path(), bundled_cli()) else { return };
-    if let Existing::Ours(points_to) = existing(&link) {
+    if let Existing::Ours(points_to) = existing(&link, Some(&target)) {
         if points_to != target {
             if let Err(error) = install(&link, &target) {
                 eprintln!("could not update the eavesy command link: {error}");
@@ -170,9 +173,9 @@ mod tests {
         install(&link, &target).unwrap();
         let leftovers: Vec<_> = std::fs::read_dir(link.parent().unwrap()).unwrap().collect();
         assert_eq!(leftovers.len(), 1, "no temporary links left behind");
-        uninstall(&link).unwrap();
+        uninstall(&link, Some(&target)).unwrap();
         assert!(std::fs::symlink_metadata(&link).is_err());
-        uninstall(&link).unwrap();
+        uninstall(&link, Some(&target)).unwrap();
     }
 
     #[test]
@@ -201,14 +204,31 @@ mod tests {
         let lookalike = dir.join("lookalike/eavesy");
         std::fs::create_dir_all(lookalike.parent().unwrap()).unwrap();
         symlink(Path::new("/opt/tools/eavesy-cli"), &lookalike).unwrap();
+        // Bundle layout, but another app's bundle.
+        let other_app = dir.join("other-app/eavesy");
+        std::fs::create_dir_all(other_app.parent().unwrap()).unwrap();
+        symlink(Path::new("/Applications/Other.app/Contents/MacOS/eavesy-cli"), &other_app).unwrap();
 
-        for link in [&file, &other_link, &lookalike] {
+        for link in [&file, &other_link, &lookalike, &other_app] {
             assert!(status_for(link, Some(&target)).conflict);
             assert!(install(link, &target).is_err());
-            assert!(uninstall(link).is_err());
+            assert!(uninstall(link, Some(&target)).is_err());
             assert!(std::fs::symlink_metadata(link).is_ok());
         }
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine");
+    }
+
+    #[test]
+    fn a_dev_build_owns_a_link_to_its_own_sidecar() {
+        let dir = scratch();
+        let dev = dir.join("target/debug").join(SIDECAR);
+        std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
+        std::fs::write(&dev, "#!/bin/sh\n").unwrap();
+        let link = dir.join("eavesy");
+        install(&link, &dev).unwrap();
+        assert!(status_for(&link, Some(&dev)).installed);
+        uninstall(&link, Some(&dev)).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
     }
 
     #[test]

@@ -103,11 +103,17 @@ describe('drop', () => {
     const throwing = (async () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
+    const timedOut = (async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    }) as unknown as typeof fetch;
     const cases: [typeof fetch, string][] = [
       [fakeFetch(403, { error: 'sign in to send drops' }), 'HTTP 403'],
       [fakeFetch(429, { error: 'slow down' }), 'HTTP 429: slow down'],
+      [fakeFetch(413, { error: 'text too large' }), 'HTTP 413: text too large'],
       [fakeFetch(500, 'oops'), 'HTTP 500'],
       [throwing, 'could not reach https://eavesy.com (fetch failed)'],
+      // What fetch rejects with when the AbortSignal.timeout fires on a stalled server.
+      [timedOut, 'could not reach https://eavesy.com (The operation timed out.)'],
     ];
     for (const [fetcher, why] of cases) {
       const root = tmp('eavesy-root-');
@@ -118,10 +124,12 @@ describe('drop', () => {
     }
   });
 
-  test('authenticated requests never follow redirects', async () => {
+  test('authenticated requests never follow redirects and give up on a stalled server', async () => {
     const calls: FetchCall[] = [];
     await drop({ kind: 'text', text: 'x' }, { root: tmp('r-'), credential: { base: 'https://eavesy.com', token: 't' }, fetch: fakeFetch(201, { drop: { id: 'd' } }, calls) });
     expect(calls[0].init.redirect).toBe('error');
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+
   });
 
   test('an unreadable file is reported as itself, not as a network failure', async () => {
