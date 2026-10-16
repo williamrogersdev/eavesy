@@ -26,6 +26,20 @@ pub fn arm(session_id: &str) {
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
+/// Points a recording's paste at where the cursor is as it stops, when that is
+/// a text box: a meeting can run long after the box it started in. Otherwise it
+/// keeps the box it started in. Either way the paste window runs from now.
+pub fn rearm_at_stop(session_id: &str) {
+    let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let now = pick_target(pressed, focused_text_target);
+    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    let started_in = pending
+        .as_ref()
+        .filter(|(id, _, _)| id == session_id)
+        .map(|(_, _, target)| *target);
+    *pending = now.or(started_in).map(|t| (session_id.to_string(), Instant::now(), t));
+}
+
 fn pick_target(pressed: Option<(Instant, Target)>, now: impl FnOnce() -> Option<Target>) -> Option<Target> {
     pressed
         .filter(|(at, _)| at.elapsed() < PRESS_WINDOW)

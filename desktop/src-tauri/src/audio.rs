@@ -466,9 +466,8 @@ fn spawn_capture(
     );
     state.1.fetch_sub(1, Ordering::SeqCst);
 
-    if mode == "audio" && source == "mic" {
-        crate::dictation::arm(&id);
-    }
+    // Every recording pastes its transcript at the cursor when it stops.
+    crate::dictation::arm(&id);
 
     crate::hud::set_state(
         app,
@@ -741,7 +740,8 @@ fn stop_capture_inner(
             &mode,
             &source,
             reserved_audio_folder,
-            dictation.then_some(captions),
+            &captions,
+            dictation,
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -790,7 +790,8 @@ fn finish_stopped_capture(
     mode: &str,
     source: &str,
     reserved_audio_folder: Option<PathBuf>,
-    dictation: Option<Arc<Mutex<CaptionLog>>>,
+    captions: &Mutex<CaptionLog>,
+    dictation: bool,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -823,12 +824,16 @@ fn finish_stopped_capture(
         },
         status: "processing".to_string(),
         summary: None,
-        transcript: None,
+        // What the Mac heard on device, so the recording is readable and
+        // pasteable the moment it stops. The cloud transcript replaces it.
+        transcript: captions.lock().unwrap_or_else(|e| e.into_inner()).transcript(),
         notes: None,
         has_audio: true,
         has_video: is_screen,
         folder_path: folder.to_str().map(|s| s.to_string()),
     };
+    crate::dictation::rearm_at_stop(&rec.id);
+    let pasting = crate::dictation::is_armed(&rec.id);
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
     store::append(&app, rec.clone())?;
     let _ = app.emit("recordings:updated", ());
@@ -868,14 +873,20 @@ fn finish_stopped_capture(
             archive_bytes,
         )?;
         crate::sync::wake();
-        if let Some(captions) = dictation {
-            let pasting = crate::dictation::is_armed(&rec.id);
-            paste_dictation(&app, &rec.id, audio_dest, &captions);
-            if pasting {
-                // The text goes back into the app the user was in; don't take focus from it.
-                return Ok(rec);
-            }
+        if dictation {
+            paste_dictation(&app, &rec.id, audio_dest, captions);
         }
+    }
+    // Dictation chose its own text above. Anything else pastes what the Mac
+    // heard on device now; with none, the cloud transcript pastes when ready.
+    if !dictation {
+        if let Some(text) = &rec.transcript {
+            crate::dictation::deliver(&app, &rec.id, text);
+        }
+    }
+    if pasting {
+        // The text goes back into the app the user was in; don't take focus from it.
+        return Ok(rec);
     }
 
     crate::commands::show_launcher(app.clone());

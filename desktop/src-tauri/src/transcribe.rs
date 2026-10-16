@@ -22,6 +22,7 @@ pub fn spawn(
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
+                crate::dictation::deliver(&app, &id, &text);
                 if let Some(dir) = &folder {
                     if let Some(recording) = store::load_all(&app)
                         .into_iter()
