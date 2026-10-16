@@ -7,12 +7,15 @@ import { PermissionRow } from '@/components/launcher/permission-row';
 import {
   chooseRecordingsFolder,
   errMsg,
+  getCliStatus,
   getSettings,
+  setCliInstalled,
   isDesktop,
   setLauncherPosition,
   setLiveCaptions,
   checkPermissions,
   type AccountInfo,
+  type CliStatus,
   type LauncherPosition,
   type Permissions,
   type PrivacyPane,
@@ -363,7 +366,67 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           </div>
           {folderStatus ? <p role="status" className="mt-2 text-[11px] text-muted-foreground">{folderStatus}</p> : null}
         </Section>
+
+        {isDesktop() && <CommandLineSection />}
       </div>
     </div>
+  );
+}
+
+/** Links the bundled `eavesy` CLI into ~/.local/bin so agents can read local captures. */
+function CommandLineSection() {
+  const [status, setStatus] = useState<CliStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getCliStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  if (!status?.available) return null;
+  const on = status.installed;
+  const toggle = () => {
+    setBusy(true);
+    setError(null);
+    void setCliInstalled(!on)
+      .then(setStatus)
+      .catch((err: unknown) => setError(errMsg(err, 'Could not change the eavesy command.')))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <Section title="Command line">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Install the <code>eavesy</code> command</p>
+          <p className="text-[11px] text-muted-foreground">
+            Lets agents search notes and screenshots on this Mac, including ones that never upload.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Install the eavesy command"
+          disabled={busy || status.conflict}
+          onClick={toggle}
+          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${on ? 'bg-[var(--lr-brand)]' : 'bg-[var(--lr-selected)]'}`}
+        >
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+        </button>
+      </div>
+      {on ? (
+        <p className="mt-2 select-text text-[11px] text-muted-foreground">
+          Linked at {status.link_path}. Add it to Claude Code with{' '}
+          <code className="text-foreground">claude mcp add eavesy -- {status.link_path} mcp</code>
+        </p>
+      ) : null}
+      {status.conflict ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {status.link_path} already exists and isn&rsquo;t Eavesy&rsquo;s, so it was left alone.
+        </p>
+      ) : null}
+      {error ? <p role="alert" className="mt-2 text-[11px] text-destructive">{error}</p> : null}
+    </Section>
   );
 }

@@ -2,6 +2,7 @@ mod telemetry;
 mod audio;
 mod base_url;
 mod captions;
+mod cli_link;
 mod live_transcript;
 mod visual;
 mod commands;
@@ -104,6 +105,8 @@ pub fn run() {
             commands::suspend_hotkeys,
             panel::resize_panel,
             updates::install_update,
+            cli_link::cli_status,
+            cli_link::set_cli_installed,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -176,6 +179,8 @@ pub fn run() {
             if !settings.setup_completed && settings::device_token(&handle).is_none() {
                 hotkeys::show_launcher(&handle);
             }
+
+            cli_link::repair_link();
 
             #[cfg(desktop)]
             updates::check_in_background(&handle);

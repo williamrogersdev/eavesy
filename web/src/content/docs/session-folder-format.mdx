@@ -79,6 +79,25 @@ top of `meeting.json`, treat unknown fields as additive — we add, we don&rsquo
 rename.
 </Callout>
 
+## Notes, images and screenshots
+
+Clipboard notes, pasted images and screenshots are captures too. Each gets its
+own folder with the content (`note.md`, `image.png` or `screenshot.png`) and a
+`capture.json` instead of `meeting.json`:
+
+```json
+{
+  "id": "0c8f6c2e-1d9a-4f53-8a57-3b1f0e6d9a11",
+  "title": "Note",
+  "started_at_ms": 1782900000000,
+  "source": "note",
+  "status": "complete"
+}
+```
+
+`source` is `note`, `image` or `screenshot`. These captures stay on your Mac.
+The [`eavesy` command](/docs/local-cli) lets agents search them.
+
 ## Using it with agents
 
 Because everything is on disk in open formats, an agent with filesystem access
