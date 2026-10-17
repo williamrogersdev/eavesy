@@ -137,6 +137,22 @@ export interface CaptureSession {
   source: string;
 }
 
+/**
+ * Where a macOS permission stands. `notDetermined` means never asked, so requesting it shows the
+ * system prompt; `denied` means only System Settings can change it. Accessibility and Screen
+ * Recording can't tell those apart and report `notGranted` until granted.
+ */
+export type PermissionStatus = 'granted' | 'denied' | 'notDetermined' | 'restricted' | 'notGranted';
+
+export interface PermissionStatuses {
+  mic: PermissionStatus;
+  speech: PermissionStatus;
+  screen: PermissionStatus;
+  accessibility: PermissionStatus;
+  inputMonitoring: PermissionStatus;
+  notifications: PermissionStatus;
+}
+
 export interface Permissions {
   mic: boolean;
   micAsked?: boolean;
@@ -144,6 +160,10 @@ export interface Permissions {
   accessibility?: boolean;
   /** Speech Recognition, for live captions and the instant dictation paste. */
   speech?: boolean;
+  /** Input Monitoring, for the Fn / Globe shortcut. */
+  inputMonitoring?: boolean;
+  notifications?: boolean;
+  status?: PermissionStatuses;
 }
 
 export async function checkPermissions(opts?: {
@@ -164,10 +184,103 @@ export async function setLiveCaptions(enabled: boolean): Promise<void> {
   await invoke('set_live_captions', { enabled });
 }
 
-export type PrivacyPane = 'microphone' | 'screen' | 'accessibility' | 'speech';
+// Each request asks for one permission alone, while the launcher steps out of the way so the
+// macOS prompt can be clicked. Call them one at a time.
+
+/** Asks for the microphone. Resolves with every permission afterwards. */
+export async function requestMicrophone(): Promise<Permissions | null> {
+  if (!isDesktop()) return null;
+  return invoke<Permissions>('request_microphone');
+}
+
+/** Asks for Speech Recognition (live captions, instant dictation paste). */
+export async function requestSpeech(): Promise<Permissions | null> {
+  if (!isDesktop()) return null;
+  return invoke<Permissions>('request_speech');
+}
+
+/** Asks for Screen & System Audio Recording. */
+export async function requestScreen(): Promise<Permissions | null> {
+  if (!isDesktop()) return null;
+  return invoke<Permissions>('request_screen');
+}
+
+/**
+ * Shows the Accessibility prompt, which offers to open System Settings. Resolves with whether
+ * Accessibility is already granted; poll `checkPermissions({ prompt: false })` after.
+ */
+export async function requestAccessibility(): Promise<boolean> {
+  if (!isDesktop()) return true;
+  return invoke<boolean>('request_accessibility');
+}
+
+/**
+ * Shows the Input Monitoring prompt (Fn / Globe shortcut). macOS applies a new grant only after
+ * Eavesy relaunches, so offer `relaunchApp()` once it is granted.
+ */
+export async function requestInputMonitoring(): Promise<PermissionStatus> {
+  if (!isDesktop()) return 'granted';
+  return invoke<PermissionStatus>('request_input_monitoring');
+}
+
+/** Asks to show notifications; resolves after the user answers. */
+export async function requestNotifications(): Promise<PermissionStatus> {
+  if (!isDesktop()) return 'granted';
+  return invoke<PermissionStatus>('request_notifications');
+}
+
+export type PrivacyPane =
+  | 'microphone'
+  | 'screen'
+  | 'accessibility'
+  | 'speech'
+  | 'input_monitoring'
+  | 'automation'
+  | 'notifications';
 export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
   if (!isDesktop()) return;
   await invoke('open_privacy_settings', { pane });
+}
+
+export type UpdateStatus = {
+  currentVersion: string;
+  /** When the last check finished, or null if none has since Eavesy started. */
+  checkedAtMs: number | null;
+} & (
+  | { state: 'unknown' }
+  | { state: 'upToDate' }
+  | { state: 'available'; version: string; notes: string | null }
+  | { state: 'error'; message: string }
+);
+
+export interface AppInfo {
+  name: string;
+  version: string;
+  update: UpdateStatus;
+}
+
+export async function getAppInfo(): Promise<AppInfo | null> {
+  if (!isDesktop()) return null;
+  return invoke<AppInfo>('get_app_info');
+}
+
+/** Checks for an update now. The app menu's Check for Updates… shows its own dialog instead. */
+export async function checkForUpdates(): Promise<UpdateStatus | null> {
+  if (!isDesktop()) return null;
+  return invoke<UpdateStatus>('check_for_updates');
+}
+
+/** Downloads and installs the available update, then relaunches. Rejects while recording. */
+export async function installUpdate(): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('install_update');
+}
+
+/** Fires whenever an update check finishes, including the background check. */
+export async function onUpdateStatus(cb: (status: UpdateStatus) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<UpdateStatus>('launcher:update-status', (event) => cb(event.payload));
 }
 
 /**

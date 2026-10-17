@@ -15,6 +15,7 @@ export function PermissionRow({
   onRequest,
   onOpenSettings,
   onRelaunch,
+  relaunchTitle = 'macOS applies Screen Recording after Eavesy restarts',
 }: {
   label: string;
   optional?: boolean;
@@ -26,6 +27,7 @@ export function PermissionRow({
   onRequest?: () => void;
   onOpenSettings: () => void;
   onRelaunch?: () => void;
+  relaunchTitle?: string;
 }) {
   const [asked, setAsked] = useState(false);
   const canAsk = !!onRequest && !asked && !answered;
@@ -56,7 +58,7 @@ export function PermissionRow({
             <button
               type="button"
               onClick={onRelaunch}
-              title="macOS applies Screen Recording after Eavesy restarts"
+              title={relaunchTitle}
               className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-muted-foreground transition hover:bg-[var(--lr-hover)] hover:text-foreground"
             >
               <RotateCw className="h-3 w-3" /> Reopen Eavesy

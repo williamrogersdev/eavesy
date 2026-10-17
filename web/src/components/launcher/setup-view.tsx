@@ -5,6 +5,7 @@ import { type ReactNode } from 'react';
 import { type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionRow } from '@/components/launcher/permission-row';
 import { cn } from '@/lib/utils';
+import type { SetupPermissionKind } from './use-setup-permissions';
 
 export function SetupView({
   paired,
@@ -20,7 +21,7 @@ export function SetupView({
   paired: boolean;
   connecting: boolean;
   permissions: Permissions | null;
-  checking: 'mic' | 'screen' | null;
+  checking: SetupPermissionKind | null;
   onConnect: () => void;
   onCancelConnect: () => void;
   onRequest: (kind: 'mic' | 'screen') => void;
