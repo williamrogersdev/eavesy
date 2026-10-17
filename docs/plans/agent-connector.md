@@ -11,6 +11,19 @@ Status: proposal (2026-10-17). Research notes and sources are at the end.
 > - the Mac link, which lets web clients reach the Mac.
 >
 > This doc keeps the research and the detail behind each feature.
+>
+> **What the architecture doc changes in this one** (where the two disagree,
+> the architecture doc wins):
+>
+> | This doc says | Now |
+> |---|---|
+> | Local endpoint on 127.0.0.1 with a bearer token | Unix socket (0600) with a peer-pid check; loopback is an optional fallback with a token, Origin and Host checks |
+> | `desktop/src-tauri/src/agents/` modules | The `eavesy-core` crate (`desktop/crates/eavesy-core`) |
+> | `request_secret(name, reason)` | `request_grant(name, reason)` |
+> | `send_to_mac`, `create_note` | `send_to_human`, `save` |
+> | `ask_human`, `inbox`, `request_file`, `latest_capture`/`read_capture`, `search_local` | `ask_human`, `inbox`, `request_grant` (file), and `recent`/`get`/`search` from the shared tool spec |
+> | Phases 0–5 and 2b | Build order steps 1–8 |
+> | Agents and the user may kill processes | Agents may stop only their own session's tagged tree; anything else needs a click in the UI |
 
 ## The problem, in two parts
 

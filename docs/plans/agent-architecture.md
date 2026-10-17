@@ -34,8 +34,10 @@ them, so it must never depend on any single vendor.
 5. **Local first, cloud optional.** Everything works offline on the Mac. The
    cloud is only for sync and for reaching web-only clients.
 6. **The human approves, the agent never holds secrets.** Secrets, file access
-   and process kills need a click in Eavesy's own UI. No API, tool or agent can
-   approve them.
+   and stopping any process outside the calling session's own tagged tree need
+   a click in Eavesy's own UI. No API, tool or agent can approve them. An agent
+   may stop processes *it* started (its own services and its tagged
+   descendants), because that's cleanup, not control.
 7. **Fast or it doesn't ship.** Every step has a speed budget (see
    [Performance budgets](#performance-budgets)), and a slow adapter fails open
    rather than blocking an agent.
@@ -142,9 +144,23 @@ adapter. Revisit if the app's uptime turns out to be a problem.
 
 - **Transport:** a Unix socket at
   `~/Library/Application Support/com.eavesy.desktop/eavesy.sock` with 0600
-  permissions, so only the user can reach it. No TCP port by default. A
-  loopback port only gets added if a client can't use sockets, for example
-  Claude Code HTTP hooks; the CLI wrapper covers that case anyway.
+  permissions, so only the user can reach it. No TCP port by default.
+- **The security boundary is "same macOS user", stated plainly.** Any process
+  running as you can connect, just as any process running as you can already
+  read your files. The design copes with that in three ways:
+  - The core identifies every caller from the socket's peer credentials
+    (`LOCAL_PEERPID` / `getpeereid`). It maps that pid to a Session through
+    the process tree, so an agent can only act as *its own* session. Stopping
+    processes is checked against that session's tree.
+  - Nothing reachable over the API can *approve* anything. Grants, kills
+    outside a session's own tree, and local-only Items going remote all need a
+    click in the native UI.
+  - Every call is logged as an event with the caller's pid and session.
+- **Loopback fallback** (only if a client can't use sockets; the CLI wrapper
+  usually covers this): bound to 127.0.0.1 and needs a per-install bearer
+  token (0600 file). Requests with a browser `Origin` header are rejected, and
+  `Host` must be `127.0.0.1:<port>`, which blocks DNS-rebinding attacks.
+  Off by default.
 - **Shape:** JSON requests mirroring the verbs (`items.search`, `send`, `ask`,
   `grant.request`, `services.start`, `processes.list`, …) plus an
   `events.subscribe` stream.
@@ -155,8 +171,11 @@ adapter. Revisit if the app's uptime turns out to be a problem.
 
 The local MCP (`eavesy mcp`, stdio) and the remote MCP (`workers/mcp`) expose
 **the same tool names and schemas**, defined once in `spec/agent-tools.json`.
-Each server shows only the tools its trust tier allows. A contract test fails
-CI if either server drifts from the spec.
+Each tool in the spec carries a `tiers` field (`local`, `remote`), and for
+remote, the scope it needs (`read`/`write`). Each server shows only the tools
+its tier allows, and the check is enforced **on the server** (in the core for
+local, in `workers/mcp` for remote). Clients never enforce it. A contract
+test fails CI if either server's tool list or schemas drift from the spec.
 
 | Tool (canonical) | Local | Remote | Notes |
 |---|---|---|---|
@@ -164,20 +183,55 @@ CI if either server drifts from the spec.
 | `action_items` | ✓ | ✓ | Today's `get_action_items` |
 | `save` (agent output → Item) | ✓ | ✓ (write scope) | Fills the `write` scope that exists but has no tools yet |
 | `send_to_human` | ✓ | ✓ | Puts a message or Item in your Inbox |
-| `ask_human` | ✓ | ✓ via the Mac link | Waits up to N minutes for an answer; uses MCP elicitation where the client supports it |
+| `ask_human` | ✓ | ✓ via the Mac link | See [ask_human semantics](#ask_human-semantics); uses MCP elicitation where the client supports it |
 | `inbox` | ✓ | — | Items you sent to *this* session |
-| `machine_status` | ✓ | opt-in summary | Running services, memory pressure, other agents |
-| `start_service` / `list_services` / `service_logs` / `stop_service` | ✓ | — | |
+| `machine_status` | ✓ | opt-in, read-only summary | Running services, memory pressure, other agents. Remotely, a summary only: names, ports and memory, no args or env |
+| `start_service` / `list_services` / `service_logs` / `stop_service` | ✓ | — | `stop_service` only affects the calling session's own services |
 | `request_grant` | ✓ | — | Returns only granted or denied, **never a value** |
 
 ### Trust tiers
 
 | Tier | Who | Can |
 |---|---|---|
-| Human | Eavesy UI, hotkeys | Everything; the only tier that can approve grants and kills |
-| Local agent | CLI and stdio MCP (same user) | Read Items, send/ask, run services, *request* grants, stop its *own* processes |
+| Human | Eavesy UI, hotkeys | Everything. The only tier that can approve grants and stop processes outside a session's own tree |
+| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes in its *own* session's tagged tree |
 | Browser extension | Your browser, authenticated by native messaging | Register tabs as Sessions, receive delivered Items, capture page content |
-| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`. Local-only Items need a per-request approval in the HUD. **No processes, no grants, ever** |
+| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. **No process control, no grants, ever** |
+
+### Mac link authentication
+
+The Mac link is the most exposed surface, so its rules are explicit:
+
+- **The Mac authenticates with its existing device token.** That's the token
+  from pairing, kept in the Keychain (`settings.rs`) and already tied to one
+  user in `device_tokens`. The Mac opens an outbound WebSocket to the
+  `MacLink` Durable Object for that user. The DO is keyed by user id; one
+  user can have several Macs, each its own device.
+- **Remote calls are tied to the same user.** A remote MCP call carries the
+  connection's OAuth or MCP token, which `workers/mcp` resolves to a user and
+  scopes. Only then does it route to *that* user's DO. A call can never reach
+  another user's Mac. The tier and scope checks run in `workers/mcp` before
+  anything is sent. The Mac checks again (tier `remote`) before acting.
+- **What the Mac receives is limited by the remote tier.** That's the same
+  rule set as above, so the cloud can't ask the Mac for anything a remote
+  client couldn't.
+- **Revocation:** signing the device out (`DELETE /api/devices/me`) or
+  revoking it in web Settings ends the link and refuses new connections from
+  that device. Revoking an MCP connection stops that client at once. The Mac
+  link switch in the app closes the socket locally.
+- **When the Mac is offline,** calls that only need cloud data still work.
+  Calls that need the Mac are either queued in `drops` (send) or return
+  `mac_offline` (ask, local Items).
+
+### ask_human semantics
+
+- The default timeout is 10 minutes. The caller can set 30 s to 60 min.
+- It returns `{status: "answered", text}`, `{status: "dismissed"}` or
+  `{status: "timeout"}`. It never hangs forever.
+- The attention queue de-duplicates by `(session, question)`: identical asks
+  share one HUD card, and every waiting caller gets the same answer. Rate
+  limiting makes extra asks wait their turn; it never drops them silently. An
+  ask that can't be shown before its timeout returns `timeout`.
 
 ## Making it work with every client
 
@@ -213,6 +267,13 @@ keys pick a different target while you're still talking. In the common case
 you never click anything. The same picker works for a screenshot or clipboard
 item ("send this to…").
 
+Just before pasting, the router **checks the target again**: same window or
+tab, same tty, and the input is focused (dictation already does this check
+by AX target today). If the target changed, the Item goes to that session's
+inbox and the clipboard, with a notice; nothing is pasted somewhere
+unexpected. **Items that come in remotely are never pasted automatically.**
+They land in the Inbox, and you choose where they go.
+
 **2. An agent needs you.** A Claude Code Stop hook, an `ask_human` call, or a
 ChatGPT tool call through the Mac link becomes an event
 (`session.waiting` / `ask`). The attention queue then shows it in the HUD
@@ -224,8 +285,22 @@ flow 1.
 `request_grant("DATABASE_URL", reason)` or runs `eavesy run -- npm run dev`.
 The attention queue shows an approval sheet naming the session, the command
 and the value names. You approve, and the value is injected into that child
-process only. The agent sees `granted` and the command's output, never the
-secret. Every step is logged as an event.
+process only. **No Eavesy API or tool ever returns the value.** The command's
+own output is a separate risk: a process can still print its env or log a
+connection string. `eavesy run` masks exact matches of injected values in the
+output it passes back (`••••`). That masking is **best effort**: it can't catch
+encoded or partial copies. The docs say so, and the approval sheet shows the
+command so you can judge it. Every step is logged as an event.
+
+**Grant lifecycle:**
+- **Scopes:** *once* (this command), *this session* (ends at SessionEnd or
+  after at most 24 h) or *always for this project + agent* (opt-in; shown and
+  revocable in the Grants list).
+- **Revoking** stops future use straight away. A child process that's
+  already running keeps the env it started with. macOS gives no way to take
+  it back, so the revoke dialog offers **Revoke and stop process**.
+- **Session ends:** session-scoped grants expire, and tagged processes are
+  cleaned up under the usual policy.
 
 **4. The Mac gets heavy.** The monitor emits `machine.pressure` and
 `process.orphaned`. Policy decides between showing a notice and stopping
