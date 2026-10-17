@@ -25,6 +25,8 @@ export type ComposerHandle = {
 
 export type ComposerProps = {
   onSaveNote: (text: string) => void | Promise<void>;
+  /** A save failed. The draft is kept so nothing typed is lost. */
+  onSaveError?: (error: unknown) => void;
   /** Files pasted into the field (or picked, when there is no `onPick`). Native drag-drop paths are handled by the panel. */
   onFiles: (files: File[]) => void;
   /** Opens a native file picker instead of the browser one (the desktop app needs real paths). */
@@ -56,7 +58,7 @@ export function noteText(draft: string, pasted: string | null): string {
  * list and never reflows it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSaveNote, onFiles, onPick, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
+  { onSaveNote, onSaveError, onFiles, onPick, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
   ref,
 ) {
   const [draft, setDraft] = useState('');
@@ -106,13 +108,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const text = noteText(draft, pasted);
   const multiline = draft.includes('\n') || pasted !== null;
 
+  const saving = useRef(false);
   const save = useCallback(async () => {
-    if (!text) return;
-    await onSaveNote(text);
-    setDraft('');
-    setPasted(null);
+    if (!text || saving.current) return;
+    saving.current = true;
+    const savedDraft = draft;
+    const savedPasted = pasted;
+    try {
+      await onSaveNote(text);
+    } catch (error) {
+      onSaveError?.(error);
+      return;
+    } finally {
+      saving.current = false;
+    }
+    // Keep anything typed or pasted while the save was in flight.
+    setDraft((current) => current.startsWith(savedDraft) ? current.slice(savedDraft.length).trimStart() : current);
+    setPasted((current) => current === savedPasted ? null : current);
     confirm();
-  }, [text, onSaveNote, confirm]);
+  }, [text, draft, pasted, onSaveNote, onSaveError, confirm]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;

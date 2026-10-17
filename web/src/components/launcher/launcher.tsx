@@ -742,6 +742,7 @@ export function Launcher() {
             <Composer
               ref={composerRef}
               dragActive={dragging}
+              onSaveError={(error) => flash(errMsg(error, 'Couldn’t save that note'), 5000, 'warn')}
               onSaveNote={async (text) => {
                 await saveNote(text);
                 historyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });

@@ -6,6 +6,8 @@ import { Kbd } from './kbd';
 export type MenuItem =
   | {
       label: string;
+      /** React key; defaults to the label. Set it when two items share a label. */
+      id?: string;
       icon?: LucideIcon;
       kbd?: string;
       onSelect: () => void;
@@ -43,7 +45,7 @@ export function Menu({ trigger, items, align = 'end', header, open, onOpenChange
               <DropdownMenu.Separator key={`sep-${i}`} className="ev-menu-sep" />
             ) : (
               <DropdownMenu.Item
-                key={item.label}
+                key={item.id ?? `${i}-${item.label}`}
                 className="ev-menu-item"
                 data-tone={item.tone ?? 'default'}
                 disabled={item.disabled}

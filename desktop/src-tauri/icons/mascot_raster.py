@@ -47,7 +47,7 @@ def quad(p0, c, p1, steps=24):
 
 
 class Canvas:
-    """RGBA float canvas. `to_px` maps viewBox units to pixels: px = ox + u * s."""
+    """RGBA float canvas. `self.u` / `self.v` are each pixel's position in viewBox units (px = ox + u * s)."""
 
     def __init__(self, size, s, ox, oy):
         self.size = size

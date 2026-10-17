@@ -10,7 +10,9 @@ use crate::hotkeys;
 
 const TRAY_ID: &str = "eavesy-tray";
 
-/// Whether the tray currently shows the recording glyph (red porch light).
+/// Whether a capture is recording, i.e. which glyph the tray should show.
+static WANT_RECORDING: AtomicBool = AtomicBool::new(false);
+/// Whether the tray actually shows the recording glyph (red porch light).
 static SHOWING_RECORDING: AtomicBool = AtomicBool::new(false);
 
 fn menu_accel(accelerator: &str) -> Option<String> {
@@ -73,18 +75,30 @@ pub fn refresh(app: &AppHandle) {
 
 /// Swaps the menu bar glyph while a capture records. The idle glyph is a
 /// template image (tinted by macOS); the recording one keeps its red dot.
+/// Callable from any thread: the swap itself runs on the main thread.
 pub fn set_recording(app: &AppHandle, recording: bool) {
-    if SHOWING_RECORDING.swap(recording, Ordering::SeqCst) == recording {
+    WANT_RECORDING.store(recording, Ordering::SeqCst);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || apply_recording_glyph(&handle));
+}
+
+/// Brings the glyph in line with `WANT_RECORDING`. Main thread only. The
+/// shown state is recorded only once the swap worked, so a missing tray or a
+/// failed swap is retried by the next call (and by `install`).
+fn apply_recording_glyph(app: &AppHandle) {
+    let want = WANT_RECORDING.load(Ordering::SeqCst);
+    if SHOWING_RECORDING.load(Ordering::SeqCst) == want {
         return;
     }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let icon = if recording {
+    let icon = if want {
         tauri::include_image!("icons/tray-recording.png")
     } else {
         tauri::include_image!("icons/tray.png")
     };
-    let _ = tray.set_icon(Some(icon));
-    let _ = tray.set_icon_as_template(!recording);
+    if tray.set_icon(Some(icon)).is_ok() && tray.set_icon_as_template(!want).is_ok() {
+        SHOWING_RECORDING.store(want, Ordering::SeqCst);
+    }
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
@@ -119,6 +133,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .icon_as_template(true);
 
     builder.build(app)?;
+    // A capture may have started before the tray existed.
+    SHOWING_RECORDING.store(false, Ordering::SeqCst);
+    apply_recording_glyph(app);
     Ok(())
 }
 
