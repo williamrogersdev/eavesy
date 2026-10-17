@@ -93,7 +93,9 @@ pub fn set_transcript<R: Runtime>(
 
 /// Applies a cloud result. Returns the recording (None if it is not in the
 /// registry) and whether anything changed, so an unchanged poll does not rewrite
-/// recordings.json or notify the UI.
+/// recordings.json or notify the UI. `transcript_final` says the cloud has
+/// transcribed every part, even if the summary is still being written.
+#[allow(clippy::too_many_arguments)]
 pub fn set_result<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -102,6 +104,7 @@ pub fn set_result<R: Runtime>(
     summary: Option<String>,
     notes: Option<String>,
     status: &str,
+    transcript_final: bool,
 ) -> Result<Option<(StoredRecording, bool)>, String> {
     let mut updated = None;
     mutate(app, |list| {
@@ -124,7 +127,7 @@ pub fn set_result<R: Runtime>(
 
         let before = recording.clone();
         recording.title = title.to_string();
-        if !transcript_is_local && takes_cloud_transcript(recording.transcript.as_deref(), &transcript, status) {
+        if !transcript_is_local && takes_cloud_transcript(recording.transcript.as_deref(), &transcript, status, transcript_final) {
             recording.transcript = Some(transcript);
         }
         if !summary_is_local {
@@ -141,18 +144,40 @@ pub fn set_result<R: Runtime>(
     Ok(updated)
 }
 
-/// Whether a cloud transcript should replace the one a recording has. A
-/// finished one always does. Until then the cloud has only part of the
-/// recording, so it must not swap the fuller on-device text that was stored at
-/// stop for a shorter partial; it takes over once it says at least as much.
-/// A failed one never wipes text the recording already has.
-fn takes_cloud_transcript(current: Option<&str>, cloud: &str, status: &str) -> bool {
-    let words = |text: &str| text.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)).count();
-    match status {
-        "complete" => true,
-        "transcript_failed" => current.is_none_or(|text| text.trim().is_empty()),
-        _ => words(cloud) >= current.map_or(0, words),
+/// Whether a cloud transcript should replace the one a recording has.
+///
+/// The text stored at stop is what the Mac heard on device: a first pass the
+/// cloud refines, never one it may erase. So a cloud transcript with no words
+/// never replaces one that has words, whatever its status: Whisper can drop a
+/// quiet or short clip, or a segment may never have reached the cloud, and
+/// "No speech detected" over words the user watched appear is worse than the
+/// rougher on-device text. Otherwise a final cloud transcript (complete, or
+/// every segment transcribed, with none abandoned) replaces it. Until then the cloud has only part
+/// of the recording, so it takes over once it says at least as much. A failed
+/// one never wipes text the recording already has.
+fn takes_cloud_transcript(current: Option<&str>, cloud: &str, status: &str, transcript_final: bool) -> bool {
+    let current_words = current.map_or(0, spoken_word_count);
+    let cloud_words = spoken_word_count(cloud);
+    if cloud_words == 0 && current_words > 0 {
+        return false;
     }
+    if transcript_final {
+        return true;
+    }
+    match status {
+        "transcript_failed" => current_words == 0,
+        _ => cloud_words >= current_words,
+    }
+}
+
+/// Words in a transcript, leaving out markdown headings: a cloud transcript
+/// with no lines is still "# Title / ## Transcript", which says nothing.
+fn spoken_word_count(text: &str) -> usize {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .filter(|w| w.chars().any(char::is_alphabetic))
+        .count()
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -296,22 +321,46 @@ mod tests {
     fn a_partial_cloud_transcript_does_not_replace_fuller_on_device_text() {
         let on_device = Some("Hello there, this is the whole recording.");
         let partial = "# Recording\n\n## Transcript\n\n[00:00:00] Hello there,";
-        assert!(!takes_cloud_transcript(on_device, partial, "processing"));
+        assert!(!takes_cloud_transcript(on_device, partial, "processing", false));
         let caught_up = "# Recording\n\n## Transcript\n\n[00:00:00] Hello there, this is the whole recording now.";
-        assert!(takes_cloud_transcript(on_device, caught_up, "processing"));
-        assert!(takes_cloud_transcript(None, partial, "processing"));
+        assert!(takes_cloud_transcript(on_device, caught_up, "processing", false));
+        assert!(takes_cloud_transcript(None, partial, "processing", false));
     }
 
     #[test]
-    fn a_finished_cloud_transcript_always_replaces_the_on_device_one() {
-        assert!(takes_cloud_transcript(Some("much longer on device text than the cloud"), "# R\n\nshort", "complete"));
+    fn a_finished_cloud_transcript_with_words_replaces_the_on_device_one() {
+        let cloud = "# R\n\n## Transcript\n\n[00:00:00] short";
+        assert!(takes_cloud_transcript(Some("much longer on device text than the cloud"), cloud, "complete", true));
+        assert!(takes_cloud_transcript(Some("much longer on device text than the cloud"), cloud, "processing", true));
+        // Complete but missing parts that never uploaded: it has to catch up first.
+        assert!(!takes_cloud_transcript(Some("much longer on device text than the cloud"), cloud, "complete", false));
+    }
+
+    #[test]
+    fn an_empty_cloud_transcript_never_wipes_on_device_words() {
+        // What render_transcript writes for a result with no lines.
+        let empty = "# Voice memo\n\n## Transcript\n\n";
+        let heard = Some("Remind me to call the bank tomorrow.");
+        for status in ["complete", "processing", "transcript_failed"] {
+            assert!(!takes_cloud_transcript(heard, empty, status, true), "{status}");
+            assert!(!takes_cloud_transcript(heard, "   \n", status, false), "{status}");
+        }
+        // With nothing heard on device there is nothing to protect.
+        assert!(takes_cloud_transcript(None, empty, "complete", false));
+        assert!(takes_cloud_transcript(Some("  "), empty, "complete", false));
     }
 
     #[test]
     fn a_failed_cloud_transcript_keeps_the_on_device_text() {
         let empty = "# Recording\n\n## Transcript\n\n";
-        assert!(!takes_cloud_transcript(Some("What the Mac heard."), empty, "transcript_failed"));
-        assert!(takes_cloud_transcript(None, empty, "transcript_failed"));
+        assert!(!takes_cloud_transcript(Some("What the Mac heard."), empty, "transcript_failed", false));
+        assert!(takes_cloud_transcript(None, empty, "transcript_failed", false));
+    }
+
+    #[test]
+    fn headings_are_not_spoken_words() {
+        assert_eq!(spoken_word_count("# Voice memo\n\n## Transcript\n\n"), 0);
+        assert_eq!(spoken_word_count("# T\n\n[00:00:01] hello there\n"), 2);
     }
     use std::sync::Arc;
 
@@ -373,7 +422,7 @@ mod tests {
         let app = app.handle();
         append(app, sample("meeting", 1)).unwrap();
         let path = registry_path(app).unwrap();
-        let poll = || set_result(app, "meeting", "Sync", "transcript".into(), None, None, "processing").unwrap();
+        let poll = || set_result(app, "meeting", "Sync", "transcript".into(), None, None, "processing", false).unwrap();
 
         assert!(poll().unwrap().1, "the first result changes the recording");
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();

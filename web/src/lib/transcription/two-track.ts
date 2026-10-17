@@ -11,7 +11,18 @@ export function speakerForTrack(track: Track): SpeakerId | null {
   return null;
 }
 
-export function isSilentTrack(track: Track, activeMs: number | null): boolean {
+/**
+ * Whether a track's segment is too quiet to be worth transcribing. Only used to
+ * skip the idle side of a two-sided call: a mic-only recording (dictation, a
+ * voice note) is never skipped, since a quiet mic is still the whole recording
+ * and Whisper's own VAD decides what is speech.
+ */
+export function isSilentTrack(
+  track: Track,
+  activeMs: number | null,
+  opts: { micOnly?: boolean } = {},
+): boolean {
+  if (opts.micOnly) return false;
   return track !== 'mixed' && activeMs !== null && activeMs < SILENT_TRACK_ACTIVE_MS;
 }
 
@@ -43,7 +54,13 @@ export interface WhisperLine {
   compressionRatio?: number;
 }
 
-export function isHallucination(line: WhisperLine): boolean {
+/**
+ * Whether a Whisper line is invented rather than heard. `lenient` is for
+ * mic-only recordings, where a short note can really be just "thank you" or
+ * "bye": a stock phrase is then dropped only when Whisper itself doubted there
+ * was speech, not merely because it gave no score.
+ */
+export function isHallucination(line: WhisperLine, opts: { lenient?: boolean } = {}): boolean {
   const text = line.text.trim();
   if (!text) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
@@ -53,7 +70,9 @@ export function isHallucination(line: WhisperLine): boolean {
   const stock = STOCK_PHRASES.some(
     (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
   );
-  return stock && (line.noSpeechProb === undefined || line.noSpeechProb > 0.3);
+  if (!stock) return false;
+  if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
+  return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }
 
 export interface AttributedLine {

@@ -212,17 +212,23 @@ export async function handleTranscribeSegment(
     eq(meetingSegments.transcribeClaimedAt, claimedAt),
   );
   try {
-    if (!isSilentTrack(track, segment.activeMs)) {
+    const micOnly = track === 'mic' && !(await hasSystemTrack(db, meetingId));
+    if (!isSilentTrack(track, segment.activeMs, { micOnly })) {
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
-      const transcription = await new WorkersAiSegmentTranscriber(env.AI).transcribe({
-        audio,
-        language: meeting.language,
-        contextBlurb: meeting.contextBlurb,
-      });
+      const transcriber = new WorkersAiSegmentTranscriber(env.AI);
+      const request = { audio, language: meeting.language, contextBlurb: meeting.contextBlurb };
+      const transcription = await transcriber.transcribe(request);
       const speakerId = speakerForTrack(track);
-      const lines = transcription.segments.filter((relative) => !isHallucination(relative));
+      let lines = transcription.segments.filter((relative) => !isHallucination(relative, { lenient: micOnly }));
+      // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
+      // the user's own note, so give it one more pass without VAD, keeping the
+      // strict filter so silence does not turn into "Thank you."
+      if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
+        const retry = await transcriber.transcribe({ ...request, vadFilter: false });
+        lines = retry.segments.filter((relative) => !isHallucination(relative));
+      }
 
       await runBatched(db, lines.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
@@ -307,6 +313,16 @@ export async function handleTranscribeSegment(
       .where(ownClaim);
     throw error;
   }
+}
+
+/** Whether any part of the meeting recorded the computer's audio: a two-sided call. */
+async function hasSystemTrack(db: Db, meetingId: string): Promise<boolean> {
+  const row = await db
+    .select({ id: meetingSegments.id })
+    .from(meetingSegments)
+    .where(and(eq(meetingSegments.meetingId, meetingId), eq(meetingSegments.track, 'system')))
+    .limit(1);
+  return row.length > 0;
 }
 
 /**

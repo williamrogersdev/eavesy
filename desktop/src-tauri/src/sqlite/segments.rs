@@ -106,6 +106,18 @@ pub fn all_segments_uploaded<R: Runtime>(app: &AppHandle<R>, session_id: &str) -
     Ok(remaining == 0)
 }
 
+/// Whether any part of this recording was given up on and never reached the cloud.
+pub fn has_abandoned_segments<R: Runtime>(app: &AppHandle<R>, session_id: &str) -> Result<bool, String> {
+    let abandoned: i64 = open(app)?
+        .query_row(
+            "SELECT count(*) FROM recording_segments WHERE session_id=?1 AND gave_up=1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("count abandoned segments: {e}"))?;
+    Ok(abandoned > 0)
+}
+
 pub(super) fn record_segment_on(conn: &Connection, session_id: &str, segment: &SegmentManifest, now: i64) -> Result<(), String> {
     conn.execute(
         "INSERT INTO recording_segments

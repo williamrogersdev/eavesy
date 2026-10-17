@@ -31,6 +31,12 @@ describe('speaker attribution', () => {
     expect(isSilentTrack('mixed', 0)).toBe(false);
   });
 
+  test('a mic-only recording is never skipped as silent', () => {
+    expect(isSilentTrack('mic', 0, { micOnly: true })).toBe(false);
+    expect(isSilentTrack('mic', 100, { micOnly: true })).toBe(false);
+    expect(isSilentTrack('mic', 100)).toBe(true);
+  });
+
   test('labels need both sides to have spoken', () => {
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'you' }])).toBe(false);
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'them' }])).toBe(true);
@@ -90,6 +96,16 @@ describe('hallucination filter', () => {
   test('keeps a real thank-you when Whisper heard speech', () => {
     expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.05 })).toBe(false);
     expect(isHallucination({ text: 'Thank you so much for joining.' })).toBe(false);
+  });
+
+  test('a mic-only note keeps a short stock phrase unless Whisper doubted it', () => {
+    const lenient = { lenient: true };
+    expect(isHallucination({ text: 'Thank you.' }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Bye!' }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.4 }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.6 }, lenient)).toBe(true);
+    expect(isHallucination({ text: '[BLANK_AUDIO]' }, lenient)).toBe(true);
+    expect(isHallucination({ text: 'something', noSpeechProb: 0.9 }, lenient)).toBe(true);
   });
 
   test('drops looping or no-speech text', () => {

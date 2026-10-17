@@ -31,7 +31,7 @@ import { ROLLING_NOTES_EVERY_MS, ROLLING_NOTES_OVERLAP_MS, removeEcho } from './
  * so check back quickly at first instead of always adding a minute.
  */
 export function summaryRetryDelaySeconds(inFlight: number, waitedMs: number) {
-  if (inFlight <= 4 && waitedMs < 2 * 60 * 1_000) return 10;
+  if (inFlight <= 4 && waitedMs < 2 * 60 * 1_000) return 2;
   if (waitedMs < 5 * 60 * 1_000) return 30;
   return 60;
 }
@@ -137,6 +137,19 @@ export async function handleSummarize(
 
   const lastLineEnd = segments.reduce((end, segment) => Math.max(end, segment.endMs), 0);
   const meetingMs = Math.max(lastLineEnd, (meeting.durationSec ?? 0) * 1_000);
+
+  if (mode.final && (await isQuickNote(db, meetingId, meetingMs, segments))) {
+    // A dictation or short voice note: the words are the whole point and a
+    // summary of two sentences is noise. Finish now instead of waiting on Claude.
+    const now = Date.now();
+    await db
+      .update(meetings)
+      .set({ title: quickNoteTitle(segments, meeting.title), status: 'complete', statusError: partial, updatedAt: now })
+      .where(eq(meetings.id, meetingId));
+    await logMeetingComplete(db, meeting.userId, meetingId, now);
+    await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    return;
+  }
   const wantChapters = mode.final && meetingMs >= MIN_CHAPTER_MEETING_MS;
   const rendered = transcriptText(segments, meeting.speakerNamesJson, { timestamps: wantChapters });
   let transcript = rendered.text;
@@ -206,6 +219,29 @@ export async function handleSummarize(
       })
       .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'uploading'])));
   }
+}
+
+/** A recording this short, from the mic alone, is a note: no summary. */
+export const QUICK_NOTE_MAX_MS = 60_000;
+const QUICK_NOTE_MAX_WORDS = 150;
+
+async function isQuickNote(db: Db, meetingId: string, meetingMs: number, lines: { text: string }[]) {
+  if (meetingMs > QUICK_NOTE_MAX_MS) return false;
+  const words = lines.reduce((count, line) => count + line.text.split(/\s+/).filter(Boolean).length, 0);
+  if (words > QUICK_NOTE_MAX_WORDS) return false;
+  const tracks = await db
+    .selectDistinct({ track: meetingSegments.track })
+    .from(meetingSegments)
+    .where(eq(meetingSegments.meetingId, meetingId));
+  return tracks.length > 0 && tracks.every((row) => row.track === 'mic');
+}
+
+/** The note's first few words, so History shows something better than "Voice memo". */
+export function quickNoteTitle(lines: { text: string }[], fallback: string) {
+  const words = lines.map((line) => line.text).join(' ').split(/\s+/).filter(Boolean);
+  if (words.length === 0) return fallback;
+  const head = words.slice(0, 8).join(' ').replace(/[.,;:!?]+$/, '');
+  return words.length > 8 ? `${head}…` : head;
 }
 
 export async function logMeetingComplete(db: Db, userId: string, meetingId: string, now: number) {
