@@ -11,7 +11,6 @@ const MODIFIERS: u64 = (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20);
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn CGPreflightListenEventAccess() -> bool;
-    fn CGRequestListenEventAccess() -> bool;
     fn CGEventTapCreate(location: u32, placement: u32, options: u32, mask: u64,
         callback: extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void,
         info: *mut c_void) -> *mut c_void;
@@ -71,7 +70,7 @@ extern "C" fn receive(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut 
 pub fn bind(app: &AppHandle, action: u8) -> Result<(), String> {
     unsafe {
         if !CGPreflightListenEventAccess() {
-            CGRequestListenEventAccess();
+            crate::permissions::request_input_monitoring_inner(app);
             return Err("Allow Eavesy in System Settings → Privacy & Security → Input Monitoring, then quit and reopen Eavesy and select Fn / Globe again. Set Keyboard → Press Fn/Globe key to → Do Nothing to avoid triggering macOS too.".into());
         }
     }

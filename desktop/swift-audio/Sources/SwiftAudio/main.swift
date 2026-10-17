@@ -3,10 +3,7 @@ import Foundation
 setvbuf(stdout, nil, _IONBF, 0)
 
 if CommandLine.arguments.contains("--preflight") {
-    Preflight.run(
-        needScreen: CommandLine.arguments.contains("--need-screen"),
-        needSpeech: CommandLine.arguments.contains("--need-speech"),
-        prompt: !CommandLine.arguments.contains("--no-prompt"))
+    Preflight.run(arguments: CommandLine.arguments)
 }
 
 if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 < CommandLine.arguments.count {

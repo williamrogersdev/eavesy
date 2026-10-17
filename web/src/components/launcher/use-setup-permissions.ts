@@ -12,10 +12,18 @@ import {
   errMsg,
   openPrivacySettings,
   checkPermissions,
+  requestAccessibility,
+  requestInputMonitoring,
+  requestMicrophone,
+  requestNotifications,
+  requestScreen,
+  requestSpeech,
   type Permissions,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
 import { type Flash, type LauncherView, type RunTask } from './types';
+
+export type SetupPermissionKind = 'mic' | 'screen' | 'speech' | 'accessibility' | 'inputMonitoring' | 'notifications';
 
 export function useSetupPermissions({
   desktop,
@@ -41,32 +49,48 @@ export function useSetupPermissions({
   runTask: RunTask;
 }) {
   const [setupPermissions, setSetupPermissions] = useState<Permissions | null>(null);
-  const [checkingSetupPermissions, setCheckingSetupPermissions] = useState<'mic' | 'screen' | null>(null);
+  const [checkingSetupPermissions, setCheckingSetupPermissions] = useState<SetupPermissionKind | null>(null);
 
   const refreshPermissionsQuietly = useCallback(async () => {
     const permissions = await checkPermissions({ prompt: false, needScreen: false });
     if (permissions) setSetupPermissions(permissions);
   }, []);
 
-  const requestSetupPermission = useCallback(async (kind: 'mic' | 'screen') => {
+  // One macOS prompt at a time: each request asks for a single permission.
+  const requestSetupPermission = useCallback(async (kind: SetupPermissionKind) => {
     setCheckingSetupPermissions(kind);
     try {
-      // First launch is when Speech Recognition is asked for (with the mic),
-      // so live captions never prompt in the middle of a meeting.
-      setSetupPermissions(await checkPermissions({ needScreen: kind === 'screen', needSpeech: kind === 'mic' }));
+      if (kind === 'mic') {
+        let permissions = await requestMicrophone();
+        // First launch is when Speech Recognition is asked for (right after the mic),
+        // so live captions never prompt in the middle of a meeting.
+        if (permissions?.status?.speech === 'notDetermined') permissions = await requestSpeech();
+        setSetupPermissions(permissions);
+      } else if (kind === 'screen') {
+        setSetupPermissions(await requestScreen());
+      } else if (kind === 'speech') {
+        setSetupPermissions(await requestSpeech());
+      } else {
+        if (kind === 'accessibility') await requestAccessibility();
+        else if (kind === 'inputMonitoring') await requestInputMonitoring();
+        else await requestNotifications();
+        await refreshPermissionsQuietly();
+      }
     } catch (error) {
       flash(errMsg(error, 'Could not check permissions'), 8000);
     } finally {
       setCheckingSetupPermissions(null);
     }
-  }, [flash]);
+  }, [flash, refreshPermissionsQuietly]);
 
   const openPrivacy = useCallback((pane: PrivacyPane) => {
     runTask(() => openPrivacySettings(pane), 'Could not open System Settings');
   }, [runTask]);
 
   const permissionsView = desktop && (view === 'setup' || view === 'settings');
-  const allAllowed = !!setupPermissions?.mic && !!setupPermissions?.screen && !!setupPermissions?.accessibility;
+  const coreAllowed = !!setupPermissions?.mic && !!setupPermissions?.screen && !!setupPermissions?.accessibility;
+  const allAllowed = coreAllowed && !!setupPermissions?.speech && !!setupPermissions?.inputMonitoring
+    && !!setupPermissions?.notifications;
   useEffect(() => {
     if (!permissionsView || allAllowed) return;
     let busy = false;
@@ -91,8 +115,10 @@ export function useSetupPermissions({
     }
   }, [flash, searchRef, setView, setupForced]);
 
+  // Finish on its own only once nothing is left to allow; otherwise the remaining permissions
+  // stay on screen until the user chooses to finish.
   useEffect(() => {
-    if (view !== 'setup' || recording || !setupPaired || !setupPermissions?.mic) return;
+    if (view !== 'setup' || recording || !setupPaired || !coreAllowed) return;
     const id = window.setTimeout(() => {
       runTask(async () => {
         await finishSetup();
@@ -100,7 +126,7 @@ export function useSetupPermissions({
       }, 'Could not finish setup');
     }, 700);
     return () => window.clearTimeout(id);
-  }, [view, recording, setupPaired, setupPermissions?.mic, finishSetup, runTask, flash, dictationHotkey]);
+  }, [view, recording, setupPaired, coreAllowed, finishSetup, runTask, flash, dictationHotkey]);
 
   return {
     setupPermissions,

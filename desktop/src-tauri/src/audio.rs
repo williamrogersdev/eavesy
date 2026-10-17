@@ -182,19 +182,14 @@ pub struct Permissions {
     /// Speech Recognition, for live captions and the dictation paste.
     #[serde(default)]
     pub speech: bool,
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXIsProcessTrusted() -> bool;
-}
-
-fn accessibility_granted() -> bool {
-    #[cfg(target_os = "macos")]
-    return unsafe { AXIsProcessTrusted() };
-    #[cfg(not(target_os = "macos"))]
-    true
+    /// Input Monitoring, for the Fn / Globe shortcut.
+    #[serde(default)]
+    pub input_monitoring: bool,
+    #[serde(default)]
+    pub notifications: bool,
+    /// Each permission's status, telling "never asked" apart from "denied".
+    #[serde(default)]
+    pub status: crate::permissions::PermissionStatuses,
 }
 
 #[tauri::command(async)]
@@ -233,20 +228,37 @@ fn check_permissions_inner(
     if !prompt {
         args.push("--no-prompt");
     }
-    let mut permissions = run_preflight(&bin, &args)?;
+    let _yielded = prompt.then(|| crate::panel::yield_for_system_prompt(&app));
+    let (mut permissions, mut statuses) = run_preflight(&bin, &args)?;
     if !permissions.screen {
         std::thread::sleep(Duration::from_millis(700));
-        if let Ok(again) = run_preflight(&bin, &["--preflight", "--no-prompt"]) {
+        if let Ok((again, again_statuses)) = run_preflight(&bin, &["--preflight", "--no-prompt"]) {
             permissions.screen = again.screen;
             permissions.mic |= again.mic;
             permissions.speech |= again.speech;
+            statuses = again_statuses;
         }
     }
-    permissions.accessibility = accessibility_granted();
+    crate::permissions::complete(&mut permissions, statuses.0.as_deref(), statuses.1.as_deref());
     Ok(permissions)
 }
 
-fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, String> {
+/// Asks for one permission alone, so only one macOS prompt is ever on screen.
+pub fn request_permission(app: AppHandle, request: crate::permissions::Request) -> Result<Permissions, String> {
+    let bin = capture_bin(&app)?;
+    let result = {
+        let _yielded = crate::panel::yield_for_system_prompt(&app);
+        run_preflight(&bin, &["--preflight", "--request", request.sidecar_arg()])
+    };
+    let (mut permissions, statuses) = result.inspect_err(|error| crate::telemetry::capture("capture.permissions", error))?;
+    crate::permissions::complete(&mut permissions, statuses.0.as_deref(), statuses.1.as_deref());
+    Ok(permissions)
+}
+
+/// The sidecar's microphone and speech statuses, when it sends them.
+type SidecarStatuses = (Option<String>, Option<String>);
+
+fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<(Permissions, SidecarStatuses), String> {
     let output = Command::new(bin)
         .args(args)
         .output()
@@ -264,18 +276,24 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, St
         screen: bool,
         #[serde(default)]
         speech: bool,
+        mic_status: Option<String>,
+        speech_status: Option<String>,
     }
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if let Ok(parsed) = serde_json::from_str::<Line>(line) {
             if parsed.event == "permissions" {
-                return Ok(Permissions {
+                let permissions = Permissions {
                     mic: parsed.mic,
                     mic_asked: parsed.mic_asked,
                     screen: parsed.screen,
                     accessibility: false,
                     speech: parsed.speech,
-                });
+                    input_monitoring: false,
+                    notifications: false,
+                    status: Default::default(),
+                };
+                return Ok((permissions, (parsed.mic_status, parsed.speech_status)));
             }
         }
     }

@@ -35,7 +35,15 @@ pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), String> {
     hide_panel_on_main_thread(&app).await?;
 
+    // Hiding the launcher hands focus back to the app it opened over; wait for that app to be in
+    // front before pasting into it.
     std::thread::sleep(std::time::Duration::from_millis(120));
+    for _ in 0..8 {
+        if !crate::app_menu::is_active() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 
     paste_text(&app, &text)
 }
@@ -435,16 +443,14 @@ pub fn show_setup(app: AppHandle) {
 #[allow(deprecated)]
 pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
-    let anchor = match pane.as_str() {
-        "microphone" => "Privacy_Microphone",
-        "screen" => "Privacy_ScreenCapture",
-        "accessibility" => "Privacy_Accessibility",
-        "speech" => "Privacy_SpeechRecognition",
-        other => return Err(format!("unknown privacy pane '{other}'")),
+    let url = match pane.as_str() {
+        "notifications" => crate::permissions::NOTIFICATIONS_SETTINGS_URL.to_string(),
+        other => {
+            let anchor = crate::permissions::privacy_anchor(other).ok_or_else(|| format!("unknown privacy pane '{other}'"))?;
+            format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")
+        }
     };
-    app.shell()
-        .open(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"), None)
-        .map_err(|e| e.to_string())?;
+    app.shell().open(url, None).map_err(|e| e.to_string())?;
     crate::make_room::after_opening_settings(&app);
     Ok(())
 }
