@@ -57,12 +57,8 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        let status = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(r#"tell application "System Events" to keystroke "v" using command down"#)
-            .status()
-            .map_err(|e| format!("failed to run osascript: {e}"))?;
-        if !status.success() {
+        if let Err(error) = crate::dictation::press_paste() {
+            eprintln!("paste: {error}");
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
                  clipboard — press ⌘V to paste it now."
@@ -78,7 +74,9 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     }
 
     if let Some(prev) = previous {
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        // The key press is posted, not awaited: give the app time to read the
+        // pasteboard before the user's own clipboard comes back.
+        std::thread::sleep(std::time::Duration::from_millis(400));
         let _ = app.clipboard().write_text(prev);
     }
 
@@ -214,6 +212,14 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
     }
 }
 
+
+/// The HUD grows to show its running transcript, and shrinks back after.
+#[tauri::command]
+pub fn set_hud_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || crate::hud::set_expanded_on_main(&handle, expanded))
+        .map_err(|error| format!("could not resize the capture control: {error}"))
+}
 
 #[tauri::command]
 pub fn close_hud(app: AppHandle) -> Result<(), String> {

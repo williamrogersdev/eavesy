@@ -12,6 +12,7 @@ const {
   summaryRetryDelaySeconds,
   SUMMARY_WAIT_LIMIT_MS,
 } = await import('@/server/processing-worker');
+const { QUICK_NOTE_MAX_MS } = await import('@/server/processing/summarize');
 import { createFakeEnv, delivery, stubAnthropic, summaryReply } from '@/server/testing/fake-env';
 
 const SUMMARY = {
@@ -99,6 +100,8 @@ describe('final summary', () => {
 
   test('checks back quickly at first, then backs off', () => {
     expect(summaryRetryDelaySeconds(2, 0)).toBe(2);
+    expect(summaryRetryDelaySeconds(2, 15_000)).toBe(5);
+    expect(summaryRetryDelaySeconds(2, 60_000)).toBe(10);
     expect(summaryRetryDelaySeconds(30, 0)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 3 * 60_000)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 10 * 60_000)).toBe(60);
@@ -476,6 +479,44 @@ describe('mic-only notes', () => {
     expect(t.meeting().status).toBe('complete');
     expect(t.meeting().title).toBe('Remind me to send the invoice to Dana…');
     expect(t.sent.map((m) => m.body.kind)).toEqual(['embed']);
+  });
+
+  test('a note right at the limits is still a quick note; one word or millisecond more is not', async () => {
+    const run = async (ms: number, words: number) => {
+      const t = setup();
+      t.addSegment(0, 'complete', 'mic', 5_000);
+      t.sqlite.run(`UPDATE meetings SET duration_sec = ?`, [ms / 1_000]);
+      t.addLine(0, Array.from({ length: words }, () => 'word').join(' '));
+      const api = stubAnthropic(() => summaryReply(SUMMARY));
+      restoreFetch = api.restore;
+      await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+      api.restore();
+      restoreFetch = null;
+      return api.calls.length;
+    };
+    expect(await run(QUICK_NOTE_MAX_MS, 150)).toBe(0);
+    expect(await run(QUICK_NOTE_MAX_MS + 1_000, 10)).toBe(1);
+    expect(await run(10_000, 151)).toBe(1);
+  });
+
+  test('a short call with both sides is still summarized', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 5_000);
+    t.addSegment(0, 'complete', 'system', 5_000);
+    t.addLine(0, 'Quick sync.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(1);
+  });
+
+  test('a short note waits for its unfinished part before finishing', async () => {
+    const t = setup();
+    t.addSegment(0, 'pending', 'mic', 5_000);
+    const outcome = await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(outcome.acked).toBe(true);
+    expect(t.meeting().status).toBe('processing');
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['summarize']);
   });
 
   test('a long voice note is still summarized', async () => {

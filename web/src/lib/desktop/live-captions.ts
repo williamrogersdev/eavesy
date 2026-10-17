@@ -56,3 +56,31 @@ export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): 
     .map((caption) => ({ text: caption.text, provisional: true, label: trackLabel(caption.track) }));
   return [...recent, ...hearing].slice(-keep);
 }
+
+/** Everything heard so far in one recording: the settled lines and, per track, what is still being heard. */
+export interface RunningTranscript {
+  sessionId: string | null;
+  finals: LiveCaption[];
+  partials: Record<string, LiveCaption>;
+}
+
+export const EMPTY_RUNNING: RunningTranscript = { sessionId: null, finals: [], partials: {} };
+
+/** Adds a caption; one from another recording starts over. */
+export function addCaption(state: RunningTranscript, caption: LiveCaption): RunningTranscript {
+  const base = state.sessionId === caption.sessionId ? state : { ...EMPTY_RUNNING, sessionId: caption.sessionId };
+  if (!caption.text.trim()) return base;
+  if (!caption.isFinal) return { ...base, partials: { ...base.partials, [caption.track]: caption } };
+  const partials = { ...base.partials };
+  delete partials[caption.track];
+  return { ...base, finals: [...base.finals, caption], partials };
+}
+
+/** The running transcript as plain text: settled words, then the words still being heard. */
+export function runningText(state: RunningTranscript): string {
+  const byTime = (a: LiveCaption, b: LiveCaption) => a.startMs - b.startMs || a.endMs - b.endMs;
+  return [...[...state.finals].sort(byTime), ...Object.values(state.partials).sort(byTime)]
+    .map((caption) => caption.text.trim())
+    .filter(Boolean)
+    .join(' ');
+}

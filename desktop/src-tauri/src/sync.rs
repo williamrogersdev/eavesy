@@ -80,7 +80,9 @@ fn poll_interval_ms(status: &str, ended_at: Option<i64>, now: i64) -> i64 {
 }
 
 /// Until when the loop idles in short steps, so a fast poll is not held up by
-/// the usual idle pause.
+/// the usual idle pause. Shared by every session on purpose: the loop serves
+/// them all, so one recording that just stopped speeds up the whole loop for a
+/// couple of seconds; each fast poll pushes it forward, and it lapses on its own.
 static FAST_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 fn idle_pause() -> Duration {
@@ -164,6 +166,7 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
                 mode: None,
                 started_at_ms: None,
                 message: Some(message.to_string()),
+                notice: None,
             });
         }
         use tauri_plugin_notification::NotificationExt;
@@ -502,7 +505,8 @@ async fn poll_result<R: Runtime>(
     // A part that never reached the cloud is missing from its transcript, so
     // it is not final for this recording: it must say at least as much as the
     // on-device text before it replaces it.
-    let complete_upload = !sqlite::has_abandoned_segments(app, &session.id).unwrap_or(false);
+    // Fails closed: if that cannot be read, treat the transcript as partial.
+    let complete_upload = matches!(sqlite::has_abandoned_segments(app, &session.id), Ok(false));
     let transcript_final = (status == "complete" || result.transcript_ready) && complete_upload;
     // The registry and the recording folder are plain file IO: keep it off the
     // async runtime, and skip it entirely when the poll brought nothing new.
@@ -560,7 +564,7 @@ async fn poll_result<R: Runtime>(
                 && !matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Done)
             {
                 let message = (!spoken.trim().is_empty()).then(|| spoken.trim().to_string());
-                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message });
+                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message, notice: None });
             }
         }
     }

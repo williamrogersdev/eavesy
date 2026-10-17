@@ -149,7 +149,8 @@ body {
 
 .eavesy-control {
   --ctl-rec: #ff4d5a;
-  container-type: size;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -168,6 +169,28 @@ body {
   border-color: color-mix(in srgb, var(--ctl-rec) 70%, transparent);
   background: linear-gradient(180deg, rgb(70 24 32 / 0.42), rgb(32 18 22 / 0.55));
 }
+
+/* The bar keeps its own height when the transcript opens under it. */
+.ctl-bar {
+  container-type: size;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ctl-transcript {
+  flex: none;
+  height: 72px;
+  overflow-y: auto;
+  padding: 6px 10px 8px;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgb(255 255 255 / 0.88);
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ctl-transcript-notice { color: #a7e3c0; font-weight: 500; }
+.eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
 
 .ctl-grid {
   display: grid;

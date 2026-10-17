@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { captionTail, liveView, trackLabel, type LiveCaption, type LiveLine } from './live-captions';
+import {
+  addCaption,
+  captionTail,
+  EMPTY_RUNNING,
+  liveView,
+  runningText,
+  trackLabel,
+  type LiveCaption,
+  type LiveLine,
+} from './live-captions';
 
 const line = (startMs: number, text: string, provisional = false): LiveLine => ({
   startMs,
@@ -57,5 +66,26 @@ describe('trackLabel', () => {
     expect(trackLabel('system')).toBe('Others');
     expect(trackLabel('speaker_2')).toBeNull();
     expect(trackLabel(null)).toBeNull();
+  });
+});
+
+describe('running transcript', () => {
+  const add = (captions: LiveCaption[]) => captions.reduce(addCaption, EMPTY_RUNNING);
+
+  it('keeps every settled line and the words still being heard', () => {
+    const state = add([partial(0, 'hel'), partial(0, 'Hello there.', true), partial(1_500, 'and one')]);
+    expect(runningText(state)).toBe('Hello there. and one');
+  });
+
+  it('a final replaces only its own track’s partial', () => {
+    const them = { ...partial(500, 'they say'), track: 'system' };
+    const state = add([them, partial(0, 'I said'), partial(0, 'I said.', true)]);
+    expect(runningText(state)).toBe('I said. they say');
+  });
+
+  it('starts over for a new recording', () => {
+    const state = add([partial(0, 'old words', true), { ...partial(0, 'new', true), sessionId: 't' }]);
+    expect(runningText(state)).toBe('new');
+    expect(state.sessionId).toBe('t');
   });
 });

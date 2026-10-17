@@ -51,12 +51,6 @@ export async function onLauncherOpened(cb: () => void): Promise<UnlistenFn> {
   return t.event.listen<unknown>('launcher:opened', () => cb());
 }
 
-export async function onDictationHotkey(cb: () => void): Promise<UnlistenFn> {
-  const t = tauri();
-  if (!t) return () => {};
-  return t.event.listen<unknown>('launcher:dictation', () => cb());
-}
-
 export async function onRecordingsUpdated(cb: () => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};

@@ -10,7 +10,6 @@ import {
   relaunchApp,
   isDesktop,
   onLauncherOpened,
-  onDictationHotkey,
   onLauncherSettings,
   onLauncherSetup,
   cancelPairing,
@@ -33,7 +32,7 @@ import {
   type Permissions,
 } from '@/lib/desktop/bridge';
 import { CaptureHistory, plainTranscript } from '@/components/launcher/capture-history';
-import { LiveCaptions } from '@/components/launcher/live-captions';
+import { InProgressCapture } from '@/components/launcher/in-progress-capture';
 import { includeComputerAudio, onCapturePrefsChanged } from '@/lib/desktop/capture-prefs';
 import { SettingsView, type AccountState } from '@/components/launcher/settings-view';
 import { loadRecordings } from '@/lib/launcher/data';
@@ -286,20 +285,6 @@ export function Launcher() {
       flash(errMsg(e, 'Could not save recording'), 8000);
     } finally { captureBusy.current = false; }
   }, [recording, flash, refreshRecordings]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    runTask(async () => {
-      const stopListening = await onDictationHotkey(() => {
-        if (starting) return;
-        if (recording) runTask(stopRecording);
-        else runTask(() => beginRecording('audio', { source: 'mic', dictation: true }));
-      });
-      if (disposed) stopListening(); else unlisten = stopListening;
-    });
-    return () => { disposed = true; unlisten?.(); };
-  }, [beginRecording, recording, runTask, starting, stopRecording]);
 
   useEffect(() => {
     let disposed = false;
@@ -625,7 +610,7 @@ export function Launcher() {
             onConnect={() => runTask(connectAccount, 'Could not connect account')}
             onOpenWeb={() => runTask(openWebApp, 'Could not open the web app')}
           />
-        ) : starting && !recording ? (
+        ) : starting && !recording && !desktop ? (
           <StartingView />
         ) : view === 'context' && !recording ? (
           <ContextView
@@ -651,7 +636,14 @@ export function Launcher() {
                 <button type="button" onClick={() => runTask(refreshRecordings)} className="shrink-0 rounded-md px-2 py-1 hover:bg-[var(--lr-hover)]">Retry</button>
               </div>
             )}
-            {recording && <LiveCaptions sessionId={recording.session.session_id} />}
+            {(recording || starting) && (
+              <InProgressCapture
+                sessionId={recording?.session.session_id ?? null}
+                mode={recording?.mode ?? 'audio'}
+                elapsed={elapsed}
+                onStop={() => runTask(stopRecording, 'Could not stop recording')}
+              />
+            )}
             <CaptureHistory signedIn={account !== null} onSignIn={() => runTask(connectAccount, 'Could not connect account')} recordings={recordings} onPaste={pasteFromClipboard} onCopied={(message) => flash(message)} onError={(error) => flash(errMsg(error, 'Could not copy'), 5000)} />
           </div>
         ) : (

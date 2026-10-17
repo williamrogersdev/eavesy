@@ -16,6 +16,7 @@ mod hotkeys;
 mod hud;
 #[cfg(target_os = "macos")]
 mod cf;
+mod dictate;
 mod dictation;
 mod make_room;
 mod panel;
@@ -95,6 +96,7 @@ pub fn run() {
             commands::show_launcher,
             commands::dismiss_hud,
             commands::close_hud,
+            commands::set_hud_expanded,
             commands::account_info,
             commands::disconnect_account,
             commands::open_web_app,

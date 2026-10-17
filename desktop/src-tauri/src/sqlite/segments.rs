@@ -51,7 +51,10 @@ pub fn next_segment<R: Runtime>(
             "SELECT session_id, idx, track, active_ms, file_path, start_ms, duration_ms FROM recording_segments
              WHERE session_id=?1 AND status IN ('pending','failed') AND gave_up=0
                AND next_attempt_at <= ?2
-             ORDER BY idx, track LIMIT 1",
+             -- The computer-audio track of a part goes before its mic track:
+             -- the server treats a mic part as a mic-only note until it has
+             -- seen a system part of the same meeting.
+             ORDER BY idx, CASE track WHEN 'system' THEN 0 ELSE 1 END, track LIMIT 1",
             params![session_id, chrono::Utc::now().timestamp_millis()],
             |row| {
                 Ok(PendingSegment {

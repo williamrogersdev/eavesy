@@ -1,6 +1,8 @@
 //! On-device captions from the capture engine: forwarded live to the UI and
 //! collected per recording, so dictation can paste without a round trip.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 /// One `caption` line from the capture engine, tagged with its recording.
@@ -45,8 +47,10 @@ pub enum Paste {
 #[derive(Debug, Default)]
 pub struct CaptionLog {
     finals: Vec<Caption>,
-    last_partial: Option<Caption>,
+    /// Per track, what the recognizer is hearing past its last final.
+    partials: BTreeMap<String, Caption>,
     unavailable: Option<String>,
+    /// How captions ended, merged over every track that reported.
     done: Option<CaptionsDone>,
 }
 
@@ -57,34 +61,61 @@ impl CaptionLog {
         }
         if caption.is_final {
             self.finals.push(caption.clone());
-            self.last_partial = None;
+            self.partials.remove(&caption.track);
         } else {
-            self.last_partial = Some(caption.clone());
+            self.partials.insert(caption.track.clone(), caption.clone());
         }
     }
 
+    /// Each track reports its own `captions_done`: a clean finish on one must
+    /// not hide a failure or dropped audio on the other.
     pub fn finish(&mut self, done: CaptionsDone) {
-        self.done = Some(done);
+        self.done = Some(match self.done {
+            None => done,
+            Some(seen) => CaptionsDone {
+                dropped: seen.dropped + done.dropped,
+                timed_out: seen.timed_out || done.timed_out,
+                failed: seen.failed || done.failed,
+            },
+        });
+    }
+
+    /// Whether a track has reported how its captions ended.
+    pub fn is_done(&self) -> bool {
+        self.done.is_some()
+    }
+
+    /// What to paste the moment a dictation stops, without waiting for the
+    /// recognizer to finish cleanly: every final plus what it was still
+    /// hearing. Only a recognizer that could not run, failed, or lost audio
+    /// (or heard nothing) sends the clip to Whisper instead.
+    pub fn quick_paste(&self) -> Paste {
+        self.decide(false)
     }
 
     /// The on-device text, if every bit of the clip reached the recognizer and
     /// it finished; otherwise why Whisper should do it. With no final, the last
     /// partial is the text: it is what the recognizer had heard at the end.
     pub fn paste(&self) -> Paste {
+        self.decide(true)
+    }
+
+    /// `paste` and `quick_paste` differ only in whether the recognizer must
+    /// have reported a clean, timely finish.
+    fn decide(&self, need_clean_finish: bool) -> Paste {
         if let Some(reason) = &self.unavailable {
             return Paste::Whisper(format!("captions unavailable: {reason}"));
         }
-        let Some(done) = self.done else {
-            return Paste::Whisper("captions did not report finishing".to_string());
-        };
-        if done.failed {
-            return Paste::Whisper("the recognizer failed".to_string());
-        }
-        if done.timed_out {
-            return Paste::Whisper("the recognizer did not finish in time".to_string());
-        }
-        if done.dropped > 0 {
-            return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
+        match self.done {
+            None if need_clean_finish => return Paste::Whisper("captions did not report finishing".to_string()),
+            Some(done) if done.failed => return Paste::Whisper("the recognizer failed".to_string()),
+            Some(done) if done.timed_out && need_clean_finish => {
+                return Paste::Whisper("the recognizer did not finish in time".to_string())
+            }
+            Some(done) if done.dropped > 0 => {
+                return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped))
+            }
+            _ => {}
         }
         let text = self.spoken_text();
         if text.is_empty() {
@@ -106,22 +137,29 @@ impl CaptionLog {
         finals
     }
 
-    /// With no final, the last partial: what the recognizer had heard at the end.
-    fn or_last_partial(&self, text: String) -> String {
-        if text.is_empty() {
-            self.last_partial.as_ref().map(|c| c.text.trim().to_string()).unwrap_or_default()
-        } else {
-            text
-        }
+    /// What each track was still hearing past its last final, in spoken order.
+    fn trailing_partials(&self) -> Vec<&Caption> {
+        let mut partials: Vec<&Caption> = self.partials.values().collect();
+        partials.sort_by_key(|c| (c.start_ms, c.end_ms));
+        partials
     }
 
-    /// Everything heard, as one plain paragraph: the text to paste.
+    /// Everything heard, as one plain paragraph: the text to paste. The words
+    /// the recognizer was still working on at the end count too: the user said
+    /// them, and they are usually the last words of the note.
     pub fn spoken_text(&self) -> String {
-        self.or_last_partial(self.text())
+        self.sorted_finals()
+            .into_iter()
+            .chain(self.trailing_partials())
+            .map(|c| c.text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// The finals in spoken order, as one paragraph.
-    pub fn text(&self) -> String {
+    #[cfg(test)]
+    fn text(&self) -> String {
         self.sorted_finals()
             .iter()
             .map(|c| c.text.trim())
@@ -134,10 +172,11 @@ impl CaptionLog {
     /// heard even if it did not finish cleanly: some text now beats none. With
     /// both sides captioned, each turn is labelled the way the cloud labels it.
     pub fn transcript(&self) -> Option<String> {
-        let finals = self.sorted_finals();
-        let both_sides = finals.iter().any(|c| c.track == "mic") && finals.iter().any(|c| c.track == "system");
+        let mut heard = self.sorted_finals();
+        heard.extend(self.trailing_partials());
+        let both_sides = heard.iter().any(|c| c.track == "mic") && heard.iter().any(|c| c.track == "system");
         let mut turns: Vec<(&str, String)> = Vec::new();
-        for caption in finals {
+        for caption in heard {
             let text = caption.text.trim();
             match turns.last_mut() {
                 Some((track, line)) if !both_sides || *track == caption.track => {
@@ -156,7 +195,6 @@ impl CaptionLog {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        let text = self.or_last_partial(text);
         (!text.is_empty()).then_some(text)
     }
 }
@@ -265,11 +303,48 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_after_the_last_final_does_not_replace_the_finals() {
+    fn a_partial_after_the_last_final_is_kept_after_the_finals() {
         let mut log = CaptionLog::default();
         log.record(&caption("First.", true, 0));
         log.record(&caption("and the", false, 2_000));
-        assert_eq!(finished(&mut log, CLEAN), Paste::OnDevice("First.".into()));
+        log.record(&caption("and the last words", false, 2_000));
+        assert_eq!(finished(&mut log, CLEAN), Paste::OnDevice("First. and the last words".into()));
+        assert_eq!(log.transcript().as_deref(), Some("First. and the last words"));
+    }
+
+    #[test]
+    fn a_final_replaces_its_tracks_partial_but_not_the_other_tracks() {
+        let mut log = CaptionLog::default();
+        log.record(&Caption { track: "system".into(), ..caption("they are still", false, 1_000) });
+        log.record(&caption("I said", false, 0));
+        log.record(&caption("I said this.", true, 0));
+        assert_eq!(log.spoken_text(), "I said this. they are still");
+    }
+
+    #[test]
+    fn one_tracks_clean_finish_does_not_hide_the_others_failure() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Words.", true, 0));
+        log.finish(CaptionsDone { dropped: 2, timed_out: false, failed: false });
+        log.finish(CLEAN);
+        assert!(matches!(log.paste(), Paste::Whisper(_)));
+        assert!(matches!(log.quick_paste(), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn the_quick_paste_does_not_wait_for_a_clean_finish() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Send it", true, 0));
+        log.record(&caption("today", false, 900));
+        assert!(!log.is_done());
+        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
+        log.finish(CaptionsDone { timed_out: true, ..CLEAN });
+        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
+        assert!(matches!(CaptionLog::default().quick_paste(), Paste::Whisper(_)), "nothing heard");
+        let mut failed = CaptionLog::default();
+        failed.record(&caption("x", true, 0));
+        failed.finish(CaptionsDone { failed: true, ..CLEAN });
+        assert!(matches!(failed.quick_paste(), Paste::Whisper(_)));
     }
 
     #[test]

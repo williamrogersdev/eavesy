@@ -7,7 +7,6 @@ use crate::panel;
 use crate::settings::{self, Settings};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
-pub const EVENT_DICTATION_HOTKEY: &str = "launcher:dictation";
 
 pub enum Action {
     Toggle,
@@ -62,6 +61,7 @@ fn register_toggle(app: &AppHandle, accelerator: &str) -> Result<(), String> {
 }
 
 fn register_dictation(app: &AppHandle, accelerator: &str) -> Result<(), String> {
+    crate::dictate::reset_key();
     #[cfg(target_os = "macos")]
     if accelerator == "Fn" { return crate::fn_key::bind(app, 2); }
     let shortcut = parse_accelerator(accelerator)?;
@@ -69,27 +69,17 @@ fn register_dictation(app: &AppHandle, accelerator: &str) -> Result<(), String> 
         return Err(format!("accelerator '{accelerator}' is already registered"));
     }
     app.global_shortcut()
-        .on_shortcut(shortcut, move |app, _shortcut, event| {
-            if event.state != ShortcutState::Pressed {
-                return;
-            }
-            trigger_dictation(app);
+        .on_shortcut(shortcut, move |app, _shortcut, event| match event.state {
+            ShortcutState::Pressed => crate::dictate::key_down(app),
+            ShortcutState::Released => crate::dictate::key_up(app),
         })
         .map_err(|e| format!("failed to register dictation hotkey '{accelerator}': {e}"))
 }
 
+/// Starts or stops dictation without opening the launcher, so focus stays in
+/// the app the words are going to.
 pub fn trigger_dictation(app: &AppHandle) {
-    crate::dictation::note_shortcut_press();
-    let handle = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || {
-        if let Some(window) = handle.get_webview_window("main") {
-            if panel::show(&handle, &window).is_ok() {
-                let _ = handle.emit(EVENT_DICTATION_HOTKEY, ());
-            }
-        }
-    }) {
-        crate::telemetry::capture("launcher.dictation.dispatch", &error.to_string());
-    }
+    crate::dictate::toggle(app);
 }
 
 pub fn toggle_launcher(app: &AppHandle) {
@@ -139,6 +129,7 @@ fn show_launcher_on_main(app: &AppHandle) {
 }
 
 pub fn suspend(app: &AppHandle, suspended: bool) -> Result<(), String> {
+    crate::dictate::reset_key();
     let _ = app.global_shortcut().unregister_all();
     #[cfg(target_os = "macos")]
     crate::fn_key::unbind();
