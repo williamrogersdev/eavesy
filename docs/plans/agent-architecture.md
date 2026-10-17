@@ -150,8 +150,16 @@ adapter. Revisit if the app's uptime turns out to be a problem.
   read your files. The design copes with that in three ways:
   - The core identifies every caller from the socket's peer credentials
     (`LOCAL_PEERPID` / `getpeereid`). It maps that pid to a Session through
-    the process tree, so an agent can only act as *its own* session. Stopping
-    processes is checked against that session's tree.
+    the process tree, so an agent can only act as *its own* session.
+  - **Who owns a process, for the purpose of stopping it,** is decided only by
+    what the core itself recorded: services it launched (`start_service`,
+    `eavesy run`) and tree snapshots it took while the agent's ancestry was
+    still intact, both keyed by `(pid, start time)` so a reused pid can't
+    match. The `EAVESY_SESSION` env tag is **only a hint** for grouping in the
+    UI. Any same-user process can fake it, so it never authorizes a stop.
+    Callers the core can't resolve to a session are refused by default. If
+    a process can't be proven to belong to the caller, stopping it needs the
+    human.
   - Nothing reachable over the API can *approve* anything. Grants, kills
     outside a session's own tree, and local-only Items going remote all need a
     click in the native UI.
@@ -185,7 +193,7 @@ test fails CI if either server's tool list or schemas drift from the spec.
 | `send_to_human` | ✓ | ✓ | Puts a message or Item in your Inbox |
 | `ask_human` | ✓ | ✓ via the Mac link | See [ask_human semantics](#ask_human-semantics); uses MCP elicitation where the client supports it |
 | `inbox` | ✓ | — | Items you sent to *this* session |
-| `machine_status` | ✓ | opt-in, read-only summary | Running services, memory pressure, other agents. Remotely, a summary only: names, ports and memory, no args or env |
+| `machine_status` | ✓ | opt-in, read-only summary | Running services, memory pressure, other agents. Remotely, a summary only: the fields are service name (as given to `start_service`, or the executable's base name), port, memory, client type and status. Excluded: cwd, paths, session titles, args and env |
 | `start_service` / `list_services` / `service_logs` / `stop_service` | ✓ | — | `stop_service` only affects the calling session's own services |
 | `request_grant` | ✓ | — | Returns only granted or denied, **never a value** |
 
@@ -225,13 +233,23 @@ The Mac link is the most exposed surface, so its rules are explicit:
 
 ### ask_human semantics
 
-- The default timeout is 10 minutes. The caller can set 30 s to 60 min.
-- It returns `{status: "answered", text}`, `{status: "dismissed"}` or
-  `{status: "timeout"}`. It never hangs forever.
+- The default timeout is 10 minutes. The caller can set 30 s to 60 min, and
+  values outside that range are clamped to it. Clients often have shorter
+  tool timeouts of their own, so the tool description tells agents to pass a
+  timeout below their client's limit.
+- It returns one of four results, and never hangs forever:
+  - `{status: "answered", text}`
+  - `{status: "dismissed"}`
+  - `{status: "timeout"}`: only after waiting the full timeout.
+  - `{status: "mac_offline"}`: remote only, returned straight away when the
+    Mac link is down, without waiting.
 - The attention queue de-duplicates by `(session, question)`: identical asks
-  share one HUD card, and every waiting caller gets the same answer. Rate
-  limiting makes extra asks wait their turn; it never drops them silently. An
-  ask that can't be shown before its timeout returns `timeout`.
+  share one HUD card, and every waiting caller gets the same answer.
+  - A caller that cancels or disconnects is removed from the card. The card
+    closes when its last caller ends.
+  - Rate limiting makes extra asks wait their turn; it never drops them
+    silently. An ask that can't be shown before its timeout returns
+    `timeout`.
 
 ## Making it work with every client
 
@@ -269,9 +287,17 @@ item ("send this to…").
 
 Just before pasting, the router **checks the target again**: same window or
 tab, same tty, and the input is focused (dictation already does this check
-by AX target today). If the target changed, the Item goes to that session's
-inbox and the clipboard, with a notice; nothing is pasted somewhere
-unexpected. **Items that come in remotely are never pasted automatically.**
+by AX target today). The check and the paste happen in one step, on the main
+thread, right next to each other. That keeps the window for a race to a few
+milliseconds. That small remaining risk is accepted; the pre-paste check is
+the safeguard.
+
+If the target changed or is gone, the Item goes to the **originally chosen**
+session's inbox and to the clipboard, with a notice saying which. If even
+writing to the clipboard fails, the Item still sits in the Inbox, so nothing
+is lost and nothing lands somewhere unexpected.
+
+**Items that come in remotely are never pasted automatically.**
 They land in the Inbox, and you choose where they go.
 
 **2. An agent needs you.** A Claude Code Stop hook, an `ask_human` call, or a
@@ -293,12 +319,16 @@ encoded or partial copies. The docs say so, and the approval sheet shows the
 command so you can judge it. Every step is logged as an event.
 
 **Grant lifecycle:**
-- **Scopes:** *once* (this command), *this session* (ends at SessionEnd or
-  after at most 24 h) or *always for this project + agent* (opt-in; shown and
-  revocable in the Grants list).
-- **Revoking** stops future use straight away. A child process that's
-  already running keeps the env it started with. macOS gives no way to take
-  it back, so the revoke dialog offers **Revoke and stop process**.
+- **Scopes:**
+  - *once*: this command only.
+  - *this session*: expires at the **earliest** of SessionEnd, the session's
+    root processes exiting (this covers crashes and agents without hooks),
+    or 24 h.
+  - *always for this project + agent*: opt-in, shown and revocable in the
+    Grants list.
+- **Revoking or expiry** stops future use straight away. A child process
+  that's already running keeps the env it started with. macOS gives no way to
+  take it back, so the revoke dialog offers **Revoke and stop process**.
 - **Session ends:** session-scoped grants expire, and tagged processes are
   cleaned up under the usual policy.
 
