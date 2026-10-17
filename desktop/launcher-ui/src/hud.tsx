@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
 import { Camera, History, Mic, Square, Video, X } from 'lucide-react';
-import { includeComputerAudio } from '@/lib/desktop/capture-prefs';
+import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { errMsg } from '@/lib/desktop/errors';
 import {
   addCaption,
@@ -131,13 +131,13 @@ function Hud() {
     void invoke(cmd, args).catch((error: unknown) => setActionError(errMsg(error, 'Could not complete action')));
   };
 
-  const readyToCapture = async (mode: 'audio' | 'video' | 'image', mixed: boolean): Promise<boolean> => {
+  const readyToCapture = async (mode: 'audio' | 'video' | 'image'): Promise<boolean> => {
     const setup = (await invoke('get_setup_status')) as { completed?: boolean } | undefined;
     if (setup && !setup.completed) {
       await invoke('show_setup');
       return false;
     }
-    const needsScreen = mode !== 'audio' || mixed;
+    const needsScreen = mode !== 'audio';
     const needsMic = mode !== 'image';
     const perms = (await invoke('check_permissions', { needScreen: needsScreen, prompt: true })) as
       | { mic: boolean; screen: boolean }
@@ -155,11 +155,11 @@ function Hud() {
     setStarting(true);
     setActionError(null);
     try {
-      const mixed = mode === 'audio' && includeComputerAudio();
-      if (!(await readyToCapture(mode, mixed))) return;
+      // The HUD's mic button is Talk: microphone only. Meetings start from the panel.
+      if (!(await readyToCapture(mode))) return;
       if (mode === 'image') await invoke('capture_screenshot');
       else if (mode === 'video') await invoke('start_screen_capture', { mic: true });
-      else await invoke('start_capture', { source: mixed ? 'mixed' : 'mic' });
+      else await invoke('start_capture', { source: 'mic' });
     }
     catch (error) {
       const message = errMsg(error, mode === 'image' ? 'Could not take the screenshot' : 'Could not start recording');
@@ -229,21 +229,21 @@ function Hud() {
   };
 
   return (
-    <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope eavesy-control">
+    <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
       <div className="ctl-bar">
       <div className="ctl-grid">
-        <button type="button" onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : act('show_launcher')} aria-label={recording ? 'Stop recording' : 'Open Eavesy'} title={recording ? 'Stop recording' : 'Open Eavesy'} className={`ctl-mark ${recording ? 'animate-recording-pulse' : ''}`}>
-          {recording ? <Square className="h-2.5 w-2.5" fill="currentColor" /> : <span className="ctl-dot" />}
+        <button type="button" onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : act('show_launcher')} aria-label={recording ? 'Stop recording' : 'Open Eavesy'} title={recording ? 'Stop recording' : 'Open Eavesy'} className="ctl-mark">
+          <Mascot size={18} state={mascotState(state.phase)} recording={recording} />
         </button>
         <div className="ctl-title" title={actionError ?? undefined}>
-          {recording && <span className="font-mono tabular-nums text-white/75">{elapsedLabel(state.startedAtMs, now)}</span>}
+          {recording && <span className="ctl-timer">{elapsedLabel(state.startedAtMs, now)}</span>}
           {liveCaptions.map((c) => (
-            <span key={c.track} aria-live="polite" title={c.text} className={`ctl-caption ${c.isFinal ? 'text-white/90' : 'text-white/65'}`}>
+            <span key={c.track} aria-live="polite" title={c.text} data-final={c.isFinal || undefined} className="ctl-caption">
               <bdi>{labelled && <span className="ctl-caption-label">{trackLabel(c.track)}</span>}{captionTail(c.text, 120)}</bdi>
             </span>
           ))}
-          {state.phase === 'transcribing' && <span className="text-white/60">Transcribing…</span>}
-          {actionError && <span role="alert" title={actionError} className="line-clamp-2 min-w-0 whitespace-normal leading-tight text-[#ffc9b5]">{actionError}</span>}
+          {state.phase === 'transcribing' && <span className="ctl-quiet">Writing it down…</span>}
+          {actionError && <span role="alert" title={actionError} className="ctl-error">{actionError}</span>}
         </div>
         <div className="ctl-actions">
           <button type="button" disabled={starting || state.phase === 'transcribing'} onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : void startRecording()} aria-label={recording ? 'Stop & save' : 'Start voice note'} title={`${recording ? 'Stop & save' : 'Record microphone'}${shortcut ? ` (${shortcut})` : ''}`} className="ctl-btn">{recording ? <Square className="h-3 w-3" fill="currentColor" /> : <Mic className="h-3.5 w-3.5" />}<span className="ctl-label">{recording ? 'Stop' : 'Mic'}</span></button>
@@ -259,6 +259,18 @@ function Hud() {
       {expanded && showTranscript && <HudTranscript text={transcript.text} notice={transcript.notice} />}
     </div>
   );
+}
+
+/** The mascot mirrors the capture: eaves up only while the mic is really live. */
+function mascotState(phase: Phase): MascotState {
+  switch (phase) {
+    case 'recording': return 'listening';
+    case 'transcribing': return 'thinking';
+    case 'saved':
+    case 'done': return 'happy';
+    case 'failed': return 'confused';
+    default: return 'idle';
+  }
 }
 
 /**

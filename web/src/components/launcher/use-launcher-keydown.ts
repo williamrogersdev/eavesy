@@ -22,7 +22,6 @@ export function useLauncherKeyDown({
   runPrimary,
   goSettings,
   openActions,
-  pasteFromClipboard,
   flash,
   runTask,
 }: {
@@ -43,7 +42,6 @@ export function useLauncherKeyDown({
   runPrimary: () => void;
   goSettings: () => void;
   openActions: () => void;
-  pasteFromClipboard: () => void;
   flash: Flash;
   runTask: RunTask;
 }) {
@@ -52,11 +50,8 @@ export function useLauncherKeyDown({
       const meta = e.metaKey || e.ctrlKey;
 
       if (meta && e.key === ',') { e.preventDefault(); goSettings(); return; }
-      if (desktop && view === 'list' && meta && e.key.toLowerCase() === 'v' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
-        e.preventDefault();
-        pasteFromClipboard();
-        return;
-      }
+      // Desktop history keys (⌘V, /, N, Esc) are handled at the document level in launcher.tsx.
+      if (desktop && view === 'list') return;
       if (view === 'settings') {
         if (e.key === 'Escape') { e.preventDefault(); setView('list'); }
         return;
@@ -183,7 +178,6 @@ export function useLauncherKeyDown({
       openActions,
       flash,
       runTask,
-      pasteFromClipboard,
       setView,
       setActionsOpen,
       setActionsSel,

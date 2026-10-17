@@ -25,8 +25,12 @@ export type ComposerHandle = {
 
 export type ComposerProps = {
   onSaveNote: (text: string) => void | Promise<void>;
-  /** Files from the picker or a paste. Native drag-drop paths are handled by the panel. */
+  /** A save failed. The draft is kept so nothing typed is lost. */
+  onSaveError?: (error: unknown) => void;
+  /** Files pasted into the field (or picked, when there is no `onPick`). Native drag-drop paths are handled by the panel. */
   onFiles: (files: File[]) => void;
+  /** Opens a native file picker instead of the browser one (the desktop app needs real paths). */
+  onPick?: () => void;
   placeholder?: string;
   maxLines?: number;
   /** Set by a panel-level drag listener while a file hovers the panel. */
@@ -49,12 +53,23 @@ export function noteText(draft: string, pasted: string | null): string {
 }
 
 /**
+ * The draft after `saved` was stored: empty if nothing changed, only what was
+ * typed after it if the user kept typing, and untouched if they edited the
+ * saved text itself (their change wins over clearing it).
+ */
+export function draftAfterSave(current: string, saved: string): string {
+  if (current === saved) return '';
+  if (current.startsWith(saved)) return current.slice(saved.length).trimStart();
+  return current;
+}
+
+/**
  * The one obvious place to put things in (DESIGN.md §5): typed notes, paste,
  * file picker and drop target. Pinned to the bottom; grows upward over the
  * list and never reflows it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSaveNote, onFiles, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
+  { onSaveNote, onSaveError, onFiles, onPick, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
   ref,
 ) {
   const [draft, setDraft] = useState('');
@@ -104,13 +119,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const text = noteText(draft, pasted);
   const multiline = draft.includes('\n') || pasted !== null;
 
+  const saving = useRef(false);
   const save = useCallback(async () => {
-    if (!text) return;
-    await onSaveNote(text);
-    setDraft('');
-    setPasted(null);
+    if (!text || saving.current) return;
+    saving.current = true;
+    const savedDraft = draft;
+    const savedPasted = pasted;
+    try {
+      await onSaveNote(text);
+    } catch (error) {
+      onSaveError?.(error);
+      return;
+    } finally {
+      saving.current = false;
+    }
+    // Keep anything typed or pasted while the save was in flight.
+    setDraft((current) => draftAfterSave(current, savedDraft));
+    setPasted((current) => current === savedPasted ? null : current);
     confirm();
-  }, [text, onSaveNote, confirm]);
+  }, [text, draft, pasted, onSaveNote, onSaveError, confirm]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
@@ -164,7 +191,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             icon={hoverAdd ? Paperclip : Plus}
             onMouseEnter={() => setHoverAdd(true)}
             onMouseLeave={() => setHoverAdd(false)}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => (onPick ? onPick() : fileRef.current?.click())}
           />
         )}
         <input

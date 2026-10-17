@@ -1,90 +1,107 @@
 'use client';
 
 import {
+  AudioLines,
   Camera,
+  Clapperboard,
   ClipboardPaste,
   Copy,
-  FileText,
+  FolderOpen,
   Image as ImageIcon,
-  Mic,
+  MoreHorizontal,
   Pause,
   Play,
-  Radio,
-  Upload,
-  Video,
+  Search,
+  StickyNote,
+  Trash2,
+  Users,
+  type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { captureMediaUrl, copyCaptureMedia, copyText } from '@/lib/desktop/bridge';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import {
+  captureMediaUrl,
+  copyCaptureMedia,
+  copyText,
+  deleteCapture,
+  liveTranscript,
+  onLiveCaption,
+  onLiveTranscript,
+  pasteToFrontmost,
+  revealInFinder,
+} from '@/lib/desktop/bridge';
+import { liveView, type LiveCaption, type LiveLine } from '@/lib/desktop/live-captions';
 import type { Recording } from '@/lib/launcher/types';
-import { cn } from '@/lib/utils';
+import {
+  clock,
+  countByFilter,
+  FILTERS,
+  groupByDay,
+  highlightParts,
+  plainTranscript,
+  timeOfDay,
+  visibleRecordings,
+  type HistoryFilter,
+} from './history-model';
+import type { CaptureKind } from './capture-toolbar';
+import type { Flash, RunTask } from './types';
+import { Bubble, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
 
-export function plainTranscript(text: string): string {
-  return text.replace(/^# [^\n]*\n+(?:## Transcript\n+)?/, '')
-    .replace(/^\*\*\[\d{2}:\d{2}:\d{2}\] ([^\n]*?):\*\* /gm, '$1: ')
-    .replace(/^\[\d{2}:\d{2}:\d{2}\] /gm, '').trim();
+export { plainTranscript };
+
+/** A capture running now, shown as one height-locked row at the top of Today. */
+export interface LiveCapture {
+  /** Null while it is still starting. */
+  sessionId: string | null;
+  kind: CaptureKind;
+  /** `thinking` once stopped, while the words are written down. */
+  phase: 'listening' | 'thinking';
+  elapsed: number;
 }
 
-const KIND: Record<Recording['source'], { label: string; icon: ComponentType<{ className?: string }> }> = {
-  mic: { label: 'Voice note', icon: Mic },
-  dictation: { label: 'Voice note', icon: Mic },
-  both: { label: 'Meeting', icon: Radio },
-  system: { label: 'Meeting', icon: Radio },
-  screen: { label: 'Video', icon: Video },
+const KIND: Record<Recording['source'], { label: string; icon: LucideIcon }> = {
+  mic: { label: 'Voice note', icon: AudioLines },
+  dictation: { label: 'Voice note', icon: AudioLines },
+  both: { label: 'Meeting', icon: Users },
+  system: { label: 'Meeting', icon: Users },
+  screen: { label: 'Video', icon: Clapperboard },
   screenshot: { label: 'Screenshot', icon: Camera },
   image: { label: 'Image', icon: ImageIcon },
-  note: { label: 'Note', icon: FileText },
-  upload: { label: 'Upload', icon: Upload },
+  note: { label: 'Note', icon: StickyNote },
+  upload: { label: 'Upload', icon: AudioLines },
 };
 
-function clock(sec: number): string {
-  const total = Math.max(0, Math.round(sec));
-  const m = Math.floor(total / 60);
-  return `${m}:${String(total % 60).padStart(2, '0')}`;
+function kindOf(rec: Recording): { label: string; icon: LucideIcon } {
+  if (rec.source === 'upload') return { label: rec.title || 'Upload', icon: rec.hasVideo ? Clapperboard : AudioLines };
+  return KIND[rec.source] ?? KIND.mic;
 }
 
-function relative(ms: number, now: number): string {
-  const min = Math.round((now - ms) / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function useMediaUrl(id: string, enabled: boolean) {
+function useMediaUrl(id: string) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     void captureMediaUrl(id)
       .then((value) => { if (!cancelled) setUrl(value); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [id, enabled]);
+  }, [id]);
   return { url, error };
 }
 
 let nowPlaying: HTMLAudioElement | null = null;
 
-function PlayButton({ id, durationSec }: { id: string; durationSec: number }) {
+function usePlayer(id: string) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [position, setPosition] = useState(0);
   const [failed, setFailed] = useState(false);
-
   useEffect(() => () => { audio.current?.pause(); }, []);
-
   const toggle = async () => {
     try {
       if (!audio.current) {
         const el = new Audio(await captureMediaUrl(id));
-        el.ontimeupdate = () => setPosition(el.currentTime);
         el.onplay = () => setPlaying(true);
         el.onpause = () => setPlaying(false);
-        el.onended = () => { setPlaying(false); setPosition(0); };
+        el.onended = () => setPlaying(false);
         audio.current = el;
       }
       const el = audio.current;
@@ -92,186 +109,330 @@ function PlayButton({ id, durationSec }: { id: string; durationSec: number }) {
         if (nowPlaying && nowPlaying !== el) nowPlaying.pause();
         nowPlaying = el;
         await el.play();
-      } else {
-        el.pause();
-      }
+      } else el.pause();
     } catch {
       setFailed(true);
     }
   };
-
-  return (
-    <button
-      type="button"
-      onClick={() => void toggle()}
-      disabled={failed}
-      aria-label={playing ? 'Pause' : 'Play recording'}
-      title={failed ? 'Audio unavailable' : playing ? 'Pause' : 'Play'}
-      className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-[var(--lr-selected)] hover:text-foreground disabled:opacity-40"
-    >
-      {playing ? <Pause className="h-3.5 w-3.5" fill="currentColor" /> : <Play className="h-3.5 w-3.5" fill="currentColor" />}
-      {(playing || position > 0) && (
-        <span className="font-mono text-[10px] tabular-nums">{clock(position)} / {clock(durationSec)}</span>
-      )}
-    </button>
-  );
+  return { playing, failed, toggle };
 }
 
-function Visual({ id, video }: { id: string; video: boolean }) {
-  const { url, error } = useMediaUrl(id, true);
-  if (error) return <p className="text-xs text-muted-foreground">Preview unavailable. The file may have been moved.</p>;
-  if (!url) return <div className="h-24 animate-pulse rounded-md bg-[var(--lr-hover)]" />;
-  return video
-    ? <video src={url} controls preload="metadata" className="max-h-48 w-full rounded-md bg-black" aria-label="Captured video" />
-    : <img src={url} alt="Captured screenshot" className="max-h-40 max-w-full rounded-md object-contain" />;
-}
-
-function Text({ children, muted }: { children: string; muted?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const long = children.length > 280 || children.split('\n').length > 5;
+function Thumb({ id, video, durationSec }: { id: string; video: boolean; durationSec: number }) {
+  const { url, error } = useMediaUrl(id);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  if (error) return <p className="ev-sub">Preview unavailable. The file may have been moved.</p>;
+  if (!url) return <div className="ev-thumb" data-loading="true" />;
   return (
-    <div>
-      <p
-        className={cn(
-          'whitespace-pre-wrap break-words text-[13px] leading-relaxed',
-          muted ? 'text-muted-foreground' : 'text-foreground',
-          long && !open && 'line-clamp-4',
-        )}
-      >
-        {children}
-      </p>
-      {long && (
-        <button type="button" onClick={() => setOpen(!open)} className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground">
-          {open ? 'Show less' : 'Show more'}
-        </button>
+    <div className="ev-thumb">
+      {video ? (
+        <video
+          ref={videoRef}
+          src={url}
+          preload="metadata"
+          aria-label="Screen recording. Click to play."
+          onClick={() => { const el = videoRef.current; if (el) void (el.paused ? el.play() : el.pause()); }}
+        />
+      ) : (
+        <img src={url} alt="Screenshot" />
       )}
+      {video && durationSec > 0 && <span className="ev-badge">{clock(durationSec)}</span>}
     </div>
   );
 }
 
-function statusLine(rec: Recording, signedIn: boolean): string {
-  if (rec.status === 'recording') return 'Recording…';
-  if (!signedIn && rec.status !== 'complete') return 'Saved on this Mac. Sign in to get the transcript.';
-  if (rec.status === 'processing') return 'Transcribing…';
-  if (rec.status === 'complete') return 'No speech detected.';
-  return 'Couldn’t transcribe this one. The audio is saved.';
+function Highlighted({ text, query }: { text: string; query: string }) {
+  return (
+    <>
+      {highlightParts(text, query).map((part, i) =>
+        part.hit ? <mark key={i} className="ev-hl">{part.text}</mark> : part.text,
+      )}
+    </>
+  );
 }
 
-function CaptureRow({ rec, now, signedIn, onSignIn, onCopied, onError }: {
+function Body({ text, query, muted }: { text: string; query: string; muted?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 220 || text.split('\n').length > 3;
+  return (
+    <>
+      <div className={`ev-body${long && !open ? ' ev-clamp' : ''}`} data-muted={muted}>
+        <Highlighted text={text} query={query} />
+      </div>
+      {long && (
+        <button type="button" className="ev-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? 'Less' : 'More'}
+        </button>
+      )}
+    </>
+  );
+}
+
+function CaptureRow({
+  rec,
+  query,
+  signedIn,
+  onSignIn,
+  flash,
+  runTask,
+}: {
   rec: Recording;
-  now: number;
+  query: string;
   signedIn: boolean;
   onSignIn: () => void;
-  onCopied: (message: string) => void;
-  onError: (error: unknown) => void;
+  flash: Flash;
+  runTask: RunTask;
 }) {
-  const kind = KIND[rec.source] ?? KIND.mic;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const kind = kindOf(rec);
   const Icon = kind.icon;
   const text = plainTranscript(rec.transcript ?? '');
   const image = rec.source === 'screenshot' || rec.source === 'image';
   const video = !!rec.hasVideo;
   const playable = rec.hasAudio && !video && rec.status !== 'recording';
   const timed = rec.durationSec > 0 && !image && rec.source !== 'note';
+  const player = usePlayer(rec.id);
+  const spoken = rec.source !== 'note' && !image && rec.source !== 'upload';
 
-  const copy = async () => {
-    try {
-      if (image || (video && !text)) {
-        await copyCaptureMedia(rec.id);
-        onCopied(image ? 'Image copied' : 'Video copied');
-      } else {
-        await copyText(text);
-        onCopied(rec.source === 'note' ? 'Note copied' : 'Transcript copied');
-      }
-    } catch (error) {
-      onError(error);
-    }
-  };
+  const copy = () => runTask(async () => {
+    if (image || (video && !text)) await copyCaptureMedia(rec.id);
+    else await copyText(text);
+    flash('Copied');
+  }, 'Couldn’t copy that');
 
-  // Text while the cloud is still working is a first pass: what the Mac heard
-  // on device, or the cloud's transcript so far.
-  const refining = signedIn && rec.status === 'processing' && (
-    <p className="mt-1 text-[11px] text-muted-foreground">First pass · refining in the cloud…</p>
-  );
+  const paste = () => runTask(async () => {
+    await pasteToFrontmost(text);
+    flash('Pasted');
+  }, 'Couldn’t paste that');
+
   let body: ReactNode;
-  if (image) body = <Visual id={rec.id} video={false} />;
+  if (image) body = <Thumb id={rec.id} video={false} durationSec={0} />;
   else if (video) body = <>
-    <Visual id={rec.id} video />
-    {text && <div className="mt-2"><Text>{text}</Text>{refining}</div>}
+    <Thumb id={rec.id} video durationSec={rec.durationSec} />
+    {text && <div style={{ marginTop: 6 }}><Body text={text} query={query} /></div>}
   </>;
-  else if (text) body = <><Text>{text}</Text>{refining}</>;
-  else if (!signedIn && rec.status !== 'complete' && rec.status !== 'recording') body = (
-    <p className="text-[13px] text-muted-foreground">
-      Saved on this Mac.{' '}
-      <button type="button" onClick={onSignIn} className="font-medium text-[var(--lr-brand)] hover:underline">Sign in</button>
-      {' '}to get the transcript and summary.
-    </p>
+  else if (text) body = <>
+    <Body text={text} query={query} />
+    {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
+  </>;
+  else if (!signedIn && spoken && rec.status !== 'complete') body = (
+    <div className="ev-body" data-muted="true">
+      Saved on this Mac. <button type="button" className="ev-link" onClick={onSignIn}>Sign in</button> to get a transcript.
+    </div>
   );
-  else body = <Text muted>{statusLine(rec, signedIn)}</Text>;
+  else if (rec.status === 'processing') body = <div className="ev-body" data-muted="true">Writing it down…</div>;
+  else if (rec.status === 'failed' || rec.status === 'transcript_failed') body = (
+    <div className="ev-body" data-tone="warn">Transcription failed. The audio is saved.</div>
+  );
+  else if (spoken) body = <div className="ev-body" data-muted="true">Didn’t hear any words in this one. The audio is still saved.</div>;
+  else body = <div className="ev-body" data-muted="true">Saved on this Mac.</div>;
 
   return (
-    <article className="border-b border-border px-1 py-2.5 last:border-b-0">
-      <header className="mb-1.5 flex h-7 items-center gap-1.5 text-[11px] text-muted-foreground">
-        <Icon className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-medium text-foreground">{kind.label}</span>
-        {timed && <span className="tabular-nums">· {clock(rec.durationSec)}</span>}
-        <span>· {relative(rec.startedAt, now)}</span>
-        <span className="ml-auto flex items-center">
-          {playable && <PlayButton id={rec.id} durationSec={rec.durationSec} />}
-          <button
-            type="button"
-            onClick={() => void copy()}
-            disabled={!image && !video && !text}
-            aria-label={`Copy ${kind.label.toLowerCase()}`}
-            title="Copy"
-            className="grid h-7 w-7 place-items-center rounded-md hover:bg-[var(--lr-selected)] hover:text-foreground disabled:opacity-30"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </button>
-        </span>
+    <article className="ev-row" data-menu={menuOpen} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
+      <span className="ev-disc-kind" aria-hidden><Icon size={13} strokeWidth={1.75} /></span>
+      <header className="ev-rh">
+        <span className="ev-rh-kind">{kind.label}</span>
+        {timed && <span>· {clock(rec.durationSec)}</span>}
+        <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
+      <div className="ev-actions">
+        {playable && (
+          <IconButton
+            label={player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play'}
+            icon={player.playing ? Pause : Play}
+            filled
+            disabled={player.failed}
+            onClick={() => void player.toggle()}
+          />
+        )}
+        <IconButton label="Copy" icon={Copy} disabled={!image && !video && !text} onClick={copy} />
+        {text && <IconButton label="Paste at cursor" icon={ClipboardPaste} onClick={paste} />}
+        <Menu
+          align="end"
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          trigger={<IconButton label="More" icon={MoreHorizontal} />}
+          items={[
+            { label: 'Show in Finder', icon: FolderOpen, onSelect: () => runTask(() => revealInFinder(rec.id)) },
+            'separator',
+            {
+              label: 'Move to Trash',
+              icon: Trash2,
+              tone: 'warn',
+              onSelect: () => runTask(async () => {
+                await deleteCapture(rec.id);
+                flash('Moved to Trash');
+              }, 'Couldn’t delete that'),
+            },
+          ]}
+        />
+      </div>
     </article>
   );
 }
 
-export function CaptureHistory({ recordings, signedIn, onSignIn, onPaste, onCopied, onError }: {
+/** The newest line heard in a live capture: cloud lines, else what the Mac is still hearing. */
+function useLastLiveLine(sessionId: string | null): string {
+  const [lines, setLines] = useState<LiveLine[]>([]);
+  const [partials, setPartials] = useState<Record<string, LiveCaption>>({});
+  useEffect(() => {
+    if (!sessionId) return;
+    let disposed = false;
+    const offs: (() => void)[] = [];
+    const reload = () => {
+      void liveTranscript(sessionId).then((next) => { if (!disposed) setLines(next); }).catch(() => {});
+    };
+    reload();
+    void Promise.all([
+      onLiveTranscript((id) => { if (id === sessionId) reload(); }),
+      onLiveCaption((caption) => {
+        if (caption.sessionId === sessionId) setPartials((prev) => ({ ...prev, [caption.track]: caption }));
+      }),
+    ]).then((listeners) => { if (disposed) listeners.forEach((off) => off()); else offs.push(...listeners); });
+    return () => { disposed = true; offs.forEach((off) => off()); };
+  }, [sessionId]);
+  return liveView(lines, Object.values(partials), 1).at(-1)?.text ?? '';
+}
+
+const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
+
+function LiveRow({ live }: { live: LiveCapture }) {
+  const line = useLastLiveLine(live.sessionId);
+  const thinking = live.phase === 'thinking';
+  return (
+    <article className="ev-row" data-live="true" data-phase={live.phase} aria-label="Capture in progress" aria-live="polite">
+      <span className="ev-disc-kind" aria-hidden>
+        <Mascot size={16} state={thinking ? 'thinking' : 'listening'} recording={!thinking && live.sessionId !== null} />
+      </span>
+      <header className="ev-rh">
+        <span className="ev-rh-kind">
+          {thinking ? 'Writing it down…' : live.sessionId ? LIVE_LABEL[live.kind] : 'Starting…'}
+        </span>
+        {!thinking && live.sessionId && <span>· {clock(live.elapsed)}</span>}
+      </header>
+      <div className="ev-livetext"><bdi>{line || (thinking ? '' : ' ')}</bdi></div>
+    </article>
+  );
+}
+
+export function CaptureHistory({
+  recordings,
+  live,
+  signedIn,
+  onSignIn,
+  flash,
+  runTask,
+  searchRef,
+  scrollRef,
+  loadError,
+  onRetry,
+}: {
   recordings: Recording[];
+  live: LiveCapture | null;
   signedIn: boolean;
   onSignIn: () => void;
-  onPaste: () => void;
-  onCopied: (message: string) => void;
-  onError: (error: unknown) => void;
+  flash: Flash;
+  runTask: RunTask;
+  searchRef: RefObject<HTMLInputElement | null>;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  loadError: string | null;
+  onRetry: () => void;
 }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<HistoryFilter>('all');
   const [now, setNow] = useState(() => Date.now());
+  const [mountedAt] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-  const sorted = [...recordings].sort((a, b) => b.startedAt - a.startedAt);
+
+  const liveId = live?.sessionId ?? null;
+  const visible = useMemo(
+    () => visibleRecordings(recordings, filter, query).filter((rec) => rec.id !== liveId),
+    [recordings, filter, query, liveId],
+  );
+  const counts = useMemo(() => countByFilter(recordings), [recordings]);
+  const groups = useMemo(() => {
+    const grouped = groupByDay(visible, now);
+    if (!live) return grouped;
+    if (grouped[0]?.label === 'Today') return grouped;
+    return [{ label: 'Today', items: [] }, ...grouped];
+  }, [visible, now, live]);
+
+  const empty = recordings.length === 0 && !live;
+  const searching = query.trim() !== '' || filter !== 'all';
 
   return (
     <>
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground">Capture history</h2>
-        <button
-          type="button"
-          onClick={onPaste}
-          title="Save what's on your clipboard (⌘V)"
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-[var(--lr-hover)] hover:text-foreground"
-        >
-          <ClipboardPaste className="h-3.5 w-3.5" /> Paste
-          <kbd className="font-sans text-[10px] opacity-60">⌘V</kbd>
-        </button>
-      </div>
-      {sorted.length === 0 ? (
-        <p className="py-6 text-sm text-muted-foreground">
-          Record a voice note, take a screenshot, or press ⌘V to keep text or an image here.
-        </p>
+      {loadError && (
+        <div role="alert" className="ev-banner">
+          <span>Couldn’t load your captures: {loadError}</span>
+          <button type="button" className="ev-link" onClick={onRetry}>Try again</button>
+        </div>
+      )}
+      {!empty && (
+        <>
+          <label className="ev-search">
+            <Search size={15} strokeWidth={1.75} aria-hidden />
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              placeholder="Search captures"
+              aria-label="Search captures"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && query) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQuery('');
+                }
+              }}
+            />
+            {!query && <Kbd keys="/" />}
+          </label>
+          <div className="ev-chips" role="group" aria-label="Show">
+            {FILTERS.map((f) => (
+              <Chip key={f.value} selected={filter === f.value} count={searching ? counts[f.value] : undefined} onClick={() => setFilter(f.value)}>
+                {f.label}
+              </Chip>
+            ))}
+          </div>
+        </>
+      )}
+      {empty ? (
+        <div className="ev-empty">
+          <Mascot size={72} state="idle" />
+          <Bubble tail="bottom">
+            It’s quiet up here. Hold <Kbd keys="fn" /> and talk, or drop something in below.
+          </Bubble>
+          <span className="ev-empty-pointer" aria-hidden />
+        </div>
       ) : (
-        <div className="flex flex-col">
-          {sorted.map((rec) => (
-            <CaptureRow key={rec.id} rec={rec} now={now} signedIn={signedIn} onSignIn={onSignIn} onCopied={onCopied} onError={onError} />
+        <div ref={scrollRef} data-capture-history className="ev-scroll">
+          {groups.map((group, index) => (
+            <section key={group.label} className="ev-group" aria-label={group.label}>
+              <h2 className="ev-gh">{group.label}</h2>
+              {/* The live row and the capture it becomes share a key (the session id),
+                  so the finished row morphs in place instead of replacing it. */}
+              {[
+                ...(index === 0 && live && group.label === 'Today'
+                  ? [<div key={live.sessionId ?? 'starting'} className="ev-grow"><LiveRow live={live} /></div>]
+                  : []),
+                ...group.items.map((rec) => (
+                  <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
+                    <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
+                  </div>
+                )),
+              ]}
+            </section>
           ))}
+          {searching && visible.length === 0 && (
+            <p className="ev-empty-search">
+              {query.trim() ? `No captures match “${query.trim()}”.` : 'Nothing here yet.'}
+            </p>
+          )}
         </div>
       )}
     </>

@@ -2,6 +2,7 @@
 
 import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
+import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
 import { HotkeyRecorder } from '@/components/launcher/hotkey-recorder';
 import { PermissionRow } from '@/components/launcher/permission-row';
 import {
@@ -14,7 +15,9 @@ import {
   checkPermissions,
   checkForUpdates,
   getAppInfo,
+  getScreenshotFolder,
   installUpdate,
+  setAutoImportScreenshots,
   type AccountInfo,
   type LauncherPosition,
   type PermissionStatus,
@@ -33,12 +36,7 @@ export function accountInitial(account: AccountInfo): string {
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="px-1 text-[11px] font-medium text-muted-foreground">{title}</h3>
-      <div className="rounded-xl border border-border bg-[var(--lr-hover)] p-3">{children}</div>
-    </section>
-  );
+  return <Card title={title}><div className="ev-set-body">{children}</div></Card>;
 }
 
 function UpdatesCard() {
@@ -67,17 +65,15 @@ function UpdatesCard() {
         : `Eavesy ${status.currentVersion}`;
   return (
     <div className="flex items-center gap-2">
-      <p role="status" className="min-w-0 flex-1 text-[12px] text-foreground">{error ?? line}</p>
+      <p role="status" className="ev-set-label min-w-0 flex-1">{error ?? line}</p>
       {status?.state === 'available' ? (
-        <button type="button" disabled={busy !== null} onClick={() => run('install')} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-[12px] text-background hover:opacity-90 disabled:opacity-50">
-          {busy === 'install' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        <Button variant="primary" size="sm" disabled={busy !== null} loading={busy === 'install'} onClick={() => run('install')}>
           Install &amp; Relaunch
-        </button>
+        </Button>
       ) : (
-        <button type="button" disabled={busy !== null} onClick={() => run('check')} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-[12px] hover:bg-[var(--lr-selected)] disabled:opacity-50">
-          {busy === 'check' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        <Button variant="outline" size="sm" disabled={busy !== null} loading={busy === 'check'} onClick={() => run('check')}>
           Check for Updates
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -92,20 +88,18 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
   onOpenWeb: () => void;
 }) {
   if (account === undefined) {
-    return <p className="text-xs text-muted-foreground">Checking your account…</p>;
+    return <p className="ev-set-hint">Checking your account…</p>;
   }
   if (connecting) {
     return (
       <div className="flex items-center gap-3">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+        <Loader2 className="ev-spin h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" />
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-foreground">Approve this Mac in your browser</p>
-          <p className="text-[11px] text-muted-foreground">Click “Approve this Mac” on the page that opened. This updates on its own.</p>
+          <p className="ev-set-label">Approve this Mac in your browser</p>
+          <p className="ev-set-hint">Click “Approve this Mac” on the page that opened. This updates on its own.</p>
         </div>
         {onCancelConnect && (
-          <button type="button" onClick={onCancelConnect} className="ml-auto shrink-0 rounded-md border border-border px-2.5 py-1 text-[12px] hover:bg-[var(--lr-selected)]">
-            Cancel
-          </button>
+          <Button variant="outline" size="sm" className="ml-auto shrink-0" onClick={onCancelConnect}>Cancel</Button>
         )}
       </div>
     );
@@ -114,54 +108,32 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
     return (
       <div className="flex flex-col gap-3">
         <div>
-          <p className="text-[13px] font-medium text-foreground">Not signed in</p>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="ev-set-label">Not signed in</p>
+          <p className="ev-set-hint">
             Sign in to get transcripts and summaries, and to see your captures on the web and your other devices.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onConnect}
-          className="self-start rounded-md bg-[var(--lr-brand)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-        >
-          Sign in to Eavesy
-        </button>
+        <Button variant="primary" size="sm" className="self-start" onClick={onConnect}>Sign in to Eavesy</Button>
       </div>
     );
   }
   return (
     <div className="flex items-center gap-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--lr-brand)] text-sm font-semibold text-white">
+      <span className="ev-acct" data-size="lg" aria-hidden>
         {accountInitial(account)}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-medium text-foreground">
+        <p className="ev-set-label truncate">
           {account.name ?? account.email ?? 'Eavesy account'}
         </p>
-        <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-          <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+        <p className="ev-set-hint flex items-center gap-1 truncate">
+          <Check className="h-3 w-3 shrink-0 text-[var(--ev-leaf)]" />
           {account.name && account.email ? `${account.email} · syncing` : 'Connected · syncing this Mac'}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          onClick={onOpenWeb}
-          title="Open Eavesy on the web"
-          aria-label="Open Eavesy on the web"
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-[var(--lr-selected)] hover:text-foreground"
-        >
-          <ArrowUpRight className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={onDisconnect}
-          title="Sign out on this Mac"
-          aria-label="Sign out on this Mac"
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-[var(--lr-selected)] hover:text-foreground"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-        </button>
+        <IconButton label="Open Eavesy on the web" icon={ArrowUpRight} onClick={onOpenWeb} />
+        <IconButton label="Sign out on this Mac" icon={LogOut} onClick={onDisconnect} />
       </div>
     </div>
   );
@@ -185,9 +157,9 @@ function PositionPicker({ value, custom, disabled, onPick }: {
       <div
         role="radiogroup"
         aria-label="Control position"
-        className="relative aspect-[16/10] w-full max-w-[240px] overflow-hidden rounded-lg border border-border bg-background/60"
+        className="relative aspect-[16/10] w-full max-w-[240px] overflow-hidden rounded-[var(--ev-r-ctl)] bg-[var(--ev-well)] shadow-[0_0_0_1px_var(--ev-line)]"
       >
-        <div className="h-2.5 w-full bg-foreground/10" />
+        <div className="h-2.5 w-full bg-[var(--ev-line)]" />
         {SPOTS.map((spot) => {
           const selected = !custom && spot.value === value;
           return (
@@ -203,20 +175,20 @@ function PositionPicker({ value, custom, disabled, onPick }: {
               className={cn(
                 'group absolute top-4 flex h-6 w-[30%] items-center justify-center rounded-md transition-colors disabled:cursor-default',
                 spot.className,
-                selected ? 'bg-[var(--lr-brand-soft)]' : 'hover:bg-foreground/5',
+                selected ? 'bg-[var(--ev-slate-soft)]' : 'hover:bg-[var(--ev-hover)]',
               )}
             >
               <span
                 className={cn(
                   'h-2.5 w-12 rounded-full transition-colors',
-                  selected ? 'bg-[var(--lr-brand)]' : 'bg-foreground/15 group-hover:bg-foreground/30',
+                  selected ? 'bg-[var(--ev-slate)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
                 )}
               />
             </button>
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="ev-set-hint">
         {custom ? 'You moved the control. Click a spot to snap it back.' : `${current?.label ?? 'Top center'}. Drag the control anywhere to fine-tune.`}
       </p>
     </div>
@@ -252,9 +224,23 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [captionsBusy, setCaptionsBusy] = useState(false);
   const [speech, setSpeech] = useState<boolean | undefined>(permissions?.speech);
   const captionsOn = settings?.live_captions ?? true;
+  const [shotFolder, setShotFolder] = useState<string | null>(null);
+  const [shotsBusy, setShotsBusy] = useState(false);
+  const [shotsError, setShotsError] = useState<string | null>(null);
+  const shotsOn = settings?.auto_import_screenshots ?? false;
 
-  const toggleCaptions = () => {
-    const next = !captionsOn;
+  useEffect(() => { void getScreenshotFolder().then(setShotFolder); }, []);
+
+  const toggleScreenshots = (next: boolean) => {
+    setShotsBusy(true);
+    setShotsError(null);
+    void setAutoImportScreenshots(next)
+      .then(() => setSettings((current) => current ? { ...current, auto_import_screenshots: next } : current))
+      .catch((error: unknown) => setShotsError(errMsg(error, 'Could not change that setting.')))
+      .finally(() => setShotsBusy(false));
+  };
+
+  const toggleCaptions = (next: boolean) => {
     setCaptionsBusy(true);
     void setLiveCaptions(next)
       .then(async () => {
@@ -286,20 +272,15 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-[var(--lr-hover)] hover:text-foreground"
-          aria-label="Back"
-          title="Back (esc)"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <h2 className="text-sm font-semibold text-foreground">Settings</h2>
-      </div>
+      {/* On the Mac the title bar carries Back and the title. */}
+      {!isDesktop() && (
+        <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-3">
+          <IconButton label="Back" title="Back (esc)" icon={ArrowLeft} onClick={onBack} />
+          <h2 className="ev-set-label">Settings</h2>
+        </div>
+      )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4 pt-2">
+      <div className="ev-settings">
         <Section title="Account">
           <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
         </Section>
@@ -379,27 +360,17 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
 
         {isDesktop() && (
           <Section title="Live captions">
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] text-foreground">Show captions while recording</p>
-                <p className="text-[11px] text-muted-foreground">Transcribed on this Mac as you speak. The cloud transcript replaces them.</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={captionsOn}
-                aria-label="Live captions"
-                disabled={!settings || captionsBusy}
-                onClick={toggleCaptions}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${captionsOn ? 'bg-[var(--lr-brand)]' : 'bg-[var(--lr-selected)]'}`}
-              >
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${captionsOn ? 'left-[18px]' : 'left-0.5'}`} />
-              </button>
-            </div>
+            <Switch
+              checked={captionsOn}
+              onCheckedChange={toggleCaptions}
+              disabled={!settings || captionsBusy}
+              label="Show captions while recording"
+              hint="Transcribed on this Mac as you speak. The cloud transcript replaces them."
+            />
             {captionsOn && (speech ?? permissions?.speech) === false && (
-              <p className="mt-2 text-[11px] text-muted-foreground">
+              <p className="ev-set-hint mt-2">
                 Speech Recognition is off for Eavesy, so there are no captions and dictation waits for the cloud.{' '}
-                <button type="button" onClick={() => onOpenPrivacy('speech')} className="underline">Open System Settings</button>
+                <button type="button" onClick={() => onOpenPrivacy('speech')} className="ev-link">Open System Settings</button>
               </p>
             )}
           </Section>
@@ -412,12 +383,12 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
             disabled={!settings || positionBusy || !isDesktop()}
             onPick={pickPosition}
           />
-          {positionError ? <p role="alert" className="mt-2 text-center text-xs text-destructive">{positionError}</p> : null}
+          {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
         </Section>
 
         <Section title="Shortcuts">
           {!loaded ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
+            <p className="ev-set-hint">Loading…</p>
           ) : (
             <div className="flex flex-col gap-2">
               <HotkeyRecorder onSaved={onShortcutsChanged} action="toggle" initial={settings?.toggle_hotkey ?? 'Cmd+Shift+Space'} label="Open Eavesy" />
@@ -428,9 +399,12 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
 
         <Section title="Recordings folder">
           <div className="flex items-center gap-2">
-            <p className="min-w-0 flex-1 truncate text-[12px] text-foreground" title={folder}>{folder}</p>
-            <button
-              type="button"
+            <p className="ev-set-path flex-1" title={folder}>{folder}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={FolderOpen}
+              loading={folderBusy}
               disabled={folderBusy}
               onClick={() => {
                 setFolderBusy(true);
@@ -444,14 +418,27 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
                   .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
                   .finally(() => setFolderBusy(false));
               }}
-              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-[12px] hover:bg-[var(--lr-selected)] disabled:opacity-50"
             >
-              {folderBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
               Change
-            </button>
+            </Button>
           </div>
-          {folderStatus ? <p role="status" className="mt-2 text-[11px] text-muted-foreground">{folderStatus}</p> : null}
+          {folderStatus ? <p role="status" className="ev-set-hint mt-2">{folderStatus}</p> : null}
         </Section>
+
+        {isDesktop() && (
+          <Section title="Screenshots">
+            <Switch
+              checked={shotsOn}
+              onCheckedChange={toggleScreenshots}
+              disabled={!settings || shotsBusy}
+              label="Add macOS screenshots automatically"
+              hint={shotFolder
+                ? `New screenshots saved to ${shotFolder} are copied into Eavesy. The originals stay where they are.`
+                : 'New macOS screenshots are copied into Eavesy. The originals stay where they are.'}
+            />
+            {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
+          </Section>
+        )}
 
         {isDesktop() && (
           <Section title="Updates">

@@ -110,7 +110,10 @@ fn media_path(app: &AppHandle, id: &str) -> Result<(PathBuf, bool), String> {
     let image = matches!(recording.source.as_str(), "screenshot" | "image");
     if !image && !recording.has_video && !recording.has_audio { return Err("This capture has no saved media.".into()); }
     let path = if let Some(folder) = recording.folder_path {
-        PathBuf::from(folder).join(if recording.source == "image" { "image.png" } else if image { "screenshot.png" } else if recording.has_video { "screen.mp4" } else { "audio.m4a" })
+        let folder = PathBuf::from(folder);
+        let known = folder.join(if recording.source == "image" { "image.png" } else if image { "screenshot.png" } else if recording.has_video { "screen.mp4" } else { "audio.m4a" });
+        // Imported files keep their own format (image.jpg, audio.mp3, video.mov…).
+        if known.is_file() { known } else { imported_media(&folder).unwrap_or(known) }
     } else {
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid capture ID.")?;
         app.path().app_data_dir().map_err(|error| error.to_string())?.join("captures").join(format!("{id}.mp4"))
@@ -118,6 +121,16 @@ fn media_path(app: &AppHandle, id: &str) -> Result<(PathBuf, bool), String> {
     let path = path.canonicalize().map_err(|_| "Saved capture file is unavailable.")?;
     if !path.is_file() { return Err("Saved capture is not a file.".into()); }
     Ok((path, image))
+}
+
+/// The file an import stored under its own extension (`image.jpg`, `audio.mp3`…).
+fn imported_media(folder: &std::path::Path) -> Option<PathBuf> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(folder).ok()?.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+    entries.sort();
+    entries.into_iter().find(|path| {
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        matches!(stem, Some("image" | "screenshot" | "audio" | "video")) && path.is_file() && crate::imports::is_media(path)
+    })
 }
 
 #[tauri::command]
@@ -130,7 +143,8 @@ pub fn capture_media(app: AppHandle, id: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String> {
     let (path, image) = media_path(&app, &id)?;
-    if image {
+    let png = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
+    if image && png {
         if std::fs::metadata(&path).map_err(|error| error.to_string())?.len() > 32 * 1024 * 1024 { return Err("Screenshot is too large to copy.".into()); }
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let image = tauri::image::Image::from_bytes(&bytes).map_err(|error| error.to_string())?;

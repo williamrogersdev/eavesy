@@ -65,6 +65,9 @@ pub struct Settings {
     /// On-device live captions for meetings and voice notes (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_captions: Option<bool>,
+    /// Copy new macOS screenshots into the history (off unless turned on).
+    #[serde(default)]
+    pub auto_import_screenshots: bool,
 }
 
 impl Settings {
@@ -98,6 +101,7 @@ impl Default for Settings {
             api_base_url: None,
             segment_sec: None,
             live_captions: None,
+            auto_import_screenshots: false,
         }
     }
 }

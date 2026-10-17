@@ -18,8 +18,14 @@ import {
   onCaptureState,
   onRecordingsUpdated,
   pairDevice,
-  pasteClip,
   checkPermissions,
+  captureScreenshot,
+  importFiles,
+  onDragDrop,
+  pasteToComposer,
+  pickAndImportFiles,
+  saveNote,
+  type ImportResult,
   startAudioCapture,
   startScreenCapture,
   stopCapture,
@@ -31,9 +37,7 @@ import {
   type CaptureStatus,
   type Permissions,
 } from '@/lib/desktop/bridge';
-import { CaptureHistory, plainTranscript } from '@/components/launcher/capture-history';
-import { InProgressCapture } from '@/components/launcher/in-progress-capture';
-import { includeComputerAudio, onCapturePrefsChanged } from '@/lib/desktop/capture-prefs';
+import { CaptureHistory, plainTranscript, type LiveCapture } from '@/components/launcher/capture-history';
 import { SettingsView, type AccountState } from '@/components/launcher/settings-view';
 import { loadRecordings } from '@/lib/launcher/data';
 import { prettyAccel } from '@/lib/launcher/accel';
@@ -50,7 +54,8 @@ import { useLauncherItems } from './use-launcher-items';
 import { useRecordingActions } from './use-recording-actions';
 import { useLauncherKeyDown } from './use-launcher-keydown';
 import { TitleBar } from './title-bar';
-import { CaptureToolbar } from './capture-toolbar';
+import { CaptureToolbar, type CaptureKind } from './capture-toolbar';
+import { Composer, Mascot, type ComposerHandle } from './ui';
 import { PaletteView } from './palette-view';
 import { useSetupPermissions } from './use-setup-permissions';
 
@@ -76,11 +81,8 @@ export function Launcher() {
   const [account, setAccount] = useState<AccountState>(undefined);
   const [connecting, setConnecting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [withComputerAudio, setWithComputerAudio] = useState(false);
-  useEffect(() => {
-    setWithComputerAudio(includeComputerAudio());
-    return onCapturePrefsChanged(() => setWithComputerAudio(includeComputerAudio()));
-  }, []);
+  const [dragging, setDragging] = useState(false);
+  const composerRef = useRef<ComposerHandle>(null);
   const [preflighting, setPreflighting] = useState(false);
   const [setupKnown, setSetupKnown] = useState(!desktop);
   const setupForced = useRef(false);
@@ -136,17 +138,23 @@ export function Launcher() {
     }
   }, [now]);
 
+  /** Something landed in the history from the composer: show it and say so quietly. */
+  const landed = useCallback((result?: ImportResult | null) => {
+    if (result && result.skipped.length) flash(result.skipped.join(' '), 5000, 'warn');
+    if (!result || result.ids.length) {
+      historyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      composerRef.current?.confirm();
+    }
+  }, [flash]);
+
+  /** ⌘V outside a text field: files and images save at once, text becomes a draft. */
   const pasteFromClipboard = useCallback(() => {
     runTask(async () => {
-      try {
-        await pasteClip();
-        historyRef.current?.scrollTo({ top: 0 });
-        flash('Saved to capture history');
-      } catch (error) {
-        throw new Error(errMsg(error, 'Could not paste from the clipboard'));
-      }
-    });
-  }, [flash, runTask]);
+      const outcome = await pasteToComposer();
+      if (outcome.kind === 'text') composerRef.current?.insertText(outcome.text);
+      else landed({ ids: Array.from({ length: outcome.count }, () => ''), skipped: outcome.skipped });
+    }, 'Couldn’t paste that');
+  }, [landed, runTask]);
 
   const refreshAccount = useCallback(async () => {
     if (!desktop) return;
@@ -296,8 +304,8 @@ export function Launcher() {
         setCapturePhase(state.phase);
         if (state.phase === 'recording' && state.sessionId) {
           setRecording((current) => current?.session.session_id === state.sessionId ? current : {
-            session: { session_id: state.sessionId!, started_at_ms: state.startedAtMs ?? Date.now(), mode: state.mode ?? 'audio', source: 'mixed' },
-            mode: state.mode === 'screen' ? 'screen' : 'audio',
+            session: { session_id: state.sessionId!, started_at_ms: state.startedAtMs ?? Date.now(), mode: state.mode ?? 'audio', source: 'mic' },
+            mode: state.mode === 'screen' || state.mode === 'video' ? 'screen' : 'audio',
           });
         } else {
           setRecording((current) => current?.session.session_id === state.sessionId ? null : current);
@@ -359,6 +367,58 @@ export function Launcher() {
 
   const signedOut = useSignedOut(desktop, runTask);
 
+  const liveKind: CaptureKind | null = recording
+    ? recording.mode === 'screen'
+      ? 'video'
+      : recording.session.source === 'mic'
+        ? 'talk'
+        : 'meeting'
+    : null;
+  const live: LiveCapture | null = recording
+    ? { sessionId: recording.session.session_id, kind: liveKind ?? 'talk', phase: capturePhase === 'transcribing' ? 'thinking' : 'listening', elapsed }
+    : starting
+      ? { sessionId: null, kind: 'talk', phase: 'listening', elapsed: 0 }
+      : null;
+
+  const takeScreenshot = useCallback(() => {
+    runTask(async () => {
+      if (captureBusy.current) return;
+      captureBusy.current = true;
+      setStarting(true);
+      try {
+        await captureScreenshot();
+      } finally {
+        captureBusy.current = false;
+        setStarting(false);
+      }
+    }, 'Screenshot didn’t work');
+  }, [runTask]);
+
+  // Native drag-drop (real file paths): the composer becomes the drop target.
+  // Subscribed once; the handler reads the latest callbacks through a ref.
+  const onDrop = useRef<(paths: string[]) => void>(() => {});
+  useEffect(() => {
+    onDrop.current = (paths) => runTask(async () => landed(await importFiles(paths)), 'Couldn’t add those files');
+  }, [landed, runTask]);
+  useEffect(() => {
+    if (!desktop) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onDragDrop((event) => {
+      if (event.type === 'enter' || event.type === 'over') setDragging(true);
+      else if (event.type === 'leave') setDragging(false);
+      else {
+        setDragging(false);
+        setView('list');
+        onDrop.current(event.paths);
+      }
+    })
+      .then((off) => { if (disposed) off(); else unlisten = off; })
+      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t listen for dropped files'), 5000, 'warn'));
+    return () => { disposed = true; unlisten?.(); };
+  }, [desktop, flash]);
+
+
   useEffect(() => {
     focusPanel();
     let disposed = false;
@@ -416,6 +476,47 @@ export function Launcher() {
     }
     runTask(() => router.push('/app/settings'), 'Could not open settings');
   }, [desktop, router, runTask]);
+
+  // Document-level keys for the history view, so they work wherever focus is
+  // (the panel div only gets keys while it has focus): ⌘V pastes, / searches,
+  // N writes a note, Esc closes.
+  useEffect(() => {
+    if (!desktop || view !== 'list') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return;
+      const target = e.target as HTMLElement | null;
+      const typing = !!target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
+      // A menu handles its own keys, even when focus has left it for the body.
+      const inMenu = !!target?.closest('[role="menu"]') || !!document.querySelector('[role="menu"][data-state="open"]');
+      if (inMenu) return;
+      if (typing) {
+        if (e.key === 'Escape' && target === searchRef.current && !searchRef.current.value) {
+          e.preventDefault();
+          runTask(hidePanel, 'Couldn’t close the panel');
+        }
+        return;
+      }
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key === ',') {
+        e.preventDefault();
+        goSettings();
+      } else if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        pasteFromClipboard();
+      } else if (!meta && !e.altKey && e.key === '/') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (!meta && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+        e.preventDefault();
+        composerRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        runTask(hidePanel, 'Couldn’t close the panel');
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [desktop, view, pasteFromClipboard, goSettings, runTask]);
 
   const commands = useLauncherCommands({
     desktop,
@@ -514,7 +615,6 @@ export function Launcher() {
     runPrimary,
     goSettings,
     openActions,
-    pasteFromClipboard,
     flash,
     runTask,
   });
@@ -529,8 +629,9 @@ export function Launcher() {
     >
       {!desktop && <div className="launcher-scrim absolute inset-0" />}
       <div
+        data-dragging={dragging}
         className={cn(
-          'launcher-panel relative z-10 flex flex-col overflow-hidden border border-border',
+          'launcher-panel ev-panel relative z-10 flex flex-col overflow-hidden border border-border',
           desktop
             ?
               'h-full w-full rounded-[12px]'
@@ -544,34 +645,34 @@ export function Launcher() {
         {desktop && <ResizeHandles />}
         {desktop && (
           <TitleBar
-            capturePhase={capturePhase}
-            elapsed={elapsed}
             view={view}
             account={account}
             connecting={connecting}
-            recording={!!recording}
+            signedOut={signedOut}
             goSettings={goSettings}
+            goBack={() => setView('list')}
+            connect={() => runTask(connectAccount, 'Couldn’t connect your account')}
+            disconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
             runTask={runTask}
-            stopRecording={stopRecording}
           />
         )}
         {desktop && view === 'list' && (
           <CaptureToolbar
-            recording={!!recording}
-            withComputerAudio={withComputerAudio}
-            starting={starting}
+            active={liveKind}
+            elapsed={elapsed}
+            busy={starting}
             dictationHotkey={dictationHotkey}
-            captureBusy={captureBusy}
-            setStarting={setStarting}
-            runTask={runTask}
-            stopRecording={stopRecording}
-            beginRecording={beginRecording}
+            onTalk={() => runTask(() => beginRecording('audio', { source: 'mic', dictation: true }))}
+            onMeeting={() => runTask(() => beginRecording('audio', { source: 'mixed' }))}
+            onVideo={() => runTask(() => beginRecording('screen', { mic: true }))}
+            onScreenshot={takeScreenshot}
+            onStop={() => runTask(stopRecording, 'Couldn’t stop the recording')}
           />
         )}
-        {desktop && view === 'list' && signedOut && (
-          <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--lr-brand-soft)] px-4 py-2 text-xs">
-            <span>Eavesy is signed out. Recordings stay on this Mac and upload once you reconnect.</span>
-            <button type="button" disabled={connecting} onClick={() => runTask(connectAccount, 'Could not connect account')} className="shrink-0 rounded-md bg-[var(--lr-brand)] px-2 py-1 text-white disabled:opacity-50">Reconnect</button>
+        {desktop && view === 'list' && signedOut && account !== null && (
+          <div role="alert" className="ev-banner">
+            <span>Sync is paused. Captures stay on this Mac until you sign in again.</span>
+            <button type="button" className="ev-link" disabled={connecting} onClick={() => runTask(connectAccount, 'Couldn’t connect your account')}>Sign in</button>
           </div>
         )}
         {desktop && !setupKnown ? (
@@ -629,22 +730,31 @@ export function Launcher() {
             onStop={() => runTask(stopRecording, 'Could not stop recording')}
           />
         ) : desktop ? (
-          <div ref={historyRef} data-capture-history className="min-h-0 flex-1 overflow-y-auto p-4 [overflow-anchor:none]">
-            {loadError && (
-              <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
-                <span>Couldn’t load your recordings: {loadError}</span>
-                <button type="button" onClick={() => runTask(refreshRecordings)} className="shrink-0 rounded-md px-2 py-1 hover:bg-[var(--lr-hover)]">Retry</button>
-              </div>
-            )}
-            {(recording || starting) && (
-              <InProgressCapture
-                sessionId={recording?.session.session_id ?? null}
-                mode={recording?.mode ?? 'audio'}
-                elapsed={elapsed}
-                onStop={() => runTask(stopRecording, 'Could not stop recording')}
-              />
-            )}
-            <CaptureHistory signedIn={account !== null} onSignIn={() => runTask(connectAccount, 'Could not connect account')} recordings={recordings} onPaste={pasteFromClipboard} onCopied={(message) => flash(message)} onError={(error) => flash(errMsg(error, 'Could not copy'), 5000)} />
+          <div className="ev-history">
+            <CaptureHistory
+              recordings={recordings}
+              live={live}
+              signedIn={account !== null}
+              onSignIn={() => runTask(connectAccount, 'Couldn’t connect your account')}
+              flash={flash}
+              runTask={runTask}
+              searchRef={searchRef}
+              scrollRef={historyRef}
+              loadError={loadError}
+              onRetry={() => runTask(refreshRecordings)}
+            />
+            <Composer
+              ref={composerRef}
+              dragActive={dragging}
+              onSaveError={(error) => flash(errMsg(error, 'Couldn’t save that note'), 5000, 'warn')}
+              onSaveNote={async (text) => {
+                await saveNote(text);
+                historyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onFiles={pasteFromClipboard}
+              onPick={() => runTask(async () => landed(await pickAndImportFiles()), 'Couldn’t add those files')}
+              onEscapeEmpty={() => runTask(hidePanel)}
+            />
           </div>
         ) : (
           <PaletteView
@@ -682,8 +792,9 @@ export function Launcher() {
         )}
 
         {toast && (
-          <div className="pointer-events-none absolute bottom-14 left-1/2 z-20 -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-[13px] font-medium text-background shadow-lg">
-            {toast}
+          <div className="ev-toast" role="status" data-tone={toast.tone}>
+            <Mascot size={16} state={toast.tone === 'warn' ? 'confused' : 'happy'} />
+            {toast.message}
           </div>
         )}
       </div>

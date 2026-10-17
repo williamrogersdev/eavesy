@@ -14,6 +14,7 @@ mod fn_key;
 mod shortcut_conflicts;
 mod hotkeys;
 mod hud;
+mod imports;
 #[cfg(target_os = "macos")]
 mod cf;
 mod dictate;
@@ -23,6 +24,7 @@ mod panel;
 mod permissions;
 mod placement;
 mod recovery;
+mod screenshot_watcher;
 mod settings;
 mod store;
 mod sync;
@@ -48,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
         .manage(fs_watcher::WatcherManager::default())
+        .manage(screenshot_watcher::ScreenshotWatcher::default())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
     #[cfg(target_os = "macos")]
@@ -74,6 +77,13 @@ pub fn run() {
             visual::capture_media,
             visual::copy_capture_media,
             visual::paste_clip,
+            imports::import_files,
+            imports::save_note,
+            imports::paste_to_composer,
+            imports::delete_capture,
+            imports::open_recordings_folder,
+            screenshot_watcher::get_screenshot_folder,
+            screenshot_watcher::set_auto_import_screenshots,
             fs_writer::write_meeting_folder,
             fs_writer::set_root_folder,
             fs_writer::reveal_in_finder,
@@ -173,6 +183,7 @@ pub fn run() {
                     telemetry::capture("filesystem.watch.start", &error);
                 }
             }
+            screenshot_watcher::start(&handle);
             if let Err(e) = hotkeys::register_all(&handle, &settings) {
                 telemetry::capture("hotkeys.register", &e);
                 use tauri_plugin_notification::NotificationExt;
