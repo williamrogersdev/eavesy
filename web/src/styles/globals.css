@@ -1,4 +1,6 @@
 @import "tailwindcss" source("../");
+@import "../components/launcher/ui/tokens.css";
+@import "../components/launcher/ui/ui.css";
 
 :root {
   --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
@@ -172,21 +174,6 @@ summary,
   .animate-fade-up, .animate-recording-pulse { animation: none; }
 }
 
-.launcher-scope {
-  --lr-brand: #ef4444;
-  --lr-brand-ink: #fecaca;
-  --lr-surface: color-mix(in srgb, var(--background) 86%, transparent);
-  --lr-elevated: color-mix(in srgb, var(--background) 70%, transparent);
-  --lr-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --lr-selected: color-mix(in srgb, var(--lr-brand) 16%, transparent);
-  --lr-brand-soft: color-mix(in srgb, var(--lr-brand) 20%, transparent);
-}
-@media (prefers-color-scheme: light) {
-  .launcher-scope {
-    --lr-brand: #dc2626;
-    --lr-brand-ink: #7f1d1d;
-  }
-}
 .lr-row-active {
   background: var(--lr-selected);
   box-shadow: inset 2px 0 0 0 var(--lr-brand);

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 const nm = (pkg: string) => path.resolve(dir, 'node_modules', pkg);
-const sharedDeps = ['react', 'react-dom', 'lucide-react', 'clsx', 'tailwind-merge', '@radix-ui/react-dialog'];
+const sharedDeps = ['react', 'react-dom', 'lucide-react', 'clsx', 'tailwind-merge', '@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'];
 const depAliases = Object.fromEntries(sharedDeps.map((p) => [p, nm(p)]));
 
 export default defineConfig({

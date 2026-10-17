@@ -43,6 +43,7 @@ pub fn current() -> HudState {
 
 pub fn set_state(app: &AppHandle, state: HudState) {
     *CURRENT.lock().unwrap_or_else(|error| error.into_inner()) = Some(state.clone());
+    crate::tray::set_recording(app, state.phase == Phase::Recording);
     let _ = app.emit_to("main", "capture:state", state.clone());
     let Some(window) = app.get_webview_window("hud") else {
         return;

@@ -29,6 +29,18 @@ ignore them here.
 - **Worker entry** is `src/worker.ts`, a thin pass-through to the authenticated
   TanStack Start handler. Long-form desktop ingest uses `/api/sessions/*`.
 
+## Launcher (`src/components/launcher/`)
+
+The capture panel is shared with the macOS app (`desktop/launcher-ui` bundles
+it via the `@` alias). Its design standard is
+[`desktop/DESIGN.md`](../desktop/DESIGN.md): read it before changing anything
+there. Build UI from the primitives in `src/components/launcher/ui/` and the
+`--ev-*` tokens in `ui/tokens.css`; don't add new colours, fonts or one-off
+buttons. Red (`--ev-rec`) means "recording right now" and nothing else.
+Any dependency the launcher imports must also be in
+`desktop/launcher-ui/package.json` and its `sharedDeps` list in
+`vite.config.ts`.
+
 ## Before writing code
 
 Verify framework APIs against the installed packages / current docs (TanStack

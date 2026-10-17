@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -8 72 72" width="288" height="288">
+  <title>Eavesy</title>
+  <defs><clipPath id="b"><path d="M32 15C46.5 15 54 27 54 40C54 51.5 45 58.5 32 58.5C19 58.5 10 51.5 10 40C10 27 17.5 15 32 15Z"/></clipPath></defs>
+  <ellipse cx="32" cy="61" rx="15" ry="2.2" fill="#2A2233" opacity=".1"/>
+  <path d="M32 15C46.5 15 54 27 54 40C54 51.5 45 58.5 32 58.5C19 58.5 10 51.5 10 40C10 27 17.5 15 32 15Z" fill="#F6B93B"/>
+  <polyline clip-path="url(#b)" points="8,33.5 32,13.5 56,33.5" fill="none" stroke="#E39E1E" stroke-opacity=".45" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="17.6" cy="44.6" rx="3.6" ry="2.2" fill="#F59BA0" opacity=".7"/>
+  <ellipse cx="46.4" cy="44.6" rx="3.6" ry="2.2" fill="#F59BA0" opacity=".7"/>
+  <ellipse cx="24" cy="37.5" rx="3.2" ry="4.2" fill="#2A2233"/>
+  <ellipse cx="40" cy="37.5" rx="3.2" ry="4.2" fill="#2A2233"/>
+  <circle cx="25.2" cy="35.8" r="1.15" fill="#FFF8EE"/>
+  <circle cx="41.2" cy="35.8" r="1.15" fill="#FFF8EE"/>
+  <path d="M29.2 45.4Q32 48.2 34.8 45.4" fill="none" stroke="#2A2233" stroke-width="1.8" stroke-linecap="round"/>
+  <rect x="43" y="9.5" width="5.2" height="10" rx="1.4" fill="#4B3A78"/>
+  <line x1="32" y1="9" x2="5" y2="31" stroke="#4B3A78" stroke-width="8" stroke-linecap="round"/>
+  <line x1="32" y1="9" x2="59" y2="31" stroke="#4B3A78" stroke-width="8" stroke-linecap="round"/>
+</svg>

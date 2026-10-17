@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "../../../web/src/components/launcher/ui/tokens.css";
+@import "../../../web/src/components/launcher/ui/ui.css";
 
 @source "../../../web/src/components/launcher";
 @source "../../../web/src/lib";
@@ -72,22 +74,6 @@ body {
 @keyframes eq {
   0%, 100% { transform: scaleY(0.25); }
   50% { transform: scaleY(1); }
-}
-
-.launcher-scope {
-  --lr-brand: #ef4444;
-  --lr-brand-ink: #fecaca;
-  --lr-surface: color-mix(in srgb, var(--background) 86%, transparent);
-  --lr-elevated: color-mix(in srgb, var(--background) 70%, transparent);
-  --lr-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --lr-selected: color-mix(in srgb, var(--lr-brand) 16%, transparent);
-  --lr-brand-soft: color-mix(in srgb, var(--lr-brand) 20%, transparent);
-}
-@media (prefers-color-scheme: light) {
-  .launcher-scope {
-    --lr-brand: #dc2626;
-    --lr-brand-ink: #7f1d1d;
-  }
 }
 
 .lr-row-active {

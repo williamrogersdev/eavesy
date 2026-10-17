@@ -1,15 +1,33 @@
 # Icons
 
-Real artwork, generated from `icon-source.png` by `gen_icon.py`. Regenerate the
-app icon set with `bunx tauri icon icon-source.png`.
+All artwork is the Eavesy mascot (see `desktop/DESIGN.md` §3), rasterized by
+`mascot_raster.py` from the same geometry as `mascot.svg` and
+`web/src/components/launcher/ui/mascot.tsx`. The scripts need numpy; `uv`
+fetches it for you.
 
-`tray.png` / `tray@2x.png` are separate and **not** part of that generated set:
-they are a monochrome glyph used as a macOS *template* image, so the menu bar
-tints them for light/dark. The full-colour app icon cannot be used here — as a
-template it renders as a solid white square. `src/tray.rs` embeds `tray.png` at
-compile time via `tauri::include_image!`, which requires the `image-png` Cargo
-feature.
+## App icon
 
-The tray glyph is the app icon's rounded square and record dot, drawn by
-`gen_tray.py` (`python3 gen_tray.py .` from this folder). It is deliberately
-not a microphone: other dictation apps already put one in the menu bar.
+`gen_icon.py` draws `icon-source.png` (1024², plaster squircle on the macOS icon
+grid, mascot at 78% peeking up from the bottom edge). Regenerate the set with:
+
+```bash
+uv run gen_icon.py
+bunx @tauri-apps/cli@2 icon icon-source.png -o /tmp/eavesy-icons
+cp /tmp/eavesy-icons/{32x32.png,128x128.png,128x128@2x.png,icon.png,icon.icns} .
+```
+
+## Menu bar
+
+`gen_tray.py` (`uv run gen_tray.py .`) writes two glyphs, neither of them a
+microphone:
+
+- `tray.png` / `tray@2x.png`: the roof chevron and two eye dots, black on
+  transparent. Used as a macOS *template* image so the menu bar tints it for
+  light and dark. The full-colour app icon cannot be used here: as a template
+  it renders as a solid square.
+- `tray-recording.png` / `@2x`: shown while a capture is recording. Not a
+  template, so the red porch light on the roof peak stays red; the chevron is
+  a mid-tone that reads on light and dark menu bars.
+
+`src/tray.rs` embeds both at compile time via `tauri::include_image!` (needs
+the `image-png` Cargo feature) and swaps them from `hud::set_state`.
