@@ -37,27 +37,42 @@ pub struct AppInfo {
     pub update: UpdateStatus,
 }
 
-static LAST: Mutex<Option<(UpdateState, i64)>> = Mutex::new(None);
+/// The last finished check: its state, when it finished, and the order it started in.
+static LAST: Mutex<Option<(UpdateState, i64, u64)>> = Mutex::new(None);
+static STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn status(app: &AppHandle) -> UpdateStatus {
     let last = LAST.lock().ok().and_then(|last| last.clone());
     UpdateStatus {
         current_version: crate::app_menu::version(app),
-        checked_at_ms: last.as_ref().map(|(_, at)| *at),
-        state: last.map(|(state, _)| state).unwrap_or(UpdateState::Unknown),
+        checked_at_ms: last.as_ref().map(|(_, at, _)| *at),
+        state: last.map(|(state, _, _)| state).unwrap_or(UpdateState::Unknown),
     }
 }
 
-fn record(app: &AppHandle, state: UpdateState) -> UpdateStatus {
+/// Records a check's result unless a check that started later has already finished, so
+/// overlapping background and interactive checks can't leave an older answer showing.
+fn record(app: &AppHandle, (started, state): (u64, UpdateState)) -> UpdateStatus {
     if let Ok(mut last) = LAST.lock() {
-        *last = Some((state, chrono::Utc::now().timestamp_millis()));
+        if newer(last.as_ref().map(|(_, _, order)| *order), started) {
+            *last = Some((state, chrono::Utc::now().timestamp_millis(), started));
+        }
     }
     let status = status(app);
     let _ = app.emit(EVENT_UPDATE_STATUS, &status);
     status
 }
 
-async fn check(app: &AppHandle) -> UpdateState {
+fn newer(recorded: Option<u64>, started: u64) -> bool {
+    recorded.is_none_or(|recorded| started >= recorded)
+}
+
+async fn check(app: &AppHandle) -> (u64, UpdateState) {
+    let started = STARTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    (started, check_once(app).await)
+}
+
+async fn check_once(app: &AppHandle) -> UpdateState {
     let result = match app.updater() {
         Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
@@ -77,7 +92,7 @@ pub fn check_in_background(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut announced: Option<String> = None;
         loop {
-            let state = check(&app).await;
+            let (started, state) = check(&app).await;
             if let UpdateState::Available { version, .. } = &state {
                 if announced.as_deref() != Some(version.as_str()) {
                     let _ = app
@@ -89,7 +104,7 @@ pub fn check_in_background(app: &AppHandle) {
                     announced = Some(version.clone());
                 }
             }
-            record(&app, state);
+            record(&app, (started, state));
             tokio::time::sleep(RECHECK).await;
         }
     });
@@ -104,8 +119,8 @@ pub fn get_app_info(app: AppHandle) -> AppInfo {
 /// Checks for an update now and returns the result; the UI decides what to show.
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> UpdateStatus {
-    let state = check(&app).await;
-    record(&app, state)
+    let result = check(&app).await;
+    record(&app, result)
 }
 
 pub fn dialog_text(status: &UpdateStatus) -> (String, String) {
@@ -134,7 +149,9 @@ pub fn check_interactively(app: &AppHandle) {
         let available = matches!(status.state, UpdateState::Available { .. });
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            crate::app_menu::present(&handle);
+            // The launcher stays open but steps below the dialog until it is answered.
+            let lowered = crate::panel::yield_for_system_prompt(&handle);
+            crate::app_menu::activate_only();
             let dialog = handle.dialog().message(message).title(title);
             if available {
                 let installer = handle.clone();
@@ -142,6 +159,7 @@ pub fn check_interactively(app: &AppHandle) {
                     .kind(MessageDialogKind::Info)
                     .buttons(MessageDialogButtons::OkCancelCustom("Install & Relaunch".into(), "Later".into()))
                     .show(move |install| {
+                        drop(lowered);
                         if install {
                             install_and_report(installer);
                         }
@@ -149,7 +167,7 @@ pub fn check_interactively(app: &AppHandle) {
             } else {
                 let kind =
                     if matches!(status.state, UpdateState::Error { .. }) { MessageDialogKind::Warning } else { MessageDialogKind::Info };
-                dialog.kind(kind).buttons(MessageDialogButtons::Ok).show(|_| {});
+                dialog.kind(kind).buttons(MessageDialogButtons::Ok).show(move |_| drop(lowered));
             }
         });
     });
@@ -160,14 +178,15 @@ fn install_and_report(app: AppHandle) {
         if let Err(message) = install_update(app.clone()).await {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
-                crate::app_menu::present(&handle);
+                let lowered = crate::panel::yield_for_system_prompt(&handle);
+                crate::app_menu::activate_only();
                 handle
                     .dialog()
                     .message(message)
                     .title("Eavesy couldn't install the update")
                     .kind(MessageDialogKind::Warning)
                     .buttons(MessageDialogButtons::Ok)
-                    .show(|_| {});
+                    .show(move |_| drop(lowered));
             });
         }
     });
@@ -212,6 +231,13 @@ mod tests {
         assert_eq!(title, "Eavesy 0.3.0 is available");
         assert!(body.contains("0.2.0"));
         assert!(dialog_text(&status(UpdateState::Error { message: "offline".into() })).1.contains("offline"));
+    }
+
+    #[test]
+    fn an_older_check_never_replaces_a_newer_answer() {
+        assert!(newer(None, 0));
+        assert!(newer(Some(3), 4));
+        assert!(!newer(Some(4), 3));
     }
 
     #[test]

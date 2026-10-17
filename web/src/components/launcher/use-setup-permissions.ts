@@ -58,18 +58,22 @@ export function useSetupPermissions({
 
   // One macOS prompt at a time: each request asks for a single permission.
   const requestSetupPermission = useCallback(async (kind: SetupPermissionKind) => {
+    // A null result means there was nothing to ask (outside the Mac app); keep what we know.
+    const keep = (permissions: Permissions | null) => {
+      if (permissions) setSetupPermissions(permissions);
+    };
     setCheckingSetupPermissions(kind);
     try {
       if (kind === 'mic') {
         let permissions = await requestMicrophone();
         // First launch is when Speech Recognition is asked for (right after the mic),
         // so live captions never prompt in the middle of a meeting.
-        if (permissions?.status?.speech === 'notDetermined') permissions = await requestSpeech();
-        setSetupPermissions(permissions);
+        if (permissions?.status?.speech === 'notDetermined') permissions = (await requestSpeech()) ?? permissions;
+        keep(permissions);
       } else if (kind === 'screen') {
-        setSetupPermissions(await requestScreen());
+        keep(await requestScreen());
       } else if (kind === 'speech') {
-        setSetupPermissions(await requestSpeech());
+        keep(await requestSpeech());
       } else {
         if (kind === 'accessibility') await requestAccessibility();
         else if (kind === 'inputMonitoring') await requestInputMonitoring();

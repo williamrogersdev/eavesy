@@ -93,9 +93,9 @@ pub fn complete(permissions: &mut Permissions, mic_status: Option<&str>, speech_
         input_monitoring,
         notifications,
     };
-    // A sidecar run that asked for the microphone may report `mic` from the answer before the
-    // status settles; trust whichever says granted.
-    if permissions.mic {
+    // A sidecar run that asked for the microphone reports `mic` from the answer, which can arrive
+    // before the status settles. Only an unsettled status yields to it.
+    if permissions.mic && matches!(permissions.status.mic, PermissionStatus::NotDetermined | PermissionStatus::NotGranted) {
         permissions.status.mic = PermissionStatus::Granted;
     }
 }
@@ -163,21 +163,29 @@ pub fn request_input_monitoring_inner(app: &AppHandle) -> PermissionStatus {
     input_monitoring_status()
 }
 
-/// Asks to show notifications. Returns the status after the user answers.
+/// Asks to show notifications. Returns the status after the user answers (or after two minutes).
 #[tauri::command]
 pub async fn request_notifications(app: AppHandle) -> PermissionStatus {
-    let status = notification_status();
+    use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+    let status = imp::fetch_notification_status(FRESH);
     if status != PermissionStatus::NotDetermined {
         return status;
     }
-    let _yielded = crate::panel::yield_for_system_prompt(&app);
+    // Stepped aside only while the prompt is likely on screen, not for the whole wait.
+    let answered_flag = Arc::new(AtomicBool::new(false));
+    let flag = answered_flag.clone();
+    crate::panel::yield_while_prompt_shows(&app, move || flag.load(Ordering::SeqCst));
     let (done, answered) = tokio::sync::oneshot::channel();
     imp::request_notifications(Box::new(move || {
+        answered_flag.store(true, Ordering::SeqCst);
         let _ = done.send(());
     }));
     let _ = tokio::time::timeout(std::time::Duration::from_secs(120), answered).await;
-    notification_status()
+    imp::fetch_notification_status(FRESH)
 }
+
+/// How long a caller that needs the current answer waits for macOS before using the last one.
+const FRESH: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub fn accessibility_granted() -> bool {
     imp::accessibility_granted()
@@ -187,8 +195,10 @@ pub fn input_monitoring_status() -> PermissionStatus {
     imp::input_monitoring_status()
 }
 
+/// The notification status, without blocking a permission refresh on macOS: returns the last
+/// answer and refreshes it in the background, waiting briefly only before the first answer.
 pub fn notification_status() -> PermissionStatus {
-    imp::notification_status()
+    imp::fetch_notification_status(std::time::Duration::ZERO)
 }
 
 /// The System Settings anchor for each pane `open_privacy_settings` accepts.
@@ -212,6 +222,8 @@ mod imp {
     use super::PermissionStatus;
     use crate::cf::*;
     use std::ffi::c_void;
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::time::Duration;
 
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
@@ -280,7 +292,20 @@ mod imp {
         bundle.bundleIdentifier().is_some() && bundle.bundlePath().to_string().ends_with(".app")
     }
 
-    pub fn notification_status() -> PermissionStatus {
+    /// Last answer from macOS: `u8::MAX` until the first one arrives.
+    static CACHED: AtomicU8 = AtomicU8::new(u8::MAX);
+    const FIRST_ANSWER: Duration = Duration::from_millis(500);
+
+    fn cached() -> Option<PermissionStatus> {
+        match CACHED.load(Ordering::SeqCst) {
+            u8::MAX => None,
+            raw => Some(PermissionStatus::from_notification_status(raw as isize)),
+        }
+    }
+
+    /// Asks macOS for the status and waits up to `wait` for this answer (`FIRST_ANSWER` when
+    /// there is no earlier one), otherwise returns the last known status.
+    pub fn fetch_notification_status(wait: Duration) -> PermissionStatus {
         use block2::RcBlock;
         use objc2_user_notifications::{UNNotificationSettings, UNUserNotificationCenter};
         use std::ptr::NonNull;
@@ -288,16 +313,18 @@ mod imp {
         if !in_app_bundle() {
             return PermissionStatus::NotGranted;
         }
+        let wait = if cached().is_none() { wait.max(FIRST_ANSWER) } else { wait };
         let (send, receive) = std::sync::mpsc::channel();
         let block = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
-            let status = unsafe { settings.as_ref() }.authorizationStatus();
-            let _ = send.send(status.0);
+            let status = unsafe { settings.as_ref() }.authorizationStatus().0;
+            CACHED.store(status.clamp(0, u8::MAX as isize - 1) as u8, Ordering::SeqCst);
+            let _ = send.send(());
         });
         UNUserNotificationCenter::currentNotificationCenter().getNotificationSettingsWithCompletionHandler(&block);
-        receive
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .map(PermissionStatus::from_notification_status)
-            .unwrap_or(PermissionStatus::NotGranted)
+        if !wait.is_zero() {
+            let _ = receive.recv_timeout(wait);
+        }
+        cached().unwrap_or(PermissionStatus::NotGranted)
     }
 
     pub fn request_notifications(answered: Box<dyn FnOnce() + Send>) {
@@ -337,7 +364,7 @@ mod imp {
         PermissionStatus::Granted
     }
     pub fn request_input_monitoring() {}
-    pub fn notification_status() -> PermissionStatus {
+    pub fn fetch_notification_status(_wait: std::time::Duration) -> PermissionStatus {
         PermissionStatus::Granted
     }
     pub fn request_notifications(answered: Box<dyn FnOnce() + Send>) {

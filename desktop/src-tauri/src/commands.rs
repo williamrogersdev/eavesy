@@ -38,11 +38,18 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
     // Hiding the launcher hands focus back to the app it opened over; wait for that app to be in
     // front before pasting into it.
     std::thread::sleep(std::time::Duration::from_millis(120));
-    for _ in 0..8 {
+    for _ in 0..16 {
         if !crate::app_menu::is_active() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if crate::app_menu::is_active() {
+        // Focus never left Eavesy, so ⌘V would land here. Leave the text on the clipboard.
+        app.clipboard()
+            .write_text(text)
+            .map_err(|e| format!("failed to copy to clipboard: {e}"))?;
+        return Err("Couldn't switch back to the app you were in. The text is on your clipboard — press ⌘V to paste it.".into());
     }
 
     paste_text(&app, &text)

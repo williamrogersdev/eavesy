@@ -11,8 +11,8 @@ pub fn set_pinned(pinned: bool) { PINNED.store(pinned, Ordering::SeqCst); }
 pub fn is_pinned() -> bool { PINNED.load(Ordering::SeqCst) || is_yielding() }
 pub fn is_yielding() -> bool { YIELDS.load(Ordering::SeqCst) > 0 }
 
-/// Keeps the launcher and the HUD out of the way of a macOS permission prompt; dropping the
-/// guard restores them.
+/// Keeps the launcher and the HUD out of the way of a macOS permission prompt (or one of
+/// Eavesy's own dialogs); dropping the guard restores them.
 ///
 /// macOS ignores clicks on a privacy (TCC) alert while another window covers it, and both
 /// panels float above the alert. While any guard is alive both drop to the normal window level,
@@ -25,7 +25,7 @@ pub struct SystemPromptYield {
 
 pub fn yield_for_system_prompt(app: &tauri::AppHandle) -> SystemPromptYield {
     if YIELDS.fetch_add(1, Ordering::SeqCst) == 0 {
-        on_main_and_wait(app, |app| imp::set_yielded(app, true));
+        on_main_and_wait(app, apply_yield);
         crate::make_room::clear_of_system_prompts(app);
     }
     SystemPromptYield { app: app.clone() }
@@ -34,9 +34,7 @@ pub fn yield_for_system_prompt(app: &tauri::AppHandle) -> SystemPromptYield {
 impl Drop for SystemPromptYield {
     fn drop(&mut self) {
         if YIELDS.fetch_sub(1, Ordering::SeqCst) == 1 {
-            on_main_and_wait(&self.app, |app| {
-                if !is_yielding() { imp::set_yielded(app, false); }
-            });
+            on_main_and_wait(&self.app, apply_yield);
         }
     }
 }
@@ -65,6 +63,17 @@ fn hold_finished(elapsed: Duration, granted: bool, prompt_visible: bool) -> bool
     granted || elapsed >= PROMPT_MAX_HOLD || (elapsed >= PROMPT_MIN_HOLD && !prompt_visible)
 }
 
+static APPLIED: AtomicBool = AtomicBool::new(false);
+
+/// Brings the panels in line with the yield count as it is when this runs on the main thread,
+/// so a late or out-of-order dispatch can't leave them lowered (or raised) against the count.
+fn apply_yield(app: &tauri::AppHandle) {
+    let yielding = is_yielding();
+    if APPLIED.swap(yielding, Ordering::SeqCst) != yielding {
+        imp::set_yielded(app, yielding);
+    }
+}
+
 fn on_main_and_wait(app: &tauri::AppHandle, work: impl FnOnce(&tauri::AppHandle) + Send + 'static) {
     if std::thread::current().name() == Some("main") {
         work(app);
@@ -73,7 +82,11 @@ fn on_main_and_wait(app: &tauri::AppHandle, work: impl FnOnce(&tauri::AppHandle)
     let (done, wait) = std::sync::mpsc::channel();
     let handle = app.clone();
     if app.run_on_main_thread(move || { work(&handle); let _ = done.send(()); }).is_ok() {
-        let _ = wait.recv_timeout(Duration::from_millis(500));
+        // Waiting only keeps the prompt from appearing before the panels are lowered; the work
+        // re-reads the count when it runs, so a late run is still correct.
+        if wait.recv_timeout(Duration::from_millis(500)).is_err() {
+            tracing::warn!("panel yield change is still waiting for the main thread");
+        }
     }
 }
 
@@ -240,7 +253,7 @@ mod imp {
         delegate.set_listener(Box::new(move |name: String| {
             if name == "window_did_resign_key" && !super::is_pinned() {
                 let collapse = handle.clone();
-                let _ = handle.run_on_main_thread(move || { let _ = hide(&collapse); });
+                let _ = handle.run_on_main_thread(move || { let _ = super::hide(&collapse); });
             }
         }));
         panel.set_delegate(delegate);
@@ -262,14 +275,16 @@ mod imp {
         Ok(())
     }
 
-    pub fn hide(app: &AppHandle) -> Result<(), String> {
+    pub fn hide_and(app: &AppHandle, focus: super::AfterHide) -> Result<(), String> {
         let panel = app
             .get_webview_panel("main")
             .map_err(|e| format!("panel not found: {e:?}"))?;
         super::remember_size(app);
         crate::hud::collapse_from_panel_on_main(app);
         panel.order_out(None);
-        crate::app_menu::return_focus();
+        if focus == super::AfterHide::ReturnFocus {
+            crate::app_menu::return_focus();
+        }
         Ok(())
     }
 
@@ -299,7 +314,7 @@ mod imp {
         Ok(())
     }
 
-    pub fn hide(app: &AppHandle) -> Result<(), String> {
+    pub fn hide_and(app: &AppHandle, _focus: super::AfterHide) -> Result<(), String> {
         super::remember_size(app);
         crate::hud::collapse_from_panel_on_main(app);
         if let Some(w) = app.get_webview_window("main") {
@@ -315,4 +330,17 @@ mod imp {
     }
 }
 
-pub use imp::{hide, install, is_visible, show};
+/// What happens to focus when the launcher hides.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AfterHide {
+    /// Hand focus back to the app the launcher opened over.
+    ReturnFocus,
+    /// Keep Eavesy active, because it is about to show another window or dialog.
+    KeepFocus,
+}
+
+pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
+    imp::hide_and(app, AfterHide::ReturnFocus)
+}
+
+pub use imp::{hide_and, install, is_visible, show};

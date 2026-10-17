@@ -70,12 +70,15 @@ pub fn system_prompt_frame() -> Option<Rect> {
 
 /// While the launcher yields to a system prompt, moves it beside the prompt whenever one appears.
 pub fn clear_of_system_prompts(app: &AppHandle) {
+    use std::sync::atomic::Ordering;
+    // One watcher at a time: starting a new one retires the last.
+    let generation = WATCHER.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
         let mut last: Option<Rect> = None;
         for _ in 0..600 {
             std::thread::sleep(Duration::from_millis(150));
-            if !crate::panel::is_yielding() {
+            if !crate::panel::is_yielding() || WATCHER.load(Ordering::SeqCst) != generation {
                 return;
             }
             let Some(prompt) = system_prompt_frame() else { continue };
@@ -88,6 +91,8 @@ pub fn clear_of_system_prompts(app: &AppHandle) {
         }
     });
 }
+
+static WATCHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone, Copy)]
 enum Layer {

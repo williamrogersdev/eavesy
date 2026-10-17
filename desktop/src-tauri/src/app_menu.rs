@@ -95,17 +95,18 @@ pub fn show_about(app: &AppHandle) {
 }
 
 /// Puts the launcher away without handing focus back, and makes Eavesy the active app, so a
-/// window or dialog Eavesy is about to open comes to the front. Main thread only.
+/// window Eavesy is about to open comes to the front. Main thread only.
 pub fn present(app: &AppHandle) {
-    KEEP_FOCUS.store(true, std::sync::atomic::Ordering::SeqCst);
     if crate::panel::is_visible(app) {
-        let _ = crate::panel::hide(app);
+        let _ = crate::panel::hide_and(app, crate::panel::AfterHide::KeepFocus);
     }
-    KEEP_FOCUS.store(false, std::sync::atomic::Ordering::SeqCst);
     imp::activate_app();
 }
 
-static KEEP_FOCUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Makes Eavesy the active app without touching the launcher. Main thread only.
+pub fn activate_only() {
+    imp::activate_app();
+}
 
 /// Makes Eavesy the active app, remembering which app was in front. Main thread only.
 pub fn activate() {
@@ -116,9 +117,6 @@ pub fn activate() {
 /// Hands focus back to the app that was in front before [`activate`], if Eavesy is still the
 /// active app (when the user clicked another app, that app is already in front). Main thread only.
 pub fn return_focus() {
-    if KEEP_FOCUS.load(std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
     imp::return_focus();
 }
 
@@ -146,17 +144,21 @@ mod imp {
         std::process::id() as i32
     }
 
-    pub fn remember_frontmost() {
+    fn frontmost_app() -> Option<i32> {
         unsafe {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: id = msg_send![workspace, frontmostApplication];
             if front == nil {
-                return;
+                return None;
             }
             let pid: i32 = msg_send![front, processIdentifier];
-            if pid > 0 && pid != own_pid() {
-                PREVIOUS.store(pid, Ordering::SeqCst);
-            }
+            (pid > 0).then_some(pid)
+        }
+    }
+
+    pub fn remember_frontmost() {
+        if let Some(pid) = frontmost_app().filter(|pid| *pid != own_pid()) {
+            PREVIOUS.store(pid, Ordering::SeqCst);
         }
     }
 
@@ -176,7 +178,7 @@ mod imp {
     }
 
     pub fn return_focus() {
-        let pid = PREVIOUS.swap(0, Ordering::SeqCst);
+        let pid = PREVIOUS.load(Ordering::SeqCst);
         if pid <= 0 || !is_active() {
             return;
         }
