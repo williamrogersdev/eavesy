@@ -53,6 +53,17 @@ export function noteText(draft: string, pasted: string | null): string {
 }
 
 /**
+ * The draft after `saved` was stored: empty if nothing changed, only what was
+ * typed after it if the user kept typing, and untouched if they edited the
+ * saved text itself (their change wins over clearing it).
+ */
+export function draftAfterSave(current: string, saved: string): string {
+  if (current === saved) return '';
+  if (current.startsWith(saved)) return current.slice(saved.length).trimStart();
+  return current;
+}
+
+/**
  * The one obvious place to put things in (DESIGN.md §5): typed notes, paste,
  * file picker and drop target. Pinned to the bottom; grows upward over the
  * list and never reflows it.
@@ -123,7 +134,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       saving.current = false;
     }
     // Keep anything typed or pasted while the save was in flight.
-    setDraft((current) => current.startsWith(savedDraft) ? current.slice(savedDraft.length).trimStart() : current);
+    setDraft((current) => draftAfterSave(current, savedDraft));
     setPasted((current) => current === savedPasted ? null : current);
     confirm();
   }, [text, draft, pasted, onSaveNote, onSaveError, confirm]);

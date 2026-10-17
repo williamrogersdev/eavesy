@@ -6,7 +6,7 @@ import { Kbd } from './kbd';
 export type MenuItem =
   | {
       label: string;
-      /** React key; defaults to the label. Set it when two items share a label. */
+      /** React key; defaults to the item's index plus its label. */
       id?: string;
       icon?: LucideIcon;
       kbd?: string;

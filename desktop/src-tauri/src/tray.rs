@@ -79,7 +79,9 @@ pub fn refresh(app: &AppHandle) {
 pub fn set_recording(app: &AppHandle, recording: bool) {
     WANT_RECORDING.store(recording, Ordering::SeqCst);
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || apply_recording_glyph(&handle));
+    if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
+        eprintln!("tray: couldn't schedule the recording glyph: {error}");
+    }
 }
 
 /// Brings the glyph in line with `WANT_RECORDING`. Main thread only. The
@@ -96,8 +98,9 @@ fn apply_recording_glyph(app: &AppHandle) {
     } else {
         tauri::include_image!("icons/tray.png")
     };
-    if tray.set_icon(Some(icon)).is_ok() && tray.set_icon_as_template(!want).is_ok() {
-        SHOWING_RECORDING.store(want, Ordering::SeqCst);
+    match tray.set_icon(Some(icon)).and_then(|()| tray.set_icon_as_template(!want)) {
+        Ok(()) => SHOWING_RECORDING.store(want, Ordering::SeqCst),
+        Err(error) => eprintln!("tray: couldn't swap the recording glyph: {error}"),
     }
 }
 
