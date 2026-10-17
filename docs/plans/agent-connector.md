@@ -2,6 +2,16 @@
 
 Status: proposal (2026-10-17). Research notes and sources are at the end.
 
+> **How the pieces fit together is defined in
+> [agent-architecture.md](agent-architecture.md).** That doc is the source
+> of truth for the core model, the trust tiers and the build order; its
+> numbered build order replaces the phases below where they differ. It also
+> adds two things this plan lacked:
+> - a browser extension, so web chats are first-class;
+> - the Mac link, which lets web clients reach the Mac.
+>
+> This doc keeps the research and the detail behind each feature.
+
 ## The problem, in two parts
 
 1. **Bridging.** Getting things *to* agents is slow and awkward. That covers a
