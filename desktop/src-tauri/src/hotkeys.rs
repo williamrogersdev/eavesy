@@ -61,6 +61,7 @@ fn register_toggle(app: &AppHandle, accelerator: &str) -> Result<(), String> {
 }
 
 fn register_dictation(app: &AppHandle, accelerator: &str) -> Result<(), String> {
+    crate::dictate::reset_key();
     #[cfg(target_os = "macos")]
     if accelerator == "Fn" { return crate::fn_key::bind(app, 2); }
     let shortcut = parse_accelerator(accelerator)?;
@@ -128,6 +129,7 @@ fn show_launcher_on_main(app: &AppHandle) {
 }
 
 pub fn suspend(app: &AppHandle, suspended: bool) -> Result<(), String> {
+    crate::dictate::reset_key();
     let _ = app.global_shortcut().unregister_all();
     #[cfg(target_os = "macos")]
     crate::fn_key::unbind();

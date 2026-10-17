@@ -23,7 +23,7 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
     std::fs::write(folder.join("capture.json"), serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     store::append(&app, recording)?;
     let _ = app.emit("recordings:updated", ());
-    hud::set_state(&app, hud::HudState { phase: hud::Phase::Done, session_id: Some(id.clone()), mode: Some("image".into()), started_at_ms: None, message: None });
+    hud::set_state(&app, hud::HudState { phase: hud::Phase::Done, session_id: Some(id.clone()), mode: Some("image".into()), started_at_ms: None, message: None, notice: None });
     crate::commands::show_launcher(app.clone());
     Ok(id)
 }

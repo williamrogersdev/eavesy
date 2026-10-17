@@ -27,10 +27,14 @@ pub struct HudState {
     pub mode: Option<String>,
     pub started_at_ms: Option<i64>,
     pub message: Option<String>,
+    /// Where the words went when they could not be pasted ("Copied — …"),
+    /// shown apart from `message`, which is then the words themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 impl HudState {
-    pub fn idle() -> Self { Self { phase: Phase::Idle, session_id: None, mode: None, started_at_ms: None, message: None } }
+    pub fn idle() -> Self { Self { phase: Phase::Idle, session_id: None, mode: None, started_at_ms: None, message: None, notice: None } }
 }
 static CURRENT: std::sync::Mutex<Option<HudState>> = std::sync::Mutex::new(None);
 pub fn current() -> HudState {
@@ -79,12 +83,14 @@ pub fn set_expanded_on_main(app: &AppHandle, expand: bool) {
             let bottom = crate::placement::work_area_at(app, position.x + size.width / 2.0, position.y + 1.0)
                 .map_or(f64::MAX, |area| area.1 + area.3);
             let lift = (position.y + size.height + TRANSCRIPT_HEIGHT - bottom).max(0.0);
-            *state = Some((TRANSCRIPT_HEIGHT, lift));
-            drop(state);
-            let _ = window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT));
-            if lift > 0.0 {
-                let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y - lift));
+            // Remember the growth only once the window really grew, so a
+            // failed resize is never subtracted from the saved frame.
+            if window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT)).is_err() {
+                return;
             }
+            let lifted = lift > 0.0
+                && window.set_position(tauri::LogicalPosition::new(position.x, position.y - lift)).is_ok();
+            *state = Some((TRANSCRIPT_HEIGHT, if lifted { lift } else { 0.0 }));
         }
         (false, Some((extra, lift))) => {
             *state = None;

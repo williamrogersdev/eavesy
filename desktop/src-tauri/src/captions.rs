@@ -90,43 +90,32 @@ impl CaptionLog {
     /// hearing. Only a recognizer that could not run, failed, or lost audio
     /// (or heard nothing) sends the clip to Whisper instead.
     pub fn quick_paste(&self) -> Paste {
-        if let Some(reason) = &self.unavailable {
-            return Paste::Whisper(format!("captions unavailable: {reason}"));
-        }
-        if let Some(done) = self.done {
-            if done.failed {
-                return Paste::Whisper("the recognizer failed".to_string());
-            }
-            if done.dropped > 0 {
-                return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
-            }
-        }
-        let text = self.spoken_text();
-        if text.is_empty() {
-            Paste::Whisper("no words recognized on device".to_string())
-        } else {
-            Paste::OnDevice(text)
-        }
+        self.decide(false)
     }
 
     /// The on-device text, if every bit of the clip reached the recognizer and
     /// it finished; otherwise why Whisper should do it. With no final, the last
     /// partial is the text: it is what the recognizer had heard at the end.
     pub fn paste(&self) -> Paste {
+        self.decide(true)
+    }
+
+    /// `paste` and `quick_paste` differ only in whether the recognizer must
+    /// have reported a clean, timely finish.
+    fn decide(&self, need_clean_finish: bool) -> Paste {
         if let Some(reason) = &self.unavailable {
             return Paste::Whisper(format!("captions unavailable: {reason}"));
         }
-        let Some(done) = self.done else {
-            return Paste::Whisper("captions did not report finishing".to_string());
-        };
-        if done.failed {
-            return Paste::Whisper("the recognizer failed".to_string());
-        }
-        if done.timed_out {
-            return Paste::Whisper("the recognizer did not finish in time".to_string());
-        }
-        if done.dropped > 0 {
-            return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped));
+        match self.done {
+            None if need_clean_finish => return Paste::Whisper("captions did not report finishing".to_string()),
+            Some(done) if done.failed => return Paste::Whisper("the recognizer failed".to_string()),
+            Some(done) if done.timed_out && need_clean_finish => {
+                return Paste::Whisper("the recognizer did not finish in time".to_string())
+            }
+            Some(done) if done.dropped > 0 => {
+                return Paste::Whisper(format!("{} audio buffers never reached the recognizer", done.dropped))
+            }
+            _ => {}
         }
         let text = self.spoken_text();
         if text.is_empty() {

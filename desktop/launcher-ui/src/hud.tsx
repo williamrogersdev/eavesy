@@ -24,6 +24,8 @@ interface HudState {
   mode: string | null;
   startedAtMs: number | null;
   message: string | null;
+  /** Where the words went when they were not pasted ("Copied — …"). */
+  notice?: string | null;
 }
 
 interface TauriGlobal {
@@ -272,11 +274,8 @@ function hudTranscript(state: HudState | null, running: RunningTranscript): { te
     case 'recording':
     case 'saved':
       return { text: heard, notice: null };
-    case 'done': {
-      // The desktop sends either the words themselves or a short "Copied — …" notice.
-      const isNotice = !!message && message.startsWith('Copied');
-      return isNotice ? { text: heard, notice: message } : { text: message ?? heard, notice: null };
-    }
+    case 'done':
+      return { text: message ?? heard, notice: state.notice ?? null };
     case 'failed':
       return { text: '', notice: message };
     default:

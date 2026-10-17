@@ -523,6 +523,7 @@ fn spawn_capture(
             mode: Some(mode.to_string()),
             started_at_ms: Some(started_at_ms),
             message: None,
+            notice: None,
         },
     );
 
@@ -741,6 +742,7 @@ fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) {
             mode: None,
             started_at_ms: None,
             message: Some(error.to_string()),
+            notice: None,
         },
     );
 }
@@ -911,6 +913,7 @@ fn finish_stopped_capture(
                 mode: Some(if is_screen { "video" } else { "audio" }.to_string()),
                 started_at_ms: None,
                 message: None,
+                notice: None,
             },
         );
     }

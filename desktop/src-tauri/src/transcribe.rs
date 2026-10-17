@@ -49,6 +49,7 @@ pub fn spawn(
                             mode: None,
                             started_at_ms: None,
                             message: Some(text),
+                            notice: None,
                         },
                     );
                 }
@@ -67,6 +68,7 @@ pub fn spawn(
                             mode: None,
                             started_at_ms: None,
                             message: Some(e.clone()),
+                            notice: None,
                         },
                     );
                 }

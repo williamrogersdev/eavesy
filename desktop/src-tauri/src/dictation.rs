@@ -144,9 +144,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         get_launcher_out_of_the_way(&app);
         let mut how = delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()));
         if how == Delivery::Pasted && crate::commands::paste_text(&app, &text).is_err() {
-            how = Delivery::CopiedNoAccessibility;
+            // Say what actually stopped it: the permission, or anything else.
+            how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
         }
         if how != Delivery::Pasted {
+            // A failed paste may have left the text on the clipboard already;
+            // writing it again makes sure it is there whatever step failed.
             use tauri_plugin_clipboard_manager::ClipboardExt;
             if let Err(error) = app.clipboard().write_text(text.clone()) {
                 eprintln!("dictation: could not copy the text: {error}");
@@ -159,7 +162,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 session_id: Some(session_id),
                 mode: Some("audio".to_string()),
                 started_at_ms: None,
-                message: Some(how.notice().map_or(text, str::to_string)),
+                message: Some(text),
+                notice: how.notice().map(str::to_string),
             });
         }
     });

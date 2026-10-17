@@ -56,6 +56,33 @@ fn release_stops(started_by: Option<Instant>, now: Instant) -> bool {
     started_by.is_some_and(|at| now.duration_since(at) >= HOLD_TO_TALK)
 }
 
+/// What letting go of the key does.
+#[derive(Debug, PartialEq, Eq)]
+enum OnRelease {
+    Nothing,
+    Stop(String),
+    /// Held, but the capture is still starting: stop it once it runs.
+    StopWhenReady,
+}
+
+fn on_release(started_by: Option<Instant>, now: Instant, active: Option<String>, starting: bool) -> OnRelease {
+    if !release_stops(started_by, now) {
+        return OnRelease::Nothing;
+    }
+    match active {
+        Some(id) => OnRelease::Stop(id),
+        None if starting => OnRelease::StopWhenReady,
+        None => OnRelease::Nothing,
+    }
+}
+
+/// Forgets a key that is down: the shortcut was re-registered or suspended,
+/// so its release may never arrive and must not leave the hotkey stuck.
+pub fn reset_key() {
+    KEY_DOWN.store(false, Ordering::SeqCst);
+    *press() = Press::default();
+}
+
 fn active_session(app: &AppHandle) -> (Option<String>, bool) {
     let captures = app.state::<Captures>();
     let active = captures.0.lock().unwrap_or_else(|e| e.into_inner()).keys().next().cloned();
@@ -67,7 +94,7 @@ pub fn key_down(app: &AppHandle) {
     if KEY_DOWN.swap(true, Ordering::SeqCst) {
         return;
     }
-    pressed(app);
+    pressed(app, true);
 }
 
 /// The dictation hotkey came up.
@@ -76,7 +103,8 @@ pub fn key_up(app: &AppHandle) {
     released(app);
 }
 
-fn pressed(app: &AppHandle) {
+/// `can_hold`: a real key press, whose release can end a push-to-talk.
+fn pressed(app: &AppHandle, can_hold: bool) {
     let at = Instant::now();
     let app = app.clone();
     std::thread::spawn(move || {
@@ -90,7 +118,7 @@ fn pressed(app: &AppHandle) {
                 stop(&app, id);
             }
             OnPress::Start => {
-                *press() = Press { started_by: Some(at), stop_when_ready: false };
+                *press() = Press { started_by: can_hold.then_some(at), stop_when_ready: false };
                 start(&app);
             }
         }
@@ -100,14 +128,12 @@ fn pressed(app: &AppHandle) {
 /// Ends a push-to-talk dictation; a tap leaves it running.
 fn released(app: &AppHandle) {
     let mut state = press();
-    if !release_stops(state.started_by, Instant::now()) {
-        state.started_by = None;
-        return;
-    }
-    state.started_by = None;
+    let started_by = state.started_by.take();
     let (active, starting) = active_session(app);
-    match active {
-        Some(id) => {
+    match on_release(started_by, Instant::now(), active, starting) {
+        OnRelease::Nothing => {}
+        OnRelease::StopWhenReady => state.stop_when_ready = true,
+        OnRelease::Stop(id) => {
             drop(state);
             let app = app.clone();
             std::thread::spawn(move || {
@@ -115,14 +141,12 @@ fn released(app: &AppHandle) {
                 stop(&app, id);
             });
         }
-        None if starting => state.stop_when_ready = true,
-        None => {}
     }
 }
 
 /// A press that toggles without a release (Fn tap, menu bar).
 pub fn toggle(app: &AppHandle) {
-    pressed(app);
+    pressed(app, false);
 }
 
 fn start(app: &AppHandle) {
@@ -133,6 +157,7 @@ fn start(app: &AppHandle) {
         mode: Some("audio".to_string()),
         started_at_ms: Some(chrono::Utc::now().timestamp_millis()),
         message: None,
+        notice: None,
     });
     let result = crate::audio::start_capture(app.clone(), app.state::<Captures>(), Some("mic".to_string()), None, Some(true));
     match result {
@@ -150,6 +175,7 @@ fn start(app: &AppHandle) {
                 mode: None,
                 started_at_ms: None,
                 message: Some(error),
+                notice: None,
             });
         }
     }
@@ -170,6 +196,26 @@ mod tests {
         assert_eq!(on_press(Some("a".into()), false), OnPress::Stop("a".into()));
         assert_eq!(on_press(None, true), OnPress::Ignore);
         assert_eq!(on_press(Some("a".into()), true), OnPress::Stop("a".into()));
+    }
+
+    #[test]
+    fn letting_go_after_a_hold_stops_now_or_once_the_capture_runs() {
+        let now = Instant::now();
+        let held = Some(now);
+        let later = now + Duration::from_millis(800);
+        assert_eq!(on_release(held, later, Some("a".into()), false), OnRelease::Stop("a".into()));
+        assert_eq!(on_release(held, later, None, true), OnRelease::StopWhenReady);
+        assert_eq!(on_release(held, later, None, false), OnRelease::Nothing);
+        // A tap, or a toggle that never armed a hold, leaves it running.
+        assert_eq!(on_release(held, now + Duration::from_millis(100), Some("a".into()), false), OnRelease::Nothing);
+        assert_eq!(on_release(None, later, Some("a".into()), false), OnRelease::Nothing);
+    }
+
+    #[test]
+    fn a_reset_unsticks_a_key_whose_release_was_lost() {
+        KEY_DOWN.store(true, Ordering::SeqCst);
+        reset_key();
+        assert!(!KEY_DOWN.load(Ordering::SeqCst));
     }
 
     #[test]

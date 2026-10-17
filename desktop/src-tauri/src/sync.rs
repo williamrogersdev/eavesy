@@ -166,6 +166,7 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
                 mode: None,
                 started_at_ms: None,
                 message: Some(message.to_string()),
+                notice: None,
             });
         }
         use tauri_plugin_notification::NotificationExt;
@@ -563,7 +564,7 @@ async fn poll_result<R: Runtime>(
                 && !matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Done)
             {
                 let message = (!spoken.trim().is_empty()).then(|| spoken.trim().to_string());
-                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message });
+                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message, notice: None });
             }
         }
     }
