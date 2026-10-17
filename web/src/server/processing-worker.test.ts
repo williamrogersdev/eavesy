@@ -93,12 +93,12 @@ describe('final summary', () => {
     expect(outcome.acked).toBe(true);
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0].body.kind).toBe('summarize');
-    expect(t.sent[0].delaySeconds).toBe(10);
+    expect(t.sent[0].delaySeconds).toBe(2);
     expect(t.meeting().status).toBe('processing');
   });
 
   test('checks back quickly at first, then backs off', () => {
-    expect(summaryRetryDelaySeconds(2, 0)).toBe(10);
+    expect(summaryRetryDelaySeconds(2, 0)).toBe(2);
     expect(summaryRetryDelaySeconds(30, 0)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 3 * 60_000)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 10 * 60_000)).toBe(60);
@@ -398,6 +398,96 @@ describe('two-track transcription', () => {
     const request = api.calls[0] as { system: string; messages: { content: string }[] };
     expect(request.messages[0].content).toBe('Will: I will write the notes.\nThem: Great, thanks.');
     expect(request.system).toContain('"Will" is the person who recorded the meeting');
+  });
+});
+
+describe('mic-only notes', () => {
+  test('a quiet mic is transcribed even with little active time', async () => {
+    let calls = 0;
+    const t = setup({
+      transcribe: () => {
+        calls += 1;
+        return { text: '', segments: [{ start: 0, end: 1, text: 'Call the bank.' }] };
+      },
+    });
+    t.addSegment(0, 'pending', 'mic', 120);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(calls).toBe(1);
+    expect(t.lines().map((l) => l.text)).toEqual(['Call the bank.']);
+  });
+
+  test('a short "thank you" note is kept when Whisper did not doubt it', async () => {
+    const t = setup({ transcribe: () => ({ text: '', segments: [{ start: 0, end: 1, text: 'Thank you.' }] }) });
+    t.addSegment(0, 'pending', 'mic', 900);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(t.lines().map((l) => l.text)).toEqual(['Thank you.']);
+  });
+
+  test('speech the VAD cut away gets one more pass without it', async () => {
+    const passes: boolean[] = [];
+    const t = setup({
+      transcribe: (_audio, { vadFilter }) => {
+        passes.push(vadFilter);
+        return vadFilter
+          ? { text: '', segments: [] }
+          : { text: '', segments: [{ start: 0, end: 2, text: 'quiet words', no_speech_prob: 0.2 }] };
+      },
+    });
+    t.addSegment(0, 'pending', 'mic', 600);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(passes).toEqual([true, false]);
+    expect(t.lines().map((l) => l.text)).toEqual(['quiet words']);
+  });
+
+  test('the retry without VAD still drops invented stock phrases', async () => {
+    const t = setup({
+      transcribe: (_audio, { vadFilter }) =>
+        vadFilter ? { text: '', segments: [] } : { text: '', segments: [{ start: 0, end: 1, text: 'Thank you.' }] },
+    });
+    t.addSegment(0, 'pending', 'mic', 600);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(t.lines()).toEqual([]);
+    expect(t.segmentStatus(0, 'mic')).toBe('complete');
+  });
+
+  test('the mic side of a call is still skipped when silent', async () => {
+    let calls = 0;
+    const t = setup({
+      transcribe: () => {
+        calls += 1;
+        return { text: '', segments: [] };
+      },
+    });
+    t.addSegment(0, 'complete', 'system', 60_000);
+    t.addSegment(0, 'pending', 'mic', 0);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(calls).toBe(0);
+  });
+
+  test('a short dictation finishes without a summary, titled by its words', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 5_000);
+    t.sqlite.run(`UPDATE meeting_segments SET duration_ms = 8000`);
+    t.addLine(0, 'Remind me to send the invoice to Dana on Monday morning please.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(0);
+    expect(t.meeting().status).toBe('complete');
+    expect(t.meeting().title).toBe('Remind me to send the invoice to Dana…');
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed']);
+  });
+
+  test('a long voice note is still summarized', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 60_000);
+    t.addLine(0, 'Hello.');
+    t.addLine(200_000, 'More thoughts.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(1);
+    expect(t.meeting().title).toBe(SUMMARY.title);
   });
 });
 

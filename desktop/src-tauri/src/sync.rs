@@ -59,9 +59,37 @@ struct ResultResponse {
     transcript_override_md: Option<String>,
     #[serde(default)]
     notes_md: String,
+    /// Every uploaded part is transcribed, so the transcript is final even
+    /// while the summary is still being written. Older servers don't send it.
+    #[serde(default)]
+    transcript_ready: bool,
 }
 
 const POLL_INTERVAL_MS: i64 = 10_000;
+/// Right after a recording stops the transcript is seconds away: poll this
+/// often for the first `FAST_POLL_WINDOW_MS`, then fall back to the slow pace.
+const FAST_POLL_INTERVAL_MS: i64 = 1_000;
+const FAST_POLL_WINDOW_MS: i64 = 60_000;
+
+/// How long to wait before polling a session's result again.
+fn poll_interval_ms(status: &str, ended_at: Option<i64>, now: i64) -> i64 {
+    match ended_at {
+        Some(ended) if status == "processing" && ended > 0 && now - ended < FAST_POLL_WINDOW_MS => FAST_POLL_INTERVAL_MS,
+        _ => POLL_INTERVAL_MS,
+    }
+}
+
+/// Until when the loop idles in short steps, so a fast poll is not held up by
+/// the usual idle pause.
+static FAST_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn idle_pause() -> Duration {
+    if chrono::Utc::now().timestamp_millis() < FAST_UNTIL_MS.load(Ordering::Relaxed) {
+        Duration::from_millis(250)
+    } else {
+        Duration::from_secs(2)
+    }
+}
 const ERROR_BACKOFF_MS: i64 = 15_000;
 /// Retry interval while the server does not support segments-only finalize yet.
 const SEGMENTS_ONLY_RETRY_MS: i64 = 10 * 60 * 1_000;
@@ -262,7 +290,7 @@ pub async fn run(app: AppHandle) -> Result<()> {
                     set_signed_out(&app, false);
                 }
                 if outcome == Pass::Idle {
-                    idle(Duration::from_secs(2)).await;
+                    idle(idle_pause()).await;
                 } else {
                     sleep(Duration::from_millis(250)).await;
                 }
@@ -296,7 +324,14 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
     let outcome = sync_session(app, api, token, session.clone()).await;
     let recorded = match outcome {
         Ok(Step::Progressed) => Ok(()),
-        Ok(Step::Waiting) => sqlite::defer_session(app, &session.id, POLL_INTERVAL_MS, None),
+        Ok(Step::Waiting) => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let interval = poll_interval_ms(&session.status, session.ended_at, now);
+            if interval < POLL_INTERVAL_MS {
+                FAST_UNTIL_MS.fetch_max(now + interval * 2, Ordering::Relaxed);
+            }
+            sqlite::defer_session(app, &session.id, interval, None)
+        }
         Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
         Err(error) if is_permanent(&error) => {
             eprintln!("desktop ingest: giving up on {}: {error:#}", session.id);
@@ -464,6 +499,11 @@ async fn poll_result<R: Runtime>(
         "failed" => "transcript_failed",
         _ => "processing",
     };
+    // A part that never reached the cloud is missing from its transcript, so
+    // it is not final for this recording: it must say at least as much as the
+    // on-device text before it replaces it.
+    let complete_upload = !sqlite::has_abandoned_segments(app, &session.id).unwrap_or(false);
+    let transcript_final = (status == "complete" || result.transcript_ready) && complete_upload;
     // The registry and the recording folder are plain file IO: keep it off the
     // async runtime, and skip it entirely when the poll brought nothing new.
     let changed = blocking({
@@ -476,7 +516,7 @@ async fn poll_result<R: Runtime>(
         let notes = result.notes_md.clone();
         move || -> Result<bool, String> {
             let Some((recording, changed)) =
-                crate::store::set_result(&app, &id, &title, transcript, summary, Some(notes), status)?
+                crate::store::set_result(&app, &id, &title, transcript, summary, Some(notes), status, transcript_final)?
             else {
                 return Ok(false);
             };
@@ -503,7 +543,7 @@ async fn poll_result<R: Runtime>(
             eprintln!("desktop ingest: could not announce refreshed transcript: {error}");
         }
     }
-    if result.status == "complete" {
+    if transcript_final {
         if let Some(app) = crate::ui::wry(app) {
             // Paste the words alone: the markdown headings, timestamps and
             // speaker labels are for the transcript file, not a text box. A
@@ -512,12 +552,19 @@ async fn poll_result<R: Runtime>(
                 Some(edited) => spoken_words(edited),
                 None => result.transcript.iter().map(|segment| segment.text.trim()).collect::<Vec<_>>().join(" "),
             };
+            // Both are no-ops once done: the paste is taken once, and the HUD
+            // only moves on from a stopped recording that is not already Done.
             crate::dictation::deliver(app, &session.id, &spoken);
             let current = crate::hud::current();
-            if current.session_id.as_deref() == Some(session.id.as_str()) && current.phase != crate::hud::Phase::Recording {
-                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message: Some(transcript) });
+            if current.session_id.as_deref() == Some(session.id.as_str())
+                && !matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Done)
+            {
+                let message = (!spoken.trim().is_empty()).then(|| spoken.trim().to_string());
+                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message });
             }
         }
+    }
+    if result.status == "complete" {
         sqlite::mark_complete(app, &session.id).map_err(|e| anyhow!(e))?;
         if let Ok(Some(latency)) = sqlite::with_open(app, |conn| crate::live_transcript::latency(conn, &session.id)) {
             tracing::info!(
@@ -812,6 +859,30 @@ mod tests {
         assert_eq!(super::spoken_words(unlabelled), "Just me talking. An added line.");
         let hashes = "# Note\n\n#1 priority is shipping.\n\n#launch day\n";
         assert_eq!(super::spoken_words(hashes), "#1 priority is shipping. #launch day");
+    }
+
+    #[test]
+    fn results_are_polled_fast_right_after_stop_then_slowly() {
+        let now = 1_000_000;
+        assert_eq!(super::poll_interval_ms("processing", Some(now - 5_000), now), super::FAST_POLL_INTERVAL_MS);
+        assert_eq!(super::poll_interval_ms("processing", Some(now - 61_000), now), super::POLL_INTERVAL_MS);
+        // A meeting still recording only has live results to show: no rush.
+        assert_eq!(super::poll_interval_ms("recording", Some(now), now), super::POLL_INTERVAL_MS);
+        assert_eq!(super::poll_interval_ms("processing", None, now), super::POLL_INTERVAL_MS);
+    }
+
+    #[test]
+    fn a_result_without_transcript_ready_is_not_final() {
+        let old: super::ResultResponse = serde_json::from_str(
+            r#"{"status":"processing","title":"T","transcript":[],"summary":null,"summaryOverrideMd":null,"transcriptOverrideMd":null}"#,
+        )
+        .unwrap();
+        assert!(!old.transcript_ready);
+        let ready: super::ResultResponse = serde_json::from_str(
+            r#"{"status":"processing","title":"T","transcript":[],"summary":null,"summaryOverrideMd":null,"transcriptOverrideMd":null,"transcriptReady":true}"#,
+        )
+        .unwrap();
+        assert!(ready.transcript_ready);
     }
 
     #[test]

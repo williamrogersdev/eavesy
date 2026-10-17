@@ -12,12 +12,14 @@ export class WorkersAiSegmentTranscriber implements SegmentTranscriber {
     audio: Uint8Array;
     language?: string;
     contextBlurb?: string | null;
+    /** Whisper's voice-activity filter. Off for mic-only clips, where it can cut quiet speech. */
+    vadFilter?: boolean;
   }): Promise<SegmentTranscription> {
     const result = await this.ai.run(WHISPER_MODEL, {
       audio: audioBase64(args.audio),
       task: 'transcribe',
       language: args.language ?? 'en',
-      vad_filter: true,
+      vad_filter: args.vadFilter ?? true,
       condition_on_previous_text: false,
       initial_prompt: args.contextBlurb || undefined,
     });
