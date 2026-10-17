@@ -25,8 +25,10 @@ export type ComposerHandle = {
 
 export type ComposerProps = {
   onSaveNote: (text: string) => void | Promise<void>;
-  /** Files from the picker or a paste. Native drag-drop paths are handled by the panel. */
+  /** Files pasted into the field (or picked, when there is no `onPick`). Native drag-drop paths are handled by the panel. */
   onFiles: (files: File[]) => void;
+  /** Opens a native file picker instead of the browser one (the desktop app needs real paths). */
+  onPick?: () => void;
   placeholder?: string;
   maxLines?: number;
   /** Set by a panel-level drag listener while a file hovers the panel. */
@@ -54,7 +56,7 @@ export function noteText(draft: string, pasted: string | null): string {
  * list and never reflows it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSaveNote, onFiles, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
+  { onSaveNote, onFiles, onPick, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
   ref,
 ) {
   const [draft, setDraft] = useState('');
@@ -164,7 +166,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             icon={hoverAdd ? Paperclip : Plus}
             onMouseEnter={() => setHoverAdd(true)}
             onMouseLeave={() => setHoverAdd(false)}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => (onPick ? onPick() : fileRef.current?.click())}
           />
         )}
         <input

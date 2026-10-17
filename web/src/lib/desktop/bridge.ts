@@ -14,12 +14,24 @@ interface TauriGlobal {
   dialog?: {
     open(options: {
       directory: boolean;
-      multiple: false;
+      multiple: boolean;
       defaultPath?: string;
       title?: string;
     }): Promise<string | string[] | null>;
   };
+  webview?: {
+    getCurrentWebview(): {
+      onDragDropEvent(handler: (event: { payload: DragDropPayload }) => void): Promise<UnlistenFn>;
+    };
+  };
 }
+
+/** Tauri's native drag-drop: real file paths, unlike HTML5 drag events. */
+export type DragDropPayload =
+  | { type: 'enter'; paths: string[]; position: { x: number; y: number } }
+  | { type: 'over'; position: { x: number; y: number } }
+  | { type: 'drop'; paths: string[]; position: { x: number; y: number } }
+  | { type: 'leave' };
 
 declare global {
   interface Window {
@@ -324,6 +336,8 @@ export interface Settings {
   launcher_position?: LauncherPosition;
   /** Absent means on. */
   live_captions?: boolean;
+  /** Copy new macOS screenshots into the history. */
+  auto_import_screenshots?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right';
@@ -458,4 +472,59 @@ export async function onCaptureState(cb: (state: CaptureStatus) => void): Promis
 
 export async function captureScreenshot(): Promise<void> {
   await invoke('capture_screenshot');
+}
+
+export interface ImportResult { ids: string[]; skipped: string[] }
+
+/** Files dropped or picked: images, .txt/.md notes, audio and video. */
+export async function importFiles(paths: string[]): Promise<ImportResult> {
+  return invoke<ImportResult>('import_files', { paths });
+}
+
+/** Opens the native file picker and imports what was chosen. Null when cancelled. */
+export async function pickAndImportFiles(): Promise<ImportResult | null> {
+  const dialog = tauri()?.dialog;
+  if (!dialog) return null;
+  const picked = await dialog.open({ directory: false, multiple: true, title: 'Add to Eavesy' });
+  const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+  return paths.length ? importFiles(paths) : null;
+}
+
+export type PasteOutcome =
+  | { kind: 'saved'; count: number; skipped: string[] }
+  | { kind: 'text'; text: string };
+
+/** ⌘V in the panel: files and images are saved, text comes back as a draft. */
+export async function pasteToComposer(): Promise<PasteOutcome> {
+  return invoke<PasteOutcome>('paste_to_composer');
+}
+
+/** Moves the capture's folder to the Trash and drops it from the history. */
+export async function deleteCapture(id: string): Promise<void> {
+  await invoke('delete_capture', { id });
+}
+
+export async function openRecordingsFolder(): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('open_recordings_folder');
+}
+
+export async function getScreenshotFolder(): Promise<string | null> {
+  if (!isDesktop()) return null;
+  return invoke<string>('get_screenshot_folder').catch(() => null);
+}
+
+export async function setAutoImportScreenshots(enabled: boolean): Promise<void> {
+  await invoke('set_auto_import_screenshots', { enabled });
+}
+
+export async function onDragDrop(cb: (payload: DragDropPayload) => void): Promise<UnlistenFn> {
+  const webview = tauri()?.webview;
+  if (!webview) return () => {};
+  return webview.getCurrentWebview().onDragDropEvent((event) => cb(event.payload));
+}
+
+/** Saves a typed note from the composer as a Note capture. */
+export async function saveNote(text: string): Promise<void> {
+  await invoke('save_note', { text });
 }

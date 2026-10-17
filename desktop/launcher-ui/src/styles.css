@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "../../../web/src/components/launcher/ui/tokens.css";
 @import "../../../web/src/components/launcher/ui/ui.css";
+@import "../../../web/src/components/launcher/panel.css";
 
 @source "../../../web/src/components/launcher";
 @source "../../../web/src/lib";
@@ -133,27 +134,32 @@ body {
   }
 }
 
+/* HUD: a dark glass pill that floats over whatever is on screen, in both
+   appearances (DESIGN.md → HUD). Red only while the mic is live. */
 .eavesy-control {
-  --ctl-rec: #ff4d5a;
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid rgb(255 255 255 / 0.12);
-  background: linear-gradient(180deg, rgb(38 34 40 / 0.55), rgb(22 20 24 / 0.66));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-  color: rgb(255 255 255 / 0.9);
-  font-size: 11px;
+  border-radius: var(--ev-r-hud);
+  border: 1px solid var(--ev-hud-line);
+  background: var(--ev-hud);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-ui);
+  font-size: 12px;
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  transition: border-color 160ms ease;
+  transition: border-color var(--ev-d-state) ease;
 }
+/* Room for the transcript sheet: square off into a card. */
+.eavesy-control:has(.ctl-transcript) { border-radius: 16px; }
 .eavesy-control[data-phase="recording"] {
-  border-color: color-mix(in srgb, var(--ctl-rec) 70%, transparent);
-  background: linear-gradient(180deg, rgb(70 24 32 / 0.42), rgb(32 18 22 / 0.55));
+  border-color: color-mix(in srgb, var(--ev-rec) 65%, transparent);
 }
 
 /* The bar keeps its own height when the transcript opens under it. */
@@ -166,16 +172,17 @@ body {
   flex: none;
   height: 72px;
   overflow-y: auto;
-  padding: 6px 10px 8px;
-  border-top: 1px solid rgb(255 255 255 / 0.1);
-  font-size: 12px;
-  line-height: 1.4;
-  color: rgb(255 255 255 / 0.88);
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--ev-hud-line);
+  font: var(--ev-t-body);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ev-hud-ink);
   white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
 }
-.ctl-transcript-notice { color: #a7e3c0; font-weight: 500; }
+.ctl-transcript-notice { color: #9fe0bd; font-weight: 600; }
 .eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
 
 .ctl-grid {
@@ -185,32 +192,33 @@ body {
   grid-template-areas: "mark title actions tools";
   align-items: center;
   gap: 2px;
-  padding: 0 6px;
+  padding: 0 8px 0 5px;
 }
 .ctl-mark {
   grid-area: mark;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   margin-right: 4px;
   border-radius: 9999px;
-  background: rgb(255 255 255 / 0.1);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
-  color: #3a1712;
 }
-.ctl-mark:hover { background: rgb(255 255 255 / 0.18); }
-.ctl-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 9999px;
-  background: #ff453a;
+.ctl-mark:hover { background: rgb(255 255 255 / 0.12); }
+.ctl-timer {
+  font-variant-numeric: tabular-nums;
+  color: var(--ev-hud-ink-2);
 }
-.eavesy-control[data-phase="recording"] .ctl-mark { background: var(--ctl-rec); color: #fff; }
-.eavesy-control[data-phase="transcribing"] .ctl-mark,
-.eavesy-control[data-phase="failed"] .ctl-mark { background: #f6c97f; color: #4a3218; }
-.eavesy-control[data-phase="saved"] .ctl-mark,
-.eavesy-control[data-phase="done"] .ctl-mark { background: #a7e3c0; color: #1d4a33; }
+.ctl-quiet { color: var(--ev-hud-ink-2); }
+.ctl-error {
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.2;
+  color: #ffc9b5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .ctl-title {
   grid-area: title;
@@ -230,6 +238,8 @@ body {
 }
 .ctl-caption { flex: 1 1 0; }
 .ctl-caption > bdi { direction: ltr; }
+.ctl-caption { color: var(--ev-hud-ink-2); }
+.ctl-caption[data-final] { color: var(--ev-hud-ink); }
 .ctl-caption-label { margin-right: 4px; color: rgb(255 255 255 / 0.5); font-weight: 600; }
 .ctl-actions,
 .ctl-tools { display: flex; align-items: center; gap: 1px; }
@@ -250,13 +260,13 @@ body {
   min-width: 24px;
   justify-content: center;
   padding: 0 5px;
-  border-radius: 7px;
-  color: rgb(255 255 255 / 0.82);
+  border-radius: 9999px;
+  color: var(--ev-hud-ink-2);
   font-weight: 500;
 }
 .ctl-btn:hover:not(:disabled) { background: rgb(255 255 255 / 0.12); color: #fff; }
 .ctl-btn:disabled { opacity: 0.4; }
-.ctl-close:hover:not(:disabled) { background: rgb(255 77 90 / 0.28); }
+.ctl-close:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); }
 .ctl-label { display: none; }
 
 @container (min-width: 380px) {

@@ -1,41 +1,68 @@
 'use client';
 
-import { Camera, Mic, Square, Video, Volume2, VolumeX } from 'lucide-react';
-import { type MutableRefObject } from 'react';
-import { captureScreenshot } from '@/lib/desktop/bridge';
-import { setIncludeComputerAudio } from '@/lib/desktop/capture-prefs';
-import { cn } from '@/lib/utils';
-import { type BeginRecording, type RunTask } from './types';
+import { AudioLines, Camera, Clapperboard, Users } from 'lucide-react';
+import { clock } from './history-model';
+import { ToolbarSegment, ToolbarShelf } from './ui';
 
+export type CaptureKind = 'talk' | 'meeting' | 'video';
+
+/**
+ * Four equal segments named by purpose (DESIGN.md §5). While a capture runs,
+ * its own segment becomes the red Stop with the elapsed time and the others dim.
+ */
 export function CaptureToolbar({
-  recording,
-  withComputerAudio,
-  starting,
+  active,
+  elapsed,
+  busy,
   dictationHotkey,
-  captureBusy,
-  setStarting,
-  runTask,
-  stopRecording,
-  beginRecording,
+  onTalk,
+  onMeeting,
+  onScreenshot,
+  onVideo,
+  onStop,
 }: {
-  recording: boolean;
-  withComputerAudio: boolean;
-  starting: boolean;
+  /** The capture running now, if any. */
+  active: CaptureKind | null;
+  elapsed: number;
+  /** A capture is starting or a screenshot is being taken. */
+  busy: boolean;
   dictationHotkey: string;
-  captureBusy: MutableRefObject<boolean>;
-  setStarting: (starting: boolean) => void;
-  runTask: RunTask;
-  stopRecording: () => Promise<void>;
-  beginRecording: BeginRecording;
+  onTalk: () => void;
+  onMeeting: () => void;
+  onScreenshot: () => void;
+  onVideo: () => void;
+  onStop: () => void;
 }) {
+  const live = active !== null;
+  const segment = (kind: CaptureKind, start: () => void) => ({
+    active: active === kind,
+    dimmed: live && active !== kind,
+    disabled: (live && active !== kind) || (busy && !live),
+    elapsed: active === kind ? clock(elapsed) : undefined,
+    onClick: active === kind ? onStop : start,
+  });
+  const fn = dictationHotkey === 'Fn' || dictationHotkey === 'fn';
   return (
-    <div className="flex h-9 shrink-0 items-center justify-around border-b border-border px-2 text-[11px] text-muted-foreground">
-      <span className="flex items-center">
-        <button type="button" aria-label={recording ? 'Stop & save' : withComputerAudio ? 'Record mic and computer audio' : 'Start voice note'} disabled={starting} title={dictationHotkey ? `${recording ? 'Stop & save' : 'Start recording'} from anywhere with ${dictationHotkey}` : undefined} onClick={() => recording ? runTask(stopRecording) : runTask(() => beginRecording('audio', { source: withComputerAudio ? 'mixed' : 'mic' }))} className="flex items-center gap-1.5 rounded-full px-2 py-1 text-[var(--lr-brand)] hover:bg-[var(--lr-brand-soft)]">{recording ? <Square className="h-3.5 w-3.5" fill="currentColor" /> : <Mic className="h-3.5 w-3.5" />} {recording ? 'Stop' : 'Microphone'}{dictationHotkey && <kbd className="ml-0.5 font-sans text-[10px] tracking-wide text-muted-foreground/70">{dictationHotkey}</kbd>}</button>
-        {!recording && <button type="button" aria-pressed={withComputerAudio} onClick={() => setIncludeComputerAudio(!withComputerAudio)} title={withComputerAudio ? 'Recording computer audio too (calls and meetings). Click to record only your mic.' : 'Also record computer audio, for calls and meetings'} aria-label="Include computer audio" className={cn('grid h-6 w-6 place-items-center rounded-full', withComputerAudio ? 'bg-[var(--lr-brand-soft)] text-[var(--lr-brand)]' : 'text-muted-foreground hover:bg-[var(--lr-hover)]')}>{withComputerAudio ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}</button>}
-      </span>
-      <button type="button" aria-label="Take screenshot" disabled={starting || !!recording} onClick={() => runTask(async () => { if (captureBusy.current) return; captureBusy.current = true; setStarting(true); try { await captureScreenshot(); } finally { captureBusy.current = false; setStarting(false); } })} className="flex items-center gap-1.5 rounded-full px-2 py-1 hover:bg-[var(--lr-hover)] disabled:opacity-40"><Camera className="h-3.5 w-3.5" /> Screenshot</button>
-      <button type="button" aria-label="Record screen video" disabled={starting || !!recording} onClick={() => runTask(() => beginRecording('screen', { mic: true }))} className="flex items-center gap-1.5 rounded-full px-2 py-1 hover:bg-[var(--lr-hover)] disabled:opacity-40"><Video className="h-3.5 w-3.5" /> Video</button>
+    <div className="ev-toolbar">
+      <ToolbarShelf>
+        <ToolbarSegment
+          icon={AudioLines}
+          label="Talk"
+          kbd={fn ? 'fn' : undefined}
+          hint={fn ? 'Hold fn to talk. Let go to paste.' : `Talk, then paste where your cursor is${dictationHotkey ? ` (${dictationHotkey})` : ''}`}
+          {...segment('talk', onTalk)}
+        />
+        <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" {...segment('meeting', onMeeting)} />
+        <ToolbarSegment
+          icon={Camera}
+          label="Screenshot"
+          hint="Pick an area to save"
+          dimmed={live}
+          disabled={live || busy}
+          onClick={onScreenshot}
+        />
+        <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" {...segment('video', onVideo)} />
+      </ToolbarShelf>
     </div>
   );
 }

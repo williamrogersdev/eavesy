@@ -78,6 +78,7 @@ pub fn run() {
             visual::copy_capture_media,
             visual::paste_clip,
             imports::import_files,
+            imports::save_note,
             imports::paste_to_composer,
             imports::delete_capture,
             imports::open_recordings_folder,

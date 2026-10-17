@@ -161,6 +161,51 @@ pub async fn import_files(app: AppHandle, paths: Vec<String>) -> Result<ImportRe
         .map_err(|error| error.to_string())
 }
 
+/// A note typed (or pasted as text) in the composer.
+#[tauri::command]
+pub async fn save_note(app: AppHandle, text: String) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("The note is empty.".into());
+    }
+    if text.len() as u64 > MAX_NOTE_BYTES {
+        return Err("That note is too long (over 1 MB).".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let now = chrono::Utc::now();
+        let folder = fs_writer::allocate_recording_folder(&fs_writer::recordings_root(&app)?, "Note", now)?;
+        let result = (|| {
+            std::fs::write(folder.join("note.md"), &text).map_err(|error| error.to_string())?;
+            let recording = store::StoredRecording {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: "Note".into(),
+                started_at_ms: now.timestamp_millis(),
+                duration_sec: 0,
+                source: "note".into(),
+                status: "complete".into(),
+                summary: None,
+                transcript: Some(text),
+                notes: None,
+                has_audio: false,
+                has_video: false,
+                folder_path: Some(folder.to_string_lossy().into_owned()),
+            };
+            let json = serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string())?;
+            std::fs::write(folder.join("capture.json"), json).map_err(|error| error.to_string())?;
+            let id = recording.id.clone();
+            store::append(&app, recording)?;
+            Ok::<_, String>(id)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&folder);
+        } else {
+            let _ = app.emit("recordings:updated", ());
+        }
+        result
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PasteOutcome {

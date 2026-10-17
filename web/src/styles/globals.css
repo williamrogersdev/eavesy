@@ -1,6 +1,7 @@
 @import "tailwindcss" source("../");
 @import "../components/launcher/ui/tokens.css";
 @import "../components/launcher/ui/ui.css";
+@import "../components/launcher/panel.css";
 
 :root {
   --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
