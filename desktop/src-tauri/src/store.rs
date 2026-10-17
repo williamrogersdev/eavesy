@@ -66,6 +66,15 @@ pub fn append<R: Runtime>(app: &AppHandle<R>, rec: StoredRecording) -> Result<()
     })
 }
 
+/// Removes a capture from the history. Its files are handled by the caller.
+pub fn remove<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    mutate(app, |list| {
+        let before = list.len();
+        list.retain(|recording| recording.id != id);
+        Ok(list.len() != before)
+    })
+}
+
 pub fn set_transcript<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,

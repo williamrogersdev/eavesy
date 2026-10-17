@@ -11,6 +11,15 @@
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Eavesy shows live captions and pastes dictation using speech recognition on this Mac.</string>
 
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Eavesy watches for new screenshots here when you turn on "Add macOS screenshots automatically", and reads files you drop into it.</string>
+
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Eavesy reads files you drop or paste into it from your Downloads folder.</string>
+
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Eavesy reads files you drop or paste into it, and watches for screenshots if macOS saves them here.</string>
+
     <key>NSAppleEventsUsageDescription</key>
     <string>Eavesy pastes your transcript into the app you're using.</string>
 </dict>
