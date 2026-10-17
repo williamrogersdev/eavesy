@@ -1,31 +1,43 @@
-import math, struct, sys, zlib
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["numpy"]
+# ///
+"""Menu bar glyphs (desktop/DESIGN.md §3): the mascot's roof chevron and two
+eye dots. Never a microphone.
 
-def sd_round_rect(x, y, cx, cy, half, r):
-    qx, qy = abs(x - cx) - (half - r), abs(y - cy) - (half - r)
-    return math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
+    uv run gen_tray.py .
 
-def render(size):
-    u = size / 44.0
-    c, half, r = size / 2, 17 * u, 9.5 * u
-    stroke, dot = 3.4 * u, 7.2 * u
-    ss = 4
-    rows = []
-    for py in range(size):
-        row = bytearray([0])
-        for px in range(size):
-            hit = 0
-            for sy in range(ss):
-                for sx in range(ss):
-                    x, y = px + (sx + .5) / ss, py + (sy + .5) / ss
-                    ring = abs(sd_round_rect(x, y, c, c, half - stroke / 2, r - stroke / 2)) <= stroke / 2
-                    if ring or math.hypot(x - c, y - c) <= dot:
-                        hit += 1
-            row += bytes([0, 0, 0, round(255 * hit / ss ** 2)])
-        rows.append(bytes(row))
-    raw = zlib.compress(b''.join(rows), 9)
-    chunk = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d))
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)) + chunk(b'IDAT', raw) + chunk(b'IEND', b'')
+- tray.png / tray@2x.png: black on transparent, used as a macOS template image
+  so the menu bar tints it for light and dark.
+- tray-recording.png / @2x: not a template. Same glyph in a mid-tone that reads
+  on light and dark menu bars, with the red porch light on the roof peak.
+"""
+import sys
 
-out = sys.argv[1]
-open(f'{out}/tray.png', 'wb').write(render(44))
-open(f'{out}/tray@2x.png', 'wb').write(render(88))
+from mascot_raster import Canvas, paint_mini_glyph
+
+# Glyph bounds in viewBox units: roof caps reach x 0.5..63.5, y 4.5; eyes end ~43.2.
+GLYPH_W, GLYPH_TOP, GLYPH_BOTTOM = 63.0, 1.0, 43.5
+MID = (0x8A, 0x7F, 0x96)
+
+
+def render(size, recording=False):
+    s = size * 0.94 / GLYPH_W
+    ox = size / 2 - 32 * s
+    oy = size / 2 - (GLYPH_TOP + GLYPH_BOTTOM) / 2 * s
+    cv = Canvas(size, s, ox, oy)
+    color = MID if recording else (0, 0, 0)
+    paint_mini_glyph(cv, color, color, recording=recording)
+    return cv.png()
+
+
+out = sys.argv[1] if len(sys.argv) > 1 else '.'
+for name, size, rec in (
+    ('tray.png', 44, False),
+    ('tray@2x.png', 88, False),
+    ('tray-recording.png', 44, True),
+    ('tray-recording@2x.png', 88, True),
+):
+    open(f'{out}/{name}', 'wb').write(render(size, rec))
+    print('wrote', name)

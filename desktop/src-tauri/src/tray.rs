@@ -4,9 +4,14 @@ use tauri::{
     AppHandle,
 };
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::hotkeys;
 
 const TRAY_ID: &str = "eavesy-tray";
+
+/// Whether the tray currently shows the recording glyph (red porch light).
+static SHOWING_RECORDING: AtomicBool = AtomicBool::new(false);
 
 fn menu_accel(accelerator: &str) -> Option<String> {
     (accelerator != "Fn" && crate::hotkeys::parse_accelerator(accelerator).is_ok()).then(|| accelerator.to_string())
@@ -64,6 +69,22 @@ pub fn refresh(app: &AppHandle) {
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
+}
+
+/// Swaps the menu bar glyph while a capture records. The idle glyph is a
+/// template image (tinted by macOS); the recording one keeps its red dot.
+pub fn set_recording(app: &AppHandle, recording: bool) {
+    if SHOWING_RECORDING.swap(recording, Ordering::SeqCst) == recording {
+        return;
+    }
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let icon = if recording {
+        tauri::include_image!("icons/tray-recording.png")
+    } else {
+        tauri::include_image!("icons/tray.png")
+    };
+    let _ = tray.set_icon(Some(icon));
+    let _ = tray.set_icon_as_template(!recording);
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
