@@ -12,5 +12,6 @@ export interface SegmentTranscriber {
     audio: Uint8Array;
     language?: string;
     contextBlurb?: string | null;
+    vadFilter?: boolean;
   }): Promise<SegmentTranscription>;
 }

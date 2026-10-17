@@ -430,6 +430,7 @@ mod tests {
             Some("# Brief\n\nCloud summary".to_string()),
             Some("Cloud notes".to_string()),
             "complete",
+            true,
         )
         .unwrap();
         let refreshed = store::load_all(restarted.handle())
