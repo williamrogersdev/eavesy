@@ -31,7 +31,9 @@ import { ROLLING_NOTES_EVERY_MS, ROLLING_NOTES_OVERLAP_MS, removeEcho } from './
  * so check back quickly at first instead of always adding a minute.
  */
 export function summaryRetryDelaySeconds(inFlight: number, waitedMs: number) {
-  if (inFlight <= 4 && waitedMs < 2 * 60 * 1_000) return 2;
+  if (inFlight <= 4 && waitedMs < 10 * 1_000) return 2;
+  if (inFlight <= 4 && waitedMs < 30 * 1_000) return 5;
+  if (inFlight <= 4 && waitedMs < 2 * 60 * 1_000) return 10;
   if (waitedMs < 5 * 60 * 1_000) return 30;
   return 60;
 }
