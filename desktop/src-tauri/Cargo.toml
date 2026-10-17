@@ -77,6 +77,6 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 base64 = "0.22"
-minisign-verify = "0.2.5"
+minisign-verify = "0.3.0"
 wiremock = "0.6"
 tauri = { version = "2.0", features = ["test"] }
