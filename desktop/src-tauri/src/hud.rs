@@ -142,7 +142,7 @@ pub fn reset_frame(app: &AppHandle) {
 pub fn set_hidden_on_main(app: &AppHandle, hidden: bool) {
     update_prefs(app, |config| config.hud_hidden = hidden);
     if hidden && !is_active(&current().phase) {
-        imp::hide(app);
+        hide_on_main(app);
     } else {
         show_on_main(app);
     }
@@ -168,7 +168,7 @@ fn show_unchecked(app: &AppHandle) {
     };
     let prefs = prefs(app);
     if prefs.hidden && !is_active(&current().phase) {
-        imp::hide(app);
+        hide_on_main(app);
         return;
     }
     if !window.is_visible().unwrap_or(false) {
@@ -243,7 +243,12 @@ fn save_frame(app: &AppHandle) {
     }
 }
 
-pub fn hide_on_main(app: &AppHandle) { imp::hide(app); }
+/// Hides the HUD, giving back any transcript room first so the frame saved
+/// while hidden, and the next show, start from the bar's own size.
+pub fn hide_on_main(app: &AppHandle) {
+    set_expanded_on_main(app, false);
+    imp::hide(app);
+}
 
 #[cfg(target_os = "macos")]
 mod imp {

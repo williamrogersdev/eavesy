@@ -506,7 +506,13 @@ async fn poll_result<R: Runtime>(
     // it is not final for this recording: it must say at least as much as the
     // on-device text before it replaces it.
     // Fails closed: if that cannot be read, treat the transcript as partial.
-    let complete_upload = matches!(sqlite::has_abandoned_segments(app, &session.id), Ok(false));
+    let complete_upload = match sqlite::has_abandoned_segments(app, &session.id) {
+        Ok(abandoned) => !abandoned,
+        Err(error) => {
+            eprintln!("sync: could not check abandoned segments for {}: {error}", session.id);
+            false
+        }
+    };
     let transcript_final = (status == "complete" || result.transcript_ready) && complete_upload;
     // The registry and the recording folder are plain file IO: keep it off the
     // async runtime, and skip it entirely when the poll brought nothing new.

@@ -106,6 +106,10 @@ pub enum Delivery {
     CopiedNoAccessibility,
     /// On the clipboard: the cursor is not in a text box any more.
     CopiedNoTextBox,
+    /// On the clipboard, but the ⌘V key press could not be sent.
+    CopiedPasteFailed,
+    /// Neither pasted nor copied: the clipboard could not be written.
+    NotCopied,
 }
 
 impl Delivery {
@@ -115,6 +119,8 @@ impl Delivery {
             Delivery::Pasted => None,
             Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
             Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
+            Delivery::CopiedPasteFailed => Some("Copied — couldn't paste, press ⌘V"),
+            Delivery::NotCopied => Some("Couldn't paste or copy these words"),
         }
     }
 }
@@ -143,16 +149,26 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     std::thread::spawn(move || {
         get_launcher_out_of_the_way(&app);
         let mut how = delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()));
-        if how == Delivery::Pasted && crate::commands::paste_text(&app, &text).is_err() {
-            // Say what actually stopped it: the permission, or anything else.
-            how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
-        }
-        if how != Delivery::Pasted {
-            // A failed paste may have left the text on the clipboard already;
-            // writing it again makes sure it is there whatever step failed.
+        if how == Delivery::Pasted {
+            // A failed key press leaves the text on the clipboard on purpose
+            // (the user's own clipboard is not restored), so ⌘V still works.
+            use crate::commands::PasteError;
+            how = match crate::commands::paste_text_quietly(&app, &text) {
+                Ok(()) => Delivery::Pasted,
+                Err(PasteError::Clipboard(error)) => {
+                    eprintln!("dictation: {error}");
+                    Delivery::NotCopied
+                }
+                Err(PasteError::Keystroke(error)) => {
+                    eprintln!("dictation: {error}");
+                    if accessibility_trusted() { Delivery::CopiedPasteFailed } else { Delivery::CopiedNoAccessibility }
+                }
+            };
+        } else {
             use tauri_plugin_clipboard_manager::ClipboardExt;
             if let Err(error) = app.clipboard().write_text(text.clone()) {
                 eprintln!("dictation: could not copy the text: {error}");
+                how = Delivery::NotCopied;
             }
         }
         let current = crate::hud::current();
@@ -165,6 +181,11 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 message: Some(text),
                 notice: how.notice().map(str::to_string),
             });
+        } else if let Some(notice) = how.notice() {
+            // A new dictation already owns the HUD: say where these words
+            // went without taking it over.
+            use tauri_plugin_notification::NotificationExt;
+            let _ = app.notification().builder().title("Eavesy").body(notice).show();
         }
     });
 }

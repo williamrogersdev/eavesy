@@ -53,7 +53,8 @@ pub fn next_segment<R: Runtime>(
                AND next_attempt_at <= ?2
              -- The computer-audio track of a part goes before its mic track:
              -- the server treats a mic part as a mic-only note until it has
-             -- seen a system part of the same meeting.
+             -- seen a system part of the same meeting. Every other track
+             -- ('mic', 'mixed') follows, in track-name order.
              ORDER BY idx, CASE track WHEN 'system' THEN 0 ELSE 1 END, track LIMIT 1",
             params![session_id, chrono::Utc::now().timestamp_millis()],
             |row| {

@@ -49,15 +49,9 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
 }
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
-    let previous = app.clipboard().read_text().ok();
-
-    app.clipboard()
-        .write_text(text.to_string())
-        .map_err(|e| format!("failed to copy to clipboard: {e}"))?;
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Err(error) = crate::dictation::press_paste() {
+    paste_text_quietly(app, text).map_err(|error| match error {
+        PasteError::Clipboard(message) => message,
+        PasteError::Keystroke(error) => {
             eprintln!("paste: {error}");
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
@@ -69,8 +63,32 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
                 .title("Eavesy couldn't paste")
                 .body(&message)
                 .show();
-            return Err(message);
+            message
         }
+    })
+}
+
+/// Why a paste did not happen.
+#[derive(Debug)]
+pub enum PasteError {
+    /// The text never reached the clipboard.
+    Clipboard(String),
+    /// The text is on the clipboard (left there on purpose, so ⌘V still
+    /// works), but the ⌘V key press could not be sent.
+    Keystroke(String),
+}
+
+/// `paste_text` without the notification: the caller says what happened.
+pub fn paste_text_quietly(app: &AppHandle, text: &str) -> Result<(), PasteError> {
+    let previous = app.clipboard().read_text().ok();
+
+    app.clipboard()
+        .write_text(text.to_string())
+        .map_err(|e| PasteError::Clipboard(format!("failed to copy to clipboard: {e}")))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        crate::dictation::press_paste().map_err(PasteError::Keystroke)?;
     }
 
     if let Some(prev) = previous {
