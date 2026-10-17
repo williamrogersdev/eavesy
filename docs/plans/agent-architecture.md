@@ -157,9 +157,9 @@ adapter. Revisit if the app's uptime turns out to be a problem.
     still intact, both keyed by `(pid, start time)` so a reused pid can't
     match. The `EAVESY_SESSION` env tag is **only a hint** for grouping in the
     UI. Any same-user process can fake it, so it never authorizes a stop.
-    Callers the core can't resolve to a session are refused by default. If
-    a process can't be proven to belong to the caller, stopping it needs the
-    human.
+    A stop request from a caller the core can't resolve, or for a process it
+    can't prove the caller owns, is **rejected**. It doesn't turn into a
+    prompt. The human can still stop anything from the Agents view.
   - Nothing reachable over the API can *approve* anything. Grants, kills
     outside a session's own tree, and local-only Items going remote all need a
     click in the native UI.
@@ -202,7 +202,7 @@ test fails CI if either server's tool list or schemas drift from the spec.
 | Tier | Who | Can |
 |---|---|---|
 | Human | Eavesy UI, hotkeys | Everything. The only tier that can approve grants and stop processes outside a session's own tree |
-| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes in its *own* session's tagged tree |
+| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes the core recorded as its own session's (see the ownership rule above) |
 | Browser extension | Your browser, authenticated by native messaging | Register tabs as Sessions, receive delivered Items, capture page content |
 | Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. **No process control, no grants, ever** |
 
@@ -241,8 +241,9 @@ The Mac link is the most exposed surface, so its rules are explicit:
   - `{status: "answered", text}`
   - `{status: "dismissed"}`
   - `{status: "timeout"}`: only after waiting the full timeout.
-  - `{status: "mac_offline"}`: remote only, returned straight away when the
-    Mac link is down, without waiting.
+  - `{status: "mac_offline"}`: for any remote call that needs the Mac,
+    returned straight away when the Mac link is down, without waiting. Local
+    callers never see it.
 - The attention queue de-duplicates by `(session, question)`: identical asks
   share one HUD card, and every waiting caller gets the same answer.
   - A caller that cancels or disconnects is removed from the card. The card
@@ -287,15 +288,15 @@ item ("send this to…").
 
 Just before pasting, the router **checks the target again**: same window or
 tab, same tty, and the input is focused (dictation already does this check
-by AX target today). The check and the paste happen in one step, on the main
-thread, right next to each other. That keeps the window for a race to a few
-milliseconds. That small remaining risk is accepted; the pre-paste check is
-the safeguard.
+by AX target today). The check and the paste run back to back on the main
+thread, which shrinks the race window to a few milliseconds. They aren't
+atomic, though. If focus changes inside that window, the paste can still
+land in the wrong place. That rare case is an accepted risk.
 
 If the target changed or is gone, the Item goes to the **originally chosen**
 session's inbox and to the clipboard, with a notice saying which. If even
 writing to the clipboard fails, the Item still sits in the Inbox, so nothing
-is lost and nothing lands somewhere unexpected.
+is lost.
 
 **Items that come in remotely are never pasted automatically.**
 They land in the Inbox, and you choose where they go.
@@ -322,15 +323,18 @@ command so you can judge it. Every step is logged as an event.
 - **Scopes:**
   - *once*: this command only.
   - *this session*: expires at the **earliest** of SessionEnd, the session's
-    root processes exiting (this covers crashes and agents without hooks),
+    agent process exiting (the long-lived agent process recorded at
+    SessionStart, such as `claude` or `codex`, not short-lived launchers;
+    this covers crashes and agents without hooks),
     or 24 h.
   - *always for this project + agent*: opt-in, shown and revocable in the
     Grants list.
 - **Revoking or expiry** stops future use straight away. A child process
   that's already running keeps the env it started with. macOS gives no way to
   take it back, so the revoke dialog offers **Revoke and stop process**.
-- **Session ends:** session-scoped grants expire, and tagged processes are
-  cleaned up under the usual policy.
+- **Session ends:** session-scoped grants expire, and processes the core
+  recorded as the session's own are cleaned up under the usual policy. A
+  matching tag alone never counts.
 
 **4. The Mac gets heavy.** The monitor emits `machine.pressure` and
 `process.orphaned`. Policy decides between showing a notice and stopping
