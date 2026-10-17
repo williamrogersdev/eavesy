@@ -1,4 +1,5 @@
 mod telemetry;
+mod app_menu;
 mod audio;
 mod base_url;
 mod captions;
@@ -18,6 +19,7 @@ mod cf;
 mod dictation;
 mod make_room;
 mod panel;
+mod permissions;
 mod placement;
 mod recovery;
 mod settings;
@@ -104,6 +106,14 @@ pub fn run() {
             commands::suspend_hotkeys,
             panel::resize_panel,
             updates::install_update,
+            updates::check_for_updates,
+            updates::get_app_info,
+            permissions::request_microphone,
+            permissions::request_speech,
+            permissions::request_screen,
+            permissions::request_accessibility,
+            permissions::request_input_monitoring,
+            permissions::request_notifications,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -139,6 +149,10 @@ pub fn run() {
             }
 
             hud::set_state(&handle, hud::HudState::idle());
+
+            if let Err(e) = app_menu::install(&handle) {
+                telemetry::capture("app_menu.install", &e.to_string());
+            }
 
             if let Err(e) = tray::install(&handle) {
                 telemetry::capture("tray.install", &e.to_string());

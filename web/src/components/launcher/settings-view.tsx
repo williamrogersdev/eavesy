@@ -12,13 +12,19 @@ import {
   setLauncherPosition,
   setLiveCaptions,
   checkPermissions,
+  checkForUpdates,
+  getAppInfo,
+  installUpdate,
   type AccountInfo,
   type LauncherPosition,
+  type PermissionStatus,
   type Permissions,
   type PrivacyPane,
   type Settings,
+  type UpdateStatus,
 } from '@/lib/desktop/bridge';
 import { cn } from '@/lib/utils';
+import type { SetupPermissionKind } from './use-setup-permissions';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -32,6 +38,48 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h3 className="px-1 text-[11px] font-medium text-muted-foreground">{title}</h3>
       <div className="rounded-xl border border-border bg-[var(--lr-hover)] p-3">{children}</div>
     </section>
+  );
+}
+
+function UpdatesCard() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [busy, setBusy] = useState<'check' | 'install' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void getAppInfo().then((info) => { if (info) setStatus(info.update); }).catch(() => {});
+  }, []);
+  const run = (kind: 'check' | 'install') => {
+    setBusy(kind);
+    setError(null);
+    const task = kind === 'check'
+      ? checkForUpdates().then((next) => { if (next) setStatus(next); })
+      : installUpdate();
+    void task
+      .catch((e: unknown) => setError(errMsg(e, kind === 'check' ? 'Could not check for updates.' : 'Could not install the update.')))
+      .finally(() => setBusy(null));
+  };
+  const line = !status ? '' : status.state === 'upToDate'
+    ? `You're up to date (v${status.currentVersion}).`
+    : status.state === 'available'
+      ? `Eavesy ${status.version} is available. You have ${status.currentVersion}.`
+      : status.state === 'error'
+        ? `Couldn't check for updates: ${status.message}`
+        : `Eavesy ${status.currentVersion}`;
+  return (
+    <div className="flex items-center gap-2">
+      <p role="status" className="min-w-0 flex-1 text-[12px] text-foreground">{error ?? line}</p>
+      {status?.state === 'available' ? (
+        <button type="button" disabled={busy !== null} onClick={() => run('install')} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-[12px] text-background hover:opacity-90 disabled:opacity-50">
+          {busy === 'install' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Install &amp; Relaunch
+        </button>
+      ) : (
+        <button type="button" disabled={busy !== null} onClick={() => run('check')} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-[12px] hover:bg-[var(--lr-selected)] disabled:opacity-50">
+          {busy === 'check' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Check for Updates
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -175,10 +223,15 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
+/** Whether macOS has already asked, so Allow would do nothing and only System Settings helps. */
+function answered(status: PermissionStatus | undefined): boolean | undefined {
+  return status === undefined ? undefined : status !== 'notDetermined';
+}
+
 export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
   permissions: Permissions | null;
-  checkingPermission: 'mic' | 'screen' | null;
-  onRequestPermission: (kind: 'mic' | 'screen') => void;
+  checkingPermission: SetupPermissionKind | null;
+  onRequestPermission: (kind: SetupPermissionKind) => void;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
   account: AccountState;
@@ -276,13 +329,49 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
                 onRelaunch={onRelaunch}
               />
               <PermissionRow
+                label="Speech Recognition"
+                optional
+                hint="Live captions and instant dictation paste."
+                settingsHint="Turn on Eavesy under Speech Recognition in System Settings."
+                granted={permissions?.speech}
+                answered={answered(permissions?.status?.speech)}
+                checking={checkingPermission === 'speech'}
+                onRequest={() => onRequestPermission('speech')}
+                onOpenSettings={() => onOpenPrivacy('speech')}
+              />
+              <PermissionRow
                 label="Accessibility"
                 optional
                 hint="Paste what you dictate right where your cursor is."
                 settingsHint="Turn on Eavesy under Accessibility in System Settings."
                 granted={permissions?.accessibility}
-                checking={false}
+                checking={checkingPermission === 'accessibility'}
+                onRequest={() => onRequestPermission('accessibility')}
                 onOpenSettings={() => onOpenPrivacy('accessibility')}
+              />
+              <PermissionRow
+                label="Input Monitoring"
+                optional
+                hint="Use the Fn / Globe key as a shortcut."
+                settingsHint="Turn on Eavesy under Input Monitoring, then reopen Eavesy."
+                granted={permissions?.inputMonitoring}
+                answered={answered(permissions?.status?.inputMonitoring)}
+                checking={checkingPermission === 'inputMonitoring'}
+                onRequest={() => onRequestPermission('inputMonitoring')}
+                onOpenSettings={() => onOpenPrivacy('input_monitoring')}
+                onRelaunch={onRelaunch}
+                relaunchTitle="macOS applies Input Monitoring after Eavesy restarts"
+              />
+              <PermissionRow
+                label="Notifications"
+                optional
+                hint="Sign-in, upload and update alerts."
+                settingsHint="Turn on notifications for Eavesy in System Settings → Notifications."
+                granted={permissions?.notifications}
+                answered={answered(permissions?.status?.notifications)}
+                checking={checkingPermission === 'notifications'}
+                onRequest={() => onRequestPermission('notifications')}
+                onOpenSettings={() => onOpenPrivacy('notifications')}
               />
             </div>
           </Section>
@@ -363,6 +452,12 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           </div>
           {folderStatus ? <p role="status" className="mt-2 text-[11px] text-muted-foreground">{folderStatus}</p> : null}
         </Section>
+
+        {isDesktop() && (
+          <Section title="Updates">
+            <UpdatesCard />
+          </Section>
+        )}
       </div>
     </div>
   );

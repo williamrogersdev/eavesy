@@ -1,5 +1,5 @@
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle,
 };
@@ -36,11 +36,25 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open_item = MenuItem::with_id(app, "open", "Open Eavesy", true, menu_accel(&settings.toggle_hotkey))?;
     let control_item = MenuItem::with_id(app, "show_control", "Show Capture Control", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let updates_item = MenuItem::with_id(app, "check_updates", "Check for Updates…", true, None::<&str>)?;
+    let about_item = MenuItem::with_id(app, "about", "About Eavesy", true, None::<&str>)?;
     let diagnostics_item = MenuItem::with_id(app, "copy_diagnostics", "Copy Diagnostics", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit Eavesy", true, None::<&str>)?;
+    let separator = || PredefinedMenuItem::separator(app);
     Menu::with_items(
         app,
-        &[&record_item, &open_item, &control_item, &settings_item, &diagnostics_item, &quit_item],
+        &[
+            &record_item,
+            &open_item,
+            &control_item,
+            &separator()?,
+            &settings_item,
+            &updates_item,
+            &about_item,
+            &separator()?,
+            &diagnostics_item,
+            &quit_item,
+        ],
     )
 }
 
@@ -62,6 +76,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "open" => hotkeys::show_launcher(app),
             "show_control" => crate::hud::set_hidden_on_main(app, false),
             "settings" => { let _ = crate::commands::show_settings(app.clone()); },
+            "check_updates" => crate::updates::check_interactively(app),
+            "about" => crate::app_menu::show_about(app),
             "copy_diagnostics" => crate::diagnostics::copy(app),
             "quit" => app.exit(0),
             _ => {}

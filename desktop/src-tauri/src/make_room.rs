@@ -51,11 +51,54 @@ fn move_clear_of(app: &AppHandle, other: Rect) {
 }
 
 fn system_settings_frame() -> Option<Rect> {
-    frontmost_window_of(&["System Settings", "System Preferences"])
+    frontmost_window_of(&["System Settings", "System Preferences"], Layer::Normal)
+}
+
+/// Processes that draw macOS privacy (TCC) and permission alerts.
+const SYSTEM_PROMPT_OWNERS: &[&str] = &[
+    "UserNotificationCenter",
+    "universalAccessAuthWarn",
+    "CoreServicesUIAgent",
+    "SecurityAgent",
+    "tccd",
+];
+
+/// The frame of a macOS permission alert on screen, if one can be seen.
+pub fn system_prompt_frame() -> Option<Rect> {
+    frontmost_window_of(SYSTEM_PROMPT_OWNERS, Layer::Any)
+}
+
+/// While the launcher yields to a system prompt, moves it beside the prompt whenever one appears.
+pub fn clear_of_system_prompts(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut last: Option<Rect> = None;
+        for _ in 0..600 {
+            std::thread::sleep(Duration::from_millis(150));
+            if !crate::panel::is_yielding() {
+                return;
+            }
+            let Some(prompt) = system_prompt_frame() else { continue };
+            if last == Some(prompt) {
+                continue;
+            }
+            last = Some(prompt);
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || move_clear_of(&handle, prompt));
+        }
+    });
+}
+
+#[derive(Clone, Copy)]
+enum Layer {
+    /// Ordinary app windows only.
+    Normal,
+    /// Any layer: system alerts float above ordinary windows.
+    Any,
 }
 
 #[cfg(target_os = "macos")]
-fn frontmost_window_of(owners: &[&str]) -> Option<Rect> {
+fn frontmost_window_of(owners: &[&str], layer: Layer) -> Option<Rect> {
     use crate::cf::*;
 
     #[repr(C)]
@@ -82,7 +125,7 @@ fn frontmost_window_of(owners: &[&str]) -> Option<Rect> {
             if !owners.contains(&owner.as_str()) {
                 return None;
             }
-            if cf_i32(CFDictionaryGetValue(window, layer_key.0)) != Some(0) {
+            if matches!(layer, Layer::Normal) && cf_i32(CFDictionaryGetValue(window, layer_key.0)) != Some(0) {
                 return None;
             }
             let mut rect = CGRect::default();
@@ -94,7 +137,7 @@ fn frontmost_window_of(owners: &[&str]) -> Option<Rect> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn frontmost_window_of(_owners: &[&str]) -> Option<Rect> {
+fn frontmost_window_of(_owners: &[&str], _layer: Layer) -> Option<Rect> {
     None
 }
 
@@ -106,7 +149,7 @@ mod tests {
     #[test]
     #[ignore = "needs a window server; run by hand"]
     fn reads_a_real_window_frame() {
-        let frame = frontmost_window_of(&["Claude"]).expect("Claude window on screen");
+        let frame = frontmost_window_of(&["Claude"], Layer::Normal).expect("Claude window on screen");
         tracing::debug!("Claude window: {frame:?}");
         assert!(frame.2 > 100.0 && frame.3 > 100.0);
     }
