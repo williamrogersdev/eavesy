@@ -123,10 +123,14 @@ fn media_path(app: &AppHandle, id: &str) -> Result<(PathBuf, bool), String> {
     Ok((path, image))
 }
 
+/// The file an import stored under its own extension (`image.jpg`, `audio.mp3`…).
 fn imported_media(folder: &std::path::Path) -> Option<PathBuf> {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(folder).ok()?.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
     entries.sort();
-    entries.into_iter().find(|path| path.is_file() && crate::imports::is_media(path))
+    entries.into_iter().find(|path| {
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        matches!(stem, Some("image" | "screenshot" | "audio" | "video")) && path.is_file() && crate::imports::is_media(path)
+    })
 }
 
 #[tauri::command]

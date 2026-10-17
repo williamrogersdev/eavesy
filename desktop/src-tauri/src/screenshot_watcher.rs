@@ -5,13 +5,17 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// macOS writes `.Screenshot …` first and renames it; wait for it to settle.
 const SETTLE: Duration = Duration::from_millis(600);
+/// How often waiting screenshots are looked at again.
+const TICK: Duration = Duration::from_millis(300);
+/// Give up on a file after this long (not a screen capture, or never finished).
+const GIVE_UP: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 pub struct ScreenshotWatcher {
@@ -19,8 +23,8 @@ pub struct ScreenshotWatcher {
 }
 
 /// Where macOS saves screenshots: `defaults read com.apple.screencapture location`,
-/// else ~/Desktop.
-pub fn screenshot_folder() -> PathBuf {
+/// else ~/Desktop. None when neither can be found.
+pub fn screenshot_folder() -> Option<PathBuf> {
     let configured = std::process::Command::new("defaults")
         .args(["read", "com.apple.screencapture", "location"])
         .output()
@@ -32,7 +36,7 @@ pub fn screenshot_folder() -> PathBuf {
     configured
         .filter(|path| path.is_dir())
         .or_else(|| dirs::home_dir().map(|home| home.join("Desktop")))
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .filter(|path| path.is_dir())
 }
 
 fn expand_home(path: &str) -> PathBuf {
@@ -67,7 +71,7 @@ impl ScreenshotWatcher {
         if !enabled {
             return Ok(());
         }
-        let folder = screenshot_folder();
+        let folder = screenshot_folder().ok_or("Couldn't find the folder macOS saves screenshots to.")?;
         let (sender, receiver) = mpsc::channel::<PathBuf>();
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
             let Ok(event) = event else { return };
@@ -92,33 +96,76 @@ impl ScreenshotWatcher {
     }
 }
 
-/// Debounces events and imports each screenshot once (by its original path).
-/// Ends when the watcher (and with it the sender) is dropped.
+struct Waiting {
+    path: PathBuf,
+    since: Instant,
+    /// Size at the last look; imported once it stops changing.
+    size: Option<u64>,
+}
+
+/// What to do with a waiting file on this look.
+#[derive(Debug, PartialEq)]
+enum Verdict {
+    Import,
+    Wait,
+    Drop,
+}
+
+fn judge(age: Duration, size_now: Option<u64>, size_before: Option<u64>, tagged: impl FnOnce() -> bool) -> Verdict {
+    if age < SETTLE {
+        return Verdict::Wait;
+    }
+    let Some(size) = size_now else { return Verdict::Drop };
+    let stable = size > 0 && size_before == Some(size);
+    if stable && tagged() {
+        Verdict::Import
+    } else if age >= GIVE_UP {
+        Verdict::Drop
+    } else {
+        Verdict::Wait
+    }
+}
+
+/// Imports each screenshot once (by its original path), after it has settled:
+/// its size stopped changing and macOS tagged it as a screen capture (which
+/// can lag the file). Files are looked at every TICK even while events keep
+/// arriving. Ends when the watcher (and with it the sender) is dropped.
 fn run(app: AppHandle, receiver: mpsc::Receiver<PathBuf>) {
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    let mut pending: Vec<PathBuf> = Vec::new();
+    let mut waiting: Vec<Waiting> = Vec::new();
+    let mut last_look = Instant::now();
     loop {
-        match receiver.recv_timeout(SETTLE) {
+        match receiver.recv_timeout(TICK) {
             Ok(path) => {
-                if !seen.contains(&path) && !pending.contains(&path) {
-                    pending.push(path);
+                if !seen.contains(&path) && !waiting.iter().any(|item| item.path == path) {
+                    waiting.push(Waiting { path, since: Instant::now(), size: None });
                 }
-                continue;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
-        let mut added = false;
-        for path in pending.drain(..) {
-            if !path.is_file() || !is_screen_capture(&path) {
-                continue;
-            }
-            seen.insert(path.clone());
-            match crate::imports::import_path(&app, &path, true) {
-                Ok(_) => added = true,
-                Err(error) => crate::telemetry::capture("screenshots.import", &error),
-            }
+        if waiting.is_empty() || last_look.elapsed() < TICK {
+            continue;
         }
+        last_look = Instant::now();
+        let mut added = false;
+        waiting.retain_mut(|item| {
+            let size_now = std::fs::metadata(&item.path).ok().filter(|meta| meta.is_file()).map(|meta| meta.len());
+            let verdict = judge(item.since.elapsed(), size_now, item.size, || is_screen_capture(&item.path));
+            item.size = size_now;
+            match verdict {
+                Verdict::Wait => true,
+                Verdict::Drop => false,
+                Verdict::Import => {
+                    seen.insert(item.path.clone());
+                    match crate::imports::import_path(&app, &item.path, true) {
+                        Ok(_) => added = true,
+                        Err(error) => crate::telemetry::capture("screenshots.import", &error),
+                    }
+                    false
+                }
+            }
+        });
         if added {
             let _ = app.emit("recordings:updated", ());
         }
@@ -133,20 +180,26 @@ pub fn start(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn get_screenshot_folder() -> String {
-    let folder = screenshot_folder();
-    match dirs::home_dir().and_then(|home| folder.strip_prefix(&home).ok().map(Path::to_path_buf)) {
+pub fn get_screenshot_folder() -> Option<String> {
+    let folder = screenshot_folder()?;
+    Some(match dirs::home_dir().and_then(|home| folder.strip_prefix(&home).ok().map(Path::to_path_buf)) {
         Some(rest) => format!("~/{}", rest.display()),
         None => folder.display().to_string(),
-    }
+    })
 }
 
 #[tauri::command]
 pub fn set_auto_import_screenshots(app: AppHandle, enabled: bool) -> Result<(), String> {
+    // Start (or stop) first, so the saved setting never claims a watcher that failed.
+    let watcher = app.state::<ScreenshotWatcher>();
+    watcher.apply(&app, enabled)?;
     let mut config = crate::settings::load(&app);
     config.auto_import_screenshots = enabled;
-    crate::settings::save(&app, &config)?;
-    app.state::<ScreenshotWatcher>().apply(&app, enabled)
+    if let Err(error) = crate::settings::save(&app, &config) {
+        let _ = watcher.apply(&app, !enabled);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -159,6 +212,19 @@ mod tests {
         assert!(!candidate(Path::new("/Users/a/Desktop/.Screenshot 2026-10-17 at 9.41.12.png")));
         assert!(!candidate(Path::new("/Users/a/Desktop/Screen Recording 2026.mov")));
         assert!(!candidate(Path::new("/Users/a/Desktop/notes.txt")));
+    }
+
+    #[test]
+    fn screenshots_wait_until_settled_tagged_and_finished() {
+        let late = SETTLE + TICK;
+        assert_eq!(judge(Duration::from_millis(100), Some(10), Some(10), || true), Verdict::Wait);
+        assert_eq!(judge(late, Some(10), Some(10), || true), Verdict::Import);
+        // Still being written, or not tagged yet: look again.
+        assert_eq!(judge(late, Some(20), Some(10), || true), Verdict::Wait);
+        assert_eq!(judge(late, Some(10), Some(10), || false), Verdict::Wait);
+        // Gone, or never became a screen capture.
+        assert_eq!(judge(late, None, Some(10), || true), Verdict::Drop);
+        assert_eq!(judge(GIVE_UP, Some(10), Some(10), || false), Verdict::Drop);
     }
 
     #[test]

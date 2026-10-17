@@ -395,25 +395,28 @@ export function Launcher() {
   }, [runTask]);
 
   // Native drag-drop (real file paths): the composer becomes the drop target.
+  // Subscribed once; the handler reads the latest callbacks through a ref.
+  const onDrop = useRef<(paths: string[]) => void>(() => {});
+  useEffect(() => {
+    onDrop.current = (paths) => runTask(async () => landed(await importFiles(paths)), 'Couldn’t add those files');
+  }, [landed, runTask]);
   useEffect(() => {
     if (!desktop) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    runTask(async () => {
-      const off = await onDragDrop((event) => {
-        if (event.type === 'enter' || event.type === 'over') setDragging(true);
-        else if (event.type === 'leave') setDragging(false);
-        else {
-          setDragging(false);
-          setView('list');
-          runTask(async () => landed(await importFiles(event.paths)), 'Couldn’t add those files');
-        }
-      });
-      if (disposed) off();
-      else unlisten = off;
-    }, 'Couldn’t listen for dropped files');
+    void onDragDrop((event) => {
+      if (event.type === 'enter' || event.type === 'over') setDragging(true);
+      else if (event.type === 'leave') setDragging(false);
+      else {
+        setDragging(false);
+        setView('list');
+        onDrop.current(event.paths);
+      }
+    })
+      .then((off) => { if (disposed) off(); else unlisten = off; })
+      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t listen for dropped files'), 5000, 'warn'));
     return () => { disposed = true; unlisten?.(); };
-  }, [desktop, landed, runTask]);
+  }, [desktop, flash]);
 
 
   useEffect(() => {
@@ -483,7 +486,8 @@ export function Launcher() {
       if (e.defaultPrevented || e.isComposing) return;
       const target = e.target as HTMLElement | null;
       const typing = !!target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
-      const inMenu = !!target?.closest('[role="menu"]');
+      // A menu handles its own keys, even when focus has left it for the body.
+      const inMenu = !!target?.closest('[role="menu"]') || !!document.querySelector('[role="menu"][data-state="open"]');
       if (inMenu) return;
       if (typing) {
         if (e.key === 'Escape' && target === searchRef.current && !searchRef.current.value) {

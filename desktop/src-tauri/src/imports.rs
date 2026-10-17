@@ -233,16 +233,16 @@ pub async fn paste_to_composer(app: AppHandle) -> Result<PasteOutcome, String> {
         }
         return Ok(PasteOutcome::Saved { count: result.ids.len(), skipped: result.skipped });
     }
+    // Text first: rich text from browsers and documents often carries an image too.
     let clipboard = app.clipboard();
+    if let Some(text) = clipboard.read_text().ok().filter(|text| !text.trim().is_empty()) {
+        return Ok(PasteOutcome::Text { text });
+    }
     if clipboard.read_image().ok().is_some_and(|image| image.width() > 0 && image.height() > 0) {
         crate::visual::paste_clip(app).await?;
         return Ok(PasteOutcome::Saved { count: 1, skipped: Vec::new() });
     }
-    let text = clipboard.read_text().map_err(|_| "The clipboard is empty.".to_string())?;
-    if text.trim().is_empty() {
-        return Err("The clipboard is empty.".into());
-    }
-    Ok(PasteOutcome::Text { text })
+    Err("The clipboard is empty.".into())
 }
 
 /// File URLs on the general pasteboard (files copied in Finder). Main thread only.
@@ -282,8 +282,9 @@ fn clipboard_file_paths() -> Vec<PathBuf> {
 #[cfg(not(target_os = "macos"))]
 fn clipboard_file_paths() -> Vec<PathBuf> { Vec::new() }
 
-/// Moves a capture's folder to the Trash and removes it from the history.
-/// The folder must sit inside the recordings folder.
+/// Removes a capture from the history and moves its folder to the Trash.
+/// The folder must sit inside the recordings folder. A folder that is already
+/// gone is fine; if the Trash refuses, the capture is put back.
 #[tauri::command]
 pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
     let recording = store::load_all(&app)
@@ -294,7 +295,8 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
     if recording.status == "recording" || live {
         return Err("Stop the recording before deleting it.".into());
     }
-    if let Some(folder) = recording.folder_path.as_deref().map(PathBuf::from).filter(|folder| folder.exists()) {
+    let folder = recording.folder_path.as_deref().map(PathBuf::from).filter(|folder| folder.exists());
+    if let Some(folder) = &folder {
         let root = fs_writer::recordings_root(&app)?;
         let inside = folder
             .canonicalize()
@@ -304,12 +306,20 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
         if !inside {
             return Err("That capture's folder is outside your Eavesy folder, so it was left alone.".into());
         }
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.run_on_main_thread(move || { let _ = sender.send(move_to_trash(&folder)); })
-            .map_err(|error| error.to_string())?;
-        receiver.await.map_err(|error| error.to_string())??;
     }
     store::remove(&app, &id)?;
+    if let Some(folder) = folder {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let trashed = match app.run_on_main_thread(move || { let _ = sender.send(move_to_trash(&folder)); }) {
+            Ok(()) => receiver.await.map_err(|error| error.to_string()).and_then(|result| result),
+            Err(error) => Err(error.to_string()),
+        };
+        if let Err(error) = trashed {
+            let _ = store::append(&app, recording);
+            let _ = app.emit("recordings:updated", ());
+            return Err(error);
+        }
+    }
     let _ = app.emit("recordings:updated", ());
     Ok(())
 }
