@@ -94,7 +94,7 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
     std::thread::spawn(move || {
         let Some(credential) = settings::device_credential(&app) else { return };
         match run(&audio, false, &credential) {
-            Ok(text) => crate::dictation::deliver(&app, &id, &text),
+            Ok(text) => crate::dictation::deliver_dictation(&app, &id, &text),
             Err(error) => crate::telemetry::capture("dictation.whisper_paste", &error),
         }
     });

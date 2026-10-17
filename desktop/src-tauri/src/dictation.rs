@@ -78,6 +78,93 @@ pub fn deliver_at_stop(app: &AppHandle, session_id: &str, text: &str) {
     deliver_then(app, session_id, text, true);
 }
 
+/// Hides the launcher if it is open and not pinned, so the paste lands in the
+/// app under it. Waits for focus to move back only when it actually hid.
+fn get_launcher_out_of_the_way(app: &AppHandle) {
+    if crate::panel::is_pinned() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let visible = crate::panel::is_visible(&handle);
+        if visible {
+            let _ = crate::panel::hide(&handle);
+        }
+        let _ = tx.send(visible);
+    });
+    if rx.recv_timeout(Duration::from_millis(500)).unwrap_or(false) {
+        std::thread::sleep(Duration::from_millis(80));
+    }
+}
+
+/// How a dictation's text reached the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    Pasted,
+    /// On the clipboard: Eavesy may not paste (no Accessibility permission).
+    CopiedNoAccessibility,
+    /// On the clipboard: the cursor is not in a text box any more.
+    CopiedNoTextBox,
+}
+
+impl Delivery {
+    /// What the HUD says, or None to show the words themselves.
+    pub fn notice(self) -> Option<&'static str> {
+        match self {
+            Delivery::Pasted => None,
+            Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
+            Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
+        }
+    }
+}
+
+fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> Delivery {
+    match (trusted, target) {
+        (false, _) => Delivery::CopiedNoAccessibility,
+        (true, Some(target)) if focused == Some(target) => Delivery::Pasted,
+        _ => Delivery::CopiedNoTextBox,
+    }
+}
+
+/// Delivers a dictation the moment it has text: pasted at the cursor when it
+/// is still in the text box it was in, otherwise put on the clipboard. Never
+/// opens the launcher, and the HUD says which happened. Called once per
+/// dictation: it takes the paste target, so the cloud transcript that follows
+/// does not paste a second time.
+pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
+    let target = take_pending(session_id);
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    let session_id = session_id.to_string();
+    std::thread::spawn(move || {
+        get_launcher_out_of_the_way(&app);
+        let mut how = delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()));
+        if how == Delivery::Pasted && crate::commands::paste_text(&app, &text).is_err() {
+            how = Delivery::CopiedNoAccessibility;
+        }
+        if how != Delivery::Pasted {
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            if let Err(error) = app.clipboard().write_text(text.clone()) {
+                eprintln!("dictation: could not copy the text: {error}");
+            }
+        }
+        let current = crate::hud::current();
+        if current.phase != crate::hud::Phase::Recording || current.session_id.as_deref() == Some(session_id.as_str()) {
+            crate::hud::set_state(&app, crate::hud::HudState {
+                phase: crate::hud::Phase::Done,
+                session_id: Some(session_id),
+                mode: Some("audio".to_string()),
+                started_at_ms: None,
+                message: Some(how.notice().map_or(text, str::to_string)),
+            });
+        }
+    });
+}
+
 fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
     let Some(target) = take_pending(session_id) else { return };
     if text.trim().is_empty() {
@@ -86,18 +173,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     let app = app.clone();
     let text = text.trim().to_string();
     std::thread::spawn(move || {
-        if !crate::panel::is_pinned() {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let handle = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if crate::panel::is_visible(&handle) {
-                    let _ = crate::panel::hide(&handle);
-                }
-                let _ = tx.send(());
-            });
-            let _ = rx.recv_timeout(Duration::from_secs(1));
-            std::thread::sleep(Duration::from_millis(150));
-        }
+        get_launcher_out_of_the_way(&app);
         if focused_text_target() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
             return;
         }
@@ -114,6 +190,55 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
             crate::commands::show_launcher(app);
         }
     });
+}
+
+fn accessibility_trusted() -> bool {
+    #[cfg(target_os = "macos")]
+    return unsafe { ax::AXIsProcessTrusted() };
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
+/// Presses ⌘V in whatever app is frontmost, straight through Quartz events:
+/// no AppleScript process to launch, so the paste lands in milliseconds.
+/// Needs the Accessibility permission, like any synthetic key press.
+#[cfg(target_os = "macos")]
+pub fn press_paste() -> Result<(), String> {
+    use crate::cf::CFTypeRef;
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceCreate(state: i32) -> CFTypeRef;
+        fn CGEventCreateKeyboardEvent(source: CFTypeRef, key: u16, down: bool) -> CFTypeRef;
+        fn CGEventSetFlags(event: CFTypeRef, flags: u64);
+        fn CGEventPost(tap: u32, event: CFTypeRef);
+    }
+    const HID_SYSTEM_STATE: i32 = 1;
+    const KEY_V: u16 = 9;
+    const COMMAND: u64 = 1 << 20;
+    const HID_EVENT_TAP: u32 = 0;
+    if !accessibility_trusted() {
+        return Err("Accessibility permission is off".to_string());
+    }
+    unsafe {
+        let source = crate::cf::Owned(CGEventSourceCreate(HID_SYSTEM_STATE));
+        for down in [true, false] {
+            let event = CGEventCreateKeyboardEvent(source.0, KEY_V, down);
+            if event.is_null() {
+                return Err("could not create the paste key press".to_string());
+            }
+            let event = crate::cf::Owned(event);
+            // Exactly ⌘: modifiers still held from the hotkey must not turn
+            // this into ⌘⇧V or similar.
+            CGEventSetFlags(event.0, COMMAND);
+            CGEventPost(HID_EVENT_TAP, event.0);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn press_paste() -> Result<(), String> {
+    Err("pasting is only supported on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -205,6 +330,18 @@ mod tests {
             *PENDING.lock().unwrap() = Some(("c".into(), old, Target { pid: 42 }));
             assert_eq!(take_pending("c"), None);
         }
+    }
+
+    #[test]
+    fn a_dictation_pastes_only_into_the_box_it_was_in_and_otherwise_copies() {
+        let box_a = Some(Target { pid: 7 });
+        assert_eq!(delivery(true, box_a, box_a), Delivery::Pasted);
+        assert_eq!(delivery(true, box_a, Some(Target { pid: 8 })), Delivery::CopiedNoTextBox);
+        assert_eq!(delivery(true, None, None), Delivery::CopiedNoTextBox);
+        // Without Accessibility there is no target and no way to paste.
+        assert_eq!(delivery(false, None, None), Delivery::CopiedNoAccessibility);
+        assert_eq!(Delivery::CopiedNoAccessibility.notice(), Some("Copied — allow Accessibility to paste automatically"));
+        assert_eq!(Delivery::Pasted.notice(), None);
     }
 
     #[test]

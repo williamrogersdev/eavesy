@@ -2,9 +2,18 @@ import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
 import { Camera, History, Mic, Square, Video, X } from 'lucide-react';
 import { includeComputerAudio } from '@/lib/desktop/capture-prefs';
 import { errMsg } from '@/lib/desktop/errors';
-import { captionTail, trackLabel, type LiveCaption } from '@/lib/desktop/live-captions';
+import {
+  addCaption,
+  captionTail,
+  EMPTY_RUNNING,
+  runningText,
+  trackLabel,
+  type LiveCaption,
+  type RunningTranscript,
+} from '@/lib/desktop/live-captions';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { createRoot } from 'react-dom/client';
+import { HudTranscript } from './hud-transcript';
 import './styles.css';
 
 type Phase = 'idle' | 'saved' | 'recording' | 'transcribing' | 'done' | 'failed';
@@ -68,6 +77,10 @@ function Hud() {
   const [shortcut, setShortcut] = useState('');
   // The newest caption of each track, so the mic and the call never replace each other.
   const [captions, setCaptions] = useState<Record<string, LiveCaption>>({});
+  // Everything heard in the current recording, for the transcript under the bar.
+  const [running, setRunning] = useState<RunningTranscript>(EMPTY_RUNNING);
+  // Whether the window has grown to make room for that transcript.
+  const [expanded, setExpanded] = useState(false);
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -104,6 +117,7 @@ function Hud() {
           const sameSession = Object.values(current).every((c) => c.sessionId === caption.sessionId);
           return { ...(sameSession ? current : {}), [caption.track]: caption };
         });
+        setRunning((current) => addCaption(current, caption));
       });
       if (disposed) off?.(); else unlisten = off;
     })().catch(() => {});
@@ -153,14 +167,26 @@ function Hud() {
     finally { setStarting(false); }
   };
 
+  const transcript = hudTranscript(state, running);
+  const showTranscript = transcript.text !== '' || transcript.notice !== null;
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke('set_hud_expanded', { expanded: showTranscript })
+      .then(() => { if (!cancelled) setExpanded(showTranscript); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showTranscript]);
+
   useEffect(() => {
     if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
     const sessionId = state.sessionId;
+    // Long enough to read the words that were just pasted.
     const timeout = window.setTimeout(() => {
       void invoke('dismiss_hud', { sessionId }).catch(() => {});
-    }, 3500);
+    }, showTranscript ? 6000 : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, state?.mode]);
+  }, [state?.phase, state?.sessionId, state?.mode, showTranscript]);
 
   useEffect(() => {
     if (state?.phase !== 'recording') return;
@@ -171,7 +197,7 @@ function Hud() {
   if (!state) return null;
 
   const recording = state.phase === 'recording';
-  const liveCaptions = recording
+  const liveCaptions = recording && !expanded
     ? ['mic', 'system']
         .map((track) => captions[track])
         .filter((c): c is LiveCaption => !!c && c.sessionId === state.sessionId && !!c.text.trim())
@@ -181,7 +207,7 @@ function Hud() {
   const busy = starting || recording || state.phase === 'transcribing';
 
   const pressSurface = (e: MouseEvent) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, .ctl-transcript')) return;
     const origin = { x: e.screenX, y: e.screenY };
     const cleanup = () => {
       window.removeEventListener('mousemove', move);
@@ -202,6 +228,7 @@ function Hud() {
 
   return (
     <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope eavesy-control">
+      <div className="ctl-bar">
       <div className="ctl-grid">
         <button type="button" onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : act('show_launcher')} aria-label={recording ? 'Stop recording' : 'Open Eavesy'} title={recording ? 'Stop recording' : 'Open Eavesy'} className={`ctl-mark ${recording ? 'animate-recording-pulse' : ''}`}>
           {recording ? <Square className="h-2.5 w-2.5" fill="currentColor" /> : <span className="ctl-dot" />}
@@ -226,8 +253,35 @@ function Hud() {
           {closable && <button type="button" onClick={() => act('close_hud')} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-close"><X className="h-3.5 w-3.5" /></button>}
         </div>
       </div>
+      </div>
+      {expanded && showTranscript && <HudTranscript text={transcript.text} notice={transcript.notice} />}
     </div>
   );
+}
+
+/**
+ * What the transcript under the bar shows. While recording: what has been
+ * heard. After: the words that were pasted or stored, or the notice about
+ * where they went ("Copied — …") over what was heard. A failure shows why.
+ */
+function hudTranscript(state: HudState | null, running: RunningTranscript): { text: string; notice: string | null } {
+  if (!state) return { text: '', notice: null };
+  const heard = state.sessionId && running.sessionId === state.sessionId ? runningText(running) : '';
+  const message = state.message?.trim() || null;
+  switch (state.phase) {
+    case 'recording':
+    case 'saved':
+      return { text: heard, notice: null };
+    case 'done': {
+      // The desktop sends either the words themselves or a short "Copied — …" notice.
+      const isNotice = !!message && message.startsWith('Copied');
+      return isNotice ? { text: heard, notice: message } : { text: message ?? heard, notice: null };
+    }
+    case 'failed':
+      return { text: '', notice: message };
+    default:
+      return { text: '', notice: null };
+  }
 }
 
 const root = document.getElementById('root');

@@ -53,6 +53,51 @@ pub fn set_state(app: &AppHandle, state: HudState) {
 
 const DEFAULT_SIZE: (f64, f64) = (272.0, 40.0);
 
+/// How much taller the HUD gets to show the running transcript under its bar.
+const TRANSCRIPT_HEIGHT: f64 = 72.0;
+
+/// Extra height the HUD has now for its transcript, and how far it moved up
+/// to make room at the bottom of the screen. Never saved as the user's frame.
+static EXPANDED: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
+
+fn expanded() -> Option<(f64, f64)> {
+    *EXPANDED.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Grows the HUD to show the transcript under its bar, or shrinks it back.
+/// The HUD asks for it once it has words to show.
+pub fn set_expanded_on_main(app: &AppHandle, expand: bool) {
+    let Some(window) = app.get_webview_window("hud") else { return };
+    let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let position = position.to_logical::<f64>(scale);
+    let size = size.to_logical::<f64>(scale);
+    let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
+    match (expand, *state) {
+        (true, None) => {
+            let bottom = crate::placement::work_area_at(app, position.x + size.width / 2.0, position.y + 1.0)
+                .map_or(f64::MAX, |area| area.1 + area.3);
+            let lift = (position.y + size.height + TRANSCRIPT_HEIGHT - bottom).max(0.0);
+            *state = Some((TRANSCRIPT_HEIGHT, lift));
+            drop(state);
+            let _ = window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT));
+            if lift > 0.0 {
+                let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y - lift));
+            }
+        }
+        (false, Some((extra, lift))) => {
+            *state = None;
+            drop(state);
+            let _ = window.set_size(tauri::LogicalSize::new(size.width, (size.height - extra).max(DEFAULT_SIZE.1)));
+            if lift > 0.0 {
+                let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y + lift));
+            }
+        }
+        _ => {}
+    }
+}
+
 fn is_active(phase: &Phase) -> bool {
     matches!(phase, Phase::Recording | Phase::Transcribing)
 }
@@ -121,6 +166,8 @@ fn show_unchecked(app: &AppHandle) {
         return;
     }
     if !window.is_visible().unwrap_or(false) {
+        // Shown afresh at the saved frame: any transcript room is gone.
+        *EXPANDED.lock().unwrap_or_else(|error| error.into_inner()) = None;
         match prefs.frame.filter(|frame| on_screen(app, frame)) {
             Some(frame) => {
                 let _ = window.set_size(tauri::LogicalSize::new(frame.width, frame.height));
@@ -182,7 +229,9 @@ fn save_frame(app: &AppHandle) {
     };
     let position = position.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
-    let frame = HudFrame { x: position.x, y: position.y, width: size.width, height: size.height };
+    // While the transcript shows, save the frame the HUD returns to.
+    let (extra, lift) = expanded().unwrap_or((0.0, 0.0));
+    let frame = HudFrame { x: position.x, y: position.y + lift, width: size.width, height: size.height - extra };
     if prefs(app).frame != Some(frame) {
         update_prefs(app, |config| config.hud_frame = Some(frame));
     }

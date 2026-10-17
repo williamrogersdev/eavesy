@@ -23,8 +23,37 @@ pub struct Captures(pub Mutex<HashMap<String, Session>>, pub AtomicUsize);
 
 impl Captures {
     pub fn is_busy(&self) -> bool {
+        self.is_starting() || self.0.lock().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+
+    /// Whether a capture is on its way up but not running yet.
+    pub fn is_starting(&self) -> bool {
         self.1.load(Ordering::SeqCst) > 0
-            || self.0.lock().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+
+    /// Claims the right to start a capture. Only one runs at a time: a second
+    /// hotkey press, the HUD and the launcher can all ask at once, and two
+    /// engines would fight over the mic and leave one recording orphaned.
+    fn claim_start(&self) -> Result<Starting<'_>, String> {
+        let running = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !running.is_empty() || self.1.fetch_add(1, Ordering::SeqCst) > 0 {
+            if running.is_empty() {
+                self.1.fetch_sub(1, Ordering::SeqCst);
+            }
+            return Err(ALREADY_CAPTURING.to_string());
+        }
+        Ok(Starting(&self.1))
+    }
+}
+
+const ALREADY_CAPTURING: &str = "A recording is already running. Stop it before starting another.";
+
+/// A start in progress; it ends when this is dropped, whether or not it worked.
+struct Starting<'a>(&'a AtomicUsize);
+
+impl Drop for Starting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -325,6 +354,7 @@ fn spawn_capture(
     context_blurb: Option<&str>,
     dictation: bool,
 ) -> Result<CaptureSession, String> {
+    let _starting = state.claim_start()?;
     let bin = capture_bin(app)?;
     let id = uuid::Uuid::new_v4().to_string();
     let started_at_ms = now_ms();
@@ -408,8 +438,6 @@ fn spawn_capture(
     let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
     let reader = BufReader::new(stdout);
 
-    state.1.fetch_add(1, Ordering::SeqCst);
-
     let reader = match await_ready(reader, START_TIMEOUT) {
         Ok(r) => r,
         Err(msg) => {
@@ -419,7 +447,6 @@ fn spawn_capture(
             };
             let _ = child.kill();
             let _ = child.wait();
-            state.1.fetch_sub(1, Ordering::SeqCst);
             discard();
             return Err(msg);
         }
@@ -438,7 +465,6 @@ fn spawn_capture(
         ) {
             let _ = child.kill();
             let _ = child.wait();
-            state.1.fetch_sub(1, Ordering::SeqCst);
             discard();
             return Err(error);
         }
@@ -464,7 +490,6 @@ fn spawn_capture(
             dictation,
         },
     );
-    state.1.fetch_sub(1, Ordering::SeqCst);
 
     // A voice note pastes back into the box it started in. Meetings and screen
     // recordings run too long for that: they target the box focused at stop.
@@ -732,6 +757,9 @@ fn stop_capture_inner(
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
 
+    // Dictation pastes now, while the engine is still sealing its files.
+    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions);
+
     let result = match await_done(events, STOP_TIMEOUT) {
         Ok(done) => finish_stopped_capture(
             &app,
@@ -745,6 +773,7 @@ fn stop_capture_inner(
             reserved_audio_folder,
             &captions,
             dictation,
+            pasted_early,
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -795,6 +824,7 @@ fn finish_stopped_capture(
     reserved_audio_folder: Option<PathBuf>,
     captions: &Mutex<CaptionLog>,
     dictation: bool,
+    pasted_early: bool,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -837,8 +867,11 @@ fn finish_stopped_capture(
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
     store::append(&app, rec.clone())?;
-    // Only a recording that was stored gets a paste target.
-    crate::dictation::rearm_at_stop(&rec.id);
+    // Only a recording that was stored gets a paste target. Dictation chose
+    // its target as it stopped, and may have pasted already.
+    if !dictation {
+        crate::dictation::rearm_at_stop(&rec.id);
+    }
     let armed = crate::dictation::is_armed(&rec.id);
     // Plain text for the paste: speaker labels belong in the transcript, not
     // in whatever box the user is typing in.
@@ -846,20 +879,23 @@ fn finish_stopped_capture(
         .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
-    crate::hud::set_state(
-        &app,
-        crate::hud::HudState {
-            phase: if is_screen {
-                crate::hud::Phase::Done
-            } else {
-                crate::hud::Phase::Saved
+    // A dictation that pasted already shows its words in the HUD.
+    if !pasted_early {
+        crate::hud::set_state(
+            &app,
+            crate::hud::HudState {
+                phase: if is_screen {
+                    crate::hud::Phase::Done
+                } else {
+                    crate::hud::Phase::Saved
+                },
+                session_id: Some(rec.id.clone()),
+                mode: Some(if is_screen { "video" } else { "audio" }.to_string()),
+                started_at_ms: None,
+                message: None,
             },
-            session_id: Some(rec.id.clone()),
-            mode: Some(if is_screen { "video" } else { "audio" }.to_string()),
-            started_at_ms: None,
-            message: None,
-        },
-    );
+        );
+    }
 
     if is_screen {
         crate::transcribe::spawn(
@@ -881,7 +917,7 @@ fn finish_stopped_capture(
             archive_bytes,
         )?;
         crate::sync::wake();
-        if dictation {
+        if dictation && !pasted_early {
             paste_dictation(&app, &rec.id, audio_dest, captions);
         }
     }
@@ -896,8 +932,9 @@ fn finish_stopped_capture(
             crate::dictation::deliver_at_stop(&app, &rec.id, text);
         }
     }
-    if pasting {
-        // The text goes back into the app the user was in; don't take focus from it.
+    if pasting || dictation || source == "mic" {
+        // The text goes back into the app the user was in, and a voice note
+        // lives in the HUD: don't take focus from the app the user is in.
         return Ok(rec);
     }
 
@@ -913,6 +950,33 @@ fn pastes_at_stop(dictation: bool, armed: bool, on_device_text: bool) -> bool {
     armed && (dictation || on_device_text)
 }
 
+/// How long a stopping dictation waits for the recognizer's last finals
+/// before it pastes what it has (finals plus the words still in progress).
+const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
+
+/// Waits briefly for the recognizer to settle, then pastes the on-device text
+/// straight away, before the engine has sealed its files or anything is
+/// stored. Returns false when there is nothing trustworthy to paste yet; the
+/// clip then goes to Whisper once it is saved.
+fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>) -> bool {
+    let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
+    while std::time::Instant::now() < deadline && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done() {
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    crate::dictation::rearm_at_stop(session_id);
+    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste();
+    match decision {
+        Paste::OnDevice(text) => {
+            crate::dictation::deliver_dictation(app, session_id, &text);
+            true
+        }
+        Paste::Whisper(reason) => {
+            eprintln!("dictation: no quick paste ({reason}); waiting for the saved clip");
+            false
+        }
+    }
+}
+
 /// Pastes a dictation the moment it stops: the on-device text when it can be
 /// trusted, otherwise a quick cloud Whisper pass on the clip. Either way the
 /// recording is already queued to upload, and the cloud transcript stays its
@@ -920,19 +984,7 @@ fn pastes_at_stop(dictation: bool, armed: bool, on_device_text: bool) -> bool {
 fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: &Mutex<CaptionLog>) {
     let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
     match decision {
-        Paste::OnDevice(text) => {
-            crate::dictation::deliver_at_stop(app, session_id, &text);
-            crate::hud::set_state(
-                app,
-                crate::hud::HudState {
-                    phase: crate::hud::Phase::Done,
-                    session_id: Some(session_id.to_string()),
-                    mode: None,
-                    started_at_ms: None,
-                    message: Some(text),
-                },
-            );
-        }
+        Paste::OnDevice(text) => crate::dictation::deliver_dictation(app, session_id, &text),
         Paste::Whisper(reason) => {
             eprintln!("dictation: using Whisper for the paste ({reason})");
             crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio);
