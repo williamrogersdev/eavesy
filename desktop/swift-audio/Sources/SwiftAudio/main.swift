@@ -1,6 +1,7 @@
 import Foundation
 
 setvbuf(stdout, nil, _IONBF, 0)
+StartClock.mark()
 
 if CommandLine.arguments.contains("--preflight") {
     Preflight.run(arguments: CommandLine.arguments)
@@ -10,7 +11,24 @@ if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 <
     Screenshot.run(outPath: CommandLine.arguments[index + 1])
 }
 
-let args = Arguments.parse(CommandLine.arguments)
+let stdinLines = LineReader(handle: .standardInput)
+
+// A standby is launched ahead of the hotkey and waits, microphone closed, for
+// the arguments a cold launch would have had.
+var micWarmup: MicWarmup?
+let argv: [String]
+if CommandLine.arguments.contains("--standby") {
+    micWarmup = MicWarmup.prepare()
+    FileHandle.standardError.write(Data(
+        "standby: ready in \(StartClock.ms()) ms (mic session prepared: \(micWarmup != nil))\n".utf8))
+    guard let start = Standby.awaitStart(stdinLines) else { exit(0) }
+    StartClock.mark()
+    argv = [CommandLine.arguments[0]] + start
+} else {
+    argv = CommandLine.arguments
+}
+
+let args = Arguments.parse(argv)
 
 let captions = Dictionary(
     uniqueKeysWithValues: args.captions.map { track in
@@ -30,7 +48,9 @@ case .audio:
         source: args.source,
         segmentDir: args.segmentDir,
         segmentSec: args.segmentSec,
-        captions: captions)
+        captions: captions,
+        micWarmup: micWarmup)
+    micWarmup = nil
 case .screen:
     recorder = ScreenRecorder(outPath: args.outPath, includeMic: args.includeMic)
 }
@@ -71,26 +91,10 @@ installSignalHandler(SIGINT)
 installSignalHandler(SIGTERM)
 
 let stdinThread = Thread {
-    let handle = FileHandle.standardInput
-    var buffer = Data()
-    while true {
-        let chunk = handle.availableData
-        if chunk.isEmpty {
-            gracefulStop()
-            break
-        }
-        buffer.append(chunk)
-        while let nl = buffer.firstIndex(of: 0x0A) {
-            let lineData = buffer.subdata(in: buffer.startIndex..<nl)
-            buffer.removeSubrange(buffer.startIndex...nl)
-            let line = String(decoding: lineData, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if line == "stop" {
-                gracefulStop()
-                return
-            }
-        }
+    while let line = stdinLines.next() {
+        if line == "stop" { break }
     }
+    gracefulStop()
 }
 stdinThread.stackSize = 1 << 20
 stdinThread.start()

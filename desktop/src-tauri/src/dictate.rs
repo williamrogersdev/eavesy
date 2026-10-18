@@ -119,7 +119,7 @@ fn pressed(app: &AppHandle, can_hold: bool) {
             }
             OnPress::Start => {
                 *press() = Press { started_by: can_hold.then_some(at), stop_when_ready: false };
-                start(&app);
+                start(&app, at);
             }
         }
     });
@@ -149,7 +149,7 @@ pub fn toggle(app: &AppHandle) {
     pressed(app, false);
 }
 
-fn start(app: &AppHandle) {
+fn start(app: &AppHandle, pressed_at: Instant) {
     // Say so at once: the engine takes a moment to open the mic.
     crate::hud::set_state(app, crate::hud::HudState {
         phase: crate::hud::Phase::Recording,
@@ -159,7 +159,14 @@ fn start(app: &AppHandle) {
         message: None,
         notice: None,
     });
-    let result = crate::audio::start_capture(app.clone(), app.state::<Captures>(), Some("mic".to_string()), None, Some(true));
+    let result = crate::audio::start_audio_capture(
+        app,
+        &app.state::<Captures>(),
+        Some("mic".to_string()),
+        None,
+        Some(true),
+        pressed_at,
+    );
     match result {
         Ok(session) => {
             let stop_now = std::mem::take(&mut press().stop_when_ready);
