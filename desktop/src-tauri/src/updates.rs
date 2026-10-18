@@ -42,6 +42,8 @@ pub struct AppInfo {
 static LAST: Mutex<Option<(UpdateState, i64)>> = Mutex::new(None);
 /// Set while an install runs, so a second click doesn't download it twice.
 static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The version installed this run, waiting for a restart to take effect.
+static INSTALLED: Mutex<Option<String>> = Mutex::new(None);
 
 fn status(app: &AppHandle) -> UpdateStatus {
     let last = LAST.lock().ok().and_then(|last| last.clone());
@@ -54,7 +56,8 @@ fn status(app: &AppHandle) -> UpdateStatus {
 
 fn record(app: &AppHandle, state: UpdateState) -> UpdateStatus {
     if let Ok(mut last) = LAST.lock() {
-        let state = keep_installed(last.as_ref().map(|(prev, _)| prev), state);
+        let installed = INSTALLED.lock().ok().and_then(|v| v.clone());
+        let state = keep_installed(installed.as_deref(), state);
         *last = Some((state, chrono::Utc::now().timestamp_millis()));
     }
     let status = status(app);
@@ -64,10 +67,10 @@ fn record(app: &AppHandle, state: UpdateState) -> UpdateStatus {
 
 /// Until Eavesy restarts, the running build still sees the installed version as
 /// "available"; keep saying it's installed so the UI doesn't offer it again.
-fn keep_installed(prev: Option<&UpdateState>, next: UpdateState) -> UpdateState {
-    match (prev, &next) {
-        (Some(UpdateState::Installed { version: done }), UpdateState::Available { version, .. }) if done == version => {
-            UpdateState::Installed { version: done.clone() }
+fn keep_installed(installed: Option<&str>, next: UpdateState) -> UpdateState {
+    match (installed, &next) {
+        (Some(done), UpdateState::Available { version, .. }) if done == version => {
+            UpdateState::Installed { version: done.to_string() }
         }
         _ => next,
     }
@@ -209,6 +212,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     INSTALLING.store(false, Ordering::SeqCst);
     let version = result?;
 
+    if let Ok(mut installed) = INSTALLED.lock() {
+        *installed = Some(version.clone());
+    }
     if app.state::<crate::audio::Captures>().is_busy() {
         record(&app, UpdateState::Installed { version });
         return Ok(());
@@ -254,9 +260,12 @@ mod tests {
     fn an_installed_update_is_not_offered_again() {
         let installed = UpdateState::Installed { version: "0.3.0".into() };
         let same = UpdateState::Available { version: "0.3.0".into(), notes: None };
-        assert_eq!(keep_installed(Some(&installed), same), installed);
+        assert_eq!(keep_installed(Some("0.3.0"), same.clone()), installed);
+        assert_eq!(keep_installed(None, same.clone()), same);
         let newer = UpdateState::Available { version: "0.3.1".into(), notes: None };
-        assert_eq!(keep_installed(Some(&installed), newer.clone()), newer);
+        assert_eq!(keep_installed(Some("0.3.0"), newer.clone()), newer);
+        let failed = UpdateState::Error { message: "offline".into() };
+        assert_eq!(keep_installed(Some("0.3.0"), failed.clone()), failed);
     }
 
     #[test]
