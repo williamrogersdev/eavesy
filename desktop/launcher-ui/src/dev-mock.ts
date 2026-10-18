@@ -148,6 +148,6 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),
     get_settings: () => Promise.resolve({ ...settings }),
     fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
-    suspend_hotkeys: () => Promise.resolve(null),
+    suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
   };
 }

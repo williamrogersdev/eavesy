@@ -469,10 +469,13 @@ export async function openKeyboardSettings(inputMonitoring = false): Promise<voi
   await invoke('open_keyboard_settings', { inputMonitoring });
 }
 
-/** Turns every shortcut off (or back on). Resolves once the Mac app has done it. */
-export async function suspendHotkeys(suspended: boolean): Promise<void> {
-  if (!isDesktop()) return;
-  await invoke('suspend_hotkeys', { suspended });
+/**
+ * Turns every shortcut off (or back on). Resolves once the Mac app has done it,
+ * with whether a lone fn tap will be reported (`onFnTap`) while they're off.
+ */
+export async function suspendHotkeys(suspended: boolean): Promise<boolean> {
+  if (!isDesktop()) return false;
+  return (await invoke<boolean | null>('suspend_hotkeys', { suspended })) === true;
 }
 
 export async function setPanelPinned(pinned: boolean): Promise<void> {

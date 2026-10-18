@@ -47,6 +47,8 @@ export type Shortcuts = {
   defaults: HotkeyBindings;
   fn: FnStatus | null;
   recording: HotkeyAction | null;
+  /** While recording: whether the Mac app will report a lone fn tap. */
+  fnArmed: boolean;
   startRecording: (action: HotkeyAction) => Promise<void>;
   stopRecording: () => Promise<void>;
   reload: () => Promise<void>;
@@ -65,6 +67,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
   const [defaults, setDefaults] = useState<HotkeyBindings>(FALLBACK_DEFAULTS);
   const [fn, setFn] = useState<FnStatus | null>(null);
   const [recording, setRecording] = useState<HotkeyAction | null>(null);
+  const [fnArmed, setFnArmed] = useState(false);
   const recordingRef = useRef<HotkeyAction | null>(null);
   const bindingsRef = useRef<HotkeyBindings | null>(null);
   const fnRef = useRef<FnStatus | null>(null);
@@ -110,7 +113,8 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
   const startRecording = useCallback(async (action: HotkeyAction) => {
     recordingRef.current = action;
     setRecording(action);
-    await suspendHotkeys(true).catch(() => {});
+    setFnArmed(false);
+    setFnArmed(await suspendHotkeys(true).catch(() => false));
   }, []);
 
   const stopRecording = useCallback(async () => {
@@ -122,7 +126,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   const changed = useCallback(() => changedRef.current?.(), []);
 
-  return { bindings, defaults, fn, recording, startRecording, stopRecording, reload, recheckFn, changed };
+  return { bindings, defaults, fn, recording, fnArmed, startRecording, stopRecording, reload, recheckFn, changed };
 }
 
 type Notice =
@@ -210,6 +214,8 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
   const proposeRef = useRef(propose);
   const cancelRef = useRef(cancel);
   const stopRef = useRef(stopRecording);
+  // Set while recording: takes the shortcut, once. "Use fn" goes through it too.
+  const captureRef = useRef<(accelerator: string) => void>(() => {});
   useEffect(() => {
     proposeRef.current = propose;
     cancelRef.current = cancel;
@@ -225,12 +231,10 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       if (consumed) return;
       consumed = true;
       setHeld(NOTHING_HELD);
-      try {
-        await stopRef.current();
-      } finally {
-        await proposeRef.current(accelerator);
-      }
+      await stopRef.current().catch(() => {});
+      await proposeRef.current(accelerator);
     };
+    captureRef.current = (accelerator) => { void capture(accelerator); };
     // The webview sees fn only on some Macs; the Mac app reports a tap too
     // when Input Monitoring is on.
     let fnDown = false;
@@ -269,11 +273,13 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       window.removeEventListener('keyup', onKeyUp, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
       unlisten?.();
+      captureRef.current = () => {};
     };
   }, [recording]);
 
   const liveCaps = heldCaps(held);
-  const fnHearable = !desktop || shortcuts.fn?.input_monitoring !== false;
+  // Only promise "tap fn" when the Mac app confirmed it's listening for one.
+  const fnHearable = !desktop || shortcuts.fnArmed;
   const other: HotkeyAction = action === 'toggle' ? 'dictation' : 'toggle';
 
   return (
@@ -322,7 +328,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
         <p className="ev-shortcut-note">
           Press a shortcut. Esc to cancel.{' '}
           {/* Without Input Monitoring a tap of fn can't be heard, so offer it as a choice. */}
-          <button type="button" className="ev-link" onClick={() => { void stopRecording().then(() => propose(FN)); }}>Use fn</button>
+          <button type="button" className="ev-link" onClick={() => captureRef.current(FN)}>Use fn</button>
         </p>
       ) : null}
       {!desktop ? <p className="ev-shortcut-note">Change shortcuts in the Mac app.</p> : null}

@@ -528,6 +528,7 @@ pub fn show_notice(app: AppHandle, title: String, body: String) {
 }
 
 #[tauri::command]
-pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<(), HotkeyError> {
+/// Returns whether a lone fn tap will be reported while suspended.
+pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyError> {
     hotkeys::suspend(&app, suspended)
 }

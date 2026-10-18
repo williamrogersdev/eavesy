@@ -287,33 +287,48 @@ fn show_launcher_on_main(app: &AppHandle) {
 /// While Settings records a shortcut, every shortcut is off so pressing the
 /// current one doesn't fire it, and a lone fn tap is reported as
 /// `EVENT_FN_TAP` instead. Resuming registers the saved shortcuts again.
-pub fn suspend(app: &AppHandle, suspended: bool) -> Result<(), HotkeyError> {
+pub fn suspend(app: &AppHandle, suspended: bool) -> Result<bool, HotkeyError> {
     let mut is_suspended = registry();
     unregister_everything(app);
     *is_suspended = suspended;
     if suspended {
+        // Whether a lone fn tap can be heard while recording, so Settings
+        // only says "or tap fn" when it's true.
         #[cfg(target_os = "macos")]
-        if let Err(error) = crate::fn_key::capture(app) {
-            // Not fatal: recording still works with the keyboard, and the UI
-            // knows from fn_status whether a tap can be heard.
-            if error != HotkeyError::InputMonitoring { crate::telemetry::capture("hotkeys.fn_capture", &error.to_string()); }
-        }
-        return Ok(());
+        return Ok(match crate::fn_key::capture(app) {
+            Ok(()) => true,
+            Err(error) => {
+                if error != HotkeyError::InputMonitoring { crate::telemetry::capture("hotkeys.fn_capture", &error.to_string()); }
+                false
+            }
+        });
+        #[cfg(not(target_os = "macos"))]
+        return Ok(false);
     }
+    // The startup notice lists every failure; on resume the first is enough
+    // for the caller, and each row re-reads its own state.
     let failures = register_all(app, &settings::load(app));
-    failures.into_iter().next().map_or(Ok(()), |(_, _, e)| Err(e))
+    failures.into_iter().next().map_or(Ok(false), |(_, _, e)| Err(e))
 }
 
 /// Gives `action` a new shortcut ("" unbinds it), trading with the other
 /// action when `swap` is set. Either both shortcuts end up registered and
 /// saved, or nothing changes. Also ends a suspension.
 pub fn set_hotkey(app: &AppHandle, action: Action, accelerator: &str, swap: bool) -> Result<(), HotkeyError> {
-    let mut suspended = registry();
-    let mut settings = settings::load(app);
-    let current = Bindings::of(&settings);
-    let next = plan(&current, action, accelerator, swap)?;
-    apply(app, &mut settings, &current, &next)?;
-    *suspended = false;
+    {
+        let mut suspended = registry();
+        let mut settings = settings::load(app);
+        let current = Bindings::of(&settings);
+        let next = plan(&current, action, accelerator, swap)?;
+        apply(app, &mut settings, &current, &next)?;
+        *suspended = false;
+    }
+    // Choosing fn is when to ask for Input Monitoring: only for that choice,
+    // only once it's saved, and outside the registry lock.
+    #[cfg(target_os = "macos")]
+    if accelerator == FN && !crate::fn_key::input_monitoring_granted() {
+        crate::permissions::request_input_monitoring_inner(app);
+    }
     Ok(())
 }
 
@@ -332,11 +347,6 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
     let failures = register_bindings(app, next);
     // fn without Input Monitoring is still saved: it starts working once
     // Eavesy relaunches with the permission, and Settings shows how to get there.
-    // Choosing fn is when to ask for Input Monitoring (not every launch).
-    #[cfg(target_os = "macos")]
-    if failures.iter().any(|(_, _, e)| *e == HotkeyError::InputMonitoring) {
-        crate::permissions::request_input_monitoring_inner(app);
-    }
     let blocking = failures.into_iter().find(|(_, _, e)| *e != HotkeyError::InputMonitoring);
     if let Some((_, _, error)) = blocking {
         unregister_everything(app);
