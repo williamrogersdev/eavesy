@@ -55,11 +55,18 @@ if the PR:
 - changes `.github/workflows/deploy.yml`, `macos-release.yml`, wrangler
   bindings/routes, secrets handling, or auth (`web/src/start.ts`, Clerk config,
   MCP OAuth/token scopes);
-- would cut a desktop release or tag (`v*`) or touch the Homebrew cask version;
 - needs `--admin` or any bypass of branch protection to merge — never use it;
 - is still red after three real fix attempts on the same failure.
 
 When you stop, say which condition hit, what's left, and the PR link.
+
+## Desktop releases
+
+Agents may cut Mac app releases when the user asks, following
+`docs/RELEASING.md`: bump the version and CHANGELOG in a PR, then once it is
+merged, tag that merge commit `desktop-vX.Y.Z` and push only that tag
+(`git push origin desktop-vX.Y.Z`, never `--tags`). Then see the workflow
+through: the publish approval and the Homebrew cask PR.
 
 ## Hard rules
 

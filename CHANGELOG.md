@@ -6,14 +6,57 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-18 - desktop
+
+### Added
+
+- Mac app: a new look. Warm light and dark themes, a small mascot that shows
+  when Eavesy is listening, a new app and menu bar icon, and a design system in
+  [desktop/DESIGN.md](desktop/DESIGN.md).
+  ([#76](https://github.com/williamrogersdev/eavesy/pull/76),
+  [#77](https://github.com/williamrogersdev/eavesy/pull/77))
+- Mac app: a redesigned panel. One row of Talk, Meeting, Screenshot and Video
+  buttons; search, filters and day groups in History; an account menu; delete
+  for captures; and a composer at the bottom for typed notes, pastes and
+  dropped files. macOS screenshots can be added to History automatically.
+  ([#77](https://github.com/williamrogersdev/eavesy/pull/77))
+- Mac app: guided first-run setup that covers every permission (Microphone,
+  Speech Recognition, Accessibility, Input Monitoring, Notifications, Screen
+  Recording) and the shortcuts, and can be run again from Settings.
+  ([#78](https://github.com/williamrogersdev/eavesy/pull/78),
+  [#79](https://github.com/williamrogersdev/eavesy/pull/79),
+  [#81](https://github.com/williamrogersdev/eavesy/pull/81))
+- Mac app: a real app menu with About and Check for Updates…, also in the menu
+  bar icon's menu. ([#73](https://github.com/williamrogersdev/eavesy/pull/73))
+- Mac app: a running transcript under the recording bar while you dictate.
+  ([#74](https://github.com/williamrogersdev/eavesy/pull/74))
+
 ### Changed
 
+- Mac app: dictation pastes at your cursor as soon as you stop, and runs only
+  in the recording bar instead of switching the panel to a recording screen.
+  Without Accessibility, the text is copied to the clipboard and Eavesy says so.
+  ([#74](https://github.com/williamrogersdev/eavesy/pull/74))
+- Mac app: shortcut settings can record, clear, reset and swap each shortcut,
+  explain conflicts inline, and guide Fn/Globe setup.
+  ([#80](https://github.com/williamrogersdev/eavesy/pull/80))
+- Mac app: final transcripts arrive sooner, since the transcript no longer waits
+  for the summary and the app checks for results more often after you stop.
+  ([#72](https://github.com/williamrogersdev/eavesy/pull/72))
 - Mac app: a recording has a transcript the moment you stop it. The on-device
   captions taken while recording fill History right away, and the cloud
   transcript replaces them when it is ready. Every recording (voice note,
   meeting, screen) now pastes its transcript as plain text into the text box
   your cursor is in when you stop.
   ([#63](https://github.com/williamrogersdev/eavesy/pull/63))
+
+### Fixed
+
+- Mac app: an empty cloud result no longer wipes the words heard on the Mac,
+  which showed as "No speech detected", and quiet or short dictations are no
+  longer dropped. ([#72](https://github.com/williamrogersdev/eavesy/pull/72))
+- Mac app: the panel moves out of the way of macOS permission prompts so
+  "Allow" can be clicked. ([#73](https://github.com/williamrogersdev/eavesy/pull/73))
 
 ## [0.2.0] - 2026-10-15 - desktop
 
