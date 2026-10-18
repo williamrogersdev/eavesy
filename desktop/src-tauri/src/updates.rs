@@ -205,6 +205,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     if app.state::<crate::audio::Captures>().is_busy() {
         return Err("Stop the current recording before updating.".into());
     }
+    if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
+        return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
+    }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
     }
