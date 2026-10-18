@@ -14,6 +14,7 @@ function UpdateButton({ runTask }: { runTask: RunTask }) {
   const [installing, setInstalling] = useState(false);
   if (status?.state !== 'available') return null;
   const install = () => {
+    if (installing) return;
     setInstalling(true);
     runTask(
       () => installUpdate().finally(() => setInstalling(false)),
@@ -26,6 +27,7 @@ function UpdateButton({ runTask }: { runTask: RunTask }) {
       variant="ghost"
       icon={ArrowDownCircle}
       loading={installing}
+      disabled={installing}
       onClick={install}
       title={`Eavesy ${status.version} is ready (you have ${status.currentVersion}). Install and relaunch.`}
     >

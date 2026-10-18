@@ -17,6 +17,8 @@ pub enum UpdateState {
     Unknown,
     UpToDate,
     Available { version: String, notes: Option<String> },
+    /// Downloaded and installed; it takes effect the next time Eavesy starts.
+    Installed { version: String },
     Error { message: String },
 }
 
@@ -38,6 +40,8 @@ pub struct AppInfo {
 }
 
 static LAST: Mutex<Option<(UpdateState, i64)>> = Mutex::new(None);
+/// Set while an install runs, so a second click doesn't download it twice.
+static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn status(app: &AppHandle) -> UpdateStatus {
     let last = LAST.lock().ok().and_then(|last| last.clone());
@@ -50,11 +54,23 @@ fn status(app: &AppHandle) -> UpdateStatus {
 
 fn record(app: &AppHandle, state: UpdateState) -> UpdateStatus {
     if let Ok(mut last) = LAST.lock() {
+        let state = keep_installed(last.as_ref().map(|(prev, _)| prev), state);
         *last = Some((state, chrono::Utc::now().timestamp_millis()));
     }
     let status = status(app);
     let _ = app.emit(EVENT_UPDATE_STATUS, &status);
     status
+}
+
+/// Until Eavesy restarts, the running build still sees the installed version as
+/// "available"; keep saying it's installed so the UI doesn't offer it again.
+fn keep_installed(prev: Option<&UpdateState>, next: UpdateState) -> UpdateState {
+    match (prev, &next) {
+        (Some(UpdateState::Installed { version: done }), UpdateState::Available { version, .. }) if done == version => {
+            UpdateState::Installed { version: done.clone() }
+        }
+        _ => next,
+    }
 }
 
 async fn check(app: &AppHandle) -> UpdateState {
@@ -114,6 +130,10 @@ pub fn dialog_text(status: &UpdateStatus) -> (String, String) {
         UpdateState::UpToDate | UpdateState::Unknown => {
             ("You're up to date".into(), format!("Eavesy {current} is the newest version."))
         }
+        UpdateState::Installed { version } => (
+            format!("Eavesy {version} is installed"),
+            format!("It takes effect the next time Eavesy starts. You're running {current} until then."),
+        ),
         UpdateState::Available { version, .. } => (
             format!("Eavesy {version} is available"),
             format!("You have {current}. Install it now? Eavesy relaunches when it's done."),
@@ -173,28 +193,41 @@ fn install_and_report(app: AppHandle) {
     });
 }
 
+/// Downloads and installs the update, then relaunches. If a recording started
+/// meanwhile, it keeps the install, reports `Installed` and skips the relaunch.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
     use tauri::Manager;
     if app.state::<crate::audio::Captures>().is_busy() {
         return Err("Stop the current recording before updating.".into());
     }
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return Err("The update is already installing.".into());
+    }
+    let result = download_and_install(&app).await;
+    INSTALLING.store(false, Ordering::SeqCst);
+    let version = result?;
+
+    if app.state::<crate::audio::Captures>().is_busy() {
+        record(&app, UpdateState::Installed { version });
+        return Ok(());
+    }
+    app.restart();
+}
+
+async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
         .await
         .map_err(|e| e.to_string())?
         .ok_or("Eavesy is already up to date")?;
-
     update
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
-
-    if app.state::<crate::audio::Captures>().is_busy() {
-        return Err("Update installed. It takes effect after this recording, when Eavesy restarts.".into());
-    }
-    app.restart();
+    Ok(update.version)
 }
 
 #[cfg(test)]
@@ -212,6 +245,18 @@ mod tests {
         assert_eq!(title, "Eavesy 0.3.0 is available");
         assert!(body.contains("0.2.0"));
         assert!(dialog_text(&status(UpdateState::Error { message: "offline".into() })).1.contains("offline"));
+        let (title, body) = dialog_text(&status(UpdateState::Installed { version: "0.3.0".into() }));
+        assert_eq!(title, "Eavesy 0.3.0 is installed");
+        assert!(body.contains("next time Eavesy starts"));
+    }
+
+    #[test]
+    fn an_installed_update_is_not_offered_again() {
+        let installed = UpdateState::Installed { version: "0.3.0".into() };
+        let same = UpdateState::Available { version: "0.3.0".into(), notes: None };
+        assert_eq!(keep_installed(Some(&installed), same), installed);
+        let newer = UpdateState::Available { version: "0.3.1".into(), notes: None };
+        assert_eq!(keep_installed(Some(&installed), newer.clone()), newer);
     }
 
     #[test]

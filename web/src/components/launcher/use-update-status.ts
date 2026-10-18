@@ -11,11 +11,13 @@ export function useUpdateStatus(): UpdateStatus | null {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   useEffect(() => {
     let alive = true;
+    let fromEvent = false;
     let stop: (() => void) | undefined;
+    // An event is always newer than the snapshot, so the snapshot never overwrites one.
     void getAppInfo()
-      .then((info) => { if (alive && info) setStatus(info.update); })
+      .then((info) => { if (alive && info && !fromEvent) setStatus(info.update); })
       .catch(() => {});
-    void onUpdateStatus((next) => { if (alive) setStatus(next); })
+    void onUpdateStatus((next) => { fromEvent = true; if (alive) setStatus(next); })
       .then((unlisten) => { if (alive) stop = unlisten; else unlisten(); })
       .catch(() => {});
     return () => { alive = false; stop?.(); };
