@@ -404,23 +404,72 @@ export async function completeSetup(): Promise<void> {
   await invoke('complete_setup');
 }
 
-export async function setHotkey(
-  action: 'toggle' | 'dictation',
-  accelerator: string,
-): Promise<void> {
-  if (!isDesktop()) return;
-  await invoke('set_hotkey', { action, accelerator });
+export type HotkeyAction = 'toggle' | 'dictation';
+/** Both shortcuts; "" means unbound, "Fn" the fn / 🌐 key on its own. */
+export type HotkeyBindings = Record<HotkeyAction, string>;
+/** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
+export type HotkeyError =
+  | { kind: 'needsModifier' }
+  | { kind: 'taken'; by: HotkeyAction | 'other' }
+  | { kind: 'inputMonitoring' }
+  | { kind: 'invalid'; message: string };
+/** A shortcut that works but that macOS or most apps already use. */
+export type HotkeyConflict = { kind: 'system'; name: string } | { kind: 'common'; name: string };
+export type GlobeAction = 'do_nothing' | 'input_source' | 'emoji' | 'dictation' | 'unknown';
+export interface FnStatus {
+  input_monitoring: boolean;
+  globe_action: GlobeAction;
 }
 
-export async function hotkeyConflict(accelerator: string): Promise<{ title: string; detail: string } | null> {
-  if (!isDesktop()) return null;
-  return invoke('hotkey_conflict', { accelerator });
+export function isHotkeyError(error: unknown): error is HotkeyError {
+  return !!error && typeof error === 'object' && 'kind' in error && typeof error.kind === 'string';
 }
+
+/** Rejects with a `HotkeyError`. With `swap`, trades shortcuts with the other action. */
+export async function setHotkey(action: HotkeyAction, accelerator: string, swap = false): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('set_hotkey', { action, accelerator, swap });
+}
+
+/** Rejects with a `HotkeyError` for the modifier rule or the other action's shortcut. */
+export async function checkHotkey(action: HotkeyAction, accelerator: string): Promise<HotkeyConflict | null> {
+  if (!isDesktop()) return null;
+  return invoke<HotkeyConflict | null>('check_hotkey', { action, accelerator });
+}
+
+export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
+  if (!isDesktop()) return { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+  return invoke<HotkeyBindings>('get_hotkey_defaults');
+}
+
+export async function resetHotkey(action: HotkeyAction, swap = false): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('reset_hotkey', { action, swap });
+}
+
+export async function resetAllHotkeys(): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('reset_all_hotkeys');
+}
+
+export async function fnStatus(): Promise<FnStatus | null> {
+  if (!isDesktop()) return null;
+  return invoke<FnStatus>('fn_status').catch(() => null);
+}
+
+/** A lone fn tap while shortcuts are suspended for recording one. */
+export async function onFnTap(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<unknown>('hotkeys:fn-tap', () => cb());
+}
+
 export async function openKeyboardSettings(inputMonitoring = false): Promise<void> {
   if (!isDesktop()) return;
   await invoke('open_keyboard_settings', { inputMonitoring });
 }
 
+/** Turns every shortcut off (or back on). Resolves once the Mac app has done it. */
 export async function suspendHotkeys(suspended: boolean): Promise<void> {
   if (!isDesktop()) return;
   await invoke('suspend_hotkeys', { suspended });

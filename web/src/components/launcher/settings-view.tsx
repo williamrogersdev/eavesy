@@ -3,7 +3,7 @@
 import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
-import { HotkeyRecorder } from '@/components/launcher/hotkey-recorder';
+import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { PermissionChecklist } from '@/components/launcher/permission-checklist';
 import {
   chooseRecordingsFolder,
@@ -212,7 +212,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
@@ -251,8 +251,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   useEffect(() => {
     void getSettings()
       .then(setSettings)
-      .catch(() => setSettings(null))
-      .finally(() => setLoaded(true));
+      .catch(() => setSettings(null));
   }, []);
 
   const pickPosition = (position: LauncherPosition) => {
@@ -326,16 +325,11 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
         </Section>
 
-        <Section title="Shortcuts">
-          {!loaded ? (
-            <p className="ev-set-hint">Loading…</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <HotkeyRecorder onSaved={onShortcutsChanged} action="toggle" initial={settings?.toggle_hotkey ?? 'Cmd+Shift+Space'} label="Open Eavesy" />
-              <HotkeyRecorder onSaved={onShortcutsChanged} action="dictation" initial={settings?.dictation_hotkey ?? 'Cmd+Shift+D'} label="Start dictation" />
-            </div>
-          )}
-        </Section>
+        <Card title="Shortcuts">
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
+          {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
+        </Card>
 
         <Section title="Recordings folder">
           <div className="flex items-center gap-2">

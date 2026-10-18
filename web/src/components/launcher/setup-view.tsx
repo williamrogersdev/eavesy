@@ -1,25 +1,14 @@
 'use client';
 
-import { Check, Keyboard } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import type { AccountInfo, Permissions, PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
+import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 
 const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Done'] as const;
-
-/** Key caps for an accelerator from `prettyAccel` ("Fn" → fn, "⌘⇧Space" → ⌘ ⇧ Space). */
-function talkKeys(accel: string): string {
-  return usesFnKey(accel) ? 'fn' : accel;
-}
-
-/** How the Talk shortcut works. fn is a tap today; other shortcuts are tap or hold (dictate.rs). */
-function talkHint(accel: string): string {
-  return usesFnKey(accel)
-    ? 'Tap fn and talk. Tap it again to paste where your cursor is.'
-    : 'Hold to talk and let go to paste, or tap to start and stop.';
-}
 
 export function SetupView({
   paired,
@@ -35,8 +24,7 @@ export function SetupView({
   onRequest,
   onOpenPrivacy,
   onRelaunch,
-  onOpenKeyboardSettings,
-  onChangeShortcuts,
+  onShortcutsChanged,
   onFinish,
 }: {
   paired: boolean;
@@ -53,8 +41,8 @@ export function SetupView({
   onRequest: (kind: SetupPermissionKind) => void;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
-  onOpenKeyboardSettings: () => void;
-  onChangeShortcuts: () => void;
+  /** A shortcut was changed on the Shortcuts step. */
+  onShortcutsChanged: () => void;
   onFinish: () => void;
 }) {
   const [step, setStep] = useState(0);
@@ -66,6 +54,7 @@ export function SetupView({
   const micOn = permissions?.mic === true;
   const pasteOn = permissions?.accessibility === true;
   const talk = dictationHotkey || '⌘⇧D';
+  const shortcuts = useShortcuts(onShortcutsChanged);
 
   // Signing in finishes in the browser; when it does, move on by ourselves.
   const [wasPaired, setWasPaired] = useState(paired);
@@ -180,22 +169,11 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Your shortcuts</h2>
         <p className="ev-onb-lead">They work from any app, even when this panel is closed.</p>
+        {/* Click a shortcut to change it; fn setup steps show under the row that uses it. */}
         <div className="ev-card">
-          <ShortcutLine label="Talk" hint={talkHint(talk)} keys={talkKeys(talk)} />
-          <ShortcutLine label="Open Eavesy" hint="Shows this panel with everything you've captured." keys={talkKeys(toggleHotkey)} />
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
         </div>
-        <Button variant="quiet" size="sm" icon={Keyboard} className="ev-onb-change" onClick={onChangeShortcuts}>
-          Change in Settings
-        </Button>
-        {fnInUse && (
-          <div className="ev-onb-tip">
-            <p>
-              If <Kbd keys="fn" /> opens the emoji picker, set “Press 🌐 key to” → “Do Nothing” in Keyboard settings.
-              {permissions?.inputMonitoring === false && ' fn also needs Input Monitoring, one step back.'}
-            </p>
-            <Button variant="outline" size="sm" onClick={onOpenKeyboardSettings}>Open Keyboard settings</Button>
-          </div>
-        )}
       </>
     );
     footer = <>{back}{next()}</>;
@@ -256,18 +234,6 @@ export function SetupView({
         {body}
       </div>
       <div className="ev-onb-foot">{footer}</div>
-    </div>
-  );
-}
-
-function ShortcutLine({ label, hint, keys }: { label: string; hint: string; keys: string }) {
-  return (
-    <div className="ev-shortcut">
-      <div className="min-w-0">
-        <div className="ev-perm-title">{label}</div>
-        <p className="ev-perm-hint">{hint}</p>
-      </div>
-      <Kbd keys={keys} size="md" />
     </div>
   );
 }

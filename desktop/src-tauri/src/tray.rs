@@ -15,11 +15,13 @@ static WANT_RECORDING: AtomicBool = AtomicBool::new(false);
 /// Whether the tray actually shows the recording glyph (red porch light).
 static SHOWING_RECORDING: AtomicBool = AtomicBool::new(false);
 
+/// No accelerator for fn or an unbound ("") shortcut.
 fn menu_accel(accelerator: &str) -> Option<String> {
-    (accelerator != "Fn" && crate::hotkeys::parse_accelerator(accelerator).is_ok()).then(|| accelerator.to_string())
+    (accelerator != crate::hotkeys::FN && crate::hotkeys::parse_accelerator(accelerator).is_ok()).then(|| accelerator.to_string())
 }
 
-fn glyphs(accelerator: &str) -> String {
+pub(crate) fn glyphs(accelerator: &str) -> String {
+    if accelerator == crate::hotkeys::FN { return "fn".into(); }
     accelerator
         .split('+')
         .map(|part| match part.trim().to_ascii_lowercase().as_str() {
@@ -34,6 +36,7 @@ fn glyphs(accelerator: &str) -> String {
 }
 
 fn tooltip(settings: &crate::settings::Settings) -> String {
+    if settings.dictation_hotkey.is_empty() { return "Eavesy".into(); }
     format!("Eavesy · {} to record", glyphs(&settings.dictation_hotkey))
 }
 
@@ -153,8 +156,9 @@ mod tests {
     fn shortcuts_render_as_glyphs_and_fn_is_not_a_menu_accelerator() {
         assert_eq!(glyphs("Cmd+Shift+D"), "⌘⇧D");
         assert_eq!(glyphs("Cmd+Shift+Space"), "⌘⇧Space");
-        assert_eq!(glyphs("Fn"), "Fn");
+        assert_eq!(glyphs("Fn"), "fn");
         assert!(menu_accel("Cmd+Shift+D").is_some());
         assert!(menu_accel("Fn").is_none());
+        assert!(menu_accel("").is_none());
     }
 }

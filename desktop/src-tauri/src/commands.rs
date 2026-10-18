@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 
-use crate::hotkeys::{self, Action};
+use crate::hotkeys::{self, Action, HotkeyError};
 use crate::panel;
 use crate::settings::{self, Settings};
 use crate::store;
@@ -187,12 +187,58 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
     settings::save(&app, &config)
 }
 
+/// Gives `action` ("toggle" or "dictation") a shortcut; "" leaves it unbound.
+/// With `swap`, takes the other action's shortcut and gives it this one's.
 #[tauri::command]
-pub fn set_hotkey(app: AppHandle, action: String, accelerator: String) -> Result<(), String> {
+pub fn set_hotkey(app: AppHandle, action: String, accelerator: String, swap: Option<bool>) -> Result<(), HotkeyError> {
     let action = Action::parse(&action)?;
-    hotkeys::set_hotkey(&app, action, &accelerator)?;
+    let result = hotkeys::set_hotkey(&app, action, &accelerator, swap.unwrap_or(false));
     crate::tray::refresh(&app);
-    Ok(())
+    result
+}
+
+#[tauri::command]
+pub fn get_hotkey_defaults() -> hotkeys::Bindings {
+    hotkeys::Bindings::defaults()
+}
+
+#[tauri::command]
+pub fn reset_hotkey(app: AppHandle, action: String, swap: Option<bool>) -> Result<(), HotkeyError> {
+    let action = Action::parse(&action)?;
+    let result = hotkeys::set_hotkey(&app, action, action.default_accelerator(), swap.unwrap_or(false));
+    crate::tray::refresh(&app);
+    result
+}
+
+#[tauri::command]
+pub fn reset_all_hotkeys(app: AppHandle) -> Result<(), HotkeyError> {
+    let result = hotkeys::reset_all(&app);
+    crate::tray::refresh(&app);
+    result
+}
+
+#[derive(Serialize)]
+pub struct FnStatus {
+    input_monitoring: bool,
+    globe_action: &'static str,
+}
+
+/// What still stands between the fn key and an Eavesy shortcut.
+#[tauri::command(async)]
+pub fn fn_status() -> FnStatus {
+    #[cfg(target_os = "macos")]
+    {
+        let globe = match crate::fn_key::GlobeAction::read() {
+            crate::fn_key::GlobeAction::DoNothing => "do_nothing",
+            crate::fn_key::GlobeAction::InputSource => "input_source",
+            crate::fn_key::GlobeAction::Emoji => "emoji",
+            crate::fn_key::GlobeAction::Dictation => "dictation",
+            crate::fn_key::GlobeAction::Unknown => "unknown",
+        };
+        FnStatus { input_monitoring: crate::fn_key::input_monitoring_granted(), globe_action: globe }
+    }
+    #[cfg(not(target_os = "macos"))]
+    FnStatus { input_monitoring: false, globe_action: "unknown" }
 }
 
 #[tauri::command]
@@ -391,9 +437,14 @@ pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingDto>, String> {
     Ok(out)
 }
 
+/// Checks a shortcut before saving it: the modifier rule, the other action,
+/// then macOS and common app shortcuts.
 #[tauri::command]
-pub async fn hotkey_conflict(accelerator: String) -> Option<crate::shortcut_conflicts::Conflict> {
-    crate::shortcut_conflicts::check(&accelerator)
+pub async fn check_hotkey(app: AppHandle, action: String, accelerator: String) -> Result<Option<crate::shortcut_conflicts::Conflict>, HotkeyError> {
+    let action = Action::parse(&action)?;
+    let settings = settings::load(&app);
+    let current = hotkeys::Bindings { toggle: settings.toggle_hotkey, dictation: settings.dictation_hotkey };
+    crate::shortcut_conflicts::check(&current, action, &accelerator)
 }
 
 #[tauri::command]
@@ -476,6 +527,6 @@ pub fn show_notice(app: AppHandle, title: String, body: String) {
 }
 
 #[tauri::command]
-pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<(), String> {
+pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<(), HotkeyError> {
     hotkeys::suspend(&app, suspended)
 }

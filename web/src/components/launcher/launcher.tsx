@@ -8,7 +8,6 @@ import {
   getSetupStatus,
   hidePanel,
   relaunchApp,
-  openKeyboardSettings,
   isDesktop,
   onLauncherOpened,
   onLauncherSettings,
@@ -628,6 +627,14 @@ export function Launcher() {
     runTask,
   });
 
+  const reloadShortcuts = () => runTask(async () => {
+    const saved = await getSettings();
+    if (saved) {
+      setToggleHotkey(prettyAccel(saved.toggle_hotkey));
+      setDictationHotkey(prettyAccel(saved.dictation_hotkey));
+    }
+  });
+
   return (
     <div
       className={cn(
@@ -707,8 +714,7 @@ export function Launcher() {
             onRequest={(kind) => runTask(() => requestSetupPermission(kind), 'Could not check permissions')}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
-            onOpenKeyboardSettings={() => runTask(() => openKeyboardSettings(), 'Could not open Keyboard settings')}
-            onChangeShortcuts={() => setView('settings')}
+            onShortcutsChanged={reloadShortcuts}
             onFinish={() => runTask(async () => {
               await finishSetup();
               flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
@@ -727,13 +733,7 @@ export function Launcher() {
             connecting={connecting}
             onCancelConnect={cancelConnect}
             onDisconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
-            onShortcutsChanged={() => runTask(async () => {
-              const saved = await getSettings();
-              if (saved) {
-                setToggleHotkey(prettyAccel(saved.toggle_hotkey));
-                setDictationHotkey(prettyAccel(saved.dictation_hotkey));
-              }
-            })}
+            onShortcutsChanged={reloadShortcuts}
             onBack={() => setView('list')}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}
             onOpenWeb={() => runTask(openWebApp, 'Could not open the web app')}

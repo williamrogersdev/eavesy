@@ -3,7 +3,11 @@ use std::sync::{atomic::{AtomicU8, Ordering}, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
+use crate::hotkeys::HotkeyError;
+
+/// 0 off, 1 open Eavesy, 2 dictation, `CAPTURE` report taps to Settings.
 static ACTION: AtomicU8 = AtomicU8::new(0);
+const CAPTURE: u8 = 3;
 static TAP: OnceLock<usize> = OnceLock::new();
 const FN: u64 = 1 << 23;
 const MODIFIERS: u64 = (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20);
@@ -60,6 +64,7 @@ extern "C" fn receive(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut 
             match ACTION.load(Ordering::SeqCst) {
                 1 => crate::hotkeys::toggle_launcher(&context.app),
                 2 => crate::hotkeys::trigger_dictation(&context.app),
+                CAPTURE => { use tauri::Emitter; let _ = context.app.emit(crate::hotkeys::EVENT_FN_TAP, ()); }
                 _ => {}
             }
         }
@@ -67,41 +72,80 @@ extern "C" fn receive(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut 
     event
 }
 
-pub fn bind(app: &AppHandle, action: u8) -> Result<(), String> {
-    unsafe {
-        if !CGPreflightListenEventAccess() {
-            crate::permissions::request_input_monitoring_inner(app);
-            return Err("Allow Eavesy in System Settings → Privacy & Security → Input Monitoring, then quit and reopen Eavesy and select Fn / Globe again. Set Keyboard → Press Fn/Globe key to → Do Nothing to avoid triggering macOS too.".into());
-        }
-    }
-    if TAP.get().is_none() {
-        let app = app.clone();
-        let (send, receive_result) = std::sync::mpsc::channel();
-        std::thread::spawn(move || unsafe {
-            let context = Box::into_raw(Box::new(Context { app, gesture: Gesture::default() }));
-            let tap = CGEventTapCreate(1, 0, 1, (1 << 12) | (1 << 10), receive, context.cast());
-            if tap.is_null() {
-                drop(Box::from_raw(context));
-                let _ = send.send(Err("macOS could not enable Fn / Globe. Check Input Monitoring and reopen Eavesy.".to_string()));
-                return;
-            }
-            let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
-            if source.is_null() {
-                CFRelease(tap); drop(Box::from_raw(context));
-                let _ = send.send(Err("Could not start the Fn / Globe listener.".to_string()));
-                return;
-            }
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
-            let _ = TAP.set(tap as usize);
-            let _ = send.send(Ok(()));
-            CFRunLoopRun();
-        });
-        receive_result.recv_timeout(Duration::from_secs(3))
-            .map_err(|_| "Fn / Globe listener did not start; reopen Eavesy.".to_string())??;
-    }
+/// Whether Eavesy may watch the fn key (Input Monitoring, applied at launch).
+pub fn input_monitoring_granted() -> bool {
+    unsafe { CGPreflightListenEventAccess() }
+}
+
+pub fn bind(app: &AppHandle, action: u8) -> Result<(), HotkeyError> {
+    if !input_monitoring_granted() { return Err(HotkeyError::InputMonitoring); }
+    ensure_tap(app).map_err(HotkeyError::invalid)?;
     ACTION.store(action, Ordering::SeqCst);
     if let Some(tap) = TAP.get() { unsafe { CGEventTapEnable(*tap as *mut c_void, true); } }
     Ok(())
+}
+
+/// While Settings records a shortcut, a lone fn tap is reported to it rather
+/// than acted on. Without Input Monitoring the webview's own key events are
+/// all there is.
+pub fn capture(app: &AppHandle) {
+    let _ = bind(app, CAPTURE);
+}
+
+fn ensure_tap(app: &AppHandle) -> Result<(), String> {
+    if TAP.get().is_some() { return Ok(()); }
+    let app = app.clone();
+    let (send, receive_result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || unsafe {
+        let context = Box::into_raw(Box::new(Context { app, gesture: Gesture::default() }));
+        let tap = CGEventTapCreate(1, 0, 1, (1 << 12) | (1 << 10), receive, context.cast());
+        if tap.is_null() {
+            drop(Box::from_raw(context));
+            let _ = send.send(Err("macOS could not watch the fn key. Check Input Monitoring and relaunch Eavesy.".to_string()));
+            return;
+        }
+        let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+        if source.is_null() {
+            CFRelease(tap); drop(Box::from_raw(context));
+            let _ = send.send(Err("Could not start watching the fn key.".to_string()));
+            return;
+        }
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+        let _ = TAP.set(tap as usize);
+        let _ = send.send(Ok(()));
+        CFRunLoopRun();
+    });
+    receive_result.recv_timeout(Duration::from_secs(3))
+        .map_err(|_| "The fn key listener did not start; relaunch Eavesy.".to_string())?
+}
+
+/// What the 🌐 key does on its own (System Settings → Keyboard → "Press 🌐 key to").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobeAction { DoNothing, InputSource, Emoji, Dictation, Unknown }
+
+impl GlobeAction {
+    /// `AppleFnUsageType` in com.apple.HIToolbox. Unset means the macOS
+    /// default, which shows the emoji picker.
+    pub fn from_usage_type(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("0") => GlobeAction::DoNothing,
+            Some("1") => GlobeAction::InputSource,
+            Some("2") | None => GlobeAction::Emoji,
+            Some("3") => GlobeAction::Dictation,
+            Some(_) => GlobeAction::Unknown,
+        }
+    }
+
+    pub fn read() -> Self {
+        let output = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "com.apple.HIToolbox", "AppleFnUsageType"]).output();
+        match output {
+            Ok(out) if out.status.success() => Self::from_usage_type(Some(&String::from_utf8_lossy(&out.stdout))),
+            Ok(_) => Self::from_usage_type(None),
+            Err(_) => GlobeAction::Unknown,
+        }
+    }
 }
 
 pub fn unbind() {
@@ -112,6 +156,14 @@ pub fn unbind() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn globe_setting_maps_to_what_the_key_does() {
+        assert_eq!(GlobeAction::from_usage_type(Some("0\n")), GlobeAction::DoNothing);
+        assert_eq!(GlobeAction::from_usage_type(Some("1")), GlobeAction::InputSource);
+        assert_eq!(GlobeAction::from_usage_type(None), GlobeAction::Emoji);
+        assert_eq!(GlobeAction::from_usage_type(Some("3")), GlobeAction::Dictation);
+        assert_eq!(GlobeAction::from_usage_type(Some("9")), GlobeAction::Unknown);
+    }
     #[test]
     fn standalone_tap_fires_on_release_once() {
         let mut g = Gesture::default(); let t = Instant::now();
