@@ -76,7 +76,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   const reload = useCallback(async () => {
     const settings = await getSettings().catch(() => null);
-    const next = settings ? { toggle: settings.toggle_hotkey, dictation: settings.dictation_hotkey } : FALLBACK_DEFAULTS;
+    const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '' } : FALLBACK_DEFAULTS;
     bindingsRef.current = next;
     setBindings(next);
   }, []);
@@ -96,7 +96,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   useEffect(() => {
     void reload();
-    void getHotkeyDefaults().then(setDefaults).catch(() => {});
+    void getHotkeyDefaults().then((next) => { if (next?.toggle !== undefined) setDefaults(next); }).catch(() => {});
     void recheckFn();
     const onFocus = () => { void recheckFn(); };
     const onVisible = () => { if (document.visibilityState === 'visible') void recheckFn(); };

@@ -21,7 +21,8 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
         if (command === 'check_permissions') result = { mic: true, screen: true };
         if (command === 'start_capture') result = { session_id: 'shortcut-test' };
         if (command === 'live_transcript') result = [{ startMs: 0, endMs: 2000, track: null, text: 'Cloud line.', provisional: false }];
-        if (command === 'hotkey_conflict') result = { title: 'Fn / Globe may also trigger macOS', detail: 'Set Press Fn/Globe key to Do Nothing.' };
+        if (command === 'suspend_hotkeys') result = args?.suspended === true;
+        if (command === 'fn_status') result = { input_monitoring: true, globe_action: 'emoji' };
         return result as T;
       } },
       event: { listen: async <T,>(name: string, handler: (event: { payload: T }) => void) => {
@@ -34,18 +35,16 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
   await page.goto('/launcher', { waitUntil: 'networkidle' });
 }
 
-test('Fn warning opens settings and cancellation leaves binding unchanged', async ({ page }) => {
+test('tapping fn while recording a shortcut saves fn and shows what macOS still needs', async ({ page }) => {
   await nativeLauncher(page, false);
   await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await page.getByRole('button', { name: 'Use Fn / Globe tap' }).first().click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('Do Nothing');
-  await dialog.getByRole('button', { name: 'Open Keyboard settings' }).click();
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(dialog).toBeHidden();
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string }[] } }).__shortcutTest.calls);
-  expect(calls.some((call) => call.command === 'open_keyboard_settings')).toBe(true);
-  expect(calls.some((call) => call.command === 'set_hotkey')).toBe(false);
+  await page.getByRole('button', { name: /Change the Talk shortcut/ }).click();
+  await expect(page.getByText('Press a shortcut, or tap fn. Esc to cancel.')).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('hotkeys:fn-tap'));
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
+  expect(calls.find((call) => call.command === 'check_hotkey')?.args).toEqual({ action: 'dictation', accelerator: 'Fn' });
+  expect(calls.find((call) => call.command === 'set_hotkey')?.args).toEqual({ action: 'dictation', accelerator: 'Fn', swap: false });
 });
 
 test('native dictation event starts mic capture and second press saves', async ({ page }) => {

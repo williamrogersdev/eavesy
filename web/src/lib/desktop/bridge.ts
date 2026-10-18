@@ -438,8 +438,9 @@ export async function checkHotkey(action: HotkeyAction, accelerator: string): Pr
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  if (!isDesktop()) return { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
-  return invoke<HotkeyBindings>('get_hotkey_defaults');
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+  if (!isDesktop()) return fallback;
+  return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }
 
 export async function resetHotkey(action: HotkeyAction, swap = false): Promise<void> {
