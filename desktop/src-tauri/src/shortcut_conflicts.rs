@@ -1,9 +1,18 @@
 use serde::Serialize;
+
+use crate::hotkeys::{plan, Action, Bindings, HotkeyError};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 use std::str::FromStr;
 
-#[derive(Serialize)]
-pub struct Conflict { pub title: String, pub detail: String }
+/// A shortcut Eavesy can register but that something else probably uses too.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Conflict {
+    /// An enabled macOS keyboard shortcut (System Settings → Keyboard Shortcuts).
+    System { name: String },
+    /// A ⌘ combination most apps use, like ⌘C for Copy.
+    Common { name: String },
+}
 
 fn keycode(key: Code) -> Option<u64> {
     use Code::*;
@@ -40,36 +49,63 @@ fn symbolic_match(value: &serde_json::Value, code: u64, mods: u64) -> Option<Str
     })
 }
 
-pub fn check(accelerator: &str) -> Option<Conflict> {
-    if accelerator == "Fn" {
-        return Some(Conflict { title: "Fn / Globe may also trigger macOS".into(), detail:
-            "In System Settings → Keyboard, set ‘Press Fn/Globe key to’ to ‘Do Nothing’. Check Apple's Dictation shortcut too. Eavesy uses a single tap to start or stop; Fn combinations and holds keep their normal behavior. Fn requires Input Monitoring access.".into() });
+/// What the Settings UI needs before saving a shortcut: whether it breaks the
+/// rule, belongs to the other action, or clashes with macOS or common apps.
+pub fn check(current: &Bindings, action: Action, accelerator: &str) -> Result<Option<Conflict>, HotkeyError> {
+    plan(current, action, accelerator, false)?;
+    if accelerator.is_empty() || accelerator == crate::hotkeys::FN { return Ok(None); }
+    let Ok(shortcut) = Shortcut::from_str(accelerator) else { return Ok(None) };
+    if let Some(name) = system_match(&shortcut) { return Ok(Some(Conflict::System { name })); }
+    Ok(common_name(&shortcut).map(|name| Conflict::Common { name: name.into() }))
+}
+
+#[cfg(target_os = "macos")]
+fn system_match(shortcut: &Shortcut) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let code = keycode(shortcut.key)?;
+    let export = Command::new("/usr/bin/defaults").args(["export", "com.apple.symbolichotkeys", "-"]).output().ok()?;
+    if !export.status.success() { return None; }
+    let mut convert = Command::new("/usr/bin/plutil").args(["-convert", "json", "-o", "-", "--", "-"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    if let Some(mut input) = convert.stdin.take() { let _ = input.write_all(&export.stdout); }
+    let output = convert.wait_with_output().ok()?;
+    let value = serde_json::from_slice(&output.stdout).ok()?;
+    let id = symbolic_match(&value, code, flags(shortcut))?;
+    Some(system_name(&id).into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_match(_: &Shortcut) -> Option<String> { None }
+
+fn system_name(id: &str) -> &'static str {
+    match id {
+        "64" => "Spotlight",
+        "65" => "Finder search",
+        "60" | "61" => "input source switching",
+        "32" | "34" => "Mission Control",
+        "33" | "35" => "App Exposé",
+        "36" | "37" => "Show Desktop",
+        "28" | "29" | "30" | "31" | "184" => "Screenshots",
+        "162" => "Dictation",
+        "163" => "Notification Center",
+        "175" => "Do Not Disturb",
+        _ => "a macOS shortcut",
     }
-    let shortcut=Shortcut::from_str(accelerator).ok()?;
-    #[cfg(target_os = "macos")]
-    if let Some(code)=keycode(shortcut.key) {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        if let Ok(export)=Command::new("/usr/bin/defaults").args(["export", "com.apple.symbolichotkeys", "-"]).output() {
-            if export.status.success() {
-                if let Ok(mut convert)=Command::new("/usr/bin/plutil").args(["-convert","json","-o","-","--","-"])
-                    .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
-                    if let Some(mut input)=convert.stdin.take() { let _=input.write_all(&export.stdout); }
-                    if let Ok(output)=convert.wait_with_output() {
-                        if let Ok(value)=serde_json::from_slice(&output.stdout) {
-                            if let Some(id)=symbolic_match(&value,code,flags(&shortcut)) {
-                                let name=match id.as_str() { "64"=>"Spotlight", "65"=>"Finder search", "60"|"61"=>"Input source switching", "32"=>"Mission Control", "36"=>"Desktop", _=>"an enabled macOS shortcut" };
-                                return Some(Conflict { title:format!("Already assigned to {name}"), detail: "Open System Settings → Keyboard → Keyboard Shortcuts to disable or change the macOS binding, then return here and save. You can also choose another Eavesy shortcut.".into() });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let command=shortcut.mods.contains(Modifiers::SUPER);
-    let common=command && matches!(shortcut.key, Code::KeyC|Code::KeyV|Code::KeyX|Code::KeyA|Code::KeyQ|Code::KeyW|Code::KeyD|Code::KeyS|Code::KeyZ|Code::Space);
-    common.then(|| Conflict { title:"Possible macOS or application conflict".into(), detail: "This combination is commonly used by macOS or other apps. Eavesy's global binding can take precedence. Check Keyboard Shortcuts in System Settings or choose another combination. App-specific bindings cannot all be detected automatically.".into() })
+}
+
+/// The everyday meaning of a plain ⌘ combination in most apps.
+fn common_name(shortcut: &Shortcut) -> Option<&'static str> {
+    if shortcut.mods != Modifiers::SUPER { return None; }
+    use Code::*;
+    Some(match shortcut.key {
+        KeyC => "Copy", KeyV => "Paste", KeyX => "Cut", KeyA => "Select All", KeyZ => "Undo",
+        KeyS => "Save", KeyQ => "Quit", KeyW => "Close", KeyN => "New", KeyO => "Open",
+        KeyP => "Print", KeyF => "Find", KeyT => "New Tab", KeyH => "Hide", KeyM => "Minimize",
+        KeyR => "Reload", KeyD => "Duplicate", Comma => "Settings", Space => "Spotlight",
+        Tab => "the app switcher", Backquote => "window switching",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -84,5 +120,15 @@ mod tests {
         assert_eq!(symbolic_match(&prefs,49,1048576),Some("64".into()));
         assert_eq!(symbolic_match(&prefs,49,1572864),None);
         assert_eq!(symbolic_match(&prefs,2,1048576),None);
+    }
+    #[test]
+    fn fn_is_never_a_conflict_and_common_combos_are_named() {
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into() };
+        assert_eq!(check(&now, Action::Dictation, "Fn"), Ok(None));
+        assert_eq!(check(&now, Action::Dictation, ""), Ok(None));
+        assert_eq!(common_name(&Shortcut::from_str("Cmd+C").unwrap()), Some("Copy"));
+        assert_eq!(common_name(&Shortcut::from_str("Cmd+Shift+C").unwrap()), None);
+        assert_eq!(check(&now, Action::Dictation, "Shift+K"), Err(HotkeyError::NeedsModifier));
+        assert!(matches!(check(&now, Action::Dictation, "Cmd+Shift+Space"), Err(HotkeyError::Taken { .. })));
     }
 }

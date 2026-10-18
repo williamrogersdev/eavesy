@@ -321,7 +321,6 @@
 .ev-perm-hint { margin-top: 1px; font: 400 12px/16px var(--ev-font-text); color: var(--ev-ink-2); }
 .ev-perm-action { display: flex; align-items: center; gap: 4px; }
 .ev-perm-on { font: 650 12px var(--ev-font-round); color: var(--ev-leaf); padding: 0 4px; }
-.ev-shortcut { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; }
 .ev-banner[data-tone='quiet'] { background: var(--ev-well); color: var(--ev-ink-2); }
 .ev-banner .ev-link { flex: none; white-space: nowrap; }
 
@@ -352,6 +351,36 @@
 .ev-onb-try::placeholder { color: var(--ev-ink-3); }
 .ev-onb-try:focus-visible { background: var(--ev-raised); box-shadow: var(--ev-focus), var(--ev-e-2); }
 .ev-onb-foot { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--ev-line); }
+
+/* ---------- shortcut rows (Settings + onboarding, DESIGN.md §5) ---------- */
+.ev-shortcut { padding: 10px 12px; }
+.ev-shortcut-row { display: flex; align-items: center; gap: 12px; }
+.ev-shortcut-keys { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
+.ev-shortcut-chip {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 30px; margin-right: 4px; padding: 3px 6px;
+  border-radius: var(--ev-r-ctl); background: none; color: var(--ev-ink);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: background var(--ev-d-state) ease, box-shadow var(--ev-d-state) ease;
+}
+.ev-shortcut-chip:hover:not(:disabled) { background: var(--ev-hover); }
+.ev-shortcut-chip:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-shortcut-chip:disabled { cursor: default; opacity: 0.6; }
+.ev-shortcut-chip[data-recording] { outline: 1.5px dashed var(--ev-slate); outline-offset: -1.5px; background: var(--ev-slate-soft); }
+.ev-shortcut-slot { display: inline-flex; width: 24px; justify-content: center; }
+.ev-shortcut-prompt { color: var(--ev-ink-2); font: var(--ev-t-small); }
+.ev-shortcut-note { margin-top: 6px; color: var(--ev-ink-2); font: 400 12px/16px var(--ev-font-text); }
+.ev-shortcut-error { margin-top: 6px; color: var(--ev-warn-ink); font: 500 12px/16px var(--ev-font-text); }
+.ev-shortcut-card {
+  margin-top: 8px; padding: 10px 12px; border-radius: var(--ev-r-ctl);
+  background: var(--ev-warn-soft); color: var(--ev-ink); font: 400 12.5px/17px var(--ev-font-text);
+}
+.ev-shortcut-card[data-tone='steps'] { background: var(--ev-well); }
+.ev-shortcut-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ev-shortcut-steps { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
+.ev-shortcut-steps li { display: flex; align-items: flex-start; gap: 10px; }
+.ev-shortcut-steps li[data-done] .ev-set-label { color: var(--ev-ink-2); }
+.ev-shortcut-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding: 10px 12px; font: 400 12px/16px var(--ev-font-text); }
 
 @media (prefers-reduced-motion: reduce) {
   .ev-grow { animation: ev-fade 120ms linear; }

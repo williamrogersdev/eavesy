@@ -8,7 +8,6 @@ import {
   getSetupStatus,
   hidePanel,
   relaunchApp,
-  openKeyboardSettings,
   isDesktop,
   onLauncherOpened,
   onLauncherSettings,
@@ -635,6 +634,14 @@ export function Launcher() {
     runTask,
   });
 
+  const reloadShortcuts = () => runTask(async () => {
+    const saved = await getSettings();
+    if (saved) {
+      setToggleHotkey(prettyAccel(saved.toggle_hotkey));
+      setDictationHotkey(prettyAccel(saved.dictation_hotkey));
+    }
+  });
+
   return (
     <div
       className={cn(
@@ -716,8 +723,7 @@ export function Launcher() {
             onRequest={requestSetupPermission}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
-            onOpenKeyboardSettings={() => runTask(() => openKeyboardSettings(), 'Could not open Keyboard settings')}
-            onChangeShortcuts={() => { settingsFromSetup.current = true; setView('settings'); }}
+            onShortcutsChanged={reloadShortcuts}
             onFinish={() => runTask(async () => {
               // The toast is about Talk, so it looks at the dictation shortcut alone.
               if (!(await finishSetup())) return;
@@ -737,13 +743,7 @@ export function Launcher() {
             connecting={connecting}
             onCancelConnect={cancelConnect}
             onDisconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
-            onShortcutsChanged={() => runTask(async () => {
-              const saved = await getSettings();
-              if (saved) {
-                setToggleHotkey(prettyAccel(saved.toggle_hotkey));
-                setDictationHotkey(prettyAccel(saved.dictation_hotkey));
-              }
-            })}
+            onShortcutsChanged={reloadShortcuts}
             onBack={() => setView('list')}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}
             onOpenWeb={() => runTask(openWebApp, 'Could not open the web app')}

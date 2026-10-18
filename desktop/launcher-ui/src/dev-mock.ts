@@ -1,7 +1,8 @@
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
 // &live for a recording in progress, &setup for first-run onboarding with
-// nothing allowed yet). Never active in a production build.
+// nothing allowed yet, &settings to open Settings, &fn=ready for a Mac where
+// fn is fully set up). Never active in a production build.
 
 type Handler = (e: { payload: unknown }) => void;
 
@@ -49,11 +50,16 @@ export function installDevMock(): void {
   };
   if (params.has('setup')) installSetupMock(results);
   const listeners = new Map<string, Handler[]>();
+  const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
+  const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
+  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap') };
+  if (params.has('settings')) setTimeout(() => emit('launcher:settings'), 400);
   window.__TAURI__ = {
     core: {
       convertFileSrc: () => SHOT,
-      invoke: <T>(cmd: string) => {
-        console.debug('[mock invoke]', cmd);
+      invoke: <T>(cmd: string, args?: Record<string, unknown>) => {
+        console.debug('[mock invoke]', cmd, args);
+        if (cmd in hotkeys) return hotkeys[cmd](args ?? {}) as Promise<T>;
         const value = cmd in results ? results[cmd] : null;
         return Promise.resolve((typeof value === 'function' ? (value as () => unknown)() : value) as T);
       },
@@ -61,7 +67,9 @@ export function installDevMock(): void {
     event: {
       listen: (event: string, handler: Handler) => {
         listeners.set(event, [...(listeners.get(event) ?? []), handler]);
-        return Promise.resolve(() => {});
+        return Promise.resolve(() => {
+          listeners.set(event, (listeners.get(event) ?? []).filter((h) => h !== handler));
+        });
       },
     },
     webview: { getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve(() => {}) }) },
@@ -94,4 +102,52 @@ function installSetupMock(results: Record<string, unknown>): void {
     request_input_monitoring: grant('inputMonitoring', 'granted'),
     request_notifications: grant('notifications', 'granted'),
   });
+}
+
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string };
+const DEFAULTS = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
+
+/** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
+function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args: Record<string, unknown>) => Promise<unknown>> {
+  const key = (action: unknown) => (action === 'toggle' ? 'toggle_hotkey' : 'dictation_hotkey');
+  const other = (action: unknown) => (action === 'toggle' ? 'dictation' : 'toggle');
+  const validate = (accel: string) => {
+    if (!accel || accel === 'Fn' || /^F([1-9]|1[0-2])$/.test(accel) || /(^|\+)(Cmd|Ctrl|Alt)\+/.test(accel)) return null;
+    return { kind: 'needsModifier' };
+  };
+  const plan = (action: unknown, accel: string, swap: boolean) => {
+    const refused = validate(accel);
+    if (refused) return refused;
+    const otherKey = key(other(action));
+    if (accel && settings[otherKey] === accel) {
+      if (!swap) return { kind: 'taken', by: other(action) };
+      settings[otherKey] = settings[key(action)];
+    }
+    settings[key(action)] = accel;
+    return null;
+  };
+  return {
+    check_hotkey: ({ action, accelerator }) => {
+      const accel = String(accelerator);
+      const refused = validate(accel) ?? (accel && settings[key(other(action))] === accel ? { kind: 'taken', by: other(action) } : null);
+      if (refused) return Promise.reject(refused);
+      if (accel === 'Cmd+Space') return Promise.resolve({ kind: 'system', name: 'Spotlight' });
+      const common = /^Cmd\+([A-Z])$/.exec(accel)?.[1];
+      return Promise.resolve(common && COMMON[common] ? { kind: 'common', name: COMMON[common] } : null);
+    },
+    set_hotkey: ({ action, accelerator, swap }) => {
+      const refused = plan(action, String(accelerator), swap === true);
+      return refused ? Promise.reject(refused) : Promise.resolve(null);
+    },
+    reset_all_hotkeys: () => {
+      settings.toggle_hotkey = DEFAULTS.toggle;
+      settings.dictation_hotkey = DEFAULTS.dictation;
+      return Promise.resolve(null);
+    },
+    get_hotkey_defaults: () => Promise.resolve(DEFAULTS),
+    get_settings: () => Promise.resolve({ ...settings }),
+    fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
+    suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
+  };
 }

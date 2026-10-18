@@ -1,7 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
-import { HotkeyRecorder } from '@/components/launcher/hotkey-recorder';
-import { getSettings, isDesktop } from '@/lib/desktop/bridge';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
@@ -64,8 +62,6 @@ function SettingsPage() {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('pair');
   });
-  const [toggleHotkey, setToggleHotkey] = useState('Cmd+Shift+Space');
-  const [dictationHotkey, setDictationHotkey] = useState('Cmd+Shift+D');
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
@@ -97,14 +93,6 @@ function SettingsPage() {
         setDisplayName(account.displayName ?? '');
       })
       .catch(() => setError('Could not load account settings.'));
-    if (isDesktop()) {
-      void getSettings()
-        .then((s) => {
-          if (s?.toggle_hotkey) setToggleHotkey(s.toggle_hotkey);
-          if (s?.dictation_hotkey) setDictationHotkey(s.dictation_hotkey);
-        })
-        .catch(() => setError('Could not load desktop hotkeys.'));
-    }
     void fetch('/api/mcp-tokens')
       .then(async (response): Promise<unknown> => (response.ok ? response.json() : []))
       .then((tokens) => setMcpTokens(parseMcpTokens(tokens)))
@@ -284,16 +272,6 @@ function SettingsPage() {
         </Row>
       </AppSection>
 
-      {isDesktop() ? (
-        <AppSection title="Shortcuts" description="Click a shortcut, then press the keys you want.">
-          <Row label="Open Eavesy">
-            <HotkeyRecorder action="toggle" initial={toggleHotkey} label="Launcher" />
-          </Row>
-          <Row label="Start dictation">
-            <HotkeyRecorder action="dictation" initial={dictationHotkey} label="Dictation" />
-          </Row>
-        </AppSection>
-      ) : null}
 
       <TemplateManager />
 

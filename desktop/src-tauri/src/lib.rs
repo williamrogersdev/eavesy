@@ -96,7 +96,11 @@ pub fn run() {
             commands::get_setup_status,
             commands::complete_setup,
             commands::set_hotkey,
-            commands::hotkey_conflict,
+            commands::check_hotkey,
+            commands::get_hotkey_defaults,
+            commands::reset_hotkey,
+            commands::reset_all_hotkeys,
+            commands::fn_status,
             commands::open_keyboard_settings,
             commands::set_panel_pinned,
             commands::get_hud_state,
@@ -184,20 +188,12 @@ pub fn run() {
                 }
             }
             screenshot_watcher::start(&handle);
-            if let Err(e) = hotkeys::register_all(&handle, &settings) {
-                telemetry::capture("hotkeys.register", &e);
+            let failures = hotkeys::register_all(&handle, &settings);
+            if let Some(body) = hotkeys::startup_notice(&failures) {
+                telemetry::capture("hotkeys.register", &body);
                 use tauri_plugin_notification::NotificationExt;
-                let _ = handle
-                    .notification()
-                    .builder()
-                    .title("Eavesy couldn't set your shortcut")
-                    .body(format!(
-                        "The launcher shortcut ({}) is unavailable — it may already be in use. \
-                         Click the Eavesy icon in the menu bar to open it, then pick a new \
-                         shortcut in Settings.",
-                        settings.toggle_hotkey
-                    ))
-                    .show();
+                let title = if failures.len() > 1 { "Eavesy couldn't set your shortcuts" } else { "Eavesy couldn't set a shortcut" };
+                let _ = handle.notification().builder().title(title).body(body).show();
             }
 
             if !settings.setup_completed && settings::device_token(&handle).is_none() {
