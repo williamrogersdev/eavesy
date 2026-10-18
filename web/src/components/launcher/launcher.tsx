@@ -113,6 +113,10 @@ export function Launcher() {
   const historyRef = useRef<HTMLDivElement>(null);
 
   const { toast, flash, runTask } = useToastTasks();
+  // However Settings is left (title bar, Esc, tray, panel reopening), the detour is over.
+  useEffect(() => {
+    if (view !== 'settings') settingsFromSetup.current = false;
+  }, [view]);
   const {
     setupPermissions,
     setSetupPermissions,
@@ -325,7 +329,7 @@ export function Launcher() {
       const listeners = await Promise.all([
         onLauncherSettings(() => setView('settings')),
         onLauncherRecordings(() => { setView((v) => (v === 'setup' ? v : 'list')); historyRef.current?.scrollTo({ top: 0 }); }),
-        onLauncherSetup(() => { setupForced.current = true; settingsFromSetup.current = false; setSetupStep(0); setView('setup'); }),
+        onLauncherSetup(() => { setupForced.current = true; setSetupStep(0); setView('setup'); }),
         onCaptureState((state) => {
           receivedCaptureState = true;
           applyCaptureState(state);
@@ -669,11 +673,7 @@ export function Launcher() {
             connecting={connecting}
             signedOut={signedOut}
             goSettings={goSettings}
-            goBack={() => {
-              const detour = view === 'settings' && settingsFromSetup.current;
-              settingsFromSetup.current = false;
-              setView(detour ? 'setup' : 'list');
-            }}
+            goBack={() => setView(view === 'settings' && settingsFromSetup.current ? 'setup' : 'list')}
             connect={() => runTask(connectAccount, 'Couldn’t connect your account')}
             disconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
             runTask={runTask}
@@ -737,7 +737,7 @@ export function Launcher() {
             onRequestPermission={requestSetupPermission}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
-            onRunSetup={() => { setupForced.current = true; settingsFromSetup.current = false; setSetupStep(0); setView('setup'); }}
+            onRunSetup={() => { setupForced.current = true; setSetupStep(0); setView('setup'); }}
             fnInUse={usesFnKey(dictationHotkey, toggleHotkey)}
             account={account}
             connecting={connecting}
