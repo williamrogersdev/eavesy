@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -128,6 +129,10 @@ struct CaptureEvent {
     timed_out: Option<bool>,
     #[serde(default)]
     failed: Option<bool>,
+    #[serde(default, rename = "firstBufferMs")]
+    first_buffer_ms: Option<i64>,
+    #[serde(default, rename = "audioFromMs")]
+    audio_from_ms: Option<i64>,
 }
 
 impl CaptureEvent {
@@ -341,9 +346,22 @@ pub fn start_capture(
     context_blurb: Option<String>,
     dictation: Option<bool>,
 ) -> Result<CaptureSession, String> {
+    start_audio_capture(&app, &state, source, context_blurb, dictation, Instant::now())
+}
+
+/// `asked_at`: when the user asked (the hotkey press), which the time to the
+/// first audio is measured from.
+pub fn start_audio_capture(
+    app: &AppHandle,
+    state: &State<'_, Captures>,
+    source: Option<String>,
+    context_blurb: Option<String>,
+    dictation: Option<bool>,
+    asked_at: Instant,
+) -> Result<CaptureSession, String> {
     let source = source.unwrap_or_else(|| "mixed".to_string());
     let dictation = dictation.unwrap_or(false) && source == "mic";
-    let result = spawn_capture(&app, &state, "audio", &source, false, context_blurb.as_deref(), dictation);
+    let result = spawn_capture(app, state, "audio", &source, false, context_blurb.as_deref(), dictation, asked_at);
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_audio", error);
     }
@@ -356,13 +374,14 @@ pub fn start_screen_capture(
     state: State<'_, Captures>,
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
-    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None, false);
+    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None, false, Instant::now());
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_screen", error);
     }
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: &AppHandle,
     state: &State<'_, Captures>,
@@ -371,6 +390,7 @@ fn spawn_capture(
     mic: bool,
     context_blurb: Option<&str>,
     dictation: bool,
+    asked_at: Instant,
 ) -> Result<CaptureSession, String> {
     let _starting = state.claim_start()?;
     let bin = capture_bin(app)?;
@@ -402,62 +422,69 @@ fn spawn_capture(
         }
     };
 
-    let log = captures_dir(app).ok().and_then(|dir| {
-        rotate_log(&dir.join("capture.log"));
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("capture.log"))
-            .ok()
-    });
-
-    let mut cmd = Command::new(&bin);
-    cmd.arg("--mode")
-        .arg(mode)
-        .arg("--out")
-        .arg(&out_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(match log {
-            Some(file) => Stdio::from(file),
-            None => Stdio::null(),
-        });
+    let mut args: Vec<OsString> = vec!["--mode".into(), mode.into(), "--out".into(), out_path.clone().into()];
     if mode == "screen" {
-        cmd.arg("--mic").arg(if mic { "true" } else { "false" });
+        args.extend(["--mic".into(), if mic { "true" } else { "false" }.into()]);
     } else {
         // Captions run in the system language; on-device recognition either
         // supports it or says it doesn't. Dictation always runs them for its
         // paste; meetings and voice notes only with the Live captions setting.
         if dictation {
-            cmd.arg("--captions").arg("mic");
+            args.extend(["--captions".into(), "mic".into()]);
         } else if crate::settings::load(app).live_captions() {
-            cmd.arg("--captions").arg("all");
+            args.extend(["--captions".into(), "all".into()]);
         }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
             return Err(format!("could not create segment queue: {e}"));
         }
-        cmd.arg("--source")
-            .arg(source)
-            .arg("--segment-dir")
-            .arg(&segment_dir)
-            .arg("--segment-sec")
-            .arg(crate::settings::load(app).segment_sec().to_string());
+        args.extend([
+            "--source".into(),
+            source.into(),
+            "--segment-dir".into(),
+            segment_dir.clone().into(),
+            "--segment-sec".into(),
+            crate::settings::load(app).segment_sec().to_string().into(),
+        ]);
     }
 
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            discard();
-            return Err(format!("could not start capture engine: {e}"));
+    // Audio captures go to the spare engine when there is one; anything that
+    // goes wrong handing it over falls back to a cold start.
+    let spare = (mode == "audio")
+        .then(crate::standby::take)
+        .flatten()
+        .and_then(|engine| {
+            engine
+                .start(&args)
+                .map_err(|error| tracing::warn!("{error}; starting the capture engine cold"))
+                .ok()
+        });
+    let warm = spare.is_some();
+    let (mut child, stdin, stdout) = match spare {
+        Some(started) => started,
+        None => {
+            let mut cmd = Command::new(&bin);
+            cmd.args(&args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(capture_log(app));
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
+                    let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
+                    (child, stdin, stdout)
+                }
+                Err(e) => {
+                    discard();
+                    return Err(format!("could not start capture engine: {e}"));
+                }
+            }
         }
     };
-    let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
-    let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
     let reader = BufReader::new(stdout);
 
     let reader = match await_ready(reader, START_TIMEOUT) {
-        Ok(r) => r,
+        Ok((reader, ready)) => {
+            log_start_latency(&id, warm, asked_at.elapsed(), &ready);
+            reader
+        }
         Err(msg) => {
             let msg = match child.try_wait() {
                 Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
@@ -466,6 +493,9 @@ fn spawn_capture(
             let _ = child.kill();
             let _ = child.wait();
             discard();
+            if warm {
+                prepare_standby(app);
+            }
             return Err(msg);
         }
     };
@@ -535,10 +565,54 @@ fn spawn_capture(
     })
 }
 
+/// The engine's stderr: the capture log, rotated before it grows too large.
+fn capture_log(app: &AppHandle) -> Stdio {
+    captures_dir(app)
+        .ok()
+        .and_then(|dir| {
+            rotate_log(&dir.join("capture.log"));
+            std::fs::OpenOptions::new().create(true).append(true).open(dir.join("capture.log")).ok()
+        })
+        .map_or_else(Stdio::null, Stdio::from)
+}
+
+/// Makes sure a spare engine is waiting for the next capture. In the
+/// background: launching one is quick, but never worth holding up a caller.
+pub fn prepare_standby(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let made = crate::standby::refill(|| {
+            let mut cmd = Command::new(capture_bin(&app)?);
+            cmd.arg("--standby").stderr(capture_log(&app));
+            Ok(cmd)
+        });
+        if let Err(error) = made {
+            tracing::warn!("{error}");
+        }
+    });
+}
+
+/// How long the press waited for its first audio, in the app log (which goes
+/// into copied diagnostics). `audio_from_ms` is when that audio begins, from
+/// the engine's own start: anything said before it was never recorded.
+fn log_start_latency(session_id: &str, warm: bool, waited: Duration, ready: &CaptureEvent) {
+    let first_audio_ms = waited.as_millis() as u64;
+    let engine = if warm { "spare" } else { "cold" };
+    tracing::info!(
+        session_id,
+        engine,
+        first_audio_ms,
+        engine_first_buffer_ms = ready.first_buffer_ms,
+        engine_audio_from_ms = ready.audio_from_ms,
+        "first audio {first_audio_ms} ms after the press ({engine} engine)"
+    );
+}
+
+/// Waits for the engine's `ready`, which it sends with its first audio buffer.
 fn await_ready(
     reader: BufReader<ChildStdout>,
     timeout: Duration,
-) -> Result<BufReader<ChildStdout>, String> {
+) -> Result<(BufReader<ChildStdout>, CaptureEvent), String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = reader;
@@ -553,7 +627,7 @@ fn await_ready(
                 Ok(_) => {
                     if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
                         match ev.event.as_str() {
-                            "ready" => break Ok(()),
+                            "ready" => break Ok(ev),
                             "error" => {
                                 break Err(ev.message.unwrap_or_else(|| "capture failed".to_string()))
                             }
@@ -564,10 +638,10 @@ fn await_ready(
                 Err(e) => break Err(format!("capture engine read failed: {e}")),
             }
         };
-        let _ = tx.send(result.map(|()| reader));
+        let _ = tx.send(result.map(|ev| (reader, ev)));
     });
     match rx.recv_timeout(timeout) {
-        Ok(Ok(reader)) => Ok(reader),
+        Ok(Ok(ready)) => Ok(ready),
         Ok(Err(msg)) => Err(msg),
         Err(_) => Err(
             "timed out starting the recording — the microphone/screen permission prompt may not \
@@ -802,6 +876,8 @@ fn stop_capture_inner(
             Err(msg)
         }
     };
+    // The engine is done with the mic: line up the next one.
+    prepare_standby(&app);
     match result {
         Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
         result => result,

@@ -20,9 +20,14 @@ enum EventEmitter {
         FileHandle.standardOutput.write(line)
     }
 
-    static func ready() {
+    /// The first audio buffer arrived, `firstBufferMs` after the capture was
+    /// asked for (see `StartClock`); its audio begins `audioFromMs` after.
+    static func ready(firstBufferMs: Int64? = nil, audioFromMs: Int64? = nil) {
         captureIsLive = true
-        emit(["event": "ready"])
+        var event: [String: Any] = ["event": "ready"]
+        if let firstBufferMs { event["firstBufferMs"] = firstBufferMs }
+        if let audioFromMs { event["audioFromMs"] = audioFromMs }
+        emit(event)
     }
 
     static func warning(_ message: String) {
