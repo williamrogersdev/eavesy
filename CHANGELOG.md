@@ -60,6 +60,10 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
   longer dropped. ([#72](https://github.com/williamrogersdev/eavesy/pull/72))
 - Mac app: the panel moves out of the way of macOS permission prompts so
   "Allow" can be clicked. ([#73](https://github.com/williamrogersdev/eavesy/pull/73))
+- Mac app: dictation catches its first words. A spare capture engine is kept
+  ready without the mic being live, so recording starts about 100 ms sooner
+  after the shortcut. ([#86](https://github.com/williamrogersdev/eavesy/pull/86),
+  [#87](https://github.com/williamrogersdev/eavesy/pull/87))
 
 ## [0.2.0] - 2026-10-15 - desktop
 

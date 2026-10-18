@@ -10,9 +10,12 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 static SPARE: Mutex<Option<Engine>> = Mutex::new(None);
+/// A refill is launching a spare; another one leaves it to that.
+static LAUNCHING: AtomicBool = AtomicBool::new(false);
 
 pub struct Engine {
     child: Child,
@@ -86,18 +89,51 @@ pub fn take() -> Option<Engine> {
     }
 }
 
-/// Launches a spare unless a live one is waiting already.
+/// Launches a spare unless a live one is waiting or being launched already.
+/// The launch happens outside the lock, so a press taking the spare never
+/// waits on it.
 pub fn refill(make: impl FnOnce() -> Result<Command, String>) -> Result<(), String> {
-    let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(engine) = spare.as_mut() {
-        if engine.alive() {
-            return Ok(());
-        }
-        reap(&mut engine.child);
-        *spare = None;
+    let Some(_launching) = Launching::claim() else { return Ok(()) };
+    if !needs_spare() {
+        return Ok(());
     }
-    *spare = Some(Engine::launch(make()?)?);
+    let mut engine = make().and_then(Engine::launch)?;
+    let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
+    if spare.is_some() {
+        drop(spare);
+        reap(&mut engine.child);
+    } else {
+        *spare = Some(engine);
+    }
     Ok(())
+}
+
+/// The one refill allowed to launch; the claim ends when this is dropped,
+/// however the refill ends.
+struct Launching;
+
+impl Launching {
+    fn claim() -> Option<Launching> {
+        (!LAUNCHING.swap(true, Ordering::SeqCst)).then_some(Launching)
+    }
+}
+
+impl Drop for Launching {
+    fn drop(&mut self) {
+        LAUNCHING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Whether no live spare is waiting; a dead one is cleared away.
+fn needs_spare() -> bool {
+    let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(engine) = spare.as_mut() else { return true };
+    if engine.alive() {
+        return false;
+    }
+    reap(&mut engine.child);
+    *spare = None;
+    true
 }
 
 #[cfg(test)]
@@ -138,13 +174,25 @@ mod tests {
         assert!(child.wait().unwrap().success());
     }
 
+    /// The only test that touches `SPARE`; any other must share a lock with it.
     #[test]
     fn a_spare_that_died_is_not_handed_out_and_is_replaced() {
         let mut quits = Command::new("/bin/sh");
         quits.arg("-c").arg("exit 0");
         refill(|| Ok(quits)).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while SPARE.lock().unwrap().as_mut().is_some_and(Engine::alive) {
+            assert!(std::time::Instant::now() < deadline, "the shell never exited");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(take().is_none(), "a dead spare is never handed out");
+
+        {
+            let _launching = Launching::claim().unwrap();
+            refill(|| Err("a refill already launching is left to finish".to_string())).unwrap();
+        }
+        assert!(take().is_none());
+        assert!(refill(|| Err("the claim ends with its guard".to_string())).is_err());
 
         refill(|| Ok(echo_engine())).unwrap();
         refill(|| Err("a live spare is kept, not relaunched".to_string())).unwrap();

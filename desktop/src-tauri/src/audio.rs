@@ -448,6 +448,19 @@ fn spawn_capture(
         ]);
     }
 
+    let cold = || -> Result<crate::standby::Started, String> {
+        let mut child = Command::new(&bin)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(capture_log(app))
+            .spawn()
+            .map_err(|e| format!("could not start capture engine: {e}"))?;
+        let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
+        Ok((child, stdin, stdout))
+    };
+
     // Audio captures go to the spare engine when there is one; anything that
     // goes wrong handing it over falls back to a cold start.
     let spare = (mode == "audio")
@@ -459,45 +472,50 @@ fn spawn_capture(
                 .map_err(|error| tracing::warn!("{error}; starting the capture engine cold"))
                 .ok()
         });
-    let warm = spare.is_some();
-    let (mut child, stdin, stdout) = match spare {
-        Some(started) => started,
-        None => {
-            let mut cmd = Command::new(&bin);
-            cmd.args(&args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(capture_log(app));
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
-                    let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
-                    (child, stdin, stdout)
-                }
-                Err(e) => {
-                    discard();
-                    return Err(format!("could not start capture engine: {e}"));
-                }
-            }
+    let mut warm = spare.is_some();
+    let mut started = match spare.map_or_else(cold, Ok) {
+        Ok(started) => started,
+        Err(error) => {
+            discard();
+            return Err(error);
         }
     };
-    let reader = BufReader::new(stdout);
 
-    let reader = match await_ready(reader, START_TIMEOUT) {
-        Ok((reader, ready)) => {
-            log_start_latency(&id, warm, asked_at.elapsed(), &ready);
-            reader
-        }
-        Err(msg) => {
-            let msg = match child.try_wait() {
-                Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
-                _ => msg,
-            };
-            let _ = child.kill();
-            let _ = child.wait();
-            discard();
-            if warm {
-                prepare_standby(app);
+    let (mut child, stdin, reader) = loop {
+        let (mut child, stdin, stdout) = started;
+        let not_ready = match await_ready(BufReader::new(stdout), START_TIMEOUT) {
+            Ok((reader, ready)) => {
+                log_start_latency(&id, warm, asked_at.elapsed(), &ready);
+                break (child, stdin, reader);
             }
-            return Err(msg);
+            Err(not_ready) => not_ready,
+        };
+        let timed_out = not_ready == NotReady::TimedOut;
+        let msg = not_ready.message();
+        let mut msg = match child.try_wait() {
+            Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
+            _ => msg,
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        // A spare that failed after taking the capture gets one cold retry. A
+        // start that timed out (a prompt left unanswered) would only time out again.
+        if warm && !timed_out {
+            tracing::warn!("spare capture engine failed: {msg}; starting the capture engine cold");
+            warm = false;
+            match cold() {
+                Ok(retry) => {
+                    started = retry;
+                    continue;
+                }
+                Err(error) => msg = format!("{msg}; starting it cold failed too: {error}"),
+            }
         }
+        discard();
+        if mode == "audio" {
+            prepare_standby(app);
+        }
+        return Err(msg);
     };
 
     if mode == "audio" {
@@ -608,11 +626,32 @@ fn log_start_latency(session_id: &str, warm: bool, waited: Duration, ready: &Cap
     );
 }
 
+/// Why an engine never said `ready`.
+#[derive(Debug, PartialEq)]
+enum NotReady {
+    /// Nothing within the start timeout: most likely a permission prompt
+    /// left unanswered.
+    TimedOut,
+    /// The engine reported an error or exited.
+    Failed(String),
+}
+
+impl NotReady {
+    fn message(self) -> String {
+        match self {
+            NotReady::TimedOut => "timed out starting the recording — the microphone/screen permission prompt \
+                                   may not have been answered. Grant access in System Settings and try again."
+                .to_string(),
+            NotReady::Failed(msg) => msg,
+        }
+    }
+}
+
 /// Waits for the engine's `ready`, which it sends with its first audio buffer.
 fn await_ready(
     reader: BufReader<ChildStdout>,
     timeout: Duration,
-) -> Result<(BufReader<ChildStdout>, CaptureEvent), String> {
+) -> Result<(BufReader<ChildStdout>, CaptureEvent), NotReady> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = reader;
@@ -642,12 +681,8 @@ fn await_ready(
     });
     match rx.recv_timeout(timeout) {
         Ok(Ok(ready)) => Ok(ready),
-        Ok(Err(msg)) => Err(msg),
-        Err(_) => Err(
-            "timed out starting the recording — the microphone/screen permission prompt may not \
-             have been answered. Grant access in System Settings and try again."
-                .to_string(),
-        ),
+        Ok(Err(msg)) => Err(NotReady::Failed(msg)),
+        Err(_) => Err(NotReady::TimedOut),
     }
 }
 
@@ -876,8 +911,11 @@ fn stop_capture_inner(
             Err(msg)
         }
     };
-    // The engine is done with the mic: line up the next one.
-    prepare_standby(&app);
+    // The engine is done with the mic: line up the next one. Only audio
+    // captures take a spare.
+    if mode == "audio" {
+        prepare_standby(&app);
+    }
     match result {
         Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
         result => result,

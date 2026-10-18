@@ -50,10 +50,11 @@ case .audio:
         segmentSec: args.segmentSec,
         captions: captions,
         micWarmup: micWarmup)
-    micWarmup = nil
 case .screen:
     recorder = ScreenRecorder(outPath: args.outPath, includeMic: args.includeMic)
 }
+// The recorder holds the prepared session if it can use it; let go of it here.
+micWarmup = nil
 
 let stopLock = NSLock()
 var didStop = false
