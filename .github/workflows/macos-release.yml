@@ -122,10 +122,12 @@ jobs:
       - name: Verify web and Worker code
         run: |
           cd web
+          # Build first: it generates the route tree that lint and typecheck
+          # read (ci.yml runs them in the same order).
+          bun run build
           bun run lint
           bun run typecheck
           bun run test
-          bun run build
           cd ../workers/processing
           bunx tsc --noEmit
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/processing-dry-run"
