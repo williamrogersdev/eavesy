@@ -28,6 +28,9 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
   [#81](https://github.com/williamrogersdev/eavesy/pull/81))
 - Mac app: a real app menu with About and Check for Updates…, also in the menu
   bar icon's menu. ([#73](https://github.com/williamrogersdev/eavesy/pull/73))
+- Mac app: an Update button at the top right of the panel whenever a newer
+  version is ready; one click installs it and relaunches. Eavesy checks every
+  two hours.
 - Mac app: a running transcript under the recording bar while you dictate.
   ([#74](https://github.com/williamrogersdev/eavesy/pull/74))
 
