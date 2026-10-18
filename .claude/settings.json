@@ -49,8 +49,6 @@
       "Bash(git push origin main:*)",
       "Bash(git push origin HEAD:main:*)",
       "Bash(gh pr merge * --admin*)",
-      "Bash(gh release:*)",
-      "Bash(git tag:*)",
       "Bash(git push --tags:*)",
       "Bash(bunx wrangler deploy)",
       "Bash(bunx wrangler secret:*)",
