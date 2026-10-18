@@ -50,8 +50,9 @@ export function useSetupPermissions({
     if (permissions) setSetupPermissions(permissions);
   }, []);
 
-  // One macOS prompt at a time: each request asks for a single permission.
-  const requestSetupPermission = useCallback(async (kind: SetupPermissionKind) => {
+  // One macOS prompt at a time: each request asks for a single permission. Resolves with
+  // whether the request ran; a failure is shown here and resolves false.
+  const requestSetupPermission = useCallback(async (kind: SetupPermissionKind): Promise<boolean> => {
     setCheckingSetupPermissions(kind);
     try {
       if (kind === 'mic') {
@@ -66,8 +67,10 @@ export function useSetupPermissions({
         else await requestNotifications();
         await refreshPermissionsQuietly();
       }
+      return true;
     } catch (error) {
       flash(errMsg(error, 'Could not check permissions'), 8000);
+      return false;
     } finally {
       setCheckingSetupPermissions(null);
     }
@@ -102,14 +105,17 @@ export function useSetupPermissions({
     };
   }, [desktop, view, permissionsView, allAllowed, refreshPermissionsQuietly]);
 
-  const finishSetup = useCallback(async () => {
+  /** Resolves with whether setup was saved as finished; a failure is shown here. */
+  const finishSetup = useCallback(async (): Promise<boolean> => {
     try {
       await completeSetup();
       setupForced.current = false;
       setView('list');
       searchRef.current?.focus();
+      return true;
     } catch (error) {
       flash(errMsg(error, 'Could not finish setup'));
+      return false;
     }
   }, [flash, searchRef, setView, setupForced]);
 
