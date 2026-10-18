@@ -10,9 +10,12 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 static SPARE: Mutex<Option<Engine>> = Mutex::new(None);
+/// A refill is launching a spare; another one leaves it to that.
+static LAUNCHING: AtomicBool = AtomicBool::new(false);
 
 pub struct Engine {
     child: Child,
@@ -86,22 +89,19 @@ pub fn take() -> Option<Engine> {
     }
 }
 
-/// Launches a spare unless a live one is waiting already. The launch happens
-/// outside the lock, so a press taking the spare never waits on it.
+/// Launches a spare unless a live one is waiting or being launched already.
+/// The launch happens outside the lock, so a press taking the spare never
+/// waits on it.
 pub fn refill(make: impl FnOnce() -> Result<Command, String>) -> Result<(), String> {
-    if !needs_spare() {
+    if !needs_spare() || LAUNCHING.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
-    let mut engine = Engine::launch(make()?)?;
-    let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
-    if spare.is_some() {
-        // Another refill got there first.
-        drop(spare);
-        reap(&mut engine.child);
-    } else {
-        *spare = Some(engine);
-    }
-    Ok(())
+    let launched = make().and_then(Engine::launch);
+    let result = launched.map(|engine| {
+        *SPARE.lock().unwrap_or_else(|e| e.into_inner()) = Some(engine);
+    });
+    LAUNCHING.store(false, Ordering::SeqCst);
+    result
 }
 
 /// Whether no live spare is waiting; a dead one is cleared away.
@@ -166,6 +166,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(take().is_none(), "a dead spare is never handed out");
+
+        LAUNCHING.store(true, Ordering::SeqCst);
+        refill(|| Err("a refill already launching is left to finish".to_string())).unwrap();
+        LAUNCHING.store(false, Ordering::SeqCst);
+        assert!(take().is_none());
 
         refill(|| Ok(echo_engine())).unwrap();
         refill(|| Err("a live spare is kept, not relaunched".to_string())).unwrap();

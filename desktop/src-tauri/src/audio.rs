@@ -17,7 +17,6 @@ use crate::store::{self, StoredRecording};
 
 const START_TIMEOUT: Duration = Duration::from_secs(150);
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
-const START_TIMED_OUT: &str = "timed out starting the recording";
 const NO_ACTIVE_CAPTURE: &str = "no active capture with that id";
 
 #[derive(Default)]
@@ -484,14 +483,16 @@ fn spawn_capture(
 
     let (mut child, stdin, reader) = loop {
         let (mut child, stdin, stdout) = started;
-        let msg = match await_ready(BufReader::new(stdout), START_TIMEOUT) {
+        let not_ready = match await_ready(BufReader::new(stdout), START_TIMEOUT) {
             Ok((reader, ready)) => {
                 log_start_latency(&id, warm, asked_at.elapsed(), &ready);
                 break (child, stdin, reader);
             }
-            Err(msg) => msg,
+            Err(not_ready) => not_ready,
         };
-        let msg = match child.try_wait() {
+        let timed_out = not_ready == NotReady::TimedOut;
+        let msg = not_ready.message();
+        let mut msg = match child.try_wait() {
             Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
             _ => msg,
         };
@@ -499,12 +500,15 @@ fn spawn_capture(
         let _ = child.wait();
         // A spare that failed after taking the capture gets one cold retry. A
         // start that timed out (a prompt left unanswered) would only time out again.
-        if warm && !msg.starts_with(START_TIMED_OUT) {
+        if warm && !timed_out {
             tracing::warn!("spare capture engine failed: {msg}; starting the capture engine cold");
             warm = false;
-            if let Ok(retry) = cold() {
-                started = retry;
-                continue;
+            match cold() {
+                Ok(retry) => {
+                    started = retry;
+                    continue;
+                }
+                Err(error) => msg = format!("{msg}; starting it cold failed too: {error}"),
             }
         }
         discard();
@@ -622,11 +626,32 @@ fn log_start_latency(session_id: &str, warm: bool, waited: Duration, ready: &Cap
     );
 }
 
+/// Why an engine never said `ready`.
+#[derive(Debug, PartialEq)]
+enum NotReady {
+    /// Nothing within the start timeout: most likely a permission prompt
+    /// left unanswered.
+    TimedOut,
+    /// The engine reported an error or exited.
+    Failed(String),
+}
+
+impl NotReady {
+    fn message(self) -> String {
+        match self {
+            NotReady::TimedOut => "timed out starting the recording — the microphone/screen permission prompt \
+                                   may not have been answered. Grant access in System Settings and try again."
+                .to_string(),
+            NotReady::Failed(msg) => msg,
+        }
+    }
+}
+
 /// Waits for the engine's `ready`, which it sends with its first audio buffer.
 fn await_ready(
     reader: BufReader<ChildStdout>,
     timeout: Duration,
-) -> Result<(BufReader<ChildStdout>, CaptureEvent), String> {
+) -> Result<(BufReader<ChildStdout>, CaptureEvent), NotReady> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = reader;
@@ -656,11 +681,8 @@ fn await_ready(
     });
     match rx.recv_timeout(timeout) {
         Ok(Ok(ready)) => Ok(ready),
-        Ok(Err(msg)) => Err(msg),
-        Err(_) => Err(format!(
-            "{START_TIMED_OUT} — the microphone/screen permission prompt may not have been \
-             answered. Grant access in System Settings and try again."
-        )),
+        Ok(Err(msg)) => Err(NotReady::Failed(msg)),
+        Err(_) => Err(NotReady::TimedOut),
     }
 }
 

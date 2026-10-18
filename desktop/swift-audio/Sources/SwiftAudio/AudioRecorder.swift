@@ -232,6 +232,7 @@ final class AudioRecorder: NSObject, Recorder {
                 return
             }
             warm.output.setSampleBufferDelegate(nil, queue: nil)
+            warm.release()
             FileHandle.standardError.write(Data("prepared mic session did not start; building a fresh one\n".utf8))
         }
         guard let input = try? AVCaptureDeviceInput(device: device) else {

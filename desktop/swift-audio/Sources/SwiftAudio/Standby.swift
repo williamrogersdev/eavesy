@@ -108,6 +108,16 @@ final class MicWarmup {
         return MicWarmup(session: session, output: output, deviceID: device.uniqueID)
     }
 
+    /// Gives the device back: stops the session (startRunning is synchronous,
+    /// so a session that is not running by now never came up) and empties it.
+    func release() {
+        session.stopRunning()
+        session.beginConfiguration()
+        session.inputs.forEach(session.removeInput)
+        session.outputs.forEach(session.removeOutput)
+        session.commitConfiguration()
+    }
+
     /// Whether this session still records the default microphone: one plugged
     /// in since standby began gets a fresh session instead.
     func matches(_ device: AVCaptureDevice) -> Bool {
