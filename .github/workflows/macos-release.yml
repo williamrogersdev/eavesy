@@ -135,6 +135,11 @@ jobs:
           bunx tsc --noEmit
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/mcp-dry-run"
 
+      # The Rust build script needs the launcher UI and the SwiftAudio sidecar
+      # (ci.yml runs the same prebuild before its Rust tests).
+      - name: Prebuild launcher UI and SwiftAudio sidecar
+        run: desktop/scripts/prebuild.sh
+
       - name: Verify desktop Rust core
         working-directory: desktop/src-tauri
         run: |
