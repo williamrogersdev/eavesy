@@ -439,8 +439,9 @@ pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingDto>, String> {
 
 /// Checks a shortcut before saving it: the modifier rule, the other action,
 /// then macOS and common app shortcuts.
-#[tauri::command]
-pub async fn check_hotkey(app: AppHandle, action: String, accelerator: String) -> Result<Option<crate::shortcut_conflicts::Conflict>, HotkeyError> {
+/// Runs off the main thread: it shells out to `defaults` and `plutil`.
+#[tauri::command(async)]
+pub fn check_hotkey(app: AppHandle, action: String, accelerator: String) -> Result<Option<crate::shortcut_conflicts::Conflict>, HotkeyError> {
     let action = Action::parse(&action)?;
     let settings = settings::load(&app);
     let current = hotkeys::Bindings { toggle: settings.toggle_hotkey, dictation: settings.dictation_hotkey };

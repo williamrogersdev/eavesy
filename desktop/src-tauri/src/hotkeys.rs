@@ -293,7 +293,11 @@ pub fn suspend(app: &AppHandle, suspended: bool) -> Result<(), HotkeyError> {
     *is_suspended = suspended;
     if suspended {
         #[cfg(target_os = "macos")]
-        crate::fn_key::capture(app);
+        if let Err(error) = crate::fn_key::capture(app) {
+            // Not fatal: recording still works with the keyboard, and the UI
+            // knows from fn_status whether a tap can be heard.
+            if error != HotkeyError::InputMonitoring { crate::telemetry::capture("hotkeys.fn_capture", &error.to_string()); }
+        }
         return Ok(());
     }
     let failures = register_all(app, &settings::load(app));
@@ -328,6 +332,11 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
     let failures = register_bindings(app, next);
     // fn without Input Monitoring is still saved: it starts working once
     // Eavesy relaunches with the permission, and Settings shows how to get there.
+    // Choosing fn is when to ask for Input Monitoring (not every launch).
+    #[cfg(target_os = "macos")]
+    if failures.iter().any(|(_, _, e)| *e == HotkeyError::InputMonitoring) {
+        crate::permissions::request_input_monitoring_inner(app);
+    }
     let blocking = failures.into_iter().find(|(_, _, e)| *e != HotkeyError::InputMonitoring);
     if let Some((_, _, error)) = blocking {
         unregister_everything(app);

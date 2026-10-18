@@ -86,10 +86,10 @@ pub fn bind(app: &AppHandle, action: u8) -> Result<(), HotkeyError> {
 }
 
 /// While Settings records a shortcut, a lone fn tap is reported to it rather
-/// than acted on. Without Input Monitoring the webview's own key events are
-/// all there is.
-pub fn capture(app: &AppHandle) {
-    let _ = bind(app, CAPTURE);
+/// than acted on. Fails without Input Monitoring; Settings reads `fn_status`
+/// and offers a "Use fn" button instead of promising that a tap works.
+pub fn capture(app: &AppHandle) -> Result<(), HotkeyError> {
+    bind(app, CAPTURE)
 }
 
 fn ensure_tap(app: &AppHandle) -> Result<(), String> {

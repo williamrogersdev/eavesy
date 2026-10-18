@@ -155,7 +155,6 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     setNotice(null);
   }
   const rowRef = useRef<HTMLDivElement>(null);
-  const capturing = useRef(false);
   const { reload, recheckFn, changed, startRecording, stopRecording } = shortcuts;
 
   const fail = useCallback((error: unknown, accelerator: string) => {
@@ -206,15 +205,31 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     void stopRecording();
   }, [stopRecording]);
 
+  // The listeners below live for one recording; keep them from re-subscribing
+  // when these callbacks change identity mid-recording.
+  const proposeRef = useRef(propose);
+  const cancelRef = useRef(cancel);
+  const stopRef = useRef(stopRecording);
+  useEffect(() => {
+    proposeRef.current = propose;
+    cancelRef.current = cancel;
+    stopRef.current = stopRecording;
+  }, [propose, cancel, stopRecording]);
+
   useEffect(() => {
     if (!recording) return;
+    // One recording yields at most one shortcut, even if the webview and the
+    // Mac app both report the same fn tap.
+    let consumed = false;
     const capture = async (accelerator: string) => {
-      if (capturing.current) return;
-      capturing.current = true;
+      if (consumed) return;
+      consumed = true;
       setHeld(NOTHING_HELD);
-      await stopRecording();
-      await propose(accelerator);
-      capturing.current = false;
+      try {
+        await stopRef.current();
+      } finally {
+        await proposeRef.current(accelerator);
+      }
     };
     // The webview sees fn only on some Macs; the Mac app reports a tap too
     // when Input Monitoring is on.
@@ -226,7 +241,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       setHeld({ meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
       if (e.key === 'Fn') { fnDown = true; chorded = false; return; }
       if (fnDown) chorded = true;
-      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) { cancel(); return; }
+      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) { cancelRef.current(); return; }
       const accelerator = acceleratorFromEvent(e);
       if (accelerator) void capture(accelerator);
     };
@@ -240,7 +255,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       }
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (!rowRef.current?.contains(e.target as Node)) cancel();
+      if (!rowRef.current?.contains(e.target as Node)) cancelRef.current();
     };
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
@@ -255,9 +270,10 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       document.removeEventListener('pointerdown', onPointerDown, true);
       unlisten?.();
     };
-  }, [recording, propose, cancel, stopRecording]);
+  }, [recording]);
 
   const liveCaps = heldCaps(held);
+  const fnHearable = !desktop || shortcuts.fn?.input_monitoring !== false;
   const other: HotkeyAction = action === 'toggle' ? 'dictation' : 'toggle';
 
   return (
@@ -301,7 +317,14 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
         </div>
       </div>
 
-      {recording ? <p className="ev-shortcut-note">Press a shortcut, or tap fn. Esc to cancel.</p> : null}
+      {recording && fnHearable ? <p className="ev-shortcut-note">Press a shortcut, or tap fn. Esc to cancel.</p> : null}
+      {recording && !fnHearable ? (
+        <p className="ev-shortcut-note">
+          Press a shortcut. Esc to cancel.{' '}
+          {/* Without Input Monitoring a tap of fn can't be heard, so offer it as a choice. */}
+          <button type="button" className="ev-link" onClick={() => { void stopRecording().then(() => propose(FN)); }}>Use fn</button>
+        </p>
+      ) : null}
       {!desktop ? <p className="ev-shortcut-note">Change shortcuts in the Mac app.</p> : null}
 
       {notice?.kind === 'error' ? <p role="alert" className="ev-shortcut-error">{notice.text}</p> : null}
