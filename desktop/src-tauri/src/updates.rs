@@ -212,12 +212,13 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         return Err("The update is already installing.".into());
     }
     let result = download_and_install(&app).await;
+    // Record the install before releasing the lock, so no second call slips in between.
+    if let Ok(version) = &result {
+        *INSTALLED.lock().unwrap_or_else(|e| e.into_inner()) = Some(version.clone());
+    }
     INSTALLING.store(false, Ordering::SeqCst);
     let version = result?;
 
-    if let Ok(mut installed) = INSTALLED.lock() {
-        *installed = Some(version.clone());
-    }
     if app.state::<crate::audio::Captures>().is_busy() {
         record(&app, UpdateState::Installed { version });
         return Ok(());
