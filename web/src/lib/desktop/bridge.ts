@@ -262,6 +262,7 @@ export type UpdateStatus = {
   | { state: 'unknown' }
   | { state: 'upToDate' }
   | { state: 'available'; version: string; notes: string | null }
+  | { state: 'installed'; version: string }
   | { state: 'error'; message: string }
 );
 
@@ -282,7 +283,11 @@ export async function checkForUpdates(): Promise<UpdateStatus | null> {
   return invoke<UpdateStatus>('check_for_updates');
 }
 
-/** Downloads and installs the available update, then relaunches. Rejects while recording. */
+/**
+ * Downloads and installs the available update, then relaunches. Rejects while
+ * recording; if a recording starts mid-download it resolves without relaunching
+ * and the status becomes `installed`.
+ */
 export async function installUpdate(): Promise<void> {
   if (!isDesktop()) return;
   await invoke('install_update');

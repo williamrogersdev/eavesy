@@ -59,6 +59,8 @@ function UpdatesCard() {
     ? `You're up to date (v${status.currentVersion}).`
     : status.state === 'available'
       ? `Eavesy ${status.version} is available. You have ${status.currentVersion}.`
+      : status.state === 'installed'
+        ? `Eavesy ${status.version} is installed. It takes effect the next time Eavesy starts.`
       : status.state === 'error'
         ? `Couldn't check for updates: ${status.message}`
         : `Eavesy ${status.currentVersion}`;
