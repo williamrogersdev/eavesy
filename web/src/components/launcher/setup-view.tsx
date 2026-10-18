@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Keyboard } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import type { AccountInfo, Permissions, PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
@@ -22,6 +22,8 @@ function talkHint(accel: string): string {
 }
 
 export function SetupView({
+  step,
+  onStep,
   paired,
   connecting,
   account,
@@ -39,6 +41,9 @@ export function SetupView({
   onChangeShortcuts,
   onFinish,
 }: {
+  /** Kept by the launcher so a detour to Settings comes back to the same step. */
+  step: number;
+  onStep: (step: number) => void;
   paired: boolean;
   connecting: boolean;
   account: AccountInfo | null | undefined;
@@ -50,14 +55,14 @@ export function SetupView({
   toggleHotkey: string;
   onConnect: () => void;
   onCancelConnect: () => void;
-  onRequest: (kind: SetupPermissionKind) => void;
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
   onOpenKeyboardSettings: () => void;
   onChangeShortcuts: () => void;
   onFinish: () => void;
 }) {
-  const [step, setStep] = useState(0);
+  const setStep = onStep;
   const [cheer, setCheer] = useState(false);
   const [tried, setTried] = useState('');
   // Only a paste proves dictation reached the cursor; typing in the box doesn't count.
@@ -68,11 +73,12 @@ export function SetupView({
   const talk = dictationHotkey || '⌘⇧D';
 
   // Signing in finishes in the browser; when it does, move on by ourselves.
-  const [wasPaired, setWasPaired] = useState(paired);
-  if (paired !== wasPaired) {
-    setWasPaired(paired);
-    if (paired && step === 0) setStep(1);
-  }
+  // (The step lives in the launcher, so this runs as an effect, not during render.)
+  const wasPaired = useRef(paired);
+  useEffect(() => {
+    if (paired && !wasPaired.current && step === 0) onStep(1);
+    wasPaired.current = paired;
+  }, [paired, step, onStep]);
 
   // One small lift each time macOS turns something on.
   useOnGrant(permissions, () => setCheer(true));
@@ -101,8 +107,10 @@ export function SetupView({
         : "Hi, I'm Eavesy. I live up here and write things down for you.",
     !micOn
       ? "I'll need to borrow your ears. Only while you're talking to me, promise."
-      : !pasteOn
-        ? 'Thank you. One more and I can type for you, right where your cursor is.'
+      : permissions?.speech === false
+        ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
+        : !pasteOn
+          ? 'One more and I can type for you, right where your cursor is.'
         : 'Lovely. The rest just makes me more useful.',
     'Two keys are all you need. You can change them any time.',
     heard

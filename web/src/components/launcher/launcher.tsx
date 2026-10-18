@@ -89,6 +89,9 @@ export function Launcher() {
   const [preflighting, setPreflighting] = useState(false);
   const [setupKnown, setSetupKnown] = useState(!desktop);
   const setupForced = useRef(false);
+  const [setupStep, setSetupStep] = useState(0);
+  // Settings opened from setup's Shortcuts step: Back returns there instead of to the list.
+  const settingsFromSetup = useRef(false);
   const connectingRef = useRef(false);
   const [toggleHotkey, setToggleHotkey] = useState('⌘⇧Space');
   const [dictationHotkey, setDictationHotkey] = useState('');
@@ -323,7 +326,7 @@ export function Launcher() {
       const listeners = await Promise.all([
         onLauncherSettings(() => setView('settings')),
         onLauncherRecordings(() => { setView((v) => (v === 'setup' ? v : 'list')); historyRef.current?.scrollTo({ top: 0 }); }),
-        onLauncherSetup(() => { setupForced.current = true; setView('setup'); }),
+        onLauncherSetup(() => { setupForced.current = true; settingsFromSetup.current = false; setSetupStep(0); setView('setup'); }),
         onCaptureState((state) => {
           receivedCaptureState = true;
           applyCaptureState(state);
@@ -659,7 +662,11 @@ export function Launcher() {
             connecting={connecting}
             signedOut={signedOut}
             goSettings={goSettings}
-            goBack={() => setView('list')}
+            goBack={() => {
+              const detour = view === 'settings' && settingsFromSetup.current;
+              settingsFromSetup.current = false;
+              setView(detour ? 'setup' : 'list');
+            }}
             connect={() => runTask(connectAccount, 'Couldn’t connect your account')}
             disconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
             runTask={runTask}
@@ -694,6 +701,8 @@ export function Launcher() {
           <div className="min-h-0 flex-1" aria-busy="true" />
         ) : view === 'setup' && (desktop || !recording) ? (
           <SetupView
+            step={setupStep}
+            onStep={setSetupStep}
             paired={setupPaired}
             connecting={connecting}
             account={account}
@@ -704,13 +713,14 @@ export function Launcher() {
             toggleHotkey={toggleHotkey}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}
             onCancelConnect={cancelConnect}
-            onRequest={(kind) => runTask(() => requestSetupPermission(kind), 'Could not check permissions')}
+            onRequest={requestSetupPermission}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
             onOpenKeyboardSettings={() => runTask(() => openKeyboardSettings(), 'Could not open Keyboard settings')}
-            onChangeShortcuts={() => setView('settings')}
+            onChangeShortcuts={() => { settingsFromSetup.current = true; setView('settings'); }}
             onFinish={() => runTask(async () => {
-              await finishSetup();
+              // The toast is about Talk, so it looks at the dictation shortcut alone.
+              if (!(await finishSetup())) return;
               flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
             }, 'Could not finish setup')}
           />
@@ -718,10 +728,10 @@ export function Launcher() {
           <SettingsView
             permissions={setupPermissions}
             checkingPermission={checkingSetupPermissions}
-            onRequestPermission={(kind) => runTask(() => requestSetupPermission(kind), 'Could not check permissions')}
+            onRequestPermission={requestSetupPermission}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
-            onRunSetup={() => { setupForced.current = true; setView('setup'); }}
+            onRunSetup={() => { setupForced.current = true; settingsFromSetup.current = false; setSetupStep(0); setView('setup'); }}
             fnInUse={usesFnKey(dictationHotkey, toggleHotkey)}
             account={account}
             connecting={connecting}
