@@ -93,15 +93,35 @@ pub fn take() -> Option<Engine> {
 /// The launch happens outside the lock, so a press taking the spare never
 /// waits on it.
 pub fn refill(make: impl FnOnce() -> Result<Command, String>) -> Result<(), String> {
-    if !needs_spare() || LAUNCHING.swap(true, Ordering::SeqCst) {
+    let Some(_launching) = Launching::claim() else { return Ok(()) };
+    if !needs_spare() {
         return Ok(());
     }
-    let launched = make().and_then(Engine::launch);
-    let result = launched.map(|engine| {
-        *SPARE.lock().unwrap_or_else(|e| e.into_inner()) = Some(engine);
-    });
-    LAUNCHING.store(false, Ordering::SeqCst);
-    result
+    let mut engine = make().and_then(Engine::launch)?;
+    let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
+    if spare.is_some() {
+        drop(spare);
+        reap(&mut engine.child);
+    } else {
+        *spare = Some(engine);
+    }
+    Ok(())
+}
+
+/// The one refill allowed to launch; the claim ends when this is dropped,
+/// however the refill ends.
+struct Launching;
+
+impl Launching {
+    fn claim() -> Option<Launching> {
+        (!LAUNCHING.swap(true, Ordering::SeqCst)).then_some(Launching)
+    }
+}
+
+impl Drop for Launching {
+    fn drop(&mut self) {
+        LAUNCHING.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Whether no live spare is waiting; a dead one is cleared away.
@@ -167,10 +187,12 @@ mod tests {
         }
         assert!(take().is_none(), "a dead spare is never handed out");
 
-        LAUNCHING.store(true, Ordering::SeqCst);
-        refill(|| Err("a refill already launching is left to finish".to_string())).unwrap();
-        LAUNCHING.store(false, Ordering::SeqCst);
+        {
+            let _launching = Launching::claim().unwrap();
+            refill(|| Err("a refill already launching is left to finish".to_string())).unwrap();
+        }
         assert!(take().is_none());
+        assert!(refill(|| Err("the claim ends with its guard".to_string())).is_err());
 
         refill(|| Ok(echo_engine())).unwrap();
         refill(|| Err("a live spare is kept, not relaunched".to_string())).unwrap();
