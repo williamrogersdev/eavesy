@@ -85,6 +85,8 @@ final class AudioRecorder: NSObject, Recorder {
     }
 
     func start() {
+        // Only a recording with the mic uses a prepared mic session.
+        if source == .system { micWarmup = nil }
         setupWriter()
         installSleepWakeObservers()
         startCaptureSources()
@@ -219,11 +221,18 @@ final class AudioRecorder: NSObject, Recorder {
         }
         let warm = micWarmup
         micWarmup = nil
+        // Access was confirmed just before this (requestMicAccessThen). A
+        // session that does not come up, say its device went away while it
+        // waited, is dropped for a fresh one.
         if let warm, warm.matches(device) {
             warm.output.setSampleBufferDelegate(self, queue: micOutputQueue)
             warm.session.startRunning()
-            captureSession = warm.session
-            return
+            if warm.session.isRunning {
+                captureSession = warm.session
+                return
+            }
+            warm.output.setSampleBufferDelegate(nil, queue: nil)
+            FileHandle.standardError.write(Data("prepared mic session did not start; building a fresh one\n".utf8))
         }
         guard let input = try? AVCaptureDeviceInput(device: device) else {
             fail("could not open microphone input")
