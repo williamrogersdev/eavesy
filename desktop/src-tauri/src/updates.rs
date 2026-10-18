@@ -6,7 +6,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
-const RECHECK: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+const RECHECK: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 /// Emitted with an [`UpdateStatus`] whenever a check finishes.
 pub const EVENT_UPDATE_STATUS: &str = "launcher:update-status";
 
@@ -84,7 +84,7 @@ pub fn check_in_background(app: &AppHandle) {
                         .notification()
                         .builder()
                         .title(format!("Eavesy {version} is available"))
-                        .body("Choose Check for Updates… in the Eavesy menu to install it.")
+                        .body("Click Update at the top of the Eavesy panel to install it.")
                         .show();
                     announced = Some(version.clone());
                 }

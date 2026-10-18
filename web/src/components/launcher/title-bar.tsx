@@ -1,10 +1,38 @@
 'use client';
 
-import { ArrowLeft, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
-import { hidePanel, openRecordingsFolder, openWebApp } from '@/lib/desktop/bridge';
+import { useState } from 'react';
+import { ArrowDownCircle, ArrowLeft, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
+import { hidePanel, installUpdate, openRecordingsFolder, openWebApp } from '@/lib/desktop/bridge';
 import { accountInitial, type AccountState } from '@/components/launcher/settings-view';
 import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
 import { type LauncherView, type RunTask } from './types';
+import { useUpdateStatus } from './use-update-status';
+
+/** Quiet "Update" pill, shown only once a newer version is ready to install. */
+function UpdateButton({ runTask }: { runTask: RunTask }) {
+  const status = useUpdateStatus();
+  const [installing, setInstalling] = useState(false);
+  if (status?.state !== 'available') return null;
+  const install = () => {
+    setInstalling(true);
+    runTask(
+      () => installUpdate().finally(() => setInstalling(false)),
+      'Couldn’t install the update',
+    );
+  };
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={ArrowDownCircle}
+      loading={installing}
+      onClick={install}
+      title={`Eavesy ${status.version} is ready (you have ${status.currentVersion}). Install and relaunch.`}
+    >
+      {installing ? 'Updating…' : 'Update'}
+    </Button>
+  );
+}
 
 /**
  * 44px drag region: close, mascot + wordmark, then the account chip (or
@@ -62,6 +90,7 @@ export function TitleBar({
         </>
       )}
       <span data-tauri-drag-region className="ev-tb-spacer" />
+      {view !== 'setup' && <UpdateButton runTask={runTask} />}
       {view !== 'settings' && view !== 'setup' && account === null && (
         <Button size="sm" variant="ghost" loading={connecting} onClick={connect}>
           {connecting ? 'Waiting…' : 'Sign in'}
