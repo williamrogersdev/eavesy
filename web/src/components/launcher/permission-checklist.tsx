@@ -98,10 +98,44 @@ export function isGranted(permissions: Permissions | null, kind: SetupPermission
  * Screen Recording and Accessibility can't tell "never asked" from "said no" (`notGranted`), so
  * those count as unanswered until Eavesy has asked once.
  */
-function answered(permissions: Permissions | null, kind: SetupPermissionKind): boolean {
+export function answered(permissions: Permissions | null, kind: SetupPermissionKind): boolean {
   const status: PermissionStatus | undefined = permissions?.status?.[kind];
   if (kind === 'mic' && status === undefined) return !!permissions?.micAsked;
   return status === 'denied' || status === 'restricted';
+}
+
+/** Kinds macOS reports only as granted or not, so "asked once" stands in for "denied". */
+export const REMEMBERS_ASKING: ReadonlySet<SetupPermissionKind> = new Set(['screen', 'accessibility']);
+
+export interface RowState {
+  granted: boolean | undefined;
+  disc: DiscStatus;
+  /** Allow would show nothing more, so the button opens System Settings. */
+  inSettings: boolean;
+  showRelaunch: boolean;
+}
+
+/**
+ * What a row shows. `asked`: the user went through Allow (and it ran) or Open Settings in this
+ * panel. `grantedAtStart`: whether it was on when the row first had permissions to show.
+ */
+export function permissionRowState({ permissions, kind, relaunch, checking, asked, grantedAtStart }: {
+  permissions: Permissions | null;
+  kind: SetupPermissionKind;
+  relaunch: boolean;
+  checking: boolean;
+  asked: boolean;
+  grantedAtStart: boolean | undefined;
+}): RowState {
+  const granted = isGranted(permissions, kind);
+  const denied = answered(permissions, kind);
+  const newlyGranted = granted === true && grantedAtStart === false;
+  return {
+    granted,
+    disc: checking ? 'checking' : granted ? 'granted' : denied ? 'denied' : 'pending',
+    inSettings: denied || asked,
+    showRelaunch: relaunch && (newlyGranted || (asked && !granted)),
+  };
 }
 
 export function PermissionChecklistRow({
@@ -115,7 +149,7 @@ export function PermissionChecklistRow({
   spec: PermissionSpec;
   permissions: Permissions | null;
   checking: boolean;
-  onRequest: (kind: SetupPermissionKind) => void;
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenSettings: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
 }) {
@@ -125,23 +159,21 @@ export function PermissionChecklistRow({
   // Granted while this list was open: some permissions need Eavesy to reopen before they work.
   const [grantedAtStart, setGrantedAtStart] = useState(granted);
   if (grantedAtStart === undefined && granted !== undefined) setGrantedAtStart(granted);
-  const newlyGranted = granted === true && grantedAtStart === false;
-
-  const inSettings = answered(permissions, spec.kind) || asked;
-  const status: DiscStatus = checking
-    ? 'checking'
-    : granted
-      ? 'granted'
-      : answered(permissions, spec.kind)
-        ? 'denied'
-        : 'pending';
-  const showRelaunch = !!spec.relaunch && (newlyGranted || (asked && !granted));
+  const { disc: status, inSettings, showRelaunch } = permissionRowState({
+    permissions, kind: spec.kind, relaunch: !!spec.relaunch, checking, asked, grantedAtStart,
+  });
   const tag = TAG[spec.need];
 
   const act = () => {
-    if (inSettings) onOpenSettings(spec.pane);
-    else onRequest(spec.kind);
-    setAsked(true);
+    if (inSettings) {
+      onOpenSettings(spec.pane);
+      setAsked(true);
+      return;
+    }
+    // Only a request that ran counts as asked; a failed one leaves Allow in place.
+    void onRequest(spec.kind).then((ran) => {
+      if (ran && REMEMBERS_ASKING.has(spec.kind)) setAsked(true);
+    });
   };
 
   return (
@@ -202,12 +234,12 @@ export function PermissionChecklist({
   fnInUse: boolean;
   /** Limit to these kinds, in this order. */
   only?: SetupPermissionKind[];
-  onRequest: (kind: SetupPermissionKind) => void;
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenSettings: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
 }) {
   const specs = permissionSpecs(fnInUse);
-  const rows = only ? only.map((kind) => specs.find((spec) => spec.kind === kind)!).filter(Boolean) : specs;
+  const rows = only ? only.flatMap((kind) => specs.filter((spec) => spec.kind === kind)) : specs;
   return (
     <>
       {rows.map((spec) => (

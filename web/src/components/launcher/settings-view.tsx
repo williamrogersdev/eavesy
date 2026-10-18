@@ -197,7 +197,7 @@ function PositionPicker({ value, custom, disabled, onPick }: {
 export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
-  onRequestPermission: (kind: SetupPermissionKind) => void;
+  onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
   onRunSetup: () => void;
