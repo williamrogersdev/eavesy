@@ -1,6 +1,7 @@
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
-// &live for a recording in progress). Never active in a production build.
+// &live for a recording in progress, &setup for first-run onboarding with
+// nothing allowed yet). Never active in a production build.
 
 type Handler = (e: { payload: unknown }) => void;
 
@@ -46,13 +47,15 @@ export function installDevMock(): void {
     capture_media: '/mock/shot.png',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };
+  if (params.has('setup')) installSetupMock(results);
   const listeners = new Map<string, Handler[]>();
   window.__TAURI__ = {
     core: {
       convertFileSrc: () => SHOT,
       invoke: <T>(cmd: string) => {
         console.debug('[mock invoke]', cmd);
-        return Promise.resolve((cmd in results ? results[cmd] : null) as T);
+        const value = cmd in results ? results[cmd] : null;
+        return Promise.resolve((typeof value === 'function' ? (value as () => unknown)() : value) as T);
       },
     },
     event: {
@@ -63,4 +66,32 @@ export function installDevMock(): void {
     },
     webview: { getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve(() => {}) }) },
   } as unknown as NonNullable<Window['__TAURI__']>;
+}
+
+/** First run: signed out, nothing allowed. Each request grants its permission, like clicking Allow. */
+function installSetupMock(results: Record<string, unknown>): void {
+  const kinds = ['mic', 'speech', 'screen', 'accessibility', 'inputMonitoring', 'notifications'] as const;
+  const granted = new Set<string>();
+  let paired = false;
+  const permissions = () => ({
+    ...Object.fromEntries(kinds.map((kind) => [kind, granted.has(kind)])),
+    micAsked: granted.has('mic'),
+    status: Object.fromEntries(kinds.map((kind) => [kind, granted.has(kind) ? 'granted' : kind === 'screen' || kind === 'accessibility' ? 'notGranted' : 'notDetermined'])),
+  });
+  const grant = (kind: (typeof kinds)[number], value: unknown = permissions) => () => {
+    granted.add(kind);
+    return typeof value === 'function' ? (value as () => unknown)() : value;
+  };
+  Object.assign(results, {
+    get_setup_status: () => ({ paired, completed: false }),
+    account_info: () => (paired ? { name: 'Robin Avery', email: 'robin@example.com' } : null),
+    pair_device: () => { paired = true; return null; },
+    check_permissions: permissions,
+    request_microphone: grant('mic'),
+    request_speech: grant('speech'),
+    request_screen: grant('screen'),
+    request_accessibility: grant('accessibility', true),
+    request_input_monitoring: grant('inputMonitoring', 'granted'),
+    request_notifications: grant('notifications', 'granted'),
+  });
 }
