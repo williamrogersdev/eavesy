@@ -314,8 +314,48 @@
 .ev-set-hint { margin-top: 1px; color: var(--ev-ink-2); font: 400 12px/16px var(--ev-font-text); }
 .ev-set-path { min-width: 0; overflow: hidden; color: var(--ev-ink); font: 500 12px/16px var(--ev-font-round); text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- permission rows (onboarding + Settings) ---------- */
+.ev-perm { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; }
+.ev-perm-title { font: 650 13px/18px var(--ev-font-round); color: var(--ev-ink); }
+.ev-perm-tag { margin-left: 6px; font: 500 11.5px var(--ev-font-round); color: var(--ev-ink-3); }
+.ev-perm-hint { margin-top: 1px; font: 400 12px/16px var(--ev-font-text); color: var(--ev-ink-2); }
+.ev-perm-action { display: flex; align-items: center; gap: 4px; }
+.ev-perm-on { font: 650 12px var(--ev-font-round); color: var(--ev-leaf); padding: 0 4px; }
+.ev-shortcut { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; }
+.ev-banner[data-tone='quiet'] { background: var(--ev-well); color: var(--ev-ink-2); }
+.ev-banner .ev-link { flex: none; white-space: nowrap; }
+
+/* ---------- onboarding (DESIGN.md §7) ---------- */
+.ev-onb { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.ev-onb-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px 12px; }
+.ev-onb-hero { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; align-items: start; }
+.ev-onb-bubble { margin-top: 18px; }
+.ev-steps { display: flex; align-items: center; gap: 6px; margin: 14px 2px 6px; font: 650 11.5px var(--ev-font-round); color: var(--ev-ink-3); }
+.ev-steps i { width: 6px; height: 6px; border-radius: 999px; background: var(--ev-line-strong); transition: width var(--ev-d-state) var(--ev-ease-out), background var(--ev-d-state); }
+.ev-steps i[data-state='on'] { width: 16px; background: var(--ev-slate); }
+.ev-steps i[data-state='done'] { background: var(--ev-leaf); }
+.ev-steps span { margin-left: 6px; }
+.ev-onb-title { margin: 0 2px 4px; font: var(--ev-t-title); color: var(--ev-ink); }
+.ev-onb-lead { margin: 0 2px 12px; font: 400 13px/19px var(--ev-font-text); color: var(--ev-ink-2); }
+.ev-onb-lead .ev-kbd, .ev-onb-note .ev-kbd, .ev-onb-tip .ev-kbd { vertical-align: 1px; }
+.ev-onb-note { margin: 8px 2px 0; font: 500 12px/17px var(--ev-font-round); color: var(--ev-ink-3); }
+.ev-onb-ok { display: inline-flex; align-items: center; gap: 5px; color: var(--ev-leaf); font-weight: 650; }
+.ev-onb-later { margin: 14px 0 6px 4px; }
+.ev-onb-change { margin: 8px 0 0 2px; }
+.ev-onb-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 10px 12px; border-radius: var(--ev-r-pop); background: var(--ev-well); font: 400 12px/17px var(--ev-font-text); color: var(--ev-ink-2); }
+.ev-onb-tip p { margin: 0; }
+.ev-onb-try {
+  display: block; width: 100%; min-height: 76px; resize: none; padding: 10px 12px;
+  border: 0; border-radius: var(--ev-r-pop); background: var(--ev-well); color: var(--ev-ink);
+  font: 400 13.5px/20px var(--ev-font-text); outline: none;
+}
+.ev-onb-try::placeholder { color: var(--ev-ink-3); }
+.ev-onb-try:focus-visible { background: var(--ev-raised); box-shadow: var(--ev-focus), var(--ev-e-2); }
+.ev-onb-foot { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--ev-line); }
+
 @media (prefers-reduced-motion: reduce) {
   .ev-grow { animation: ev-fade 120ms linear; }
+  .ev-steps i { transition: none; }
   .ev-toast { animation: none; }
   .ev-thumb[data-loading='true'] { animation: none; }
 }

@@ -8,6 +8,7 @@ import {
   getSetupStatus,
   hidePanel,
   relaunchApp,
+  openKeyboardSettings,
   isDesktop,
   onLauncherOpened,
   onLauncherSettings,
@@ -36,6 +37,7 @@ import {
   type CaptureSession,
   type CaptureStatus,
   type Permissions,
+  type PrivacyPane,
 } from '@/lib/desktop/bridge';
 import { CaptureHistory, plainTranscript, type LiveCapture } from '@/components/launcher/capture-history';
 import { SettingsView, type AccountState } from '@/components/launcher/settings-view';
@@ -58,6 +60,7 @@ import { CaptureToolbar, type CaptureKind } from './capture-toolbar';
 import { Composer, Mascot, type ComposerHandle } from './ui';
 import { PaletteView } from './palette-view';
 import { useSetupPermissions } from './use-setup-permissions';
+import { usesFnKey } from './permission-checklist';
 
 export { plainTranscript };
 
@@ -121,12 +124,18 @@ export function Launcher() {
     setView,
     setupForced,
     searchRef,
-    recording,
-    setupPaired,
-    dictationHotkey,
     flash,
     runTask,
   });
+
+  // A quiet, lasting note on the list while something dictation relies on is off.
+  const permissionNudge: { text: string; pane: PrivacyPane } | null = !setupPermissions
+    ? null
+    : setupPermissions.accessibility === false
+      ? { text: 'Dictation is copied, not pasted: Accessibility is off for Eavesy.', pane: 'accessibility' }
+      : setupPermissions.inputMonitoring === false && usesFnKey(dictationHotkey, toggleHotkey)
+        ? { text: 'fn can’t start dictation: Input Monitoring is off for Eavesy.', pane: 'input_monitoring' }
+        : null;
 
   /** Reloads the list; on failure keeps what is shown and says the list is stale. */
   const refreshRecordings = useCallback(async () => {
@@ -675,19 +684,35 @@ export function Launcher() {
             <button type="button" className="ev-link" disabled={connecting} onClick={() => runTask(connectAccount, 'Couldn’t connect your account')}>Sign in</button>
           </div>
         )}
+        {desktop && view === 'list' && permissionNudge && (
+          <div role="status" className="ev-banner" data-tone="quiet">
+            <span>{permissionNudge.text}</span>
+            <button type="button" className="ev-link" onClick={() => openPrivacy(permissionNudge.pane)}>Open Settings</button>
+          </div>
+        )}
         {desktop && !setupKnown ? (
           <div className="min-h-0 flex-1" aria-busy="true" />
-        ) : view === 'setup' && !recording ? (
+        ) : view === 'setup' && (desktop || !recording) ? (
           <SetupView
             paired={setupPaired}
             connecting={connecting}
+            account={account}
             permissions={setupPermissions}
             checking={checkingSetupPermissions}
+            listening={!!recording}
+            dictationHotkey={dictationHotkey}
+            toggleHotkey={toggleHotkey}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}
             onCancelConnect={cancelConnect}
             onRequest={(kind) => runTask(() => requestSetupPermission(kind), 'Could not check permissions')}
-            onOpenSettings={openPrivacy}
-            onFinish={() => runTask(finishSetup, 'Could not finish setup')}
+            onOpenPrivacy={openPrivacy}
+            onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
+            onOpenKeyboardSettings={() => runTask(() => openKeyboardSettings(), 'Could not open Keyboard settings')}
+            onChangeShortcuts={() => setView('settings')}
+            onFinish={() => runTask(async () => {
+              await finishSetup();
+              flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
+            }, 'Could not finish setup')}
           />
         ) : view === 'settings' ? (
           <SettingsView
@@ -696,6 +721,8 @@ export function Launcher() {
             onRequestPermission={(kind) => runTask(() => requestSetupPermission(kind), 'Could not check permissions')}
             onOpenPrivacy={openPrivacy}
             onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
+            onRunSetup={() => { setupForced.current = true; setView('setup'); }}
+            fnInUse={usesFnKey(dictationHotkey, toggleHotkey)}
             account={account}
             connecting={connecting}
             onCancelConnect={cancelConnect}

@@ -1,10 +1,10 @@
 'use client';
 
-import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
 import { HotkeyRecorder } from '@/components/launcher/hotkey-recorder';
-import { PermissionRow } from '@/components/launcher/permission-row';
+import { PermissionChecklist } from '@/components/launcher/permission-checklist';
 import {
   chooseRecordingsFolder,
   errMsg,
@@ -20,7 +20,6 @@ import {
   setAutoImportScreenshots,
   type AccountInfo,
   type LauncherPosition,
-  type PermissionStatus,
   type Permissions,
   type PrivacyPane,
   type Settings,
@@ -195,17 +194,14 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
-/** Whether macOS has already asked, so Allow would do nothing and only System Settings helps. */
-function answered(status: PermissionStatus | undefined): boolean | undefined {
-  return status === undefined ? undefined : status !== 'notDetermined';
-}
-
-export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
+export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
   onRequestPermission: (kind: SetupPermissionKind) => void;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
+  onRunSetup: () => void;
+  fnInUse: boolean;
   account: AccountState;
   connecting: boolean;
   onConnect: () => void;
@@ -286,76 +282,20 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
         </Section>
 
         {isDesktop() && (
-          <Section title="Permissions">
-            <div className="-m-1 grid">
-              <PermissionRow
-                label="Microphone"
-                hint="Voice notes and dictation."
-                settingsHint="Turn on Eavesy under Microphone in System Settings."
-                granted={permissions?.mic}
-                answered={permissions?.micAsked}
-                checking={checkingPermission === 'mic'}
-                onRequest={() => onRequestPermission('mic')}
-                onOpenSettings={() => onOpenPrivacy('microphone')}
-              />
-              <PermissionRow
-                label="Screen Recording"
-                optional
-                hint="Calls, screenshots and screen video."
-                settingsHint="Turn on Eavesy under Screen Recording, then reopen Eavesy."
-                granted={permissions?.screen}
-                checking={checkingPermission === 'screen'}
-                onRequest={() => onRequestPermission('screen')}
-                onOpenSettings={() => onOpenPrivacy('screen')}
-                onRelaunch={onRelaunch}
-              />
-              <PermissionRow
-                label="Speech Recognition"
-                optional
-                hint="Live captions and instant dictation paste."
-                settingsHint="Turn on Eavesy under Speech Recognition in System Settings."
-                granted={permissions?.speech}
-                answered={answered(permissions?.status?.speech)}
-                checking={checkingPermission === 'speech'}
-                onRequest={() => onRequestPermission('speech')}
-                onOpenSettings={() => onOpenPrivacy('speech')}
-              />
-              <PermissionRow
-                label="Accessibility"
-                optional
-                hint="Paste what you dictate right where your cursor is."
-                settingsHint="Turn on Eavesy under Accessibility in System Settings."
-                granted={permissions?.accessibility}
-                checking={checkingPermission === 'accessibility'}
-                onRequest={() => onRequestPermission('accessibility')}
-                onOpenSettings={() => onOpenPrivacy('accessibility')}
-              />
-              <PermissionRow
-                label="Input Monitoring"
-                optional
-                hint="Use the Fn / Globe key as a shortcut."
-                settingsHint="Turn on Eavesy under Input Monitoring, then reopen Eavesy."
-                granted={permissions?.inputMonitoring}
-                answered={answered(permissions?.status?.inputMonitoring)}
-                checking={checkingPermission === 'inputMonitoring'}
-                onRequest={() => onRequestPermission('inputMonitoring')}
-                onOpenSettings={() => onOpenPrivacy('input_monitoring')}
-                onRelaunch={onRelaunch}
-                relaunchTitle="macOS applies Input Monitoring after Eavesy restarts"
-              />
-              <PermissionRow
-                label="Notifications"
-                optional
-                hint="Sign-in, upload and update alerts."
-                settingsHint="Turn on notifications for Eavesy in System Settings → Notifications."
-                granted={permissions?.notifications}
-                answered={answered(permissions?.status?.notifications)}
-                checking={checkingPermission === 'notifications'}
-                onRequest={() => onRequestPermission('notifications')}
-                onOpenSettings={() => onOpenPrivacy('notifications')}
-              />
+          <Card title="Permissions">
+            <PermissionChecklist
+              permissions={permissions}
+              checking={checkingPermission}
+              fnInUse={fnInUse}
+              onRequest={onRequestPermission}
+              onOpenSettings={onOpenPrivacy}
+              onRelaunch={onRelaunch}
+            />
+            <div className="ev-set-row">
+              <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
+              <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
             </div>
-          </Section>
+          </Card>
         )}
 
         {isDesktop() && (
