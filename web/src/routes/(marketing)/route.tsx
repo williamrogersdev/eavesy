@@ -13,7 +13,7 @@ export const Route = createFileRoute('/(marketing)')({
 
 function MarketingLayout() {
   return (
-    <div className="theme-dark relative flex flex-1 flex-col overflow-hidden">
+    <div className="ev ev-site relative flex flex-1 flex-col overflow-hidden">
       <JsonLd schema={[organizationSchema(), websiteSchema()]} />
       <Nav />
       <div className="flex flex-1 flex-col">

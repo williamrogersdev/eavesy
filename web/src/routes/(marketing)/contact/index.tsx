@@ -52,18 +52,18 @@ function ContactPage() {
               return (
                 <div
                   key={channel.label}
-                  className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.02] p-5"
+                  className="flex items-start gap-3 rounded-2xl border border-ev-line bg-ev-raised p-5"
                 >
-                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-white/[0.06] text-accent">
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-well text-ev-slate">
                     <Icon className="h-4 w-4" />
                   </span>
                   <div>
-                    <div className="text-sm font-semibold text-white">
+                    <div className="text-sm font-semibold text-ev-ink">
                       {channel.label}
                     </div>
                     <a
                       href={`mailto:${channel.value}`}
-                      className="text-sm text-white/55 transition hover:text-white"
+                      className="text-sm text-ev-ink-2 transition hover:text-ev-ink"
                     >
                       {channel.value}
                     </a>

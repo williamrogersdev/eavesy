@@ -56,13 +56,13 @@ function DocPage() {
           ]}
         />
         <header className="mb-8">
-          <div className="text-xs font-semibold uppercase tracking-wider text-accent">
+          <div className="text-xs font-semibold text-ev-slate">
             {frontmatter.category}
           </div>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-ev-ink">
             {frontmatter.title}
           </h1>
-          <p className="mt-3 text-lg leading-relaxed text-white/55">
+          <p className="mt-3 text-lg leading-relaxed text-ev-ink-2">
             {frontmatter.description}
           </p>
         </header>

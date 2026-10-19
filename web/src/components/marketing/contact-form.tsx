@@ -43,18 +43,18 @@ export function ContactForm() {
 
   if (status === 'success') {
     return (
-      <div className="flex flex-col items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-10 text-center">
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white/80">
+      <div className="flex flex-col items-center gap-4 rounded-2xl border border-ev-line bg-ev-raised p-10 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-ev-well text-ev-ink">
           <Check className="h-6 w-6" />
         </span>
-        <h2 className="text-xl font-semibold text-white">Message sent</h2>
-        <p className="max-w-sm text-sm text-white/55">
+        <h2 className="text-xl font-semibold text-ev-ink">Message sent</h2>
+        <p className="max-w-sm text-sm text-ev-ink-2">
           Thanks for reaching out — we’ll get back to you at the email you provided.
         </p>
         <button
           type="button"
           onClick={() => setStatus('idle')}
-          className="text-sm font-medium text-accent transition hover:text-accent-hover"
+          className="text-sm font-medium text-ev-slate transition hover:text-ev-slate-hover"
         >
           Send another message
         </button>
@@ -67,7 +67,7 @@ export function ContactForm() {
       onSubmit={(event) => {
         void handleSubmit(event);
       }}
-      className="flex flex-col gap-5 rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-8"
+      className="flex flex-col gap-5 rounded-2xl border border-ev-line bg-ev-raised p-6 sm:p-8"
     >
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Name">
@@ -96,7 +96,7 @@ export function ContactForm() {
       <Field label="Topic">
         <select name="topic" className={inputClass} defaultValue="General">
           {TOPICS.map((t) => (
-            <option key={t} value={t} className="bg-[#0c0c12]">
+            <option key={t} value={t}>
               {t}
             </option>
           ))}
@@ -124,12 +124,12 @@ export function ContactForm() {
         className="hidden"
       />
 
-      {error && <p className="text-sm text-accent">{error}</p>}
+      {error && <p className="text-sm text-ev-slate">{error}</p>}
 
       <button
         type="submit"
         disabled={status === 'submitting'}
-        className="inline-flex items-center justify-center gap-2 rounded-xl bg-action px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-action/25 transition hover:bg-action-hover disabled:opacity-60"
+        className="inline-flex items-center justify-center gap-2 rounded-full bg-ev-slate px-5 py-3 text-sm font-round font-bold text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover disabled:opacity-60"
       >
         {status === 'submitting' && <Loader2 className="h-4 w-4 animate-spin" />}
         {status === 'submitting' ? 'Sending…' : 'Send message'}
@@ -139,7 +139,7 @@ export function ContactForm() {
 }
 
 const inputClass =
-  'w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-white placeholder:text-white/50 outline-none transition focus:border-accent/50 focus:bg-white/[0.05]';
+  'w-full rounded-xl border border-ev-line bg-ev-raised px-4 py-2.5 text-sm text-ev-ink placeholder:text-ev-ink-2 outline-none transition focus:border-ev-slate/40 focus:bg-ev-paper';
 
 function Field({
   label,
@@ -150,7 +150,7 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-white/70">{label}</span>
+      <span className="text-sm font-medium text-ev-ink">{label}</span>
       {children}
     </label>
   );

@@ -61,7 +61,7 @@ function DownloadMacPage() {
         <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted/40">
           <Apple className="h-6 w-6" />
         </span>
-        <h1 className="mt-5 text-4xl font-semibold tracking-tight">
+        <h1 className="mt-5 text-4xl font-extrabold tracking-tight">
           {started ? 'Your download is starting' : 'Eavesy for Mac'}
         </h1>
         <p className="mt-3 text-muted-foreground">
@@ -79,14 +79,14 @@ function DownloadMacPage() {
         <div className="mx-auto max-w-sm rounded-lg border border-border bg-muted/30 p-5 text-center text-sm">
           <p className="font-medium">Eavesy runs on Mac.</p>
           <p className="mt-1 text-muted-foreground">
-            Open <span className="font-mono">eavesy.com/download/mac</span> on your Mac to install it.
+            Open <span className="font-semibold text-ev-ink">eavesy.com/download/mac</span> on your Mac to install it.
           </p>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-2">
           <a
             href={DMG_URL}
-            className="inline-flex items-center gap-2.5 rounded-xl bg-action px-6 py-3 text-base font-semibold text-white shadow-lg shadow-action/25 hover:bg-action-hover"
+            className="inline-flex items-center gap-2.5 rounded-full bg-ev-slate px-6 py-3 text-base font-round font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover"
           >
             <Apple className="h-5 w-5" />
             {started ? 'Download again' : 'Download for Mac'}
