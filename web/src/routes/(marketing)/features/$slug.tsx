@@ -65,15 +65,15 @@ function FeatureDetailPage() {
             {feature.highlights.map((h) => (
               <div
                 key={h.title}
-                className="rounded-2xl border border-white/10 bg-white/[0.02] p-6"
+                className="rounded-2xl border border-ev-line bg-ev-raised p-6"
               >
                 <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent/15 text-accent">
+                  <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-ev-slate-soft text-ev-slate">
                     <Check className="h-3.5 w-3.5" strokeWidth={3} />
                   </span>
                   <div>
-                    <h2 className="font-semibold text-white">{h.title}</h2>
-                    <p className="mt-1.5 text-sm leading-relaxed text-white/55">
+                    <h2 className="font-semibold text-ev-ink">{h.title}</h2>
+                    <p className="mt-1.5 text-sm leading-relaxed text-ev-ink-2">
                       {h.body}
                     </p>
                   </div>
@@ -85,16 +85,16 @@ function FeatureDetailPage() {
       </section>
 
       {feature.faqs && feature.faqs.length > 0 && (
-        <section className="border-t border-white/[0.06] px-6 py-16">
+        <section className="border-t border-ev-line px-6 py-16">
           <Container className="max-w-3xl">
-            <h2 className="text-2xl font-semibold tracking-tight text-white">
+            <h2 className="text-2xl font-extrabold tracking-tight text-ev-ink">
               Frequently asked
             </h2>
-            <dl className="mt-8 divide-y divide-white/[0.06]">
+            <dl className="mt-8 divide-y divide-ev-line">
               {feature.faqs.map((f) => (
                 <div key={f.q} className="py-5">
-                  <dt className="font-medium text-white">{f.q}</dt>
-                  <dd className="mt-2 text-sm leading-relaxed text-white/55">{f.a}</dd>
+                  <dt className="font-medium text-ev-ink">{f.q}</dt>
+                  <dd className="mt-2 text-sm leading-relaxed text-ev-ink-2">{f.a}</dd>
                 </div>
               ))}
             </dl>
@@ -103,9 +103,9 @@ function FeatureDetailPage() {
       )}
 
       {related.length > 0 && (
-        <section className="border-t border-white/[0.06] px-6 py-16">
+        <section className="border-t border-ev-line px-6 py-16">
           <Container>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/50">
+            <h2 className="text-sm font-semibold text-ev-ink-2">
               Related features
             </h2>
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -115,13 +115,13 @@ function FeatureDetailPage() {
                   <Link
                     key={r.slug}
                     href={`/features/${r.slug}`}
-                    className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-white/20 hover:bg-white/[0.04]"
+                    className="group flex items-center gap-3 rounded-xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
                   >
-                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-accent/15 text-accent">
+                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-slate-soft text-ev-slate">
                       <Icon className="h-4 w-4" />
                     </span>
-                    <span className="text-sm font-medium text-white">{r.name}</span>
-                    <ArrowRight className="ml-auto h-4 w-4 text-white/50 transition group-hover:text-white/60" />
+                    <span className="text-sm font-medium text-ev-ink">{r.name}</span>
+                    <ArrowRight className="ml-auto h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-ink-2" />
                   </Link>
                 );
               })}

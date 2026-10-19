@@ -42,25 +42,25 @@ function ChangelogPage() {
       <section className="px-6 py-16">
         <Container className="max-w-3xl">
           {entries.length === 0 ? (
-            <p className="text-white/55">No entries yet.</p>
+            <p className="text-ev-ink-2">No entries yet.</p>
           ) : (
             <div className="flex flex-col gap-16">
               {entries.map((entry) => (
                 <article key={entry.slug} className="flex flex-col gap-4">
                   <div className="flex flex-wrap items-center gap-3">
                     {entry.frontmatter.version && (
-                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/70">
+                      <span className="rounded-full border border-ev-line bg-ev-well px-3 py-1 text-xs font-medium text-ev-ink">
                         {entry.frontmatter.version}
                       </span>
                     )}
                     <time
                       dateTime={entry.frontmatter.date}
-                      className="text-sm text-white/50"
+                      className="text-sm text-ev-ink-2"
                     >
                       {formatDate(entry.frontmatter.date)}
                     </time>
                   </div>
-                  <h2 className="text-2xl font-semibold tracking-tight text-white">
+                  <h2 className="text-2xl font-extrabold tracking-tight text-ev-ink">
                     {entry.frontmatter.title}
                   </h2>
                   <MdxContent Component={entry.Component} />

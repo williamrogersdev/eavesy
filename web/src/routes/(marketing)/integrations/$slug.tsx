@@ -57,19 +57,19 @@ function IntegrationDetailPage() {
 
       <section className="px-6 py-16">
         <Container className="max-w-3xl">
-          <h2 className="text-2xl font-semibold tracking-tight text-white">
+          <h2 className="text-2xl font-extrabold tracking-tight text-ev-ink">
             How it works with {integration.name}
           </h2>
           <ol className="mt-8 flex flex-col gap-px">
             {integration.steps.map((step, i) => (
               <li
                 key={step}
-                className="flex gap-5 border-b border-white/[0.06] py-5 last:border-0"
+                className="flex gap-5 border-b border-ev-line py-5 last:border-0"
               >
-                <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full border border-white/15 text-sm font-semibold text-white/70">
+                <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full border border-ev-line text-sm font-semibold text-ev-ink">
                   {i + 1}
                 </span>
-                <p className="leading-relaxed text-white/70">{step}</p>
+                <p className="leading-relaxed text-ev-ink">{step}</p>
               </li>
             ))}
           </ol>
@@ -77,16 +77,16 @@ function IntegrationDetailPage() {
       </section>
 
       {integration.faqs && integration.faqs.length > 0 && (
-        <section className="border-t border-white/[0.06] px-6 py-16">
+        <section className="border-t border-ev-line px-6 py-16">
           <Container className="max-w-3xl">
-            <h2 className="text-2xl font-semibold tracking-tight text-white">
+            <h2 className="text-2xl font-extrabold tracking-tight text-ev-ink">
               Frequently asked
             </h2>
-            <dl className="mt-8 divide-y divide-white/[0.06]">
+            <dl className="mt-8 divide-y divide-ev-line">
               {integration.faqs.map((f) => (
                 <div key={f.q} className="py-5">
-                  <dt className="font-medium text-white">{f.q}</dt>
-                  <dd className="mt-2 text-sm leading-relaxed text-white/55">{f.a}</dd>
+                  <dt className="font-medium text-ev-ink">{f.q}</dt>
+                  <dd className="mt-2 text-sm leading-relaxed text-ev-ink-2">{f.a}</dd>
                 </div>
               ))}
             </dl>
@@ -95,9 +95,9 @@ function IntegrationDetailPage() {
       )}
 
       {others.length > 0 && (
-        <section className="border-t border-white/[0.06] px-6 py-16">
+        <section className="border-t border-ev-line px-6 py-16">
           <Container>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/50">
+            <h2 className="text-sm font-semibold text-ev-ink-2">
               More {integration.category.toLowerCase()} integrations
             </h2>
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -105,10 +105,10 @@ function IntegrationDetailPage() {
                 <Link
                   key={o.slug}
                   href={`/integrations/${o.slug}`}
-                  className="group flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-white/20 hover:bg-white/[0.04]"
+                  className="group flex items-center justify-between rounded-xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
                 >
-                  <span className="text-sm font-medium text-white">{o.name}</span>
-                  <ArrowRight className="h-4 w-4 text-white/50 transition group-hover:text-white/60" />
+                  <span className="text-sm font-medium text-ev-ink">{o.name}</span>
+                  <ArrowRight className="h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-ink-2" />
                 </Link>
               ))}
             </div>

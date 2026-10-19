@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(marketing)/privacy/')({
 function PrivacyPage() {
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-16 text-sm">
-      <h1 className="text-3xl font-semibold tracking-tight">Privacy</h1>
+      <h1 className="text-3xl font-extrabold tracking-tight">Privacy</h1>
       <p className="text-muted-foreground">Last updated: {new Date().getFullYear()}.</p>
 
       <section className="flex flex-col gap-4">
