@@ -60,6 +60,7 @@ const RECORDING = 'meet_owner_recording';
 const LINE = 'line_owner';
 const CAPTURE = 'cap_owner';
 const TEMPLATE = 'tpl_owner';
+const PROJECT = 'proj_owner';
 const MCP_TOKEN = 'mcp_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
@@ -321,6 +322,32 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
+  '/api/projects/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/projects' }, excludes: [PROJECT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a project owned by the caller' },
+  },
+  '/api/projects/$id/': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/projects/${PROJECT}`, params: { id: PROJECT }, body: json({ name: 'Mine now' }) },
+        unchanged: () => row('SELECT name FROM folders WHERE id = ?', PROJECT),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/projects/${PROJECT}`, params: { id: PROJECT } },
+        unchanged: () => row('SELECT id FROM folders WHERE id = ?', PROJECT),
+      },
+    },
+  },
+  '/api/projects/$id/suggestions': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/projects/${PROJECT}/suggestions`, params: { id: PROJECT } }, status: 404 },
+    },
+  },
   '/api/sessions/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/sessions' }, excludes: [MEETING] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' },
@@ -412,6 +439,7 @@ beforeEach(async () => {
     'drops',
     'dictations',
     'prompt_templates',
+    'folders',
     'mcp_tokens',
     'activity_log',
     'meetings',
@@ -447,6 +475,9 @@ async function seedOwner() {
       `INSERT INTO prompt_templates (id, user_id, name, system_prompt, applies_to, sort_order)
        VALUES (?, ?, 'Owner template', 'Owner prompt', 'meeting', 0)`,
     ).bind(TEMPLATE, OWNER),
+    testEnv.DB.prepare(
+      `INSERT INTO folders (id, user_id, name, vocabulary_json, match_json) VALUES (?, ?, 'Owner project', '[]', '[]')`,
+    ).bind(PROJECT, OWNER),
     testEnv.DB.prepare(
       `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at)
        VALUES (?, ?, 'Owner dictation', 'Owner words', 3, ?)`,

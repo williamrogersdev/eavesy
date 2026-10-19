@@ -25,7 +25,7 @@ export async function listForUser(db: AppDb, userId: string): Promise<ProjectWit
   const rows = await db
     .select({
       folder: folders,
-      recordingCount: sql<number>`(select count(*) from ${meetings} where ${meetings.folderId} = ${folders.id} and ${meetings.deletedAt} is null)`,
+      recordingCount: sql<number>`(select count(*) from meetings m where m.folder_id = "folders"."id" and m.deleted_at is null)`,
     })
     .from(folders)
     .where(eq(folders.userId, userId))
@@ -141,9 +141,9 @@ const SUGGESTION_LIMIT = 8;
  * Products, projects and companies the project's recent summaries mention
  * that are not in its vocabulary yet, most mentioned first.
  */
-export async function vocabularySuggestions(db: AppDb, args: { id: string; userId: string }): Promise<string[]> {
+export async function vocabularySuggestions(db: AppDb, args: { id: string; userId: string }): Promise<string[] | null> {
   const project = await getForUser(db, args);
-  if (!project) return [];
+  if (!project) return null;
   const rows = await db
     .select({ mentionsJson: summaries.mentionsJson })
     .from(summaries)

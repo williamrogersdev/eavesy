@@ -14,6 +14,7 @@ export const Route = createFileRoute('/api/projects/$id/suggestions')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const terms = await projectsRepo.vocabularySuggestions(getDb(), { id: params.id, userId: actor.userId });
+        if (!terms) return Response.json({ error: 'not found' }, { status: 404 });
         return Response.json({ terms });
       },
     },
