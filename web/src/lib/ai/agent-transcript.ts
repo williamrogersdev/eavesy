@@ -23,7 +23,7 @@ const SHARED_RULES = `Do:
 - Fix punctuation, capitalisation and sentence boundaries.
 - Write code identifiers, file names, paths, commands, flags, packages and URLs in backticks, spelled as code ("summarize dot ts" becomes \`summarize.ts\`, "bun run build" becomes \`bun run build\`). Only do this when it is clearly code.
 - Spell names and terms the way the context below spells them.
-- Mark words you cannot make out as [unclear] rather than guessing.
+- Keep the language the speaker used.
 
 Do not:
 - Summarise, shorten ideas, reorder, or rephrase beyond the above. Keep the speaker's own words, voice and person.
@@ -32,11 +32,21 @@ Do not:
 
 Output only the cleaned text.`;
 
+const UNCLEAR_RULE = `\n- Mark words you cannot make out as [unclear] rather than guessing.`;
+
 function soloPrompt(context: string | null) {
   return `You clean up a voice transcript of one person talking, so they can paste it straight into an AI agent (for example a coding assistant) as their own message.
 
-${SHARED_RULES}
+${SHARED_RULES}${UNCLEAR_RULE}
 - Break the text into short paragraphs by topic. When the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.${contextBlock(context)}`;
+}
+
+function dictationPrompt(context: string | null) {
+  return `You clean up a dictation: one person speaking, whose words are typed at their cursor in whatever app they are using (a chat, an email, a coding agent, a document), as if they had typed them.
+
+${SHARED_RULES}
+- Give your best reading of words that are hard to make out; never insert markers.
+- Keep a short dictation as plain sentences. Break a long one into short paragraphs by topic, and when the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.${contextBlock(context)}`;
 }
 
 function conversationPrompt(context: string | null) {
@@ -44,25 +54,20 @@ function conversationPrompt(context: string | null) {
 
 The transcript is a series of turns separated by blank lines. Each turn starts with the speaker's label, like "Maya: ". Keep every turn, in the same order, each separated by a blank line and starting with exactly the same label. Never merge, split, drop or reassign turns; only clean the words inside each one.
 
-${SHARED_RULES}${contextBlock(context)}`;
+${SHARED_RULES}${UNCLEAR_RULE}${contextBlock(context)}`;
 }
 
 function contextBlock(context: string | null) {
   return context ? `\n\nContext about the recording, for spelling names and terms only:\n${context}` : '';
 }
 
-async function cleanChunk(
-  client: Anthropic,
-  chunk: Turn[],
-  kind: TranscriptKind,
-  context: string | null,
-): Promise<string> {
+async function cleanChunk(client: Anthropic, chunk: Turn[], system: string): Promise<string> {
   // A tag the speakers can't guess, so nothing said in the recording can close it early.
   const tag = `transcript-${crypto.randomUUID().slice(0, 8)}`;
   const response = await client.messages.create({
     model: MODELS.transcriptCleanup,
     max_tokens: 8_192,
-    system: kind === 'conversation' ? conversationPrompt(context) : soloPrompt(context),
+    system,
     messages: [{ role: 'user', content: `<${tag}>\n${renderTurns(chunk)}\n</${tag}>` }],
   });
   if (response.stop_reason !== 'end_turn') throw new Error(`cleanup stopped: ${response.stop_reason}`);
@@ -105,7 +110,8 @@ export async function buildAgentTranscript(
       let text: string | null = null;
       if (client) {
         try {
-          const candidate = await cleanChunk(client, chunk, args.kind, args.context);
+          const system = args.kind === 'conversation' ? conversationPrompt(args.context) : soloPrompt(args.context);
+          const candidate = await cleanChunk(client, chunk, system);
           if (cleanedChunkIsValid(chunk, candidate, args.kind)) text = candidate;
         } catch {
           text = null;
@@ -124,4 +130,29 @@ export async function buildAgentTranscript(
     ? conversationEnvelope(body, { ...args.meta, speakers: speakersOf(args.turns, args.meta.recorderName) })
     : body;
   return { markdown, fallbackChunks };
+}
+
+/** Fewer words than this is pasted as said: there is nothing for the model to tidy. */
+const MIN_POLISH_WORDS = 4;
+
+/**
+ * A dictation tidied the way it would have been typed: fillers, stutters and
+ * false starts gone, punctuated, names spelled from `context`. Falls back to
+ * the model-free cleanup, so the result is never worse than what was heard.
+ */
+export async function polishDictation(
+  client: Anthropic | null,
+  args: { text: string; context: string | null },
+): Promise<{ text: string; polished: boolean }> {
+  const said = args.text.trim();
+  const plain = stripFillers(said);
+  if (!client || said.split(/\s+/).length < MIN_POLISH_WORDS) return { text: plain, polished: false };
+  const turns: Turn[] = [{ speaker: null, text: said }];
+  try {
+    const candidate = await cleanChunk(client, turns, dictationPrompt(args.context));
+    if (cleanedChunkIsValid(turns, candidate, 'solo')) return { text: candidate, polished: true };
+  } catch {
+    // The model-free cleanup below still beats the raw words.
+  }
+  return { text: plain, polished: false };
 }

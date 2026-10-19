@@ -166,6 +166,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/dictations' }, excludes: [DICTATION] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a dictation owned by the caller' },
   },
+  '/api/dictations/polish': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'tidies the caller’s own words with their vocabulary; nothing is stored' },
+  },
   '/api/downloads/mac/$file': { GET: { public: 'Public versioned app download' } },
   '/api/downloads/mac/latest': { GET: { public: 'Public app download' } },
   '/api/downloads/mac/update/$file': { GET: { public: 'Public app update artifacts' } },
