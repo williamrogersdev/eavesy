@@ -37,7 +37,7 @@ export function AccountData({ email }: { email?: string }) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm">Export everything</p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ev-ink-2">
             Transcripts, briefs, notes, dictations and templates as one zip. Audio and video download from
             each recording.
           </p>
@@ -54,7 +54,7 @@ export function AccountData({ email }: { email?: string }) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm">Delete account</p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ev-ink-2">
             Permanently deletes your recordings, transcripts and settings from Eavesy and signs out your Mac.
             Files on your Mac stay where they are.
           </p>
@@ -63,7 +63,7 @@ export function AccountData({ email }: { email?: string }) {
           <button
             type="button"
             onClick={() => setConfirming(true)}
-            className={cn(appButton('secondary', 'sm'), 'text-danger')}
+            className={cn(appButton('secondary', 'sm'), 'text-ev-warn-ink')}
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete
           </button>
@@ -71,9 +71,9 @@ export function AccountData({ email }: { email?: string }) {
       </div>
 
       {confirming ? (
-        <div className="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger-soft p-3">
-          <label htmlFor="confirm-delete" className="text-xs text-foreground">
-            This can’t be undone. Type <span className="font-mono font-semibold">{expected}</span> to confirm.
+        <div className="flex flex-col gap-2 rounded-[var(--ev-r-pop)] border border-ev-warn-ink bg-ev-warn-soft p-3">
+          <label htmlFor="confirm-delete" className="text-xs text-ev-ink">
+            This can’t be undone. Type <span className="font-round font-semibold">{expected}</span> to confirm.
           </label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
@@ -82,7 +82,7 @@ export function AccountData({ email }: { email?: string }) {
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
               spellCheck={false}
-              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 text-sm outline-none focus:border-danger/60"
+              className="h-8 min-w-0 flex-1 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2.5 text-sm outline-none focus:border-ev-warn-ink"
             />
             <div className="flex gap-2">
               <button
@@ -107,7 +107,7 @@ export function AccountData({ email }: { email?: string }) {
               </button>
             </div>
           </div>
-          {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
+          {error ? <p role="alert" className="text-xs text-ev-warn-ink">{error}</p> : null}
         </div>
       ) : null}
     </div>

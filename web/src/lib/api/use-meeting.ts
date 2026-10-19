@@ -177,6 +177,9 @@ export interface MeetingListItem {
   startedAt: number;
   durationSec?: number | null;
   status?: string;
+  source?: string | null;
+  platform?: string | null;
+  deviceName?: string | null;
 }
 
 export const meetingList = createResource('/api/meetings/list', parseMeetingList);
@@ -185,7 +188,7 @@ export function useMeetings() {
   return meetingList.use();
 }
 
-function parseMeetingList(value: unknown): MeetingListItem[] {
+export function parseMeetingList(value: unknown): MeetingListItem[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   return value.items.flatMap((item) => {
     if (
@@ -203,6 +206,9 @@ function parseMeetingList(value: unknown): MeetingListItem[] {
       startedAt: item.startedAt,
       durationSec: typeof item.durationSec === 'number' ? item.durationSec : null,
       status: typeof item.status === 'string' ? item.status : undefined,
+      source: typeof item.source === 'string' ? item.source : null,
+      platform: typeof item.platform === 'string' ? item.platform : null,
+      deviceName: typeof item.deviceName === 'string' ? item.deviceName : null,
     }];
   });
 }

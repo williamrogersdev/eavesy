@@ -1,31 +1,42 @@
 # Eavesy
 
-> Eavesy is a local, AI-first assistant for your Mac (Apple Silicon). You drop things into it (text or images from your clipboard, screenshots, dictation, and recordings) and it turns them into clean, structured Markdown context that is quick to copy into any AI agent or reach over MCP. It is local-first: files live on your disk as Markdown and JSON.
+> Eavesy is a free, open-source (Apache-2.0) Mac app for Apple silicon (macOS 13+) that keeps what you say, hear, see and copy as plain files on your disk, as Markdown your AI agent can read. It works without an account. Signing in at eavesy.com adds cloud transcripts, briefs, search, chat and MCP access. Source: https://github.com/williamrogersdev/eavesy
 
-Meeting recording is one capability, not the headline. Eavesy is free; everyone gets the same fair-use limits: https://eavesy.com/docs/fair-use-limits
+Everyone gets the same fair-use limits: https://eavesy.com/docs/fair-use-limits
 
-## What you can drop in (shipping today)
-- Clipboard text or an image: open the launcher (global hotkey), press Cmd+V. Saved as a note (`note.md`) or `image.png`.
-- Screenshots: from the launcher (macOS 14+).
-- Dictation: speak, get cleaned-up text with a transcript (requires signing in).
-- Recordings: screen, system audio, and microphone on the Mac app, or microphone/screen in the browser recorder. Get a transcript and a Markdown summary (title, TL;DR, decisions, action items); transcription requires signing in. Browser-recorder sessions live in the web app, not on disk. No bot joins calls.
+## Capture modes (Mac app)
+- Talk (default shortcut Cmd+Shift+D, can be set to fn): microphone only. Tap toggles, hold longer than 350 ms for push-to-talk. Pastes on-device text where the cursor is, with or without an account. Any cleanup happens only in the cloud copy. Docs: https://eavesy.com/docs/talk-and-dictation
+- Meeting: microphone plus the audio the Mac plays. No screen. No bot joins the call. Docs: https://eavesy.com/docs/meetings
+- Video: screen, its audio, and the microphone. Docs: https://eavesy.com/docs/video
+- Screenshot: pick an area (macOS 14+). Clipboard (Cmd+V in the launcher), quick notes, and dropped files are kept too. These stay on the Mac and are never uploaded. Docs: https://eavesy.com/docs/screenshots-and-notes
 
-Not available yet: forwarding messages or orders straight from other apps, live captions, reading text out of screenshots in the Mac app, and cross-device drops. Do not assume these exist.
+Open Eavesy: Cmd+Shift+Space. Only Open and Talk are global shortcuts. Docs: https://eavesy.com/docs/keyboard-shortcuts
+
+## Transcripts
+- On-device live captions while recording (on by default). The cloud transcript (Whisper on Cloudflare Workers AI, signed in only) replaces them.
+- Meetings are labelled You and Them by track. There is no per-person diarization.
+- Spoken language defaults to English; automatic detection or another language is under Settings > Transcription > Spoken language in the web app. Up to 100 custom words under Settings > Transcription.
+- Briefs: title, summary, decisions, action items, open questions. Built-in formats and custom templates can regenerate them.
+
+## Web app
+Browser recorder (account required; uploads in about 4-minute segments), a capture bar for audio, webcam or screen video and screenshots (uploaded), and drops between your signed-in browsers. Browser recordings are copied to a signed-in Mac's ~/Eavesy/Recordings without audio. Docs: https://eavesy.com/docs/browser-recorder
+
+There is no iPhone, iPad, Windows, Linux or Intel Mac app.
 
 ## Where the files live
-The Mac app (not the browser recorder) writes each capture to a folder under `~/Eavesy/Recordings/` (change it with Settings > Recordings folder in the launcher):
+The Mac app writes each capture to a folder under `~/Eavesy/Recordings/` (change it under Settings > Recordings folder in the Mac app). Folders are named `<YYYY-MM-DD> <title at start>`, for example `2026-06-15 Meeting recording`, and are never renamed. A clash gets ` (HH-MM)` added. Launcher screenshots use `Screenshot-<id>`.
 
 ```text
-~/Eavesy/Recordings/2026-06-15 Design review/
-├── summary.md       # structured brief (recordings)
-├── transcript.md    # full transcript
+~/Eavesy/Recordings/2026-06-15 Meeting recording/
+├── summary.md       # brief
+├── transcript.md    # on-device text, then the cloud transcript
 ├── notes.md         # the user's own notes
-├── meeting.json     # metadata (id, title, date, durationSeconds, files)
+├── meeting.json     # schemaVersion, id, remoteMeetingId, title, date, startedAt, durationSeconds, source, status, files
 ├── audio.m4a
-└── screen.mp4       # when screen capture was on
+└── screen.mp4       # Video mode only
 ```
 
-Clipboard and screenshot captures hold `note.md` / `image.png` / `screenshot.png` plus `capture.json`. All formats are open; read them directly with filesystem access, no API needed. Format: https://eavesy.com/docs/session-folder-format
+Clipboard, screenshot and imported captures hold `note.md`, `image.png` or `screenshot.png` plus `capture.json`. Format: https://eavesy.com/docs/session-folder-format
 
 ## Connect over MCP
 Server: `https://mcp.eavesy.com` (streamable HTTP). Add it by URL: the server supports MCP authorization (OAuth 2.1, PKCE, dynamic client registration, metadata at `/.well-known/oauth-protected-resource`), so clients like Claude.ai, ChatGPT and Claude Code send the user to sign in to Eavesy and approve the connection. No token to paste.
@@ -61,10 +72,10 @@ Tools, all read-only (names say "meeting" because that is the recording type in 
 - `search_dictations` (query, limit): search dictations.
 - `get_action_items` (status: open|completed|all, owner): action items across recordings.
 
-Clipboard notes, images, and screenshots are never uploaded (they stay on the Mac), so they are not available over MCP. Docs: https://eavesy.com/docs/connect-mcp
+Only recordings synced to the account are available over MCP. Screenshots, clipboard captures and notes from the Mac app stay on the Mac. Docs: https://eavesy.com/docs/connect-mcp
 
 ## Copy-paste examples
-Paste into an agent after copying a summary from Eavesy:
+Paste into an agent after copying a brief from Eavesy:
 
 ```text
 Here is the context from my call (Markdown below). Draft the follow-up tasks as a checklist.
@@ -84,16 +95,21 @@ grep -ril "pricing" ~/Eavesy/Recordings/*/transcript.md
 ```
 
 ## Bring your own keys
-In the web app Settings you can connect your own OpenRouter account so AI usage runs on your credits. Otherwise the hosted service handles transcription and summaries.
+In the web app under Settings > AI providers you can connect your own OpenRouter account or add an Anthropic API key. Keys are entered on the web and stored encrypted. The Mac app keeps only its device token in the Keychain.
+
+## Self-hosting
+Eavesy runs on Cloudflare (Workers, D1, R2, KV, Queues, Vectorize, Workers AI) with Clerk for sign-in. Guide: https://github.com/williamrogersdev/eavesy/blob/main/docs/SELF_HOSTING.md
 
 ## Key pages
 - Home: https://eavesy.com/
 - Features: https://eavesy.com/features
 - How it works: https://eavesy.com/how-it-works
-- Integrations: https://eavesy.com/integrations
 - Docs: https://eavesy.com/docs
-- Context for AI agents: https://eavesy.com/docs/context-for-agents
-- Privacy and data: https://eavesy.com/docs/privacy-and-data
+- Getting started: https://eavesy.com/docs/getting-started
+- Install the Mac app: https://eavesy.com/docs/installing-the-mac-app
+- Give your agent context: https://eavesy.com/docs/context-for-agents
+- Privacy and your data: https://eavesy.com/docs/privacy-and-data
+- Open source and self-hosting: https://eavesy.com/docs/open-source
 - Security: https://eavesy.com/security
 - Source: https://github.com/williamrogersdev/eavesy
 
