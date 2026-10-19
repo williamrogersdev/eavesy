@@ -1,8 +1,9 @@
 # Observability
 
-Eavesy reports errors to Sentry from five surfaces: the web Worker, the
-processing Worker, the MCP Worker, the browser, and the Mac app. Each is off
-unless its DSN is configured. Reports are meant to be actionable (what failed,
+Eavesy reports errors from five surfaces: the web Worker, the processing
+Worker, the MCP Worker and the browser report to Sentry; the Mac app reports
+to PostHog error tracking. Each is off unless its DSN or project key is
+configured. Reports are meant to be actionable (what failed,
 where, in which release) without carrying anything a user wrote or said.
 
 ## What is sent and what is not
@@ -13,7 +14,7 @@ where, in which release) without carrying anything a user wrote or said.
 | Stack trace (function, file, line) | Stack-frame local variables |
 | Route / URL path and HTTP method | Query strings and URL fragments |
 | Release, environment, `service` tag | Request and response bodies |
-| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, app log lines on the Mac) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
+| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, the last 50 info-and-up app log lines on the Mac) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
 | Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames |
 | Job kind, meeting id, attempt count | Any context key that looks like content or a credential (`text`, `transcript`, `summary`, `notes`, `body`, `title`, `token`, `key`, `secret`, `email`, …) |
 
@@ -57,8 +58,10 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
   build time; without it the bundle contains no Sentry code. Router error
   boundaries report through `reportClientError`. No session replay, no DOM
   breadcrumbs.
-- `desktop/src-tauri/src/telemetry.rs` — Mac app Sentry init, the Rust
-  scrubber, and the app log. Recording folders are named after meeting
+- `desktop/src-tauri/src/telemetry.rs` — Mac app error reporting (PostHog
+  `$exception` events, grouped by `$exception_fingerprint` =
+  `desktop:<operation>:<reason>`, at most 100 per launch, anonymous with no
+  person profile), the Rust scrubber, and the app log. Recording folders are named after meeting
   titles, which can contain spaces, colons and quotes, so any path under the
   configured recordings root becomes `<recordings>/…` and any other path under
   `/Users`, `/Volumes` or `/private` becomes `~/…`, `/Volumes/…` or
@@ -76,11 +79,10 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | Workers release | `SENTRY_RELEASE` | Set to the git SHA by the deploy workflow (`--var`) |
 | Browser | `VITE_SENTRY_DSN` | GitHub Actions variable, written to `web/.env.production` at build |
 | Browser release | `VITE_SENTRY_RELEASE` | Git SHA, set by the deploy workflow |
-| Mac app | `SENTRY_DSN` | Compile time; `DESKTOP_SENTRY_DSN` secret in the release-candidate workflow |
+| Mac app | `EAVESY_POSTHOG_KEY`, `EAVESY_POSTHOG_HOST` | Compile time; `DESKTOP_POSTHOG_KEY` / `DESKTOP_POSTHOG_HOST` repository variables in the release workflow |
 
-`desktop/scripts/build-macos-release.sh` fails when `SENTRY_DSN` is empty.
-Self-hosted builds that deliberately ship without error reporting set
-`EAVESY_ALLOW_NO_SENTRY=1`.
+`desktop/scripts/build-macos-release.sh` warns when `EAVESY_POSTHOG_KEY` is
+empty and builds an app that reports nothing.
 
 Tracing is sampled at 5% on the Workers and in the browser (same-origin API
 calls only get trace headers). The Mac app sends no traces.
@@ -96,7 +98,7 @@ own `capture.log` under the app data folder.
 clipboard: app version, macOS version and architecture, the last 200 app log
 lines (spanning yesterday's file, so a bundle copied after midnight is not
 empty) and the last 100 `capture.log` lines, each scrubbed with the same rules
-as Sentry events. Nothing is uploaded; the user decides where to paste it.
+as error reports. Nothing is uploaded; the user decides where to paste it.
 
 ## Latency metric
 

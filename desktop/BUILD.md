@@ -64,9 +64,11 @@ No shared API secret is compiled into the app. A Mac that has not been paired
 still saves captured media locally, but transcription asks the user to pair
 before making a network request.
 
-`SENTRY_DSN` is required for `build-macos-release.sh`, which fails without it
-(self-hosted builds can opt out with `EAVESY_ALLOW_NO_SENTRY=1`). It enables
-panic and operational error reporting: events keep the failing operation and
+`EAVESY_POSTHOG_KEY` (a PostHog project API key, `phc_…`) is optional and
+read at compile time; `EAVESY_POSTHOG_HOST` defaults to
+`https://us.i.posthog.com`. With a key, the app sends panics and operational
+errors to PostHog error tracking as anonymous `$exception` events (a random
+id per launch, no person profile). Events keep the failing operation and
 error text, with recording, home, `/Volumes` and `/private` paths replaced
 by placeholders (folder names are meeting titles) and tokens, keys, emails and
 IPs removed. Audio, transcripts and notes are never attached. See

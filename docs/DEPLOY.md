@@ -124,10 +124,10 @@ For browser errors, set the GitHub Actions variable `VITE_SENTRY_DSN` (a
 browser DSN is public by design); the deploy workflow writes it into
 `web/.env.production`. Leave it unset to ship no Sentry code to browsers.
 
-The desktop app reads `SENTRY_DSN` at **compile time**, and
-`build-macos-release.sh` refuses to build a release without it (set
-`EAVESY_ALLOW_NO_SENTRY=1` to opt out deliberately). In CI it comes from the
-`DESKTOP_SENTRY_DSN` secret; authentication uses the paired-device credential
+The desktop app reports to PostHog error tracking instead, using a project
+key read at **compile time** (`EAVESY_POSTHOG_KEY`; in CI the
+`DESKTOP_POSTHOG_KEY` variable, see [RELEASING.md](RELEASING.md)). Without
+it the app reports nothing. Authentication uses the paired-device credential
 in Keychain.
 
 ## Database migrations

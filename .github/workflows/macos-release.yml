@@ -3,6 +3,7 @@ name: macOS release
 # Tag push `desktop-vX.Y.Z`: build, sign, notarize, attach to a draft GitHub
 # Release, then (after approval in the `macos-release` environment) publish to
 # R2 + the updater manifest and open a Homebrew cask bump PR.
+# Tags are pushed by tag-desktop-release.yml when a version bump lands on main.
 # Manual dispatch: release candidate only (CI artifacts, nothing published).
 # Secrets and setup: docs/RELEASING.md.
 
@@ -171,7 +172,8 @@ jobs:
       # notarize the .app; the next step notarizes the exact final DMG.
       - name: Build signed release candidate
         env:
-          SENTRY_DSN: ${{ secrets.DESKTOP_SENTRY_DSN }}
+          EAVESY_POSTHOG_KEY: ${{ vars.DESKTOP_POSTHOG_KEY }}
+          EAVESY_POSTHOG_HOST: ${{ vars.DESKTOP_POSTHOG_HOST }}
         run: desktop/scripts/build-macos-release.sh
 
       - name: Notarize and validate release candidate
@@ -387,3 +389,19 @@ jobs:
           - DMG sha256: \`$SHA\`
 
           Opened by the macOS release workflow (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+
+      # The tap has no CI of its own, so this is its check: the cask URL must
+      # serve exactly the bytes that were notarized and published.
+      - name: Verify the cask download
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          SHA: ${{ steps.bump.outputs.sha }}
+        run: |
+          URL="$(sed -n -E 's/^[[:space:]]*url "([^"]*)".*/\1/p' "tap/$CASK_PATH" | head -1)"
+          URL="${URL//'#{version}'/$VERSION}"
+          echo "Checking $URL"
+          GOT="$(curl --fail --silent --show-error --location "$URL" | sha256sum | awk '{print $1}')"
+          if [[ "$GOT" != "$SHA" ]]; then
+            echo "::error::$URL has sha256 $GOT, expected $SHA"
+            exit 1
+          fi

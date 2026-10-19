@@ -1,7 +1,27 @@
 # Releasing the Mac app
 
-Releases run in GitHub Actions from
-[`.github/workflows/macos-release.yml`](../.github/workflows/macos-release.yml).
+A release is one button and one approval:
+
+1. **Actions → Release desktop → Run workflow**, pick `patch` or `minor`.
+2. When the draft GitHub Release appears, test its DMG, then approve the
+   `publish` job.
+
+Everything between those two steps is automatic. Three workflows do it:
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| [`release-desktop.yml`](../.github/workflows/release-desktop.yml) | Manual (`patch`, `minor`, `major` or an exact `X.Y.Z`) | Runs `scripts/bump-desktop.mjs`: bumps `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, and moves `[Unreleased]` in `CHANGELOG.md` under `## [X.Y.Z] - date - desktop`. If `[Unreleased]` is empty, the section is written from the titles of PRs that touched `desktop/` since the last `desktop-v` tag (`feat` → Added, `fix` → Fixed, the rest → Changed; `chore`, `ci`, `docs`, `test` are left out). Opens `chore(release): desktop X.Y.Z` with auto-merge on. |
+| [`tag-desktop-release.yml`](../.github/workflows/tag-desktop-release.yml) | A push to `main` that changes `tauri.conf.json` | If `desktop-vX.Y.Z` doesn't exist yet, checks `Cargo.toml` and the CHANGELOG section, then pushes the annotated tag. |
+| [`macos-release.yml`](../.github/workflows/macos-release.yml) | Tag push `desktop-vX.Y.Z` | Build, sign, notarize, draft release, **publish (approval)**, Homebrew cask PR. Details below. |
+
+To reword the release notes, edit `CHANGELOG.md` on the `release/desktop-vX.Y.Z`
+branch before the PR merges (or write them under `[Unreleased]` before you
+run the workflow; those are used as they are). The version-bump PR only
+touches `desktop/` and `CHANGELOG.md`, so it doesn't redeploy eavesy.com.
+
+The same bump works locally: `node scripts/bump-desktop.mjs minor --dry-run`
+prints the next version and CHANGELOG section without changing anything.
+
 The local scripts (`desktop/scripts/build-macos-release.sh` and
 `release-macos.sh`) are what the workflow runs, so a laptop release still works
 as a fallback (see [desktop/BUILD.md](../desktop/BUILD.md)).
@@ -41,25 +61,21 @@ Only Apple Silicon (`aarch64`) is built, which matches the local scripts.
 
 ## Cutting a release
 
-1. Bump `version` in `desktop/src-tauri/tauri.conf.json` and
-   `desktop/src-tauri/Cargo.toml` (then run `cargo check` to refresh
-   `Cargo.lock`).
-2. In `CHANGELOG.md`, move the desktop entries from `[Unreleased]` into a new
-   `## [X.Y.Z] - YYYY-MM-DD` section.
-3. Merge to `main`, then tag the merge commit:
-
-   ```bash
-   git tag desktop-vX.Y.Z origin/main
-   ```
-
-   ```bash
-   git push origin desktop-vX.Y.Z
-   ```
-
-4. Wait for the draft release. Install its DMG on a clean Mac account and test
+1. Run **Actions → Release desktop** from `main` with `patch` or `minor`
+   (`gh workflow run release-desktop.yml -f bump=minor`). It opens the
+   version-bump PR with auto-merge on; CI must pass as for any PR.
+2. When it merges, the tag is pushed and the macOS release run starts on its
+   own.
+3. Wait for the draft release. Install its DMG on a clean Mac account and test
    recording, pairing and the update check.
-5. Approve the `publish` job (Actions run → Review deployments → `macos-release`).
-6. Review and merge the cask PR in `homebrew-eavesy`.
+4. Approve the `publish` job (Actions run → Review deployments → `macos-release`).
+5. Merge the cask PR in `homebrew-eavesy`. The workflow has already checked
+   that the cask URL serves the published DMG with the same sha256.
+
+Without `RELEASE_TOKEN` the first two steps are manual: run
+`node scripts/bump-desktop.mjs minor`, open the PR, and after it merges push
+the tag yourself (`git tag desktop-vX.Y.Z origin/main`, then
+`git push origin desktop-vX.Y.Z`).
 
 To retry, use "Re-run failed jobs". Publishing is idempotent: it re-uploads
 the same bytes. If the build itself was wrong, delete the draft release and
@@ -100,7 +116,6 @@ these values into chat.
 | `APPLE_TEAM_ID` | 10-character team ID | `security find-identity -v -p codesigning` shows it in parentheses after the identity name. Then `gh secret set APPLE_TEAM_ID --env macos-signing`. |
 | `TAURI_SIGNING_PRIVATE_KEY` | Contents of the updater Minisign private key. **Use the existing key.** A new key orphans every installed copy. | `gh secret set TAURI_SIGNING_PRIVATE_KEY --env macos-signing < ~/.tauri/eavesy-updater.key` |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The key's password | Only if the key has one; the local scripts use an empty password. GitHub can't store an empty secret, and an unset secret is passed as an empty string, so skip it in that case. |
-| `DESKTOP_SENTRY_DSN` | DSN of the desktop Sentry project. The build fails without it. | The `SENTRY_DSN` you export for local release builds, or Sentry → desktop project → Settings → Client Keys (DSN). Then `gh secret set DESKTOP_SENTRY_DSN --env macos-signing`. |
 
 **Instead of the Apple ID set** you can use an App Store Connect API key. It
 doesn't expire with your password and isn't tied to your 2FA. Create it at
@@ -121,7 +136,33 @@ set whenever `APPLE_ID` is present.
 | `CLOUDFLARE_API_TOKEN` | secret | A **new, narrow** token, `eavesy-release-r2`: account permission *Workers R2 Storage Edit* (add *Account Settings Read* if Wrangler asks), this account only. Don't reuse the broad deploy token from [DEPLOY.md](DEPLOY.md). `gh secret set CLOUDFLARE_API_TOKEN --env macos-release` |
 | `CLOUDFLARE_ACCOUNT_ID` | variable | Same account ID as production: `gh variable set CLOUDFLARE_ACCOUNT_ID --env macos-release` |
 
-### 4. Homebrew tap token (repository secret)
+### 4. Error reporting (repository variables, optional)
+
+The app reports errors and crashes to PostHog error tracking when a project
+key is compiled in. The project API key (`phc_…`) is public by design, so it
+is a variable, not a secret. Without it the build still succeeds and the app
+reports nothing.
+
+| Name | Value |
+| --- | --- |
+| `DESKTOP_POSTHOG_KEY` | PostHog → Project settings → Project API key. `gh variable set DESKTOP_POSTHOG_KEY` |
+| `DESKTOP_POSTHOG_HOST` | Only for the EU cloud or self-hosting, e.g. `https://eu.i.posthog.com`. Defaults to `https://us.i.posthog.com`. |
+
+### 5. Release token (repository secret)
+
+| Name | Value |
+| --- | --- |
+| `RELEASE_TOKEN` | Fine-grained PAT of a repository **admin**, repository access **only** `williamrogersdev/eavesy`, permissions *Contents: read and write* and *Pull requests: read and write*. `gh secret set RELEASE_TOKEN --repo williamrogersdev/eavesy` |
+
+`release-desktop.yml` and `tag-desktop-release.yml` use it instead of the
+default `GITHUB_TOKEN` for three reasons: PRs, merges and tags made with
+`GITHUB_TOKEN` start no workflows (so neither CI nor the release run would
+start), this repository doesn't let Actions open PRs, and the
+`desktop-v*` tag ruleset only lets admins create tags. Give it an expiry and
+put a reminder in your calendar; when it lapses, both workflows fail with a
+message pointing here.
+
+### 6. Homebrew tap token (repository secret)
 
 | Name | Value |
 | --- | --- |
@@ -133,7 +174,7 @@ containing exactly one `version "…"` line and one `sha256 "…"` line, and a
 versioned `url`, for example
 `https://github.com/williamrogersdev/eavesy/releases/download/desktop-v#{version}/Eavesy_#{version}_aarch64.dmg`.
 
-### 5. Dry run
+### 7. Dry run
 
 Run the workflow manually from `main` (Actions → macOS release → Run
 workflow). It exercises every signing and notarization secret and publishes

@@ -193,8 +193,8 @@ tokens are not retained.
 
 ## Observability
 
-Every surface (web, processing and MCP Workers, browser, Mac app) can report
-errors to Sentry. Reports keep the error message, stack, route, method and
+The web, processing and MCP Workers and the browser can report errors to
+Sentry; the Mac app reports to PostHog error tracking. Reports keep the error message, stack, route, method and
 release; a shared scrubber removes bodies, headers, cookies, query strings,
 emails, IPs, API keys and tokens, and the Mac app replaces recording and
 home-directory paths (folder names are meeting titles). Audio, transcripts, notes and summaries are never sent. The Mac app

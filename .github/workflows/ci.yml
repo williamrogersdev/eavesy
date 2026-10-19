@@ -4,14 +4,65 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Lets the release workflow start CI on a branch it pushed (pushes made with
+  # GITHUB_TOKEN start no workflows on their own).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
 
 jobs:
+  # Decides which of the two required jobs this change needs. A job skipped by
+  # its `if` still reports success, so both required checks always resolve;
+  # if this job itself fails, both run.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE...$HEAD")"
+          printf '%s\n' "$files"
+          web=false
+          desktop=false
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            case "$f" in
+              .github/workflows/ci.yml) web=true; desktop=true ;;
+              desktop/*) desktop=true ;;
+              docs/*|packaging/*|plugins/*|*.md|LICENSE|NOTICE) ;;
+              .github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/dependabot.yml) ;;
+              .github/workflows/macos-release.yml|.github/workflows/release-desktop.yml|.github/workflows/tag-desktop-release.yml) ;;
+              *) web=true ;;
+            esac
+          done <<< "$files"
+          echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" | tee -a "$GITHUB_OUTPUT"
+
   web:
     name: Web + Workers
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -62,6 +113,8 @@ jobs:
 
   desktop:
     name: Desktop (Rust + Swift)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -70,9 +123,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: clippy
+      # Only main saves the cache, so PR runs restore main's warm cache
+      # instead of each branch storing (and evicting) its own copy.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prebuild
         run: desktop/scripts/prebuild.sh
       - name: Swift tests

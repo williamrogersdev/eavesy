@@ -3,6 +3,17 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Mac app, docs and release-only changes don't touch what this deploys.
+    paths-ignore:
+      - "desktop/**"
+      - "docs/**"
+      - "packaging/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/macos-release.yml"
+      - ".github/workflows/release-desktop.yml"
+      - ".github/workflows/tag-desktop-release.yml"
   workflow_dispatch:
 
 concurrency:
