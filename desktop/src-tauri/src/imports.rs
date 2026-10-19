@@ -307,7 +307,18 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             return Err("That capture's folder is outside your Eavesy folder, so it was left alone.".into());
         }
     }
-    store::remove(&app, &id)?;
+    let dismissed = crate::cloud_pull::dismiss(&app, &id)?;
+    let undismiss = || {
+        if dismissed {
+            if let Err(error) = crate::cloud_pull::undismiss(&app, &id) {
+                eprintln!("cloud pull: could not restore {id} after a failed delete: {error}");
+            }
+        }
+    };
+    if let Err(error) = store::remove(&app, &id) {
+        undismiss();
+        return Err(error);
+    }
     if let Some(folder) = folder {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let trashed = match app.run_on_main_thread(move || { let _ = sender.send(move_to_trash(&folder)); }) {
@@ -315,9 +326,15 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             Err(error) => Err(error.to_string()),
         };
         if let Err(error) = trashed {
-            let _ = store::append(&app, recording);
+            // Undone either way: a pulled meeting that could not be put back is
+            // then pulled again, rather than lost on this Mac.
+            undismiss();
+            let restored = store::append(&app, recording);
             let _ = app.emit("recordings:updated", ());
-            return Err(error);
+            return Err(match restored {
+                Ok(()) => error,
+                Err(append_error) => format!("{error} It also could not be put back in your history: {append_error}"),
+            });
         }
     }
     let _ = app.emit("recordings:updated", ());
