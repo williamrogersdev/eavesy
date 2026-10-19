@@ -6,6 +6,42 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19 - desktop
+
+### Added
+
+- Mac app: a quiet sound when the mic goes live and when it stops (Settings →
+  Sounds), and a strip under the recording bar that shows your words as they
+  are heard. ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: a "Bottom center" spot for the recording bar; low on the screen its
+  transcript opens upward. ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: a spoken-language setting (Settings → Transcription) with automatic
+  detection. ([#95](https://github.com/williamrogersdev/eavesy/pull/95))
+- Mac app: click a screenshot to see it full size.
+  ([#93](https://github.com/williamrogersdev/eavesy/pull/93))
+
+### Changed
+
+- Mac app: the recording bar says "Starting…" until the mic is really on, then
+  turns red, and "Writing it down…" the moment you stop. While recording the
+  panel's toolbar becomes the one live bar with Stop.
+  ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: dictation pastes into the app you were in even when it hides its
+  text box from Accessibility (browsers, Slack, Notion, VS Code); the words
+  also stay on the clipboard then. ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: the setup's "Try it" step puts your dictation in its practice box.
+  ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: macOS screenshots are added to History by default, shown whole, at
+  full Retina size. ([#93](https://github.com/williamrogersdev/eavesy/pull/93))
+
+### Fixed
+
+- Mac app: a tap while the mic is opening stops the recording instead of being
+  lost. ([#94](https://github.com/williamrogersdev/eavesy/pull/94))
+- Mac app: fewer invented words on silence, no repetition loops, and live
+  captions on older macOS no longer cut words in half.
+  ([#95](https://github.com/williamrogersdev/eavesy/pull/95))
+
 ## [0.3.0] - 2026-10-18 - desktop
 
 ### Added
