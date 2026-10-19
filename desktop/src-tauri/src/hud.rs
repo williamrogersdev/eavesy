@@ -157,15 +157,27 @@ pub fn set_sheet_on_main(app: &AppHandle, extra: f64) -> Option<bool> {
     let up = if extra > 0.0 { sheet_opens_up(app, extra) } else { expanded().is_some_and(|(_, lift)| lift > 0.0) };
     let (_, _, _, bar_height) = bar_frame(&window)?;
     let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
-    let current = state.map_or(0.0, |(extra, _)| extra);
-    if (current - extra).abs() < 1.0 {
+    let Some((height, next)) = sheet_change(*state, extra, up, bar_height) else {
         return Some(up);
-    }
-    if !imp::set_height(&window, bar_height + extra, up) {
+    };
+    if !imp::set_height(&window, height, up) {
         return None;
     }
-    *state = (extra > 0.0).then_some((extra, if up { extra } else { 0.0 }));
+    *state = next;
     Some(up)
+}
+
+/// What asking for a sheet `extra` tall does to a window whose sheet is
+/// `current` (height, lift): None when it already is that tall, else the
+/// window's new height and the sheet after. A sheet above the bar lifts the
+/// window's top by its height; closing it puts everything back.
+fn sheet_change(current: Option<(f64, f64)>, extra: f64, up: bool, bar_height: f64) -> Option<(f64, Option<(f64, f64)>)> {
+    let extra = extra.clamp(0.0, MAX_SHEET).round();
+    let now = current.map_or(0.0, |(extra, _)| extra);
+    if (now - extra).abs() < 1.0 {
+        return None;
+    }
+    Some((bar_height + extra, (extra > 0.0).then_some((extra, if up { extra } else { 0.0 }))))
 }
 
 /// The user closed the control with its X: it stays hidden while idle.
@@ -412,7 +424,31 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::opens_up;
+    use super::{opens_up, sheet_change, MAX_SHEET};
+
+    #[test]
+    fn a_sheet_below_the_bar_grows_the_window_without_lifting_it() {
+        assert_eq!(sheet_change(None, 120.0, false, 40.0), Some((160.0, Some((120.0, 0.0)))));
+    }
+
+    #[test]
+    fn a_sheet_above_the_bar_lifts_the_window_by_its_height() {
+        assert_eq!(sheet_change(None, 120.0, true, 40.0), Some((160.0, Some((120.0, 120.0)))));
+        // Growing keeps it lifted by the whole sheet.
+        assert_eq!(sheet_change(Some((120.0, 120.0)), 200.0, true, 40.0), Some((240.0, Some((200.0, 200.0)))));
+    }
+
+    #[test]
+    fn closing_the_sheet_returns_the_window_to_its_bar() {
+        assert_eq!(sheet_change(Some((120.0, 120.0)), 0.0, true, 40.0), Some((40.0, None)));
+        assert_eq!(sheet_change(None, 0.0, false, 40.0), None);
+    }
+
+    #[test]
+    fn a_sheet_is_capped_and_small_changes_are_ignored() {
+        assert_eq!(sheet_change(None, 900.0, false, 40.0), Some((40.0 + MAX_SHEET, Some((MAX_SHEET, 0.0)))));
+        assert_eq!(sheet_change(Some((120.0, 0.0)), 120.4, false, 40.0), None);
+    }
 
     const AREA: Option<(f64, f64)> = Some((25.0, 1000.0));
 

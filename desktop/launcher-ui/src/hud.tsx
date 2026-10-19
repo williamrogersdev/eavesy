@@ -101,6 +101,9 @@ function Hud() {
   const [shown, setShown] = useState(0);
   const sheetHeight = useRef(0);
   const resizing = useRef<Promise<void>>(Promise.resolve());
+  // A resize the window refused is asked for again, a few times.
+  const [retry, setRetry] = useState(0);
+  const failures = useRef(0);
   // The result the pointer has already visited: once it leaves, a short grace.
   const visited = useRef<string | null>(null);
   const loadShortcut = () => {
@@ -229,11 +232,15 @@ function Hud() {
       }
       // Only room the window really made counts: a failed resize is asked for again next time.
       const up = await invoke('set_hud_sheet', { height: target }).then((value) => value === true, () => null);
-      if (up === null) return;
+      if (up === null) {
+        if (++failures.current <= 3) window.setTimeout(() => setRetry((n) => n + 1), 300 * failures.current);
+        return;
+      }
+      failures.current = 0;
       sheetHeight.current = target;
       setGrowsUp(target > 0 && up);
     });
-  }, [target, shown]);
+  }, [target, shown, retry]);
 
   useEffect(() => setCopied(false), [sheet, state?.sessionId, state?.phase]);
 
