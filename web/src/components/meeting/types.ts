@@ -27,6 +27,9 @@ export interface MeetingMeta {
   speakerNamesJson?: string | null;
   summaryOverrideMd?: string | null;
   transcriptOverrideMd?: string | null;
+  agentTranscriptMd?: string | null;
+  transcriptKind?: 'solo' | 'conversation' | null;
+  folderId?: string | null;
 }
 export interface MeetingData {
   meeting: MeetingMeta;

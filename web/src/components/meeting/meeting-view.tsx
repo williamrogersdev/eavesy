@@ -8,6 +8,7 @@ import { applyTranscriptDelta } from '@/lib/transcription/live-transcript';
 import { formatDuration } from '@/lib/utils';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
 import { TranscriptPlayer } from './transcript-player';
+import { ProjectPicker } from './project-picker';
 import { type MeetingData, type Segment } from './types';
 import { BriefControls } from './brief-controls';
 import { EditableTitle } from './editable-title';
@@ -85,11 +86,14 @@ function Loaded({
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <EditableTitle meetingId={meetingId} initial={meeting.title} onSaved={onSaved} />
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {new Date(meeting.startedAt).toLocaleString()}
-            {meeting.durationSec ? ` · ${formatDuration(meeting.durationSec * 1000)}` : ''}
-            {meeting.platform ? ` · ${meeting.platform}` : ''}
-          </p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {new Date(meeting.startedAt).toLocaleString()}
+              {meeting.durationSec ? ` · ${formatDuration(meeting.durationSec * 1000)}` : ''}
+              {meeting.platform ? ` · ${meeting.platform}` : ''}
+            </span>
+            <ProjectPicker meetingId={meetingId} projectId={meeting.folderId ?? null} onSaved={onSaved} />
+          </div>
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -213,6 +217,7 @@ function Loaded({
         lines={segments}
         chapters={summary?.chapters ?? []}
         speakerNamesJson={meeting.speakerNamesJson ?? null}
+        agentTranscript={meeting.agentTranscriptMd}
         onChanged={onSaved}
       /> : null}
 

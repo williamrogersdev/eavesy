@@ -93,7 +93,7 @@ export async function buildAgentTranscript(
   },
 ): Promise<AgentTranscriptResult> {
   const chunks = chunkTurns(args.turns, CLEANUP_CHUNK_CHARS);
-  const cleaned: string[] = new Array(chunks.length);
+  const cleaned = Array.from<string>({ length: chunks.length });
   let fallbackChunks = 0;
   let next = 0;
   const worker = async () => {

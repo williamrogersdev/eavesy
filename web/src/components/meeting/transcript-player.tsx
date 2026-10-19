@@ -27,6 +27,7 @@ export function TranscriptPlayer({
   lines,
   chapters,
   speakerNamesJson,
+  agentTranscript,
   onChanged,
 }: {
   meetingId: string;
@@ -34,6 +35,7 @@ export function TranscriptPlayer({
   lines: TranscriptLine[];
   chapters: Chapter[];
   speakerNamesJson: string | null;
+  agentTranscript?: string | null;
   onChanged: () => void;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -244,7 +246,20 @@ export function TranscriptPlayer({
       <div>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transcript</h2>
-          <CopyText text={copyText} />
+          <div className="flex items-center gap-3">
+            {agentTranscript?.trim() ? (
+              <>
+                <CopyText
+                  text={agentTranscript}
+                  label="Copy for AI"
+                  title="Fillers removed, turns merged, code terms formatted: ready to paste into an agent"
+                />
+                <CopyText text={copyText} label="Copy raw" title="Every line as heard, with timestamps" />
+              </>
+            ) : (
+              <CopyText text={copyText} label="Copy transcript" />
+            )}
+          </div>
         </div>
         <div
           className="max-h-[32rem] overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-sm leading-relaxed"
@@ -472,7 +487,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function CopyText({ text }: { text: string }) {
+function CopyText({ text, label, title }: { text: string; label: string; title?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -486,10 +501,11 @@ function CopyText({ text }: { text: string }) {
           /* clipboard unavailable */
         }
       })(); }}
+      title={title}
       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
     >
       {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-      {copied ? 'Copied' : 'Copy transcript'}
+      {copied ? 'Copied' : label}
     </button>
   );
 }

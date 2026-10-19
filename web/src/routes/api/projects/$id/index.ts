@@ -5,7 +5,7 @@ import { projectActor, projectFieldsSchema } from '@/server/project-input';
 
 const patchSchema = projectFieldsSchema.partial();
 
-export const Route = createFileRoute('/api/projects/$id')({
+export const Route = createFileRoute('/api/projects/$id/')({
   server: {
     handlers: {
       PATCH: async ({ request, params }) => {

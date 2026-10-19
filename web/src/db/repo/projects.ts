@@ -1,7 +1,7 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { captures, folders, meetings } from '../schema';
+import { captures, folders, meetings, summaries } from '../schema';
 import { cleanList, parseStringList, PROJECT_LIMITS, type Project } from '@/lib/projects';
 
 type FolderRow = typeof folders.$inferSelect;
@@ -132,4 +132,49 @@ export async function ownsProject(db: AppDb, userId: string, projectId: string):
       .limit(1)
   )[0];
   return Boolean(row);
+}
+
+const SUGGESTION_MEETINGS = 30;
+const SUGGESTION_LIMIT = 8;
+
+/**
+ * Products, projects and companies the project's recent summaries mention
+ * that are not in its vocabulary yet, most mentioned first.
+ */
+export async function vocabularySuggestions(db: AppDb, args: { id: string; userId: string }): Promise<string[]> {
+  const project = await getForUser(db, args);
+  if (!project) return [];
+  const rows = await db
+    .select({ mentionsJson: summaries.mentionsJson })
+    .from(summaries)
+    .innerJoin(meetings, eq(meetings.id, summaries.meetingId))
+    .where(and(eq(meetings.userId, args.userId), eq(meetings.folderId, args.id), isNull(meetings.deletedAt)))
+    .orderBy(desc(meetings.startedAt))
+    .limit(SUGGESTION_MEETINGS);
+  const known = new Set([...project.vocabulary, project.name].map((term) => term.toLowerCase()));
+  const counts = new Map<string, { term: string; count: number }>();
+  for (const row of rows) {
+    let mentions: unknown;
+    try {
+      mentions = JSON.parse(row.mentionsJson);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(mentions)) continue;
+    for (const mention of mentions) {
+      if (typeof mention !== 'object' || mention === null) continue;
+      const { entity, type } = mention as { entity?: unknown; type?: unknown };
+      if (typeof entity !== 'string' || type === 'person') continue;
+      const term = entity.trim();
+      const key = term.toLowerCase();
+      if (!term || term.length > PROJECT_LIMITS.term || known.has(key)) continue;
+      const entry = counts.get(key) ?? { term, count: 0 };
+      entry.count += 1;
+      counts.set(key, entry);
+    }
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.term.localeCompare(b.term))
+    .slice(0, SUGGESTION_LIMIT)
+    .map((entry) => entry.term);
 }
