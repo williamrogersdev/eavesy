@@ -10,7 +10,7 @@ import { guardBurst } from '@/server/rate-limit';
 const createSessionSchema = z.object({
   clientSessionId: z.string().uuid(),
   title: z.string().trim().min(1).max(200).optional(),
-  language: z.string().trim().min(2).max(10).default('en'),
+  language: z.string().trim().min(2).max(10).optional(),
   contextBlurb: z.string().trim().max(4_000).optional(),
   localFolderSlug: z.string().trim().max(200).optional(),
   archiveFormat: z.enum(['m4a', 'webm', 'opus']).default('m4a'),

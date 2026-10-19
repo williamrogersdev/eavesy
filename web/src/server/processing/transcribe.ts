@@ -55,6 +55,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
+    contextBlurb: meeting.contextBlurb,
     ai: env.AI,
   });
 

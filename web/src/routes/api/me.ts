@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
+import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveActor } from '@/server/auth';
 
@@ -14,7 +15,7 @@ const updateSchema = z.object({
   role: z.string().max(60).nullable().optional(),
   phoneNumber: z.string().max(40).nullable().optional(),
   defaultTranscriptionEngine: z.literal('whisper').optional(),
-  defaultLanguage: z.string().max(10).optional(),
+  defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
 });
 

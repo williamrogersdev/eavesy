@@ -399,7 +399,6 @@ async fn sync_session<R: Runtime>(
             .json(&serde_json::json!({
                 "clientSessionId": session.id,
                 "title": session.title,
-                "language": "en",
                 "contextBlurb": session.context_blurb.as_deref().unwrap_or(""),
             }))
             .send()

@@ -2,6 +2,7 @@ import type { WorkersAiRunner } from '@/lib/ai/embed';
 import type { TranscriptSegment } from '@/lib/transcription/types';
 import type { SegmentTranscriber, SegmentTranscription } from '@/lib/transcription/provider';
 import { audioBase64 } from '@/lib/transcription/base64';
+import { whisperLanguage } from '@/lib/transcription/language';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -15,15 +16,16 @@ export class WorkersAiSegmentTranscriber implements SegmentTranscriber {
     /** Whisper's voice-activity filter. Off for mic-only clips, where it can cut quiet speech. */
     vadFilter?: boolean;
   }): Promise<SegmentTranscription> {
+    const language = whisperLanguage(args.language);
     const result = await this.ai.run(WHISPER_MODEL, {
       audio: audioBase64(args.audio),
       task: 'transcribe',
-      language: args.language ?? 'en',
+      ...(language ? { language } : {}),
       vad_filter: args.vadFilter ?? true,
       condition_on_previous_text: false,
       initial_prompt: args.contextBlurb || undefined,
     });
-    return mapResult(result, args.language);
+    return mapResult(result, language);
   }
 }
 
