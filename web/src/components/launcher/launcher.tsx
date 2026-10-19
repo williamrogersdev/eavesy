@@ -681,8 +681,7 @@ export function Launcher() {
         )}
         {desktop && view === 'list' && (
           <CaptureToolbar
-            active={liveKind}
-            elapsed={elapsed}
+            live={live}
             busy={starting}
             dictationHotkey={dictationHotkey}
             onTalk={() => runTask(() => beginRecording('audio', { source: 'mic', dictation: true }))}
@@ -715,7 +714,8 @@ export function Launcher() {
             account={account}
             permissions={setupPermissions}
             checking={checkingSetupPermissions}
-            listening={!!recording}
+            listening={!!recording && capturePhase !== 'transcribing'}
+            liveSessionId={recording?.session.session_id ?? null}
             dictationHotkey={dictationHotkey}
             toggleHotkey={toggleHotkey}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}

@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
-import { Camera, History, Mic, Square, Video, X } from 'lucide-react';
+import { Camera, Check, History, Mic, Square, Video, X } from 'lucide-react';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { errMsg } from '@/lib/desktop/errors';
 import {
@@ -67,7 +67,9 @@ function browserPreviewState(): HudState | null {
     sessionId: 'preview',
     mode: 'audio',
     startedAtMs: Date.now() - 78_000,
-    message: null,
+    message: phase === 'done'
+      ? 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away. It is just not really fleshed out yet, but the shape is right.'
+      : null,
   };
 }
 
@@ -81,8 +83,9 @@ function Hud() {
   const [captions, setCaptions] = useState<Record<string, LiveCaption>>({});
   // Everything heard in the current recording, for the transcript under the bar.
   const [running, setRunning] = useState<RunningTranscript>(EMPTY_RUNNING);
-  // Whether the window has grown to make room for that transcript.
+  // Whether the window has grown to make room for that transcript, and which way.
   const [expanded, setExpanded] = useState(false);
+  const [growsUp, setGrowsUp] = useState(false);
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -172,13 +175,18 @@ function Hud() {
   const transcript = hudTranscript(state, running);
   const showTranscript = transcript.text !== '' || transcript.notice !== null;
 
+  // Asked again on every phase: a control hidden and shown again has lost its room.
   useEffect(() => {
     let cancelled = false;
     void invoke('set_hud_expanded', { expanded: showTranscript })
-      .then(() => { if (!cancelled) setExpanded(showTranscript); })
+      .then((up) => {
+        if (cancelled) return;
+        setGrowsUp(showTranscript && up === true);
+        setExpanded(showTranscript);
+      })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showTranscript]);
+  }, [showTranscript, state?.phase, state?.sessionId]);
 
   useEffect(() => {
     if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
@@ -209,7 +217,8 @@ function Hud() {
   const busy = starting || recording || state.phase === 'transcribing';
 
   const pressSurface = (e: MouseEvent) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button, .ctl-transcript')) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    const inTranscript = !!(e.target as HTMLElement).closest('.ctl-transcript');
     const origin = { x: e.screenX, y: e.screenY };
     const cleanup = () => {
       window.removeEventListener('mousemove', move);
@@ -218,10 +227,12 @@ function Hud() {
     const move = (ev: globalThis.MouseEvent) => {
       if (Math.hypot(ev.screenX - origin.x, ev.screenY - origin.y) < 4) return;
       cleanup();
-      void invoke('plugin:window|start_dragging', { label: 'hud' }).catch(() => {});
+      // The transcript's words can be selected; the rest of the control drags.
+      if (!inTranscript) void invoke('plugin:window|start_dragging', { label: 'hud' }).catch(() => {});
     };
     const up = () => {
       cleanup();
+      if (inTranscript && window.getSelection()?.toString()) return;
       act('show_launcher');
     };
     window.addEventListener('mousemove', move);
@@ -229,20 +240,26 @@ function Hud() {
   };
 
   return (
-    <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
+    <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} data-grow={growsUp ? 'up' : undefined} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
       <div className="ctl-bar">
       <div className="ctl-grid">
         <button type="button" onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : act('show_launcher')} aria-label={recording ? 'Stop recording' : 'Open Eavesy'} title={recording ? 'Stop recording' : 'Open Eavesy'} className="ctl-mark">
           <Mascot size={18} state={mascotState(state.phase)} recording={recording} />
         </button>
         <div className="ctl-title" title={actionError ?? undefined}>
+          {recording && <span className="ctl-rec" aria-hidden />}
           {recording && <span className="ctl-timer">{elapsedLabel(state.startedAtMs, now)}</span>}
+          {recording && liveCaptions.length === 0 && <span className="ctl-quiet">{state.sessionId ? 'Listening' : 'Starting…'}</span>}
           {liveCaptions.map((c) => (
             <span key={c.track} aria-live="polite" title={c.text} data-final={c.isFinal || undefined} className="ctl-caption">
               <bdi>{labelled && <span className="ctl-caption-label">{trackLabel(c.track)}</span>}{captionTail(c.text, 120)}</bdi>
             </span>
           ))}
-          {state.phase === 'transcribing' && <span className="ctl-quiet">Writing it down…</span>}
+          {state.phase === 'transcribing' && <span className="ctl-quiet ctl-writing">Writing it down…</span>}
+          {state.phase === 'done' && !transcript.notice && state.mode === 'audio' && transcript.text && (
+            <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Pasted</span>
+          )}
+          {state.phase === 'saved' && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Saved</span>}
           {actionError && <span role="alert" title={actionError} className="ctl-error">{actionError}</span>}
         </div>
         <div className="ctl-actions">

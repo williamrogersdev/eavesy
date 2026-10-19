@@ -12,8 +12,7 @@ pub enum Phase {
     Idle,
     Saved,
     Recording,
-    // Not produced by the Rust side today, but launcher-ui renders this phase.
-    #[allow(dead_code)]
+    /// Stopped, and the words are on their way.
     Transcribing,
     Done,
     Failed,
@@ -42,7 +41,11 @@ pub fn current() -> HudState {
 }
 
 pub fn set_state(app: &AppHandle, state: HudState) {
-    *CURRENT.lock().unwrap_or_else(|error| error.into_inner()) = Some(state.clone());
+    let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
+    let was_recording = previous.is_some_and(|previous| previous.phase == Phase::Recording);
+    if let Some(cue) = crate::sounds::cue_for(was_recording, state.phase == Phase::Recording, state.phase == Phase::Failed) {
+        crate::sounds::play(app, cue);
+    }
     crate::tray::set_recording(app, state.phase == Phase::Recording);
     let _ = app.emit_to("main", "capture:state", state.clone());
     let Some(window) = app.get_webview_window("hud") else {
@@ -56,10 +59,27 @@ pub fn set_state(app: &AppHandle, state: HudState) {
     });
 }
 
+/// A recording is stopping: leave the red state at once, with the stop sound,
+/// and say the words are on their way. What happens next replaces it.
+pub fn show_stopping(app: &AppHandle, session_id: &str) {
+    let now = current();
+    if now.phase != Phase::Recording || now.session_id.as_deref().is_some_and(|id| id != session_id) {
+        return;
+    }
+    set_state(app, HudState {
+        phase: Phase::Transcribing,
+        session_id: Some(session_id.to_string()),
+        mode: now.mode,
+        started_at_ms: None,
+        message: None,
+        notice: None,
+    });
+}
+
 const DEFAULT_SIZE: (f64, f64) = (272.0, 40.0);
 
 /// How much taller the HUD gets to show the running transcript under its bar.
-const TRANSCRIPT_HEIGHT: f64 = 72.0;
+const TRANSCRIPT_HEIGHT: f64 = 96.0;
 
 /// Extra height the HUD has now for its transcript, and how far it moved up
 /// to make room at the bottom of the screen. Never saved as the user's frame.
@@ -69,12 +89,14 @@ fn expanded() -> Option<(f64, f64)> {
     *EXPANDED.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-/// Grows the HUD to show the transcript under its bar, or shrinks it back.
-/// The HUD asks for it once it has words to show.
-pub fn set_expanded_on_main(app: &AppHandle, expand: bool) {
-    let Some(window) = app.get_webview_window("hud") else { return };
+/// Grows the HUD to show the transcript with its bar, or shrinks it back.
+/// The HUD asks for it once it has words to show. Returns whether the
+/// transcript opens above the bar: a control in the lower half grows upwards,
+/// moving the window so the bar itself stays exactly where it was.
+pub fn set_expanded_on_main(app: &AppHandle, expand: bool) -> bool {
+    let Some(window) = app.get_webview_window("hud") else { return false };
     let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
-        return;
+        return false;
     };
     let position = position.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
@@ -83,16 +105,19 @@ pub fn set_expanded_on_main(app: &AppHandle, expand: bool) {
         (true, None) => {
             let bottom = crate::placement::work_area_at(app, position.x + size.width / 2.0, position.y + 1.0)
                 .map_or(f64::MAX, |area| area.1 + area.3);
-            let lift = (position.y + size.height + TRANSCRIPT_HEIGHT - bottom).max(0.0);
+            let up = crate::placement::in_lower_half(app, position.x + size.width / 2.0, position.y, size.height)
+                || position.y + size.height + TRANSCRIPT_HEIGHT > bottom;
             // Remember the growth only once the window really grew, so a
             // failed resize is never subtracted from the saved frame.
             if window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT)).is_err() {
-                return;
+                return false;
             }
-            let lifted = lift > 0.0
-                && window.set_position(tauri::LogicalPosition::new(position.x, position.y - lift)).is_ok();
-            *state = Some((TRANSCRIPT_HEIGHT, if lifted { lift } else { 0.0 }));
+            let lifted = up
+                && window.set_position(tauri::LogicalPosition::new(position.x, position.y - TRANSCRIPT_HEIGHT)).is_ok();
+            *state = Some((TRANSCRIPT_HEIGHT, if lifted { TRANSCRIPT_HEIGHT } else { 0.0 }));
+            lifted
         }
+        (true, Some((_, lift))) => lift > 0.0,
         (false, Some((extra, lift))) => {
             *state = None;
             drop(state);
@@ -100,8 +125,9 @@ pub fn set_expanded_on_main(app: &AppHandle, expand: bool) {
             if lift > 0.0 {
                 let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y + lift));
             }
+            false
         }
-        _ => {}
+        (false, None) => false,
     }
 }
 
@@ -219,8 +245,19 @@ fn follow_panel(app: &AppHandle) {
     };
     let position = position.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
-    let (width, height) = prefs(app).frame.map_or(DEFAULT_SIZE, |frame| (frame.width, frame.height));
-    let frame = HudFrame { x: position.x + (size.width - width) / 2.0, y: position.y, width, height };
+    let saved = prefs(app).frame;
+    let (width, height) = saved.map_or(DEFAULT_SIZE, |frame| (frame.width, frame.height));
+    // A control docked low opened the panel upwards: hand it back at the bottom.
+    let low = match saved {
+        Some(frame) => crate::placement::in_lower_half(app, frame.x + frame.width / 2.0, frame.y, frame.height),
+        None => matches!(settings::load(app).launcher_position, settings::LauncherPosition::BottomCenter),
+    };
+    let y = if low {
+        position.y + size.height - height
+    } else {
+        position.y
+    };
+    let frame = HudFrame { x: position.x + (size.width - width) / 2.0, y, width, height };
     if prefs(app).frame != Some(frame) {
         update_prefs(app, |config| config.hud_frame = Some(frame));
     }

@@ -21,6 +21,7 @@ pub enum LauncherPosition {
     TopRight,
     #[default]
     TopCenter,
+    BottomCenter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -68,6 +69,9 @@ pub struct Settings {
     /// Copy new macOS screenshots into the history (off unless turned on).
     #[serde(default)]
     pub auto_import_screenshots: bool,
+    /// A short sound as a recording starts and stops (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_sounds: Option<bool>,
 }
 
 impl Settings {
@@ -79,6 +83,10 @@ impl Settings {
 
     pub fn live_captions(&self) -> bool {
         self.live_captions.unwrap_or(true)
+    }
+
+    pub fn capture_sounds(&self) -> bool {
+        self.capture_sounds.unwrap_or(true)
     }
 }
 
@@ -102,6 +110,7 @@ impl Default for Settings {
             segment_sec: None,
             live_captions: None,
             auto_import_screenshots: false,
+            capture_sounds: None,
         }
     }
 }

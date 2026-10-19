@@ -837,6 +837,12 @@ pub fn stop_capture(
         crate::telemetry::capture("capture.stop", error);
         if error != NO_ACTIVE_CAPTURE {
             show_stop_failed(&app, &session_id, error);
+        } else {
+            // Shown as stopping by the key press, but something else stopped it first.
+            let hud = crate::hud::current();
+            if hud.phase == crate::hud::Phase::Transcribing && hud.session_id.as_deref() == Some(session_id.as_str()) {
+                crate::hud::set_state(&app, crate::hud::HudState { session_id: hud.session_id, ..crate::hud::HudState::idle() });
+            }
         }
     }
     result
@@ -885,6 +891,7 @@ fn stop_capture_inner(
 
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
+    crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
     let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions);

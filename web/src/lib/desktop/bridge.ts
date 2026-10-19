@@ -76,6 +76,18 @@ export async function onLiveCaption(cb: (caption: LiveCaption) => void): Promise
   return t.event.listen<LiveCaption>('recording:caption', (event) => cb(event.payload));
 }
 
+/** Setup's practice box is showing: send the next dictation's words to the panel. */
+export async function setDictationInPanel(wants: boolean): Promise<void> {
+  await invoke('set_dictation_in_panel', { wants });
+}
+
+/** A dictation finished for the panel: its words belong in the panel (setup's practice box). */
+export async function onDictationText(cb: (text: string) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<{ sessionId: string; text: string }>('dictation:text', (event) => cb(event.payload.text));
+}
+
 /** The stored live transcript of a recording changed; read it with `liveTranscript`. */
 export async function onLiveTranscript(cb: (sessionId: string) => void): Promise<UnlistenFn> {
   const t = tauri();
@@ -194,6 +206,10 @@ export async function checkPermissions(opts?: {
 
 export async function setLiveCaptions(enabled: boolean): Promise<void> {
   await invoke('set_live_captions', { enabled });
+}
+
+export async function setCaptureSounds(enabled: boolean): Promise<void> {
+  await invoke('set_capture_sounds', { enabled });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -343,9 +359,11 @@ export interface Settings {
   live_captions?: boolean;
   /** Copy new macOS screenshots into the history. */
   auto_import_screenshots?: boolean;
+  /** Absent means on. */
+  capture_sounds?: boolean;
 }
 
-export type LauncherPosition = 'top_left' | 'top_center' | 'top_right';
+export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';
 
 export interface SetupStatus {
   paired: boolean;

@@ -3,10 +3,11 @@
 import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
-import type { AccountInfo, Permissions, PrivacyPane } from '@/lib/desktop/bridge';
+import { onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
+import { useLiveLines } from './use-live-lines';
 
 const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Done'] as const;
 
@@ -19,6 +20,7 @@ export function SetupView({
   permissions,
   checking,
   listening,
+  liveSessionId,
   dictationHotkey,
   toggleHotkey,
   onConnect,
@@ -39,6 +41,8 @@ export function SetupView({
   checking: SetupPermissionKind | null;
   /** A dictation is recording right now (the mic is live). */
   listening: boolean;
+  /** The recording running now, for its words as they are heard. */
+  liveSessionId: string | null;
   dictationHotkey: string;
   toggleHotkey: string;
   onConnect: () => void;
@@ -60,6 +64,32 @@ export function SetupView({
   const pasteOn = permissions?.accessibility === true;
   const talk = dictationHotkey || '⌘⇧D';
   const shortcuts = useShortcuts(onShortcutsChanged);
+  const tryBox = useRef<HTMLTextAreaElement>(null);
+  const hearing = useLiveLines(step === 3 && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
+  // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
+  useEffect(() => {
+    if (step !== 3) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void setDictationInPanel(true).catch(() => {});
+    void onDictationText((text) => {
+      const box = tryBox.current;
+      setTried((current) => {
+        const start = box?.selectionStart ?? current.length;
+        const end = box?.selectionEnd ?? current.length;
+        const before = current.slice(0, start);
+        const joined = before && !/\s$/.test(before) ? `${before} ${text}` : `${before}${text}`;
+        return joined + current.slice(end);
+      });
+      setPasted(true);
+      box?.focus();
+    }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    return () => {
+      disposed = true;
+      off?.();
+      void setDictationInPanel(false).catch(() => {});
+    };
+  }, [step]);
 
   // Signing in finishes in the browser; when it does, move on by ourselves.
   // (The step lives in the launcher, so this runs as an effect, not during render.)
@@ -193,6 +223,9 @@ export function SetupView({
           Click in the box, then {usesFnKey(talk) ? <>tap <Kbd keys="fn" /></> : <>hold <Kbd keys={talk} /></>} and say something.
         </p>
         <textarea
+          ref={tryBox}
+          autoFocus
+          data-listening={listening || undefined}
           className="ev-onb-try"
           value={tried}
           onChange={(event) => {
@@ -201,7 +234,7 @@ export function SetupView({
             if (inputType === 'insertFromPaste') setPasted(true);
             else if (!event.target.value.trim()) setPasted(false);
           }}
-          placeholder="Your words land here…"
+          placeholder={listening ? 'Listening… keep talking' : 'Your words land here…'}
           rows={3}
           aria-label="Try dictation here"
         />
@@ -209,7 +242,7 @@ export function SetupView({
           {heard ? (
             <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
           ) : listening ? (
-            'Listening…'
+            <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
           ) : pasteOn ? (
             'Nothing to send anywhere. This box is just for practice.'
           ) : (

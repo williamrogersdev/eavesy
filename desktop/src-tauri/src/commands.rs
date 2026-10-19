@@ -75,9 +75,13 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
 
     if let Some(prev) = previous {
         // The key press is posted, not awaited: give the app time to read the
-        // pasteboard before the user's own clipboard comes back.
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        let _ = app.clipboard().write_text(prev);
+        // pasteboard before the user's own clipboard comes back. Off this
+        // thread, so whoever pasted can say so at once.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let _ = app.clipboard().write_text(prev);
+        });
     }
 
     Ok(())
@@ -123,6 +127,20 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
 pub fn set_live_captions(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut config = settings::load(&app);
     config.live_captions = Some(enabled);
+    settings::save(&app, &config)
+}
+
+/// Setup's practice box is open in the panel and wants the next dictation.
+#[tauri::command]
+pub fn set_dictation_in_panel(wants: bool) {
+    crate::dictation::set_panel_wants_dictation(wants);
+}
+
+/// Turns the start and stop sounds on or off.
+#[tauri::command]
+pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut config = settings::load(&app);
+    config.capture_sounds = Some(enabled);
     settings::save(&app, &config)
 }
 
@@ -260,11 +278,16 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
 
 
 /// The HUD grows to show its running transcript, and shrinks back after.
+/// Returns whether the transcript opens above the bar.
 #[tauri::command]
-pub fn set_hud_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
+pub async fn set_hud_expanded(app: AppHandle, expanded: bool) -> Result<bool, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
-    app.run_on_main_thread(move || crate::hud::set_expanded_on_main(&handle, expanded))
-        .map_err(|error| format!("could not resize the capture control: {error}"))
+    app.run_on_main_thread(move || {
+        let _ = sender.send(crate::hud::set_expanded_on_main(&handle, expanded));
+    })
+    .map_err(|error| format!("could not resize the capture control: {error}"))?;
+    receiver.await.map_err(|error| format!("could not resize the capture control: {error}"))
 }
 
 #[tauri::command]

@@ -108,13 +108,13 @@ fn pressed(app: &AppHandle, can_hold: bool) {
     let at = Instant::now();
     let app = app.clone();
     std::thread::spawn(move || {
-        // Where the cursor is right now: the paste goes back there.
-        crate::dictation::note_shortcut_press();
         let (active, starting) = active_session(&app);
         match on_press(active, starting) {
             OnPress::Ignore => {}
             OnPress::Stop(id) => {
                 *press() = Press::default();
+                crate::hud::show_stopping(&app, &id);
+                crate::dictation::note_shortcut_press();
                 stop(&app, id);
             }
             OnPress::Start => {
@@ -137,6 +137,7 @@ fn released(app: &AppHandle) {
             drop(state);
             let app = app.clone();
             std::thread::spawn(move || {
+                crate::hud::show_stopping(&app, &id);
                 crate::dictation::note_shortcut_press();
                 stop(&app, id);
             });
@@ -150,7 +151,8 @@ pub fn toggle(app: &AppHandle) {
 }
 
 fn start(app: &AppHandle, pressed_at: Instant) {
-    // Say so at once: the engine takes a moment to open the mic.
+    // Say so at once, with its sound: the engine takes a moment to open the
+    // mic, and finding the text box under the cursor can take a moment too.
     crate::hud::set_state(app, crate::hud::HudState {
         phase: crate::hud::Phase::Recording,
         session_id: None,
@@ -159,6 +161,8 @@ fn start(app: &AppHandle, pressed_at: Instant) {
         message: None,
         notice: None,
     });
+    // Where the cursor is right now: the paste goes back there.
+    crate::dictation::note_shortcut_press();
     let result = crate::audio::start_audio_capture(
         app,
         &app.state::<Captures>(),

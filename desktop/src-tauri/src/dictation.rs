@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +102,8 @@ fn get_launcher_out_of_the_way(app: &AppHandle) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Pasted,
+    /// Typed into Eavesy's own panel (the setup's practice box), which has focus.
+    InEavesy,
     /// On the clipboard: Eavesy may not paste (no Accessibility permission).
     CopiedNoAccessibility,
     /// On the clipboard: the cursor is not in a text box any more.
@@ -112,7 +114,7 @@ impl Delivery {
     /// What the HUD says, or None to show the words themselves.
     pub fn notice(self) -> Option<&'static str> {
         match self {
-            Delivery::Pasted => None,
+            Delivery::Pasted | Delivery::InEavesy => None,
             Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
             Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
         }
@@ -141,13 +143,25 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        get_launcher_out_of_the_way(&app);
-        let mut how = delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()));
-        if how == Delivery::Pasted && crate::commands::paste_text(&app, &text).is_err() {
-            // Say what actually stopped it: the permission, or anything else.
-            how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
+        let mut how = if panel_wants_it(&app) {
+            Delivery::InEavesy
+        } else {
+            delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
+        };
+        match how {
+            Delivery::InEavesy => {
+                let _ = app.emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() });
+            }
+            Delivery::Pasted => {
+                get_launcher_out_of_the_way(&app);
+                if crate::commands::paste_text(&app, &text).is_err() {
+                    // Say what actually stopped it: the permission, or anything else.
+                    how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
+                }
+            }
+            _ => {}
         }
-        if how != Delivery::Pasted {
+        if matches!(how, Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox) {
             // A failed paste may have left the text on the clipboard already;
             // writing it again makes sure it is there whatever step failed.
             use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -167,6 +181,33 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             });
         }
     });
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DictationText {
+    session_id: String,
+    text: String,
+}
+
+static PANEL_WANTS_DICTATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The panel has a box of its own waiting for dictation (setup's practice
+/// box). Dictation goes there directly: a synthetic ⌘V can't be aimed at it.
+pub fn set_panel_wants_dictation(wants: bool) {
+    PANEL_WANTS_DICTATION.store(wants, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn panel_wants_it(app: &AppHandle) -> bool {
+    if !PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
+        return false;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = tx.send(crate::panel::is_visible(&handle));
+    });
+    rx.recv_timeout(Duration::from_millis(300)).unwrap_or(false)
 }
 
 fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
