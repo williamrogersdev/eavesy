@@ -51,7 +51,7 @@ export function EditableTitle({
           if (e.key === 'Enter') void commit();
           if (e.key === 'Escape') setDraft(null);
         }}
-        className="w-full rounded-md border border-accent/50 bg-background px-2 py-0.5 text-xl font-semibold tracking-tight outline-none"
+        className="w-full rounded-[var(--ev-r-ctl)] bg-ev-paper px-2 py-0.5 font-round text-2xl font-extrabold text-ev-ink shadow-[var(--ev-focus)] outline-none"
       />
     );
   }
@@ -64,14 +64,14 @@ export function EditableTitle({
         className="group flex max-w-full items-start gap-2 text-left"
         title="Rename"
       >
-        <h1 className="min-w-0 break-words text-xl font-semibold tracking-tight">{initial}</h1>
+        <h1 className="min-w-0 break-words font-round text-2xl font-extrabold leading-tight text-ev-ink">{initial}</h1>
         {saving ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <Loader2 className="mt-1.5 h-4 w-4 animate-spin text-ev-ink-3" />
         ) : (
-          <Pencil className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+          <Pencil className="h-4 w-4 mt-1.5 text-ev-ink-3 opacity-0 transition group-hover:opacity-100" />
         )}
       </button>
-      {saveError ? <p className="mt-1 text-xs text-danger">{saveError}</p> : null}
+      {saveError ? <p className="mt-1 text-xs text-ev-warn-ink">{saveError}</p> : null}
     </div>
   );
 }

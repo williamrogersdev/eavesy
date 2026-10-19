@@ -40,12 +40,12 @@ export const FEATURE_PAGES: FeaturePage[] = [
     description:
       'In the Mac app, press ⌘V to save clipboard text or an image, or take a screenshot. Each one is stored as a Markdown or image file you can copy into any AI agent.',
     intro:
-      'Not everything your AI needs is a recording. Open the Eavesy launcher with your global hotkey and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window. Everything lands in a normal folder on your disk, next to your recordings.',
+      'Not everything your AI needs is a recording. Open the Eavesy launcher with ⌘⇧Space and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window, or drop a file in. Everything lands in a normal folder on your disk, next to your recordings, and stays on your Mac.',
     highlights: [
       { title: 'Clipboard text and images', body: 'Press ⌘V in the launcher to save whatever you copied last, a message, an order, a snippet of code, or an image, as a capture.' },
       { title: 'Screenshots', body: 'Take a screenshot of your display from the launcher (macOS 14 or later). Eavesy’s own window is left out of the image.' },
       { title: 'Plain files', body: 'Text is stored as note.md and images as PNG files in a folder you can open, grep, or point an agent at.' },
-      { title: 'Still to come', body: 'Forwarding messages and orders straight from other apps, and reading text out of screenshots in the Mac app, are not available yet.' },
+      { title: 'Drop in files', body: 'Drop images, Markdown or text files, audio, or video onto the launcher to keep a copy with the rest of your context.' },
     ],
     faqs: [
       { q: 'Can I drop in a message or an order?', a: 'Copy it and press ⌘V in the Eavesy launcher. It is saved as a Markdown note. Capturing directly from other apps is not available yet.' },
@@ -56,21 +56,21 @@ export const FEATURE_PAGES: FeaturePage[] = [
     slug: 'bot-free-capture',
     icon: Radio,
     eyebrow: 'Eyes and ears',
-    name: 'Screen + voice capture',
-    title: 'Capture your screen and voice — no bot on the call',
+    name: 'Talk, meetings and video',
+    title: 'Record your voice, your calls, or your screen with no bot on the call',
     description:
-      'Eavesy records your screen, system audio, and mic straight from your Mac—what you see and what is said. No bot joins the call and no meeting link is required.',
+      'Talk records your mic. Meeting records your mic and the audio your Mac plays. Video records your screen, its audio, and your mic. Nothing joins the call and no meeting link is needed.',
     intro:
-      'Most meeting recorders join the call as another participant and ask for calendar access. Eavesy takes a different path: it captures your screen, the audio your computer is playing, and your microphone. That same capture model works for calls, walkthroughs, bug reproductions, and in-person conversations. You choose when it starts and remain in control of consent and sharing.',
+      'Eavesy records from your Mac instead of joining your call. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
     highlights: [
-      { title: 'Screen, system, and mic', body: 'It captures the window you’re walking through, every remote voice via system audio, and your mic — mixed into one clean session.' },
+      { title: 'Three modes', body: 'Talk uses your mic only. Meeting adds the audio your Mac plays, without recording the screen. Video records your screen, its audio, and your mic.' },
       { title: 'No meeting bot', body: 'Nothing joins the participant list. Eavesy records from your Mac while you handle consent according to your organization and local requirements.' },
       { title: 'Works in person too', body: 'No meeting link required. Record a hallway conversation, a workshop, or a 1:1 over coffee the same way you record a Zoom call.' },
-      { title: 'Hotkey to start', body: 'Launch a capture from anywhere with a global shortcut — no need to switch apps or set anything up first.' },
+      { title: 'Shortcuts to start', body: 'Press ⌘⇧D to talk from anywhere, or ⌘⇧Space to open the launcher and start a meeting or video.' },
     ],
     faqs: [
       { q: 'Does anyone on the call know I’m recording?', a: 'Eavesy does not add a participant to the call. Tell participants when required and follow the consent laws in your jurisdiction and your organization’s policy.' },
-      { q: 'Does it work for in-person meetings?', a: 'Yes. Because it captures your Mac’s screen, audio, and microphone directly, no meeting link is needed — it records in-person conversations just as well as video calls.' },
+      { q: 'Does it work for in-person meetings?', a: 'Yes. Meeting mode records your Mac’s microphone directly, so no meeting link is needed. It works in the room just as well as on a call.' },
     ],
     related: ['live-summary', 'transcription', 'privacy'],
   },
@@ -100,14 +100,14 @@ export const FEATURE_PAGES: FeaturePage[] = [
     icon: FileText,
     eyebrow: 'Accurate transcription',
     name: 'Transcription',
-    title: 'Durable transcripts in dozens of languages',
+    title: 'Live captions on your Mac, full transcripts in the cloud',
     description:
-      'Whisper transcription with punctuation and multi-language support. Mac capture processes sealed rolling segments; browser recordings process after you stop.',
+      'On-device live captions while you record, then a Whisper transcript in the cloud that replaces them. English by default, with other languages and automatic detection in Settings.',
     intro:
-      'Eavesy uses multilingual Whisper transcription. The Mac app seals recoverable audio segments during long recordings and processes each segment as it uploads; short browser recordings upload and process when you finish. The result is readable, searchable text without pretending batch transcription is an instant live caption feed.',
+      'The Mac app writes live captions on your Mac as you speak, with no account needed. When you sign in, audio uploads in segments and Whisper produces a full transcript that replaces the captions. Meetings are labelled You and Them by track. Add custom words so names and jargon come out right.',
     highlights: [
-      { title: 'Recoverable rolling segments', body: 'Long Mac sessions are sealed to disk in segments and processed during capture, limiting how much work a crash or network interruption can affect.' },
-      { title: 'Multi-language', body: 'Transcribes dozens of languages automatically, with no setup or language picker required.' },
+      { title: 'Recoverable rolling segments', body: 'Long recordings upload in segments while you record, limiting how much a crash or network interruption can affect.' },
+      { title: 'Your language, your words', body: 'English by default. Pick another language or automatic detection, and add up to 100 custom words, under Settings → Transcription.' },
       { title: 'Portable output', body: 'Copy or export the transcript as Markdown; Mac sessions also keep the source files in a normal folder.' },
       { title: 'Always included', body: 'You always get the complete transcript, never just a summary.' },
     ],
@@ -159,7 +159,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       'With the Mac app, each session is saved as a real folder on your disk: a Markdown brief, the full transcript, the audio, and JSON metadata. It’s your context in open formats — portable, greppable, feed-it-to-any-agent, and yours to keep even if you stop using Eavesy.',
     highlights: [
       { title: 'Open formats', body: 'Markdown + JSON + audio, structured in a predictable folder layout you can read with any tool.' },
-      { title: 'Local source files + private processing', body: 'Files live on your Mac while a private cloud copy powers transcription, search, sync, and recovery.' },
+      { title: 'Local source files + private processing', body: 'Files live on your Mac. When you sign in, a private cloud copy of your recordings powers transcription, search, sync, and recovery.' },
       { title: 'Fits your workflow', body: 'Drop the folder into an Obsidian vault, back it up with Dropbox, or pipe it through your own scripts.' },
       { title: 'Portable by design', body: 'Download an individual meeting bundle from its detail page; Mac sessions also remain as normal local files.' },
     ],
@@ -188,15 +188,15 @@ export const FEATURE_PAGES: FeaturePage[] = [
     icon: Mic,
     eyebrow: 'Dictation',
     name: 'Dictation',
-    title: 'Turn speech into clean text, anywhere',
+    title: 'Talk, and the words land where your cursor is',
     description:
-      'Dictate notes and have them cleaned up automatically — filler words removed, punctuation added — ready to paste wherever you’re working.',
+      'Press ⌘⇧D, speak, and Eavesy pastes on-device text where your cursor is. No account needed. Signed in, a cleaned-up copy is kept in the cloud too.',
     intro:
-      'Beyond meetings, Eavesy turns quick spoken thoughts into tidy text. Dictate a note and it’s transcribed and lightly cleaned — filler removed, sentences punctuated — so it’s ready to drop into a doc, an email, or a task.',
+      'Tap ⌘⇧D to start and again to stop, or hold it to talk. Eavesy turns your words into text on your Mac and pastes it into the app you’re using. When you’re signed in, the audio also gets a cloud transcript, and that copy is lightly cleaned up with filler removed and punctuation added.',
     highlights: [
-      { title: 'Cleaned automatically', body: 'Filler words and false starts are removed and punctuation added, so you get usable text, not a raw stream.' },
-      { title: 'History you can search', body: 'Every dictation is saved and searchable alongside your meetings.' },
-      { title: 'Fast and frictionless', body: 'Start with a hotkey, speak, and paste — no app switching required.' },
+      { title: 'On-device first', body: 'The text pasted on your Mac is made on your Mac, with or without an account.' },
+      { title: 'Cleanup in the cloud copy', body: 'Filler words and false starts are removed only in the cloud copy, never in the text pasted on your Mac.' },
+      { title: 'Tap or hold', body: 'Tap to toggle, or hold for push-to-talk. Set Talk to fn if you like.' },
     ],
     related: ['transcription', 'semantic-search'],
   },

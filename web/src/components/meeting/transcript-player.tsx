@@ -154,9 +154,9 @@ export function TranscriptPlayer({
   if (shown.length === 0 && !audioUrl) return null;
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4 rounded-[var(--ev-r-panel)] bg-ev-raised p-4 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)] sm:p-5">
       {audioUrl ? (
-        <div className="sticky top-0 z-10 -mx-2 rounded-lg border border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+        <div className="sticky top-2 z-10 rounded-full bg-ev-well/95 py-1.5 pl-1.5 pr-4 backdrop-blur">
           <audio
             ref={audio}
             src={audioUrl}
@@ -173,12 +173,12 @@ export function TranscriptPlayer({
             <button
               type="button"
               onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover active:scale-95"
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
             </button>
-            <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+            <span className="w-24 shrink-0 font-round text-xs font-semibold tabular-nums text-ev-ink-2">
               {clockLabel(nowMs)} / {durationMs ? clockLabel(durationMs) : '--:--'}
             </span>
             <div className="relative flex-1">
@@ -189,7 +189,7 @@ export function TranscriptPlayer({
                 step={250}
                 value={Math.min(nowMs, durationMs || nowMs)}
                 onChange={(e) => seek(Number(e.target.value), playing)}
-                className="w-full accent-[var(--color-accent,currentColor)]"
+                className="w-full accent-[var(--ev-slate)]"
                 aria-label="Seek"
               />
               {durationMs
@@ -197,7 +197,7 @@ export function TranscriptPlayer({
                     <span
                       key={chapter.startMs}
                       title={chapter.title}
-                      className="pointer-events-none absolute top-0 h-1.5 w-0.5 -translate-x-1/2 rounded bg-muted-foreground/60"
+                      className="pointer-events-none absolute top-0 h-1.5 w-0.5 -translate-x-1/2 rounded bg-ev-ink-3"
                       style={{ left: `${(chapter.startMs / durationMs) * 100}%` }}
                     />
                   ))
@@ -208,12 +208,10 @@ export function TranscriptPlayer({
       ) : null}
 
       {chapters.length || labelled ? (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           {chapters.length ? (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Chapters
-              </h3>
+              <h3 className="mb-1.5 font-round text-[13px] font-bold text-ev-ink-2">Chapters</h3>
               <ol className="space-y-0.5">
                 {chapters.map((chapter, i) => (
                   <li key={chapter.startMs}>
@@ -221,11 +219,11 @@ export function TranscriptPlayer({
                       type="button"
                       onClick={() => seek(chapter.startMs)}
                       className={cn(
-                        'flex w-full items-baseline gap-2 rounded px-1.5 py-0.5 text-left text-sm hover:bg-muted',
-                        activeChapter === i && 'bg-muted font-medium',
+                        'flex w-full items-baseline gap-2 rounded-[var(--ev-r-ctl)] px-2 py-1 text-left text-sm text-ev-ink hover:bg-[var(--ev-hover)]',
+                        activeChapter === i && 'bg-ev-slate-soft font-semibold text-ev-slate',
                       )}
                     >
-                      <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      <span className="w-12 shrink-0 font-round text-xs tabular-nums text-ev-ink-3">
                         {clockLabel(chapter.startMs)}
                       </span>
                       {chapter.title}
@@ -243,11 +241,11 @@ export function TranscriptPlayer({
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transcript</h2>
+          <h2 className="font-round text-[15px] font-extrabold text-ev-ink">Transcript</h2>
           <CopyText text={copyText} />
         </div>
         <div
-          className="max-h-[32rem] overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-sm leading-relaxed"
+          className="-mx-2 max-h-[36rem] overflow-y-auto text-[14.5px] leading-relaxed text-ev-ink"
           onWheel={() => setFollowPlayback(false)}
         >
           {shown.map((line, i) => {
@@ -258,7 +256,7 @@ export function TranscriptPlayer({
             return (
               <div key={line.id}>
                 {heading ? (
-                  <h3 className="mb-1 mt-3 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground first:mt-1">
+                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-slate first:mt-1">
                     {heading}
                   </h3>
                 ) : null}
@@ -289,9 +287,9 @@ export function TranscriptPlayer({
       </div>
 
       {undo ? (
-        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-background px-4 py-2 text-sm shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ev-raised px-4 py-2 text-sm text-ev-ink shadow-[var(--ev-e-3)]">
           Line deleted.
-          <button type="button" onClick={() => void restore()} className="font-medium text-accent hover:underline">
+          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-slate hover:underline">
             Undo
           </button>
         </div>
@@ -338,20 +336,20 @@ function Line({
     <div
       ref={ref}
       className={cn(
-        'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded px-2 py-1',
-        active ? 'bg-accent/10' : 'hover:bg-muted/60',
+        'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded-[var(--ev-r-ctl)] px-2 py-1.5',
+        active ? 'bg-ev-slate-soft' : 'hover:bg-[var(--ev-hover)]',
       )}
     >
       <button
         type="button"
         onClick={onPlay}
-        className="self-start pt-0.5 text-left font-mono text-xs tabular-nums text-muted-foreground hover:text-accent"
+        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-slate"
         title="Play from here"
       >
         {clockLabel(line.startMs)}
       </button>
       <div className="min-w-0 pr-20">
-        {who ? <div className="text-xs font-semibold text-foreground">{who}</div> : null}
+        {who ? <div className="font-round text-[13px] font-bold text-ev-ink">{who}</div> : null}
         {draft !== null ? (
           <textarea
             autoFocus
@@ -367,7 +365,7 @@ function Line({
               }
               if (e.key === 'Escape') setDraft(null);
             }}
-            className="w-full resize-none rounded border border-accent/50 bg-background px-2 py-1 outline-none"
+            className="w-full resize-none rounded-[var(--ev-r-ctl)] bg-ev-paper px-2 py-1 shadow-[var(--ev-focus)] outline-none"
           />
         ) : (
           <p onClick={onPlay} className="cursor-pointer">
@@ -376,7 +374,7 @@ function Line({
         )}
       </div>
       {draft === null ? (
-        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-md border border-border bg-background p-0.5 group-hover:flex">
+        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-[var(--ev-r-ctl)] bg-ev-raised p-0.5 shadow-[var(--ev-e-2)] group-hover:flex">
           <IconButton label="Edit line" onClick={() => setDraft(line.text)}>
             <Pencil className="h-3.5 w-3.5" />
           </IconButton>
@@ -405,7 +403,7 @@ function SpeakerNames({
 }) {
   return (
     <div>
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Speakers</h3>
+      <h3 className="mb-1.5 font-round text-[13px] font-bold text-ev-ink-2">Speakers</h3>
       <div className="space-y-1.5">
         {(['you', 'them'] as const).map((id) => (
           <SpeakerName key={id} meetingId={meetingId} id={id} name={speakerName(id, names)} onSaved={onSaved} />
@@ -440,7 +438,7 @@ function SpeakerName({
   };
   return (
     <label className="flex items-center gap-2 text-sm">
-      <span className="w-12 shrink-0 text-xs text-muted-foreground">{id === 'you' ? 'Mic' : 'Call'}</span>
+      <span className="w-12 shrink-0 text-xs text-ev-ink-3">{id === 'you' ? 'Mic' : 'Call'}</span>
       <input
         value={draft ?? name}
         onChange={(e) => setDraft(e.target.value)}
@@ -451,7 +449,7 @@ function SpeakerName({
           if (e.key === 'Escape') setDraft(null);
         }}
         maxLength={60}
-        className="flex-1 rounded-md border border-border bg-background px-2 py-1 outline-none focus:border-accent/50"
+        className="min-w-0 flex-1 rounded-[var(--ev-r-ctl)] bg-ev-well px-2.5 py-1 text-ev-ink outline-none focus:bg-ev-paper focus:shadow-[var(--ev-focus)]"
         aria-label={id === 'you' ? 'Name for the microphone speaker' : 'Name for the call speaker'}
       />
     </label>
@@ -465,7 +463,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      className="rounded-[6px] p-1 text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {children}
     </button>
@@ -486,7 +484,7 @@ function CopyText({ text }: { text: string }) {
           /* clipboard unavailable */
         }
       })(); }}
-      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
       {copied ? 'Copied' : 'Copy transcript'}

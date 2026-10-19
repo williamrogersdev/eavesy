@@ -21,6 +21,8 @@ export interface MeetingMeta {
   startedAt: number;
   durationSec?: number | null;
   platform?: string | null;
+  source?: string | null;
+  deviceName?: string | null;
   status: string;
   statusError?: string | null;
   audioR2Key?: string | null;

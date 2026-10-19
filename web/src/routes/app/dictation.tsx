@@ -107,7 +107,7 @@ function DictationPage() {
     }
   };
 
-  const panel = 'flex w-full items-center gap-3 rounded-lg border border-border p-4';
+  const panel = 'flex w-full items-center gap-3 rounded-[var(--ev-r-pop)] border border-ev-line p-4';
   return (
     <AppPage width="compact">
       <AppPageHeader
@@ -123,13 +123,13 @@ function DictationPage() {
             type="button"
             onClick={() => void start()}
             aria-label="Start dictation"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-danger text-white transition hover:brightness-110 active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-slate transition hover:bg-action-hover active:scale-95"
           >
             <Mic className="h-5 w-5" />
           </button>
           <div>
             <p className="text-sm font-medium">Start dictation</p>
-            <p className="text-xs text-muted-foreground">Your browser will ask to use the microphone.</p>
+            <p className="text-xs text-ev-ink-2">Your browser will ask to use the microphone.</p>
           </div>
         </div>
       )}
@@ -137,8 +137,8 @@ function DictationPage() {
       {phase === 'recording' && (
         <div className={panel}>
           <span className="h-2.5 w-2.5 shrink-0 animate-recording-pulse rounded-full bg-danger" />
-          <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
-          <span className="text-xs text-muted-foreground">Listening</span>
+          <span className="font-round text-sm tabular-nums">{formatDuration(elapsed)}</span>
+          <span className="text-xs text-ev-ink-2">Listening</span>
           <span className="ml-auto flex gap-2">
             <button type="button" onClick={() => void stop(true)} className={appButton('ghost', 'sm')}>
               Cancel
@@ -152,8 +152,8 @@ function DictationPage() {
 
       {phase === 'processing' && (
         <div role="status" className={panel}>
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Transcribing and cleaning up…</span>
+          <Loader2 className="h-4 w-4 animate-spin text-ev-ink-2" />
+          <span className="text-sm text-ev-ink-2">Transcribing and cleaning up…</span>
         </div>
       )}
 
@@ -193,9 +193,9 @@ function Section({
   onCopy: () => void;
 }) {
   return (
-    <section className={cn('rounded-lg border p-3', primary ? 'border-accent/30 bg-accent-soft' : 'border-border')}>
+    <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-slate bg-ev-slate-soft' : 'border-ev-line')}>
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-ev-ink-2">
           {primary ? <Sparkles className="h-3.5 w-3.5" /> : null}
           {title}
         </span>

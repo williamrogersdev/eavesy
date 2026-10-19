@@ -1,8 +1,8 @@
 ---
 title: Connect an agent over MCP
 description: Add Eavesy to Claude, ChatGPT or Claude Code by URL so your agent can search your recordings and dictations.
-category: For AI agents
-order: 22
+category: Agents
+order: 41
 ---
 
 Eavesy runs a hosted [MCP](https://modelcontextprotocol.io) server at
@@ -118,8 +118,11 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
 
 These tools only read. The tool names say "meetings" because that is the name
-of a recording in the data model. Clipboard notes, images, and screenshots
-stay on your Mac and are never uploaded, so they are not available over MCP.
+of a recording in the data model. Recordings need to be in your account, so
+recordings made on a Mac that isn't signed in are not available. Screenshots,
+clipboard captures and notes from the Mac app stay on your Mac and are never
+uploaded, so they are not available over MCP either. An agent with file access
+can still [read them from disk](/docs/session-folder-format).
 
 <Callout type="note">
 Requests are rate limited per connection. A read-only connection can't create,
@@ -128,5 +131,5 @@ edit, or delete anything.
 
 ## Next
 
-- [Context for AI agents](/docs/context-for-agents)
-- [The session folder format](/docs/session-folder-format)
+- [Give your agent context](/docs/context-for-agents)
+- [Your files](/docs/session-folder-format)

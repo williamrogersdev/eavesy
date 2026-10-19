@@ -269,7 +269,7 @@ export function PaletteView({
         <Keyboard className="h-4 w-4" />
         <span>Settings · Open</span>
         <span
-          className="rounded-md border px-1.5 py-0.5 font-mono text-[12px] text-foreground"
+          className="rounded-md border px-1.5 py-0.5 font-round text-[12px] text-foreground"
           style={{
             borderColor:
               'color-mix(in srgb, var(--lr-brand) 45%, var(--border))',

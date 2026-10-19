@@ -41,7 +41,7 @@ export function RecordingView({
           Recording {mode === 'screen' ? 'screen + audio' : 'audio'}
         </span>
       </div>
-      <div className="font-mono text-6xl font-medium tabular-nums text-foreground">
+      <div className="font-round text-6xl font-medium tabular-nums text-foreground">
         {mmss(elapsed)}
       </div>
       <button

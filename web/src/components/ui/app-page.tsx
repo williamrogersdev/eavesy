@@ -12,12 +12,12 @@ export function appButton(
   size: 'sm' | 'md' = 'md',
 ) {
   return cn(
-    'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
-    size === 'sm' ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3.5 text-sm',
-    variant === 'primary' && 'bg-action text-white hover:bg-action-hover',
-    variant === 'secondary' && 'border border-border bg-background hover:bg-muted',
-    variant === 'ghost' && 'text-muted-foreground hover:bg-muted hover:text-foreground',
-    variant === 'danger' && 'bg-danger text-white hover:opacity-90',
+    'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full font-round font-bold transition duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50',
+    size === 'sm' ? 'h-8 px-3 text-[13px]' : 'h-9 px-4 text-[13.5px]',
+    variant === 'primary' && 'bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover',
+    variant === 'secondary' && 'text-ev-ink shadow-[inset_0_0_0_1px_var(--ev-line-strong)] hover:bg-[var(--ev-hover)]',
+    variant === 'ghost' && 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
+    variant === 'danger' && 'bg-ev-warn-soft text-ev-warn-ink hover:bg-[color-mix(in_srgb,var(--ev-warn-soft)_80%,var(--ev-warn-ink))]',
   );
 }
 
@@ -55,9 +55,9 @@ export function AppPageHeader({
   return (
     <header className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-[-0.02em]">{title}</h1>
+        <h1 className="font-round text-[26px] font-extrabold tracking-tight text-ev-ink">{title}</h1>
         {description ? (
-          <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">{description}</p>
+          <p className="mt-1 max-w-2xl text-sm text-ev-ink-2">{description}</p>
         ) : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
@@ -77,12 +77,12 @@ export function AppEmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center rounded-lg border border-dashed border-border px-5 py-10 text-center">
-      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">
+    <div className="flex flex-col items-center rounded-[var(--ev-r-panel)] bg-ev-well px-5 py-12 text-center">
+      <span className="grid h-10 w-10 place-items-center rounded-full bg-ev-raised text-ev-ink-2 shadow-[var(--ev-e-2)] [&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:stroke-[1.75]">
         {icon}
       </span>
-      <h2 className="mt-3 text-sm font-semibold">{title}</h2>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p>
+      <h2 className="mt-3 font-round text-[15px] font-bold text-ev-ink">{title}</h2>
+      <p className="mt-1 max-w-sm text-sm text-ev-ink-2">{description}</p>
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
@@ -99,10 +99,10 @@ export function AppAlert({
     <div
       role={tone === 'danger' ? 'alert' : 'status'}
       className={cn(
-        'rounded-md border px-3 py-2 text-sm',
-        tone === 'danger' && 'border-danger/25 bg-danger-soft text-danger',
-        tone === 'info' && 'border-border bg-muted/45 text-foreground',
-        tone === 'success' && 'border-emerald-600/25 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300',
+        'rounded-[var(--ev-r-pop)] px-3.5 py-2.5 text-sm',
+        tone === 'danger' && 'bg-ev-warn-soft text-ev-warn-ink',
+        tone === 'info' && 'bg-ev-well text-ev-ink',
+        tone === 'success' && 'bg-ev-leaf-soft text-ev-leaf',
       )}
     >
       {children}
@@ -124,11 +124,11 @@ export function AppSection({
   className?: string;
 }) {
   return (
-    <section className={cn('flex flex-col gap-3 border-t border-border pt-5 first:border-t-0 first:pt-0', className)}>
+    <section className={cn('flex flex-col gap-3 border-t border-ev-line pt-5 first:border-t-0 first:pt-0', className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold">{title}</h2>
-          {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
+          <h2 className="font-round text-[15px] font-bold text-ev-ink">{title}</h2>
+          {description ? <p className="mt-0.5 text-[13px] text-ev-ink-2">{description}</p> : null}
         </div>
         {action}
       </div>

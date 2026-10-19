@@ -394,11 +394,11 @@ export function DropsProvider({ children }: { children: ReactNode }) {
     <DropsContext.Provider value={value}>
       {children}
       {dragging ? (
-        <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-background/70 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-action bg-background px-10 py-8 text-center shadow-lg">
+        <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-ev-paper backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 rounded-[var(--ev-r-panel)] border-2 border-dashed border-ev-slate bg-ev-paper px-10 py-8 text-center shadow-[var(--ev-e-3)]">
             <Upload className="h-7 w-7 text-action" />
-            <p className="text-sm font-semibold text-foreground">Drop to send to your devices</p>
-            <p className="text-xs text-muted-foreground">It shows up on your other computers right away.</p>
+            <p className="text-sm font-semibold text-ev-ink">Drop to send to your devices</p>
+            <p className="text-xs text-ev-ink-2">It shows up on your other computers right away.</p>
           </div>
         </div>
       ) : null}
@@ -425,17 +425,17 @@ function ToastStack({
         <div
           key={toast.id}
           className={cn(
-            'pointer-events-auto rounded-lg border bg-background p-3 shadow-lg',
-            toast.tone === 'error' ? 'border-danger/40' : 'border-border',
+            'pointer-events-auto rounded-[var(--ev-r-pop)] border bg-ev-paper p-3 shadow-[var(--ev-e-3)]',
+            toast.tone === 'error' ? 'border-ev-warn-ink' : 'border-ev-line',
           )}
         >
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
-              <p className={cn('text-xs font-semibold', toast.tone === 'error' ? 'text-danger' : 'text-foreground')}>
+              <p className={cn('text-xs font-semibold', toast.tone === 'error' ? 'text-ev-warn-ink' : 'text-ev-ink')}>
                 {toast.message}
               </p>
               {toast.tone === 'incoming' && toast.drop ? (
-                <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground">
+                <p className="mt-1 line-clamp-2 break-words text-xs text-ev-ink-2">
                   {toast.drop.kind === 'text' ? toast.drop.preview : toast.drop.filename}
                 </p>
               ) : null}
@@ -447,7 +447,7 @@ function ToastStack({
                   onUndo(toast);
                   onDismiss(toast.id);
                 }}
-                className="rounded-md px-2 py-1 text-xs font-medium text-action hover:bg-muted"
+                className="rounded-[var(--ev-r-ctl)] px-2 py-1 text-xs font-medium text-action hover:bg-[var(--ev-hover)]"
               >
                 Undo
               </button>
@@ -457,7 +457,7 @@ function ToastStack({
               type="button"
               onClick={() => onDismiss(toast.id)}
               aria-label="Dismiss"
-              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-[var(--ev-r-ctl)] p-1 text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -475,7 +475,7 @@ function ToastAction({ drop }: { drop: Drop }) {
       <a
         href={downloadUrl(drop)}
         download={drop.filename ?? true}
-        className="flex items-center gap-1 rounded-md bg-action px-2 py-1 text-xs font-medium text-white hover:bg-action-hover"
+        className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs font-medium text-ev-on-slate hover:bg-action-hover"
       >
         <Download className="h-3.5 w-3.5" /> Download
       </a>
@@ -490,7 +490,7 @@ function ToastAction({ drop }: { drop: Drop }) {
           .catch(() => setCopyState('failed'))
           .finally(() => window.setTimeout(() => setCopyState('idle'), 2000));
       }}
-      className="flex items-center gap-1 rounded-md bg-action px-2 py-1 text-xs font-medium text-white hover:bg-action-hover"
+      className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs font-medium text-ev-on-slate hover:bg-action-hover"
     >
       {copyState === 'copied' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}

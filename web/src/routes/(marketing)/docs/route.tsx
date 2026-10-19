@@ -17,9 +17,9 @@ function DocsLayout() {
   }));
 
   return (
-    <main className="flex flex-1 flex-col py-12">
-      <Container className="grid gap-10 lg:grid-cols-[16rem_1fr]">
-        <aside className="lg:sticky lg:top-24 lg:h-[calc(100vh-8rem)] lg:overflow-y-auto lg:pr-4">
+    <main className="flex flex-1 flex-col py-8 lg:py-12">
+      <Container className="grid gap-8 lg:grid-cols-[15rem_1fr] lg:gap-12">
+        <aside className="lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto lg:pb-8">
           <DocsSidebar groups={groups} />
         </aside>
         <div className="min-w-0">

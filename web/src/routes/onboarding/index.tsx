@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BrandMark } from '@/components/brand-mark';
+import { Bubble, Mascot } from '@/components/launcher/ui';
 import { AppAlert } from '@/components/ui/app-page';
 import { appReturnPath } from '@/lib/auth-return';
 import { isRecord, optionalString } from '@/lib/json';
@@ -87,15 +88,15 @@ function OnboardingPage() {
   }
 
   return (
-    <div className="grid w-full max-w-4xl overflow-hidden rounded-3xl border border-border bg-background shadow-2xl shadow-black/10 lg:grid-cols-[1fr_0.9fr]">
+    <div className="grid w-full max-w-4xl overflow-hidden rounded-[24px] bg-ev-raised shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-3)] lg:grid-cols-[1fr_0.9fr]">
       <section className="p-6 sm:p-9 lg:p-12">
-        <div className="flex items-center gap-2.5 font-semibold tracking-tight">
-          <BrandMark className="h-8 w-8" /> Eavesy
+        <div className="flex items-center gap-2 font-round text-[16px] font-extrabold">
+          <BrandMark size={32} /> Eavesy
         </div>
         <div className="mt-10">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">One-minute setup</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">Make the workspace yours</h1>
-          <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+          <p className="font-round text-sm font-bold text-ev-slate">One-minute setup</p>
+          <h1 className="mt-2 font-round text-3xl font-extrabold tracking-tight">Make the workspace yours</h1>
+          <p className="mt-2 max-w-md text-sm leading-relaxed text-ev-ink-2">
             Add a name for your recordings. The optional details help Eavesy choose better defaults later.
           </p>
         </div>
@@ -111,7 +112,7 @@ function OnboardingPage() {
                 value={email}
                 readOnly
                 autoComplete="email"
-                className="h-11 w-full cursor-default rounded-xl border border-border bg-muted/45 px-3 text-sm text-muted-foreground"
+                className="h-11 w-full cursor-default rounded-[var(--ev-r-ctl)] bg-ev-well px-3 text-sm text-ev-ink-2"
               />
             </div>
           ) : null}
@@ -126,14 +127,14 @@ function OnboardingPage() {
               autoFocus
               autoComplete="name"
               placeholder="Jane Doe"
-              className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-accent/50"
+              className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
             />
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label htmlFor="onboarding-company" className="text-sm font-medium">
-                Company <span className="font-normal text-muted-foreground">(optional)</span>
+                Company <span className="font-normal text-ev-ink-2">(optional)</span>
               </label>
               <input
                 id="onboarding-company"
@@ -141,19 +142,19 @@ function OnboardingPage() {
                 onChange={(event) => setCompanyName(event.target.value)}
                 autoComplete="organization"
                 placeholder="Acme Inc."
-                className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-accent/50"
+                className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
               />
             </div>
             <div className="space-y-1.5">
               <label htmlFor="onboarding-role" className="text-sm font-medium">
-                Role <span className="font-normal text-muted-foreground">(optional)</span>
+                Role <span className="font-normal text-ev-ink-2">(optional)</span>
               </label>
               <select
                 id="onboarding-role"
                 value={role}
                 onChange={(event) => setRole(event.target.value)}
                 autoComplete="organization-title"
-                className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-accent/50"
+                className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
               >
                 <option value="">Select a role</option>
                 {ROLES.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -164,34 +165,35 @@ function OnboardingPage() {
           <button
             type="submit"
             disabled={saving || !displayName.trim()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-action px-4 text-sm font-semibold text-white shadow-sm shadow-action/20 hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-action px-4 font-round text-sm font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating your workspace…</> : <>Open your workspace <ArrowRight className="h-4 w-4" /></>}
           </button>
-          <p className="text-center text-xs leading-relaxed text-muted-foreground">
+          <p className="text-center text-xs leading-relaxed text-ev-ink-2">
             No card required.
           </p>
         </form>
       </section>
 
-      <aside className="theme-dark relative hidden overflow-hidden border-l border-white/10 p-10 lg:flex lg:flex-col lg:justify-center">
-        <div aria-hidden className="pointer-events-none absolute inset-0 bg-dot-grid text-white/[0.05]" />
-        <div aria-hidden className="pointer-events-none absolute -right-36 top-1/4 h-80 w-80 rounded-full bg-accent/20 blur-[100px]" />
+      <aside className="relative hidden overflow-hidden border-l border-ev-line bg-ev-well p-10 lg:flex lg:flex-col lg:justify-center">
         <div className="relative">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">What happens next</p>
-          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white">Your first useful brief is minutes away.</h2>
-          <ul className="mt-7 space-y-5">
+          <div className="flex items-end gap-3">
+            <Mascot size={72} state="happy" />
+            <Bubble tail="left" className="mb-4">Nearly there. Then I&apos;ll start writing things down.</Bubble>
+          </div>
+          <h2 className="mt-8 font-round text-2xl font-extrabold text-ev-ink">What happens next</h2>
+          <ol className="mt-6 space-y-5">
             {NEXT_STEPS.map((item, index) => (
-              <li key={item} className="flex gap-3 text-sm leading-relaxed text-white/70">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-white">{index + 1}</span>
+              <li key={item} className="flex gap-3 text-sm leading-relaxed text-ev-ink-2">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ev-slate-soft font-round text-xs font-extrabold text-ev-slate">{index + 1}</span>
                 {item}
               </li>
             ))}
-          </ul>
-          <div className="mt-8 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-white/55">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-accent" />
-            Capture starts only when you choose to record.
-          </div>
+          </ol>
+          <p className="mt-8 flex items-center gap-2 rounded-[var(--ev-r-pop)] bg-ev-raised p-3 text-xs text-ev-ink-2 shadow-[var(--ev-e-2)]">
+            <Mascot size={18} state="sleeping" />
+            Eavesy only listens while you&apos;re recording.
+          </p>
         </div>
       </aside>
     </div>
