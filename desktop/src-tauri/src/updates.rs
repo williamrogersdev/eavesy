@@ -8,8 +8,32 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::install_location::MOVE_TO_APPLICATIONS;
 
-/// Returned while the Move to Applications prompt is on screen, which already explains itself.
-const MOVED_PROMPTED: &str = "Move Eavesy to Applications first, then update again.";
+enum InstallError {
+    /// The Move to Applications prompt is on screen and already explains itself.
+    MovePrompted,
+    Failed(String),
+}
+
+impl From<String> for InstallError {
+    fn from(message: String) -> Self {
+        InstallError::Failed(message)
+    }
+}
+
+impl From<&str> for InstallError {
+    fn from(message: &str) -> Self {
+        InstallError::Failed(message.into())
+    }
+}
+
+impl From<InstallError> for String {
+    fn from(error: InstallError) -> Self {
+        match error {
+            InstallError::MovePrompted => "Move Eavesy to Applications first, then update again.".into(),
+            InstallError::Failed(message) => message,
+        }
+    }
+}
 
 const RECHECK: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 /// Emitted with an [`UpdateStatus`] whenever a check finishes.
@@ -185,10 +209,7 @@ pub fn check_interactively(app: &AppHandle) {
 
 fn install_and_report(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        if let Err(message) = install_update(app.clone()).await {
-            if message == MOVED_PROMPTED {
-                return;
-            }
+        if let Err(InstallError::Failed(message)) = install(app.clone()).await {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 crate::app_menu::present(&handle);
@@ -208,13 +229,17 @@ fn install_and_report(app: AppHandle) {
 /// meanwhile, it keeps the install, reports `Installed` and skips the relaunch.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    install(app).await.map_err(String::from)
+}
+
+async fn install(app: AppHandle) -> Result<(), InstallError> {
     use std::sync::atomic::Ordering;
     use tauri::Manager;
     if app.state::<crate::audio::Captures>().is_busy() {
         return Err("Stop the current recording before updating.".into());
     }
     if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
-        return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
+        return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts.").into());
     }
     if let Some(misplaced) = crate::install_location::misplaced() {
         crate::install_location::offer_move(
@@ -222,7 +247,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
             misplaced,
             "Eavesy can't update itself while it runs from the disk image. Move it to Applications? Then click Update again.",
         );
-        return Err(MOVED_PROMPTED.into());
+        return Err(InstallError::MovePrompted);
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());

@@ -107,7 +107,7 @@ const COPY_SCRIPT: &str = r#"set -e
 src="$1"; dst="$2"; old="$2.eavesy-old"
 rm -rf "$old"
 if [ -e "$dst" ]; then mv "$dst" "$old"; fi
-if ditto "$src" "$dst"; then rm -rf "$old"; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
+if ditto "$src" "$dst"; then rm -rf "$old" || true; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
 xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
 "#;
 
@@ -166,18 +166,30 @@ open "$2"
 
 fn relaunch_from(app: &AppHandle, target: &Path, volume: Option<&Path>) {
     let spawned = Command::new("/bin/sh")
-        .args([
-            "-c",
-            RELAUNCH_SCRIPT,
-            "sh",
-        ])
+        .args(["-c", RELAUNCH_SCRIPT, "sh"])
         .arg(std::process::id().to_string())
         .arg(target)
         .arg(volume.map(Path::as_os_str).unwrap_or_default())
         .spawn();
     match spawned {
         Ok(_) => app.exit(0),
-        Err(e) => crate::telemetry::capture("install_location.relaunch", &e.to_string()),
+        Err(e) => {
+            crate::telemetry::capture("install_location.relaunch", &e.to_string());
+            let handle = app.clone();
+            let message = format!(
+                "Eavesy was copied to {}. Quit this copy, eject the disk image, then open Eavesy from Applications.",
+                target.display()
+            );
+            let _ = app.run_on_main_thread(move || {
+                handle
+                    .dialog()
+                    .message(message)
+                    .title("Open Eavesy from Applications")
+                    .kind(MessageDialogKind::Info)
+                    .buttons(MessageDialogButtons::Ok)
+                    .show(|_| {});
+            });
+        }
     }
 }
 
@@ -218,21 +230,45 @@ mod tests {
         assert_eq!(classify(Path::new("/Users/me/eavesy/desktop/src-tauri/target/debug/eavesy"), |_| false), None);
     }
 
+    /// A scratch disk image, detached and deleted even if the test fails.
+    struct ScratchImage {
+        root: PathBuf,
+        mount: PathBuf,
+    }
+
+    impl ScratchImage {
+        fn mount() -> Self {
+            let root = std::env::temp_dir().join(format!("eavesy-dmg-test-{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let scratch = ScratchImage { mount: root.join("mount"), root };
+            let image = scratch.root.join("test.dmg");
+            let hdiutil = |args: &[&std::ffi::OsStr]| Command::new("hdiutil").args(args).status().unwrap().success();
+            assert!(hdiutil(&["create".as_ref(), "-quiet".as_ref(), "-size".as_ref(), "2m".as_ref(), "-fs".as_ref(), "HFS+".as_ref(), image.as_os_str()]));
+            assert!(hdiutil(&[
+                "attach".as_ref(),
+                "-quiet".as_ref(),
+                "-nobrowse".as_ref(),
+                "-readonly".as_ref(),
+                "-mountpoint".as_ref(),
+                scratch.mount.as_os_str(),
+                image.as_os_str(),
+            ]));
+            scratch
+        }
+    }
+
+    impl Drop for ScratchImage {
+        fn drop(&mut self) {
+            let _ = Command::new("hdiutil").args(["detach", "-quiet", "-force"]).arg(&self.mount).status();
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     #[test]
     fn a_mounted_disk_image_is_on_another_volume_than_temp() {
-        let root = std::env::temp_dir().join(format!("eavesy-dmg-test-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let image = root.join("test.dmg");
-        let mount = root.join("mount");
-        let run = |args: &[&std::ffi::OsStr]| Command::new("hdiutil").args(args).status().unwrap().success();
-        assert!(run(&["create".as_ref(), "-quiet".as_ref(), "-size".as_ref(), "2m".as_ref(), "-fs".as_ref(), "HFS+".as_ref(), image.as_os_str()]));
-        assert!(run(&["attach".as_ref(), "-quiet".as_ref(), "-nobrowse".as_ref(), "-readonly".as_ref(), "-mountpoint".as_ref(), mount.as_os_str(), image.as_os_str()]));
-        let differs = !same_volume(&mount, &std::env::temp_dir());
-        let same = same_volume(&root, &std::env::temp_dir());
-        run(&["detach".as_ref(), "-quiet".as_ref(), mount.as_os_str()]);
-        std::fs::remove_dir_all(&root).unwrap();
-        assert!(differs);
-        assert!(same);
+        let image = ScratchImage::mount();
+        assert!(!same_volume(&image.mount, &std::env::temp_dir()));
+        assert!(same_volume(&image.root, &std::env::temp_dir()));
     }
 
     #[test]
