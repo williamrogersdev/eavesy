@@ -111,6 +111,22 @@ pub enum Delivery {
 }
 
 impl Delivery {
+    fn event(self) -> &'static str {
+        match self {
+            Delivery::Pasted | Delivery::InEavesy => "dictation_pasted",
+            Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox => "dictation_copied",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Delivery::Pasted => "pasted",
+            Delivery::InEavesy => "in_eavesy",
+            Delivery::CopiedNoAccessibility => "no_accessibility",
+            Delivery::CopiedNoTextBox => "no_text_box",
+        }
+    }
+
     /// What the HUD says, or None to show the words themselves.
     pub fn notice(self) -> Option<&'static str> {
         match self {
@@ -173,6 +189,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 eprintln!("dictation: could not copy the text: {error}");
             }
         }
+        crate::telemetry::track(how.event(), serde_json::json!({ "delivery": how.label() }));
         // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)

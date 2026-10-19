@@ -1016,6 +1016,13 @@ fn finish_stopped_capture(
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
     store::append(&app, rec.clone())?;
+    crate::telemetry::track(
+        "recording_saved",
+        serde_json::json!({
+            "kind": if dictation { "dictation" } else if is_screen { "screen" } else { "audio" },
+            "duration_sec": rec.duration_sec,
+        }),
+    );
     // Only a recording that was stored gets a paste target. Dictation chose
     // its target as it stopped, and may have pasted already.
     if !dictation {

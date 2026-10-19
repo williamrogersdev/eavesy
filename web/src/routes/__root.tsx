@@ -10,7 +10,7 @@ import { useEffect, type ReactNode } from 'react';
 import { siteConfig } from '@/lib/site';
 import appCss from '@/styles/globals.css?url';
 import { RootError, RootNotFound } from '@/components/ui/root-fallbacks';
-import { initBrowserErrorReporting } from '@/lib/observability/browser';
+import { initBrowserAnalytics } from '@/lib/observability/browser';
 
 export const Route = createRootRoute({
   errorComponent: RootError,
@@ -66,7 +66,7 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
-  useEffect(initBrowserErrorReporting, []);
+  useEffect(initBrowserAnalytics, []);
   return (
     <RootDocument>
       <Outlet />

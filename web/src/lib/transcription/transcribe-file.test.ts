@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 
-mock.module('cloudflare:workers', () => ({ env: {} }));
+mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 
 const { mapWhisperResult, transcribeAudioFile } = await import('./transcribe-file');
 

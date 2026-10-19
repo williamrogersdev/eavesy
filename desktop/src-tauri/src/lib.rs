@@ -17,6 +17,7 @@ mod hud;
 mod imports;
 #[cfg(target_os = "macos")]
 mod cf;
+mod cloud_pull;
 mod dictate;
 mod dictation;
 mod make_room;

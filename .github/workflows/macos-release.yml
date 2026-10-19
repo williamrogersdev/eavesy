@@ -171,7 +171,8 @@ jobs:
       # notarize the .app; the next step notarizes the exact final DMG.
       - name: Build signed release candidate
         env:
-          SENTRY_DSN: ${{ secrets.DESKTOP_SENTRY_DSN }}
+          EAVESY_POSTHOG_KEY: ${{ vars.DESKTOP_POSTHOG_KEY }}
+          EAVESY_POSTHOG_HOST: ${{ vars.DESKTOP_POSTHOG_HOST }}
         run: desktop/scripts/build-macos-release.sh
 
       - name: Notarize and validate release candidate
