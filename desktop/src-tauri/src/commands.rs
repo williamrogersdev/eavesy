@@ -48,19 +48,29 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
     paste_text(&app, &text)
 }
 
-/// The user's own clipboard while a paste is waiting to put it back, and
-/// which paste may do so: a newer paste takes over the restore.
-static RESTORE: std::sync::Mutex<(u64, Option<String>)> = std::sync::Mutex::new((0, None));
+/// A paste's pending restore of the user's own clipboard: its generation, and
+/// while one is pending, what to put back (nothing, when the clipboard held
+/// no text). A newer paste takes the restore over, so Eavesy's own words on
+/// the clipboard are never mistaken for the user's.
+struct Restore {
+    generation: u64,
+    pending: Option<Option<String>>,
+}
+
+static RESTORE: std::sync::Mutex<Restore> = std::sync::Mutex::new(Restore { generation: 0, pending: None });
+
+fn restore() -> std::sync::MutexGuard<'static, Restore> {
+    RESTORE.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
+    let on_clipboard = app.clipboard().read_text().ok();
     let (generation, previous) = {
-        let mut restore = RESTORE.lock().unwrap_or_else(|e| e.into_inner());
-        // A restore still pending holds the real clipboard; the clipboard now
-        // holds the previous paste's words.
-        let previous = restore.1.take().or_else(|| app.clipboard().read_text().ok());
-        restore.0 += 1;
-        restore.1 = previous.clone();
-        (restore.0, previous)
+        let mut restore = restore();
+        let previous = restore.pending.take().unwrap_or(on_clipboard);
+        restore.generation += 1;
+        restore.pending = Some(previous.clone());
+        (restore.generation, previous)
     };
 
     app.clipboard()
@@ -72,7 +82,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.
-            RESTORE.lock().unwrap_or_else(|e| e.into_inner()).1 = None;
+            restore().pending = None;
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
                  clipboard — press ⌘V to paste it now."
@@ -87,20 +97,20 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
         }
     }
 
-    if let Some(prev) = previous {
-        // The key press is posted, not awaited: give the app time to read the
-        // pasteboard before the user's own clipboard comes back. Off this
-        // thread, so whoever pasted can say so at once.
-        let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            let mut restore = RESTORE.lock().unwrap_or_else(|e| e.into_inner());
-            if restore.0 == generation {
-                restore.1 = None;
-                let _ = app.clipboard().write_text(prev);
+    // The key press is posted, not awaited: give the app time to read the
+    // pasteboard before the user's own clipboard comes back. Off this
+    // thread, so whoever pasted can say so at once.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let mut restore = restore();
+        if restore.generation == generation {
+            restore.pending = None;
+            if let Some(previous) = previous {
+                let _ = app.clipboard().write_text(previous);
             }
-        });
-    }
+        }
+    });
 
     Ok(())
 }

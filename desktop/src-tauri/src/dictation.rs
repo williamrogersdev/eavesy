@@ -150,11 +150,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         };
         match how {
             Delivery::InEavesy => {
-                let handed_over = app
-                    .emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() })
-                    .is_ok()
-                    && panel_wants_it(&app);
-                if !handed_over {
+                if app.emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() }).is_err() {
                     how = Delivery::CopiedNoTextBox;
                 }
             }
