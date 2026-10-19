@@ -229,3 +229,22 @@ final class CaptionsTests: XCTestCase {
         #endif
     }
 }
+
+final class SFSpeechRolloverTests: XCTestCase {
+    func testWaitsForAPauseAfterThirtySeconds() {
+        XCTAssertFalse(SFSpeechEngine.rollsOver(elapsedMs: 29_000, quietMs: 1_000))
+        XCTAssertFalse(SFSpeechEngine.rollsOver(elapsedMs: 31_000, quietMs: 100))
+        XCTAssertTrue(SFSpeechEngine.rollsOver(elapsedMs: 31_000, quietMs: 250))
+    }
+
+    func testRollsOverAtTheCapEvenMidSpeech() {
+        XCTAssertTrue(SFSpeechEngine.rollsOver(elapsedMs: 45_000, quietMs: 0))
+    }
+
+    func testMeasuresBufferLoudness() throws {
+        let silent = try XCTUnwrap(LiveCaptions.pcmBuffer([Float](repeating: 0, count: 480)))
+        let loud = try XCTUnwrap(LiveCaptions.pcmBuffer([Float](repeating: 0.2, count: 480)))
+        XCTAssertLessThan(SFSpeechEngine.rms(silent), SFSpeechEngine.pauseRms)
+        XCTAssertEqual(SFSpeechEngine.rms(loud), 0.2, accuracy: 0.0001)
+    }
+}

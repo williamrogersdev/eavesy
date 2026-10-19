@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as dictationsRepo from '@/db/repo/dictations';
+import { transcriptionLanguage } from '@/db/repo/users';
 import { applyTemplate, cleanDictation } from '@/lib/ai/clean-dictation';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { meetingFolderSlug } from '@/lib/utils';
@@ -33,7 +34,8 @@ export const Route = createFileRoute('/api/dictations')({
         const audio = new Uint8Array(await file.arrayBuffer());
         const transcription = await transcribeAudioFile({
           audio,
-          language: 'en',
+          language: await transcriptionLanguage(db, actor.userId),
+          voiceNote: true,
         });
 
         let cleaned: string | undefined;

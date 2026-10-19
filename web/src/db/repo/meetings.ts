@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, lt, max } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
+import { transcriptionLanguage } from './users';
 import {
   decode,
   type ActionItem,
@@ -37,7 +38,7 @@ export async function start(
     description: '',
     startedAt: now,
     source: args.source,
-    language: args.language ?? 'en',
+    language: args.language ?? (await transcriptionLanguage(db, args.userId)),
     status: 'recording',
     localFolderSlug: args.localFolderSlug,
     deviceId: args.deviceId,

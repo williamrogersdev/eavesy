@@ -1,6 +1,8 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { TranscriptSegment } from './types';
 import { audioBase64 } from './base64';
+import { whisperLanguage } from './language';
+import { isHallucination } from './two-track';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -15,9 +17,17 @@ export interface FileTranscriptionRunner {
   run(model: string, input: unknown): Promise<unknown>;
 }
 
+/**
+ * Transcribes a whole file and drops the lines Whisper invents on silence.
+ * `voiceNote` is for the user's own mic alone (a dictation, a voice note): a
+ * short "thank you" there can be real, and if Whisper's VAD cuts quiet speech
+ * down to nothing the clip gets one more pass without it.
+ */
 export async function transcribeAudioFile(opts: {
   audio: Buffer | Uint8Array;
-  language?: string;
+  language?: string | null;
+  contextBlurb?: string | null;
+  voiceNote?: boolean;
   ai?: FileTranscriptionRunner;
 }): Promise<FileTranscriptionResult> {
   const ai = opts.ai ?? aiFromRequestContext();
@@ -26,14 +36,29 @@ export async function transcribeAudioFile(opts: {
   }
 
   const bytes = opts.audio instanceof Uint8Array ? opts.audio : new Uint8Array(opts.audio);
+  const language = whisperLanguage(opts.language);
+  const run = async (vadFilter: boolean) =>
+    mapWhisperResult(
+      await ai.run(WHISPER_MODEL, {
+        audio: audioBase64(bytes),
+        task: 'transcribe',
+        ...(language ? { language } : {}),
+        vad_filter: vadFilter,
+        condition_on_previous_text: false,
+        ...(opts.contextBlurb ? { initial_prompt: opts.contextBlurb } : {}),
+      }),
+      language,
+    );
 
-  const result = await ai.run(WHISPER_MODEL, {
-    audio: audioBase64(bytes),
-    task: 'transcribe',
-    language: opts.language ?? 'en',
-  });
+  const first = await run(true);
+  const heard = keepHeard(first, { lenient: opts.voiceNote });
+  if (heard.segments.length > 0 || !opts.voiceNote) return heard;
+  return keepHeard(await run(false), { lenient: false });
+}
 
-  return mapWhisperResult(result, opts.language);
+function keepHeard(result: FileTranscriptionResult, opts: { lenient?: boolean }): FileTranscriptionResult {
+  const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
+  return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };
 }
 
 function aiFromRequestContext(): FileTranscriptionRunner | undefined {
@@ -58,11 +83,15 @@ export function mapWhisperResult(
       if (!isRecord(s)) continue;
       const segText = typeof s.text === 'string' ? s.text.trim() : '';
       if (!segText) continue;
+      const noSpeechProb = finiteNumber(s.no_speech_prob);
+      const compressionRatio = finiteNumber(s.compression_ratio);
       segments.push({
         startMs: secondsToMilliseconds(s.start),
         endMs: secondsToMilliseconds(s.end),
         text: segText,
         isFinal: true,
+        ...(noSpeechProb !== undefined ? { noSpeechProb } : {}),
+        ...(compressionRatio !== undefined ? { compressionRatio } : {}),
       });
     }
   } else if (Array.isArray(result.words) && result.words.length > 0 && text.trim()) {

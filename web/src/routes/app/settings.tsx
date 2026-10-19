@@ -5,6 +5,7 @@ import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/compo
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
+import { TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
 
 interface Me {
   id: string;
@@ -127,6 +128,26 @@ function SettingsPage() {
       setError(cause instanceof Error ? cause.message : 'Could not save settings.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveLanguage = async (defaultLanguage: string) => {
+    const previous = me;
+    setSaved(false);
+    setError(null);
+    if (previous) setMe({ ...previous, defaultLanguage });
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ defaultLanguage }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      void refreshMe();
+      setSaved(true);
+    } catch (cause) {
+      setMe(previous);
+      setError(cause instanceof Error ? cause.message : 'Could not save the language.');
     }
   };
 
@@ -272,6 +293,29 @@ function SettingsPage() {
         </Row>
       </AppSection>
 
+      <AppSection title="Transcription">
+        <Row
+          label="Spoken language"
+          hint="What you and the people you record speak. Detect automatically handles any language, and a fixed one is more accurate."
+          htmlFor="settings-language"
+        >
+          <select
+            id="settings-language"
+            value={me.defaultLanguage}
+            onChange={(e) => void saveLanguage(e.target.value)}
+            className={`${input} sm:w-56`}
+          >
+            {TRANSCRIPTION_LANGUAGES.some((language) => language.code === me.defaultLanguage) ? null : (
+              <option value={me.defaultLanguage}>{me.defaultLanguage}</option>
+            )}
+            {TRANSCRIPTION_LANGUAGES.map((language) => (
+              <option key={language.code} value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+      </AppSection>
 
       <TemplateManager />
 
