@@ -22,17 +22,9 @@ export async function handleAgentTranscript(
   if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
   if (opts.onlyIfMissing && meeting.agentTranscriptMd) return;
 
-  const lines = await db
-    .select({
-      speakerId: transcriptSegments.speakerId,
-      startMs: transcriptSegments.startMs,
-      endMs: transcriptSegments.endMs,
-      text: transcriptSegments.text,
-    })
-    .from(transcriptSegments)
-    .where(eq(transcriptSegments.meetingId, meetingId))
-    .orderBy(transcriptSegments.startMs);
+  const lines = await readLines(db, meetingId);
   if (lines.length === 0) return;
+  const builtFrom = fingerprint(meeting, lines);
 
   const kind = transcriptKind(lines);
   const names = parseSpeakerNames(meeting.speakerNamesJson);
@@ -62,8 +54,38 @@ export async function handleAgentTranscript(
     });
   }
 
+  // An edit while the model ran queued its own rebuild: leave the write to it,
+  // so a copy of the old lines never lands after a copy of the new ones.
+  const now = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+  if (!now || fingerprint(now, await readLines(db, meetingId)) !== builtFrom) return;
+
   await db
     .update(meetings)
     .set({ agentTranscriptMd: result.markdown, transcriptKind: kind, updatedAt: Date.now() })
     .where(eq(meetings.id, meetingId));
+}
+
+function readLines(db: Db, meetingId: string) {
+  return db
+    .select({
+      speakerId: transcriptSegments.speakerId,
+      startMs: transcriptSegments.startMs,
+      endMs: transcriptSegments.endMs,
+      text: transcriptSegments.text,
+    })
+    .from(transcriptSegments)
+    .where(eq(transcriptSegments.meetingId, meetingId))
+    .orderBy(transcriptSegments.startMs);
+}
+
+/** What a refresh rebuilds the cleaned transcript for: lines, speaker names and project. */
+function fingerprint(
+  meeting: { speakerNamesJson: string | null; folderId: string | null },
+  lines: { speakerId: string | null; startMs: number; text: string }[],
+): string {
+  return JSON.stringify([
+    meeting.speakerNamesJson,
+    meeting.folderId,
+    lines.map((line) => [line.speakerId, line.startMs, line.text]),
+  ]);
 }

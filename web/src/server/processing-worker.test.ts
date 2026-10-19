@@ -787,6 +787,29 @@ describe('agent transcript', () => {
     expect(t.sent.map((message) => message.body.kind)).toEqual(['embed', 'agent-transcript']);
   });
 
+  test('a queued refresh skips a copy an earlier rebuild already made', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    t.sqlite.run(`UPDATE meetings SET agent_transcript_md = 'Ship the build today.' WHERE id = 'm1'`);
+    const api = stubAnthropic(() => textReply('unused'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', onlyIfMissing: true });
+    expect(api.calls).toHaveLength(0);
+    expect(stored(t).md).toBe('Ship the build today.');
+  });
+
+  test('a rebuild whose lines changed while it ran leaves the write to the next one', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    const api = stubAnthropic(() => {
+      t.sqlite.run(`UPDATE transcript_segments SET text = 'ship the build tomorrow and tell the team' WHERE meeting_id = 'm1'`);
+      return textReply('Ship the build today and tell the team about it.');
+    });
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(stored(t).md).toBeNull();
+  });
+
   test('cleans a monologue with the project terms and stores it', async () => {
     const t = setup();
     t.sqlite.run(

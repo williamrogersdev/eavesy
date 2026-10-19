@@ -99,7 +99,9 @@ export function conversationEnvelope(body: string, meta: EnvelopeMeta): string {
   if (meta.startedAt) attrs.push(`date="${new Date(meta.startedAt).toISOString().slice(0, 10)}"`);
   if (meta.project?.trim()) attrs.push(`project="${attribute(meta.project)}"`);
   if (meta.speakers && meta.speakers.length > 0) attrs.push(`speakers="${attribute(meta.speakers.join(', '))}"`);
-  return `<transcript ${attrs.join(' ')}>\n${body.trim()}\n</transcript>`;
+  // Speech can't close the envelope early: a literal transcript tag in it is escaped.
+  const safe = body.trim().replace(/<(\/?transcript)/gi, '&lt;$1');
+  return `<transcript ${attrs.join(' ')}>\n${safe}\n</transcript>`;
 }
 
 export function speakersOf(turns: Turn[], recorderName?: string): string[] {

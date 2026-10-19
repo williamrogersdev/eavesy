@@ -6,7 +6,7 @@ import { folders } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
-import { refreshAgentTranscript } from '@/server/agent-transcript-refresh';
+import { refreshAgentTranscriptLater } from '@/server/agent-transcript-refresh';
 import { resolveActor } from '@/server/auth';
 
 const platformValues = ['zoom', 'meet', 'teams', 'in-person', 'phone', 'other'] as const;
@@ -82,7 +82,7 @@ export const Route = createFileRoute('/api/meetings/$id')({
         }
         const updated = await meetingsRepo.update(getDb(), { meetingId: id, userId: actor.userId, ...fields, speakerNamesJson });
         if (!updated) return Response.json({ error: 'not found' }, { status: 404 });
-        if (speakerNames || fields.folderId !== undefined) await refreshAgentTranscript(id, actor.userId);
+        if (speakerNames || fields.folderId !== undefined) refreshAgentTranscriptLater(id, actor.userId);
         return Response.json({ ok: true });
       },
 
