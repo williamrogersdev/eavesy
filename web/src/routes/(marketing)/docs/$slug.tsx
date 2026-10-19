@@ -62,7 +62,7 @@ function DocPage() {
           ]}
         />
         <header className="mb-10 border-b border-ev-line pb-8">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-ev-slate-soft px-3 py-1 font-round text-xs font-bold text-ev-slate">
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-ev-coat-soft px-3 py-1 font-round text-xs font-bold text-ev-coat">
             <CategoryIcon className="h-3.5 w-3.5" />
             {frontmatter.category}
           </div>
@@ -108,7 +108,7 @@ function DocPage() {
           <DocToc items={toc} />
           <a
             href={docEditUrl(slug)}
-            className="inline-flex items-center gap-2 text-sm text-ev-ink-2 transition hover:text-ev-slate"
+            className="inline-flex items-center gap-2 text-sm text-ev-ink-2 transition hover:text-ev-coat"
           >
             <Pencil className="h-3.5 w-3.5" />
             Edit this page

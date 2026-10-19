@@ -189,7 +189,7 @@ function LibraryRow({ item }: { item: LibItem }) {
       href={item.href}
       className="group relative flex gap-3 rounded-[var(--ev-r-pop)] px-2 py-2.5 transition-colors hover:bg-[var(--ev-hover)]"
     >
-      <span className="relative mt-px grid h-[28px] w-[28px] shrink-0 place-items-center rounded-full bg-ev-paper text-ev-ink-2 shadow-[0_0_0_1px_var(--ev-line)] group-hover:text-ev-slate">
+      <span className="relative mt-px grid h-[28px] w-[28px] shrink-0 place-items-center rounded-full bg-ev-paper text-ev-ink-2 shadow-[0_0_0_1px_var(--ev-line)] group-hover:text-ev-coat">
         {working ? <Mascot size={20} state="thinking" /> : <KindIcon item={item} size={15} />}
       </span>
 
@@ -214,7 +214,7 @@ function LibraryRow({ item }: { item: LibItem }) {
               {item.device}
             </span>
           ) : null}
-          {working ? <span className="text-ev-slate">Writing it down…</span> : null}
+          {working ? <span className="text-ev-coat">Writing it down…</span> : null}
           {failed ? <span className="text-ev-warn-ink">Didn&apos;t finish</span> : null}
         </span>
       </span>

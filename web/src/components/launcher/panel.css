@@ -179,14 +179,14 @@
   padding: 2px 0 0;
   border: 0;
   background: none;
-  color: var(--ev-slate);
+  color: var(--ev-coat);
   font: 650 11.5px/16px var(--ev-font-round);
 }
 .ev-more:hover { text-decoration: underline; }
 .ev-more:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
-.ev-link { padding: 0; border: 0; background: none; color: var(--ev-slate); font: inherit; font-weight: 600; }
+.ev-link { padding: 0; border: 0; background: none; color: var(--ev-coat); font: inherit; font-weight: 600; }
 .ev-link:hover { text-decoration: underline; }
-.ev-hl { border-radius: 3px; padding: 0 1px; background: var(--ev-honey-soft); color: var(--ev-honey-ink); }
+.ev-hl { border-radius: 3px; padding: 0 1px; background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
 .ev-sub { margin-top: 3px; color: var(--ev-ink-3); font: var(--ev-t-small); }
 
 .ev-actions {
@@ -440,7 +440,7 @@
 .ev-onb-bubble { margin-top: 18px; }
 .ev-steps { display: flex; align-items: center; gap: 6px; margin: 14px 2px 6px; font: 650 11.5px var(--ev-font-round); color: var(--ev-ink-3); }
 .ev-steps i { width: 6px; height: 6px; border-radius: 999px; background: var(--ev-line-strong); transition: width var(--ev-d-state) var(--ev-ease-out), background var(--ev-d-state); }
-.ev-steps i[data-state='on'] { width: 16px; background: var(--ev-slate); }
+.ev-steps i[data-state='on'] { width: 16px; background: var(--ev-coat); }
 .ev-steps i[data-state='done'] { background: var(--ev-leaf); }
 .ev-steps span { margin-left: 6px; }
 .ev-onb-title { margin: 0 2px 4px; font: var(--ev-t-title); color: var(--ev-ink); }
@@ -481,7 +481,7 @@
 .ev-shortcut-chip:hover:not(:disabled) { background: var(--ev-hover); }
 .ev-shortcut-chip:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-shortcut-chip:disabled { cursor: default; opacity: 0.6; }
-.ev-shortcut-chip[data-recording] { outline: 1.5px dashed var(--ev-slate); outline-offset: -1.5px; background: var(--ev-slate-soft); }
+.ev-shortcut-chip[data-recording] { outline: 1.5px dashed var(--ev-coat); outline-offset: -1.5px; background: var(--ev-coat-soft); }
 .ev-shortcut-slot { display: inline-flex; width: 24px; justify-content: center; }
 .ev-shortcut-prompt { color: var(--ev-ink-2); font: var(--ev-t-small); }
 .ev-shortcut-note { margin-top: 6px; color: var(--ev-ink-2); font: 400 12px/16px var(--ev-font-text); }

@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-ev-paper">
         <a
           href="#app-content"
-          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-full bg-ev-slate px-3 py-2 font-round text-sm font-bold text-ev-on-slate transition focus:translate-y-0"
+          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-full bg-ev-coat px-3 py-2 font-round text-sm font-bold text-ev-on-coat transition focus:translate-y-0"
         >
           Skip to content
         </a>
@@ -165,7 +165,7 @@ function MobileHeader({
       <Link
         href="/app/record"
         aria-label="New recording"
-        className="grid h-9 w-9 place-items-center rounded-full bg-ev-slate text-ev-on-slate hover:bg-ev-slate-hover"
+        className="grid h-9 w-9 place-items-center rounded-full bg-ev-coat text-ev-on-coat hover:bg-ev-coat-hover"
       >
         <Mic className="h-4 w-4" />
       </Link>
@@ -267,7 +267,7 @@ function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
             className={cn(
               'flex h-9 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 font-round text-[14px] font-semibold transition',
               active
-                ? 'bg-ev-slate-soft text-ev-slate'
+                ? 'bg-ev-coat-soft text-ev-coat'
                 : 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
             )}
           >
@@ -296,10 +296,10 @@ function RecentRow({ item, onNavigate }: { item: LibItem; onNavigate?: () => voi
           : 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
       )}
     >
-      <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-3 group-hover:text-ev-slate" />
+      <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-3 group-hover:text-ev-coat" />
       <span className="min-w-0 flex-1 truncate">{item.title}</span>
       {item.kind === 'meeting' && item.status && item.status !== 'complete' ? (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ev-slate" title="Writing it down…" />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ev-coat" title="Writing it down…" />
       ) : null}
     </Link>
   );
@@ -426,7 +426,7 @@ function TopSearch() {
                   onClick={() => go(item.href)}
                   className={cn(
                     'flex h-9 w-full items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 text-left text-sm',
-                    index === active ? 'bg-ev-slate-soft text-ev-slate' : 'hover:bg-[var(--ev-hover)]',
+                    index === active ? 'bg-ev-coat-soft text-ev-coat' : 'hover:bg-[var(--ev-hover)]',
                   )}
                 >
                   <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-2" />
@@ -506,7 +506,7 @@ function AccountFooter({ onNavigate }: { onNavigate?: () => void }) {
         aria-expanded={open}
         className="flex h-11 w-full items-center gap-2.5 rounded-[var(--ev-r-pop)] px-1.5 text-left transition hover:bg-[var(--ev-hover)]"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ev-honey-soft font-round text-xs font-extrabold text-ev-honey-ink">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ev-manila-soft font-round text-xs font-extrabold text-ev-manila-ink">
           {initials || '?'}
         </span>
         <span className="min-w-0 flex-1">

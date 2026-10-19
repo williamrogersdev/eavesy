@@ -42,7 +42,7 @@ export function CopyContextButton({ data }: { data: MeetingData }) {
         'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 font-round text-[13px] font-bold transition',
         failed
           ? 'bg-ev-warn-soft text-ev-warn-ink'
-          : 'bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover disabled:cursor-not-allowed disabled:bg-ev-well disabled:text-ev-ink-3 disabled:shadow-none',
+          : 'bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover disabled:cursor-not-allowed disabled:bg-ev-well disabled:text-ev-ink-3 disabled:shadow-none',
       )}
       title={ready
         ? 'Copy summary, notes & transcript as Markdown — paste into Claude or any AI'

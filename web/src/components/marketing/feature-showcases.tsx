@@ -9,10 +9,10 @@ export function FeatureShowcases() {
     <section id="features" className="px-6 py-24">
       <div className="mx-auto max-w-2xl text-center">
         <SectionLabel>
-          <Sparkles className="h-3.5 w-3.5 text-ev-slate" /> Built for AI agents
+          <Sparkles className="h-3.5 w-3.5 text-ev-coat" /> Built for AI agents
         </SectionLabel>
         <h2 className="mt-5 text-balance text-4xl font-extrabold tracking-tight sm:text-5xl">
-          The fastest way from <span className="text-ev-slate">anything</span> to context.
+          The fastest way from <span className="text-ev-coat">anything</span> to context.
         </h2>
         <p className="mx-auto mt-4 max-w-lg text-ev-ink-2">
           A native Mac app that keeps what you save as plain Markdown, so your
@@ -34,7 +34,7 @@ function ShowcaseRow({ showcase }: { showcase: Showcase }) {
   return (
     <div className="grid items-center gap-10 md:grid-cols-2">
       <div className={cn(flip && 'md:order-2')}>
-        <div className="flex items-center gap-2 text-sm font-medium text-ev-slate">
+        <div className="flex items-center gap-2 text-sm font-medium text-ev-coat">
           <Icon className="h-4 w-4" />
           {eyebrow}
         </div>

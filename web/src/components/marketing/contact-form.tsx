@@ -54,7 +54,7 @@ export function ContactForm() {
         <button
           type="button"
           onClick={() => setStatus('idle')}
-          className="text-sm font-medium text-ev-slate transition hover:text-ev-slate-hover"
+          className="text-sm font-medium text-ev-coat transition hover:text-ev-coat-hover"
         >
           Send another message
         </button>
@@ -124,12 +124,12 @@ export function ContactForm() {
         className="hidden"
       />
 
-      {error && <p className="text-sm text-ev-slate">{error}</p>}
+      {error && <p className="text-sm text-ev-coat">{error}</p>}
 
       <button
         type="submit"
         disabled={status === 'submitting'}
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-ev-slate px-5 py-3 text-sm font-round font-bold text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover disabled:opacity-60"
+        className="inline-flex items-center justify-center gap-2 rounded-full bg-ev-coat px-5 py-3 text-sm font-round font-bold text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover disabled:opacity-60"
       >
         {status === 'submitting' && <Loader2 className="h-4 w-4 animate-spin" />}
         {status === 'submitting' ? 'Sending…' : 'Send message'}
@@ -139,7 +139,7 @@ export function ContactForm() {
 }
 
 const inputClass =
-  'w-full rounded-xl border border-ev-line bg-ev-raised px-4 py-2.5 text-sm text-ev-ink placeholder:text-ev-ink-2 outline-none transition focus:border-ev-slate/40 focus:bg-ev-paper';
+  'w-full rounded-xl border border-ev-line bg-ev-raised px-4 py-2.5 text-sm text-ev-ink placeholder:text-ev-ink-2 outline-none transition focus:border-ev-coat/40 focus:bg-ev-paper';
 
 function Field({
   label,

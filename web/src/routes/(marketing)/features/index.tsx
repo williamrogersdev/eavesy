@@ -48,7 +48,7 @@ function FeaturesPage() {
                   href={`/features/${feature.slug}`}
                   className="group flex flex-col rounded-2xl border border-ev-line bg-ev-raised p-6 transition hover:border-ev-line-strong hover:bg-ev-well"
                 >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-slate-soft text-ev-slate">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-coat-soft text-ev-coat">
                     <Icon className="h-5 w-5" />
                   </span>
                   <h2 className="mt-5 text-lg font-semibold text-ev-ink">
@@ -62,7 +62,7 @@ function FeaturesPage() {
                   <p className="mt-2 flex-1 text-sm leading-relaxed text-ev-ink-2">
                     {feature.description}
                   </p>
-                  <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-ev-slate transition group-hover:gap-2">
+                  <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-ev-coat transition group-hover:gap-2">
                     Learn more <ArrowRight className="h-4 w-4" />
                   </span>
                 </Link>

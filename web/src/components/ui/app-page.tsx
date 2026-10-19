@@ -14,7 +14,7 @@ export function appButton(
   return cn(
     'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full font-round font-bold transition duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50',
     size === 'sm' ? 'h-8 px-3 text-[13px]' : 'h-9 px-4 text-[13.5px]',
-    variant === 'primary' && 'bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover',
+    variant === 'primary' && 'bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover',
     variant === 'secondary' && 'text-ev-ink shadow-[inset_0_0_0_1px_var(--ev-line-strong)] hover:bg-[var(--ev-hover)]',
     variant === 'ghost' && 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
     variant === 'danger' && 'bg-ev-warn-soft text-ev-warn-ink hover:bg-[color-mix(in_srgb,var(--ev-warn-soft)_80%,var(--ev-warn-ink))]',

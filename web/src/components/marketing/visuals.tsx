@@ -20,7 +20,7 @@ function Frame({ children, className = '' }: { children: React.ReactNode; classN
 
 function CaptureVisual() {
   return (
-    <Frame className="flex min-h-[260px] flex-col items-center justify-center gap-6 bg-[linear-gradient(160deg,var(--ev-slate-soft),var(--ev-honey-soft))]">
+    <Frame className="flex min-h-[260px] flex-col items-center justify-center gap-6 bg-[linear-gradient(160deg,var(--ev-coat-soft),var(--ev-manila-soft))]">
       <HudPreview words={['Okay, the export button greys out', 'after I switch workspaces']} />
       <div className="flex w-full max-w-[300px] items-center gap-2.5 rounded-[var(--ev-r-pop)] bg-ev-raised px-3 py-2.5 shadow-[var(--ev-e-2)]">
         <Mascot size={22} state="happy" />
@@ -40,7 +40,7 @@ function SummaryVisual() {
   return (
     <Frame>
       <div className="flex items-center gap-1.5 font-round text-xs font-bold text-ev-ink-2">
-        <Sparkles className="h-3.5 w-3.5 text-ev-slate" strokeWidth={1.75} /> Summary
+        <Sparkles className="h-3.5 w-3.5 text-ev-coat" strokeWidth={1.75} /> Summary
       </div>
       <p className="mt-3 text-sm leading-relaxed text-ev-ink">
         Team aligned on shipping the mobile beta in late August, scoped to recording and sync.
@@ -74,7 +74,7 @@ function FilesVisual() {
   return (
     <Frame>
       <div className="flex items-center gap-2 text-sm">
-        <FolderTree className="h-4 w-4 text-ev-slate" strokeWidth={1.75} />
+        <FolderTree className="h-4 w-4 text-ev-coat" strokeWidth={1.75} />
         <span className="font-round font-bold text-ev-ink">~/Eavesy/2026-06-12 Q3 Planning</span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">

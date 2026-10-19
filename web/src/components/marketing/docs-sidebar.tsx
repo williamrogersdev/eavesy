@@ -23,7 +23,7 @@ function NavList({ groups, pathname }: { groups: DocNavGroup[]; pathname: string
         className={cn(
           'flex min-h-9 items-center gap-2 rounded-xl px-3 font-round font-bold transition',
           pathname === '/docs'
-            ? 'bg-ev-slate-soft text-ev-slate'
+            ? 'bg-ev-coat-soft text-ev-coat'
             : 'text-ev-ink hover:bg-ev-well',
         )}
       >
@@ -50,7 +50,7 @@ function NavList({ groups, pathname }: { groups: DocNavGroup[]; pathname: string
                       className={cn(
                         'flex min-h-8 items-center rounded-xl py-1.5 pl-[2.1rem] pr-3 transition',
                         active
-                          ? 'bg-ev-slate-soft font-semibold text-ev-slate'
+                          ? 'bg-ev-coat-soft font-semibold text-ev-coat'
                           : 'text-ev-ink-2 hover:bg-ev-well hover:text-ev-ink',
                       )}
                     >

@@ -46,7 +46,7 @@ export function DocToc({ items }: { items: TocItem[] }) {
                   '-ml-px block border-l-2 py-1 transition',
                   item.depth === 3 ? 'pl-7' : 'pl-4',
                   active
-                    ? 'border-ev-slate text-ev-ink'
+                    ? 'border-ev-coat text-ev-ink'
                     : 'border-transparent text-ev-ink-2 hover:border-ev-line-strong hover:text-ev-ink',
                 )}
               >

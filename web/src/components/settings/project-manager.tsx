@@ -134,7 +134,7 @@ export function ProjectManager() {
     }
   };
 
-  const field = 'w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
+  const field = 'w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
   const label = 'text-xs font-medium text-ev-ink-2';
   return (
     <AppSection
