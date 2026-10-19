@@ -321,7 +321,10 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
-  '/api/sessions/': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' } },
+  '/api/sessions/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/sessions' }, excludes: [MEETING] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' },
+  },
   '/api/templates': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/templates' }, excludes: [TEMPLATE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a template owned by the caller' },
