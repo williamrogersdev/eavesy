@@ -56,7 +56,7 @@ fn posthog_endpoint() -> String {
 
 type Outgoing = (Value, Option<mpsc::Sender<()>>);
 
-static SENDER: OnceLock<Option<Mutex<mpsc::SyncSender<Outgoing>>>> = OnceLock::new();
+static SENDER: OnceLock<Option<mpsc::SyncSender<Outgoing>>> = OnceLock::new();
 const QUEUE_LIMIT: usize = 64;
 
 /// One background thread posts events in order; an event that finds the
@@ -84,7 +84,7 @@ fn start_sender() {
                 }
             })
             .ok()?;
-        Some(Mutex::new(tx))
+        Some(tx)
     });
 }
 
@@ -138,8 +138,6 @@ fn event_body(event: &str, properties: Value) -> Value {
 
 fn enqueue(event: &str, properties: Value, done: Option<mpsc::Sender<()>>) -> bool {
     let Some(Some(sender)) = SENDER.get() else { return false };
-    // try_lock: a panic while this thread holds the lock must not deadlock.
-    let Ok(sender) = sender.try_lock() else { return false };
     sender.try_send((event_body(event, properties), done)).is_ok()
 }
 
