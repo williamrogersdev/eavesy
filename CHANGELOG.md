@@ -19,6 +19,8 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
   detection. ([#95](https://github.com/williamrogersdev/eavesy/pull/95))
 - Mac app: click a screenshot to see it full size.
   ([#93](https://github.com/williamrogersdev/eavesy/pull/93))
+- Mac app: meetings recorded on your other Macs show up in History.
+  ([#96](https://github.com/williamrogersdev/eavesy/pull/96))
 
 ### Changed
 
