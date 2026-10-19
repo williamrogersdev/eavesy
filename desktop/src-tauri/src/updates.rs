@@ -128,6 +128,7 @@ pub fn check_in_background(app: &AppHandle) {
             let state = check(&app).await;
             if let UpdateState::Available { version, .. } = &state {
                 if announced.as_deref() != Some(version.as_str()) {
+                    crate::telemetry::track("update_available", serde_json::json!({ "version": version }));
                     let _ = app
                         .notification()
                         .builder()
@@ -255,6 +256,12 @@ async fn install(app: AppHandle) -> Result<(), InstallError> {
     let result = download_and_install(&app).await;
     INSTALLING.store(false, Ordering::SeqCst);
     let version = result?;
+    // The app relaunches next, so give the event a moment to leave.
+    let event = serde_json::json!({ "version": version });
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        crate::telemetry::track_before_exit("update_installed", event, std::time::Duration::from_secs(3));
+    })
+    .await;
 
     if let Ok(mut installed) = INSTALLED.lock() {
         *installed = Some(version.clone());

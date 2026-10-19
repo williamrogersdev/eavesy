@@ -31,6 +31,41 @@ pub fn misplaced() -> Option<Misplaced> {
     }
 }
 
+/// Where this copy runs from, as a fixed category for launch analytics, so
+/// stray copies (a disk image, a build folder) show up next to the real one.
+pub fn label() -> &'static str {
+    match std::env::current_exe() {
+        Ok(exe) => location_label(&exe),
+        Err(_) => "unknown",
+    }
+}
+
+fn location_label(exe: &Path) -> &'static str {
+    let Some(bundle) = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app")) else {
+        return "unbundled";
+    };
+    let path = bundle.to_string_lossy();
+    if path.contains("/AppTranslocation/") {
+        "translocated"
+    } else if bundle.parent() == Some(Path::new(APPLICATIONS)) {
+        "applications"
+    } else if is_cargo_bundle(bundle) {
+        "build_folder"
+    } else if path.starts_with("/Volumes/") {
+        "other_volume"
+    } else if path.contains("/Applications/") {
+        "user_applications"
+    } else {
+        "other"
+    }
+}
+
+/// `…/target/<profile>/bundle/macos/Eavesy.app`, as `cargo tauri build` lays it out.
+fn is_cargo_bundle(bundle: &Path) -> bool {
+    let parts: Vec<_> = bundle.components().rev().skip(1).take(4).map(|c| c.as_os_str()).collect();
+    matches!(parts.as_slice(), [macos, bundle, _profile, target] if *macos == "macos" && *bundle == "bundle" && *target == "target")
+}
+
 /// `on_temp_volume` is `None` when the volumes can't be compared; then a
 /// `/Volumes` path is assumed to be another drive, and anything else is not.
 fn classify(exe: &Path, on_temp_volume: impl FnOnce(&Path) -> Option<bool>) -> Option<Misplaced> {
@@ -265,6 +300,23 @@ mod tests {
     use super::*;
 
     const EXE: &str = "Contents/MacOS/eavesy";
+
+    #[test]
+    fn locations_are_fixed_categories() {
+        let cases = [
+            ("/Applications/Eavesy.app/Contents/MacOS/eavesy", "applications"),
+            ("/Users/dana/Applications/Eavesy.app/Contents/MacOS/eavesy", "user_applications"),
+            ("/Volumes/Eavesy/Eavesy.app/Contents/MacOS/eavesy", "other_volume"),
+            ("/private/var/folders/x/T/AppTranslocation/ABC/d/Eavesy.app/Contents/MacOS/eavesy", "translocated"),
+            ("/Users/dana/eavesy/desktop/src-tauri/target/debug/bundle/macos/Eavesy.app/Contents/MacOS/eavesy", "build_folder"),
+            ("/Users/dana/Downloads/Eavesy.app/Contents/MacOS/eavesy", "other"),
+            ("/Users/dana/target/stuff/bundle/Eavesy.app/Contents/MacOS/eavesy", "other"),
+            ("/Users/dana/eavesy/desktop/src-tauri/target/debug/eavesy", "unbundled"),
+        ];
+        for (exe, expected) in cases {
+            assert_eq!(location_label(Path::new(exe)), expected, "{exe}");
+        }
+    }
 
     #[test]
     fn another_volume_is_misplaced() {
