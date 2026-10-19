@@ -285,6 +285,43 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live"])
     }
 
+    func testASwitchStillStartingOutlivesAFirstEngineThatFailed() {
+        let events = Events()
+        let second = FakeEngine()
+        var ready: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        var answerSwitch: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { ready = $0 }
+        captions.feed(samples, atMs: 0)
+        let switched = expectation(description: "switched")
+        captions.switchEngine({ answerSwitch = $0 }, outcome: {
+            XCTAssertEqual($0, .switched)
+            switched.fulfill()
+        })
+        ready?(.failure(CaptionUnavailable(reason: "no model for en-US")))
+        answerSwitch?(.success(second))
+        wait(for: [switched], timeout: 1)
+        captions.feed(samples, atMs: 10)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(second.appended, [0, 10])
+        XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live"])
+    }
+
+    func testCaptionsGoOffWhenTheFirstEngineAndEverySwitchFail() {
+        let events = Events()
+        var ready: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        var answerSwitch: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { ready = $0 }
+        let answered = expectation(description: "answered")
+        captions.switchEngine({ answerSwitch = $0 }, outcome: { _ in answered.fulfill() })
+        ready?(.failure(CaptionUnavailable(reason: "no model for en-US")))
+        answerSwitch?(.failure(CaptionUnavailable(reason: "no model for es-ES")))
+        wait(for: [answered], timeout: 1)
+        captions.finish(timeout: 1)
+        let statuses = events.named("captions_status")
+        XCTAssertEqual(statuses.compactMap { $0["status"] as? String }, ["unavailable"])
+        XCTAssertEqual(statuses.first?["reason"] as? String, "no model for en-US")
+    }
+
     func testAnOvertakenSwitchLetsGoOfItsEngine() {
         let first = FakeEngine()
         let late = FakeEngine()

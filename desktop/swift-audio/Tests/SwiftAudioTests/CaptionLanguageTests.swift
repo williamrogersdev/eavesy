@@ -108,15 +108,27 @@ final class CaptionLanguageTests: XCTestCase {
 
     func testALanguageCountsAsUnavailableOnlyWhenNoTrackCouldSwitch() {
         let mixed = SwitchTally(tracks: 2)
-        XCTAssertNil(mixed.record(.unavailable("no model")) as [String]??, "waits for every track")
-        XCTAssertEqual(mixed.record(.switched), .some(nil))
-
-        let overtaken = SwitchTally(tracks: 2)
-        _ = overtaken.record(.superseded)
-        XCTAssertEqual(overtaken.record(.unavailable("no model")), .some(nil))
+        XCTAssertEqual(mixed.record(.unavailable("no model")), .pending, "waits for every track")
+        XCTAssertEqual(mixed.record(.switched), .switched)
 
         let none = SwitchTally(tracks: 2)
         _ = none.record(.unavailable("no model"))
-        XCTAssertEqual(none.record(.unavailable("off")), .some(["no model", "off"]))
+        XCTAssertEqual(none.record(.unavailable("off")), .failed(["no model", "off"]))
+    }
+
+    func testAnOvertakenSwitchLeavesTheDecisionToTheLaterOne() {
+        let overtaken = SwitchTally(tracks: 2)
+        _ = overtaken.record(.superseded)
+        XCTAssertEqual(overtaken.record(.unavailable("no model")), .overtaken)
+
+        // The later switch fails too: the follower goes back to what the
+        // engines are running, not to the overtaken language.
+        let follower = LanguageFollower(
+            current: Locale(identifier: "en_US"), follows: true, detect: { _ in nil }, canCaption: { _ in true })
+        XCTAssertEqual(follower.cloudHeard("es", atMs: 0), "es")
+        XCTAssertEqual(follower.cloudHeard("fr", atMs: 100), "fr")
+        follower.failed("fr", previous: "en")
+        XCTAssertEqual(follower.current, "en")
+        XCTAssertEqual(follower.cloudHeard("es", atMs: 200), "es", "the overtaken language is still worth trying")
     }
 }
