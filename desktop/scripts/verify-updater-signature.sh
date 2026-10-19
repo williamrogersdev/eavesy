@@ -25,5 +25,14 @@ if [[ -z "$CARGO_BIN" ]]; then
 fi
 
 cd "$DESKTOP/src-tauri"
+# The example builds the app crate, whose build script requires the Swift
+# sidecar to exist. The publish job only has the notarized artifacts, so an
+# empty placeholder stands in for it; nothing built here is shipped.
+SIDECAR="binaries/SwiftAudio-$(rustc -vV | sed -n 's/^host: //p')"
+if [[ ! -e "$SIDECAR" ]]; then
+  mkdir -p binaries
+  : > "$SIDECAR"
+  trap 'rm -f "$DESKTOP/src-tauri/$SIDECAR"' EXIT
+fi
 "$CARGO_BIN" run --quiet --locked --example verify_updater_signature -- \
   "$ARCHIVE" "$SIGNATURE" "$DESKTOP/src-tauri/tauri.conf.json"
