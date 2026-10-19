@@ -6,7 +6,7 @@ import { summarizeMeeting } from '@/lib/ai/summarize';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
-import { parseVocabulary, whisperPrompt } from '@/lib/transcription/vocabulary';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import {
   ECHO_WINDOW_MS,
   findEchoLines,
@@ -229,16 +229,16 @@ export async function handleTranscribeSegment(
       };
       const transcription = await transcriber.transcribe(request);
       const speakerId = speakerForTrack(track);
-      const prompt = whisperPrompt(request);
+      const glossary = request.vocabulary;
       let lines = transcription.segments.filter(
-        (relative) => !isHallucination(relative, { lenient: micOnly, prompt }),
+        (relative) => !isHallucination(relative, { lenient: micOnly, glossary }),
       );
       // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
       // the user's own note, so give it one more pass without VAD, keeping the
       // strict filter so silence does not turn into "Thank you."
       if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
         const retry = await transcriber.transcribe({ ...request, vadFilter: false });
-        lines = retry.segments.filter((relative) => !isHallucination(relative, { prompt }));
+        lines = retry.segments.filter((relative) => !isHallucination(relative, { glossary }));
       }
 
       await runBatched(db, lines.map((relative) => {

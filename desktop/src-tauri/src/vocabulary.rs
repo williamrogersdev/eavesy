@@ -32,7 +32,7 @@ pub fn store(app: &AppHandle, words: &[String]) {
         // Written aside and renamed over, so a crash or a second refresh never
         // leaves a half-written list that reads back as none.
         let partial = path.with_extension(format!("json.{}", uuid::Uuid::new_v4()));
-        if std::fs::write(&partial, raw).is_ok() && std::fs::rename(&partial, &path).is_err() {
+        if std::fs::write(&partial, raw).and_then(|()| std::fs::rename(&partial, &path)).is_err() {
             let _ = std::fs::remove_file(&partial);
         }
     }

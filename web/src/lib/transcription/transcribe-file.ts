@@ -54,14 +54,14 @@ export async function transcribeAudioFile(opts: {
     );
 
   const first = await run(true);
-  const heard = keepHeard(first, { lenient: opts.voiceNote, prompt });
+  const heard = keepHeard(first, { lenient: opts.voiceNote, glossary: opts.vocabulary });
   if (heard.segments.length > 0 || !opts.voiceNote) return heard;
-  return keepHeard(await run(false), { lenient: false, prompt });
+  return keepHeard(await run(false), { lenient: false, glossary: opts.vocabulary });
 }
 
 function keepHeard(
   result: FileTranscriptionResult,
-  opts: { lenient?: boolean; prompt?: string },
+  opts: { lenient?: boolean; glossary?: readonly string[] },
 ): FileTranscriptionResult {
   const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };

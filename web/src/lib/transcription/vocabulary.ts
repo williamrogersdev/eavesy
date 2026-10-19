@@ -3,6 +3,8 @@ export const MAX_VOCABULARY_TERMS = 100;
 export const MAX_TERM_LENGTH = 60;
 /**
  * Whisper reads about 224 tokens of prompt and keeps the end of a longer one.
+ * The budget is in characters, about 200 tokens of English; dense jargon or
+ * other scripts tokenize longer, and then only the start of the context goes.
  * The words get up to `MAX_GLOSSARY_CHARS` of that, whole words only, and the
  * meeting's context whatever is left.
  */
