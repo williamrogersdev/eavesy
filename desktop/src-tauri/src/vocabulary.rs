@@ -29,7 +29,12 @@ pub fn store(app: &AppHandle, words: &[String]) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(path, raw);
+        // Written aside and renamed over, so a crash or a second refresh never
+        // leaves a half-written list that reads back as none.
+        let partial = path.with_extension(format!("json.{}", uuid::Uuid::new_v4()));
+        if std::fs::write(&partial, raw).is_ok() && std::fs::rename(&partial, &path).is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
     }
 }
 
@@ -67,13 +72,19 @@ pub fn refresh(app: &AppHandle) {
     });
 }
 
-/// One line each, so a word can't break the sidecar's line-per-word argument
-/// or pass for another flag.
+/// One line each, so a word can't break the sidecar's line-per-word argument,
+/// and none starting `--`, which the sidecar would read as another flag.
 fn clean(words: &[String]) -> Vec<String> {
     words
         .iter()
         .map(|word| word.split_whitespace().collect::<Vec<_>>().join(" "))
-        .map(|word| word.trim_start_matches('-').trim().to_string())
+        .map(|word| {
+            let mut word = word.as_str();
+            while let Some(rest) = word.strip_prefix("--") {
+                word = rest;
+            }
+            word.trim().to_string()
+        })
         .filter(|word| !word.is_empty())
         .take(100)
         .collect()
@@ -85,8 +96,9 @@ mod tests {
 
     #[test]
     fn words_reach_the_sidecar_one_per_line() {
-        let words = vec!["Eavesy".to_string(), " Priya\nRaman ".to_string(), "".to_string(), "--mode".to_string()];
-        assert_eq!(sidecar_arg(&words).as_deref(), Some("Eavesy\nPriya Raman\nmode"));
+        let words: Vec<String> =
+            ["Eavesy", " Priya\nRaman ", "", "--mode", "-ish"].iter().map(|word| word.to_string()).collect();
+        assert_eq!(sidecar_arg(&words).as_deref(), Some("Eavesy\nPriya Raman\nmode\n-ish"));
         assert_eq!(sidecar_arg(&[]), None);
     }
 }

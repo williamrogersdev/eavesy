@@ -113,3 +113,18 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'something', noSpeechProb: 0.9 })).toBe(true);
   });
 });
+
+describe('prompt echo', () => {
+  const prompt = 'Weekly sync. Eavesy, Priya Raman, Kubernetes.';
+
+  test('drops a line Whisper read back from its prompt', () => {
+    expect(isHallucination({ text: 'Eavesy, Priya Raman, Kubernetes.' }, { prompt })).toBe(true);
+    expect(isHallucination({ text: 'Priya Raman.' }, { prompt })).toBe(true);
+  });
+
+  test('keeps real speech that only uses a custom word', () => {
+    expect(isHallucination({ text: 'Kubernetes.' }, { prompt })).toBe(false);
+    expect(isHallucination({ text: 'Ask Priya Raman about the launch.' }, { prompt })).toBe(false);
+    expect(isHallucination({ text: 'Priya Raman.' }, { prompt, lenient: true })).toBe(false);
+  });
+});

@@ -38,3 +38,15 @@ describe('custom vocabulary', () => {
     expect(whisperPrompt({ contextBlurb: 'x'.repeat(2_000), vocabulary: ['Eavesy'] })?.endsWith(' Eavesy.')).toBe(true);
   });
 });
+
+describe('custom vocabulary in the Whisper prompt', () => {
+  test('keeps the glossary to whole words within its budget and leaves room for context', () => {
+    const words = Array.from({ length: 100 }, (_, i) => `Term${String(i).padStart(2, '0')}-${'x'.repeat(50)}`);
+    const prompt = whisperPrompt({ contextBlurb: 'c'.repeat(2_000), vocabulary: words }) ?? '';
+    expect(prompt.length).toBeLessThanOrEqual(800);
+    expect(prompt.endsWith('.')).toBe(true);
+    expect(prompt.startsWith('c')).toBe(true);
+    const glossary = prompt.slice(prompt.lastIndexOf('c') + 2, -1).split(', ');
+    expect(glossary.every((word) => words.includes(word))).toBe(true);
+  });
+});

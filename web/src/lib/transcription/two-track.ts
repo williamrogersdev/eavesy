@@ -60,9 +60,13 @@ export interface WhisperLine {
  * "bye": a stock phrase is then dropped only when Whisper itself doubted there
  * was speech, not merely because it gave no score.
  */
-export function isHallucination(line: WhisperLine, opts: { lenient?: boolean } = {}): boolean {
+export function isHallucination(
+  line: WhisperLine,
+  opts: { lenient?: boolean; prompt?: string } = {},
+): boolean {
   const text = line.text.trim();
   if (!text) return true;
+  if (opts.prompt && echoesPrompt(text, opts.prompt, opts.lenient ? 4 : 2)) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
@@ -73,6 +77,18 @@ export function isHallucination(line: WhisperLine, opts: { lenient?: boolean } =
   if (!stock) return false;
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
+}
+
+/**
+ * Whisper can read its prompt back on near-silent audio, such as the user's
+ * custom words as a list. A line counts as that when it is a run of at least
+ * `minWords` words straight out of the prompt; a single word never does, so a
+ * real "Kubernetes" survives.
+ */
+function echoesPrompt(text: string, prompt: string, minWords: number): boolean {
+  const line = normalize(text);
+  if (line.split(' ').length < minWords) return false;
+  return ` ${normalize(prompt)} `.includes(` ${line} `);
 }
 
 export interface AttributedLine {

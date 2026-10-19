@@ -87,11 +87,14 @@ struct Arguments {
             vocabulary: parseVocabulary(dict["vocabulary"]))
     }
 
+    /// The host sends at most 100 words; this holds to that whatever it sends.
     static func parseVocabulary(_ raw: String?) -> [String] {
-        (raw ?? "")
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        Array(
+            (raw ?? "")
+                .split(separator: "\n")
+                .map { String($0.trimmingCharacters(in: .whitespaces).prefix(60)) }
+                .filter { !$0.isEmpty }
+                .prefix(100))
     }
 
     /// The cloud transcribes in one language; caption in the same one, keeping

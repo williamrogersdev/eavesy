@@ -1,8 +1,13 @@
 /** More than this many words stops helping the recognizers. */
 export const MAX_VOCABULARY_TERMS = 100;
 export const MAX_TERM_LENGTH = 60;
-/** Room left in Whisper's prompt for the meeting's own context. */
-const MAX_CONTEXT_CHARS = 600;
+/**
+ * Whisper reads about 224 tokens of prompt and keeps the end of a longer one.
+ * The words get up to `MAX_GLOSSARY_CHARS` of that, whole words only, and the
+ * meeting's context whatever is left.
+ */
+const MAX_PROMPT_CHARS = 800;
+const MAX_GLOSSARY_CHARS = 500;
 
 /**
  * Trimmed, de-duplicated words and phrases, one per entry, capped in length
@@ -47,8 +52,16 @@ export function whisperPrompt(opts: {
   contextBlurb?: string | null;
   vocabulary?: readonly string[];
 }): string | undefined {
-  const context = opts.contextBlurb?.trim().slice(0, MAX_CONTEXT_CHARS).trim();
-  const words = normalizeVocabulary(opts.vocabulary ?? []);
+  const words: string[] = [];
+  let glossaryChars = 1;
+  for (const word of normalizeVocabulary(opts.vocabulary ?? [])) {
+    const added = word.length + (words.length > 0 ? 2 : 0);
+    if (glossaryChars + added > MAX_GLOSSARY_CHARS) break;
+    words.push(word);
+    glossaryChars += added;
+  }
   const glossary = words.length > 0 ? `${words.join(', ')}.` : '';
+  const room = MAX_PROMPT_CHARS - (glossary ? glossary.length + 1 : 0);
+  const context = opts.contextBlurb?.trim().slice(0, room).trim();
   return [context, glossary].filter(Boolean).join(' ') || undefined;
 }

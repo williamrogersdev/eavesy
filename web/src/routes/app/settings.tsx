@@ -345,7 +345,7 @@ function SettingsPage() {
         </Row>
         <Row
           label="Custom words"
-          hint={`Names, products and jargon to spell your way, one per line. Up to ${MAX_VOCABULARY_TERMS}.`}
+          hint={`Names, products and jargon to spell your way, one per line or separated by commas. Up to ${MAX_VOCABULARY_TERMS}.`}
           htmlFor="settings-vocabulary"
         >
           <div className="flex w-full flex-col items-end gap-2">

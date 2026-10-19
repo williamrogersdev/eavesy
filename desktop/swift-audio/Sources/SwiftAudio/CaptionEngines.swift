@@ -288,7 +288,11 @@ final class SFSpeechEngine: SpeechEngine {
                     if !vocabulary.isEmpty {
                         let context = AnalysisContext()
                         context.contextualStrings[.general] = vocabulary
-                        try? await analyzer.setContext(context)
+                        do {
+                            try await analyzer.setContext(context)
+                        } catch {
+                            EventEmitter.warning("custom words not applied: \(error.localizedDescription)")
+                        }
                     }
                     try await analyzer.start(inputSequence: input)
                 } catch {
