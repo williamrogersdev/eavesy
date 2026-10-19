@@ -436,13 +436,17 @@ fn spawn_capture(
     if mode == "screen" {
         args.extend(["--mic".into(), if mic { "true" } else { "false" }.into()]);
     } else {
-        // Captions run in the system language; on-device recognition either
-        // supports it or says it doesn't. Dictation always runs them for its
-        // paste; meetings and voice notes only with the Live captions setting.
+        // Captions run in the account's transcription language, or with
+        // `auto` start in the system's and follow what is spoken. Dictation
+        // always runs them for its paste; meetings and voice notes only with
+        // the Live captions setting.
         if dictation {
             args.extend(["--captions".into(), "mic".into()]);
         } else if crate::settings::load(app).live_captions() {
             args.extend(["--captions".into(), "all".into()]);
+        }
+        if let Some(language) = crate::vocabulary::cached_language(app) {
+            args.extend(["--language".into(), language.into()]);
         }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
@@ -815,6 +819,18 @@ fn stream_events(
     stopped_on_its_own(&app, &session_id, warning);
     });
     rx
+}
+
+/// Tells a recording's capture engine what language the cloud heard last, so
+/// captions set to follow the spoken language can move to it.
+pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) {
+    let Some(language) = crate::vocabulary::clean_language(language) else { return };
+    let captures = app.state::<Captures>();
+    let mut sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(session) = sessions.get_mut(session_id) {
+        let line = serde_json::json!({ "language": language }).to_string();
+        let _ = writeln!(session.stdin, "{line}").and_then(|()| session.stdin.flush());
+    }
 }
 
 fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>) {
