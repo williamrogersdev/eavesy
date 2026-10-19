@@ -212,6 +212,16 @@ pub fn run() {
                 let _ = handle.notification().builder().title(title).body(body).show();
             }
 
+            telemetry::track(
+                "app_launched",
+                serde_json::json!({
+                    "install_location": install_location::label(),
+                    "previous_version": telemetry::previous_version(),
+                    "setup_completed": settings.setup_completed,
+                    "paired": settings::device_token(&handle).is_some(),
+                }),
+            );
+
             if !settings.setup_completed && settings::device_token(&handle).is_none() {
                 hotkeys::show_launcher(&handle);
             }

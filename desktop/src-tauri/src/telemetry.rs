@@ -111,6 +111,21 @@ fn install_id() -> &'static str {
     })
 }
 
+/// The version that ran last time, read before this launch records its own,
+/// so `app_launched` can show whether an update actually took effect.
+pub fn previous_version() -> Option<String> {
+    let path = dirs::data_dir()?.join(IDENTIFIER).join("last-version");
+    let previous = std::fs::read_to_string(&path).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    let _ = path.parent().map(std::fs::create_dir_all);
+    let _ = std::fs::write(&path, env!("CARGO_PKG_VERSION"));
+    previous
+}
+
+fn os_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| tauri_plugin_os::version().to_string())
+}
+
 fn event_body(event: &str, properties: Value) -> Value {
     let mut props = match properties {
         Value::Object(map) => map,
@@ -125,6 +140,7 @@ fn event_body(event: &str, properties: Value) -> Value {
         (if cfg!(debug_assertions) { "development" } else { "production" }).into(),
     );
     props.insert("$os".into(), "Mac OS X".into());
+    props.insert("$os_version".into(), os_version().into());
     props.insert("arch".into(), std::env::consts::ARCH.into());
     props.insert("$process_person_profile".into(), false.into());
     json!({
