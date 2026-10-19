@@ -6,6 +6,25 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19 - desktop
+
+### Added
+
+- Mac app: stop macOS opening stray older copies of Eavesy ([#118](https://github.com/williamrogersdev/eavesy/pull/118))
+- Mac app: report launches, updates and recording starts to PostHog ([#115](https://github.com/williamrogersdev/eavesy/pull/115))
+- Mac app: add Capture, View, Window and Help menus ([#109](https://github.com/williamrogersdev/eavesy/pull/109))
+- Mac app: live captions follow the spoken language ([#108](https://github.com/williamrogersdev/eavesy/pull/108))
+- Mac app: projects and agent-ready transcripts ([#104](https://github.com/williamrogersdev/eavesy/pull/104))
+- Mac app: custom vocabulary for transcription ([#97](https://github.com/williamrogersdev/eavesy/pull/97))
+- Mac app: replace Sentry with PostHog analytics and error tracking ([#102](https://github.com/williamrogersdev/eavesy/pull/102))
+
+### Fixed
+
+- Mac app: caption language hints never wait, switches outlive a failed start ([#113](https://github.com/williamrogersdev/eavesy/pull/113))
+- Mac app: move Eavesy into Applications instead of failing updates from the disk image ([#107](https://github.com/williamrogersdev/eavesy/pull/107))
+- Mac app: harden caption language switching ([#111](https://github.com/williamrogersdev/eavesy/pull/111))
+- Mac app: make Sentry optional for release builds ([#99](https://github.com/williamrogersdev/eavesy/pull/99))
+
 ## [0.4.0] - 2026-10-19 - desktop
 
 ### Added
