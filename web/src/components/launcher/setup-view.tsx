@@ -84,7 +84,7 @@ export function SetupView({
       });
       setPasted(true);
       tryBox.current?.focus();
-      void ackDictationText(sessionId).catch(() => {});
+      void ackDictationText(sessionId).catch((error: unknown) => console.warn('Could not confirm the dictation', error));
     }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
     return () => {
       disposed = true;

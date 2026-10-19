@@ -198,23 +198,33 @@ struct DictationText {
 }
 
 /// How long the panel has to confirm it put the words in its box.
-const PANEL_ACK_TIMEOUT: Duration = Duration::from_millis(1500);
+const PANEL_ACK_TIMEOUT: Duration = Duration::from_secs(3);
 
 static PANEL_ACK: std::sync::Mutex<Option<(String, std::sync::mpsc::Sender<()>)>> = std::sync::Mutex::new(None);
 
-/// Sends the words to the panel's box and waits for it to confirm it took them.
+/// Sends the words to the panel's box and waits for it to confirm it took
+/// them. One dictation runs at a time, so one hand-off is ever in flight.
 fn hand_to_panel(app: &AppHandle, session_id: &str, text: &str) -> bool {
-    let (tx, rx) = std::sync::mpsc::channel();
-    *PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), tx));
+    let rx = await_panel_ack(session_id);
     let sent = app
         .emit_to("main", "dictation:text", DictationText { session_id: session_id.to_string(), text: text.to_string() })
         .is_ok();
     let taken = sent && rx.recv_timeout(PANEL_ACK_TIMEOUT).is_ok();
+    clear_panel_ack(session_id);
+    taken
+}
+
+fn await_panel_ack(session_id: &str) -> std::sync::mpsc::Receiver<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    *PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), tx));
+    rx
+}
+
+fn clear_panel_ack(session_id: &str) {
     let mut slot = PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner());
     if slot.as_ref().is_some_and(|(id, _)| id == session_id) {
         *slot = None;
     }
-    taken
 }
 
 /// The panel put a dictation's words in its box.
@@ -403,6 +413,17 @@ mod ax {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_waiting_dictation_is_confirmed_by_the_panel() {
+        let rx = super::await_panel_ack("a");
+        super::ack_panel_dictation("b");
+        assert!(rx.try_recv().is_err());
+        super::ack_panel_dictation("a");
+        assert!(rx.try_recv().is_ok());
+        super::clear_panel_ack("a");
+        assert!(super::PANEL_ACK.lock().unwrap().is_none());
+    }
+
     use super::*;
 
     #[test]

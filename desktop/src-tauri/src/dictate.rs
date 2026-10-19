@@ -111,7 +111,18 @@ fn pressed(app: &AppHandle, can_hold: bool) {
         let (active, starting) = active_session(&app);
         match on_press(active, starting) {
             // A second tap while the mic is still opening: stop as soon as it is open.
-            OnPress::Ignore => press().stop_when_ready = true,
+            OnPress::Ignore => {
+                press().stop_when_ready = true;
+                // The start may have finished since the check; then nobody
+                // else will look at the flag, so stop here.
+                if let (Some(id), false) = active_session(&app) {
+                    if std::mem::take(&mut press().stop_when_ready) {
+                        crate::hud::show_stopping(&app, &id);
+                        note_press_in_background();
+                        stop(&app, id);
+                    }
+                }
+            }
             OnPress::Stop(id) => {
                 *press() = Press::default();
                 crate::hud::show_stopping(&app, &id);
