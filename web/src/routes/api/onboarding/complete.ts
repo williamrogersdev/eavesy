@@ -43,7 +43,7 @@ export const Route = createFileRoute('/api/onboarding/complete')({
           await db.update(users).set({ ...patch, updatedAt: Date.now() }).where(eq(users.id, actor.userId));
         }
 
-        if (body.projects?.length && !actor.isAnonymous) {
+        if (body.projects?.length) {
           const existing = await projectsRepo.listForUser(db, actor.userId);
           for (const name of newProjectNames(body.projects, existing.map((project) => project.name))) {
             await projectsRepo.create(db, actor.userId, { name });

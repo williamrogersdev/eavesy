@@ -47,10 +47,15 @@ function OnboardingPage() {
   }, []);
 
   const addProject = (raw: string) => {
-    const name = raw.trim().replace(/\s+/g, ' ');
     setProjectDraft('');
-    if (!name || projects.some((project) => project.toLowerCase() === name.toLowerCase())) return;
-    setProjects((current) => [...current, name].slice(0, MAX_ONBOARDING_PROJECTS));
+    setProjects((current) => {
+      const next = [...current];
+      for (const part of raw.split(',')) {
+        const name = part.trim().replace(/\s+/g, ' ');
+        if (name && !next.some((project) => project.toLowerCase() === name.toLowerCase())) next.push(name);
+      }
+      return next.slice(0, MAX_ONBOARDING_PROJECTS);
+    });
   };
 
   async function finishSetup(event: React.FormEvent) {
@@ -64,7 +69,7 @@ function OnboardingPage() {
         body: JSON.stringify({
           displayName: displayName.trim(),
           spokenLanguages: spoken,
-          projects: projectDraft.trim() ? [...projects, projectDraft] : projects,
+          projects: [...projects, ...projectDraft.split(',')],
         }),
       });
       if (!response.ok) throw new Error('Could not finish setup. Please try again.');
@@ -134,7 +139,7 @@ function OnboardingPage() {
                   value={projectDraft}
                   onChange={(event) => {
                     const next = event.target.value;
-                    if (next.endsWith(',')) addProject(next.slice(0, -1));
+                    if (next.includes(',')) addProject(next);
                     else setProjectDraft(next);
                   }}
                   onKeyDown={(event) => {

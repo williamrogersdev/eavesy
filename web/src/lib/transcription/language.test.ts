@@ -93,6 +93,7 @@ describe('retryLanguage with the languages the user speaks', () => {
 
   test('a meeting that has been in another language all along is left there', () => {
     expect(retryLanguage({ setting: 'auto', detected: 'de', probability: 0.7, established: 'de', spoken })).toBeUndefined();
+    expect(retryLanguage({ setting: 'auto', detected: 'nl', probability: 0.7, established: 'de', spoken })).toBe('de');
   });
 });
 
