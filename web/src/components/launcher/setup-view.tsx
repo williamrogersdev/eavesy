@@ -3,7 +3,7 @@
 import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
-import { onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
+import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
@@ -72,7 +72,7 @@ export function SetupView({
     let disposed = false;
     let off: (() => void) | undefined;
     void setDictationInPanel(true).catch(() => {});
-    void onDictationText((text) => {
+    void onDictationText((text, sessionId) => {
       const box = tryBox.current;
       const caret = box ? { start: box.selectionStart, end: box.selectionEnd } : null;
       setTried((current) => {
@@ -84,6 +84,7 @@ export function SetupView({
       });
       setPasted(true);
       tryBox.current?.focus();
+      void ackDictationText(sessionId).catch(() => {});
     }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
     return () => {
       disposed = true;

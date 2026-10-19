@@ -164,6 +164,12 @@ pub fn set_dictation_in_panel(wants: bool) {
     crate::dictation::set_panel_wants_dictation(wants);
 }
 
+/// The panel put a dictation's words in its box.
+#[tauri::command]
+pub fn ack_dictation_text(session_id: String) {
+    crate::dictation::ack_panel_dictation(&session_id);
+}
+
 /// Turns the start and stop sounds on or off.
 #[tauri::command]
 pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {

@@ -73,6 +73,7 @@ pub fn run() {
             commands::set_live_captions,
             commands::set_capture_sounds,
             commands::set_dictation_in_panel,
+            commands::ack_dictation_text,
             audio::start_screen_capture,
             audio::stop_capture,
             audio::capture_state,

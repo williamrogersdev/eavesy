@@ -150,10 +150,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         };
         match how {
             Delivery::InEavesy => {
-                // Also on the clipboard: an event can't confirm the box took it.
-                use tauri_plugin_clipboard_manager::ClipboardExt;
-                let _ = app.clipboard().write_text(text.clone());
-                if app.emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() }).is_err() {
+                // The box says when it has the words; without that they go on
+                // the clipboard and the HUD says so.
+                if !hand_to_panel(&app, &session_id, &text) {
                     how = Delivery::CopiedNoTextBox;
                 }
             }
@@ -196,6 +195,36 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
 struct DictationText {
     session_id: String,
     text: String,
+}
+
+/// How long the panel has to confirm it put the words in its box.
+const PANEL_ACK_TIMEOUT: Duration = Duration::from_millis(1500);
+
+static PANEL_ACK: std::sync::Mutex<Option<(String, std::sync::mpsc::Sender<()>)>> = std::sync::Mutex::new(None);
+
+/// Sends the words to the panel's box and waits for it to confirm it took them.
+fn hand_to_panel(app: &AppHandle, session_id: &str, text: &str) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    *PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), tx));
+    let sent = app
+        .emit_to("main", "dictation:text", DictationText { session_id: session_id.to_string(), text: text.to_string() })
+        .is_ok();
+    let taken = sent && rx.recv_timeout(PANEL_ACK_TIMEOUT).is_ok();
+    let mut slot = PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().is_some_and(|(id, _)| id == session_id) {
+        *slot = None;
+    }
+    taken
+}
+
+/// The panel put a dictation's words in its box.
+pub fn ack_panel_dictation(session_id: &str) {
+    let slot = PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((id, tx)) = slot.as_ref() {
+        if id == session_id {
+            let _ = tx.send(());
+        }
+    }
 }
 
 static PANEL_WANTS_DICTATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

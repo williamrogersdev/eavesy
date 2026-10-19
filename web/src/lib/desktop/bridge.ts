@@ -82,10 +82,15 @@ export async function setDictationInPanel(wants: boolean): Promise<void> {
 }
 
 /** A dictation finished for the panel: its words belong in the panel (setup's practice box). */
-export async function onDictationText(cb: (text: string) => void): Promise<UnlistenFn> {
+export async function onDictationText(cb: (text: string, sessionId: string) => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
-  return t.event.listen<{ sessionId: string; text: string }>('dictation:text', (event) => cb(event.payload.text));
+  return t.event.listen<{ sessionId: string; text: string }>('dictation:text', (event) => cb(event.payload.text, event.payload.sessionId));
+}
+
+/** Tells the Mac the panel took a dictation's words, so it doesn't fall back to the clipboard. */
+export async function ackDictationText(sessionId: string): Promise<void> {
+  await invoke('ack_dictation_text', { sessionId });
 }
 
 /** The stored live transcript of a recording changed; read it with `liveTranscript`. */
