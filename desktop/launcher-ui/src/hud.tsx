@@ -104,6 +104,7 @@ function Hud() {
   // A resize the window refused is asked for again, a few times.
   const [retry, setRetry] = useState(0);
   const failures = useRef(0);
+  const retryTimer = useRef<number | undefined>(undefined);
   // The result the pointer has already visited: once it leaves, a short grace.
   const visited = useRef<string | null>(null);
   const loadShortcut = () => {
@@ -214,6 +215,7 @@ function Hud() {
     void tauri()?.event?.listen('hud:shown', () => {
       // Shown afresh at its own frame: the sheet's room is gone.
       sheetHeight.current = 0;
+      failures.current = 0;
       setShown((n) => n + 1);
     }).then((off) => { if (disposed) off(); else unlisten = off; });
     return () => { disposed = true; unlisten?.(); };
@@ -222,7 +224,12 @@ function Hud() {
   // The window makes room for the sheet one step at a time, in order. Which
   // way it opens is settled first, so the layout flips before the window
   // grows and the bar never jumps.
+  // A new size to make room for gets its own retries.
+  useEffect(() => { failures.current = 0; }, [target]);
+  useEffect(() => () => window.clearTimeout(retryTimer.current), []);
+
   useEffect(() => {
+    window.clearTimeout(retryTimer.current);
     resizing.current = resizing.current.then(async () => {
       if (target === sheetHeight.current) return;
       if (sheetHeight.current === 0 && target > 0) {
@@ -233,7 +240,7 @@ function Hud() {
       // Only room the window really made counts: a failed resize is asked for again next time.
       const up = await invoke('set_hud_sheet', { height: target }).then((value) => value === true, () => null);
       if (up === null) {
-        if (++failures.current <= 3) window.setTimeout(() => setRetry((n) => n + 1), 300 * failures.current);
+        if (++failures.current <= 3) retryTimer.current = window.setTimeout(() => setRetry((n) => n + 1), 300 * failures.current);
         return;
       }
       failures.current = 0;

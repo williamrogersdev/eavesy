@@ -158,7 +158,7 @@ pub fn set_sheet_on_main(app: &AppHandle, extra: f64) -> Option<bool> {
     let (_, _, _, bar_height) = bar_frame(&window)?;
     let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
     let Some((height, next)) = sheet_change(*state, extra, up, bar_height) else {
-        return Some(up);
+        return Some(state.map_or(up, |(_, lift)| lift > 0.0));
     };
     if !imp::set_height(&window, height, up) {
         return None;
@@ -322,16 +322,9 @@ fn follow_panel(app: &AppHandle) {
 fn save_frame(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     if !window.is_visible().unwrap_or(false) { return; }
-    let (Ok(scale), Ok(position), Ok(size)) =
-        (window.scale_factor(), window.outer_position(), window.outer_size())
-    else {
-        return;
-    };
-    let position = position.to_logical::<f64>(scale);
-    let size = size.to_logical::<f64>(scale);
-    // While the transcript shows, save the frame the HUD returns to.
-    let (extra, lift) = expanded().unwrap_or((0.0, 0.0));
-    let frame = HudFrame { x: position.x, y: position.y + lift, width: size.width, height: (size.height - extra).max(DEFAULT_SIZE.1) };
+    // While a sheet is open, save the frame the HUD returns to: its bar.
+    let Some((x, y, width, height)) = bar_frame(&window) else { return };
+    let frame = HudFrame { x, y, width, height };
     if prefs(app).frame != Some(frame) {
         update_prefs(app, |config| config.hud_frame = Some(frame));
     }
