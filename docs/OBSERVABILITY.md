@@ -76,11 +76,11 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | Workers release | `SENTRY_RELEASE` | Set to the git SHA by the deploy workflow (`--var`) |
 | Browser | `VITE_SENTRY_DSN` | GitHub Actions variable, written to `web/.env.production` at build |
 | Browser release | `VITE_SENTRY_RELEASE` | Git SHA, set by the deploy workflow |
-| Mac app | `SENTRY_DSN` | Compile time; `DESKTOP_SENTRY_DSN` secret in the release-candidate workflow |
+| Mac app | `SENTRY_DSN` | Optional compile-time environment variable for local builds |
 
-`desktop/scripts/build-macos-release.sh` fails when `SENTRY_DSN` is empty.
-Self-hosted builds that deliberately ship without error reporting set
-`EAVESY_ALLOW_NO_SENTRY=1`.
+`desktop/scripts/build-macos-release.sh` can build without `SENTRY_DSN`.
+The release workflow does not require a Sentry secret. When the DSN is unset,
+Sentry reporting is disabled; local app logs and diagnostics remain available.
 
 Tracing is sampled at 5% on the Workers and in the browser (same-origin API
 calls only get trace headers). The Mac app sends no traces.

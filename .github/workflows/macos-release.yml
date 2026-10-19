@@ -170,8 +170,6 @@ jobs:
       # Apple credentials are deliberately absent here so Tauri does not
       # notarize the .app; the next step notarizes the exact final DMG.
       - name: Build signed release candidate
-        env:
-          SENTRY_DSN: ${{ secrets.DESKTOP_SENTRY_DSN }}
         run: desktop/scripts/build-macos-release.sh
 
       - name: Notarize and validate release candidate

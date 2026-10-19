@@ -64,8 +64,8 @@ No shared API secret is compiled into the app. A Mac that has not been paired
 still saves captured media locally, but transcription asks the user to pair
 before making a network request.
 
-`SENTRY_DSN` is required for `build-macos-release.sh`, which fails without it
-(self-hosted builds can opt out with `EAVESY_ALLOW_NO_SENTRY=1`). It enables
+`SENTRY_DSN` is optional for `build-macos-release.sh`; release builds do not
+require a Sentry project or an opt-out flag. When supplied at build time, it enables
 panic and operational error reporting: events keep the failing operation and
 error text, with recording, home, `/Volumes` and `/private` paths replaced
 by placeholders (folder names are meeting titles) and tokens, keys, emails and
