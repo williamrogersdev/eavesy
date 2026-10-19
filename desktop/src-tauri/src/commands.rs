@@ -321,7 +321,9 @@ pub async fn hud_sheet_opens_up(app: AppHandle, height: f64) -> Result<bool, Str
 /// Returns whether it opened above the bar.
 #[tauri::command]
 pub async fn set_hud_sheet(app: AppHandle, height: f64) -> Result<bool, String> {
-    on_main(&app, move |handle| crate::hud::set_sheet_on_main(handle, height)).await
+    on_main(&app, move |handle| crate::hud::set_sheet_on_main(handle, height))
+        .await?
+        .ok_or_else(|| "could not resize the capture control".to_string())
 }
 
 async fn on_main<T: Send + 'static>(app: &AppHandle, work: impl FnOnce(&AppHandle) -> T + Send + 'static) -> Result<T, String> {

@@ -149,22 +149,28 @@ pub fn sheet_opens_up(app: &AppHandle, extra: f64) -> bool {
 
 /// Opens, resizes or closes the sheet under the HUD's bar, with the bar held
 /// exactly where it is. `extra` is the sheet's height; 0 closes it. Returns
-/// whether the sheet is above the bar.
-pub fn set_sheet_on_main(app: &AppHandle, extra: f64) -> bool {
-    let Some(window) = app.get_webview_window("hud") else { return false };
+/// whether the sheet is above the bar, or None when the window could not
+/// make the room.
+pub fn set_sheet_on_main(app: &AppHandle, extra: f64) -> Option<bool> {
+    let window = app.get_webview_window("hud")?;
     let extra = extra.clamp(0.0, MAX_SHEET).round();
     let up = if extra > 0.0 { sheet_opens_up(app, extra) } else { expanded().is_some_and(|(_, lift)| lift > 0.0) };
-    let Some((_, _, _, bar_height)) = bar_frame(&window) else { return false };
+    let (_, _, _, bar_height) = bar_frame(&window)?;
     let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
     let current = state.map_or(0.0, |(extra, _)| extra);
     if (current - extra).abs() < 1.0 {
-        return up;
+        return Some(up);
     }
     if !imp::set_height(&window, bar_height + extra, up) {
-        return up;
+        return None;
     }
     *state = (extra > 0.0).then_some((extra, if up { extra } else { 0.0 }));
-    up
+    Some(up)
+}
+
+/// The user closed the control with its X: it stays hidden while idle.
+pub fn hidden_by_user(app: &AppHandle) -> bool {
+    prefs(app).hidden
 }
 
 fn is_active(phase: &Phase) -> bool {

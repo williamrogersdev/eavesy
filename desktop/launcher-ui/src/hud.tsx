@@ -101,6 +101,8 @@ function Hud() {
   const [shown, setShown] = useState(0);
   const sheetHeight = useRef(0);
   const resizing = useRef<Promise<void>>(Promise.resolve());
+  // The result the pointer has already visited: once it leaves, a short grace.
+  const visited = useRef<string | null>(null);
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -221,17 +223,28 @@ function Hud() {
     resizing.current = resizing.current.then(async () => {
       if (target === sheetHeight.current) return;
       if (sheetHeight.current === 0 && target > 0) {
-        setGrowsUp(((await invoke('hud_sheet_opens_up', { height: target })) as boolean | undefined) ?? false);
+        const up = await invoke('hud_sheet_opens_up', { height: target }).catch(() => false);
+        setGrowsUp(up === true);
         await nextFrame();
       }
-      await invoke('set_hud_sheet', { height: target });
+      // Only room the window really made counts: a failed resize is asked for again next time.
+      const up = await invoke('set_hud_sheet', { height: target }).then((value) => value === true, () => null);
+      if (up === null) return;
       sheetHeight.current = target;
-      if (target === 0) setGrowsUp(false);
-    }).catch(() => {});
+      setGrowsUp(target > 0 && up);
+    });
   }, [target, shown]);
 
+  useEffect(() => setCopied(false), [sheet, state?.sessionId, state?.phase]);
+
+  const copy = (cmd: string, args: Record<string, unknown>) => {
+    setActionError(null);
+    void invoke(cmd, args)
+      .then(() => setCopied(true))
+      .catch((error: unknown) => setActionError(errMsg(error, 'Could not copy')));
+  };
+
   useEffect(() => {
-    setCopied(false);
     setImageSrc(null);
     if (!screenshot || !state?.sessionId) return;
     let cancelled = false;
@@ -248,11 +261,12 @@ function Hud() {
     if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
     const sessionId = state.sessionId;
     // Long enough to read the words or grab the screenshot; held open while
-    // the pointer is on the control.
-    if (hovered) return;
+    // the pointer is on the control, then a short grace once it leaves.
+    const key = `${state.phase}:${sessionId ?? ''}`;
+    if (hovered) { visited.current = key; return; }
     const timeout = window.setTimeout(() => {
       void invoke('dismiss_hud', { sessionId }).catch(() => {});
-    }, sheet ? 8000 : 3500);
+    }, visited.current === key ? 2500 : sheet ? 8000 : 3500);
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, state?.mode, sheet, hovered]);
 
@@ -360,7 +374,7 @@ function Hud() {
               {transcript.notice?.includes('Accessibility') && (
                 <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow pasting</button>
               )}
-              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => { act('copy_text', { text: transcript.text }); setCopied(true); }}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
+              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => copy('copy_text', { text: transcript.text })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
             </>
           ) : undefined}
         >
@@ -376,7 +390,7 @@ function Hud() {
               <span className="ctl-sheet-notice">{copied ? 'Copied — press ⌘V to paste' : 'Saved'}</span>
               <span className="ctl-sheet-spacer" />
               <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => act('show_launcher')}><Maximize2 className="h-3.5 w-3.5" />Open</button>
-              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => { act('copy_capture_media', { id: state.sessionId }); setCopied(true); }}><Copy className="h-3.5 w-3.5" />Copy</button>
+              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>
             </>
           )}
         >

@@ -25,6 +25,10 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
     let _ = app.emit("recordings:updated", ());
     // The HUD flashes a preview to copy or open; the clipboard is left as it was.
     hud::set_state(&app, hud::HudState { phase: hud::Phase::Done, session_id: Some(id.clone()), mode: Some("image".into()), started_at_ms: None, message: None, notice: None });
+    // With the control closed there is no preview to flash: show it in the panel.
+    if hud::hidden_by_user(&app) {
+        crate::commands::show_launcher(app.clone());
+    }
     Ok(id)
 }
 
