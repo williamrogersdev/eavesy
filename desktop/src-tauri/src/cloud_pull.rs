@@ -5,9 +5,10 @@
 //! recordings folder like a local capture, without audio. Its id is the cloud
 //! meeting id, so edits to its files sync back to the same meeting.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -20,8 +21,26 @@ use crate::{fs_writer, sqlite, store};
 /// How many meetings one pull downloads, so a long history arrives over a few
 /// passes instead of holding up uploads.
 const PER_PULL: usize = 5;
+/// Meetings asked for per page of the cloud list, and how many pages one pull reads.
+const PAGE: usize = 50;
+const MAX_PAGES: usize = 20;
+/// How long a meeting that could not be downloaded or saved is left alone.
+const FAILED_RETRY: Duration = Duration::from_secs(60 * 60);
 
 static STATE_LOCK: Mutex<()> = Mutex::new(());
+static FAILED: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn failed_recently(id: &str) -> bool {
+    FAILED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .is_some_and(|at| at.elapsed() < FAILED_RETRY)
+}
+
+fn mark_failed(id: &str) {
+    FAILED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.to_string(), Instant::now());
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct PullState {
@@ -87,9 +106,9 @@ pub fn is_pulled<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
     load_state(app).is_ok_and(|state| state.pulled.contains(id))
 }
 
-/// Called after a capture is deleted: a pulled meeting stays deleted on this Mac.
+/// Called before a capture is deleted: a pulled meeting stays deleted on this Mac.
 pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
-    if !is_pulled(app, id) {
+    if !load_state(app)?.pulled.contains(id) {
         return Ok(());
     }
     update_state(app, |state| {
@@ -100,42 +119,61 @@ pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
 
 /// Downloads a few meetings this Mac does not have yet. Returns how many arrived.
 pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
-    let response = api
-        .client
-        .get(api.url("/api/sessions?limit=100"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .context("list cloud meetings")?;
-    if !response.status().is_success() {
-        return Err(crate::sync::http_error("list cloud meetings", response).await);
-    }
-    let listed: CloudMeetings = response.json().await.context("decode cloud meetings")?;
-
     let state = load_state(app).map_err(|error| anyhow!(error))?;
     let mut known: HashSet<String> = store::load_all(app).into_iter().map(|recording| recording.id).collect();
     known.extend(sqlite::remote_meeting_ids(app).map_err(|error| anyhow!(error))?);
     known.extend(state.dismissed);
 
-    let mut arrived = 0;
-    for meeting in listed.items.into_iter().filter(|meeting| !known.contains(&meeting.id)).take(PER_PULL) {
-        let result = api
+    let mut wanted = Vec::new();
+    for page in 0..MAX_PAGES {
+        let response = api
             .client
-            .get(api.url(&format!("/api/sessions/{}/result", meeting.id)))
+            .get(api.url(&format!("/api/sessions?limit={PAGE}&offset={}", page * PAGE)))
             .bearer_auth(token)
             .send()
             .await
-            .context("download cloud meeting")?;
-        if !result.status().is_success() {
-            eprintln!("cloud pull: skipped {}: {:#}", meeting.id, crate::sync::http_error("download cloud meeting", result).await);
-            continue;
+            .context("list cloud meetings")?;
+        if !response.status().is_success() {
+            return Err(crate::sync::http_error("list cloud meetings", response).await);
         }
-        let result: ResultResponse = result.json().await.context("decode cloud meeting")?;
+        let listed: CloudMeetings = response.json().await.context("decode cloud meetings")?;
+        let last_page = listed.items.len() < PAGE;
+        wanted.extend(
+            listed
+                .items
+                .into_iter()
+                .filter(|meeting| !known.contains(&meeting.id) && !failed_recently(&meeting.id)),
+        );
+        if last_page || wanted.len() >= PER_PULL {
+            break;
+        }
+    }
+
+    let mut arrived = 0;
+    for meeting in wanted.into_iter().take(PER_PULL) {
+        let result = match download(api, token, &meeting.id).await {
+            Ok(result) => result,
+            Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
+            Err(error) => {
+                eprintln!("cloud pull: skipped {}: {error:#}", meeting.id);
+                mark_failed(&meeting.id);
+                continue;
+            }
+        };
         let recording = to_recording(&meeting, &result);
-        let app = app.clone();
-        let root = root.to_path_buf();
-        crate::sync::blocking(move || save(&app, &root, recording)).await?;
-        arrived += 1;
+        let saved = {
+            let app = app.clone();
+            let root = root.to_path_buf();
+            crate::sync::blocking(move || save(&app, &root, recording)).await
+        };
+        match saved {
+            Ok(true) => arrived += 1,
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("cloud pull: could not save {}: {error:#}", meeting.id);
+                mark_failed(&meeting.id);
+            }
+        }
     }
     if arrived > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {
@@ -143,6 +181,20 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         }
     }
     Ok(arrived)
+}
+
+async fn download(api: &Api, token: &str, id: &str) -> Result<ResultResponse> {
+    let response = api
+        .client
+        .get(api.url(&format!("/api/sessions/{id}/result")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("download cloud meeting")?;
+    if !response.status().is_success() {
+        return Err(crate::sync::http_error("download cloud meeting", response).await);
+    }
+    response.json().await.context("decode cloud meeting")
 }
 
 fn to_recording(meeting: &CloudMeeting, result: &ResultResponse) -> StoredRecording {
@@ -170,16 +222,34 @@ fn to_recording(meeting: &CloudMeeting, result: &ResultResponse) -> StoredRecord
     }
 }
 
-fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecording) -> Result<(), String> {
+/// Writes the meeting's folder, marks it pulled, then adds it to the history.
+/// Marking first means a crash in between only leads to it being pulled again;
+/// any failure removes the folder and the mark. Returns false when the user
+/// deleted it on this Mac while the pull was running.
+fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecording) -> Result<bool, String> {
+    if load_state(app)?.dismissed.contains(&recording.id) {
+        return Ok(false);
+    }
     let started = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(recording.started_at_ms).unwrap_or_else(chrono::Utc::now);
     let folder = fs_writer::allocate_recording_folder(root, &recording.title, started)?;
     recording.folder_path = Some(folder.to_string_lossy().into_owned());
-    fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, Some(&recording.id), recording.notes.as_deref())?;
     let id = recording.id.clone();
-    update_state(app, |state| {
-        state.pulled.insert(id.clone());
-    })?;
-    store::append(app, recording)
+    let saved = fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, Some(&id), recording.notes.as_deref())
+        .and_then(|()| update_state(app, |state| {
+            state.pulled.insert(id.clone());
+        }))
+        .and_then(|()| {
+            store::append(app, recording).inspect_err(|_| {
+                let _ = update_state(app, |state| {
+                    state.pulled.remove(&id);
+                });
+            })
+        });
+    if let Err(error) = saved {
+        let _ = std::fs::remove_dir_all(&folder);
+        return Err(error);
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -267,8 +337,98 @@ mod tests {
 
         assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 0, "already here");
 
-        store::remove(handle, "remote-1").unwrap();
         dismiss(handle, "remote-1").unwrap();
+        store::remove(handle, "remote-1").unwrap();
         assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 0, "deleted on this Mac");
+    }
+
+    fn listing(items: serde_json::Value) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({ "items": items }))
+    }
+
+    fn listed(id: &str, title: &str) -> serde_json::Value {
+        serde_json::json!({ "id": id, "title": title, "startedAt": 1_700_000_000_000_i64, "durationSec": 60, "source": "desktop", "updatedAt": 1 })
+    }
+
+    #[tokio::test]
+    async fn a_meeting_that_cannot_be_downloaded_is_skipped_without_stalling_the_rest() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .respond_with(listing(serde_json::json!([listed("broken", "Broken"), listed("fine", "Fine")])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/broken/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/fine/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Fine")))
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 0, "the broken one waits before it is tried again");
+        assert_eq!(store::load_all(handle).iter().map(|recording| recording.id.as_str()).collect::<Vec<_>>(), ["fine"]);
+    }
+
+    #[tokio::test]
+    async fn a_hostile_title_stays_inside_the_recordings_folder() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .respond_with(listing(serde_json::json!([listed("hostile", "../../escape")])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/hostile/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("../../escape")))
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+        let folder = PathBuf::from(store::load_all(handle)[0].folder_path.clone().unwrap());
+        assert_eq!(folder.parent(), Some(root.as_path()));
+    }
+
+    #[tokio::test]
+    async fn an_edit_to_a_pulled_meeting_uploads_to_its_cloud_meeting() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .respond_with(listing(serde_json::json!([listed("remote-1", "Standup")])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/remote-1/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Standup")))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/sessions/remote-1/files"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+
+        sqlite::enqueue_file_edit(handle, "remote-1", "summary", "# Brief\n\nEdited", "hash").unwrap();
+        crate::sync::pass(handle, &api, "token").await;
+        assert!(sqlite::next_file_edit(handle).unwrap().is_none());
     }
 }

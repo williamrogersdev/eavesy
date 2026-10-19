@@ -307,10 +307,8 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             return Err("That capture's folder is outside your Eavesy folder, so it was left alone.".into());
         }
     }
+    crate::cloud_pull::dismiss(&app, &id)?;
     store::remove(&app, &id)?;
-    if let Err(error) = crate::cloud_pull::dismiss(&app, &id) {
-        eprintln!("cloud pull: could not remember the deleted meeting {id}: {error}");
-    }
     if let Some(folder) = folder {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let trashed = match app.run_on_main_thread(move || { let _ = sender.send(move_to_trash(&folder)); }) {

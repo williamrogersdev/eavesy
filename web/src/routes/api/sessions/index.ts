@@ -27,7 +27,9 @@ export const Route = createFileRoute('/api/sessions/')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const limit = Math.min(Math.max(Number(new URL(request.url).searchParams.get('limit')) || 50, 1), 200);
+        const search = new URL(request.url).searchParams;
+        const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
+        const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
         const items = await getDb()
           .select({
             id: meetings.id,
@@ -46,8 +48,9 @@ export const Route = createFileRoute('/api/sessions/')({
               actor.deviceId ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId)) : undefined,
             ),
           )
-          .orderBy(desc(meetings.startedAt))
-          .limit(limit);
+          .orderBy(desc(meetings.startedAt), desc(meetings.id))
+          .limit(limit)
+          .offset(offset);
         return Response.json({ items });
       },
       POST: async ({ request }) => {

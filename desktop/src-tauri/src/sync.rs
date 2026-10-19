@@ -95,6 +95,8 @@ fn idle_pause() -> Duration {
 const ERROR_BACKOFF_MS: i64 = 15_000;
 /// How often meetings recorded on the user's other devices are looked for.
 const CLOUD_PULL_INTERVAL: Duration = Duration::from_secs(60);
+/// The longest one pull may hold up uploads.
+const CLOUD_PULL_LIMIT: Duration = Duration::from_secs(90);
 /// Retry interval while the server does not support segments-only finalize yet.
 const SEGMENTS_ONLY_RETRY_MS: i64 = 10 * 60 * 1_000;
 
@@ -110,7 +112,7 @@ impl std::error::Error for Permanent {}
 /// The server rejected the device credential. Nothing is counted against the
 /// upload: sync pauses until the user signs in again.
 #[derive(Debug)]
-struct Unauthorized(String);
+pub(crate) struct Unauthorized(String);
 impl std::fmt::Display for Unauthorized {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -260,7 +262,7 @@ pub async fn run(app: AppHandle) -> Result<()> {
     let mut api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
     let mut recovery_retried = Instant::now();
-    let mut pulled: Option<(String, Instant)> = None;
+    let mut next_pull: Option<(String, Instant)> = None;
 
     loop {
         if recovery_retried.elapsed() >= RECOVERY_RETRY {
@@ -296,20 +298,20 @@ pub async fn run(app: AppHandle) -> Result<()> {
                     set_signed_out(&app, false);
                 }
                 if outcome == Pass::Idle {
-                    let due = pulled.as_ref().is_none_or(|(pulled_token, at)| *pulled_token != token || at.elapsed() >= CLOUD_PULL_INTERVAL);
+                    let due = next_pull.as_ref().is_none_or(|(pulled_token, at)| *pulled_token != token || Instant::now() >= *at);
                     if due {
-                        pulled = Some((token.clone(), Instant::now()));
+                        let mut wait = CLOUD_PULL_INTERVAL;
                         match crate::fs_writer::recordings_root(&app) {
-                            Ok(root) => match crate::cloud_pull::pull(&app, &api, &token, &root).await {
-                                Ok(arrived) if arrived > 0 => {
-                                    // More may be waiting: come back sooner.
-                                    pulled = Some((token.clone(), Instant::now() - CLOUD_PULL_INTERVAL + Duration::from_secs(2)));
-                                }
-                                Ok(_) => {}
-                                Err(error) => eprintln!("cloud pull: {error:#}"),
+                            Ok(root) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::cloud_pull::pull(&app, &api, &token, &root)).await {
+                                // More may be waiting: come back sooner.
+                                Ok(Ok(arrived)) if arrived > 0 => wait = Duration::from_secs(2),
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => eprintln!("cloud pull: {error:#}"),
+                                Err(_) => eprintln!("cloud pull: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
                             },
                             Err(error) => eprintln!("cloud pull: {error}"),
                         }
+                        next_pull = Some((token.clone(), Instant::now() + wait));
                     }
                     idle(idle_pause()).await;
                 } else {
