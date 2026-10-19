@@ -48,8 +48,30 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
     paste_text(&app, &text)
 }
 
+/// A paste's pending restore of the user's own clipboard: its generation, and
+/// while one is pending, what to put back (nothing, when the clipboard held
+/// no text). A newer paste takes the restore over, so Eavesy's own words on
+/// the clipboard are never mistaken for the user's.
+struct Restore {
+    generation: u64,
+    pending: Option<Option<String>>,
+}
+
+static RESTORE: std::sync::Mutex<Restore> = std::sync::Mutex::new(Restore { generation: 0, pending: None });
+
+fn restore() -> std::sync::MutexGuard<'static, Restore> {
+    RESTORE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
-    let previous = app.clipboard().read_text().ok();
+    let on_clipboard = app.clipboard().read_text().ok();
+    let (generation, previous) = {
+        let mut restore = restore();
+        let previous = restore.pending.take().unwrap_or(on_clipboard);
+        restore.generation += 1;
+        restore.pending = Some(previous.clone());
+        (restore.generation, previous)
+    };
 
     app.clipboard()
         .write_text(text.to_string())
@@ -59,6 +81,8 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     {
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
+            // The words stay on the clipboard for ⌘V: nothing is put back.
+            restore().pending = None;
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
                  clipboard — press ⌘V to paste it now."
@@ -73,12 +97,20 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
         }
     }
 
-    if let Some(prev) = previous {
-        // The key press is posted, not awaited: give the app time to read the
-        // pasteboard before the user's own clipboard comes back.
+    // The key press is posted, not awaited: give the app time to read the
+    // pasteboard before the user's own clipboard comes back. Off this
+    // thread, so whoever pasted can say so at once.
+    let app = app.clone();
+    std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let _ = app.clipboard().write_text(prev);
-    }
+        let mut restore = restore();
+        if restore.generation == generation {
+            restore.pending = None;
+            if let Some(previous) = previous {
+                let _ = app.clipboard().write_text(previous);
+            }
+        }
+    });
 
     Ok(())
 }
@@ -123,6 +155,26 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
 pub fn set_live_captions(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut config = settings::load(&app);
     config.live_captions = Some(enabled);
+    settings::save(&app, &config)
+}
+
+/// Setup's practice box is open in the panel and wants the next dictation.
+#[tauri::command]
+pub fn set_dictation_in_panel(wants: bool) {
+    crate::dictation::set_panel_wants_dictation(wants);
+}
+
+/// The panel put a dictation's words in its box.
+#[tauri::command]
+pub fn ack_dictation_text(session_id: String) {
+    crate::dictation::ack_panel_dictation(&session_id);
+}
+
+/// Turns the start and stop sounds on or off.
+#[tauri::command]
+pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut config = settings::load(&app);
+    config.capture_sounds = Some(enabled);
     settings::save(&app, &config)
 }
 
@@ -260,11 +312,16 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
 
 
 /// The HUD grows to show its running transcript, and shrinks back after.
+/// Returns whether the transcript opens above the bar.
 #[tauri::command]
-pub fn set_hud_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
+pub async fn set_hud_expanded(app: AppHandle, expanded: bool, up: Option<bool>) -> Result<bool, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
-    app.run_on_main_thread(move || crate::hud::set_expanded_on_main(&handle, expanded))
-        .map_err(|error| format!("could not resize the capture control: {error}"))
+    app.run_on_main_thread(move || {
+        let _ = sender.send(crate::hud::set_expanded_on_main(&handle, expanded, up));
+    })
+    .map_err(|error| format!("could not resize the capture control: {error}"))?;
+    receiver.await.map_err(|error| format!("could not resize the capture control: {error}"))
 }
 
 #[tauri::command]

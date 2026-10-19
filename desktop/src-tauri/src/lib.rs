@@ -26,6 +26,7 @@ mod placement;
 mod recovery;
 mod screenshot_watcher;
 mod settings;
+mod sounds;
 mod store;
 mod sync;
 mod sqlite;
@@ -70,6 +71,9 @@ pub fn run() {
             audio::start_capture,
             live_transcript::live_transcript,
             commands::set_live_captions,
+            commands::set_capture_sounds,
+            commands::set_dictation_in_panel,
+            commands::ack_dictation_text,
             audio::start_screen_capture,
             audio::stop_capture,
             audio::capture_state,

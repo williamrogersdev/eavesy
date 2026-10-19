@@ -21,6 +21,7 @@ pub enum LauncherPosition {
     TopRight,
     #[default]
     TopCenter,
+    BottomCenter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -69,6 +70,9 @@ pub struct Settings {
     /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_screenshots: Option<bool>,
+    /// A short sound as a recording starts and stops (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_sounds: Option<bool>,
 }
 
 impl Settings {
@@ -84,6 +88,10 @@ impl Settings {
 
     pub fn add_screenshots(&self) -> bool {
         self.add_screenshots.unwrap_or(true)
+    }
+
+    pub fn capture_sounds(&self) -> bool {
+        self.capture_sounds.unwrap_or(true)
     }
 }
 
@@ -107,6 +115,7 @@ impl Default for Settings {
             segment_sec: None,
             live_captions: None,
             add_screenshots: None,
+            capture_sounds: None,
         }
     }
 }

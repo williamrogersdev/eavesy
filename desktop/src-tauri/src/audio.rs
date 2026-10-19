@@ -569,7 +569,8 @@ fn spawn_capture(
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
             mode: Some(mode.to_string()),
-            started_at_ms: Some(started_at_ms),
+            // The timer counts from the mic going live, not from the key press.
+            started_at_ms: Some(now_ms()),
             message: None,
             notice: None,
         },
@@ -837,6 +838,12 @@ pub fn stop_capture(
         crate::telemetry::capture("capture.stop", error);
         if error != NO_ACTIVE_CAPTURE {
             show_stop_failed(&app, &session_id, error);
+        } else {
+            // Shown as stopping by the key press, but something else stopped it first.
+            let hud = crate::hud::current();
+            if hud.phase == crate::hud::Phase::Transcribing && hud.session_id.as_deref() == Some(session_id.as_str()) {
+                crate::hud::set_state(&app, crate::hud::HudState { session_id: hud.session_id, ..crate::hud::HudState::idle() });
+            }
         }
     }
     result
@@ -885,6 +892,7 @@ fn stop_capture_inner(
 
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
+    crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
     let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions);
@@ -1013,8 +1021,9 @@ fn finish_stopped_capture(
         .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
-    // A dictation that pasted already shows its words in the HUD.
-    if !pasted_early {
+    // A dictation that pasted already shows its words in the HUD; one still
+    // waiting for its words stays on "Writing it down…" until they arrive.
+    if !pasted_early && !dictation {
         crate::hud::set_state(
             &app,
             crate::hud::HudState {
