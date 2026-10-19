@@ -54,6 +54,13 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `dictation_started` | Mac app | none |
 | `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `in_eavesy`, `no_accessibility`, `no_text_box`) |
 | `recording_saved` | Mac app | `kind` (`audio`, `screen`, `dictation`), `duration_sec` |
+| `recording_started` | Mac app, when the capture engine is launched (an attempt; a later engine failure is reported as an error) | `kind` (`audio`, `screen`, `dictation`) |
+| `app_launched` | Mac app | `install_location` (`applications`, `user_applications`, `translocated`, `other_volume`, `build_folder`, `other`, `unbundled`, `unknown`), `previous_version` (what this install location ran last), `setup_completed`, `paired` |
+| `update_available`, `update_installed` | Mac app | `version` |
+
+Every Mac app event also carries `$app_version`, `$os_version` and
+`environment`, so a breakdown of `app_launched` by `$app_version` and
+`install_location` shows which copies are still running old builds.
 
 Server events are keyed by the internal user id (`user_…`). Activity-log
 events forward only the `kind`, `captureMode`, `source` and `platform`

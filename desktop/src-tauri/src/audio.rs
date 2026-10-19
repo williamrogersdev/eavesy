@@ -372,8 +372,12 @@ pub fn start_audio_capture(
     let dictation = dictation.unwrap_or(false) && source == "mic";
     let context = SessionContext { blurb: context_blurb.as_deref(), project_id: project_id.as_deref() };
     let result = spawn_capture(app, state, "audio", &source, false, context, dictation, asked_at);
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_audio", error);
+    match &result {
+        Ok(_) => crate::telemetry::track(
+            "recording_started",
+            serde_json::json!({ "kind": if dictation { "dictation" } else { "audio" } }),
+        ),
+        Err(error) => crate::telemetry::capture("capture.start_audio", error),
     }
     result
 }
@@ -385,8 +389,9 @@ pub fn start_screen_capture(
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
     let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), SessionContext::default(), false, Instant::now());
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_screen", error);
+    match &result {
+        Ok(_) => crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" })),
+        Err(error) => crate::telemetry::capture("capture.start_screen", error),
     }
     result
 }
