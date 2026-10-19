@@ -85,7 +85,8 @@ pub fn offer_move(app: &AppHandle, misplaced: Misplaced, message: &str) {
 
 fn move_and_relaunch(app: AppHandle, misplaced: Misplaced) {
     tauri::async_runtime::spawn_blocking(move || match copy_to_applications(&misplaced.bundle) {
-        Ok(target) => relaunch_from(&app, &target, misplaced.volume.as_deref()),
+        Ok(Some(target)) => relaunch_from(&app, &target, misplaced.volume.as_deref()),
+        Ok(None) => {}
         Err(error) => {
             crate::telemetry::capture("install_location.move", &error);
             let handle = app.clone();
@@ -110,7 +111,8 @@ if ditto "$src" "$dst"; then rm -rf "$old"; else rm -rf "$dst"; [ -e "$old" ] &&
 xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
 "#;
 
-fn copy_to_applications(bundle: &Path) -> Result<PathBuf, String> {
+/// `Ok(None)` when the user cancelled the admin password prompt.
+fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
     let name = bundle.file_name().ok_or("the app bundle has no name")?;
     let target = Path::new(APPLICATIONS).join(name);
     let output = Command::new("/bin/sh")
@@ -120,7 +122,7 @@ fn copy_to_applications(bundle: &Path) -> Result<PathBuf, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
-        return Ok(target);
+        return Ok(Some(target));
     }
     // /Applications isn't writable for this user: ask for an admin password.
     let script = format!(
@@ -133,11 +135,24 @@ fn copy_to_applications(bundle: &Path) -> Result<PathBuf, String> {
         ))
     );
     let output = Command::new("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(target)
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    match admin_copy_outcome(output.status.success(), &stderr) {
+        Ok(true) => Ok(Some(target)),
+        Ok(false) => Ok(None),
+        Err(error) => Err(error),
     }
+}
+
+fn admin_copy_outcome(success: bool, stderr: &str) -> Result<bool, String> {
+    if success {
+        return Ok(true);
+    }
+    // osascript reports a cancelled password prompt as error -128.
+    if stderr.contains("(-128)") {
+        return Ok(false);
+    }
+    let stderr = stderr.trim();
+    Err(if stderr.is_empty() { "copying to Applications failed".into() } else { stderr.to_string() })
 }
 
 /// Waits for this process to exit, ejects the volume only if it is a mounted
@@ -204,12 +219,28 @@ mod tests {
     }
 
     #[test]
-    fn the_mounted_disk_image_is_on_another_volume_than_temp() {
-        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app");
-        if dmg.exists() {
-            assert!(!same_volume(dmg, &std::env::temp_dir()));
-        }
-        assert!(same_volume(&std::env::temp_dir(), &std::env::temp_dir()));
+    fn a_mounted_disk_image_is_on_another_volume_than_temp() {
+        let root = std::env::temp_dir().join(format!("eavesy-dmg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let image = root.join("test.dmg");
+        let mount = root.join("mount");
+        let run = |args: &[&std::ffi::OsStr]| Command::new("hdiutil").args(args).status().unwrap().success();
+        assert!(run(&["create".as_ref(), "-quiet".as_ref(), "-size".as_ref(), "2m".as_ref(), "-fs".as_ref(), "HFS+".as_ref(), image.as_os_str()]));
+        assert!(run(&["attach".as_ref(), "-quiet".as_ref(), "-nobrowse".as_ref(), "-readonly".as_ref(), "-mountpoint".as_ref(), mount.as_os_str(), image.as_os_str()]));
+        let differs = !same_volume(&mount, &std::env::temp_dir());
+        let same = same_volume(&root, &std::env::temp_dir());
+        run(&["detach".as_ref(), "-quiet".as_ref(), mount.as_os_str()]);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(differs);
+        assert!(same);
+    }
+
+    #[test]
+    fn cancelling_the_password_prompt_is_not_an_error() {
+        assert_eq!(admin_copy_outcome(true, ""), Ok(true));
+        assert_eq!(admin_copy_outcome(false, "execution error: User canceled. (-128)"), Ok(false));
+        assert_eq!(admin_copy_outcome(false, "  "), Err("copying to Applications failed".into()));
+        assert_eq!(admin_copy_outcome(false, "ditto: no space\n"), Err("ditto: no space".into()));
     }
 
     #[test]

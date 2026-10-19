@@ -8,6 +8,9 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::install_location::MOVE_TO_APPLICATIONS;
 
+/// Returned while the Move to Applications prompt is on screen, which already explains itself.
+const MOVED_PROMPTED: &str = "Move Eavesy to Applications first, then update again.";
+
 const RECHECK: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 /// Emitted with an [`UpdateStatus`] whenever a check finishes.
 pub const EVENT_UPDATE_STATUS: &str = "launcher:update-status";
@@ -183,6 +186,9 @@ pub fn check_interactively(app: &AppHandle) {
 fn install_and_report(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(message) = install_update(app.clone()).await {
+            if message == MOVED_PROMPTED {
+                return;
+            }
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 crate::app_menu::present(&handle);
@@ -216,7 +222,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
             misplaced,
             "Eavesy can't update itself while it runs from the disk image. Move it to Applications? Then click Update again.",
         );
-        return Err(MOVE_TO_APPLICATIONS.into());
+        return Err(MOVED_PROMPTED.into());
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
