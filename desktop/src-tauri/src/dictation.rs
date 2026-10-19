@@ -4,9 +4,19 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
+/// The app the user was in, and whether a text box in it was seen focused.
+/// Accessibility often can't see the text box in browsers and Electron apps,
+/// or answers too slowly, so the app is what decides whether to paste.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Target {
     pid: i32,
+    text_box: bool,
+}
+
+impl Target {
+    fn same_app(self, other: Target) -> bool {
+        self.pid == other.pid
+    }
 }
 
 static PRESSED: Mutex<Option<(Instant, Target)>> = Mutex::new(None);
@@ -16,13 +26,13 @@ const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 pub fn note_shortcut_press() {
-    let target = focused_text_target();
+    let target = focused_target();
     *PRESSED.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (Instant::now(), t));
 }
 
 pub fn arm(session_id: &str) {
     let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let target = pick_target(pressed, focused_text_target);
+    let target = pick_target(pressed, focused_target);
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
@@ -31,13 +41,16 @@ pub fn arm(session_id: &str) {
 /// keeps the box it started in. Either way the paste window runs from now.
 pub fn rearm_at_stop(session_id: &str) {
     let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let now = pick_target(pressed, focused_text_target);
+    let now = pick_target(pressed, focused_target);
     let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
     let started_in = pending
         .as_ref()
         .filter(|(id, _, _)| id == session_id)
         .map(|(_, _, target)| *target);
-    *pending = now.or(started_in).map(|t| (session_id.to_string(), Instant::now(), t));
+    // A recording that isn't a dictation can run for an hour: it pastes only
+    // into a text box Eavesy actually saw, never just into whatever app is open.
+    let in_text_box = |t: &Target| t.text_box;
+    *pending = now.filter(in_text_box).or(started_in.filter(in_text_box)).map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
 fn pick_target(pressed: Option<(Instant, Target)>, now: impl FnOnce() -> Option<Target>) -> Option<Target> {
@@ -102,11 +115,14 @@ fn get_launcher_out_of_the_way(app: &AppHandle) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Pasted,
+    /// Pasted into the same app, but no text box could be confirmed there, so
+    /// the words stay on the clipboard too.
+    PastedAndCopied,
     /// Typed into Eavesy's own panel (the setup's practice box), which has focus.
     InEavesy,
     /// On the clipboard: Eavesy may not paste (no Accessibility permission).
     CopiedNoAccessibility,
-    /// On the clipboard: the cursor is not in a text box any more.
+    /// On the clipboard: the user is in a different app now.
     CopiedNoTextBox,
 }
 
@@ -114,17 +130,22 @@ impl Delivery {
     /// What the HUD says, or None to show the words themselves.
     pub fn notice(self) -> Option<&'static str> {
         match self {
-            Delivery::Pasted | Delivery::InEavesy => None,
+            Delivery::Pasted | Delivery::PastedAndCopied | Delivery::InEavesy => None,
             Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
             Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
         }
     }
 }
 
+/// Pastes whenever the user is still in the app they started in. A text box
+/// seen at either end means the paste is sure to land; otherwise the words
+/// also stay on the clipboard.
 fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> Delivery {
-    match (trusted, target) {
-        (false, _) => Delivery::CopiedNoAccessibility,
-        (true, Some(target)) if focused == Some(target) => Delivery::Pasted,
+    match (trusted, target, focused) {
+        (false, _, _) => Delivery::CopiedNoAccessibility,
+        (true, Some(target), Some(now)) if target.same_app(now) => {
+            if target.text_box || now.text_box { Delivery::Pasted } else { Delivery::PastedAndCopied }
+        }
         _ => Delivery::CopiedNoTextBox,
     }
 }
@@ -146,7 +167,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {
-            delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
+            delivery(accessibility_trusted(), target, target.and_then(|_| focused_target()))
         };
         match how {
             Delivery::InEavesy => {
@@ -156,9 +177,14 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                     how = Delivery::CopiedNoTextBox;
                 }
             }
-            Delivery::Pasted => {
+            Delivery::Pasted | Delivery::PastedAndCopied => {
                 get_launcher_out_of_the_way(&app);
-                if crate::commands::paste_text(&app, &text).is_err() {
+                let pasted = if how == Delivery::Pasted {
+                    crate::commands::paste_text(&app, &text)
+                } else {
+                    crate::commands::paste_text_and_keep(&app, &text)
+                };
+                if pasted.is_err() {
                     // Say what actually stopped it: the permission, or anything else.
                     how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
                 }
@@ -269,7 +295,8 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     let text = text.trim().to_string();
     std::thread::spawn(move || {
         get_launcher_out_of_the_way(&app);
-        if focused_text_target() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
+        let in_the_box = focused_target().is_some_and(|now| now.text_box && now.same_app(target));
+        if in_the_box && crate::commands::paste_text(&app, &text).is_ok() {
             return;
         }
         use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -336,32 +363,51 @@ pub fn press_paste() -> Result<(), String> {
     Err("pasting is only supported on macOS".to_string())
 }
 
+/// The app in front, unless it is Eavesy, and whether a text box in it has
+/// focus. The app comes from the window server, which always answers; the
+/// text box from Accessibility, which may not.
 #[cfg(target_os = "macos")]
-fn focused_text_target() -> Option<Target> {
-    use ax::*;
-    unsafe {
-        if !AXIsProcessTrusted() {
-            return None;
-        }
-        let system = Owned(AXUIElementCreateSystemWide());
-        AXUIElementSetMessagingTimeout(system.0, 0.25);
-        let app = Owned(copy_attribute(system.0, "AXFocusedApplication")?);
-        let mut pid = 0;
-        if AXUIElementGetPid(app.0, &mut pid) != 0 || pid == std::process::id() as i32 {
-            return None;
-        }
-        let text_focused = || copy_attribute(app.0, "AXFocusedUIElement").map(Owned).is_some_and(|el| is_text_input(el.0));
-        if text_focused() {
-            return Some(Target { pid });
-        }
-        if enable_manual_accessibility(app.0) {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            if text_focused() {
-                return Some(Target { pid });
-            }
-        }
-        None
+fn focused_target() -> Option<Target> {
+    let pid = frontmost_pid()?;
+    if pid == std::process::id() as i32 {
+        return None;
     }
+    Some(Target { pid, text_box: unsafe { text_box_focused(pid) } })
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
+fn frontmost_pid() -> Option<i32> {
+    use tauri_nspanel::cocoa::base::{id, nil};
+    use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let front: id = msg_send![workspace, frontmostApplication];
+        if front == nil {
+            return None;
+        }
+        let pid: i32 = msg_send![front, processIdentifier];
+        (pid > 0).then_some(pid)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn text_box_focused(pid: i32) -> bool {
+    use ax::*;
+    if !AXIsProcessTrusted() {
+        return false;
+    }
+    let app = Owned(AXUIElementCreateApplication(pid));
+    AXUIElementSetMessagingTimeout(app.0, 0.25);
+    let text_focused = || copy_attribute(app.0, "AXFocusedUIElement").map(Owned).is_some_and(|el| is_text_input(el.0));
+    if text_focused() {
+        return true;
+    }
+    if enable_manual_accessibility(app.0) {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return text_focused();
+    }
+    false
 }
 
 #[cfg(target_os = "macos")]
@@ -373,7 +419,7 @@ unsafe fn is_text_input(element: ax::CFTypeRef) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn focused_text_target() -> Option<Target> {
+fn focused_target() -> Option<Target> {
     None
 }
 
@@ -385,10 +431,9 @@ mod ax {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         pub fn AXIsProcessTrusted() -> bool;
-        pub fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        pub fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
         fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
         fn AXUIElementIsAttributeSettable(element: CFTypeRef, attribute: CFTypeRef, settable: *mut u8) -> i32;
-        pub fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> i32;
         pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
         fn AXUIElementSetAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: CFTypeRef) -> i32;
     }
@@ -428,21 +473,27 @@ mod tests {
 
     #[test]
     fn only_the_armed_recording_delivers() {
-        *PENDING.lock().unwrap() = Some(("a".into(), Instant::now(), Target { pid: 42 }));
+        *PENDING.lock().unwrap() = Some(("a".into(), Instant::now(), Target { pid: 42, text_box: true }));
         assert_eq!(take_pending("b"), None);
-        assert_eq!(take_pending("a"), Some(Target { pid: 42 }));
+        assert_eq!(take_pending("a"), Some(Target { pid: 42, text_box: true }));
         assert_eq!(take_pending("a"), None);
         if let Some(old) = Instant::now().checked_sub(DELIVER_WINDOW) {
-            *PENDING.lock().unwrap() = Some(("c".into(), old, Target { pid: 42 }));
+            *PENDING.lock().unwrap() = Some(("c".into(), old, Target { pid: 42, text_box: true }));
             assert_eq!(take_pending("c"), None);
         }
     }
 
     #[test]
-    fn a_dictation_pastes_only_into_the_box_it_was_in_and_otherwise_copies() {
-        let box_a = Some(Target { pid: 7 });
+    fn a_dictation_pastes_into_the_app_it_was_in_and_otherwise_copies() {
+        let box_a = Some(Target { pid: 7, text_box: true });
+        let unseen_a = Some(Target { pid: 7, text_box: false });
         assert_eq!(delivery(true, box_a, box_a), Delivery::Pasted);
-        assert_eq!(delivery(true, box_a, Some(Target { pid: 8 })), Delivery::CopiedNoTextBox);
+        assert_eq!(delivery(true, unseen_a, box_a), Delivery::Pasted);
+        assert_eq!(delivery(true, box_a, unseen_a), Delivery::Pasted);
+        // A browser or Electron app whose text box Accessibility can't see still gets the words.
+        assert_eq!(delivery(true, unseen_a, unseen_a), Delivery::PastedAndCopied);
+        assert_eq!(delivery(true, box_a, Some(Target { pid: 8, text_box: true })), Delivery::CopiedNoTextBox);
+        assert_eq!(delivery(true, box_a, None), Delivery::CopiedNoTextBox);
         assert_eq!(delivery(true, None, None), Delivery::CopiedNoTextBox);
         // Without Accessibility there is no target and no way to paste.
         assert_eq!(delivery(false, None, None), Delivery::CopiedNoAccessibility);
@@ -452,10 +503,10 @@ mod tests {
 
     #[test]
     fn recent_press_wins_and_stale_press_falls_back() {
-        let fresh = Some((Instant::now(), Target { pid: 7 }));
-        assert_eq!(pick_target(fresh, || Some(Target { pid: 9 })), Some(Target { pid: 7 }));
+        let fresh = Some((Instant::now(), Target { pid: 7, text_box: true }));
+        assert_eq!(pick_target(fresh, || Some(Target { pid: 9, text_box: true })), Some(Target { pid: 7, text_box: true }));
         if let Some(old) = Instant::now().checked_sub(PRESS_WINDOW + Duration::from_secs(1)) {
-            assert_eq!(pick_target(Some((old, Target { pid: 7 })), || Some(Target { pid: 9 })), Some(Target { pid: 9 }));
+            assert_eq!(pick_target(Some((old, Target { pid: 7, text_box: true })), || Some(Target { pid: 9, text_box: true })), Some(Target { pid: 9, text_box: true }));
         }
         assert_eq!(pick_target(None, || None), None);
     }

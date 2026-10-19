@@ -64,6 +64,16 @@ fn restore() -> std::sync::MutexGuard<'static, Restore> {
 }
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
+    paste(app, text, true)
+}
+
+/// Pastes and leaves the words on the clipboard, for when Eavesy can't be
+/// sure the paste landed in a text box: ⌘V gets them back.
+pub fn paste_text_and_keep(app: &AppHandle, text: &str) -> Result<(), String> {
+    paste(app, text, false)
+}
+
+fn paste(app: &AppHandle, text: &str, restore_after: bool) -> Result<(), String> {
     let on_clipboard = app.clipboard().read_text().ok();
     let (generation, previous) = {
         let mut restore = restore();
@@ -95,6 +105,11 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
                 .show();
             return Err(message);
         }
+    }
+
+    if !restore_after {
+        restore().pending = None;
+        return Ok(());
     }
 
     // The key press is posted, not awaited: give the app time to read the
