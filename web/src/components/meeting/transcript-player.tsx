@@ -602,7 +602,11 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
         target,
         onPage: (entries) => setDone((previous) => mergeTranslations(previous, sources, entries)),
       });
-      const tried = result.complete || result.ids.size === 0 ? [...sources.keys()] : [...result.ids];
+      if (!result.complete && result.ids.size === 0) {
+        setError('Could not translate every line. Try again later.');
+        return;
+      }
+      const tried = result.complete ? [...sources.keys()] : [...result.ids];
       for (const id of tried) attempted.current.add(`${id}\n${sources.get(id)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not translate.');
