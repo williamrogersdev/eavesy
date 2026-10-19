@@ -1,9 +1,10 @@
 'use client';
 
 import { Plus, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cleanList, PROJECT_LIMITS } from '@/lib/projects';
 import { cn } from '@/lib/utils';
+import { addTerms, keyDraft, typeDraft } from './term-list';
 
 /** A list of short terms: type and press Enter or comma to add, × to remove. */
 export function TermInput({
@@ -22,11 +23,14 @@ export function TermInput({
   suggestions?: string[];
 }) {
   const [draft, setDraft] = useState('');
-  const add = (raw: string) => {
-    const terms = raw.split(',').map((term) => term.trim()).filter(Boolean);
-    if (terms.length === 0) return;
-    onChange(cleanList([...value, ...terms], max));
-    setDraft('');
+  const latest = useRef(value);
+  useEffect(() => {
+    latest.current = value;
+  }, [value]);
+  const update = (next: string[] | null) => {
+    if (!next) return;
+    latest.current = next;
+    onChange(next);
   };
   const offered = suggestions.filter((term) => !value.some((existing) => existing.toLowerCase() === term.toLowerCase()));
   return (
@@ -39,7 +43,7 @@ export function TermInput({
             {term}
             <button
               type="button"
-              onClick={() => onChange(value.filter((item) => item !== term))}
+              onClick={() => update(latest.current.filter((item) => item !== term))}
               aria-label={`Remove ${term}`}
               className="text-ev-ink-2 hover:text-ev-ink"
             >
@@ -50,19 +54,22 @@ export function TermInput({
         <input
           value={draft}
           onChange={(event) => {
-            const next = event.target.value;
-            if (next.endsWith(',')) add(next);
-            else setDraft(next);
+            const next = typeDraft(latest.current, event.target.value, max);
+            update(next.list);
+            setDraft(next.draft);
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              add(draft);
-            } else if (event.key === 'Backspace' && !draft && value.length > 0) {
-              onChange(value.slice(0, -1));
-            }
+            const next = keyDraft(latest.current, draft, event.key, max);
+            if (next.handled) event.preventDefault();
+            update(next.list);
+            setDraft(next.draft);
           }}
-          onBlur={() => add(draft)}
+          onBlur={() => {
+            const next = addTerms(latest.current, draft, max);
+            if (!next) return;
+            update(next);
+            setDraft('');
+          }}
           maxLength={PROJECT_LIMITS.term}
           aria-label={label}
           placeholder={value.length >= max ? '' : placeholder}
@@ -77,7 +84,7 @@ export function TermInput({
             <button
               key={term}
               type="button"
-              onClick={() => onChange(cleanList([...value, term], max))}
+              onClick={() => update(cleanList([...latest.current, term], max))}
               className={cn('inline-flex items-center gap-0.5 rounded border border-dashed border-ev-line px-1.5 py-0.5 font-mono hover:bg-[var(--ev-hover)] hover:text-ev-ink')}
             >
               <Plus className="h-3 w-3" />

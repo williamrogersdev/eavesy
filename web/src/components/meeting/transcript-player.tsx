@@ -6,6 +6,14 @@ import { useMe } from '@/lib/api/use-me';
 import { isNotesLanguage, languageName } from '@/lib/transcription/language';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
+import {
+  mergeTranslations,
+  requestTranslations,
+  spokenLanguages,
+  toggleTranslation,
+  translationFor,
+  type Translations,
+} from './transcript-translation';
 
 export interface TranscriptLine {
   id: string;
@@ -548,22 +556,10 @@ function CopyText({ text, label, title }: { text: string; label: string; title?:
   );
 }
 
-/** Each request translates a few hundred lines; a long meeting takes a few. */
-const MAX_TRANSLATE_PAGES = 20;
-
 function browserLanguage(): string {
   if (typeof navigator === 'undefined') return 'en';
   const code = navigator.language.split('-')[0]?.toLowerCase() ?? '';
   return isNotesLanguage(code) ? code : 'en';
-}
-
-/** The languages heard in these lines, most spoken first. */
-function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
-  const weight = new Map<string, number>();
-  for (const line of lines) {
-    if (line.language) weight.set(line.language, (weight.get(line.language) ?? 0) + line.text.length);
-  }
-  return [...weight].sort((a, b) => b[1] - a[1]).map(([language]) => language);
 }
 
 /**
@@ -574,7 +570,7 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
   const [showing, setShowing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<Record<string, { source: string; text: string }>>({});
+  const [done, setDone] = useState<Translations>({});
   const inFlight = useRef(false);
   const autoStarted = useRef(false);
   const attempted = useRef(new Set<string>());
@@ -601,30 +597,11 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
     setError(null);
     const sources = new Map(lines.map((line) => [line.id, line.text]));
     try {
-      let previousCount = -1;
-      for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
-        const res = await fetch(`/api/meetings/${meetingId}/translate`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ to: target }),
-        });
-        if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
-        const body: unknown = await res.json();
-        const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
-        const translatedLines =
-          typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
-        setDone((previous) => {
-          const next = { ...previous };
-          for (const [id, text] of translatedLines) {
-            const source = sources.get(id);
-            if (source !== undefined && typeof text === 'string') next[id] = { source, text };
-          }
-          return next;
-        });
-        const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
-        if (remaining === 0 || translatedLines.length === previousCount) break;
-        previousCount = translatedLines.length;
-      }
+      await requestTranslations({
+        meetingId,
+        target,
+        onPage: (entries) => setDone((previous) => mergeTranslations(previous, sources, entries)),
+      });
       for (const [id, text] of sources) attempted.current.add(`${id}\n${text}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not translate.');
@@ -655,18 +632,13 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
     loading,
     error,
     toggle: () => {
-      if (showing) {
-        setShowing(false);
-        return;
-      }
-      setShowing(true);
+      const next = toggleTranslation(showing, untried);
+      setShowing(next.showing);
+      if (!next.showing) return;
       setError(null);
-      if (untried > 0) void load();
+      if (next.load) void load();
     },
-    textFor: (line: TranscriptLine) => {
-      const entry = done[line.id];
-      return entry && entry.source === line.text && entry.text !== line.text ? entry.text : undefined;
-    },
+    textFor: (line: TranscriptLine) => translationFor(done, line),
   };
 }
 
