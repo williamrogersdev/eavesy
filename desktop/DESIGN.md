@@ -136,8 +136,8 @@ empty states (72px) and onboarding (96px) get the full figure plus bubbles. It
 never animates to ask for attention.
 
 **Where it appears**
-- **HUD:** 18px, left side of the bar, live state. It replaces the red dot:
-  the coral light shows as a dot at its lower right while recording.
+- **HUD:** 22px in cream, left side of the pill, live state. It wears the
+  coral lens while recording.
 - **Title bar:** 18px, low detail, idle/sleeping. It doesn't react to clicks.
 - **Empty states:** 72px with a speech bubble.
 - **Onboarding guide:** 96px. It walks you through each step and changes
@@ -193,8 +193,8 @@ alias block so old classes still work.
   --ev-leaf-soft:  #DDF1E5;
   --ev-warn-ink:   #9A5B00;  /* errors use warn, not coral: coral means recording */
   --ev-warn-soft:  #FFF0D6;
-  /* HUD glass (same in both modes: it sits over any app) */
-  --ev-hud:        rgb(33 28 26 / 0.66);  /* over backdrop-filter: blur(30px) saturate(160%) */
+  /* HUD pill (same in both modes: it sits over any app) */
+  --ev-hud:        rgb(22 19 18 / 0.97);  /* solid pill, no vibrancy */
   --ev-hud-line:   rgb(255 240 220 / 0.14);
   --ev-hud-ink:    #F6EFE4;
   --ev-hud-ink-2:  rgb(246 239 228 / 0.62);
@@ -256,8 +256,8 @@ for transcripts and long text (SF Pro reads better at length). Numbers use
 
 **Radii:** radius grows with the container. `--ev-r-kbd: 5px`,
 `--ev-r-ctl: 9px` (buttons, inputs, chips use pill `999px`), `--ev-r-media: 8px`,
-`--ev-r-pop: 12px`, `--ev-r-panel: 16px`, `--ev-r-hud: 999px` (bar) /
-`16px` (transcript sheet).
+`--ev-r-pop: 12px`, `--ev-r-panel: 16px`, `--ev-r-hud: 999px` (bars); the HUD
+pill itself is r20, r22 when wide.
 
 **Elevation** (always charcoal-tinted, never neutral grey):
 `--ev-e-1: 0 1px 0 rgb(33 28 26 / .05)` (pressed-in well, inset),
@@ -414,26 +414,41 @@ Storage (folder path with Change button), Permissions (status rows with leaf
 check or warn "Turn on" button). Group bodies sit on `--ev-raised`, r12,
 hairline-separated rows. These are the only card-like containers in the app.
 
-**HUD (floating, compact 300 × 34 bar plus an optional transcript sheet).**
-It's translucent vibrancy glass like Control Center, not a solid pill. It
-shows no labels until hovered, except the timer.
+**HUD (floating pill, one fixed size per phase).** A solid charcoal pill
+(`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
+CSS draws its corners so the shadow and the shape always match. Rust picks the
+window size from the phase (`hud::size_for`) and animates the native frame
+once per phase change. Content never measures itself or resizes the window, so
+the pill can't jitter or flip while words arrive.
+
+| Size | Px | Used for |
+|---|---|---|
+| pill | 248 × 40 | idle, saved, video recording, a plain "Saved" |
+| wide | 360 × 64 | recording and writing (one ticker line), pasted/copied, failed |
+| shot | 360 × 172 | a screenshot, with its thumbnail |
+
 ```
- ╭────────────────────────────────────────────╮
- │ [m] Listening 0:07  ▁▃▅▂     ⏹   ✕         │ 34, r999, --ev-hud glass
- ╰────────────────────────────────────────────╯
-   ╭────────────────────────────────────────╮   gap 6
-   │ …so the plan is we ship the redesign   │   transcript sheet, r16
-   │ on Thursday and ┃ask Sam for the deck  │   max 3 lines, newest bottom
-   ╰────────────────────────────────────────╯
+ ╭──────────────────────────────────────────────────╮
+ │ [snoop] ● 1:18  ▁▃▅▂▁                   [■ Stop] │ 40, r20
+ │         …Thursday and ask Sam for the deck before│ ticker, newest at the right
+ ╰──────────────────────────────────────────────────╯
 ```
-The mascot follows mic level with a coral dot at its lower right. The timer
-is tabular. The sheet slides down 6px and fades in over 240ms when the first
-words arrive and never before, so no empty box flashes. Final words are
-`--ev-hud-ink` and provisional words are `--ev-hud-ink-2`, with a caret
-blinking at the end. The text is 13.5/19 text font. When the mascot is
-`thinking`, the bar reads "Writing it down…". When it's `happy`, the bar
-reads "Pasted" and the HUD fades out after 1.2s. That's the only thing that
-happens.
+The snoop is cream on the charcoal (`.ctl-mark`) and wears the coral lens
+only while recording; its hat and the five voice bars follow the mic level.
+The coral dot, the coral ring and the coral Stop are the only red, and only
+while the mic is live. The ticker is one line of 12.5/18 text, clipped from
+the start with a soft left fade so the newest words stay in view. Before the
+first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
+
+After stop the top row reads "Writing it down…" and the ticker shimmers. The
+result lands as a **rubber stamp** on the case file, rotated −4° with a short
+spring: **Pasted** (leaf), **Copied** (manila) or **Not pasted** (warn, with
+an Allow button for Accessibility), followed by the words that went out and
+a Copy button. Screenshots stamp **Snapped** above the thumbnail; saves stamp
+**Saved**. Failures read "Didn't catch that" in warn, never coral. The HUD
+dismisses itself 3.5s (pill) or 7s (wide) after the result, or 2.5s after the
+pointer leaves it. A HUD low on the screen keeps its bottom edge when it
+grows, so it never moves away from where it was.
 
 ## 6. Capture lifecycle: height-stable and without view switches
 
@@ -444,9 +459,9 @@ the default flow.
 
 1. **Start** (hotkey, Talk, Meeting, or HUD): the HUD owns the session and
    turns red once the mic is live, with a quiet start sound (Settings →
-   Sounds). Its transcript sheet opens with it and echoes the words as they
-   are heard, in the quieter ink ("Your words show up here as you talk"
-   until the first one), and stays open through "Writing it down…". The panel
+   Sounds). Its ticker echoes the words as they are heard, in the quieter
+   ink (the listening hint until the first one), and stays through "Writing
+   it down…". The panel
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.
@@ -458,12 +473,10 @@ the default flow.
    moment the key is pressed, before the paste target is looked up. The live
    bar shows the same, without Stop.
 4. **Done:** the finished capture grows into the top of "Today" and the
-   toolbar comes back. The HUD shows "✓ Pasted" (or "Saved") over the words,
-   older lines fading under the bar instead of being cut. A control in the
-   lower half of the screen opens its transcript above the bar, so the bar
-   never moves.
+   toolbar comes back. The HUD stamps "Pasted" (or "Copied", "Saved") over
+   the words that went out, at the same size it had while recording.
 5. **Failure / no speech:** the warn-coloured line with its fix button. The
-   HUD shows `confused` for 1.6s.
+   HUD shows `confused` and "Didn't catch that".
 6. **The full recording view** is reachable only on purpose: "Open live
    view" in the HUD menu. It isn't used for
    dictation.

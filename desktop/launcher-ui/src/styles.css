@@ -134,220 +134,236 @@ body {
   }
 }
 
-/* HUD: a dark glass pill that floats over whatever is on screen, in both
-   appearances (DESIGN.md → HUD). Red only while the mic is live. */
+/* HUD: a charcoal pill that floats over whatever is on screen, in both
+   appearances (DESIGN.md → HUD). It draws its own shape, so the window and
+   the pill always agree. Coral only while the mic is live. */
 .eavesy-control {
+  --ctl-ink: #f2ebdf;
+  --ctl-ink-2: rgb(242 235 223 / 0.58);
+  --ctl-ink-3: rgb(242 235 223 / 0.36);
+  --ctl-hover: rgb(255 248 238 / 0.09);
+  --ctl-line: rgb(255 240 220 / 0.09);
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  border-radius: var(--ev-r-hud);
-  border: 1px solid var(--ev-hud-line);
+  border-radius: 20px;
   background: var(--ev-hud);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
-  color: var(--ev-hud-ink);
-  font: var(--ev-t-ui);
-  font-size: 12px;
+  box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  color: var(--ctl-ink);
+  font: 550 12.5px/16px var(--ev-font-round);
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  transition: border-color var(--ev-d-state) ease;
+  transition: box-shadow var(--ev-d-state) ease;
 }
-/* A window taller than one bar (the transcript, or a tall control): a card, not a pill. */
-@media (min-height: 68px) { .eavesy-control { border-radius: 16px; } }
-/* A sheet open under (or over) the bar: square off into a card. */
-.eavesy-control:has(.ctl-sheet) { border-radius: 16px; }
+.eavesy-control[data-size="wide"] { border-radius: 22px; }
+.eavesy-control[data-size="shot"] { border-radius: 20px; }
 .eavesy-control[data-phase="recording"] {
-  border-color: color-mix(in srgb, var(--ev-rec) 80%, transparent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 0 0 1px color-mix(in srgb, var(--ev-rec) 35%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 42%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
-/* Low on the screen the sheet opens above the bar, which stays put. */
-.eavesy-control[data-grow="up"] { flex-direction: column-reverse; }
 
-/* The bar never gives up its height: until the window has grown, the sheet
-   is the part that waits, never drawn over the bar. */
-.ctl-bar {
-  container-type: size;
-  flex: 1 1 auto;
-  min-height: 38px;
-}
-.ctl-sheet {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  border-top: 1px solid var(--ev-hud-line);
-  font: var(--ev-t-body);
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--ev-hud-ink);
-  user-select: text;
-  -webkit-user-select: text;
-}
-.eavesy-control[data-grow="up"] .ctl-sheet { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
-.ctl-sheet-content { padding: 9px 12px 9px 14px; }
-.ctl-sheet-content > p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.ctl-sheet-content > p + p { margin-top: 4px; }
-/* While recording the words sit back: a quiet echo of what is being heard. */
-.eavesy-control[data-phase="recording"] .ctl-sheet { color: var(--ev-hud-ink-2); }
-.ctl-sheet-hint { font-style: italic; opacity: 0.75; }
-.ctl-sheet-notice { color: #9fe0bd; font-weight: 600; font-size: 11.5px; }
-.eavesy-control[data-phase="failed"] .ctl-sheet-notice { color: #ffc9b5; }
-/* What to do with what was just captured, kept in view under the words. */
-.ctl-sheet-footer {
-  position: sticky;
-  bottom: 0;
+.ctl-top {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 2px;
-  margin: 6px -6px -9px 0;
-  padding: 4px 0 6px;
-  background: var(--ev-hud);
-  user-select: none;
-  -webkit-user-select: none;
+  gap: 4px;
+  height: 40px;
+  padding: 0 7px 0 6px;
+  white-space: nowrap;
 }
-.ctl-sheet-footer .ctl-sheet-notice { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctl-sheet-spacer { flex: 1; }
-.ctl-sheet-btn { flex: none; padding: 0 8px; color: var(--ev-hud-ink); font-size: 12px; white-space: nowrap; }
-.ctl-shot {
-  display: block;
-  width: 100%;
-  padding: 0;
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgb(255 255 255 / 0.06);
-  cursor: zoom-in;
+.eavesy-control[data-size="wide"] .ctl-top,
+.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding-top: 2px; }
+.ctl-below {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 16px 9px 44px;
 }
-.ctl-shot img { display: block; width: 100%; max-height: 150px; object-fit: contain; }
-.ctl-shot-wait { display: block; height: 96px; }
+.eavesy-control[data-size="shot"] .ctl-below { padding: 2px 8px 8px; }
+.ctl-fill { flex: 1 1 auto; min-width: 4px; }
 
-.ctl-grid {
-  display: grid;
-  height: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  grid-template-areas: "mark title actions tools";
-  align-items: center;
-  gap: 2px;
-  padding: 0 8px 0 5px;
-}
+/* The snoop, in cream on the charcoal. */
 .ctl-mark {
-  grid-area: mark;
+  --ev-mascot-body: #f2ebdf;
+  --ev-mascot-band: #9e9389;
+  --ev-mascot-eye: #161312;
   display: grid;
+  flex: none;
   place-items: center;
-  width: 26px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  transition: background var(--ev-d-press) ease;
+}
+.ctl-mark:hover { background: var(--ctl-hover); }
+
+.ctl-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   height: 26px;
-  margin-right: 4px;
-  border-radius: 9999px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--ctl-ink-2);
+  font: inherit;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
 }
-.ctl-mark:hover { background: rgb(255 255 255 / 0.12); }
-.ctl-timer {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--ev-hud-ink);
+.ctl-btn:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-btn:disabled { opacity: 0.35; }
+.ctl-icon { width: 26px; padding: 0; }
+.ctl-talk { color: var(--ctl-ink); padding: 0 6px 0 8px; }
+.ctl-kbd {
+  margin-left: 1px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgb(255 248 238 / 0.08);
+  color: var(--ctl-ink-3);
+  font: 600 10.5px/16px var(--ev-font-round);
 }
+.ctl-sep { flex: none; width: 1px; height: 14px; margin: 0 3px; background: var(--ctl-line); }
+
+.ctl-stop {
+  height: 26px;
+  padding: 0 11px 0 10px;
+  background: var(--ev-rec);
+  color: #fff;
+  font-weight: 650;
+}
+.ctl-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 86%, #fff); color: #fff; }
+
+.ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
+.ctl-quiet { color: var(--ctl-ink-2); }
+.ctl-warn { color: #ffc870; }
+
 /* The one unmistakable sign the mic is live. */
 .ctl-rec {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 0 3px;
+  border-radius: 999px;
   background: var(--ev-rec);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent);
-  animation: ctl-rec-pulse 1.4s ease-out infinite;
+  animation: ctl-rec-pulse 1.6s ease-out infinite;
 }
 @keyframes ctl-rec-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent); }
-  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 5px transparent; }
 }
-.ctl-done { display: inline-flex; align-items: center; gap: 4px; color: #9fe0bd; font-weight: 600; }
-.ctl-writing { animation: ctl-breathe 1.2s ease-in-out infinite; }
-@keyframes ctl-breathe { 50% { opacity: 0.55; } }
-.eavesy-control[data-phase="recording"] .ctl-stop { color: #fff; background: var(--ev-rec); padding: 0 9px; }
-.eavesy-control[data-phase="recording"] .ctl-stop:hover:not(:disabled) { color: #fff; background: color-mix(in srgb, var(--ev-rec) 85%, #fff); }
-.ctl-stop .ctl-label { display: inline; }
-@media (prefers-reduced-motion: reduce) {
-  .ctl-rec, .ctl-writing { animation: none; }
-}
-.ctl-quiet { color: var(--ev-hud-ink-2); }
-.ctl-error {
-  min-width: 0;
-  white-space: normal;
-  line-height: 1.2;
-  color: #ffc9b5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.ctl-timer {
+  flex: none;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
 }
 
-.ctl-title {
-  grid-area: title;
-  display: flex;
-  min-width: 0;
+.ctl-bars {
+  display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  white-space: nowrap;
+  gap: 2px;
+  height: 16px;
+  margin-left: 6px;
 }
-/* Clips from the start, so the newest words stay in view. */
-.ctl-caption {
+.ctl-bars > i {
+  width: 2.5px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--ctl-ink-2);
+  transform-origin: center;
+  transform: scaleY(calc(0.28 + var(--lvl, 0) * 0.5));
+  animation: ctl-bar 0.9s ease-in-out infinite alternate;
+  transition: transform 120ms linear;
+}
+.ctl-bars > i:nth-child(2) { animation-delay: -0.3s; }
+.ctl-bars > i:nth-child(3) { animation-delay: -0.6s; }
+.ctl-bars > i:nth-child(4) { animation-delay: -0.15s; }
+.ctl-bars > i:nth-child(5) { animation-delay: -0.45s; }
+@keyframes ctl-bar {
+  from { transform: scaleY(calc(0.25 + var(--lvl, 0) * 0.25)); }
+  to { transform: scaleY(calc(0.42 + var(--lvl, 0) * 0.58)); }
+}
+
+/* One line of words: clipped from the start, so the newest stay in view. */
+.ctl-line {
   min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12.5px/18px var(--ev-font-text);
+}
+.ctl-ticker {
+  flex: 1 1 auto;
   direction: rtl;
+  text-overflow: clip;
   text-align: left;
+  color: var(--ctl-ink-2);
 }
-.ctl-caption { flex: 1 1 0; }
-.ctl-caption > bdi { direction: ltr; }
-.ctl-caption { color: var(--ev-hud-ink-2); }
-.ctl-caption[data-final] { color: var(--ev-hud-ink); }
-.ctl-caption-label { margin-right: 4px; color: rgb(255 255 255 / 0.5); font-weight: 600; }
-.ctl-actions,
-.ctl-tools { display: flex; align-items: center; gap: 1px; }
-.ctl-actions { grid-area: actions; }
-.ctl-tools { grid-area: tools; }
-.ctl-tools::before {
-  content: "";
-  width: 1px;
-  height: 14px;
-  margin: 0 3px;
-  background: rgb(255 255 255 / 0.14);
+.ctl-ticker:has(bdi) {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px);
+  mask-image: linear-gradient(90deg, transparent, #000 32px);
 }
-.ctl-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  min-width: 24px;
-  justify-content: center;
-  padding: 0 5px;
-  border-radius: 9999px;
-  color: var(--ev-hud-ink-2);
-  font-weight: 500;
+.ctl-ticker > bdi { direction: ltr; }
+.ctl-hint { direction: ltr; unicode-bidi: isolate; color: var(--ctl-ink-3); }
+.ctl-ticker[data-working] {
+  background: linear-gradient(90deg, var(--ctl-ink-3) 0%, var(--ctl-ink) 50%, var(--ctl-ink-3) 100%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ctl-shimmer 1.6s linear infinite;
 }
-.ctl-btn:hover:not(:disabled) { background: rgb(255 255 255 / 0.12); color: #fff; }
-.ctl-btn:disabled { opacity: 0.4; }
-.ctl-close:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); }
-.ctl-label { display: none; }
+@keyframes ctl-shimmer { to { background-position: -200% 0; } }
+.ctl-words { flex: 1 1 auto; color: var(--ctl-ink); }
 
-@container (min-width: 380px) {
-  .ctl-label { display: inline; }
+.ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
+.ctl-dots > i { width: 3px; height: 3px; border-radius: 999px; background: currentColor; animation: ctl-dot 1.2s ease-in-out infinite; }
+.ctl-dots > i:nth-child(2) { animation-delay: 0.15s; }
+.ctl-dots > i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ctl-dot { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+.ctl-breathe { animation: ctl-breathe 1.2s ease-in-out infinite; }
+@keyframes ctl-breathe { 50% { opacity: 0.5; } }
+
+/* A rubber stamp on the case file: what just happened to the capture. */
+.ctl-stamp {
+  --stamp: #6fcf97;
+  flex: none;
+  margin-left: 4px;
+  padding: 1px 6px 0;
+  border: 1.5px solid var(--stamp);
+  border-radius: 4px;
+  color: var(--stamp);
+  font: 800 10px/15px var(--ev-font-round);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transform: rotate(-4deg);
+  transform-origin: 0 50%;
+  animation: ctl-stamp 320ms var(--ev-ease-spring) both;
 }
-@container (min-height: 68px) {
-  .ctl-grid {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: 1fr 1fr;
-    grid-template-areas: "mark title tools" "actions actions actions";
-    padding: 0;
-  }
-  .ctl-mark { margin-left: 8px; }
-  .ctl-tools { padding-right: 6px; }
-  .ctl-tools::before { display: none; }
-  .ctl-actions {
-    height: 100%;
-    justify-content: space-around;
-    border-top: 1px solid rgb(255 255 255 / 0.1);
-  }
-  .ctl-label { display: inline; }
+.ctl-stamp[data-tone="manila"] { --stamp: #f0c879; }
+.ctl-stamp[data-tone="warn"] { --stamp: #ffc870; }
+@keyframes ctl-stamp {
+  from { opacity: 0; transform: rotate(-10deg) scale(1.3); }
+  to { opacity: 1; transform: rotate(-4deg) scale(1); }
+}
+
+.ctl-shot {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgb(255 248 238 / 0.05);
+  cursor: zoom-in;
+}
+.ctl-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ctl-shot-wait { display: block; width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ctl-rec, .ctl-bars > i, .ctl-dots > i, .ctl-breathe, .ctl-ticker[data-working], .ctl-stamp { animation: none; }
 }
