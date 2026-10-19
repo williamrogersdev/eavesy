@@ -55,6 +55,8 @@ pub struct CaptionLog {
     /// Per track, what the recognizer is hearing past its last final.
     partials: BTreeMap<String, Caption>,
     unavailable: Option<String>,
+    /// Audio a recognizer lost before the recording stopped.
+    dropped_live: i64,
     /// How captions ended, merged over every track that reported.
     done: Option<CaptionsDone>,
 }
@@ -85,6 +87,10 @@ impl CaptionLog {
         });
     }
 
+    pub fn note_dropped(&mut self, count: i64) {
+        self.dropped_live += count.max(1);
+    }
+
     /// Whether a track has reported how its captions ended.
     pub fn is_done(&self) -> bool {
         self.done.is_some()
@@ -95,7 +101,12 @@ impl CaptionLog {
     /// hearing, as long as those words reach close to the end of the
     /// `clip_ms`-long clip. A recognizer that could not run, failed, lost
     /// audio, heard nothing or is still behind sends the clip to Whisper.
+    /// So does a note that ends in more than `QUICK_PASTE_SLACK_MS` of
+    /// silence: it pastes a moment later, whole, rather than risk a gap.
     pub fn quick_paste(&self, clip_ms: i64) -> Paste {
+        if self.dropped_live > 0 {
+            return Paste::Whisper(format!("{} audio buffers never reached the recognizer", self.dropped_live));
+        }
         match self.decide(false) {
             Paste::OnDevice(_) if self.heard_until() < clip_ms - QUICK_PASTE_SLACK_MS => Paste::Whisper(format!(
                 "on-device words stop at {:.1}s of a {:.1}s clip",
@@ -363,6 +374,22 @@ mod tests {
         failed.record(&caption("x", true, 0));
         failed.finish(CaptionsDone { failed: true, ..CLEAN });
         assert!(matches!(failed.quick_paste(2_000), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn the_quick_paste_needs_words_within_the_slack_of_the_end() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Done.", true, 9_500)); // ends at 10_000
+        assert!(matches!(log.quick_paste(10_000 + QUICK_PASTE_SLACK_MS), Paste::OnDevice(_)));
+        assert!(matches!(log.quick_paste(10_001 + QUICK_PASTE_SLACK_MS), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn audio_lost_while_recording_sends_the_quick_paste_to_whisper() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("the last words", true, 9_500));
+        log.note_dropped(3);
+        assert!(matches!(log.quick_paste(10_000), Paste::Whisper(_)));
     }
 
     #[test]

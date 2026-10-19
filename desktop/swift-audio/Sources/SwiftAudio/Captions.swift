@@ -70,9 +70,6 @@ protocol CaptionSink: AnyObject {
     func audioDropped(_ count: Int)
 }
 
-extension CaptionSink {
-    func audioDropped(_ count: Int) {}
-}
 
 /// An on-device recognizer fed 48 kHz mono float audio.
 protocol SpeechEngine: AnyObject {
@@ -291,10 +288,15 @@ final class LiveCaptions: CaptionSink {
         waitingFrames = 0
     }
 
+    /// The first loss is said at once (`captions_dropped`): a dictation that
+    /// pastes before `captions_done` must still know its text has gaps.
     private func countDropped(_ count: Int) {
+        guard count > 0 else { return }
         lock.lock()
+        let first = dropped == 0
         dropped += count
         lock.unlock()
+        if first { emit(["event": "captions_dropped", "track": track, "dropped": count]) }
     }
 
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {

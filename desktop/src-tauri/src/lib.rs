@@ -204,6 +204,7 @@ pub fn run() {
             screenshot_watcher::start(&handle);
             // A spare capture engine, so the first dictation does not wait for one.
             audio::prepare_standby(&handle);
+            audio::prepare_speech_model(&handle);
             let failures = hotkeys::register_all(&handle, &settings);
             if let Some(body) = hotkeys::startup_notice(&failures) {
                 telemetry::capture("hotkeys.register", &body);

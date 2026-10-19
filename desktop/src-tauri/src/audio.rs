@@ -159,6 +159,12 @@ impl CaptureEvent {
         })
     }
 
+    /// Audio a recognizer lost while the recording was still going.
+    fn captions_dropped(&self) -> Option<i64> {
+        (self.event == "captions_dropped").then_some(())?;
+        Some(self.dropped.unwrap_or(1))
+    }
+
     fn captions_done(&self) -> Option<CaptionsDone> {
         (self.event == "captions_done").then_some(())?;
         Some(CaptionsDone {
@@ -638,6 +644,34 @@ pub fn prepare_standby(app: &AppHandle) {
     });
 }
 
+/// Gets Apple's on-device speech model ready in the background at launch:
+/// reserved for Eavesy and downloaded if missing. Without it every recording
+/// falls back to the older recognizer, whose captions lag by ~30 s.
+pub fn prepare_speech_model(app: &AppHandle) {
+    let Ok(bin) = capture_bin(app) else { return };
+    let language = crate::vocabulary::cached_language(app);
+    std::thread::spawn(move || {
+        let mut command = Command::new(bin);
+        command.arg("--prepare-speech");
+        if let Some(language) = language {
+            command.args(["--language", language.as_str()]);
+        }
+        match command.output() {
+            Ok(output) => {
+                let line = String::from_utf8_lossy(&output.stdout);
+                let state = serde_json::from_str::<serde_json::Value>(line.trim().lines().last().unwrap_or(""))
+                    .ok()
+                    .and_then(|value| Some((value.get("locale")?.as_str()?.to_string(), value.get("state")?.as_str()?.to_string())));
+                match state {
+                    Some((locale, state)) => tracing::info!(locale, state, "speech model for {locale}: {state}"),
+                    None => tracing::warn!("speech model check gave no answer"),
+                }
+            }
+            Err(error) => tracing::warn!("speech model check did not run: {error}"),
+        }
+    });
+}
+
 /// How long the press waited for its first audio, in the app log (which goes
 /// into copied diagnostics). `audio_from_ms` is when that audio begins, from
 /// the engine's own start: anything said before it was never recorded.
@@ -782,6 +816,10 @@ fn stream_events(
                     }
                     captions.lock().unwrap_or_else(|e| e.into_inner()).note_status(&status);
                     let _ = app.emit("recording:captions_status", &status);
+                    continue;
+                }
+                if let Some(count) = ev.captions_dropped() {
+                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_dropped(count);
                     continue;
                 }
                 if let Some(done) = ev.captions_done() {
@@ -1175,12 +1213,13 @@ const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
 /// stored. Returns false when there is nothing trustworthy to paste yet; the
 /// clip then goes to Whisper once it is saved.
 fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>, started_at_ms: i64) -> bool {
+    // How long the clip is, measured as it stops: the wait below adds no audio.
+    let clip_ms = now_ms() - started_at_ms;
     let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
     while std::time::Instant::now() < deadline && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done() {
         std::thread::sleep(Duration::from_millis(15));
     }
     crate::dictation::rearm_at_stop(session_id);
-    let clip_ms = chrono::Utc::now().timestamp_millis() - started_at_ms;
     let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste(clip_ms);
     match decision {
         Paste::OnDevice(text) => {

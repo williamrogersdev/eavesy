@@ -207,9 +207,53 @@ final class SFSpeechEngine: SpeechEngine {
 }
 
 #if compiler(>=6.2)
+    /// Apple's on-device speech models for SpeechAnalyzer. A model on disk is
+    /// only usable once the app has reserved its language, so Eavesy reserves
+    /// it itself and fetches what is missing: nobody installs anything by hand.
+    @available(macOS 26.0, *)
+    enum SpeechModels {
+        enum State: String { case installed, downloading, unsupported }
+
+        static func prepare(_ transcriber: SpeechTranscriber, locale: Locale, wait: Bool) async -> State {
+            await reserve(locale)
+            switch await AssetInventory.status(forModules: [transcriber]) {
+            case .installed:
+                return .installed
+            case .unsupported:
+                return .unsupported
+            default:
+                let install = Task.detached {
+                    try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall()
+                }
+                guard wait else { return .downloading }
+                do {
+                    try await install.value
+                } catch {
+                    EventEmitter.warning("speech model for \(locale.identifier) did not install: \(error.localizedDescription)")
+                }
+                return await AssetInventory.status(forModules: [transcriber]) == .installed ? .installed : .downloading
+            }
+        }
+
+        /// Reserves `locale`, letting go of the oldest other reservation when
+        /// the system's limit is reached.
+        private static func reserve(_ locale: Locale) async {
+            let reserved = await AssetInventory.reservedLocales
+            if reserved.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) { return }
+            if reserved.count >= AssetInventory.maximumReservedLocales, let oldest = reserved.first {
+                _ = await AssetInventory.release(reservedLocale: oldest)
+            }
+            do {
+                _ = try await AssetInventory.reserve(locale: locale)
+            } catch {
+                EventEmitter.warning("speech model for \(locale.identifier) not reserved: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// macOS 26 SpeechAnalyzer + SpeechTranscriber: on-device, volatile results
-    /// within a few hundred ms, finals as it settles phrases. Times come back on
-    /// the recording clock because every buffer is stamped with its offset.
+    /// within a few seconds, finals as it settles phrases. Times come back on
+    /// the recording clock, shifted by where the first buffer started.
     @available(macOS 26.0, *)
     final class AnalyzerEngine: SpeechEngine {
         let name = "speech-analyzer"
@@ -223,6 +267,12 @@ final class SFSpeechEngine: SpeechEngine {
         private var results: Task<Void, Never>?
         private var running: Task<Void, Never>?
         private weak var sink: CaptionSink?
+        /// Where on the recording clock the first buffer fed in starts. The
+        /// analyzer is fed contiguous audio without timestamps (stamped input
+        /// fails as soon as a converted buffer's length rounds past the next
+        /// stamp) and its times are shifted by this.
+        private let offsetLock = NSLock()
+        private var offsetMs: Int64?
 
         static func make(locale: Locale, vocabulary: [String]) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
@@ -234,19 +284,17 @@ final class SFSpeechEngine: SpeechEngine {
             let transcriber = SpeechTranscriber(
                 locale: supported,
                 transcriptionOptions: [],
-                reportingOptions: [.volatileResults, .fastResults],
+                // No `.fastResults`: it drops and garbles words to show them a
+                // few seconds sooner, and these finals are what dictation pastes.
+                reportingOptions: [.volatileResults],
                 attributeOptions: [.audioTimeRange])
-            switch await AssetInventory.status(forModules: [transcriber]) {
+            switch await SpeechModels.prepare(transcriber, locale: supported, wait: false) {
             case .installed:
                 break
             case .unsupported:
                 return .failure(CaptionUnavailable(reason: "no model for \(supported.identifier)"))
-            default:
-                // Fetch it for next time; this recording falls back.
-                Task.detached {
-                    try? await AssetInventory.assetInstallationRequest(supporting: [transcriber])?
-                        .downloadAndInstall()
-                }
+            case .downloading:
+                // This recording falls back; the download carries on for next time.
                 return .failure(CaptionUnavailable(reason: "model for \(supported.identifier) downloading"))
             }
             guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
@@ -268,16 +316,17 @@ final class SFSpeechEngine: SpeechEngine {
             self.analyzer = analyzer
             converter = AVAudioConverter(from: AudioRecorder.mixFormat, to: format)
             let transcriber = self.transcriber
-            results = Task { [weak sink] in
+            results = Task { [weak sink, weak self] in
                 do {
                     for try await result in transcriber.results {
+                        let offset = self?.startOffsetMs() ?? 0
                         let start = result.range.start.seconds
                         let end = result.range.end.seconds
                         sink?.recognized(
                             text: String(result.text.characters),
                             isFinal: result.isFinal,
-                            startMs: start.isFinite ? Int64(start * 1000) : 0,
-                            endMs: end.isFinite ? Int64(end * 1000) : 0)
+                            startMs: offset + (start.isFinite ? Int64(start * 1000) : 0),
+                            endMs: offset + (end.isFinite ? Int64(end * 1000) : 0))
                     }
                 } catch {
                     sink?.engineFailed(error.localizedDescription)
@@ -305,11 +354,20 @@ final class SFSpeechEngine: SpeechEngine {
 
         func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
             guard let converted = convert(buffer) else { return }
+            offsetLock.lock()
+            if offsetMs == nil { offsetMs = atMs }
+            offsetLock.unlock()
             // A recognizer that falls behind loses the oldest audio here: say
             // so, or its text looks whole while missing what was said first.
-            if case .dropped = feed.yield(AnalyzerInput(buffer: converted, bufferStartTime: CMTime(value: atMs, timescale: 1000))) {
+            if case .dropped = feed.yield(AnalyzerInput(buffer: converted)) {
                 sink?.audioDropped(1)
             }
+        }
+
+        private func startOffsetMs() -> Int64 {
+            offsetLock.lock()
+            defer { offsetLock.unlock() }
+            return offsetMs ?? 0
         }
 
         func finish(_ done: @escaping () -> Void) {
