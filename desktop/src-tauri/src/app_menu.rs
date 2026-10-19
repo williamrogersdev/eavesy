@@ -1,5 +1,5 @@
-//! Eavesy's identity as a macOS app: the menu bar (Eavesy ▸ About, Check for Updates…,
-//! Settings…, Hide, Quit, and a standard Edit menu) and when Eavesy is the active app.
+//! Eavesy's identity as a macOS app: the menu bar (Eavesy, Edit, Capture, View, Window and
+//! Help) and when Eavesy is the active app.
 //!
 //! Eavesy keeps the default Regular activation policy: it has a Dock icon (clicking it reopens
 //! the launcher through `RunEvent::Reopen`) and a real menu bar whenever it is active. The
@@ -9,13 +9,25 @@
 //! the app that was in front before, so pasting into that app still works.
 
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
+    menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
     AppHandle,
 };
 
 pub const ABOUT: &str = "app_about";
 pub const CHECK_FOR_UPDATES: &str = "app_check_for_updates";
 pub const SETTINGS: &str = "app_settings";
+pub const RECORD: &str = "app_record";
+pub const SHOW_RECORDINGS: &str = "app_show_recordings";
+pub const OPEN_WEB_APP: &str = "app_open_web_app";
+pub const SHOW_CONTROL: &str = "app_show_control";
+pub const HIDE_CONTROL: &str = "app_hide_control";
+pub const HELP: &str = "app_help";
+pub const WHATS_NEW: &str = "app_whats_new";
+pub const CONTACT: &str = "app_contact";
+pub const SETUP: &str = "app_setup";
+pub const COPY_DIAGNOSTICS: &str = "app_copy_diagnostics";
+const WINDOW_MENU: &str = "app_window_menu";
+const HELP_MENU: &str = "app_help_menu";
 
 pub fn version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
@@ -59,11 +71,67 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
-    Menu::with_items(app, &[&eavesy, &edit])
+    // The recording and launcher shortcuts are global hotkeys, so they stay off these items:
+    // as menu key equivalents they would fire a second time while Eavesy is active.
+    let capture = Submenu::with_items(
+        app,
+        "Capture",
+        true,
+        &[
+            &MenuItem::with_id(app, RECORD, "Start or Stop Recording", true, None::<&str>)?,
+            &separator()?,
+            &MenuItem::with_id(app, SHOW_RECORDINGS, "Show Recordings", true, None::<&str>)?,
+            &MenuItem::with_id(app, OPEN_WEB_APP, "Open Eavesy on the Web", true, None::<&str>)?,
+        ],
+    )?;
+    let view = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(app, SHOW_CONTROL, "Show Capture Control", true, None::<&str>)?,
+            &MenuItem::with_id(app, HIDE_CONTROL, "Hide Capture Control", true, None::<&str>)?,
+        ],
+    )?;
+    let window = Submenu::with_id_and_items(
+        app,
+        WINDOW_MENU,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, Some("Zoom"))?,
+            &separator()?,
+            &PredefinedMenuItem::bring_all_to_front(app, None)?,
+        ],
+    )?;
+    let help = Submenu::with_id_and_items(
+        app,
+        HELP_MENU,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(app, HELP, "Eavesy Help", true, None::<&str>)?,
+            &MenuItem::with_id(app, WHATS_NEW, "What’s New in Eavesy", true, None::<&str>)?,
+            &MenuItem::with_id(app, CONTACT, "Contact Support", true, None::<&str>)?,
+            &separator()?,
+            &MenuItem::with_id(app, SETUP, "Run Setup Again…", true, None::<&str>)?,
+            &MenuItem::with_id(app, COPY_DIAGNOSTICS, "Copy Diagnostics", true, None::<&str>)?,
+        ],
+    )?;
+    Menu::with_items(app, &[&eavesy, &edit, &capture, &view, &window, &help])
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
-    app.set_menu(build(app)?)?;
+    imp::hide_full_screen_item();
+    let menu = build(app)?;
+    if let Some(MenuItemKind::Submenu(window)) = menu.get(WINDOW_MENU) {
+        window.set_as_windows_menu_for_nsapp()?;
+    }
+    if let Some(MenuItemKind::Submenu(help)) = menu.get(HELP_MENU) {
+        help.set_as_help_menu_for_nsapp()?;
+    }
+    app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
         handle(app, event.id.as_ref());
     });
@@ -79,9 +147,40 @@ pub fn handle(app: &AppHandle, id: &str) -> bool {
         SETTINGS => {
             let _ = crate::commands::show_settings(app.clone());
         }
+        RECORD => crate::hotkeys::trigger_dictation(app),
+        SHOW_RECORDINGS => crate::commands::show_launcher(app.clone()),
+        OPEN_WEB_APP => {
+            if let Err(error) = crate::commands::open_web_app(app.clone(), None) {
+                crate::telemetry::capture("app_menu.open_web_app", &error);
+            }
+        }
+        SHOW_CONTROL => crate::hud::set_hidden_on_main(app, false),
+        HIDE_CONTROL => crate::hud::set_hidden_on_main(app, true),
+        HELP | WHATS_NEW | CONTACT => open_site(app, site_path(id).unwrap_or("/")),
+        SETUP => crate::commands::show_setup(app.clone()),
+        COPY_DIAGNOSTICS => crate::diagnostics::copy(app),
         _ => return false,
     }
     true
+}
+
+// Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+fn site_path(id: &str) -> Option<&'static str> {
+    match id {
+        HELP => Some("/docs"),
+        WHATS_NEW => Some("/changelog"),
+        CONTACT => Some("/contact"),
+        _ => None,
+    }
+}
+
+#[allow(deprecated)]
+fn open_site(app: &AppHandle, path: &str) {
+    use tauri_plugin_shell::ShellExt;
+    let url = format!("{}{path}", crate::base_url::DEFAULT_BASE);
+    if let Err(error) = app.shell().open(&url, None) {
+        crate::telemetry::capture("app_menu.open_site", &error.to_string());
+    }
 }
 
 /// Shows the standard About panel. The launcher is put away first because it floats above
@@ -222,6 +321,20 @@ mod imp {
         }
     }
 
+    /// AppKit adds Enter Full Screen to a menu titled View; the launcher is a floating panel, so
+    /// that item would only break it. This applies to every Eavesy window, and as a registered
+    /// default it lives only in memory, never in the preferences file.
+    pub fn hide_full_screen_item() {
+        unsafe {
+            let key = NSString::alloc(nil).init_str("NSFullScreenMenuItemEverywhere");
+            let value: id = msg_send![class!(NSNumber), numberWithBool: NO];
+            let registered: id = msg_send![class!(NSDictionary), dictionaryWithObject: value forKey: key];
+            let defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+            let _: () = msg_send![defaults, registerDefaults: registered];
+            let _: () = msg_send![key, release];
+        }
+    }
+
     pub fn order_front_about_panel(version: &str) {
         unsafe {
             let key = NSString::alloc(nil).init_str("ApplicationVersion");
@@ -246,5 +359,20 @@ mod imp {
         false
     }
     pub fn return_focus() {}
+    pub fn hide_full_screen_item() {}
     pub fn order_front_about_panel(_version: &str) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_items_open_their_pages_and_other_ids_are_not_links() {
+        assert_eq!(site_path(HELP), Some("/docs"));
+        assert_eq!(site_path(WHATS_NEW), Some("/changelog"));
+        assert_eq!(site_path(CONTACT), Some("/contact"));
+        assert_eq!(site_path(SETUP), None);
+        assert!(!crate::base_url::DEFAULT_BASE.ends_with('/'));
+    }
 }

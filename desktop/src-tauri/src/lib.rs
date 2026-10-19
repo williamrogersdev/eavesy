@@ -16,6 +16,8 @@ mod shortcut_conflicts;
 mod hotkeys;
 mod hud;
 mod imports;
+mod install_location;
+mod stray_copies;
 #[cfg(target_os = "macos")]
 mod cf;
 mod cloud_pull;
@@ -211,10 +213,25 @@ pub fn run() {
                 let _ = handle.notification().builder().title(title).body(body).show();
             }
 
+            let location = install_location::label();
+            telemetry::track(
+                "app_launched",
+                serde_json::json!({
+                    "install_location": location,
+                    "previous_version": telemetry::previous_version(location),
+                    "setup_completed": settings.setup_completed,
+                    "paired": settings::device_token(&handle).is_some(),
+                }),
+            );
+
             if !settings.setup_completed && settings::device_token(&handle).is_none() {
                 hotkeys::show_launcher(&handle);
             }
 
+            #[cfg(target_os = "macos")]
+            install_location::offer_move_on_launch(&handle);
+            #[cfg(target_os = "macos")]
+            stray_copies::clean_up_in_background();
             #[cfg(desktop)]
             updates::check_in_background(&handle);
             vocabulary::refresh(&handle);

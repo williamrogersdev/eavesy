@@ -107,9 +107,14 @@ struct Arguments {
     /// Caption in the cloud's fixed language, keeping the user's regional
     /// variant (en-GB, en-AU) when the system already speaks it. `auto`, no
     /// language, or one no recognizer here speaks leaves the system's own.
-    static func captionLocale(language: String?, current: Locale, supported: [Locale]) -> Locale {
+    /// `supported` is only asked for when the system's own language won't do.
+    static func captionLocale(
+        language: String?, current: Locale, supported: @autoclosure () -> [Locale]
+    ) -> Locale {
         guard let language, !language.isEmpty else { return current }
-        return CaptionLanguage.locale(for: language, current: current, supported: supported) ?? current
+        let wanted = CaptionLanguage.base(language)
+        guard wanted != CaptionLanguage.auto, wanted != CaptionLanguage.base(of: current) else { return current }
+        return CaptionLanguage.locale(for: language, current: current, supported: supported()) ?? current
     }
 
     /// `--captions mic|system|all`, limited to the tracks the source records.

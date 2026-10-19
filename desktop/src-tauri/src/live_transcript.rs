@@ -426,8 +426,9 @@ pub async fn run(app: AppHandle) {
                         report_first(&app, &session_id, Milestone::CloudLine);
                     }
                     if let Some(language) = spoken_language(&delta.lines) {
-                        if hinted.get(&session_id) != Some(&language) {
-                            crate::audio::hint_caption_language(&app, &session_id, &language);
+                        if hinted.get(&session_id) != Some(&language)
+                            && crate::audio::hint_caption_language(&app, &session_id, &language)
+                        {
                             hinted.insert(session_id.clone(), language);
                         }
                     }
