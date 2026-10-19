@@ -13,10 +13,10 @@ const KINDS: Record<LibVariant, { icon: LucideIcon; label: string; plural: strin
 };
 
 export function kindOf(variant: LibVariant) {
-  return KINDS[variant];
+  return KINDS[variant] ?? KINDS.audio;
 }
 
 export function KindIcon({ item, size = 16, className }: { item: Pick<LibItem, 'variant'>; size?: number; className?: string }) {
-  const Icon = KINDS[item.variant].icon;
+  const Icon = kindOf(item.variant).icon;
   return <Icon size={size} strokeWidth={1.75} className={className} aria-hidden />;
 }

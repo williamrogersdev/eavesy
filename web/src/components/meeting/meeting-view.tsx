@@ -109,12 +109,14 @@ function Loaded({
               <EditableTitle meetingId={meetingId} initial={meeting.title} onSaved={onSaved} />
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-round text-[12.5px] font-semibold text-ev-ink-2">
                 <MetaChip>{call ?? kind.label}</MetaChip>
+                {Number.isFinite(started.getTime()) ? (
                 <MetaChip>
                   <CalendarDays className="h-3.5 w-3.5" />
                   {started.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: started.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })}
                   {' · '}
                   {started.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                 </MetaChip>
+                ) : null}
                 {meeting.durationSec ? (
                   <MetaChip>
                     <Clock className="h-3.5 w-3.5" />

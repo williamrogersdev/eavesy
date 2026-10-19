@@ -35,9 +35,9 @@ export function RecordingView({
       <div className="flex items-center gap-2.5">
         <span
           className="h-3 w-3 animate-recording-pulse rounded-full"
-          style={{ background: '#ef4444' }}
+          style={{ background: 'var(--ev-rec)' }}
         />
-        <span className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="font-round text-[13px] font-semibold text-muted-foreground">
           Recording {mode === 'screen' ? 'screen + audio' : 'audio'}
         </span>
       </div>
@@ -48,7 +48,7 @@ export function RecordingView({
         type="button"
         onClick={onStop}
         className="flex items-center gap-2 rounded-lg px-6 py-3 text-[14px] font-medium text-white"
-        style={{ background: '#ef4444' }}
+        style={{ background: 'var(--ev-rec)' }}
       >
         <Square className="h-4 w-4" fill="currentColor" /> Stop &amp; save
       </button>

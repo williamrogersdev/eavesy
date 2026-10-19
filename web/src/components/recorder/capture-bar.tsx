@@ -329,7 +329,7 @@ export function CaptureBar() {
                     type="button"
                     onClick={() => void save()}
                     disabled={phase === 'saving'}
-                    className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] font-medium text-ev-on-slate hover:bg-action-hover disabled:opacity-60"
+                    className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] text-ev-on-slate hover:bg-action-hover disabled:opacity-60"
                   >
                     {phase === 'saving' ? (
                       <>

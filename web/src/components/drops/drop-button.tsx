@@ -130,7 +130,7 @@ function DropPanel() {
             type="button"
             onClick={submit}
             disabled={!draft.trim()}
-            className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] font-medium text-ev-on-slate hover:bg-action-hover disabled:opacity-50"
+            className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] text-ev-on-slate hover:bg-action-hover disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" /> Send
           </button>
@@ -255,7 +255,7 @@ function DropRow({ drop }: { drop: LocalDrop }) {
           <a
             href={downloadUrl(drop)}
             download={drop.filename ?? true}
-            className="flex h-7 items-center gap-1 rounded-full bg-action font-round font-bold px-2 text-xs font-medium text-ev-on-slate hover:bg-action-hover"
+            className="flex h-7 items-center gap-1 rounded-full bg-action font-round font-bold px-2 text-xs text-ev-on-slate hover:bg-action-hover"
           >
             <Download className="h-3.5 w-3.5" /> Download
           </a>
