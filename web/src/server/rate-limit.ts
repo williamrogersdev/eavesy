@@ -107,6 +107,7 @@ export const USER_DAILY_QUOTAS = {
   drop: { limit: 500, failMode: 'closed' },
   chat: { limit: 300, failMode: 'closed' },
   regenerate: { limit: 60, failMode: 'closed' },
+  translate: { limit: 600, failMode: 'closed' },
   search: { limit: 1_000, failMode: 'closed' },
   export: { limit: 10, failMode: 'closed' },
   'meeting-export': { limit: 200, failMode: 'closed' },

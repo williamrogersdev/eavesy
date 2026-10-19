@@ -1,7 +1,9 @@
 'use client';
 
-import { ArrowLeftRight, Check, Clipboard, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Check, Clipboard, Languages, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMe } from '@/lib/api/use-me';
+import { isNotesLanguage, languageName } from '@/lib/transcription/language';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +14,7 @@ export interface TranscriptLine {
   speakerId?: string | null;
   text: string;
   confidence?: number | null;
+  language?: string | null;
   isEdited?: boolean;
   isFinal?: boolean;
 }
@@ -55,6 +58,11 @@ export function TranscriptPlayer({
       }),
     [lines, pending],
   );
+  const { data: me } = useMe();
+  const target = me?.notesLanguage ?? browserLanguage();
+  const translation = useTranslation(meetingId, shown, target, Boolean(me?.notesLanguage));
+  const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
+
   const labelled = hasBothSides(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
   const names = parseSpeakerNames(speakerNamesJson);
   const nameOf = (id: string | null | undefined) => (labelled && id ? speakerName(id, names) : null);
@@ -128,6 +136,7 @@ export function TranscriptPlayer({
         speakerId: line.speakerId ?? null,
         text: line.text,
         confidence: line.confidence ?? null,
+        language: line.language ?? null,
         isEdited: line.isEdited ?? false,
       }),
     });
@@ -147,7 +156,7 @@ export function TranscriptPlayer({
   const copyText = shown
     .map((line) => {
       const who = nameOf(line.speakerId);
-      return `[${clockLabel(line.startMs)}] ${who ? `${who}: ` : ''}${line.text}`;
+      return `[${clockLabel(line.startMs)}] ${who ? `${who}: ` : ''}${translated(line) ?? line.text}`;
     })
     .join('\n');
 
@@ -244,12 +253,37 @@ export function TranscriptPlayer({
       <div>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transcript</h2>
-          <CopyText text={copyText} />
+          <div className="flex items-center gap-3">
+            {translation.spoken.length > 0 ? (
+              <span className="text-xs text-muted-foreground" title="Languages heard in this meeting">
+                {translation.spoken.map(languageName).join(' · ')}
+              </span>
+            ) : null}
+            {translation.available ? (
+              <button
+                type="button"
+                onClick={translation.toggle}
+                disabled={translation.loading}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+              >
+                <Languages className="h-3.5 w-3.5" />
+                {translation.loading
+                  ? 'Translating…'
+                  : translation.showing
+                    ? 'Show original'
+                    : `Translate to ${languageName(target)}`}
+              </button>
+            ) : null}
+            <CopyText text={copyText} />
+          </div>
         </div>
         <div
           className="max-h-[32rem] overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-sm leading-relaxed"
           onWheel={() => setFollowPlayback(false)}
         >
+          {translation.error ? (
+            <p className="px-2 pb-1 text-xs text-destructive">{translation.error}</p>
+          ) : null}
           {shown.map((line, i) => {
             const who = nameOf(line.speakerId);
             const sameSpeaker = i > 0 && nameOf(shown[i - 1].speakerId) === who;
@@ -264,6 +298,7 @@ export function TranscriptPlayer({
                 ) : null}
                 <Line
                   line={line}
+                  translation={translated(line)}
                   who={who && !(sameSpeaker && !heading) ? who : null}
                   active={line.id === activeId}
                   follow={followPlayback && playing}
@@ -302,6 +337,7 @@ export function TranscriptPlayer({
 
 function Line({
   line,
+  translation,
   who,
   active,
   follow,
@@ -312,6 +348,7 @@ function Line({
   onDelete,
 }: {
   line: TranscriptLine;
+  translation?: string;
   who: string | null;
   active: boolean;
   follow: boolean;
@@ -370,9 +407,14 @@ function Line({
             className="w-full resize-none rounded border border-accent/50 bg-background px-2 py-1 outline-none"
           />
         ) : (
-          <p onClick={onPlay} className="cursor-pointer">
-            {line.text}
-          </p>
+          <div onClick={onPlay} className="cursor-pointer">
+            <p>{translation ?? line.text}</p>
+            {translation ? (
+              <p className="text-xs text-muted-foreground" lang={line.language ?? undefined}>
+                {line.text}
+              </p>
+            ) : null}
+          </div>
         )}
       </div>
       {draft === null ? (
@@ -492,6 +534,128 @@ function CopyText({ text }: { text: string }) {
       {copied ? 'Copied' : 'Copy transcript'}
     </button>
   );
+}
+
+/** Each request translates a few hundred lines; a long meeting takes a few. */
+const MAX_TRANSLATE_PAGES = 20;
+
+function browserLanguage(): string {
+  if (typeof navigator === 'undefined') return 'en';
+  const code = navigator.language.split('-')[0]?.toLowerCase() ?? '';
+  return isNotesLanguage(code) ? code : 'en';
+}
+
+/** The languages heard in these lines, most spoken first. */
+function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
+  const weight = new Map<string, number>();
+  for (const line of lines) {
+    if (line.language) weight.set(line.language, (weight.get(line.language) ?? 0) + line.text.length);
+  }
+  return [...weight].sort((a, b) => b[1] - a[1]).map(([language]) => language);
+}
+
+/**
+ * Translations of the lines heard in another language than `target`. Each one
+ * is kept with the text it was made from, so an edited line is translated again.
+ */
+function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: string, auto: boolean) {
+  const [showing, setShowing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<Record<string, { source: string; text: string }>>({});
+  const inFlight = useRef(false);
+  const autoStarted = useRef(false);
+  const attempted = useRef(new Set<string>());
+
+  useEffect(() => {
+    setDone({});
+    setShowing(false);
+    autoStarted.current = false;
+    attempted.current = new Set();
+  }, [meetingId, target]);
+
+  const spoken = useMemo(() => spokenLanguages(lines), [lines]);
+  const foreign = useMemo(
+    () => lines.filter((line) => line.language && line.language !== target),
+    [lines, target],
+  );
+  const missing = foreign.filter((line) => done[line.id]?.source !== line.text);
+  const untried = missing.filter((line) => !attempted.current.has(`${line.id}\n${line.text}`)).length;
+
+  const load = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setLoading(true);
+    setError(null);
+    const sources = new Map(lines.map((line) => [line.id, line.text]));
+    try {
+      let previousCount = -1;
+      for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
+        const res = await fetch(`/api/meetings/${meetingId}/translate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ to: target }),
+        });
+        if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
+        const body: unknown = await res.json();
+        const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+        const translatedLines =
+          typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
+        setDone((previous) => {
+          const next = { ...previous };
+          for (const [id, text] of translatedLines) {
+            const source = sources.get(id);
+            if (source !== undefined && typeof text === 'string') next[id] = { source, text };
+          }
+          return next;
+        });
+        const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
+        if (remaining === 0 || translatedLines.length === previousCount) break;
+        previousCount = translatedLines.length;
+      }
+      for (const [id, text] of sources) attempted.current.add(`${id}\n${text}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not translate.');
+      setShowing(false);
+    } finally {
+      inFlight.current = false;
+      setLoading(false);
+    }
+  }, [lines, meetingId, target]);
+
+  useEffect(() => {
+    if (!auto || autoStarted.current || foreign.length === 0) return;
+    autoStarted.current = true;
+    setShowing(true);
+    void load();
+  }, [auto, foreign.length, load]);
+
+  useEffect(() => {
+    if (!showing || untried === 0 || inFlight.current || error) return;
+    const timer = window.setTimeout(() => void load(), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [showing, untried, load, error]);
+
+  return {
+    spoken,
+    available: foreign.length > 0,
+    showing,
+    loading,
+    error,
+    toggle: () => {
+      if (showing) {
+        setShowing(false);
+        return;
+      }
+      setShowing(true);
+      setError(null);
+      if (untried > 0) void load();
+    },
+    textFor: (line: TranscriptLine) => {
+      const entry = done[line.id];
+      return entry && entry.source === line.text && entry.text !== line.text ? entry.text : undefined;
+    },
+  };
 }
 
 export function clockLabel(ms: number): string {

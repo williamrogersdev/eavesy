@@ -1,5 +1,6 @@
 import type { EngineKey } from '@/lib/transcription';
 import { MODELS } from '@/lib/ai/client';
+import { AUTO_LANGUAGE } from '@/lib/transcription/language';
 
 export type Billing = 'platform' | 'user';
 
@@ -41,7 +42,7 @@ export interface ModelPlan {
   language: string;
 }
 
-const DEFAULT_LANGUAGE = 'en';
+const DEFAULT_LANGUAGE = AUTO_LANGUAGE;
 const DEFAULT_ENGINE: EngineKey = 'whisper';
 
 function trimmed(v: string | null | undefined): string | undefined {

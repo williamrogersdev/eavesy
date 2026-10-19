@@ -11,6 +11,7 @@ export interface FileTranscriptionResult {
   text: string;
   segments: TranscriptSegment[];
   language?: string;
+  languageProbability?: number;
   durationSec?: number;
 }
 
@@ -116,6 +117,7 @@ export function mapWhisperResult(
     text,
     segments,
     language: typeof info.language === 'string' ? info.language : fallbackLanguage,
+    languageProbability: finiteNumber(info.language_probability),
     durationSec: finiteNumber(info.duration),
   };
 }
