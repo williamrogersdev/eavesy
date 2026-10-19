@@ -8,10 +8,12 @@ import {
   users,
 } from '@/db/schema';
 import { encode } from '@/db/codec';
+import * as projectsRepo from '@/db/repo/projects';
 import { ulid } from '@/db/ids';
 import { clock, MIN_CHAPTER_MEETING_MS, validateChapters } from '@/lib/ai/chapters';
 import { anthropicForUser } from '@/lib/ai/client';
 import { requestMeetingSummary, summaryModel } from '@/lib/ai/meeting-summary';
+import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { openUserKeys } from '@/server/secret-box';
@@ -150,6 +152,7 @@ export async function handleSummarize(
       .where(eq(meetings.id, meetingId));
     await logMeetingComplete(db, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     return;
   }
   const wantChapters = mode.final && meetingMs >= MIN_CHAPTER_MEETING_MS;
@@ -163,9 +166,10 @@ export async function handleSummarize(
 
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
+  const project = await projectsRepo.getForMeeting(db, meeting);
   const parsed = await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), {
     transcript,
-    contextBlurb: meeting.contextBlurb,
+    contextBlurb: combinedContext(meeting.contextBlurb, project),
     priorSummary,
     rolling: !mode.final,
     recorderName: rendered.recorderName,
@@ -211,6 +215,7 @@ export async function handleSummarize(
       .where(eq(meetings.id, meetingId));
     await logMeetingComplete(db, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   } else {
     await db
       .update(meetings)

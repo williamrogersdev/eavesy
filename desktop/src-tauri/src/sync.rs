@@ -412,6 +412,18 @@ async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) 
 
 enum Step { Progressed, Waiting }
 
+fn session_body(session: &sqlite::PendingSession) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "clientSessionId": session.id,
+        "title": session.title,
+        "contextBlurb": session.context_blurb.as_deref().unwrap_or(""),
+    });
+    if let Some(project_id) = session.project_id.as_deref().filter(|id| !id.is_empty()) {
+        body["projectId"] = serde_json::Value::from(project_id);
+    }
+    body
+}
+
 async fn sync_session<R: Runtime>(
     app: &AppHandle<R>,
     api: &Api,
@@ -423,11 +435,7 @@ async fn sync_session<R: Runtime>(
             .client
             .post(api.url("/api/sessions"))
             .bearer_auth(token)
-            .json(&serde_json::json!({
-                "clientSessionId": session.id,
-                "title": session.title,
-                "contextBlurb": session.context_blurb.as_deref().unwrap_or(""),
-            }))
+            .json(&session_body(&session))
             .send()
             .await
             .context("create cloud recording session")?;
@@ -889,6 +897,29 @@ mod tests {
         assert_eq!(super::spoken_words(unlabelled), "Just me talking. An added line.");
         let hashes = "# Note\n\n#1 priority is shipping.\n\n#launch day\n";
         assert_eq!(super::spoken_words(hashes), "#1 priority is shipping. #launch day");
+    }
+
+    #[test]
+    fn the_picked_project_goes_with_the_new_cloud_session() {
+        let mut session = super::sqlite::PendingSession {
+            id: "local".into(),
+            remote_meeting_id: None,
+            archive_path: std::path::PathBuf::from("/tmp/a.m4a"),
+            title: "Memo".into(),
+            context_blurb: None,
+            project_id: Some("proj_1".into()),
+            status: "recording".into(),
+            next_part_number: 1,
+            next_archive_offset: 0,
+            ended_at: None,
+            archive_missing: false,
+        };
+        assert_eq!(
+            super::session_body(&session),
+            serde_json::json!({ "clientSessionId": "local", "title": "Memo", "contextBlurb": "", "projectId": "proj_1" })
+        );
+        session.project_id = None;
+        assert!(super::session_body(&session).get("projectId").is_none());
     }
 
     #[test]

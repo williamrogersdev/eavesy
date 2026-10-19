@@ -1,9 +1,11 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
+import { parseStringList } from '../../../web/src/lib/projects';
+import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
 import { captureMessage, withErrorReporting } from '../../../web/src/server/observability';
 import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
 import {
@@ -368,21 +370,32 @@ const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'get_meeting',
-    description: 'Get a meeting by ID including summary and full transcript.',
+    description:
+      'Get a meeting by ID including summary and full transcript. By default the transcript is cleaned up for an AI agent: fillers removed, turns merged, code terms in backticks, and a conversation wrapped in a <transcript> tag naming its speakers. Use transcript_format "raw" for every line as heard, with timestamps.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' } },
+      properties: {
+        id: { type: 'string' },
+        transcript_format: { type: 'string', enum: ['agent', 'raw'], default: 'agent' },
+      },
       required: ['id'],
     },
     scope: 'read',
   },
   {
     name: 'recent_meetings',
-    description: 'List the most recent meetings.',
+    description: 'List the most recent meetings, optionally only those in one project (by name, see list_projects).',
     inputSchema: {
       type: 'object',
-      properties: { limit: { type: 'number', default: 10 } },
+      properties: { limit: { type: 'number', default: 10 }, project: { type: 'string' } },
     },
+    scope: 'read',
+  },
+  {
+    name: 'list_projects',
+    description:
+      "List the user's projects (the codebases or clients they record about) with a short description, key terms and how many recordings each has.",
+    inputSchema: { type: 'object', properties: {} },
     scope: 'read',
   },
   {
@@ -532,6 +545,16 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         .from(schema.transcriptSegments)
         .where(eq(schema.transcriptSegments.meetingId, id))
         .orderBy(schema.transcriptSegments.startMs);
+      const names = parseSpeakerNames(m.speakerNamesJson);
+      const project = m.folderId
+        ? (
+            await db
+              .select({ name: schema.folders.name })
+              .from(schema.folders)
+              .where(and(eq(schema.folders.id, m.folderId), eq(schema.folders.userId, userId)))
+              .limit(1)
+          )[0]
+        : undefined;
       return {
         id: m.id,
         title: m.title,
@@ -549,27 +572,61 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
               mentions: JSON.parse(summary.mentionsJson),
             }
           : null),
+        project: project?.name ?? null,
+        transcript_kind: m.transcriptKind ?? null,
         transcript:
           m.transcriptOverrideMd ??
+          (args.transcript_format !== 'raw' && m.agentTranscriptMd ? m.agentTranscriptMd : null) ??
           segments
-            .map((s) => `[${formatMs(s.startMs)}] ${s.speakerId ?? 'speaker'}: ${s.text}`)
+            .map((s) => `[${formatMs(s.startMs)}] ${s.speakerId ? speakerName(s.speakerId, names) : 'Speaker'}: ${s.text}`)
             .join('\n'),
         url: `https://eavesy.com/app/meetings/${m.id}`,
       };
     }
     case 'recent_meetings': {
       const limit = Math.min(args.limit ?? 10, 50);
+      const projects = await db
+        .select({ id: schema.folders.id, name: schema.folders.name })
+        .from(schema.folders)
+        .where(eq(schema.folders.userId, userId));
+      const projectName = typeof args.project === 'string' ? args.project.trim().toLowerCase() : '';
+      const only = projectName ? projects.find((p) => p.name.toLowerCase() === projectName) : undefined;
+      if (projectName && !only) throw new Error(`no project named "${args.project}"`);
       const rows = await db
         .select()
         .from(schema.meetings)
-        .where(and(eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt)))
+        .where(
+          and(
+            eq(schema.meetings.userId, userId),
+            isNull(schema.meetings.deletedAt),
+            only ? eq(schema.meetings.folderId, only.id) : undefined,
+          ),
+        )
         .orderBy(desc(schema.meetings.startedAt))
         .limit(limit);
       return rows.map((m) => ({
         id: m.id,
         title: m.title,
+        project: projects.find((p) => p.id === m.folderId)?.name ?? null,
         started_at: new Date(m.startedAt).toISOString(),
         duration_sec: m.durationSec,
+      }));
+    }
+    case 'list_projects': {
+      const rows = await db
+        .select({
+          folder: schema.folders,
+          recordings: sql<number>`(select count(*) from meetings m where m.folder_id = "folders"."id" and m.deleted_at is null)`,
+        })
+        .from(schema.folders)
+        .where(eq(schema.folders.userId, userId))
+        .orderBy(schema.folders.sortOrder, schema.folders.name);
+      return rows.map(({ folder, recordings }) => ({
+        name: folder.name,
+        about: folder.about,
+        terms: parseStringList(folder.vocabularyJson),
+        people: folder.people,
+        recordings: Number(recordings) || 0,
       }));
     }
     case 'search_dictations': {

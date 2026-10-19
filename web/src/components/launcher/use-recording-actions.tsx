@@ -14,6 +14,7 @@ import { copyText, pasteToFrontmost, revealInFinder } from '@/lib/desktop/bridge
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown, recordingMarkdown } from './format';
+import { agentText } from './capture-history';
 
 export function useRecordingActions({
   current,
@@ -95,15 +96,14 @@ export function useRecordingActions({
       },
       {
         id: 'ask-ai',
-        label: 'Copy as AI prompt',
+        label: 'Copy for AI',
         icon: <Sparkles className="h-4 w-4" />,
         hint: '⌘J',
         run: async () => {
-          await copyText(
-            `Here is a meeting transcript. Summarize the key decisions and action items.\n\n---\n${transcript}`,
-          );
+          const { text, cleaned } = await agentText(rec);
+          await copyText(text);
           close();
-          flash('Prompt copied — paste into your AI');
+          flash(cleaned ? 'Copied for AI' : 'Copied. The cleaned-up version isn’t ready yet');
         },
       },
       {

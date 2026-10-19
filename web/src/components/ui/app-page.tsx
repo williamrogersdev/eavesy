@@ -111,12 +111,14 @@ export function AppAlert({
 }
 
 export function AppSection({
+  id,
   title,
   description,
   action,
   children,
   className,
 }: {
+  id?: string;
   title: string;
   description?: ReactNode;
   action?: ReactNode;
@@ -124,7 +126,7 @@ export function AppSection({
   className?: string;
 }) {
   return (
-    <section className={cn('flex flex-col gap-3 border-t border-border pt-5 first:border-t-0 first:pt-0', className)}>
+    <section id={id} className={cn('flex scroll-mt-6 flex-col gap-3 border-t border-border pt-5 first:border-t-0 first:pt-0', className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{title}</h2>

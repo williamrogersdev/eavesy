@@ -40,6 +40,8 @@ export function buildContextMd(data: MeetingData): string {
   }
   if (meeting.transcriptOverrideMd?.trim()) {
     out.push(meeting.transcriptOverrideMd.trim());
+  } else if (meeting.agentTranscriptMd?.trim()) {
+    out.push('## Transcript', '', meeting.agentTranscriptMd.trim());
   } else if (segments?.length) {
     const labelled = hasBothSides(segments.map((s) => ({ speakerId: s.speakerId ?? null })));
     const names = parseSpeakerNames(meeting.speakerNamesJson);

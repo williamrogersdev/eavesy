@@ -50,6 +50,7 @@ import { ContextView } from './context-view';
 import { RecordingView, StartingView } from './recording-views';
 import { useToastTasks } from './use-toast-tasks';
 import { useSignedOut } from './use-signed-out';
+import { useProject } from './use-project';
 import { useLauncherCommands } from './use-launcher-commands';
 import { useLauncherItems } from './use-launcher-items';
 import { useRecordingActions } from './use-recording-actions';
@@ -117,6 +118,10 @@ export function Launcher() {
   const historyRef = useRef<HTMLDivElement>(null);
 
   const { toast, flash, runTask } = useToastTasks();
+  const project = useProject(desktop && !!account);
+  // Read when a recording starts, so starting doesn't depend on the project list.
+  const projectIdRef = useRef<string | undefined>(undefined);
+  projectIdRef.current = project.active?.id;
   // However Settings is left (title bar, Esc, tray, panel reopening), the detour is over.
   useEffect(() => {
     if (view !== 'settings') settingsFromSetup.current = false;
@@ -272,7 +277,7 @@ export function Launcher() {
         const session =
           mode === 'screen'
             ? await startScreenCapture(opts?.mic ?? false)
-            : await startAudioCapture(source, opts?.contextBlurb, opts?.dictation);
+            : await startAudioCapture(source, opts?.contextBlurb, opts?.dictation, projectIdRef.current);
         if (session) {
           setRecording({ session, mode });
           setView('list');
@@ -694,6 +699,7 @@ export function Launcher() {
             connect={() => runTask(connectAccount, 'Couldn’t connect your account')}
             disconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
             runTask={runTask}
+            project={project}
           />
         )}
         {desktop && view === 'list' && (
@@ -769,6 +775,7 @@ export function Launcher() {
           <StartingView />
         ) : view === 'context' && !recording ? (
           <ContextView
+            projectName={project.active?.name}
             onBack={() => setView('list')}
             onStart={(contextBlurb) =>
               runTask(

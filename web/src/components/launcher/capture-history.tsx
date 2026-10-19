@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Search,
+  Sparkles,
   StickyNote,
   Trash2,
   Users,
@@ -25,6 +26,7 @@ import {
   copyCaptureMedia,
   copyText,
   deleteCapture,
+  fetchAgentTranscript,
   pasteToFrontmost,
   revealInFinder,
 } from '@/lib/desktop/bridge';
@@ -286,6 +288,17 @@ function CaptureRow({
           onOpenChange={setMenuOpen}
           trigger={<IconButton label="More" icon={MoreHorizontal} />}
           items={[
+            ...(text && signedIn
+              ? [{
+                  label: 'Copy for AI',
+                  icon: Sparkles,
+                  onSelect: () => runTask(async () => {
+                    const { text: agent, cleaned } = await agentText(rec);
+                    await copyText(agent);
+                    flash(cleaned ? 'Copied for AI' : 'Copied. The cleaned-up version isn’t ready yet');
+                  }, 'Couldn’t copy that'),
+                }]
+              : []),
             { label: 'Show in Finder', icon: FolderOpen, onSelect: () => runTask(() => revealInFinder(rec.id)) },
             'separator',
             {
@@ -302,6 +315,15 @@ function CaptureRow({
       </div>
     </article>
   );
+}
+
+/**
+ * The transcript cleaned up for an AI agent (filler gone, code in backticks,
+ * speakers merged), or the plain transcript while the cloud is still on it.
+ */
+export async function agentText(rec: Recording): Promise<{ text: string; cleaned: boolean }> {
+  const cleaned = await fetchAgentTranscript(rec.id).catch(() => null);
+  return cleaned ? { text: cleaned, cleaned: true } : { text: plainTranscript(rec.transcript ?? ''), cleaned: false };
 }
 
 export function CaptureHistory({

@@ -129,6 +129,8 @@ export const meetings = sqliteTable(
     speakerNamesJson: text('speaker_names_json'),
     summaryOverrideMd: text('summary_override_md'),
     transcriptOverrideMd: text('transcript_override_md'),
+    agentTranscriptMd: text('agent_transcript_md'),
+    transcriptKind: text('transcript_kind', { enum: ['solo', 'conversation'] }),
     localFilesUpdatedAt: integer('local_files_updated_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
@@ -144,6 +146,7 @@ export const meetings = sqliteTable(
     uniqueIndex('meetings_client_session_uq').on(t.clientSessionId),
     index('meetings_expires_idx').on(t.expiresAt),
     uniqueIndex('meetings_share_slug_uq').on(t.shareSlug),
+    index('meetings_folder_idx').on(t.folderId).where(sql`folder_id IS NOT NULL`),
   ],
 );
 
@@ -385,6 +388,12 @@ export const folders = sqliteTable(
     name: text('name').notNull(),
     parentId: text('parent_id'),
     sortOrder: integer('sort_order').notNull().default(0),
+    about: text('about'),
+    vocabularyJson: text('vocabulary_json').notNull().default('[]'),
+    people: text('people'),
+    matchJson: text('match_json').notNull().default('[]'),
+    createdAt: integer('created_at'),
+    updatedAt: integer('updated_at'),
   },
   (t) => [index('folders_user_idx').on(t.userId)],
 );
