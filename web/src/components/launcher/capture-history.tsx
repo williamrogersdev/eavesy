@@ -15,9 +15,11 @@ import {
   StickyNote,
   Trash2,
   Users,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import {
   captureMediaUrl,
   copyCaptureMedia,
@@ -117,25 +119,66 @@ function usePlayer(id: string) {
   return { playing, failed, toggle };
 }
 
-function Thumb({ id, video, durationSec }: { id: string; video: boolean; durationSec: number }) {
+/** The full image over the panel. Esc, the close button or a click outside the image closes it. */
+function ImageViewer({ url, label, host, onClose }: { url: string; label: string; host: Element; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      opener?.focus();
+    };
+  }, []);
+  return createPortal(
+    <div className="ev-viewer" role="dialog" aria-modal="true" aria-label={label} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <img src={url} alt={label} />
+      <IconButton ref={closeRef} className="ev-viewer-close" label="Close" icon={X} onClick={onClose} />
+    </div>,
+    host,
+  );
+}
+
+function Thumb({ id, video, durationSec, label }: { id: string; video: boolean; durationSec: number; label: string }) {
   const { url, error } = useMediaUrl(id);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [viewerHost, setViewerHost] = useState<Element | null>(null);
   if (error) return <p className="ev-sub">Preview unavailable. The file may have been moved.</p>;
   if (!url) return <div className="ev-thumb" data-loading="true" />;
+  if (!video) return (
+    <>
+      <button
+        type="button"
+        className="ev-thumb"
+        data-kind="image"
+        aria-label={`View ${label.toLowerCase()}`}
+        title="Click to view"
+        onClick={(e) => setViewerHost(e.currentTarget.closest('.ev-panel') ?? document.body)}
+      >
+        <img src={url} alt={label} />
+      </button>
+      {viewerHost && <ImageViewer url={url} label={label} host={viewerHost} onClose={() => setViewerHost(null)} />}
+    </>
+  );
   return (
     <div className="ev-thumb">
-      {video ? (
-        <video
-          ref={videoRef}
-          src={url}
-          preload="metadata"
-          aria-label="Screen recording. Click to play."
-          onClick={() => { const el = videoRef.current; if (el) void (el.paused ? el.play() : el.pause()); }}
-        />
-      ) : (
-        <img src={url} alt="Screenshot" />
-      )}
-      {video && durationSec > 0 && <span className="ev-badge">{clock(durationSec)}</span>}
+      <video
+        ref={videoRef}
+        src={url}
+        preload="metadata"
+        aria-label="Screen recording. Click to play."
+        onClick={() => { const el = videoRef.current; if (el) void (el.paused ? el.play() : el.pause()); }}
+      />
+      {durationSec > 0 && <span className="ev-badge">{clock(durationSec)}</span>}
     </div>
   );
 }
@@ -205,9 +248,9 @@ function CaptureRow({
   }, 'Couldn’t paste that');
 
   let body: ReactNode;
-  if (image) body = <Thumb id={rec.id} video={false} durationSec={0} />;
+  if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;
   else if (video) body = <>
-    <Thumb id={rec.id} video durationSec={rec.durationSec} />
+    <Thumb id={rec.id} video durationSec={rec.durationSec} label={kind.label} />
     {text && <div style={{ marginTop: 6 }}><Body text={text} query={query} /></div>}
   </>;
   else if (text) body = <>

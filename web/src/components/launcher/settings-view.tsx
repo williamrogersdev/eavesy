@@ -225,7 +225,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [shotFolder, setShotFolder] = useState<string | null>(null);
   const [shotsBusy, setShotsBusy] = useState(false);
   const [shotsError, setShotsError] = useState<string | null>(null);
-  const shotsOn = settings?.auto_import_screenshots ?? false;
+  const shotsOn = settings?.add_screenshots ?? true;
 
   useEffect(() => { void getScreenshotFolder().then(setShotFolder); }, []);
 
@@ -233,7 +233,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
     setShotsBusy(true);
     setShotsError(null);
     void setAutoImportScreenshots(next)
-      .then(() => setSettings((current) => current ? { ...current, auto_import_screenshots: next } : current))
+      .then(() => setSettings((current) => current ? { ...current, add_screenshots: next } : current))
       .catch((error: unknown) => setShotsError(errMsg(error, 'Could not change that setting.')))
       .finally(() => setShotsBusy(false));
   };
