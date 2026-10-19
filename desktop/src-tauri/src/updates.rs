@@ -208,8 +208,13 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
         return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
     }
-    if let Some(message) = std::env::current_exe().ok().as_deref().and_then(install_blocker) {
-        return Err(message);
+    match std::env::current_exe() {
+        Ok(exe) => {
+            if let Some(message) = install_blocker(&exe) {
+                return Err(message);
+            }
+        }
+        Err(e) => crate::telemetry::capture("updater.locate", &e.to_string()),
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
@@ -228,22 +233,38 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
-const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from the disk image, so it can't replace itself. \
+const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from a disk image or another read-only location, so it can't replace itself. \
 Quit Eavesy, drag it into your Applications folder, eject the disk image, then open Eavesy from Applications and update again.";
 
 /// The updater swaps the app bundle in place, which can't work when the bundle
-/// sits on a read-only disk image or in a Gatekeeper translocation mount.
+/// sits on a read-only volume such as a mounted disk image, or in a Gatekeeper
+/// translocation mount.
 fn install_blocker(exe: &std::path::Path) -> Option<String> {
     let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))?;
-    let path = bundle.to_string_lossy();
-    (path.starts_with("/Volumes/") || path.contains("/AppTranslocation/")).then(|| MOVE_TO_APPLICATIONS.to_string())
+    blocks_install(bundle, || bundle.parent().is_some_and(can_write_in)).then(|| MOVE_TO_APPLICATIONS.to_string())
 }
 
-fn install_error(message: String) -> String {
-    if message.contains("os error 18") || message.contains("os error 30") {
-        MOVE_TO_APPLICATIONS.to_string()
-    } else {
-        message
+fn blocks_install(bundle: &std::path::Path, parent_writable: impl FnOnce() -> bool) -> bool {
+    let path = bundle.to_string_lossy();
+    path.contains("/AppTranslocation/") || (path.starts_with("/Volumes/") && !parent_writable())
+}
+
+fn can_write_in(dir: &std::path::Path) -> bool {
+    let probe = dir.join(format!(".eavesy-update-probe-{}", std::process::id()));
+    let writable = std::fs::File::create(&probe).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    writable
+}
+
+fn install_error(error: tauri_plugin_updater::Error) -> String {
+    let detail = error.to_string();
+    crate::telemetry::capture("updater.install", &detail);
+    match &error {
+        // EXDEV and EROFS: the bundle can't be moved out of a read-only mount.
+        tauri_plugin_updater::Error::Io(io) if matches!(io.raw_os_error(), Some(18 | 30)) => {
+            format!("{MOVE_TO_APPLICATIONS} ({detail})")
+        }
+        _ => detail,
     }
 }
 
@@ -257,7 +278,7 @@ async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     update
         .download_and_install(|_, _| {}, || {})
         .await
-        .map_err(|e| install_error(e.to_string()))?;
+        .map_err(install_error)?;
     Ok(update.version)
 }
 
@@ -294,15 +315,22 @@ mod tests {
     }
 
     #[test]
-    fn updating_from_the_disk_image_asks_to_move_to_applications() {
+    fn updating_from_a_read_only_location_asks_to_move_to_applications() {
+        use std::io::Error as IoError;
         use std::path::Path;
-        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app/Contents/MacOS/eavesy");
-        assert_eq!(install_blocker(dmg).as_deref(), Some(MOVE_TO_APPLICATIONS));
-        let translocated = Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app/Contents/MacOS/eavesy");
-        assert!(install_blocker(translocated).is_some());
+        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app");
+        assert!(blocks_install(dmg, || false));
+        assert!(!blocks_install(dmg, || true));
+        assert!(blocks_install(Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app"), || true));
+        assert!(!blocks_install(Path::new("/Applications/Eavesy.app"), || false));
         assert_eq!(install_blocker(Path::new("/Applications/Eavesy.app/Contents/MacOS/eavesy")), None);
-        assert_eq!(install_error("Cross-device link (os error 18)".into()), MOVE_TO_APPLICATIONS);
-        assert_eq!(install_error("offline".into()), "offline");
+        for code in [18, 30] {
+            let message = install_error(tauri_plugin_updater::Error::Io(IoError::from_raw_os_error(code)));
+            assert!(message.starts_with(MOVE_TO_APPLICATIONS));
+            assert!(message.contains(&format!("os error {code}")));
+        }
+        let other = install_error(tauri_plugin_updater::Error::Io(IoError::from_raw_os_error(13)));
+        assert!(!other.contains(MOVE_TO_APPLICATIONS));
     }
 
     #[test]
