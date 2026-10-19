@@ -5,11 +5,11 @@ export function Bento() {
   return (
     <section className="px-6 py-20 sm:py-24">
       <div className="mx-auto mb-12 max-w-2xl text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">What you can drop in</p>
-        <h2 className="mt-4 text-balance text-3xl font-bold tracking-tight sm:text-5xl">
+        <p className="font-round text-sm font-bold text-ev-slate">What you can drop in</p>
+        <h2 className="mt-4 text-balance text-3xl font-extrabold tracking-tight sm:text-5xl">
           One place for everything your AI needs to see.
         </h2>
-        <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-white/55 sm:text-base">
+        <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-ev-ink-2 sm:text-base">
           Eavesy holds the text, images, and recordings your prompt would otherwise
           lose, as Markdown you can copy in a second.
         </p>
@@ -28,16 +28,16 @@ function BentoCard({ item }: { item: BentoItem }) {
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-2xl border border-white/10 p-6 transition hover:-translate-y-0.5 hover:border-white/20',
-        highlight ? 'bg-accent/[0.06]' : 'bg-white/[0.02]',
+        'group relative overflow-hidden rounded-2xl border border-ev-line p-6 transition hover:-translate-y-0.5 hover:border-ev-line-strong',
+        highlight ? 'bg-ev-slate-soft' : 'bg-ev-raised',
         span && 'lg:col-span-2',
       )}
     >
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] text-accent">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-ev-well text-ev-slate">
         <Icon className="h-5 w-5" />
       </div>
       <h3 className="mt-4 font-semibold">{title}</h3>
-      <p className="mt-1.5 text-sm text-white/55">{body}</p>
+      <p className="mt-1.5 text-sm text-ev-ink-2">{body}</p>
     </div>
   );
 }

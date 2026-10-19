@@ -19,22 +19,22 @@ export function DocsSidebar({ groups }: { groups: DocNavGroup[] }) {
       <Link
         href="/docs"
         className={cn(
-          'inline-flex items-center gap-2 font-semibold transition hover:text-white',
-          pathname === '/docs' ? 'text-white' : 'text-white/60',
+          'inline-flex items-center gap-2 font-semibold transition hover:text-ev-ink',
+          pathname === '/docs' ? 'text-ev-ink' : 'text-ev-ink-2',
         )}
       >
-        <BookOpen className="h-4 w-4 text-white/50" />
+        <BookOpen className="h-4 w-4 text-ev-ink-2" />
         Overview
       </Link>
       {groups.map((group) => {
         const { icon: Icon } = categoryMeta(group.category);
         return (
         <div key={group.category}>
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-white/50">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-ev-ink-2">
             <Icon className="h-3.5 w-3.5" />
             {group.category}
           </div>
-          <ul className="flex flex-col gap-0.5 border-l border-white/[0.08]">
+          <ul className="flex flex-col gap-0.5 border-l border-ev-line">
             {group.items.map((item) => {
               const href = `/docs/${item.slug}`;
               const active = pathname === href;
@@ -45,8 +45,8 @@ export function DocsSidebar({ groups }: { groups: DocNavGroup[] }) {
                     className={cn(
                       '-ml-px block border-l-2 py-1.5 pl-4 transition',
                       active
-                        ? 'border-accent text-white'
-                        : 'border-transparent text-white/55 hover:border-white/30 hover:text-white',
+                        ? 'border-ev-slate text-ev-ink'
+                        : 'border-transparent text-ev-ink-2 hover:border-ev-line-strong hover:text-ev-ink',
                     )}
                   >
                     {item.title}

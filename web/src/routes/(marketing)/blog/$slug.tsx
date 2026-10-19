@@ -63,15 +63,15 @@ function BlogPostPage() {
 
           <header className="mb-10">
             {post.frontmatter.category && (
-              <span className="inline-flex items-center rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-accent">
+              <span className="inline-flex items-center rounded-full border border-ev-slate/40 bg-ev-slate-soft px-2.5 py-1 text-[11px] font-medium text-ev-slate">
                 {post.frontmatter.category}
               </span>
             )}
-            <h1 className="mt-4 text-balance text-4xl font-semibold tracking-tight text-white">
+            <h1 className="mt-4 text-balance text-4xl font-extrabold tracking-tight text-ev-ink">
               {post.frontmatter.title}
             </h1>
-            <p className="mt-4 text-lg text-white/55">{post.frontmatter.description}</p>
-            <div className="mt-5 flex flex-wrap items-center gap-2 text-sm text-white/50">
+            <p className="mt-4 text-lg text-ev-ink-2">{post.frontmatter.description}</p>
+            <div className="mt-5 flex flex-wrap items-center gap-2 text-sm text-ev-ink-2">
               <time dateTime={post.frontmatter.date}>
                 {formatDate(post.frontmatter.date)}
               </time>
@@ -93,7 +93,7 @@ function BlogPostPage() {
               {post.frontmatter.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-white/50"
+                  className="rounded-full border border-ev-line bg-ev-raised px-3 py-1 text-xs text-ev-ink-2"
                 >
                   {tag}
                 </span>
@@ -101,10 +101,10 @@ function BlogPostPage() {
             </div>
           )}
 
-          <div className="mt-12 border-t border-white/[0.06] pt-8">
+          <div className="mt-12 border-t border-ev-line pt-8">
             <Link
               href="/blog"
-              className="inline-flex items-center gap-2 text-sm font-medium text-accent transition hover:text-accent-hover"
+              className="inline-flex items-center gap-2 text-sm font-medium text-ev-slate transition hover:text-ev-slate-hover"
             >
               <ArrowLeft className="h-4 w-4" /> All posts
             </Link>
