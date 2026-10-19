@@ -18,7 +18,7 @@ pub fn spawn(
                 "Pair this Mac with your Eavesy account before transcribing recordings."
                     .to_string()
             })
-            .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS));
+            .and_then(|credential| run(&media_path, is_video, false, &credential, &STORED));
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
@@ -98,7 +98,7 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
             no_paste(&app, &id, "Saved. Sign in to have it typed for you");
             return;
         };
-        match run(&audio, false, true, &credential, &PASTE_RETRY_DELAYS) {
+        match run(&audio, false, true, &credential, &PASTE) {
             Ok(text) => crate::dictation::deliver_dictation(&app, &id, &text),
             Err(error) => {
                 crate::telemetry::capture("dictation.whisper_paste", &error);
@@ -129,6 +129,16 @@ const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 /// A paste is only worth waiting a moment for: after that the user has moved
 /// on, and the stored recording is transcribed with full retries anyway.
 const PASTE_RETRY_DELAYS: [u64; 1] = [2];
+
+/// How long a transcription waits on each request, and between retries.
+struct Patience {
+    timeout: std::time::Duration,
+    delays: &'static [u64],
+}
+
+const STORED: Patience = Patience { timeout: std::time::Duration::from_secs(180), delays: &RETRY_DELAYS };
+/// At most about a minute, two tries included, before the paste gives up.
+const PASTE: Patience = Patience { timeout: std::time::Duration::from_secs(25), delays: &PASTE_RETRY_DELAYS };
 /// How many pieces of a long recording upload at once.
 const PIECES_AT_ONCE: usize = 3;
 
@@ -139,15 +149,15 @@ fn run(
     is_video: bool,
     voice: bool,
     credential: &settings::Credential,
-    delays: &[u64],
+    patience: &Patience,
 ) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(patience.timeout)
         .build()
         .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
     let texts = in_order_at_once(&pieces, PIECES_AT_ONCE, |(bytes, filename, mime)| {
-        with_retry(delays, || transcribe_piece(&client, bytes, filename, mime, voice, credential))
+        with_retry(patience.delays, || transcribe_piece(&client, bytes, filename, mime, voice, credential))
     })?;
     let texts: Vec<&str> = texts.iter().map(|text| text.trim()).filter(|text| !text.is_empty()).collect();
     if texts.is_empty() {
@@ -406,6 +416,18 @@ mod tests {
         let items = [1, 2, 3, 4];
         let result = in_order_at_once(&items, 2, |item| if *item == 3 { Err("HTTP 400".to_string()) } else { Ok(*item) });
         assert_eq!(result, Err("HTTP 400".to_string()));
+    }
+
+    #[test]
+    fn a_paste_gives_up_after_one_retry() {
+        let mut calls = 0;
+        let result = with_retry(&[0], || {
+            calls += 1;
+            Err(PieceError::Retry("HTTP 503".into()))
+        });
+        assert_eq!(result, Err("HTTP 503".to_string()));
+        assert_eq!(calls, PASTE_RETRY_DELAYS.len() + 1);
+        assert!(PASTE.timeout.as_secs() * 2 + PASTE_RETRY_DELAYS.iter().sum::<u64>() <= 60);
     }
 
     #[test]

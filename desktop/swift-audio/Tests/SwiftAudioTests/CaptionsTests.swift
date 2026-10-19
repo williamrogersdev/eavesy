@@ -247,4 +247,10 @@ final class SFSpeechRolloverTests: XCTestCase {
         XCTAssertLessThan(SFSpeechEngine.rms(silent), SFSpeechEngine.pauseRms)
         XCTAssertEqual(SFSpeechEngine.rms(loud), 0.2, accuracy: 0.0001)
     }
+
+    func testAnEmptyBufferCountsAsQuiet() throws {
+        let empty = try XCTUnwrap(LiveCaptions.pcmBuffer([Float](repeating: 0.5, count: 1)))
+        empty.frameLength = 0
+        XCTAssertEqual(SFSpeechEngine.rms(empty), 0)
+    }
 }
