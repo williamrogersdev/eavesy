@@ -311,14 +311,24 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
 }
 
 
-/// The HUD grows to show its running transcript, and shrinks back after.
-/// Returns whether the transcript opens above the bar.
+/// Which way the HUD's sheet will open, asked before it opens.
 #[tauri::command]
-pub async fn set_hud_expanded(app: AppHandle, expanded: bool, up: Option<bool>) -> Result<bool, String> {
+pub async fn hud_sheet_opens_up(app: AppHandle, height: f64) -> Result<bool, String> {
+    on_main(&app, move |handle| crate::hud::sheet_opens_up(handle, height)).await
+}
+
+/// Opens, resizes or closes the sheet under the HUD's bar (0 closes it).
+/// Returns whether it opened above the bar.
+#[tauri::command]
+pub async fn set_hud_sheet(app: AppHandle, height: f64) -> Result<bool, String> {
+    on_main(&app, move |handle| crate::hud::set_sheet_on_main(handle, height)).await
+}
+
+async fn on_main<T: Send + 'static>(app: &AppHandle, work: impl FnOnce(&AppHandle) -> T + Send + 'static) -> Result<T, String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = sender.send(crate::hud::set_expanded_on_main(&handle, expanded, up));
+        let _ = sender.send(work(&handle));
     })
     .map_err(|error| format!("could not resize the capture control: {error}"))?;
     receiver.await.map_err(|error| format!("could not resize the capture control: {error}"))

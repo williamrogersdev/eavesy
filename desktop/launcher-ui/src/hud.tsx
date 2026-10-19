@@ -1,5 +1,5 @@
-import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
-import { AudioLines, Camera, Check, Clapperboard, History, Square, X } from 'lucide-react';
+import { StrictMode, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
 import { errMsg } from '@/lib/desktop/errors';
@@ -14,7 +14,7 @@ import {
 } from '@/lib/desktop/live-captions';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { createRoot } from 'react-dom/client';
-import { HudTranscript } from './hud-transcript';
+import { HudSheet } from './hud-sheet';
 import './styles.css';
 
 type Phase = 'idle' | 'saved' | 'recording' | 'transcribing' | 'done' | 'failed';
@@ -56,27 +56,26 @@ function elapsedLabel(startedAtMs: number | null, now: number): string {
   return clock(Math.max(0, Math.floor((now - startedAtMs) / 1000)));
 }
 
-/** The same rule the window uses: in the lower half of its screen, or too low to grow down. */
-function lowOnScreen(): boolean {
-  const top = (window.screen as Screen & { availTop?: number }).availTop ?? 0;
-  const height = window.screen.availHeight;
-  const middle = window.screenY + window.outerHeight / 2;
-  return middle > top + height / 2 || window.screenY + window.outerHeight + TRANSCRIPT_ROOM > top + height;
-}
+/** The sheet's tallest, while recording and after: matches `MAX_SHEET` in hud.rs at most. */
+const LIVE_SHEET = 112;
+const RESULT_SHEET = 240;
 
-/** Matches `TRANSCRIPT_HEIGHT` in hud.rs. */
-const TRANSCRIPT_ROOM = 96;
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
-  const phase = (new URLSearchParams(window.location.search).get('hud') ??
-    'idle') as Phase;
+  const params = new URLSearchParams(window.location.search);
+  const phase = (params.get('hud') ?? 'idle') as Phase;
+  const image = params.has('image');
   return {
     phase,
     sessionId: 'preview',
-    mode: 'audio',
+    mode: image ? 'image' : 'audio',
+    notice: params.get('notice'),
     startedAtMs: Date.now() - 78_000,
-    message: phase === 'done'
+    message: phase === 'done' && !image
       ? 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away. It is just not really fleshed out yet, but the shape is right.'
       : null,
   };
@@ -92,11 +91,16 @@ function Hud() {
   const [captions, setCaptions] = useState<Record<string, LiveCaption>>({});
   // Everything heard in the current recording, for the transcript under the bar.
   const [running, setRunning] = useState<RunningTranscript>(EMPTY_RUNNING);
-  // Whether the window has grown to make room for that transcript, and which way.
-  const [expanded, setExpanded] = useState(false);
+  // The height the sheet's content needs, and whether it opens above the bar.
+  const [sheetNeeds, setSheetNeeds] = useState(0);
   const [growsUp, setGrowsUp] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
   // Bumped each time the control is shown again, having lost its room.
   const [shown, setShown] = useState(0);
+  const sheetHeight = useRef(0);
+  const resizing = useRef<Promise<void>>(Promise.resolve());
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -184,47 +188,73 @@ function Hud() {
   };
 
   const transcript = hudTranscript(state, running);
-  // From the moment the mic is live until the words land, the strip stays
+  // From the moment the mic is live until the words land, the sheet stays
   // open: what is being heard is always in view, and the HUD never shrinks
   // and grows again between stopping and pasting.
-  const listening = state?.phase === 'recording' && !!state.sessionId;
-  const hint = listening ? 'Your words show up here as you talk' : state?.phase === 'transcribing' && state.sessionId ? 'Almost there…' : null;
-  const showTranscript = hint !== null || transcript.text !== '' || transcript.notice !== null;
+  const listening = state?.phase === 'recording' && !!state.sessionId && state.mode !== 'video';
+  const hint = listening ? 'Your words show up here as you talk' : state?.phase === 'transcribing' && state.sessionId && state.mode !== 'video' ? 'Almost there…' : null;
+  const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
+  const sheet: 'live' | 'result' | 'image' | null = screenshot
+    ? 'image'
+    : state && ['done', 'saved', 'failed'].includes(state.phase) && (transcript.text || transcript.notice)
+      ? 'result'
+      : hint !== null || transcript.text
+        ? 'live'
+        : null;
+  const target = sheet ? Math.min(sheetNeeds, sheet === 'live' ? LIVE_SHEET : RESULT_SHEET) : 0;
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void tauri()?.event?.listen('hud:shown', () => setShown((n) => n + 1))
-      .then((off) => { if (disposed) off(); else unlisten = off; });
+    void tauri()?.event?.listen('hud:shown', () => {
+      // Shown afresh at its own frame: the sheet's room is gone.
+      sheetHeight.current = 0;
+      setShown((n) => n + 1);
+    }).then((off) => { if (disposed) off(); else unlisten = off; });
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
-  // The direction is chosen here, before the window moves, so the layout and
-  // the window change together: the bar never jumps. Low on the screen the
-  // transcript opens above the bar.
+  // The window makes room for the sheet one step at a time, in order. Which
+  // way it opens is settled first, so the layout flips before the window
+  // grows and the bar never jumps.
   useEffect(() => {
+    resizing.current = resizing.current.then(async () => {
+      if (target === sheetHeight.current) return;
+      if (sheetHeight.current === 0 && target > 0) {
+        setGrowsUp(((await invoke('hud_sheet_opens_up', { height: target })) as boolean | undefined) ?? false);
+        await nextFrame();
+      }
+      await invoke('set_hud_sheet', { height: target });
+      sheetHeight.current = target;
+      if (target === 0) setGrowsUp(false);
+    }).catch(() => {});
+  }, [target, shown]);
+
+  useEffect(() => {
+    setCopied(false);
+    setImageSrc(null);
+    if (!screenshot || !state?.sessionId) return;
     let cancelled = false;
-    const up = showTranscript ? (expanded ? growsUp : lowOnScreen()) : false;
-    if (showTranscript) setGrowsUp(up);
-    void invoke('set_hud_expanded', { expanded: showTranscript, up })
-      .then(() => {
-        if (cancelled) return;
-        setExpanded(showTranscript);
-        if (!showTranscript) setGrowsUp(false);
+    void invoke('capture_media', { id: state.sessionId })
+      .then((path) => {
+        const src = typeof path === 'string' ? tauri()?.core?.convertFileSrc?.(path) ?? path : null;
+        if (!cancelled) setImageSrc(src);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showTranscript, state?.phase, state?.sessionId, shown]);
+  }, [screenshot, state?.sessionId]);
 
   useEffect(() => {
     if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
     const sessionId = state.sessionId;
-    // Long enough to read the words that were just pasted.
+    // Long enough to read the words or grab the screenshot; held open while
+    // the pointer is on the control.
+    if (hovered) return;
     const timeout = window.setTimeout(() => {
       void invoke('dismiss_hud', { sessionId }).catch(() => {});
-    }, showTranscript ? 6000 : 3500);
+    }, sheet ? 8000 : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, state?.mode, showTranscript]);
+  }, [state?.phase, state?.sessionId, state?.mode, sheet, hovered]);
 
   useEffect(() => {
     if (state?.phase !== 'recording') return;
@@ -238,7 +268,7 @@ function Hud() {
   // Recording with no session yet: the mic is still opening.
   const opening = recording && !state.sessionId;
   const live = recording && !opening;
-  const liveCaptions = live && !expanded
+  const liveCaptions = live && !sheet
     ? ['mic', 'system']
         .map((track) => captions[track])
         .filter((c): c is LiveCaption => !!c && c.sessionId === state.sessionId && !!c.text.trim())
@@ -249,7 +279,7 @@ function Hud() {
 
   const pressSurface = (e: MouseEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
-    const inTranscript = !!(e.target as HTMLElement).closest('.ctl-transcript');
+    const inSheet = !!(e.target as HTMLElement).closest('.ctl-sheet');
     const origin = { x: e.screenX, y: e.screenY };
     const cleanup = () => {
       window.removeEventListener('mousemove', move);
@@ -258,12 +288,12 @@ function Hud() {
     const move = (ev: globalThis.MouseEvent) => {
       if (Math.hypot(ev.screenX - origin.x, ev.screenY - origin.y) < 4) return;
       cleanup();
-      // The transcript's words can be selected; the rest of the control drags.
-      if (!inTranscript) void invoke('plugin:window|start_dragging', { label: 'hud' }).catch(() => {});
+      // The sheet's words can be selected; the rest of the control drags.
+      if (!inSheet) void invoke('plugin:window|start_dragging', { label: 'hud' }).catch(() => {});
     };
     const up = () => {
       cleanup();
-      if (inTranscript && window.getSelection()?.toString()) return;
+      if (inSheet) return;
       act('show_launcher');
     };
     window.addEventListener('mousemove', move);
@@ -271,7 +301,7 @@ function Hud() {
   };
 
   return (
-    <div aria-label={live ? 'Eavesy recording' : 'Eavesy'} data-phase={opening ? 'starting' : state.phase} data-grow={growsUp ? 'up' : undefined} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
+    <div aria-label={live ? 'Eavesy recording' : 'Eavesy'} data-phase={opening ? 'starting' : state.phase} data-grow={growsUp ? 'up' : undefined} onMouseDown={pressSurface} onMouseEnter={() => { loadShortcut(); setHovered(true); }} onMouseLeave={() => setHovered(false)} className="launcher-scope ev eavesy-control">
       <div className="ctl-bar">
       <div className="ctl-grid">
         <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-mark">
@@ -291,6 +321,7 @@ function Hud() {
           {state.phase === 'done' && state.mode === 'audio' && transcript.text && (
             <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />{transcript.notice ? 'Copied' : 'Pasted'}</span>
           )}
+          {screenshot && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Screenshot</span>}
           {state.phase === 'done' && state.mode === 'video' && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Saved</span>}
           {state.phase === 'saved' && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Saved</span>}
           {state.phase === 'failed' && !actionError && <span className="ctl-error" title={state.message ?? undefined}>Didn’t work</span>}
@@ -313,8 +344,46 @@ function Hud() {
         </div>
       </div>
       </div>
-      {expanded && showTranscript && (
-        <HudTranscript text={transcript.text} notice={transcript.notice} hint={hint} />
+      {sheet === 'live' && (
+        <HudSheet key="live" onHeight={setSheetNeeds} follow={transcript.text}>
+          {transcript.text ? <p>{transcript.text}</p> : hint && <p className="ctl-sheet-hint">{hint}</p>}
+        </HudSheet>
+      )}
+      {sheet === 'result' && (
+        <HudSheet
+          key={`result-${state.sessionId}`}
+          onHeight={setSheetNeeds}
+          footer={transcript.text ? (
+            <>
+              {transcript.notice && <span className="ctl-sheet-notice" title={transcript.notice}>{transcript.notice.includes('Accessibility') ? 'Not pasted' : transcript.notice}</span>}
+              <span className="ctl-sheet-spacer" />
+              {transcript.notice?.includes('Accessibility') && (
+                <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow pasting</button>
+              )}
+              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => { act('copy_text', { text: transcript.text }); setCopied(true); }}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
+            </>
+          ) : undefined}
+        >
+          {transcript.text ? <p>{transcript.text}</p> : transcript.notice && <p className="ctl-sheet-notice">{transcript.notice}</p>}
+        </HudSheet>
+      )}
+      {sheet === 'image' && (
+        <HudSheet
+          key={`image-${state.sessionId}`}
+          onHeight={setSheetNeeds}
+          footer={(
+            <>
+              <span className="ctl-sheet-notice">{copied ? 'Copied — press ⌘V to paste' : 'Saved'}</span>
+              <span className="ctl-sheet-spacer" />
+              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => act('show_launcher')}><Maximize2 className="h-3.5 w-3.5" />Open</button>
+              <button type="button" className="ctl-btn ctl-sheet-btn" onClick={() => { act('copy_capture_media', { id: state.sessionId }); setCopied(true); }}><Copy className="h-3.5 w-3.5" />Copy</button>
+            </>
+          )}
+        >
+          <button type="button" className="ctl-shot" onClick={() => act('show_launcher')} aria-label="Open the screenshot" title="Open the screenshot">
+            {imageSrc ? <img src={imageSrc} alt="" draggable={false} /> : <span className="ctl-shot-wait" />}
+          </button>
+        </HudSheet>
       )}
     </div>
   );
