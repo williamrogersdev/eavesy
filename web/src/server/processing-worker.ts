@@ -107,7 +107,7 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       await handleEmbedMeeting(message.meetingId, db, env);
       return;
     case 'agent-transcript':
-      await handleAgentTranscript(message.meetingId, db, env, { onlyIfMissing: message.onlyIfMissing });
+      await handleAgentTranscript(message.meetingId, db, env, { rev: message.rev });
       return;
     case 'embed-dictation':
       await handleEmbedDictation(message.dictationId, db, env);

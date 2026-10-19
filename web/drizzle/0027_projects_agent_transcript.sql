@@ -18,4 +18,8 @@ ALTER TABLE `meetings` ADD `agent_transcript_md` text;
 --> statement-breakpoint
 ALTER TABLE `meetings` ADD `transcript_kind` text;
 --> statement-breakpoint
+-- Bumped by every edit that changes what the cleaned transcript is built
+-- from; a rebuild only saves while it still matches.
+ALTER TABLE `meetings` ADD `agent_transcript_rev` integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
 CREATE INDEX `meetings_folder_idx` ON `meetings` (`folder_id`) WHERE `folder_id` IS NOT NULL;

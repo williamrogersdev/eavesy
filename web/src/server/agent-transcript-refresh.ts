@@ -1,5 +1,5 @@
 import { waitUntil } from 'cloudflare:workers';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetings } from '@/db/schema';
 import { reportError } from '@/server/observability';
@@ -9,28 +9,44 @@ import { enqueue } from '@/server/queue';
 const REFRESH_DELAY_SECONDS = 30;
 
 /**
- * The words or names behind the cleaned transcript changed: queue a rebuild,
- * then drop the stale copy so nobody pastes it. Queueing first means a failure
- * leaves the old copy in place rather than none and no rebuild coming.
+ * The words or names behind the cleaned transcript changed. One statement
+ * drops the stale copy and bumps the revision, so readers fall back to the
+ * raw transcript and any rebuild already running can't save over the edit;
+ * then a rebuild for the new revision is queued.
  */
 export async function refreshAgentTranscript(meetingId: string, userId: string): Promise<void> {
+  let rev: number | undefined;
   try {
-    const db = getDb();
-    const owned = await db
-      .select({ id: meetings.id })
-      .from(meetings)
+    const bumped = await getDb()
+      .update(meetings)
+      .set({ agentTranscriptMd: null, agentTranscriptRev: sql`${meetings.agentTranscriptRev} + 1` })
       .where(and(eq(meetings.id, meetingId), eq(meetings.userId, userId), eq(meetings.status, 'complete')))
-      .limit(1);
-    if (owned.length === 0) return;
-    // A burst of edits queues one rebuild each; the first to run does the work.
-    await enqueue({ kind: 'agent-transcript', meetingId, onlyIfMissing: true }, { delaySeconds: REFRESH_DELAY_SECONDS });
-    await db.update(meetings).set({ agentTranscriptMd: null }).where(eq(meetings.id, meetingId));
+      .returning({ rev: meetings.agentTranscriptRev });
+    rev = bumped[0]?.rev;
+    if (rev === undefined) return;
+    await enqueueRebuild(meetingId, rev);
   } catch (error) {
-    reportError('could not refresh agent transcript', error, { meetingId });
+    // The edit is saved and nobody is shown a stale copy; only the rebuild is lost.
+    reportError('could not refresh agent transcript', error, { meetingId, rev });
+  }
+}
+
+async function enqueueRebuild(meetingId: string, rev: number) {
+  const message = { kind: 'agent-transcript' as const, meetingId, rev };
+  try {
+    await enqueue(message, { delaySeconds: REFRESH_DELAY_SECONDS });
+  } catch {
+    await enqueue(message, { delaySeconds: REFRESH_DELAY_SECONDS });
   }
 }
 
 /** Runs the refresh after the response, so a saved edit never waits on it. */
 export function refreshAgentTranscriptLater(meetingId: string, userId: string): void {
-  waitUntil(refreshAgentTranscript(meetingId, userId));
+  const refresh = refreshAgentTranscript(meetingId, userId);
+  try {
+    waitUntil(refresh);
+  } catch {
+    // Outside a request (scripts, tests) there is nothing to extend; the promise still runs.
+    void refresh;
+  }
 }

@@ -131,6 +131,7 @@ export const meetings = sqliteTable(
     transcriptOverrideMd: text('transcript_override_md'),
     agentTranscriptMd: text('agent_transcript_md'),
     transcriptKind: text('transcript_kind', { enum: ['solo', 'conversation'] }),
+    agentTranscriptRev: integer('agent_transcript_rev').notNull().default(0),
     localFilesUpdatedAt: integer('local_files_updated_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),

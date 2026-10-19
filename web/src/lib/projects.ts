@@ -57,7 +57,7 @@ function containsTerm(haystack: string, term: string): boolean {
     if (at === -1) return false;
     const before = at === 0 ? '' : text[at - 1];
     const after = text[at + needle.length] ?? '';
-    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true;
+    if (!/[\p{L}\p{N}]/u.test(before) && !/[\p{L}\p{N}]/u.test(after)) return true;
     from = at + 1;
   }
 }

@@ -23,6 +23,11 @@ describe('matchProject', () => {
     expect(matchProject([pallet], { app: 'Code', title: 'pallet-site' })).toBeNull();
   });
 
+  test('letters outside ASCII are part of a word', () => {
+    expect(matchProject([eavesy], { app: 'Cursor', title: 'eavesyé — notes' })).toBeNull();
+    expect(matchProject([eavesy], { app: 'Cursor', title: 'café · eavesy' })).toBe(eavesy);
+  });
+
   test('falls back to the app name, and handles no window', () => {
     expect(matchProject([{ name: 'Figma', match: [] }], { app: 'Figma', title: null })?.name).toBe('Figma');
     expect(matchProject([eavesy], null)).toBeNull();

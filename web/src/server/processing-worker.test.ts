@@ -787,22 +787,26 @@ describe('agent transcript', () => {
     expect(t.sent.map((message) => message.body.kind)).toEqual(['embed', 'agent-transcript']);
   });
 
-  test('a queued refresh skips a copy an earlier rebuild already made', async () => {
+  test('a burst of edits runs the model once, for the latest revision', async () => {
     const t = setup();
     complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
-    t.sqlite.run(`UPDATE meetings SET agent_transcript_md = 'Ship the build today.' WHERE id = 'm1'`);
-    const api = stubAnthropic(() => textReply('unused'));
+    t.sqlite.run(`UPDATE meetings SET agent_transcript_rev = 3 WHERE id = 'm1'`);
+    const cleaned = 'Ship the build today and tell the team about it.';
+    const api = stubAnthropic(() => textReply(cleaned));
     restoreFetch = api.restore;
-    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', onlyIfMissing: true });
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', rev: 2 });
     expect(api.calls).toHaveLength(0);
-    expect(stored(t).md).toBe('Ship the build today.');
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', rev: 3 });
+    expect(api.calls).toHaveLength(1);
+    expect(stored(t).md).toBe(cleaned);
   });
 
-  test('a rebuild whose lines changed while it ran leaves the write to the next one', async () => {
+  test('a rebuild an edit overtook while the model ran does not save', async () => {
     const t = setup();
     complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
     const api = stubAnthropic(() => {
       t.sqlite.run(`UPDATE transcript_segments SET text = 'ship the build tomorrow and tell the team' WHERE meeting_id = 'm1'`);
+      t.sqlite.run(`UPDATE meetings SET agent_transcript_rev = agent_transcript_rev + 1 WHERE id = 'm1'`);
       return textReply('Ship the build today and tell the team about it.');
     });
     restoreFetch = api.restore;

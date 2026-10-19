@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { meetings, transcriptSegments, users } from '@/db/schema';
 import * as projectsRepo from '@/db/repo/projects';
 import { buildAgentTranscript } from '@/lib/ai/agent-transcript';
@@ -16,15 +16,15 @@ export async function handleAgentTranscript(
   meetingId: string,
   db: Db,
   env: ProcessingEnv,
-  opts: { onlyIfMissing?: boolean } = {},
+  opts: { rev?: number } = {},
 ) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
-  if (opts.onlyIfMissing && meeting.agentTranscriptMd) return;
+  // A later edit queued its own rebuild: a burst of edits runs the model once.
+  if (opts.rev !== undefined && opts.rev !== meeting.agentTranscriptRev) return;
 
   const lines = await readLines(db, meetingId);
   if (lines.length === 0) return;
-  const builtFrom = fingerprint(meeting, lines);
 
   const kind = transcriptKind(lines);
   const names = parseSpeakerNames(meeting.speakerNamesJson);
@@ -54,15 +54,11 @@ export async function handleAgentTranscript(
     });
   }
 
-  // An edit while the model ran queued its own rebuild: leave the write to it,
-  // so a copy of the old lines never lands after a copy of the new ones.
-  const now = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
-  if (!now || fingerprint(now, await readLines(db, meetingId)) !== builtFrom) return;
-
+  // Saved only if no edit landed while the model ran; that edit queued its own rebuild.
   await db
     .update(meetings)
     .set({ agentTranscriptMd: result.markdown, transcriptKind: kind, updatedAt: Date.now() })
-    .where(eq(meetings.id, meetingId));
+    .where(and(eq(meetings.id, meetingId), eq(meetings.agentTranscriptRev, meeting.agentTranscriptRev)));
 }
 
 function readLines(db: Db, meetingId: string) {
@@ -78,14 +74,3 @@ function readLines(db: Db, meetingId: string) {
     .orderBy(transcriptSegments.startMs);
 }
 
-/** What a refresh rebuilds the cleaned transcript for: lines, speaker names and project. */
-function fingerprint(
-  meeting: { speakerNamesJson: string | null; folderId: string | null },
-  lines: { speakerId: string | null; startMs: number; text: string }[],
-): string {
-  return JSON.stringify([
-    meeting.speakerNamesJson,
-    meeting.folderId,
-    lines.map((line) => [line.speakerId, line.startMs, line.text]),
-  ]);
-}

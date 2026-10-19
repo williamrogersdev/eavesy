@@ -141,7 +141,7 @@ fn contains_word(text: &str, needle: &str) -> bool {
     text.match_indices(needle).any(|(at, _)| {
         let before = text[..at].chars().next_back();
         let after = text[at + needle.len()..].chars().next();
-        !before.is_some_and(|c| c.is_ascii_alphanumeric()) && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
     })
 }
 
@@ -206,6 +206,7 @@ mod tests {
         assert_eq!(resolve(&follow, Some(&front("summarize.ts — eavesy"))), Some("p_eavesy".into()));
         assert_eq!(resolve(&follow, Some(&front("Eavesy Web: routes"))), Some("p_web".into()));
         assert_eq!(resolve(&follow, Some(&front("eavesyapp — notes"))), None);
+        assert_eq!(resolve(&follow, Some(&front("eavesyé — notes"))), None);
         assert_eq!(resolve(&follow, None), None);
     }
 
