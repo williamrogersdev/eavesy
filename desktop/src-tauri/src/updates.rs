@@ -6,6 +6,35 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::install_location::MOVE_TO_APPLICATIONS;
+
+enum InstallError {
+    /// The Move to Applications prompt is on screen and already explains itself.
+    MovePrompted,
+    Failed(String),
+}
+
+impl From<String> for InstallError {
+    fn from(message: String) -> Self {
+        InstallError::Failed(message)
+    }
+}
+
+impl From<&str> for InstallError {
+    fn from(message: &str) -> Self {
+        InstallError::Failed(message.into())
+    }
+}
+
+impl From<InstallError> for String {
+    fn from(error: InstallError) -> Self {
+        match error {
+            InstallError::MovePrompted => "Move Eavesy to Applications first, then update again.".into(),
+            InstallError::Failed(message) => message,
+        }
+    }
+}
+
 const RECHECK: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 /// Emitted with an [`UpdateStatus`] whenever a check finishes.
 pub const EVENT_UPDATE_STATUS: &str = "launcher:update-status";
@@ -180,7 +209,7 @@ pub fn check_interactively(app: &AppHandle) {
 
 fn install_and_report(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        if let Err(message) = install_update(app.clone()).await {
+        if let Err(InstallError::Failed(message)) = install(app.clone()).await {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 crate::app_menu::present(&handle);
@@ -200,13 +229,25 @@ fn install_and_report(app: AppHandle) {
 /// meanwhile, it keeps the install, reports `Installed` and skips the relaunch.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    install(app).await.map_err(String::from)
+}
+
+async fn install(app: AppHandle) -> Result<(), InstallError> {
     use std::sync::atomic::Ordering;
     use tauri::Manager;
     if app.state::<crate::audio::Captures>().is_busy() {
         return Err("Stop the current recording before updating.".into());
     }
     if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
-        return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
+        return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts.").into());
+    }
+    if let Some(misplaced) = crate::install_location::misplaced() {
+        crate::install_location::offer_move(
+            &app,
+            misplaced,
+            "Eavesy can't update itself while it runs from the disk image. Move it to Applications? Then click Update again.",
+        );
+        return Err(InstallError::MovePrompted);
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
@@ -225,6 +266,18 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+fn install_error(error: tauri_plugin_updater::Error) -> String {
+    let detail = error.to_string();
+    crate::telemetry::capture("updater.install", &detail);
+    match &error {
+        // EXDEV and EROFS: the bundle can't be moved out of a read-only mount.
+        tauri_plugin_updater::Error::Io(io) if matches!(io.raw_os_error(), Some(18 | 30)) => {
+            format!("{MOVE_TO_APPLICATIONS} ({detail})")
+        }
+        _ => detail,
+    }
+}
+
 async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
@@ -235,7 +288,7 @@ async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     update
         .download_and_install(|_, _| {}, || {})
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(install_error)?;
     Ok(update.version)
 }
 
@@ -269,6 +322,18 @@ mod tests {
         assert_eq!(keep_installed(Some("0.3.0"), newer.clone()), newer);
         let failed = UpdateState::Error { message: "offline".into() };
         assert_eq!(keep_installed(Some("0.3.0"), failed.clone()), failed);
+    }
+
+    #[test]
+    fn a_read_only_install_error_asks_to_move_to_applications() {
+        use std::io::Error as IoError;
+        for code in [18, 30] {
+            let message = install_error(tauri_plugin_updater::Error::Io(IoError::from_raw_os_error(code)));
+            assert!(message.starts_with(MOVE_TO_APPLICATIONS));
+            assert!(message.contains(&format!("os error {code}")));
+        }
+        let other = install_error(tauri_plugin_updater::Error::Io(IoError::from_raw_os_error(13)));
+        assert!(!other.contains(MOVE_TO_APPLICATIONS));
     }
 
     #[test]

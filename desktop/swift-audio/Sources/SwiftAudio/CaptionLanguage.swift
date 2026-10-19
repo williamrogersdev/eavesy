@@ -162,25 +162,83 @@ final class LanguageFollower {
     }
 }
 
+/// Collects how each track's switch ended. Captions only count as unable to
+/// speak a language when no track could, so one track that fails does not
+/// undo the others.
+final class SwitchTally {
+    enum Result: Equatable {
+        /// Some tracks have not answered yet.
+        case pending
+        /// At least one track moved to the language.
+        case switched
+        /// None moved, but a later switch overtook some: that one decides.
+        case overtaken
+        /// No track could move; why, per track.
+        case failed([String])
+    }
+
+    private let lock = NSLock()
+    private var waiting: Int
+    private var switched = 0
+    private var overtaken = 0
+    private var reasons: [String] = []
+
+    init(tracks: Int) {
+        waiting = tracks
+    }
+
+    func record(_ outcome: EngineSwitch) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        waiting -= 1
+        switch outcome {
+        case .switched: switched += 1
+        case .superseded: overtaken += 1
+        case .unavailable(let reason): reasons.append(reason)
+        }
+        if waiting > 0 { return .pending }
+        if switched > 0 { return .switched }
+        if overtaken > 0 { return .overtaken }
+        return .failed(reasons)
+    }
+}
+
 /// Moves every captioned track to the language `LanguageFollower` picks.
 final class CaptionLanguages {
     private let follower: LanguageFollower
     private let current: Locale
-    private let supported: [Locale]
     private let vocabulary: [String]
     private let lock = NSLock()
     private var tracks: [LiveCaptions] = []
     private var lastMs: Int64 = 0
+    private var knownLocales: [Locale]?
+    /// The language the engines are actually running in.
+    private var running: String
 
     init(locale: Locale, follows: Bool, vocabulary: [String]) {
         let current = Locale.current
-        let supported = follows ? CaptionLanguage.supportedLocales() : []
         self.current = current
-        self.supported = supported
         self.vocabulary = vocabulary
+        running = CaptionLanguage.base(of: locale)
+        var resolve: ((String) -> Locale?)?
         follower = LanguageFollower(current: locale, follows: follows) { language in
-            CaptionLanguage.locale(for: language, current: current, supported: supported) != nil
+            resolve?(language) != nil
         }
+        resolve = { [weak self] language in self?.locale(for: language) }
+    }
+
+    /// Asked of the Speech framework the first time a switch needs it, not at start.
+    private var supported: [Locale] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let knownLocales { return knownLocales }
+        let locales = CaptionLanguage.supportedLocales()
+        knownLocales = locales
+        return locales
+    }
+
+    private func locale(for language: String) -> Locale? {
+        CaptionLanguage.locale(for: language, current: current, supported: supported)
     }
 
     var captions: [LiveCaptions] {
@@ -201,9 +259,8 @@ final class CaptionLanguages {
         lock.lock()
         lastMs = max(lastMs, endMs)
         lock.unlock()
-        let previous = follower.current
         if let language = follower.heard(text, atMs: endMs) {
-            switchTo(language, from: previous)
+            switchTo(language)
         }
     }
 
@@ -212,23 +269,51 @@ final class CaptionLanguages {
         lock.lock()
         let atMs = lastMs
         lock.unlock()
-        let previous = follower.current
         if let switched = follower.cloudHeard(language, atMs: atMs) {
-            switchTo(switched, from: previous)
+            switchTo(switched)
         }
     }
 
-    private func switchTo(_ language: String, from previous: String) {
-        guard let locale = CaptionLanguage.locale(for: language, current: current, supported: supported) else { return }
-        EventEmitter.emit(["event": "captions_language", "language": locale.identifier])
+    private var runningLanguage: String {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return running
+        }
+        set {
+            lock.lock()
+            running = newValue
+            lock.unlock()
+        }
+    }
+
+    private func switchTo(_ language: String) {
+        let tracks = captions
+        guard let locale = locale(for: language), !tracks.isEmpty else {
+            follower.failed(language, previous: runningLanguage)
+            return
+        }
         let vocabulary = self.vocabulary
         let follower = self.follower
-        for track in captions {
+        let tally = SwitchTally(tracks: tracks.count)
+        for track in tracks {
             track.switchEngine({ ready in
                 CaptionEngines.make(locale: locale, vocabulary: vocabulary, completion: ready)
-            }, unavailable: { reason in
-                follower.failed(language, previous: previous)
-                FileHandle.standardError.write(Data("captions stay in \(previous), not \(language): \(reason)\n".utf8))
+            }, outcome: { outcome in
+                if outcome == .switched {
+                    EventEmitter.emit(["event": "captions_language", "track": track.track, "language": locale.identifier])
+                }
+                switch tally.record(outcome) {
+                case .pending, .overtaken:
+                    break
+                case .switched:
+                    self.runningLanguage = language
+                case .failed(let reasons):
+                    let running = self.runningLanguage
+                    follower.failed(language, previous: running)
+                    FileHandle.standardError.write(
+                        Data("captions stay in \(running), not \(language): \(reasons.joined(separator: "; "))\n".utf8))
+                }
             })
         }
     }

@@ -105,7 +105,8 @@ which Rust caches from `/api/devices/me` and passes as `--language`:
   captions stay in the system language.
 - **`auto`** starts in the system language and follows what is spoken. Rust
   sends the sidecar `{"language":"es"}` on stdin when the language most of the
-  newest cloud lines were heard in (`transcript_segments.language`) changes.
+  newest cloud lines were heard in (each line's `language` in the transcript
+  delta) changes.
   The sidecar also runs `NLLanguageRecognizer` over recent caption finals and
   switches only on strong evidence, since a recognizer in the wrong language
   mostly writes its own. Every track moves together; the old engine settles
