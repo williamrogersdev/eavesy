@@ -162,32 +162,44 @@ final class LanguageFollower {
     }
 }
 
-/// Moves every captioned track to the language `LanguageFollower` picks.
 /// Collects how each track's switch ended. Captions only count as unable to
 /// speak a language when no track could, so one track that fails does not
 /// undo the others.
 final class SwitchTally {
+    enum Result: Equatable {
+        /// Some tracks have not answered yet.
+        case pending
+        /// At least one track moved to the language.
+        case switched
+        /// None moved, but a later switch overtook some: that one decides.
+        case overtaken
+        /// No track could move; why, per track.
+        case failed([String])
+    }
+
     private let lock = NSLock()
     private var waiting: Int
     private var switched = 0
+    private var overtaken = 0
     private var reasons: [String] = []
 
     init(tracks: Int) {
         waiting = tracks
     }
 
-    /// Once every track has answered: nil if any switched or was overtaken by
-    /// a later switch, else every track's reason.
-    func record(_ outcome: EngineSwitch) -> [String]?? {
+    func record(_ outcome: EngineSwitch) -> Result {
         lock.lock()
         defer { lock.unlock() }
         waiting -= 1
         switch outcome {
-        case .switched, .superseded: switched += 1
+        case .switched: switched += 1
+        case .superseded: overtaken += 1
         case .unavailable(let reason): reasons.append(reason)
         }
-        guard waiting == 0 else { return .none }
-        return .some(switched > 0 ? nil : reasons)
+        if waiting > 0 { return .pending }
+        if switched > 0 { return .switched }
+        if overtaken > 0 { return .overtaken }
+        return .failed(reasons)
     }
 }
 
@@ -200,11 +212,14 @@ final class CaptionLanguages {
     private var tracks: [LiveCaptions] = []
     private var lastMs: Int64 = 0
     private var knownLocales: [Locale]?
+    /// The language the engines are actually running in.
+    private var running: String
 
     init(locale: Locale, follows: Bool, vocabulary: [String]) {
         let current = Locale.current
         self.current = current
         self.vocabulary = vocabulary
+        running = CaptionLanguage.base(of: locale)
         var resolve: ((String) -> Locale?)?
         follower = LanguageFollower(current: locale, follows: follows) { language in
             resolve?(language) != nil
@@ -244,9 +259,8 @@ final class CaptionLanguages {
         lock.lock()
         lastMs = max(lastMs, endMs)
         lock.unlock()
-        let previous = follower.current
         if let language = follower.heard(text, atMs: endMs) {
-            switchTo(language, from: previous)
+            switchTo(language)
         }
     }
 
@@ -255,16 +269,28 @@ final class CaptionLanguages {
         lock.lock()
         let atMs = lastMs
         lock.unlock()
-        let previous = follower.current
         if let switched = follower.cloudHeard(language, atMs: atMs) {
-            switchTo(switched, from: previous)
+            switchTo(switched)
         }
     }
 
-    private func switchTo(_ language: String, from previous: String) {
+    private var runningLanguage: String {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return running
+        }
+        set {
+            lock.lock()
+            running = newValue
+            lock.unlock()
+        }
+    }
+
+    private func switchTo(_ language: String) {
         let tracks = captions
         guard let locale = locale(for: language), !tracks.isEmpty else {
-            follower.failed(language, previous: previous)
+            follower.failed(language, previous: runningLanguage)
             return
         }
         let vocabulary = self.vocabulary
@@ -277,10 +303,17 @@ final class CaptionLanguages {
                 if outcome == .switched {
                     EventEmitter.emit(["event": "captions_language", "track": track.track, "language": locale.identifier])
                 }
-                guard case .some(let reasons?) = tally.record(outcome) else { return }
-                follower.failed(language, previous: previous)
-                FileHandle.standardError.write(
-                    Data("captions stay in \(previous), not \(language): \(reasons.joined(separator: "; "))\n".utf8))
+                switch tally.record(outcome) {
+                case .pending, .overtaken:
+                    break
+                case .switched:
+                    self.runningLanguage = language
+                case .failed(let reasons):
+                    let running = self.runningLanguage
+                    follower.failed(language, previous: running)
+                    FileHandle.standardError.write(
+                        Data("captions stay in \(running), not \(language): \(reasons.joined(separator: "; "))\n".utf8))
+                }
             })
         }
     }

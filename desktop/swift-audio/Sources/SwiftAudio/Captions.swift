@@ -73,7 +73,8 @@ protocol SpeechEngine: AnyObject {
     var name: String { get }
     func start(sink: CaptionSink) throws
     func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws
-    /// Ends input and reports any last finals, then calls `done`.
+    /// Ends input and reports any last finals, then calls `done`. Also called,
+    /// to let it go, on an engine that never started; it must still call `done`.
     func finish(_ done: @escaping () -> Void)
 }
 
@@ -111,6 +112,10 @@ final class LiveCaptions: CaptionSink {
     private let draining = DispatchGroup()
     /// The latest `switchEngine` request; an earlier one that answers late loses.
     private var switches = 0
+    /// Switches asked for whose engine has not answered yet.
+    private var pendingSwitches = 0
+    /// Why the first engine could not run, while a switch might still.
+    private var firstFailure: String?
 
     /// `makeEngine` may answer later (authorization and model checks are async);
     /// audio fed meanwhile is held, up to `maxWaitingFrames`.
@@ -198,6 +203,7 @@ final class LiveCaptions: CaptionSink {
     ) {
         lock.lock()
         switches += 1
+        pendingSwitches += 1
         let request = switches
         lock.unlock()
         makeEngine { [weak self] result in
@@ -210,6 +216,10 @@ final class LiveCaptions: CaptionSink {
     private func replaceEngine(
         _ result: Result<SpeechEngine, CaptionUnavailable>, request: Int, outcome: (EngineSwitch) -> Void
     ) {
+        lock.lock()
+        pendingSwitches -= 1
+        lock.unlock()
+        defer { giveUpIfNothingLeft() }
         let next: SpeechEngine
         switch result {
         case .failure(let reason):
@@ -284,16 +294,34 @@ final class LiveCaptions: CaptionSink {
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {
         switch result {
         case .failure(let unavailable):
-            // A switch that answered first already has captions running.
-            if engine == nil { turnOff(unavailable.reason) }
+            // A switch that answered first already has captions running, and
+            // one still to answer may yet.
+            guard engine == nil else { return }
+            firstFailure = unavailable.reason
+            giveUpIfNothingLeft()
         case .success(let engine):
             guard self.engine == nil else {
                 engine.finish {}
                 return
             }
             guard !isOff else { return }
-            if let failure = install(engine) { turnOff(failure) }
+            if let failure = install(engine) {
+                firstFailure = failure
+                giveUpIfNothingLeft()
+            }
         }
+    }
+
+    /// Called on `queue`: the first engine failed and no switch is left to
+    /// take its place, so captions are off.
+    private func giveUpIfNothingLeft() {
+        guard engine == nil, let reason = firstFailure else { return }
+        lock.lock()
+        let pending = pendingSwitches
+        lock.unlock()
+        guard pending == 0 else { return }
+        firstFailure = nil
+        turnOff(reason)
     }
 
     /// Called on `queue`: the first engine to run, fed the audio held for it.
