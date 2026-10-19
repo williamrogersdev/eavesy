@@ -122,6 +122,8 @@ function usePlayer(id: string) {
 /** The full image over the panel. Esc, the close button or a click outside the image closes it. */
 function ImageViewer({ url, label, host, onClose }: { url: string; label: string; host: Element; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
@@ -129,14 +131,14 @@ function ImageViewer({ url, label, host, onClose }: { url: string; label: string
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      onCloseRef.current();
     };
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
       opener?.focus();
     };
-  }, [onClose]);
+  }, []);
   return createPortal(
     <div className="ev-viewer" role="dialog" aria-modal="true" aria-label={label} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <img src={url} alt={label} />
