@@ -45,7 +45,12 @@ jobs:
           VERSION="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
           TAG="desktop-v$VERSION"
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
-            echo "$TAG already exists; nothing to do."
+            TAGGED="$(git rev-parse "refs/tags/$TAG^{commit}")"
+            if [[ "$TAGGED" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already points at $TAGGED, not $GITHUB_SHA. Bump the version again instead of reusing it."
+              exit 1
+            fi
+            echo "$TAG already exists at this commit; nothing to do."
             exit 0
           fi
           CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' desktop/src-tauri/Cargo.toml | head -1)"
@@ -53,8 +58,9 @@ jobs:
             echo "::error file=desktop/src-tauri/Cargo.toml::Cargo.toml has $CARGO_VERSION, tauri.conf.json has $VERSION"
             exit 1
           fi
-          if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-            echo "::error file=CHANGELOG.md::No '## [$VERSION]' section; not tagging."
+          NOTES="$(awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md)"
+          if ! grep -q '[^[:space:]]' <<< "$NOTES"; then
+            echo "::error file=CHANGELOG.md::No '## [$VERSION]' section with content; not tagging."
             exit 1
           fi
           LOGIN="$(gh api user --jq .login)"

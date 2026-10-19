@@ -47,10 +47,11 @@ jobs:
           desktop=false
           while IFS= read -r f; do
             [[ -z "$f" ]] && continue
+            [[ "$f" != */* && "$f" == *.md ]] && continue
             case "$f" in
               .github/workflows/ci.yml) web=true; desktop=true ;;
               desktop/*) desktop=true ;;
-              docs/*|packaging/*|plugins/*|*.md|LICENSE|NOTICE) ;;
+              docs/*|packaging/*|plugins/*|LICENSE|NOTICE) ;;
               .github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/dependabot.yml) ;;
               .github/workflows/macos-release.yml|.github/workflows/release-desktop.yml|.github/workflows/tag-desktop-release.yml) ;;
               *) web=true ;;

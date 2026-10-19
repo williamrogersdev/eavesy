@@ -34,6 +34,8 @@ const MAX_TEXT: usize = 1_000;
 const MAX_BREADCRUMBS: usize = 50;
 const MAX_EVENTS_PER_LAUNCH: usize = 100;
 const DEFAULT_POSTHOG_HOST: &str = "https://us.i.posthog.com";
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+const PANIC_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 
 static BREADCRUMBS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static EVENTS_SENT: AtomicUsize = AtomicUsize::new(0);
@@ -97,18 +99,22 @@ fn init_logging() -> Option<WorkerGuard> {
         .with(posthog_key().map(|_| BreadcrumbLayer))
         .try_init();
 
-    std::panic::set_hook(Box::new(|info| {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
         let detail = scrub_text(&info.to_string());
         tracing::error!(target: "panic", "{detail}");
         let report = Report { kind: "panic", operation: "panic", reason: "panic", detail: &detail, handled: false };
-        if let Some(sent) = send(report) {
-            let _ = sent.recv_timeout(Duration::from_secs(3));
+        if let Some(sent) = send(report, PANIC_SEND_TIMEOUT) {
+            let _ = sent.recv_timeout(PANIC_SEND_TIMEOUT + Duration::from_millis(500));
         }
+        default_hook(info);
     }));
     guard
 }
 
-/// Keeps the last log lines (info and up) to send with the next error.
+/// Keeps the messages of the last log lines (info and up) to send with the
+/// next error. Structured fields are left out; only the message is scrubbed
+/// and sent.
 struct BreadcrumbLayer;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BreadcrumbLayer {
@@ -131,8 +137,6 @@ impl tracing::field::Visit for FieldWriter<'_> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
             let _ = write!(self.0, " {value:?}");
-        } else {
-            let _ = write!(self.0, " {}={value:?}", field.name());
         }
     }
 }
@@ -172,11 +176,13 @@ fn exception_event(api_key: &str, report: &Report<'_>, breadcrumbs: &[String]) -
 }
 
 /// Sends on its own thread; the receiver fires once the request finished.
-fn send(report: Report<'_>) -> Option<mpsc::Receiver<()>> {
+fn send(report: Report<'_>, timeout: Duration) -> Option<mpsc::Receiver<()>> {
     let api_key = posthog_key()?;
-    if EVENTS_SENT.fetch_add(1, Ordering::Relaxed) >= MAX_EVENTS_PER_LAUNCH {
-        return None;
-    }
+    EVENTS_SENT
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |sent| {
+            (sent < MAX_EVENTS_PER_LAUNCH).then_some(sent + 1)
+        })
+        .ok()?;
     let breadcrumbs: Vec<String> = BREADCRUMBS
         .try_lock()
         .map(|crumbs| crumbs.iter().cloned().collect())
@@ -187,12 +193,15 @@ fn send(report: Report<'_>) -> Option<mpsc::Receiver<()>> {
         .name("error-report".into())
         .spawn(move || {
             if let Ok(client) = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(timeout)
                 .build()
             {
                 let _ = client.post(posthog_endpoint()).json(&event).send();
             }
             let _ = done.send(());
+        })
+        .inspect_err(|_| {
+            EVENTS_SENT.fetch_sub(1, Ordering::Relaxed);
         })
         .ok()?;
     Some(finished)
@@ -341,7 +350,7 @@ pub fn scrub_text(text: &str) -> String {
 pub fn capture(operation: &'static str, detail: &str) {
     let reason = reason(detail);
     let detail = scrub_text(detail);
-    send(Report { kind: operation, operation, reason, detail: &detail, handled: true });
+    send(Report { kind: operation, operation, reason, detail: &detail, handled: true }, SEND_TIMEOUT);
     tracing::error!(operation, reason, "{detail}");
 }
 

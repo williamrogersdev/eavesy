@@ -61,7 +61,10 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 - `desktop/src-tauri/src/telemetry.rs` — Mac app error reporting (PostHog
   `$exception` events, grouped by `$exception_fingerprint` =
   `desktop:<operation>:<reason>`, at most 100 per launch, anonymous with no
-  person profile), the Rust scrubber, and the app log. Recording folders are named after meeting
+  person profile), the Rust scrubber, and the app log. Mac breadcrumbs carry
+  only each log line's message, not its structured fields. PostHog sees the
+  sender's IP address on ingest; turn on *Discard client IP data* in the
+  PostHog project settings so it isn't stored. Recording folders are named after meeting
   titles, which can contain spaces, colons and quotes, so any path under the
   configured recordings root becomes `<recordings>/…` and any other path under
   `/Users`, `/Volumes` or `/private` becomes `~/…`, `/Volumes/…` or

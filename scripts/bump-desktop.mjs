@@ -63,6 +63,9 @@ export function insertRelease(changelog, version, date, generated) {
   const next = changelog.indexOf('\n## [', bodyStart);
   const bodyEnd = next === -1 ? changelog.length : next + 1;
   const unreleased = changelog.slice(bodyStart, bodyEnd).trim();
+  if (unreleased && generated) {
+    console.error(`Using [Unreleased] as written; not adding these generated entries:\n${generated}\n`);
+  }
   const body = unreleased || generated;
   if (!body) throw new Error('Nothing to release: [Unreleased] is empty and no desktop changes since the last tag');
   return (
@@ -121,4 +124,10 @@ function main() {
   console.log(version);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    fail(error.message);
+  }
+}
