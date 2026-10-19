@@ -166,11 +166,16 @@ fn exception_event(api_key: &str, report: &Report<'_>, breadcrumbs: &[String]) -
 /// Sends on its own thread; the receiver fires once the request finished.
 fn send(report: Report<'_>, timeout: Duration) -> Option<mpsc::Receiver<()>> {
     let api_key = posthog_key()?;
-    EVENTS_SENT
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |sent| {
-            (sent < MAX_EVENTS_PER_LAUNCH).then_some(sent + 1)
-        })
-        .ok()?;
+    let mut sent = EVENTS_SENT.load(Ordering::Relaxed);
+    loop {
+        if sent >= MAX_EVENTS_PER_LAUNCH {
+            return None;
+        }
+        match EVENTS_SENT.compare_exchange_weak(sent, sent + 1, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(current) => sent = current,
+        }
+    }
     let breadcrumbs: Vec<String> = BREADCRUMBS
         .try_lock()
         .map(|crumbs| crumbs.iter().cloned().collect())
