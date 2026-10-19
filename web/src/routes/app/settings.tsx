@@ -6,6 +6,7 @@ import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
+import { MAX_VOCABULARY_TERMS, vocabularyFromText } from '@/lib/transcription/vocabulary';
 
 interface Me {
   id: string;
@@ -17,6 +18,7 @@ interface Me {
   isAnonymous: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
+  customVocabulary: string[];
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
@@ -52,6 +54,8 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [anthropic, setAnthropic] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [vocabulary, setVocabulary] = useState('');
+  const [savingVocabulary, setSavingVocabulary] = useState(false);
   const [pairing, setPairing] = useState(false);
   const [pairResult, setPairResult] = useState<string | null>(null);
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
@@ -92,6 +96,7 @@ function SettingsPage() {
         if (!account) throw new Error('Server returned invalid account settings');
         setMe(account);
         setDisplayName(account.displayName ?? '');
+        setVocabulary(account.customVocabulary.join('\n'));
       })
       .catch(() => setError('Could not load account settings.'));
     void fetch('/api/mcp-tokens')
@@ -148,6 +153,28 @@ function SettingsPage() {
     } catch (cause) {
       setMe(previous);
       setError(cause instanceof Error ? cause.message : 'Could not save the language.');
+    }
+  };
+
+  const saveVocabulary = async () => {
+    const customVocabulary = vocabularyFromText(vocabulary);
+    setSavingVocabulary(true);
+    setSaved(false);
+    setError(null);
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ customVocabulary }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      setMe((current) => (current ? { ...current, customVocabulary } : current));
+      setVocabulary(customVocabulary.join('\n'));
+      setSaved(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save your words.');
+    } finally {
+      setSavingVocabulary(false);
     }
   };
 
@@ -238,6 +265,7 @@ function SettingsPage() {
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
+  const vocabularyChanged = vocabularyFromText(vocabulary).join('\n') !== me.customVocabulary.join('\n');
   const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
 
   return (
@@ -314,6 +342,35 @@ function SettingsPage() {
               </option>
             ))}
           </select>
+        </Row>
+        <Row
+          label="Custom words"
+          hint={`Names, products and jargon to spell your way, one per line or separated by commas (so a phrase can’t contain one). Up to ${MAX_VOCABULARY_TERMS}.`}
+          htmlFor="settings-vocabulary"
+        >
+          <div className="flex w-full flex-col items-end gap-2">
+            <textarea
+              id="settings-vocabulary"
+              rows={4}
+              placeholder={'Eavesy\nPriya Raman\nKubernetes'}
+              value={vocabulary}
+              onChange={(e) => {
+                setVocabulary(e.target.value);
+                setSaved(false);
+              }}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/60"
+            />
+            {vocabularyChanged ? (
+              <button
+                type="button"
+                onClick={() => void saveVocabulary()}
+                disabled={savingVocabulary}
+                className={appButton('primary', 'sm')}
+              >
+                {savingVocabulary ? 'Saving…' : 'Save words'}
+              </button>
+            ) : null}
+          </div>
         </Row>
       </AppSection>
 
@@ -476,6 +533,9 @@ function parseMe(value: unknown): Me | null {
     isAnonymous: value.isAnonymous,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
+    customVocabulary: Array.isArray(value.customVocabulary)
+      ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
+      : [],
     hasAnthropicKey: value.hasAnthropicKey,
     anthropicKeyHint: nullableString(value.anthropicKeyHint),
     hasOpenRouterKey: value.hasOpenRouterKey,

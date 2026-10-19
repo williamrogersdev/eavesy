@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { deviceTokens, users } from '@/db/schema';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor, sha256Hex } from '@/server/device-auth';
 
 export const Route = createFileRoute('/api/devices/me')({
@@ -17,12 +18,20 @@ export const Route = createFileRoute('/api/devices/me')({
         if (actor.isAnonymous) return Response.json({ error: 'unauthenticated' }, { status: 401 });
         const user = (
           await getDb()
-            .select({ email: users.email, displayName: users.displayName })
+            .select({
+              email: users.email,
+              displayName: users.displayName,
+              customVocabularyJson: users.customVocabularyJson,
+            })
             .from(users)
             .where(eq(users.id, actor.userId))
             .limit(1)
         )[0];
-        return Response.json({ email: user?.email ?? null, name: user?.displayName ?? null });
+        return Response.json({
+          email: user?.email ?? null,
+          name: user?.displayName ?? null,
+          vocabulary: parseVocabulary(user?.customVocabularyJson),
+        });
       },
       DELETE: async ({ request }) => {
         const authorization = request.headers.get('authorization') ?? '';

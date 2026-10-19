@@ -28,6 +28,8 @@ export const users = sqliteTable(
       // rebuild; every application-level insert explicitly writes `whisper`.
       .default('deepgram'),
     defaultLanguage: text('default_language').notNull().default('en'),
+    /** Words to recognize as spelled here (names, jargon), as a JSON array of strings. */
+    customVocabularyJson: text('custom_vocabulary_json'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),
