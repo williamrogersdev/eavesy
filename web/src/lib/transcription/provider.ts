@@ -12,6 +12,7 @@ export interface SegmentTranscriber {
     audio: Uint8Array;
     language?: string;
     contextBlurb?: string | null;
+    vocabulary?: readonly string[];
     vadFilter?: boolean;
   }): Promise<SegmentTranscription>;
 }

@@ -4,10 +4,11 @@ import { encode } from '@/db/codec';
 import * as projectsRepo from '@/db/repo/projects';
 import { MODELS } from '@/lib/ai/client';
 import { summarizeMeeting } from '@/lib/ai/summarize';
-import { combinedContext, whisperPrompt } from '@/lib/projects';
+import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import {
   ECHO_WINDOW_MS,
   findEchoLines,
@@ -58,7 +59,8 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
-    contextBlurb: whisperPrompt(meeting.contextBlurb, project),
+    contextBlurb: meeting.contextBlurb,
+    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson)],
     ai: env.AI,
   });
 
@@ -223,17 +225,27 @@ export async function handleTranscribeSegment(
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
       const transcriber = new WorkersAiSegmentTranscriber(env.AI);
-      const project = await projectsRepo.getForMeeting(db, meeting);
-      const request = { audio, language: meeting.language, contextBlurb: whisperPrompt(meeting.contextBlurb, project) };
+      const request = {
+        audio,
+        language: meeting.language,
+        contextBlurb: meeting.contextBlurb,
+        vocabulary: [
+          ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
+          ...(await userVocabulary(db, meeting.userId)),
+        ],
+      };
       const transcription = await transcriber.transcribe(request);
       const speakerId = speakerForTrack(track);
-      let lines = transcription.segments.filter((relative) => !isHallucination(relative, { lenient: micOnly }));
+      const glossary = request.vocabulary;
+      let lines = transcription.segments.filter(
+        (relative) => !isHallucination(relative, { lenient: micOnly, glossary }),
+      );
       // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
       // the user's own note, so give it one more pass without VAD, keeping the
       // strict filter so silence does not turn into "Thank you."
       if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
         const retry = await transcriber.transcribe({ ...request, vadFilter: false });
-        lines = retry.segments.filter((relative) => !isHallucination(relative));
+        lines = retry.segments.filter((relative) => !isHallucination(relative, { glossary }));
       }
 
       await runBatched(db, lines.map((relative) => {
@@ -319,6 +331,15 @@ export async function handleTranscribeSegment(
       .where(ownClaim);
     throw error;
   }
+}
+
+async function userVocabulary(db: Db, userId: string): Promise<string[]> {
+  const row = await db
+    .select({ customVocabularyJson: users.customVocabularyJson })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return parseVocabulary(row[0]?.customVocabularyJson);
 }
 
 /** Whether any part of the meeting recorded the computer's audio: a two-sided call. */

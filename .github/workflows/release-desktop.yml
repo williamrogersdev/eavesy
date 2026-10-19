@@ -1,0 +1,86 @@
+name: Release desktop
+
+# Opens the version-bump PR for the Mac app and turns on auto-merge. When it
+# lands on main, tag-desktop-release.yml pushes desktop-vX.Y.Z, which starts
+# macos-release.yml. Setup: docs/RELEASING.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Exact version instead (X.Y.Z, optional)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Open version-bump PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    steps:
+      - name: Check release token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Repository secret RELEASE_TOKEN is not set (docs/RELEASING.md). PRs and tags pushed with the default token start no CI or release runs."
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Bump version and CHANGELOG
+        id: bump
+        env:
+          BUMP: ${{ inputs.version || inputs.bump }}
+        run: node scripts/bump-desktop.mjs "$BUMP"
+
+      - name: Open PR with auto-merge
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          BRANCH="release/$TAG"
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null; then
+            echo "::error::Branch $BRANCH already exists; merge or close its PR first."
+            exit 1
+          fi
+          LOGIN="$(gh api user --jq .login)"
+          ID="$(gh api user --jq .id)"
+          git config user.name "$LOGIN"
+          git config user.email "$ID+$LOGIN@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add CHANGELOG.md desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock
+          git commit -s -m "chore(release): desktop $VERSION"
+          git push origin "$BRANCH"
+          NOTES="$(awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md)"
+          URL="$(gh pr create --base main --head "$BRANCH" \
+            --title "chore(release): desktop $VERSION" \
+            --body "Bumps the Mac app to $VERSION. When this merges, \`$TAG\` is tagged automatically and the macOS release workflow builds, signs and notarizes it, then waits for publish approval.
+
+          Edit \`CHANGELOG.md\` on this branch to reword the release notes before it merges.
+
+          $NOTES
+
+          Opened by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}.")"
+          echo "$URL"
+          if ! gh pr merge "$URL" --auto --squash --delete-branch; then
+            echo "::warning::Could not turn on auto-merge for $URL; merge it by hand once CI passes."
+          fi
+          echo "### $URL" >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanList, combinedContext, matchProject, whisperPrompt, WHISPER_PROMPT_MAX_CHARS } from './projects';
+import { cleanList, combinedContext, matchProject, projectTerms } from './projects';
 
 const eavesy = { name: 'eavesy', match: [] as string[] };
 const desktop = { name: 'Desktop app', match: ['eavesy-desktop'] };
@@ -30,24 +30,9 @@ describe('matchProject', () => {
   });
 });
 
-describe('whisperPrompt', () => {
-  test('puts terms and people first, then the note', () => {
-    expect(whisperPrompt('Weekly sync.', { vocabulary: ['Tauri', 'D1'], people: 'Maya (design), Alex' })).toBe(
-      'Tauri, D1, Maya, Alex. Weekly sync.',
-    );
-  });
-
-  test('stays inside the Whisper prompt budget', () => {
-    const vocabulary = Array.from({ length: 200 }, (_, index) => `term${index}`);
-    expect(whisperPrompt('x'.repeat(2_000), { vocabulary, people: null })!.length).toBeLessThanOrEqual(
-      WHISPER_PROMPT_MAX_CHARS + 2,
-    );
-  });
-
-  test('is undefined with nothing to say', () => {
-    expect(whisperPrompt(null, null)).toBeUndefined();
-    expect(whisperPrompt('  ', { vocabulary: [], people: null })).toBeUndefined();
-  });
+test('projectTerms lists the vocabulary, then the names in the people line', () => {
+  expect(projectTerms({ vocabulary: ['Tauri', 'D1'], people: 'Maya (design), Alex' })).toEqual(['Tauri', 'D1', 'Maya', 'Alex']);
+  expect(projectTerms(null)).toEqual([]);
 });
 
 test('cleanList trims and drops duplicates regardless of case', () => {

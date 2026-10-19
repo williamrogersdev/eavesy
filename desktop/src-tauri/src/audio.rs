@@ -456,6 +456,13 @@ fn spawn_capture(
             "--segment-sec".into(),
             crate::settings::load(app).segment_sec().to_string().into(),
         ]);
+        // The words on disk, not a fetch: a capture never waits on the network.
+        // The refresh below lands for the next one, so the first capture after
+        // pairing, or after the words change on the web, runs without them.
+        if let Some(words) = crate::vocabulary::sidecar_arg(&crate::vocabulary::cached(app)) {
+            args.extend(["--vocabulary".into(), words.into()]);
+        }
+        crate::vocabulary::refresh(app);
     }
 
     let cold = || -> Result<crate::standby::Started, String> {

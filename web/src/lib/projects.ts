@@ -16,8 +16,6 @@ export const PROJECT_LIMITS = {
   match: 12,
 } as const;
 
-/** Whisper reads at most 224 tokens of `initial_prompt`; stay well inside that. */
-export const WHISPER_PROMPT_MAX_CHARS = 700;
 
 export function parseStringList(json: string | null | undefined): string[] {
   if (!json) return [];
@@ -91,23 +89,12 @@ export function matchProject<T extends Pick<Project, 'name' | 'match'>>(
  * Text Whisper is conditioned on: project terms first so they are spelled
  * right, then the user's note for this recording.
  */
-export function whisperPrompt(
-  contextBlurb: string | null | undefined,
-  project: Pick<Project, 'vocabulary' | 'people'> | null | undefined,
-): string | undefined {
-  const parts: string[] = [];
-  let budget = WHISPER_PROMPT_MAX_CHARS;
-  const terms: string[] = [];
-  for (const term of [...(project?.vocabulary ?? []), ...namesIn(project?.people)]) {
-    if (term.length + 2 > budget) break;
-    terms.push(term);
-    budget -= term.length + 2;
-  }
-  if (terms.length > 0) parts.push(`${terms.join(', ')}.`);
-  const blurb = contextBlurb?.trim();
-  if (blurb && budget > 20) parts.push(blurb.slice(0, budget));
-  const prompt = parts.join(' ').trim();
-  return prompt || undefined;
+/**
+ * The words a project wants spelled right: its vocabulary, then the names in
+ * its people line. Transcription puts them ahead of the user's own words.
+ */
+export function projectTerms(project: Pick<Project, 'vocabulary' | 'people'> | null | undefined): string[] {
+  return [...(project?.vocabulary ?? []), ...namesIn(project?.people)];
 }
 
 function namesIn(people: string | null | undefined): string[] {
