@@ -10,8 +10,8 @@ import { isNotesLanguage } from '@/lib/transcription/language';
 import { resolveActor } from '@/server/auth';
 import { guardUserQuota } from '@/server/rate-limit';
 
-/** Past this a meeting is translated in part; the rest stays in its own language. */
-const MAX_LINES = 4_000;
+/** Lines translated per request, four model batches; the client asks again for the rest. */
+export const LINES_PER_REQUEST = 240;
 
 const schema = z.object({
   to: z.string().trim().toLowerCase().refine(isNotesLanguage, 'unsupported language'),
@@ -39,9 +39,10 @@ export const Route = createFileRoute('/api/meetings/$id/translate')({
           meetingId: meeting.id,
           language: to,
         });
-        const missing = lines
-          .filter((line) => line.language && line.language !== to && !translated.has(line.id))
-          .slice(0, MAX_LINES);
+        const untranslated = lines.filter(
+          (line) => line.language && line.language !== to && !translated.has(line.id),
+        );
+        const missing = untranslated.slice(0, LINES_PER_REQUEST);
 
         if (missing.length > 0) {
           const overQuota = await guardUserQuota(actor.userId, 'translate');
@@ -60,16 +61,19 @@ export const Route = createFileRoute('/api/meetings/$id/translate')({
             return Response.json({ error: 'translation_failed' }, { status: 502 });
           }
           const source = new Map(missing.map((line) => [line.id, line.text]));
-          const entries = [...fresh].map(([segmentId, text]) => ({
-            segmentId,
-            sourceText: source.get(segmentId) ?? '',
-            text,
-          }));
+          const entries = [...fresh].flatMap(([segmentId, text]) => {
+            const sourceText = source.get(segmentId);
+            return sourceText === undefined ? [] : [{ segmentId, sourceText, text }];
+          });
           await translationsRepo.saveTranslations(db, { meetingId: meeting.id, language: to, entries });
-          for (const [id, text] of fresh) translated.set(id, text);
+          for (const entry of entries) translated.set(entry.segmentId, entry.text);
         }
 
-        return Response.json({ language: to, lines: Object.fromEntries(translated) });
+        return Response.json({
+          language: to,
+          lines: Object.fromEntries(translated),
+          remaining: untranslated.length - missing.length,
+        });
       },
     },
   },

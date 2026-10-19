@@ -536,6 +536,9 @@ function CopyText({ text }: { text: string }) {
   );
 }
 
+/** Each request translates a few hundred lines; a long meeting takes a few. */
+const MAX_TRANSLATE_PAGES = 20;
+
 function browserLanguage(): string {
   if (typeof navigator === 'undefined') return 'en';
   const code = navigator.language.split('-')[0]?.toLowerCase() ?? '';
@@ -585,27 +588,32 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
     setLoading(true);
     setError(null);
     const sources = new Map(lines.map((line) => [line.id, line.text]));
-    for (const line of lines) attempted.current.add(`${line.id}\n${line.text}`);
     try {
-      const res = await fetch(`/api/meetings/${meetingId}/translate`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ to: target }),
-      });
-      if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
-      const body: unknown = await res.json();
-      const translatedLines =
-        typeof body === 'object' && body !== null && 'lines' in body && typeof body.lines === 'object' && body.lines
-          ? Object.entries(body.lines)
-          : [];
-      setDone((previous) => {
-        const next = { ...previous };
-        for (const [id, text] of translatedLines) {
-          const source = sources.get(id);
-          if (source !== undefined && typeof text === 'string') next[id] = { source, text };
-        }
-        return next;
-      });
+      let previousCount = -1;
+      for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
+        const res = await fetch(`/api/meetings/${meetingId}/translate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ to: target }),
+        });
+        if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
+        const body: unknown = await res.json();
+        const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+        const translatedLines =
+          typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
+        setDone((previous) => {
+          const next = { ...previous };
+          for (const [id, text] of translatedLines) {
+            const source = sources.get(id);
+            if (source !== undefined && typeof text === 'string') next[id] = { source, text };
+          }
+          return next;
+        });
+        const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
+        if (remaining === 0 || translatedLines.length === previousCount) break;
+        previousCount = translatedLines.length;
+      }
+      for (const [id, text] of sources) attempted.current.add(`${id}\n${text}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not translate.');
       setShowing(false);
@@ -641,7 +649,7 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
       }
       setShowing(true);
       setError(null);
-      if (missing.length > 0) void load();
+      if (untried > 0) void load();
     },
     textFor: (line: TranscriptLine) => {
       const entry = done[line.id];

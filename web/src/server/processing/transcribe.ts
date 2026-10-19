@@ -242,8 +242,11 @@ export async function handleTranscribeSegment(
           established: await establishedLanguage(db, meetingId),
         });
         if (retry) {
-          transcription = await transcriber.transcribe({ ...request, language: retry });
-          language = retry;
+          const again = await transcriber.transcribe({ ...request, language: retry });
+          if (again.segments.length > 0) {
+            transcription = again;
+            language = again.language ?? retry;
+          }
         }
       }
       const speakerId = speakerForTrack(track);

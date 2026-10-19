@@ -105,18 +105,31 @@ async function translateBatch(input: TranslateInput, batch: readonly Translatabl
   return parseTranslation(reply, batch);
 }
 
-/** Translates transcript lines, a few batches at a time. Lines the model skipped are left out. */
+/**
+ * Translates transcript lines, a few batches at a time. Lines the model skipped
+ * or whose batch failed are left out; it throws only when every batch failed.
+ */
 export async function translateLines(input: TranslateInput): Promise<Map<string, string>> {
   const batches: TranslatableLine[][] = [];
   for (let i = 0; i < input.lines.length; i += TRANSLATE_BATCH) {
     batches.push(input.lines.slice(i, i + TRANSLATE_BATCH));
   }
   const out = new Map<string, string>();
+  let firstError: unknown;
+  let succeeded = 0;
   for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       batches.slice(i, i + PARALLEL_BATCHES).map((batch) => translateBatch(input, batch)),
     );
-    for (const result of results) for (const [id, text] of result) out.set(id, text);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        firstError ??= result.reason;
+        continue;
+      }
+      succeeded += 1;
+      for (const [id, text] of result.value) out.set(id, text);
+    }
   }
+  if (succeeded === 0 && batches.length > 0) throw firstError;
   return out;
 }

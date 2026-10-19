@@ -38,11 +38,11 @@ describe('retryLanguage', () => {
 
   test('an unsure detection that disagrees with the meeting is retried in its language', () => {
     expect(retryLanguage({ ...base, detected: 'gl', probability: 0.41 })).toBe('es');
-    expect(retryLanguage({ ...base, detected: 'pt', probability: undefined })).toBe('es');
   });
 
   test('a confident switch of language is kept', () => {
     expect(retryLanguage({ ...base, detected: 'en', probability: 0.93 })).toBeUndefined();
+    expect(retryLanguage({ ...base, detected: 'pt', probability: undefined })).toBeUndefined();
   });
 
   test('nothing to retry when it agrees, has no history, or the language is fixed', () => {

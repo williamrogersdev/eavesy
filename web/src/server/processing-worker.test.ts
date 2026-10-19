@@ -258,6 +258,28 @@ describe('segment transcription', () => {
     ]);
   });
 
+  test('a retry that hears nothing keeps the first pass', async () => {
+    const t = setup({
+      transcribe: (_audio, { language }) =>
+        language === 'es'
+          ? { text: '', segments: [] }
+          : {
+              text: 'bale',
+              transcription_info: { language: 'gl', language_probability: 0.38 },
+              segments: [{ start: 0, end: 1, text: 'bale' }],
+            },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(t.sqlite.query(`SELECT text, language FROM transcript_segments WHERE id != 't0'`).all()).toEqual([
+      { text: 'bale', language: 'gl' },
+    ]);
+  });
+
   test('a confident switch of language is kept', async () => {
     const asked: (string | undefined)[] = [];
     const t = setup({

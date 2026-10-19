@@ -102,7 +102,7 @@ export function retryLanguage(opts: {
   if (whisperLanguage(opts.setting)) return undefined;
   const established = opts.established?.trim().toLowerCase();
   if (!established || established === opts.detected) return undefined;
-  if (opts.probability !== undefined && opts.probability >= CONFIDENT_DETECTION) return undefined;
+  if (opts.probability === undefined || opts.probability >= CONFIDENT_DETECTION) return undefined;
   return established;
 }
 
