@@ -49,6 +49,14 @@ struct CaptionSummary: Equatable {
     }
 }
 
+/// How a `LiveCaptions.switchEngine` request ended.
+enum EngineSwitch: Equatable {
+    case switched
+    /// A later switch was asked for before this one's engine was ready.
+    case superseded
+    case unavailable(String)
+}
+
 struct CaptionUnavailable: Error {
     let reason: String
 }
@@ -181,46 +189,61 @@ final class LiveCaptions: CaptionSink {
     }
 
     /// Moves captions to the engine `makeEngine` answers with, once it has
-    /// started. If it can't, or captions are not live, nothing changes and
-    /// `unavailable` says why.
+    /// started. Before the first engine is ready, the new one takes its place.
+    /// `outcome` says whether captions moved, a later switch overtook this
+    /// one, or nothing changed and why.
     func switchEngine(
         _ makeEngine: (@escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void) -> Void,
-        unavailable: @escaping (String) -> Void
+        outcome: @escaping (EngineSwitch) -> Void
     ) {
         lock.lock()
         switches += 1
         let request = switches
         lock.unlock()
         makeEngine { [weak self] result in
-            self?.queue.async { self?.replaceEngine(result, request: request, unavailable: unavailable) }
+            guard let self else { return }
+            self.queue.async { self.replaceEngine(result, request: request, outcome: outcome) }
         }
     }
 
     /// Called on `queue`.
     private func replaceEngine(
-        _ result: Result<SpeechEngine, CaptionUnavailable>, request: Int, unavailable: (String) -> Void
+        _ result: Result<SpeechEngine, CaptionUnavailable>, request: Int, outcome: (EngineSwitch) -> Void
     ) {
-        lock.lock()
-        let latest = request == switches
-        lock.unlock()
-        guard latest else { return }
-        guard !isOff, let old = engine else {
-            unavailable("captions are not live")
-            return
-        }
         let next: SpeechEngine
         switch result {
         case .failure(let reason):
-            unavailable(reason.reason)
+            outcome(.unavailable(reason.reason))
             return
         case .success(let engine):
             next = engine
+        }
+        lock.lock()
+        let latest = request == switches
+        lock.unlock()
+        guard latest else {
+            next.finish {}
+            outcome(.superseded)
+            return
+        }
+        guard !isOff else {
+            next.finish {}
+            outcome(.unavailable("captions are off"))
+            return
+        }
+        guard let old = engine else {
+            if let failure = install(next) {
+                outcome(.unavailable(failure))
+            } else {
+                outcome(.switched)
+            }
+            return
         }
         let sink = EngineSink(self)
         do {
             try next.start(sink: sink)
         } catch {
-            unavailable("speech engine did not start: \(error.localizedDescription)")
+            outcome(.unavailable("speech engine did not start: \(error.localizedDescription)"))
             return
         }
         sinks.last?.retire()
@@ -230,6 +253,7 @@ final class LiveCaptions: CaptionSink {
         let draining = self.draining
         old.finish { draining.leave() }
         emit(CaptionStatus.live(engine: next.name).json(track: track))
+        outcome(.switched)
     }
 
     /// Called on `queue`.
@@ -260,26 +284,37 @@ final class LiveCaptions: CaptionSink {
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {
         switch result {
         case .failure(let unavailable):
-            turnOff(unavailable.reason)
+            // A switch that answered first already has captions running.
+            if engine == nil { turnOff(unavailable.reason) }
         case .success(let engine):
-            guard !isOff else { return }
-            let sink = EngineSink(self)
-            do {
-                try engine.start(sink: sink)
-            } catch {
-                turnOff("speech engine did not start: \(error.localizedDescription)")
+            guard self.engine == nil else {
+                engine.finish {}
                 return
             }
-            sinks.append(sink)
-            self.engine = engine
-            emit(CaptionStatus.live(engine: engine.name).json(track: track))
-            let held = waiting
-            waiting.removeAll()
-            waitingFrames = 0
-            for (buffer, atMs) in held {
-                guarded { try engine.append(buffer, atMs: atMs) }
-            }
+            guard !isOff else { return }
+            if let failure = install(engine) { turnOff(failure) }
         }
+    }
+
+    /// Called on `queue`: the first engine to run, fed the audio held for it.
+    /// Nil once it runs, else why it did not start.
+    private func install(_ engine: SpeechEngine) -> String? {
+        let sink = EngineSink(self)
+        do {
+            try engine.start(sink: sink)
+        } catch {
+            return "speech engine did not start: \(error.localizedDescription)"
+        }
+        sinks.append(sink)
+        self.engine = engine
+        emit(CaptionStatus.live(engine: engine.name).json(track: track))
+        let held = waiting
+        waiting.removeAll()
+        waitingFrames = 0
+        for (buffer, atMs) in held {
+            guarded { try engine.append(buffer, atMs: atMs) }
+        }
+        return nil
     }
 
     private func guarded(_ work: () throws -> Void) {

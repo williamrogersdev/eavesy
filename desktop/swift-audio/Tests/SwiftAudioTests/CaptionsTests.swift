@@ -185,6 +185,21 @@ final class CaptionsTests: XCTestCase {
             Arguments.captionLocale(language: "en", current: Locale(identifier: "fr_FR"), supported: []).identifier, "en")
     }
 
+    func testSupportedLocalesAreOnlyAskedForWhenNeeded() {
+        var asked = 0
+        func supported() -> [Locale] {
+            asked += 1
+            return [Locale(identifier: "es-ES")]
+        }
+        let us = Locale(identifier: "en_US")
+        _ = Arguments.captionLocale(language: "en", current: us, supported: supported())
+        _ = Arguments.captionLocale(language: "auto", current: us, supported: supported())
+        _ = Arguments.captionLocale(language: nil, current: us, supported: supported())
+        XCTAssertEqual(asked, 0)
+        XCTAssertEqual(Arguments.captionLocale(language: "es", current: us, supported: supported()).identifier, "es-ES")
+        XCTAssertEqual(asked, 1)
+    }
+
     func testAutoLanguageFollowsSpeechAndAFixedOneDoesNot() {
         let base = ["SwiftAudio", "--mode", "audio", "--out", "/tmp/a.m4a", "--source", "mic"]
         XCTAssertTrue(Arguments.parse(base + ["--language", "auto"]).followsSpeech)
@@ -199,8 +214,8 @@ final class CaptionsTests: XCTestCase {
         let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
         captions.feed(samples, atMs: 0)
         captions.feed(samples, atMs: 10)
-        var unavailable: [String] = []
-        captions.switchEngine({ $0(.success(second)) }, unavailable: { unavailable.append($0) })
+        var outcomes: [EngineSwitch] = []
+        captions.switchEngine({ $0(.success(second)) }, outcome: { outcomes.append($0) })
         captions.feed(samples, atMs: 20)
         captions.feed(samples, atMs: 30)
         captions.finish(timeout: 1)
@@ -208,7 +223,7 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(second.appended, [20, 30])
         XCTAssertTrue(first.finished, "the replaced engine settles its last finals")
         XCTAssertTrue(second.finished)
-        XCTAssertTrue(unavailable.isEmpty)
+        XCTAssertEqual(outcomes, [.switched])
         XCTAssertEqual(events.named("caption").count, 2, "both engines' last words are kept")
         XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live", "live"])
         XCTAssertEqual(events.named("captions_done").first?["failed"] as? Bool, false)
@@ -220,8 +235,8 @@ final class CaptionsTests: XCTestCase {
         let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
         captions.feed(samples, atMs: 0)
         let reported = expectation(description: "unavailable")
-        captions.switchEngine({ $0(.failure(CaptionUnavailable(reason: "no model for es-ES"))) }, unavailable: {
-            XCTAssertEqual($0, "no model for es-ES")
+        captions.switchEngine({ $0(.failure(CaptionUnavailable(reason: "no model for es-ES"))) }, outcome: {
+            XCTAssertEqual($0, .unavailable("no model for es-ES"))
             reported.fulfill()
         })
         wait(for: [reported], timeout: 1)
@@ -237,7 +252,7 @@ final class CaptionsTests: XCTestCase {
         let second = FakeEngine()
         let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
         captions.feed(samples, atMs: 0)
-        captions.switchEngine({ $0(.success(second)) }, unavailable: { _ in })
+        captions.switchEngine({ $0(.success(second)) }, outcome: { _ in })
         captions.feed(samples, atMs: 10)
         let deadline = Date().addingTimeInterval(1)
         while second.appended.isEmpty, Date() < deadline { usleep(1_000) }
@@ -246,6 +261,57 @@ final class CaptionsTests: XCTestCase {
         captions.finish(timeout: 1)
         XCTAssertEqual(second.appended, [10, 20])
         XCTAssertFalse(events.named("captions_status").contains { $0["status"] as? String == "unavailable" })
+    }
+
+    func testASwitchBeforeTheFirstEngineIsReadyTakesItsPlace() {
+        let events = Events()
+        let first = FakeEngine()
+        let second = FakeEngine()
+        var ready: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { ready = $0 }
+        captions.feed(samples, atMs: 0)
+        let switched = expectation(description: "switched")
+        captions.switchEngine({ $0(.success(second)) }, outcome: {
+            XCTAssertEqual($0, .switched, "an engine still starting is not a reason to give up on the language")
+            switched.fulfill()
+        })
+        wait(for: [switched], timeout: 1)
+        ready?(.success(first))
+        captions.feed(samples, atMs: 10)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(second.appended, [0, 10], "the held audio goes to the engine that won")
+        XCTAssertTrue(first.appended.isEmpty)
+        XCTAssertTrue(first.finished, "the engine that lost is let go of")
+        XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live"])
+    }
+
+    func testAnOvertakenSwitchLetsGoOfItsEngine() {
+        let first = FakeEngine()
+        let late = FakeEngine()
+        let latest = FakeEngine()
+        let captions = LiveCaptions(track: "mic", emit: { _ in }) { $0(.success(first)) }
+        captions.feed(samples, atMs: 0)
+        var answerLate: ((Result<SpeechEngine, CaptionUnavailable>) -> Void)?
+        var outcomes: [EngineSwitch] = []
+        let lock = NSLock()
+        let both = expectation(description: "both answered")
+        both.expectedFulfillmentCount = 2
+        let record: (EngineSwitch) -> Void = {
+            lock.lock()
+            outcomes.append($0)
+            lock.unlock()
+            both.fulfill()
+        }
+        captions.switchEngine({ answerLate = $0 }, outcome: record)
+        captions.switchEngine({ $0(.success(latest)) }, outcome: record)
+        answerLate?(.success(late))
+        wait(for: [both], timeout: 1)
+        captions.feed(samples, atMs: 10)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(outcomes, [.switched, .superseded])
+        XCTAssertEqual(latest.appended, [10])
+        XCTAssertTrue(late.appended.isEmpty)
+        XCTAssertTrue(late.finished)
     }
 
     func testFinalsReachTheLanguageFollower() {

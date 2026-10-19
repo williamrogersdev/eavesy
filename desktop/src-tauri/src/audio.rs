@@ -822,15 +822,24 @@ fn stream_events(
 }
 
 /// Tells a recording's capture engine what language the cloud heard last, so
-/// captions set to follow the spoken language can move to it.
-pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) {
-    let Some(language) = crate::vocabulary::clean_language(language) else { return };
-    let captures = app.state::<Captures>();
-    let mut sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(session) = sessions.get_mut(session_id) {
-        let line = serde_json::json!({ "language": language }).to_string();
-        let _ = writeln!(session.stdin, "{line}").and_then(|()| session.stdin.flush());
-    }
+/// captions set to follow the spoken language can move to it. True once the
+/// engine has the line. The write goes to a copy of the engine's stdin, taken
+/// under the lock, so a slow reader never holds up other captures.
+pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
+    use std::os::fd::AsFd;
+    let Some(language) = crate::vocabulary::clean_language(language) else { return false };
+    let stdin = {
+        let captures = app.state::<Captures>();
+        let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(session) = sessions.get(session_id) else { return false };
+        match session.stdin.as_fd().try_clone_to_owned() {
+            Ok(fd) => std::fs::File::from(fd),
+            Err(_) => return false,
+        }
+    };
+    let line = serde_json::json!({ "language": language }).to_string();
+    let mut stdin = stdin;
+    writeln!(stdin, "{line}").and_then(|()| stdin.flush()).is_ok()
 }
 
 fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>) {

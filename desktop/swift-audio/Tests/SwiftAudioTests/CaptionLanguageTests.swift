@@ -105,4 +105,18 @@ final class CaptionLanguageTests: XCTestCase {
         XCTAssertNil(follower.cloudHeard("es", atMs: 100))
         XCTAssertEqual(follower.cloudHeard("fr", atMs: 200), "fr")
     }
+
+    func testALanguageCountsAsUnavailableOnlyWhenNoTrackCouldSwitch() {
+        let mixed = SwitchTally(tracks: 2)
+        XCTAssertNil(mixed.record(.unavailable("no model")) as [String]??, "waits for every track")
+        XCTAssertEqual(mixed.record(.switched), .some(nil))
+
+        let overtaken = SwitchTally(tracks: 2)
+        _ = overtaken.record(.superseded)
+        XCTAssertEqual(overtaken.record(.unavailable("no model")), .some(nil))
+
+        let none = SwitchTally(tracks: 2)
+        _ = none.record(.unavailable("no model"))
+        XCTAssertEqual(none.record(.unavailable("off")), .some(["no model", "off"]))
+    }
 }
