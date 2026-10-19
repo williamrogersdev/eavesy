@@ -222,17 +222,32 @@ final class SFSpeechEngine: SpeechEngine {
             case .unsupported:
                 return .unsupported
             default:
-                let install = Task.detached {
-                    try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall()
-                }
+                let install = installing(transcriber, locale: locale)
                 guard wait else { return .downloading }
+                await install.value
+                return await AssetInventory.status(forModules: [transcriber]) == .installed ? .installed : .downloading
+            }
+        }
+
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var inFlight: [String: Task<Void, Never>] = [:]
+
+        /// One download per language at a time, however many recordings ask.
+        private static func installing(_ transcriber: SpeechTranscriber, locale: Locale) -> Task<Void, Never> {
+            let key = locale.identifier(.bcp47)
+            lock.lock()
+            defer { lock.unlock() }
+            if let running = inFlight[key] { return running }
+            let task = Task.detached {
                 do {
-                    try await install.value
+                    try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall()
                 } catch {
                     EventEmitter.warning("speech model for \(locale.identifier) did not install: \(error.localizedDescription)")
                 }
-                return await AssetInventory.status(forModules: [transcriber]) == .installed ? .installed : .downloading
+                lock.withLock { inFlight[key] = nil }
             }
+            inFlight[key] = task
+            return task
         }
 
         /// Reserves `locale`, letting go of the oldest other reservation when
@@ -353,7 +368,10 @@ final class SFSpeechEngine: SpeechEngine {
         }
 
         func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
-            guard let converted = convert(buffer) else { return }
+            guard let converted = convert(buffer) else {
+                sink?.audioDropped(1)
+                return
+            }
             offsetLock.lock()
             if offsetMs == nil { offsetMs = atMs }
             offsetLock.unlock()
