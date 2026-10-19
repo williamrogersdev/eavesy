@@ -1,4 +1,5 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
+import { notesLanguageRule } from '@/lib/transcription/language';
 import { anthropic, anthropicForUser, MODELS } from './client';
 
 export interface SummaryDecision {
@@ -64,6 +65,8 @@ export interface SummarizeInput {
   byoApiKey?: string;
   openRouter?: { apiKey: string } | null;
   customTemplatePrompt?: string;
+  /** The language to write notes in; absent keeps the meeting's own. */
+  notesLanguage?: string | null;
 }
 
 export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSummary> {
@@ -80,6 +83,7 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
     .filter(Boolean)
     .join('\n\n---\n\n');
 
+  const systemPrompt = `${SYSTEM_PROMPT}\n\nLanguage: ${notesLanguageRule(input.notesLanguage)}`;
   let text: string;
   if (input.openRouter) {
     text = await openRouterChat({
@@ -87,7 +91,7 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
       model: OPENROUTER_MODELS.summary,
       maxTokens: 4096,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
     });
@@ -96,7 +100,7 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
     const response = await client.messages.create({
       model: MODELS.summary,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
     text = response.content.map((c) => (c.type === 'text' ? c.text : '')).join('');

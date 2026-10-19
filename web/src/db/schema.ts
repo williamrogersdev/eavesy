@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -30,6 +31,8 @@ export const users = sqliteTable(
     defaultLanguage: text('default_language').notNull().default('en'),
     /** Words to recognize as spelled here (names, jargon), as a JSON array of strings. */
     customVocabularyJson: text('custom_vocabulary_json'),
+    /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
+    notesLanguage: text('notes_language'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),
@@ -206,10 +209,33 @@ export const transcriptSegments = sqliteTable(
     speakerId: text('speaker_id'),
     text: text('text').notNull(),
     confidence: real('confidence'),
+    /** The language this line was heard in, as a Whisper code. */
+    language: text('language'),
     isEdited: integer('is_edited', { mode: 'boolean' }).notNull().default(false),
     isFinal: integer('is_final', { mode: 'boolean' }).notNull().default(true),
   },
   (t) => [index('segments_meeting_start_idx').on(t.meetingId, t.startMs)],
+);
+
+/** A transcript line translated into another language, kept while the line's text is unchanged. */
+export const transcriptTranslations = sqliteTable(
+  'transcript_translations',
+  {
+    segmentId: text('segment_id')
+      .notNull()
+      .references(() => transcriptSegments.id, { onDelete: 'cascade' }),
+    meetingId: text('meeting_id')
+      .notNull()
+      .references(() => meetings.id, { onDelete: 'cascade' }),
+    language: text('language').notNull(),
+    sourceText: text('source_text').notNull(),
+    text: text('text').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.segmentId, t.language] }),
+    index('translations_meeting_language_idx').on(t.meetingId, t.language),
+  ],
 );
 
 export const summaries = sqliteTable(

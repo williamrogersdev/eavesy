@@ -41,7 +41,7 @@ export interface SentMessage {
 }
 
 export function createFakeEnv(
-  opts: { transcribe?: (audio: Uint8Array, request: { vadFilter: boolean }) => unknown } = {},
+  opts: { transcribe?: (audio: Uint8Array, request: { vadFilter: boolean; language?: string }) => unknown } = {},
 ) {
   const sqlite = new Database(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
@@ -82,11 +82,14 @@ export function createFakeEnv(
       },
     },
     AI: {
-      async run(model: string, input: { audio?: string; text?: string[]; vad_filter?: boolean }) {
+      async run(
+        model: string,
+        input: { audio?: string; text?: string[]; vad_filter?: boolean; language?: string },
+      ) {
         if (model.includes('whisper')) {
           const audio = Uint8Array.from(atob(input.audio ?? ''), (c) => c.charCodeAt(0));
           return opts.transcribe
-            ? opts.transcribe(audio, { vadFilter: input.vad_filter ?? true })
+            ? opts.transcribe(audio, { vadFilter: input.vad_filter ?? true, language: input.language })
             : { text: '', segments: [] };
         }
         return { data: (input.text ?? []).map(() => new Array(1024).fill(0)) };

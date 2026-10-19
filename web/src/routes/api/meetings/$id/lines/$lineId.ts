@@ -18,6 +18,7 @@ const restoreSchema = z.object({
   speakerId: z.string().max(60).nullable(),
   text: z.string().min(1).max(10_000),
   confidence: z.number().nullable().optional(),
+  language: z.string().regex(/^[a-z]{2,3}$/).nullable().optional(),
   isEdited: z.boolean().optional(),
   isFinal: z.boolean().optional(),
 });
@@ -70,6 +71,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
           id: params.lineId,
           meetingId: meeting.id,
           confidence: null,
+          language: null,
           isEdited: false,
           isFinal: true,
           ...parsed.data,

@@ -64,19 +64,20 @@ async function seed(db: AppDb) {
     generatedAt: now,
   });
   const lines = [
-    ['you', 'Let’s settle the free tier first. I don’t want a length cap.'],
-    ['them', 'Agreed. People hit the cap mid-meeting and it feels terrible.'],
-    ['you', 'Then Pro is about volume and team features, not length.'],
-    ['them', 'Twelve dollars a month feels right for that.'],
+    ['you', 'Let’s settle the free tier first. I don’t want a length cap.', 'en'],
+    ['them', 'De acuerdo. La gente llega al límite a mitad de la reunión y es horrible.', 'es'],
+    ['you', 'Then Pro is about volume and team features, not length.', 'en'],
+    ['them', 'Doce dólares al mes me parece bien para eso.', 'es'],
   ] as const;
   await db.insert(transcriptSegments).values(
-    lines.map(([speakerId, text], i) => ({
+    lines.map(([speakerId, text, language], i) => ({
       id: `seg_local_${i}`,
       meetingId: 'mtg_local_complete',
       startMs: i * 30_000,
       endMs: i * 30_000 + 25_000,
       speakerId,
       text,
+      language,
     })),
   );
   await db.insert(userNotes).values({ meetingId: 'mtg_local_complete', contentMd: 'Check the launch budget with finance.', updatedAt: now });

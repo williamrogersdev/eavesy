@@ -5,7 +5,7 @@ import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/compo
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
-import { TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
+import { NOTES_LANGUAGES, TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS, vocabularyFromText } from '@/lib/transcription/vocabulary';
 
 interface Me {
@@ -18,6 +18,7 @@ interface Me {
   isAnonymous: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
+  notesLanguage: string | null;
   customVocabulary: string[];
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
@@ -136,16 +137,16 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (defaultLanguage: string) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage'>>) => {
     const previous = me;
     setSaved(false);
     setError(null);
-    if (previous) setMe({ ...previous, defaultLanguage });
+    if (previous) setMe({ ...previous, ...change });
     try {
       const response = await fetch('/api/me', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ defaultLanguage }),
+        body: JSON.stringify(change),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       void refreshMe();
@@ -324,19 +325,38 @@ function SettingsPage() {
       <AppSection title="Transcription">
         <Row
           label="Spoken language"
-          hint="What you and the people you record speak. Detect automatically handles any language, and a fixed one is more accurate."
+          hint="Detect automatically follows whatever language people speak, line by line, even when a call switches between languages. Pick one only if every meeting is in it."
           htmlFor="settings-language"
         >
           <select
             id="settings-language"
             value={me.defaultLanguage}
-            onChange={(e) => void saveLanguage(e.target.value)}
+            onChange={(e) => void saveLanguage({ defaultLanguage: e.target.value })}
             className={`${input} sm:w-56`}
           >
             {TRANSCRIPTION_LANGUAGES.some((language) => language.code === me.defaultLanguage) ? null : (
               <option value={me.defaultLanguage}>{me.defaultLanguage}</option>
             )}
             {TRANSCRIPTION_LANGUAGES.map((language) => (
+              <option key={language.code} value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row
+          label="Notes language"
+          hint="Notes are written in this language, and transcripts in any other language get a Translate button. Same as the meeting keeps each meeting in the language it was spoken in."
+          htmlFor="settings-notes-language"
+        >
+          <select
+            id="settings-notes-language"
+            value={me.notesLanguage ?? ''}
+            onChange={(e) => void saveLanguage({ notesLanguage: e.target.value || null })}
+            className={`${input} sm:w-56`}
+          >
+            <option value="">Same as the meeting</option>
+            {NOTES_LANGUAGES.map((language) => (
               <option key={language.code} value={language.code}>
                 {language.label}
               </option>
@@ -533,6 +553,7 @@ function parseMe(value: unknown): Me | null {
     isAnonymous: value.isAnonymous,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
+    notesLanguage: typeof value.notesLanguage === 'string' ? value.notesLanguage : null,
     customVocabulary: Array.isArray(value.customVocabulary)
       ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
       : [],
