@@ -150,6 +150,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         };
         match how {
             Delivery::InEavesy => {
+                // Also on the clipboard: an event can't confirm the box took it.
+                use tauri_plugin_clipboard_manager::ClipboardExt;
+                let _ = app.clipboard().write_text(text.clone());
                 if app.emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() }).is_err() {
                     how = Delivery::CopiedNoTextBox;
                 }

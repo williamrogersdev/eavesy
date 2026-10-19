@@ -73,10 +73,11 @@ export function SetupView({
     let off: (() => void) | undefined;
     void setDictationInPanel(true).catch(() => {});
     void onDictationText((text) => {
+      const box = tryBox.current;
+      const caret = box ? { start: box.selectionStart, end: box.selectionEnd } : null;
       setTried((current) => {
-        const box = tryBox.current;
-        const start = box?.selectionStart ?? current.length;
-        const end = box?.selectionEnd ?? current.length;
+        const start = caret?.start ?? current.length;
+        const end = caret?.end ?? current.length;
         const before = current.slice(0, start);
         const joined = before && !/\s$/.test(before) ? `${before} ${text}` : `${before}${text}`;
         return joined + current.slice(end);
