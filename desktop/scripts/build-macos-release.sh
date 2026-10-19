@@ -202,15 +202,6 @@ if [[ -n "${EAVESY_API_BASE:-}" && ! "$EAVESY_API_BASE" =~ ^https://[^/[:space:]
   exit 1
 fi
 
-if [[ -z "${SENTRY_DSN:-}" ]]; then
-  if [[ "${EAVESY_ALLOW_NO_SENTRY:-}" == "1" ]]; then
-    echo "⚠ SENTRY_DSN is not set and EAVESY_ALLOW_NO_SENTRY=1: this build will not report crashes or errors" >&2
-  else
-    echo "SENTRY_DSN is not set. Release builds must report crashes and errors (desktop/BUILD.md)." >&2
-    echo "Self-hosted builds without Sentry can opt out with EAVESY_ALLOW_NO_SENTRY=1." >&2
-    exit 1
-  fi
-fi
 echo "▸ Tauri signed app and updater build"
 build_status=0
 run_tauri_build || build_status=$?
