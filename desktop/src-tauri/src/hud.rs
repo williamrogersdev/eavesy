@@ -132,6 +132,23 @@ fn refit(from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool) -> (f6
     (left.round(), top.round(), size.0, size.1)
 }
 
+/// The resting pill this frame stands for: what is saved and restored, so a
+/// wide or screenshot size never outlives its phase.
+fn resting(frame: (f64, f64, f64, f64), keep_bottom: bool) -> HudFrame {
+    let (x, y, width, height) = refit(frame, DEFAULT_SIZE, keep_bottom);
+    HudFrame { x, y, width, height }
+}
+
+/// `refit` for Cocoa's bottom-left origin: keeping the top edge there means
+/// keeping `y + height`, and keeping the bottom edge means keeping `y`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn refit_cocoa(from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool) -> (f64, f64, f64, f64) {
+    let (x, y, width, height) = from;
+    let left = x + (width - size.0) / 2.0;
+    let bottom = if keep_bottom { y } else { y + height - size.1 };
+    (left.round(), bottom.round(), size.0, size.1)
+}
+
 fn frame_of(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
     let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
         return None;
@@ -151,7 +168,7 @@ pub fn fit_on_main(app: &AppHandle) {
     }
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     let visible = window.is_visible().unwrap_or(false);
-    imp::set_frame(&window, refit(from, size, low), visible);
+    imp::resize(&window, from, size, low, visible);
 }
 
 /// The user closed the control with its X: it stays hidden while idle.
@@ -229,6 +246,8 @@ fn show_unchecked(app: &AppHandle) {
     if !window.is_visible().unwrap_or(false) {
         match prefs.frame.filter(|frame| on_screen(app, frame)) {
             Some(frame) => {
+                let low = crate::placement::in_lower_half(app, frame.x + frame.width / 2.0, frame.y, frame.height);
+                let frame = resting((frame.x, frame.y, frame.width, frame.height), low);
                 let _ = window.set_size(tauri::LogicalSize::new(frame.width, frame.height));
                 let _ = window.set_position(tauri::LogicalPosition::new(frame.x, frame.y));
             }
@@ -273,7 +292,7 @@ fn follow_panel(app: &AppHandle) {
     let position = position.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
     let saved = prefs(app).frame;
-    let (width, height) = saved.map_or(DEFAULT_SIZE, |frame| (frame.width, frame.height));
+    let (width, height) = DEFAULT_SIZE;
     // A control docked low opened the panel upwards: hand it back at the bottom.
     let low = match saved {
         Some(frame) => crate::placement::in_lower_half(app, frame.x + frame.width / 2.0, frame.y, frame.height),
@@ -293,8 +312,9 @@ fn follow_panel(app: &AppHandle) {
 fn save_frame(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     if !window.is_visible().unwrap_or(false) { return; }
-    let Some((x, y, width, height)) = frame_of(&window) else { return };
-    let frame = HudFrame { x, y, width, height };
+    let Some(current) = frame_of(&window) else { return };
+    let low = crate::placement::in_lower_half(app, current.0 + current.2 / 2.0, current.1, current.3);
+    let frame = resting(current, low);
     if prefs(app).frame != Some(frame) {
         update_prefs(app, |config| config.hud_frame = Some(frame));
     }
@@ -311,33 +331,28 @@ mod imp {
         if let Ok(panel) = app.get_webview_panel("hud") { panel.order_out(None); }
     }
 
-    /// Moves the window to `(x, y, width, height)` (logical, top-left origin)
-    /// in one step, animated when it is on screen.
-    pub fn set_frame(window: &WebviewWindow, frame: (f64, f64, f64, f64), animate: bool) {
+    /// Gives the window `size` in one step, animated when it is on screen,
+    /// keeping its centre and its top edge (or bottom edge when `keep_bottom`).
+    /// Works only in the live Cocoa frame, so a change that lands while the
+    /// last one is still settling starts from where the window really is.
+    pub fn resize(window: &WebviewWindow, _from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, animate: bool) {
         use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
         use tauri_nspanel::objc::{msg_send, sel, sel_impl};
         let Ok(ns_window) = window.ns_window() else { return };
         let ns_window = ns_window as id;
-        let (x, y, width, height) = frame;
         unsafe {
-            let mut rect: NSRect = msg_send![ns_window, frame];
-            // Cocoa's origin is the bottom-left corner: keep the centre and
-            // whichever edge the logical frame kept.
-            let top = rect.origin.y + rect.size.height;
-            let (old_x, old_y) = window
-                .outer_position()
-                .ok()
-                .zip(window.scale_factor().ok())
-                .map(|(position, scale)| {
-                    let position = position.to_logical::<f64>(scale);
-                    (position.x, position.y)
-                })
-                .unwrap_or((x, y));
-            rect.origin.x += x - old_x;
-            rect.origin.y = top - (y - old_y) - height;
-            rect.size.width = width;
-            rect.size.height = height;
-            let _: () = msg_send![ns_window, setFrame: rect display: true animate: animate];
+            let rect: NSRect = msg_send![ns_window, frame];
+            let (x, y, width, height) = super::refit_cocoa(
+                (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
+                size,
+                keep_bottom,
+            );
+            let mut target = rect;
+            target.origin.x = x;
+            target.origin.y = y;
+            target.size.width = width;
+            target.size.height = height;
+            let _: () = msg_send![ns_window, setFrame: target display: true animate: animate];
             let _: () = msg_send![ns_window, invalidateShadow];
         }
     }
@@ -376,8 +391,8 @@ mod imp {
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
     }
-    pub fn set_frame(window: &WebviewWindow, frame: (f64, f64, f64, f64), _animate: bool) {
-        let (x, y, width, height) = frame;
+    pub fn resize(window: &WebviewWindow, from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, _animate: bool) {
+        let (x, y, width, height) = super::refit(from, size, keep_bottom);
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
@@ -385,7 +400,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{refit, size_for, HudState, Phase, DEFAULT_SIZE, SHOT, WIDE};
+    use super::{refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, SHOT, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -421,5 +436,18 @@ mod tests {
     fn low_on_the_screen_refitting_keeps_the_bottom_edge() {
         assert_eq!(refit((500.0, 800.0, 248.0, 40.0), WIDE, true), (444.0, 776.0, 360.0, 64.0));
         assert_eq!(refit((444.0, 776.0, 360.0, 64.0), DEFAULT_SIZE, true), (500.0, 800.0, 248.0, 40.0));
+    }
+
+    #[test]
+    fn in_cocoa_coordinates_the_top_edge_is_the_one_kept() {
+        assert_eq!(refit_cocoa((500.0, 800.0, 248.0, 40.0), WIDE, false), (444.0, 776.0, 360.0, 64.0));
+        assert_eq!(refit_cocoa((500.0, 100.0, 248.0, 40.0), WIDE, true), (444.0, 100.0, 360.0, 64.0));
+    }
+
+    #[test]
+    fn only_the_resting_pill_is_ever_saved() {
+        assert_eq!(resting((444.0, 24.0, 360.0, 64.0), false), HudFrame { x: 500.0, y: 24.0, width: 248.0, height: 40.0 });
+        assert_eq!(resting((444.0, 776.0, 360.0, 64.0), true), HudFrame { x: 500.0, y: 800.0, width: 248.0, height: 40.0 });
+        assert_eq!(resting((488.0, 24.0, 272.0, 34.0), false), HudFrame { x: 500.0, y: 24.0, width: 248.0, height: 40.0 });
     }
 }
