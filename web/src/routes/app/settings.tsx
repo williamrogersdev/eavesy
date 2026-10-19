@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
+import { ProjectManager } from '@/components/settings/project-manager';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES, TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
@@ -393,6 +394,8 @@ function SettingsPage() {
           </div>
         </Row>
       </AppSection>
+
+      <ProjectManager />
 
       <TemplateManager />
 

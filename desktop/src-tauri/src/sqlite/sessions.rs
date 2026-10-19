@@ -13,6 +13,7 @@ pub struct PendingSession {
     pub archive_path: PathBuf,
     pub title: String,
     pub context_blurb: Option<String>,
+    pub project_id: Option<String>,
     pub status: String,
     pub next_part_number: i64,
     pub next_archive_offset: i64,
@@ -53,6 +54,17 @@ pub fn begin_recording<R: Runtime>(
             ],
         )
         .map_err(|e| format!("persist recording session: {e}"))?;
+    Ok(())
+}
+
+/// The project the user picked for this recording, sent when the cloud session is created.
+pub fn set_session_project<R: Runtime>(app: &AppHandle<R>, id: &str, project_id: &str) -> Result<(), String> {
+    open(app)?
+        .execute(
+            "UPDATE recording_sessions SET project_id=?2 WHERE id=?1",
+            params![id, project_id],
+        )
+        .map_err(|e| format!("save recording project: {e}"))?;
     Ok(())
 }
 
@@ -181,7 +193,7 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
     conn
         .query_row(
             "SELECT id, remote_meeting_id, archive_path, title, context_blurb,
-                    status, next_part_number, next_archive_offset, ended_at, archive_missing
+                    status, next_part_number, next_archive_offset, ended_at, archive_missing, project_id
              FROM recording_sessions
              WHERE status IN ('recording','uploading','finalizing','processing')
                AND next_attempt_at <= ?1
@@ -211,6 +223,7 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
                     next_archive_offset: row.get(7)?,
                     ended_at: row.get(8)?,
                     archive_missing: row.get(9)?,
+                    project_id: row.get(10)?,
                 })
             },
         )

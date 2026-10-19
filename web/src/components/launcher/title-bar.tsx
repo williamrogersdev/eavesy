@@ -7,6 +7,8 @@ import { accountInitial, type AccountState } from '@/components/launcher/setting
 import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
 import { type LauncherView, type RunTask } from './types';
 import { useUpdateStatus } from './use-update-status';
+import { ProjectChip } from './project-chip';
+import type { ProjectChoice } from './use-project';
 
 /** Quiet "Update" pill, shown only once a newer version is ready to install. */
 function UpdateButton({ runTask }: { runTask: RunTask }) {
@@ -50,6 +52,7 @@ export function TitleBar({
   connect,
   disconnect,
   runTask,
+  project,
 }: {
   view: LauncherView;
   account: AccountState;
@@ -61,6 +64,8 @@ export function TitleBar({
   connect: () => void;
   disconnect: () => void;
   runTask: RunTask;
+  /** Shown on the main list once signed in. */
+  project?: ProjectChoice;
 }) {
   const folderItem: MenuItem = {
     label: 'Open ~/Eavesy folder',
@@ -98,6 +103,7 @@ export function TitleBar({
           {connecting ? 'Waiting…' : 'Sign in'}
         </Button>
       )}
+      {account && project && view === 'list' && <ProjectChip choice={project} runTask={runTask} />}
       {account && (
         <Menu
           align="end"

@@ -11,6 +11,8 @@ export type QueueMessage =
   | { kind: 'rolling-summarize'; meetingId: string; throughIdx: number; throughMs?: number }
   /** `waitingSince` bounds how long the final summary waits on segment jobs. */
   | { kind: 'summarize'; meetingId: string; waitingSince?: number }
+  /** Clean the finished transcript up for pasting into an AI agent. */
+  | { kind: 'agent-transcript'; meetingId: string; onlyIfMissing?: boolean }
   | { kind: 'cleanup-anonymous'; meetingId: string }
   /** Permanently remove a meeting the user deleted (R2, vectors, rows). */
   | { kind: 'purge-meeting'; meetingId: string }

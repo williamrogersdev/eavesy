@@ -30,6 +30,7 @@ export function TranscriptPlayer({
   lines,
   chapters,
   speakerNamesJson,
+  agentTranscript,
   onChanged,
 }: {
   meetingId: string;
@@ -37,6 +38,7 @@ export function TranscriptPlayer({
   lines: TranscriptLine[];
   chapters: Chapter[];
   speakerNamesJson: string | null;
+  agentTranscript?: string | null;
   onChanged: () => void;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -272,7 +274,18 @@ export function TranscriptPlayer({
                     : `Translate to ${languageName(target)}`}
               </button>
             ) : null}
-            <CopyText text={copyText} />
+            {agentTranscript?.trim() ? (
+              <>
+                <CopyText
+                  text={agentTranscript}
+                  label="Copy for AI"
+                  title="Fillers removed, turns merged, code terms formatted: ready to paste into an agent"
+                />
+                <CopyText text={copyText} label="Copy raw" title="Every line shown, with timestamps" />
+              </>
+            ) : (
+              <CopyText text={copyText} label="Copy transcript" />
+            )}
           </div>
         </div>
         <div
@@ -512,7 +525,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function CopyText({ text }: { text: string }) {
+function CopyText({ text, label, title }: { text: string; label: string; title?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -526,10 +539,11 @@ function CopyText({ text }: { text: string }) {
           /* clipboard unavailable */
         }
       })(); }}
+      title={title}
       className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-      {copied ? 'Copied' : 'Copy transcript'}
+      {copied ? 'Copied' : label}
     </button>
   );
 }

@@ -12,6 +12,7 @@ import { Mascot } from '@/components/launcher/ui';
 import { KindIcon, kindOf } from '@/components/library/kind';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
 import { TranscriptPlayer } from './transcript-player';
+import { ProjectPicker } from './project-picker';
 import { type MeetingData, type Segment } from './types';
 import { BriefControls } from './brief-controls';
 import { EditableTitle } from './editable-title';
@@ -129,6 +130,7 @@ function Loaded({
                     {device}
                   </MetaChip>
                 ) : null}
+                <ProjectPicker meetingId={meetingId} projectId={meeting.folderId ?? null} onSaved={onSaved} />
               </div>
             </div>
           </div>
@@ -261,6 +263,7 @@ function Loaded({
               lines={segments}
               chapters={summary?.chapters ?? []}
               speakerNamesJson={meeting.speakerNamesJson ?? null}
+              agentTranscript={meeting.agentTranscriptMd}
               onChanged={onSaved}
             />
           ) : null}

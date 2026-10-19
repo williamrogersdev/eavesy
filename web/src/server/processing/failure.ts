@@ -38,6 +38,7 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
         .where(eq(meetings.id, message.meetingId));
       return;
     case 'rolling-summarize':
+    case 'agent-transcript':
     case 'embed':
     case 'embed-dictation':
     case 'cleanup-anonymous':

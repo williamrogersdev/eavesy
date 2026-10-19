@@ -1,8 +1,10 @@
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
 import { encode } from '@/db/codec';
+import * as projectsRepo from '@/db/repo/projects';
 import { MODELS } from '@/lib/ai/client';
 import { summarizeMeeting } from '@/lib/ai/summarize';
+import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { retryLanguage, whisperLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
@@ -54,11 +56,12 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
+  const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: parseVocabulary(userRow?.customVocabularyJson),
+    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson)],
     ai: env.AI,
   });
   const language = whisperLanguage(meeting.language) ?? transcription.language ?? null;
@@ -102,7 +105,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     const plan = resolveModelPlan(user);
     const summary = await summarizeMeeting({
       transcript: fullText,
-      contextBlurb: meeting.contextBlurb ?? undefined,
+      contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
       notesLanguage: userRow?.notesLanguage,
@@ -155,6 +158,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   if (!user?.isAnonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    if (fullText.trim()) await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   }
 }
 
@@ -230,7 +234,10 @@ export async function handleTranscribeSegment(
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
-        vocabulary: await userVocabulary(db, meeting.userId),
+        vocabulary: [
+          ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
+          ...(await userVocabulary(db, meeting.userId)),
+        ],
       };
       let transcription = await transcriber.transcribe(request);
       let language = whisperLanguage(meeting.language) ?? transcription.language;

@@ -330,12 +330,46 @@ export async function startAudioCapture(
   source: 'mixed' | 'system' | 'mic',
   contextBlurb?: string,
   dictation = false,
+  projectId?: string,
 ): Promise<CaptureSession | null> {
   if (!isDesktop()) {
     window.location.href = '/app/record';
     return null;
   }
-  return invoke<CaptureSession>('start_capture', { source, contextBlurb, dictation });
+  return invoke<CaptureSession>('start_capture', { source, contextBlurb, dictation, projectId });
+}
+
+/** The account's projects, or null when this Mac is not paired or is offline. */
+export async function listDesktopProjects(): Promise<unknown[] | null> {
+  if (!isDesktop()) return null;
+  return await invoke<unknown[] | null>('list_projects');
+}
+
+/** Mirrors the launcher's project choice so the dictation hotkey files recordings the same way. */
+export async function setProjectChoice(choice: {
+  follow: boolean;
+  pinned: string | null;
+  projects: { id: string; terms: string[] }[];
+}): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('set_project_choice', { choice });
+}
+
+export interface FrontWindow {
+  app: string | null;
+  title: string | null;
+}
+
+/** The app and window title that were in front when the launcher opened. */
+export async function frontWindow(): Promise<FrontWindow | null> {
+  if (!isDesktop()) return null;
+  return await invoke<FrontWindow | null>('front_window');
+}
+
+/** A recording's transcript cleaned up for an AI agent, once the cloud has made it. */
+export async function fetchAgentTranscript(recordingId: string): Promise<string | null> {
+  if (!isDesktop()) return null;
+  return await invoke<string | null>('agent_transcript', { recordingId });
 }
 
 export async function startScreenCapture(
@@ -393,8 +427,9 @@ export async function getAccountInfo(): Promise<AccountInfo | null> {
 export async function disconnectAccount(): Promise<void> {
   await invoke('disconnect_account');
 }
-export async function openWebApp(): Promise<void> {
-  await invoke('open_web_app');
+/** Opens eavesy.com/app, or a page under it such as `/settings#projects`. */
+export async function openWebApp(path?: string): Promise<void> {
+  await invoke('open_web_app', path ? { path } : undefined);
 }
 
 export async function getSettings(): Promise<Settings | null> {

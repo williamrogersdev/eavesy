@@ -25,6 +25,7 @@ export async function start(
     deviceId?: string;
     clientSessionId?: string;
     contextBlurb?: string;
+    folderId?: string;
     isAnonymous: boolean;
     audioFormat?: 'm4a' | 'webm' | 'opus';
   },
@@ -44,6 +45,7 @@ export async function start(
     deviceId: args.deviceId,
     clientSessionId: args.clientSessionId,
     contextBlurb: args.contextBlurb,
+    folderId: args.folderId,
     audioFormat: args.audioFormat,
     expiresAt: args.isAnonymous ? now + 24 * 60 * 60 * 1000 : null,
     createdAt: now,

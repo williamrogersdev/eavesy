@@ -338,6 +338,13 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<(Permissions, S
     ))
 }
 
+/// What the user said about a recording before it started.
+#[derive(Clone, Copy, Default)]
+struct SessionContext<'a> {
+    blurb: Option<&'a str>,
+    project_id: Option<&'a str>,
+}
+
 #[tauri::command(async)]
 pub fn start_capture(
     app: AppHandle,
@@ -345,8 +352,9 @@ pub fn start_capture(
     source: Option<String>,
     context_blurb: Option<String>,
     dictation: Option<bool>,
+    project_id: Option<String>,
 ) -> Result<CaptureSession, String> {
-    start_audio_capture(&app, &state, source, context_blurb, dictation, Instant::now())
+    start_audio_capture(&app, &state, source, context_blurb, dictation, project_id, Instant::now())
 }
 
 /// `asked_at`: when the user asked (the hotkey press), which the time to the
@@ -357,11 +365,13 @@ pub fn start_audio_capture(
     source: Option<String>,
     context_blurb: Option<String>,
     dictation: Option<bool>,
+    project_id: Option<String>,
     asked_at: Instant,
 ) -> Result<CaptureSession, String> {
     let source = source.unwrap_or_else(|| "mixed".to_string());
     let dictation = dictation.unwrap_or(false) && source == "mic";
-    let result = spawn_capture(app, state, "audio", &source, false, context_blurb.as_deref(), dictation, asked_at);
+    let context = SessionContext { blurb: context_blurb.as_deref(), project_id: project_id.as_deref() };
+    let result = spawn_capture(app, state, "audio", &source, false, context, dictation, asked_at);
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_audio", error);
     }
@@ -374,7 +384,7 @@ pub fn start_screen_capture(
     state: State<'_, Captures>,
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
-    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None, false, Instant::now());
+    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), SessionContext::default(), false, Instant::now());
     if let Err(error) = &result {
         crate::telemetry::capture("capture.start_screen", error);
     }
@@ -388,7 +398,7 @@ fn spawn_capture(
     mode: &str,
     source: &str,
     mic: bool,
-    context_blurb: Option<&str>,
+    context: SessionContext<'_>,
     dictation: bool,
     asked_at: Instant,
 ) -> Result<CaptureSession, String> {
@@ -533,13 +543,19 @@ fn spawn_capture(
             &segment_dir,
             source,
             &title,
-            context_blurb,
+            context.blurb,
             started_at_ms,
         ) {
             let _ = child.kill();
             let _ = child.wait();
             discard();
             return Err(error);
+        }
+        // The project is a convenience: a recording without one is still a recording.
+        if let Some(project_id) = context.project_id {
+            if let Err(error) = crate::sqlite::set_session_project(app, &id, project_id) {
+                eprintln!("{error}");
+            }
         }
     }
     if let Err(error) = crate::sqlite::with_open(app, |conn| crate::live_transcript::begin_metrics(conn, &id, now_ms()))

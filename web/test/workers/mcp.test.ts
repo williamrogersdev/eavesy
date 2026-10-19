@@ -213,6 +213,7 @@ describe('MCP scopes', () => {
       'search_meetings',
       'get_meeting',
       'recent_meetings',
+      'list_projects',
       'search_dictations',
       'get_action_items',
     ]);
@@ -231,6 +232,64 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(5);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(6);
+  });
+});
+
+describe('MCP meetings', () => {
+  const call = async (token: string, name: string, args: Record<string, unknown>) => {
+    const body = await (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { isError?: boolean; content?: { text: string }[] } }>();
+    return JSON.parse(body.result?.content?.[0]?.text ?? 'null') as Record<string, unknown> & Record<string, unknown>[];
+  };
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'user_mcp', 'eavesy', 'Mac recorder.', '["Tauri"]', '[]')`,
+    ).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO meetings (id, user_id, title, started_at, source, status, folder_id, speaker_names_json, agent_transcript_md, transcript_kind, created_at, updated_at)
+       VALUES ('m1', 'user_mcp', 'Cask fix', ?, 'desktop', 'complete', 'p1', '{"you":"Will"}', '<transcript kind="conversation">
+Will: Bump it.
+</transcript>', 'conversation', ?, ?),
+              ('m2', 'user_mcp', 'Other', ?, 'desktop', 'complete', NULL, NULL, NULL, NULL, ?, ?)`,
+    ).bind(now, now, now, now - 1, now, now).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES ('t1', 'm1', 0, 1000, 'you', 'um bump it')`,
+    ).run();
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM transcript_segments'),
+      testEnv.DB.prepare('DELETE FROM meetings'),
+      testEnv.DB.prepare('DELETE FROM folders'),
+    ]);
+  });
+
+  it('give the agent-ready transcript by default and the raw one on request', async () => {
+    const { token } = await mint();
+    const agent = await call(token, 'get_meeting', { id: 'm1' });
+    expect(agent).toMatchObject({ project: 'eavesy', transcript_kind: 'conversation' });
+    expect(agent.transcript).toContain('Will: Bump it.');
+    const raw = await call(token, 'get_meeting', { id: 'm1', transcript_format: 'raw' });
+    expect(raw.transcript).toBe('[00:00] Will: um bump it');
+  });
+
+  it('list projects and filter recent meetings by one', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'list_projects', {})).toEqual([
+      { name: 'eavesy', about: 'Mac recorder.', terms: ['Tauri'], people: null, recordings: 1 },
+    ]);
+    const recent = await call(token, 'recent_meetings', { project: 'Eavesy' });
+    expect(recent.map((meeting) => meeting.id)).toEqual(['m1']);
+    expect(recent[0].project).toBe('eavesy');
   });
 });

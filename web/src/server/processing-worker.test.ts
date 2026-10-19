@@ -120,7 +120,7 @@ describe('final summary', () => {
     expect(t.meeting().status).toBe('complete');
     expect(t.meeting().title).toBe('Launch planning sync');
     expect(t.meeting().status_error).toContain('could not be transcribed');
-    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed']);
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed', 'agent-transcript']);
   });
 
   test('gives up waiting on stragglers after the wait limit', async () => {
@@ -565,7 +565,7 @@ describe('mic-only notes', () => {
     expect(api.calls).toHaveLength(0);
     expect(t.meeting().status).toBe('complete');
     expect(t.meeting().title).toBe('Remind me to send the invoice to Dana…');
-    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed']);
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed', 'agent-transcript']);
   });
 
   test('a note right at the limits is still a quick note; one word or millisecond more is not', async () => {
@@ -752,5 +752,104 @@ describe('deleting an account', () => {
     expect(fake.deletedVectors).toContain('m1__0');
     expect([...fake.objects.keys()]).toEqual(['users/u2/meetings/m2.webm']);
     expect(count(`SELECT count(*) n FROM meetings WHERE user_id = 'u2'`)).toBe(1);
+  });
+});
+
+describe('agent transcript', () => {
+  function textReply(text: string) {
+    return summaryReply(text as unknown as Record<string, unknown>);
+  }
+
+  function complete(t: ReturnType<typeof setup>, lines: [string | null, number, string][]) {
+    t.sqlite.run(`UPDATE meetings SET status = 'complete', title = 'Cask fix' WHERE id = 'm1'`);
+    for (const [speaker, startMs, text] of lines) {
+      t.sqlite.run(
+        `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES (?, 'm1', ?, ?, ?, ?)`,
+        [`t${startMs}${speaker}`, startMs, startMs + 1000, speaker, text],
+      );
+    }
+  }
+
+  const stored = (t: ReturnType<typeof setup>) =>
+    t.sqlite.query(`SELECT agent_transcript_md md, transcript_kind kind FROM meetings WHERE id = 'm1'`).get() as {
+      md: string | null;
+      kind: string | null;
+    };
+
+  test('the final summary queues it', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday and the launch plan is set, everyone agreed on the owners.');
+    t.addLine(70_000, 'Maya writes the release notes and Alex handles the rollout checklist.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(t.sent.map((message) => message.body.kind)).toEqual(['embed', 'agent-transcript']);
+  });
+
+  test('a queued refresh skips a copy an earlier rebuild already made', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    t.sqlite.run(`UPDATE meetings SET agent_transcript_md = 'Ship the build today.' WHERE id = 'm1'`);
+    const api = stubAnthropic(() => textReply('unused'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', onlyIfMissing: true });
+    expect(api.calls).toHaveLength(0);
+    expect(stored(t).md).toBe('Ship the build today.');
+  });
+
+  test('a rebuild whose lines changed while it ran leaves the write to the next one', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    const api = stubAnthropic(() => {
+      t.sqlite.run(`UPDATE transcript_segments SET text = 'ship the build tomorrow and tell the team' WHERE meeting_id = 'm1'`);
+      return textReply('Ship the build today and tell the team about it.');
+    });
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(stored(t).md).toBeNull();
+  });
+
+  test('cleans a monologue with the project terms and stores it', async () => {
+    const t = setup();
+    t.sqlite.run(
+      `INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'u1', 'eavesy', 'Mac recorder.', '["summarize.ts"]', '[]')`,
+    );
+    t.sqlite.run(`UPDATE meetings SET folder_id = 'p1' WHERE id = 'm1'`);
+    complete(t, [['you', 0, 'so um the retry delay in summarize dot ts needs to be shorter']]);
+    const cleaned = 'The retry delay in `summarize.ts` needs to be shorter.';
+    const api = stubAnthropic(() => textReply(cleaned));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(stored(t)).toEqual({ md: cleaned, kind: 'solo' });
+    expect(String(api.calls[0].system)).toContain('summarize.ts');
+    expect(String(api.calls[0].system)).toContain('one person talking');
+  });
+
+  test('keeps the model-free cleanup when the model drops a turn', async () => {
+    const t = setup();
+    complete(t, [
+      ['you', 0, 'So um the cask keeps failing on the notarization step.'],
+      ['them', 2_000, "That's the stapler timing out, bump it to ten minutes."],
+    ]);
+    const api = stubAnthropic(() => textReply('You: The cask keeps failing on the notarization step and the stapler.'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    const result = stored(t);
+    expect(result.kind).toBe('conversation');
+    expect(result.md).toContain('<transcript kind="conversation" title="Cask fix"');
+    expect(result.md).toContain('speakers="You (recorder), Them"');
+    expect(result.md).toContain('You: So the cask keeps failing on the notarization step.');
+    expect(result.md).toContain("Them: That's the stapler timing out, bump it to ten minutes.");
+  });
+
+  test('skips a meeting that is not finished', async () => {
+    const t = setup();
+    t.addLine(0, 'Still going.');
+    const api = stubAnthropic(() => textReply('x'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(0);
+    expect(stored(t).md).toBeNull();
   });
 });
