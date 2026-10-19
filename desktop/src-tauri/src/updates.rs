@@ -6,6 +6,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::install_location::MOVE_TO_APPLICATIONS;
+
 const RECHECK: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 /// Emitted with an [`UpdateStatus`] whenever a check finishes.
 pub const EVENT_UPDATE_STATUS: &str = "launcher:update-status";
@@ -208,13 +210,13 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
         return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
     }
-    match std::env::current_exe() {
-        Ok(exe) => {
-            if let Some(message) = install_blocker(&exe) {
-                return Err(message);
-            }
-        }
-        Err(e) => crate::telemetry::capture("updater.locate", &e.to_string()),
+    if let Some(misplaced) = crate::install_location::misplaced() {
+        crate::install_location::offer_move(
+            &app,
+            misplaced,
+            "Eavesy can't update itself while it runs from the disk image. Move it to Applications? Then click Update again.",
+        );
+        return Err(MOVE_TO_APPLICATIONS.into());
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
@@ -231,29 +233,6 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
     app.restart();
-}
-
-const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from a disk image or another read-only location, so it can't replace itself. \
-Quit Eavesy, drag it into your Applications folder, eject the disk image, then open Eavesy from Applications and update again.";
-
-/// The updater swaps the app bundle in place, which can't work when the bundle
-/// sits on a read-only volume such as a mounted disk image, or in a Gatekeeper
-/// translocation mount.
-fn install_blocker(exe: &std::path::Path) -> Option<String> {
-    let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))?;
-    blocks_install(bundle, || bundle.parent().is_some_and(can_write_in)).then(|| MOVE_TO_APPLICATIONS.to_string())
-}
-
-fn blocks_install(bundle: &std::path::Path, parent_writable: impl FnOnce() -> bool) -> bool {
-    let path = bundle.to_string_lossy();
-    path.contains("/AppTranslocation/") || (path.starts_with("/Volumes/") && !parent_writable())
-}
-
-fn can_write_in(dir: &std::path::Path) -> bool {
-    let probe = dir.join(format!(".eavesy-update-probe-{}", std::process::id()));
-    let writable = std::fs::File::create(&probe).is_ok();
-    let _ = std::fs::remove_file(&probe);
-    writable
 }
 
 fn install_error(error: tauri_plugin_updater::Error) -> String {
@@ -315,15 +294,8 @@ mod tests {
     }
 
     #[test]
-    fn updating_from_a_read_only_location_asks_to_move_to_applications() {
+    fn a_read_only_install_error_asks_to_move_to_applications() {
         use std::io::Error as IoError;
-        use std::path::Path;
-        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app");
-        assert!(blocks_install(dmg, || false));
-        assert!(!blocks_install(dmg, || true));
-        assert!(blocks_install(Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app"), || true));
-        assert!(!blocks_install(Path::new("/Applications/Eavesy.app"), || false));
-        assert_eq!(install_blocker(Path::new("/Applications/Eavesy.app/Contents/MacOS/eavesy")), None);
         for code in [18, 30] {
             let message = install_error(tauri_plugin_updater::Error::Io(IoError::from_raw_os_error(code)));
             assert!(message.starts_with(MOVE_TO_APPLICATIONS));
