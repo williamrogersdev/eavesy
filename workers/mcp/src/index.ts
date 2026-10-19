@@ -4,7 +4,7 @@ import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
-import { captureMessage, sentryOptions, withSentry } from '../../../web/src/server/observability';
+import { captureMessage, withErrorReporting } from '../../../web/src/server/observability';
 import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
 import {
   mcpTokenExpiresAt,
@@ -26,7 +26,9 @@ interface Env {
   DB: D1Database;
   AI: Ai;
   VECTORIZE: VectorizeIndex;
-  SENTRY_DSN?: string;
+  POSTHOG_KEY?: string;
+  POSTHOG_HOST?: string;
+  RELEASE?: string;
   /** Set to `false` to stop accepting tokens in the URL path. */
   MCP_ALLOW_PATH_TOKENS?: string;
   /** The web app, which shows the OAuth consent screen. Defaults to https://eavesy.com. */
@@ -314,7 +316,6 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
       });
     } catch (err) {
       captureMessage('MCP tool call failed', {
-        level: 'error',
         tags: { mcp_tool: typeof name === 'string' ? name : 'unknown' },
       });
       return jsonRpc(body.id, undefined, {
@@ -331,10 +332,7 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
 }
 
 
-export default withSentry<Env>(
-  (env: Env) => sentryOptions(env, { service: 'mcp', redactPath: true }),
-  worker,
-);
+export default withErrorReporting<Env>({ service: 'mcp', redactPath: true }, worker);
 
 function jsonRpc(id: unknown, result?: unknown, error?: { code: number; message: string }) {
   const body: Record<string, unknown> = { jsonrpc: '2.0', id };
