@@ -108,7 +108,7 @@ rm -rf "$old"
 if [ -e "$dst" ]; then mv "$dst" "$old"; fi
 if ditto "$src" "$dst"; then rm -rf "$old" || true; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
 xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
-if [ -n "$3" ]; then chown -R "$3" "$dst"; fi
+if [ -n "$3" ]; then chown -R "$3" "$dst" || true; fi
 "#;
 
 /// `Ok(None)` when the user cancelled the admin password prompt.
@@ -129,17 +129,11 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
         return admin_copy_outcome(false, &stderr).map(|_| None);
     }
     // /Applications isn't writable for this user: ask for an admin password.
-    let script = format!(
-        "do shell script {} with administrator privileges",
-        applescript_string(&format!(
-            "/bin/sh -c {} sh {} {} {}",
-            shell_quote(COPY_SCRIPT),
-            shell_quote(&bundle.to_string_lossy()),
-            shell_quote(&target.to_string_lossy()),
-            // Run as root, the copy would be root's; hand it back so updates don't need a password.
-            shell_quote(&std::env::var("USER").unwrap_or_default())
-        ))
-    );
+    let owner = current_owner();
+    if owner.is_none() {
+        crate::telemetry::capture("install_location.owner", "couldn't read the user's uid and gid");
+    }
+    let script = admin_command(bundle, &target, owner.as_deref());
     let output = Command::new("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     match admin_copy_outcome(output.status.success(), &stderr) {
@@ -147,6 +141,27 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
         Ok(false) => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+/// The copy runs as root, so it is handed back to this user (`uid:gid`, read
+/// from the per-user temp folder) and later updates don't need a password.
+fn current_owner() -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(std::env::temp_dir()).ok()?;
+    (meta.uid() != 0).then(|| format!("{}:{}", meta.uid(), meta.gid()))
+}
+
+fn admin_command(bundle: &Path, target: &Path, owner: Option<&str>) -> String {
+    format!(
+        "do shell script {} with administrator privileges",
+        applescript_string(&format!(
+            "/bin/sh -c {} sh {} {} {}",
+            shell_quote(COPY_SCRIPT),
+            shell_quote(&bundle.to_string_lossy()),
+            shell_quote(&target.to_string_lossy()),
+            shell_quote(owner.unwrap_or_default())
+        ))
+    )
 }
 
 fn needs_admin(stderr: &str) -> bool {
@@ -338,6 +353,14 @@ mod tests {
     }
 
     #[test]
+    fn the_admin_command_passes_source_target_and_owner_in_order() {
+        let command = admin_command(Path::new("/Volumes/E/Eavesy.app"), Path::new("/Applications/Eavesy.app"), Some("501:20"));
+        assert!(command.starts_with("do shell script \"/bin/sh -c "));
+        assert!(command.ends_with(" sh '/Volumes/E/Eavesy.app' '/Applications/Eavesy.app' '501:20'\" with administrator privileges"));
+        assert!(admin_command(Path::new("/a.app"), Path::new("/b.app"), None).contains(" '/b.app' ''\""));
+    }
+
+    #[test]
     fn cancelling_the_password_prompt_is_not_an_error() {
         assert_eq!(admin_copy_outcome(true, ""), Ok(true));
         assert_eq!(admin_copy_outcome(false, "execution error: User canceled. (-128)"), Ok(false));
@@ -360,8 +383,15 @@ mod tests {
         std::fs::write(src.join("Contents/version"), "new").unwrap();
         std::fs::create_dir_all(dst.join("Contents")).unwrap();
         std::fs::write(dst.join("Contents/version"), "old").unwrap();
-        let status = Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&src).arg(&dst).status().unwrap();
+        let owner = current_owner().unwrap();
+        let status =
+            Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&src).arg(&dst).arg(&owner).status().unwrap();
         assert!(status.success());
+        {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::metadata(dst.join("Contents/version")).unwrap();
+            assert_eq!(format!("{}:{}", meta.uid(), meta.gid()), owner);
+        }
         assert_eq!(std::fs::read_to_string(dst.join("Contents/version")).unwrap(), "new");
         assert!(!root.join("dst/Eavesy.app.eavesy-old").exists());
         std::fs::remove_dir_all(&root).unwrap();
