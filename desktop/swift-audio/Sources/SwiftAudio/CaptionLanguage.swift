@@ -163,24 +163,67 @@ final class LanguageFollower {
 }
 
 /// Moves every captioned track to the language `LanguageFollower` picks.
+/// Collects how each track's switch ended. Captions only count as unable to
+/// speak a language when no track could, so one track that fails does not
+/// undo the others.
+final class SwitchTally {
+    private let lock = NSLock()
+    private var waiting: Int
+    private var switched = 0
+    private var reasons: [String] = []
+
+    init(tracks: Int) {
+        waiting = tracks
+    }
+
+    /// Once every track has answered: nil if any switched or was overtaken by
+    /// a later switch, else every track's reason.
+    func record(_ outcome: EngineSwitch) -> [String]?? {
+        lock.lock()
+        defer { lock.unlock() }
+        waiting -= 1
+        switch outcome {
+        case .switched, .superseded: switched += 1
+        case .unavailable(let reason): reasons.append(reason)
+        }
+        guard waiting == 0 else { return .none }
+        return .some(switched > 0 ? nil : reasons)
+    }
+}
+
+/// Moves every captioned track to the language `LanguageFollower` picks.
 final class CaptionLanguages {
     private let follower: LanguageFollower
     private let current: Locale
-    private let supported: [Locale]
     private let vocabulary: [String]
     private let lock = NSLock()
     private var tracks: [LiveCaptions] = []
     private var lastMs: Int64 = 0
+    private var knownLocales: [Locale]?
 
     init(locale: Locale, follows: Bool, vocabulary: [String]) {
         let current = Locale.current
-        let supported = follows ? CaptionLanguage.supportedLocales() : []
         self.current = current
-        self.supported = supported
         self.vocabulary = vocabulary
+        var resolve: ((String) -> Locale?)?
         follower = LanguageFollower(current: locale, follows: follows) { language in
-            CaptionLanguage.locale(for: language, current: current, supported: supported) != nil
+            resolve?(language) != nil
         }
+        resolve = { [weak self] language in self?.locale(for: language) }
+    }
+
+    /// Asked of the Speech framework the first time a switch needs it, not at start.
+    private var supported: [Locale] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let knownLocales { return knownLocales }
+        let locales = CaptionLanguage.supportedLocales()
+        knownLocales = locales
+        return locales
+    }
+
+    private func locale(for language: String) -> Locale? {
+        CaptionLanguage.locale(for: language, current: current, supported: supported)
     }
 
     var captions: [LiveCaptions] {
@@ -219,16 +262,25 @@ final class CaptionLanguages {
     }
 
     private func switchTo(_ language: String, from previous: String) {
-        guard let locale = CaptionLanguage.locale(for: language, current: current, supported: supported) else { return }
-        EventEmitter.emit(["event": "captions_language", "language": locale.identifier])
+        let tracks = captions
+        guard let locale = locale(for: language), !tracks.isEmpty else {
+            follower.failed(language, previous: previous)
+            return
+        }
         let vocabulary = self.vocabulary
         let follower = self.follower
-        for track in captions {
+        let tally = SwitchTally(tracks: tracks.count)
+        for track in tracks {
             track.switchEngine({ ready in
                 CaptionEngines.make(locale: locale, vocabulary: vocabulary, completion: ready)
-            }, unavailable: { reason in
+            }, outcome: { outcome in
+                if outcome == .switched {
+                    EventEmitter.emit(["event": "captions_language", "track": track.track, "language": locale.identifier])
+                }
+                guard case .some(let reasons?) = tally.record(outcome) else { return }
                 follower.failed(language, previous: previous)
-                FileHandle.standardError.write(Data("captions stay in \(previous), not \(language): \(reason)\n".utf8))
+                FileHandle.standardError.write(
+                    Data("captions stay in \(previous), not \(language): \(reasons.joined(separator: "; "))\n".utf8))
             })
         }
     }
