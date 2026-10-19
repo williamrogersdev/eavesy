@@ -208,6 +208,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     if let Some(version) = INSTALLED.lock().ok().and_then(|v| v.clone()) {
         return Err(format!("Eavesy {version} is already installed. It takes effect the next time Eavesy starts."));
     }
+    if let Some(message) = std::env::current_exe().ok().as_deref().and_then(install_blocker) {
+        return Err(message);
+    }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("The update is already installing.".into());
     }
@@ -225,6 +228,25 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from the disk image, so it can't replace itself. \
+Quit Eavesy, drag it into your Applications folder, eject the disk image, then open Eavesy from Applications and update again.";
+
+/// The updater swaps the app bundle in place, which can't work when the bundle
+/// sits on a read-only disk image or in a Gatekeeper translocation mount.
+fn install_blocker(exe: &std::path::Path) -> Option<String> {
+    let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))?;
+    let path = bundle.to_string_lossy();
+    (path.starts_with("/Volumes/") || path.contains("/AppTranslocation/")).then(|| MOVE_TO_APPLICATIONS.to_string())
+}
+
+fn install_error(message: String) -> String {
+    if message.contains("os error 18") || message.contains("os error 30") {
+        MOVE_TO_APPLICATIONS.to_string()
+    } else {
+        message
+    }
+}
+
 async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
@@ -235,7 +257,7 @@ async fn download_and_install(app: &AppHandle) -> Result<String, String> {
     update
         .download_and_install(|_, _| {}, || {})
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| install_error(e.to_string()))?;
     Ok(update.version)
 }
 
@@ -269,6 +291,18 @@ mod tests {
         assert_eq!(keep_installed(Some("0.3.0"), newer.clone()), newer);
         let failed = UpdateState::Error { message: "offline".into() };
         assert_eq!(keep_installed(Some("0.3.0"), failed.clone()), failed);
+    }
+
+    #[test]
+    fn updating_from_the_disk_image_asks_to_move_to_applications() {
+        use std::path::Path;
+        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app/Contents/MacOS/eavesy");
+        assert_eq!(install_blocker(dmg).as_deref(), Some(MOVE_TO_APPLICATIONS));
+        let translocated = Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app/Contents/MacOS/eavesy");
+        assert!(install_blocker(translocated).is_some());
+        assert_eq!(install_blocker(Path::new("/Applications/Eavesy.app/Contents/MacOS/eavesy")), None);
+        assert_eq!(install_error("Cross-device link (os error 18)".into()), MOVE_TO_APPLICATIONS);
+        assert_eq!(install_error("offline".into()), "offline");
     }
 
     #[test]
