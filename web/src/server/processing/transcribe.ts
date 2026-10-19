@@ -1,8 +1,10 @@
 import { and, eq, gte, inArray, isNull, lt, lte, ne, or } from 'drizzle-orm';
 import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
 import { encode } from '@/db/codec';
+import * as projectsRepo from '@/db/repo/projects';
 import { MODELS } from '@/lib/ai/client';
 import { summarizeMeeting } from '@/lib/ai/summarize';
+import { combinedContext, whisperPrompt } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
@@ -52,10 +54,11 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
+  const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
-    contextBlurb: meeting.contextBlurb,
+    contextBlurb: whisperPrompt(meeting.contextBlurb, project),
     ai: env.AI,
   });
 
@@ -96,7 +99,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     const plan = resolveModelPlan(user);
     const summary = await summarizeMeeting({
       transcript: fullText,
-      contextBlurb: meeting.contextBlurb ?? undefined,
+      contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
     });
@@ -148,6 +151,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   if (!user?.isAnonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    if (fullText.trim()) await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   }
 }
 
@@ -219,7 +223,8 @@ export async function handleTranscribeSegment(
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
       const transcriber = new WorkersAiSegmentTranscriber(env.AI);
-      const request = { audio, language: meeting.language, contextBlurb: meeting.contextBlurb };
+      const project = await projectsRepo.getForMeeting(db, meeting);
+      const request = { audio, language: meeting.language, contextBlurb: whisperPrompt(meeting.contextBlurb, project) };
       const transcription = await transcriber.transcribe(request);
       const speakerId = speakerForTrack(track);
       let lines = transcription.segments.filter((relative) => !isHallucination(relative, { lenient: micOnly }));
