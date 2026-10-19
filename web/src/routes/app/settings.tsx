@@ -6,7 +6,8 @@ import { AccountData } from '@/components/settings/account-data';
 import { ProjectManager } from '@/components/settings/project-manager';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
-import { NOTES_LANGUAGES, TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
+import { NOTES_LANGUAGES } from '@/lib/transcription/language';
+import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { MAX_VOCABULARY_TERMS, vocabularyFromText } from '@/lib/transcription/vocabulary';
 
 interface Me {
@@ -20,6 +21,7 @@ interface Me {
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
   notesLanguage: string | null;
+  spokenLanguages: string[];
   customVocabulary: string[];
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
@@ -138,7 +140,7 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage'>>) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages'>>) => {
     const previous = me;
     setSaved(false);
     setError(null);
@@ -325,25 +327,15 @@ function SettingsPage() {
 
       <AppSection title="Transcription">
         <Row
-          label="Spoken language"
-          hint="Detect automatically follows whatever language people speak, line by line, even when a call switches between languages. Pick one only if every meeting is in it."
+          label="Languages you speak"
+          hint="Eavesy picks up whichever of these is spoken, line by line, even when a call switches between them. Leave it empty to detect any language."
           htmlFor="settings-language"
         >
-          <select
+          <SpokenLanguages
             id="settings-language"
-            value={me.defaultLanguage}
-            onChange={(e) => void saveLanguage({ defaultLanguage: e.target.value })}
-            className={`${input} sm:w-56`}
-          >
-            {TRANSCRIPTION_LANGUAGES.some((language) => language.code === me.defaultLanguage) ? null : (
-              <option value={me.defaultLanguage}>{me.defaultLanguage}</option>
-            )}
-            {TRANSCRIPTION_LANGUAGES.map((language) => (
-              <option key={language.code} value={language.code}>
-                {language.label}
-              </option>
-            ))}
-          </select>
+            value={me.spokenLanguages}
+            onChange={(spokenLanguages) => void saveLanguage({ spokenLanguages, defaultLanguage: 'auto' })}
+          />
         </Row>
         <Row
           label="Notes language"
@@ -557,6 +549,9 @@ function parseMe(value: unknown): Me | null {
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
     notesLanguage: typeof value.notesLanguage === 'string' ? value.notesLanguage : null,
+    spokenLanguages: Array.isArray(value.spokenLanguages)
+      ? value.spokenLanguages.filter((code): code is string => typeof code === 'string')
+      : [],
     customVocabulary: Array.isArray(value.customVocabulary)
       ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
       : [],

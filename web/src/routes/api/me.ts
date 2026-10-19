@@ -5,7 +5,14 @@ import { getDb } from '@/db/client';
 import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
-import { isNotesLanguage, isTranscriptionLanguage } from '@/lib/transcription/language';
+import {
+  AUTO_LANGUAGE,
+  isNotesLanguage,
+  isTranscriptionLanguage,
+  MAX_SPOKEN_LANGUAGES,
+  normalizeSpokenLanguages,
+  spokenLanguages,
+} from '@/lib/transcription/language';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveActor } from '@/server/auth';
@@ -18,6 +25,7 @@ const updateSchema = z.object({
   defaultTranscriptionEngine: z.literal('whisper').optional(),
   defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
   notesLanguage: z.string().refine(isNotesLanguage, 'unsupported language').nullable().optional(),
+  spokenLanguages: z.array(z.string().max(12)).max(MAX_SPOKEN_LANGUAGES * 2).optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
@@ -56,6 +64,7 @@ export const Route = createFileRoute('/api/me')({
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
           notesLanguage: u.notesLanguage ?? null,
+          spokenLanguages: spokenLanguages(u),
           customVocabulary: parseVocabulary(u.customVocabularyJson),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
@@ -89,6 +98,11 @@ export const Route = createFileRoute('/api/me')({
         if (body.defaultTranscriptionEngine) patch.defaultTranscriptionEngine = body.defaultTranscriptionEngine;
         if (body.defaultLanguage) patch.defaultLanguage = body.defaultLanguage;
         if (body.notesLanguage !== undefined) patch.notesLanguage = body.notesLanguage;
+        if (body.spokenLanguages) {
+          const spoken = normalizeSpokenLanguages(body.spokenLanguages);
+          patch.spokenLanguagesJson = spoken.length > 0 ? JSON.stringify(spoken) : null;
+          patch.defaultLanguage = AUTO_LANGUAGE;
+        }
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;

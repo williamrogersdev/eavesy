@@ -31,6 +31,8 @@ export const users = sqliteTable(
     defaultLanguage: text('default_language').notNull().default('en'),
     /** Words to recognize as spelled here (names, jargon), as a JSON array of strings. */
     customVocabularyJson: text('custom_vocabulary_json'),
+    /** The languages the user speaks in recordings, as a JSON array of Whisper codes, most used first. */
+    spokenLanguagesJson: text('spoken_languages_json'),
     /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
     notesLanguage: text('notes_language'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),

@@ -280,6 +280,30 @@ describe('segment transcription', () => {
     ]);
   });
 
+  test('the first clip of a meeting is steered toward the languages the user speaks', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return language === 'en'
+          ? { text: 'morning all', transcription_info: { language: 'en' }, segments: [{ start: 0, end: 1, text: 'morning all' }] }
+          : {
+              text: 'morin ol',
+              transcription_info: { language: 'cy', language_probability: 0.71 },
+              segments: [{ start: 0, end: 1, text: 'morin ol' }],
+            };
+      },
+    });
+    t.sqlite.run(`UPDATE users SET spoken_languages_json = '["en","es"]' WHERE id = 'u1'`);
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.addSegment(0, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(asked).toEqual([undefined, 'en']);
+    expect(t.sqlite.query('SELECT text, language FROM transcript_segments').all()).toEqual([
+      { text: 'morning all', language: 'en' },
+    ]);
+  });
+
   test('a confident switch of language is kept', async () => {
     const asked: (string | undefined)[] = [];
     const t = setup({

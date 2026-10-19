@@ -37,6 +37,7 @@ export const Route = createFileRoute('/api/dictations')({
           audio,
           language: prefs.language,
           vocabulary: prefs.vocabulary,
+          spoken: prefs.spoken,
           voiceNote: true,
         });
 

@@ -1,7 +1,7 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { TranscriptSegment } from './types';
 import { audioBase64 } from './base64';
-import { whisperLanguage } from './language';
+import { retryLanguage, whisperLanguage } from './language';
 import { isHallucination } from './two-track';
 import { whisperPrompt } from './vocabulary';
 
@@ -30,6 +30,8 @@ export async function transcribeAudioFile(opts: {
   language?: string | null;
   contextBlurb?: string | null;
   vocabulary?: readonly string[];
+  /** The languages the user speaks, which an unsure detection is steered toward. */
+  spoken?: readonly string[];
   voiceNote?: boolean;
   ai?: FileTranscriptionRunner;
 }): Promise<FileTranscriptionResult> {
@@ -39,7 +41,7 @@ export async function transcribeAudioFile(opts: {
   }
 
   const bytes = opts.audio instanceof Uint8Array ? opts.audio : new Uint8Array(opts.audio);
-  const language = whisperLanguage(opts.language);
+  let language = whisperLanguage(opts.language);
   const prompt = whisperPrompt({ contextBlurb: opts.contextBlurb, vocabulary: opts.vocabulary });
   const run = async (vadFilter: boolean) =>
     mapWhisperResult(
@@ -54,7 +56,21 @@ export async function transcribeAudioFile(opts: {
       language,
     );
 
-  const first = await run(true);
+  let first = await run(true);
+  const retry = retryLanguage({
+    setting: opts.language,
+    detected: first.language,
+    probability: first.languageProbability,
+    established: undefined,
+    spoken: opts.spoken,
+  });
+  if (retry && first.segments.length > 0) {
+    const fixed = language;
+    language = retry;
+    const again = await run(true);
+    if (again.segments.length > 0) first = again;
+    else language = fixed;
+  }
   const heard = keepHeard(first, { lenient: opts.voiceNote, glossary: opts.vocabulary });
   if (heard.segments.length > 0 || !opts.voiceNote) return heard;
   return keepHeard(await run(false), { lenient: false, glossary: opts.vocabulary });

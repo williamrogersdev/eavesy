@@ -204,6 +204,13 @@
       "when": 1792439747807,
       "tag": "0028_auto_detect_language",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792442281026,
+      "tag": "0029_spoken_languages",
+      "breakpoints": true
     }
   ]
 }

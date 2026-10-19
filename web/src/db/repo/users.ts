@@ -4,7 +4,7 @@ import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { users } from '../schema';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
-import { AUTO_LANGUAGE } from '@/lib/transcription/language';
+import { AUTO_LANGUAGE, spokenLanguages } from '@/lib/transcription/language';
 import { trackEvent } from '../../server/observability';
 
 export async function ensureClerkUser(
@@ -212,17 +212,24 @@ export interface TranscriptionPrefs {
   language: string;
   /** Words to recognize as the user spells them. */
   vocabulary: string[];
+  /** The languages the user speaks, most used first; empty to detect any. */
+  spoken: string[];
 }
 
 export async function transcriptionPrefs(db: AppDb, userId: string): Promise<TranscriptionPrefs> {
   const rows = await db
-    .select({ defaultLanguage: users.defaultLanguage, customVocabularyJson: users.customVocabularyJson })
+    .select({
+      defaultLanguage: users.defaultLanguage,
+      customVocabularyJson: users.customVocabularyJson,
+      spokenLanguagesJson: users.spokenLanguagesJson,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
   return {
     language: rows[0]?.defaultLanguage || AUTO_LANGUAGE,
     vocabulary: parseVocabulary(rows[0]?.customVocabularyJson),
+    spoken: rows[0] ? spokenLanguages(rows[0]) : [],
   };
 }
 
