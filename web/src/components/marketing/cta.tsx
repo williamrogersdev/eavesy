@@ -21,7 +21,7 @@ export function DownloadCTA() {
         <div className="relative mt-8">
           <DownloadButton className="px-6 py-3 text-[15px]" />
         </div>
-        <p className="relative mt-4 font-round text-xs font-semibold text-ev-ink-3">Free · macOS 13+ on Apple Silicon · No credit card</p>
+        <p className="relative mt-4 font-round text-xs font-semibold text-ev-ink-2">Free · macOS 13+ on Apple Silicon · No credit card</p>
       </div>
     </section>
   );

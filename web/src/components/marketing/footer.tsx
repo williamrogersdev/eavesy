@@ -37,7 +37,7 @@ export function Footer() {
         <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-ev-line pt-6 text-sm text-ev-ink-2 sm:flex-row">
           <span className="flex items-center gap-2">
             <Mascot size={16} state="sleeping" />
-            © {new Date().getFullYear()} Eavesy
+            © {new Date().getFullYear()} Eavesy. All rights reserved.
           </span>
           <a href="https://github.com/williamrogersdev/eavesy" className="transition hover:text-ev-slate">GitHub ↗</a>
         </div>

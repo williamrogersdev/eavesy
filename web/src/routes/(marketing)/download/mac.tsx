@@ -86,7 +86,7 @@ function DownloadMacPage() {
         <div className="flex flex-col items-center gap-2">
           <a
             href={DMG_URL}
-            className="inline-flex items-center gap-2.5 rounded-xl bg-ev-slate px-6 py-3 text-base font-semibold text-ev-ink shadow-lg hover:bg-ev-slate-hover"
+            className="inline-flex items-center gap-2.5 rounded-full bg-ev-slate px-6 py-3 text-base font-round font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover"
           >
             <Apple className="h-5 w-5" />
             {started ? 'Download again' : 'Download for Mac'}

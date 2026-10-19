@@ -121,7 +121,7 @@ function FeatureDetailPage() {
                       <Icon className="h-4 w-4" />
                     </span>
                     <span className="text-sm font-medium text-ev-ink">{r.name}</span>
-                    <ArrowRight className="ml-auto h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-ink-2" />
+                    <ArrowRight className="ml-auto h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-slate" />
                   </Link>
                 );
               })}

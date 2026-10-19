@@ -83,7 +83,7 @@ function DocsHomePage() {
             </div>
             <h3 className="mt-3 flex items-center gap-1.5 font-semibold text-ev-ink">
               {title}
-              <ArrowRight className="h-3.5 w-3.5 text-ev-ink-2 transition group-hover:translate-x-0.5 group-hover:text-ev-ink-2" />
+              <ArrowRight className="h-3.5 w-3.5 text-ev-ink-2 transition group-hover:translate-x-0.5 group-hover:text-ev-slate" />
             </h3>
             <p className="mt-1 text-sm leading-relaxed text-ev-ink-2">{desc}</p>
           </Link>
@@ -120,7 +120,7 @@ function DocsHomePage() {
                         <h3 className="font-semibold text-ev-ink">
                           {doc.frontmatter.title}
                         </h3>
-                        <ArrowRight className="h-4 w-4 flex-none text-ev-ink-2 transition group-hover:translate-x-0.5 group-hover:text-ev-ink-2" />
+                        <ArrowRight className="h-4 w-4 flex-none text-ev-ink-2 transition group-hover:translate-x-0.5 group-hover:text-ev-slate" />
                       </div>
                       <p className="mt-1.5 text-sm leading-relaxed text-ev-ink-2">
                         {doc.frontmatter.description}
@@ -146,7 +146,7 @@ function DocsHomePage() {
         </div>
         <a
           href={`mailto:${siteConfig.supportEmail}`}
-          className="inline-flex items-center gap-2 rounded-xl border border-ev-line bg-ev-well px-4 py-2.5 text-sm font-semibold text-ev-ink transition hover:bg-ev-well"
+          className="inline-flex items-center gap-2 rounded-xl border border-ev-line bg-ev-well px-4 py-2.5 text-sm font-semibold text-ev-ink transition hover:border-ev-line-strong hover:bg-ev-raised"
         >
           Email support
           <ArrowRight className="h-4 w-4" />
