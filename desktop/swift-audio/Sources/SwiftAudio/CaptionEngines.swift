@@ -125,8 +125,9 @@ final class SFSpeechEngine: SpeechEngine {
         elapsedMs >= rolloverCapMs || (elapsedMs >= rolloverMs && quietMs >= pauseMs)
     }
 
+    /// Audio it can't measure counts as loud, so it never passes for a pause.
     static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
-        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 1 }
         var sum: Float = 0
         for i in 0..<Int(buffer.frameLength) {
             sum += samples[i] * samples[i]
