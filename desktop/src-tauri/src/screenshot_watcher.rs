@@ -1,4 +1,4 @@
-//! Opt-in: adds new macOS screenshots (⌘⇧3/4/5) to the history. Watches the
+//! On unless turned off: adds new macOS screenshots (⌘⇧3/4/5) to the history. Watches the
 //! folder macOS saves them to, non-recursively, and keeps only files macOS
 //! marked as screen captures. The original stays where it is; Eavesy copies it.
 
@@ -173,7 +173,7 @@ fn run(app: AppHandle, receiver: mpsc::Receiver<PathBuf>) {
 }
 
 pub fn start(app: &AppHandle) {
-    let enabled = crate::settings::load(app).auto_import_screenshots;
+    let enabled = crate::settings::load(app).add_screenshots();
     if let Err(error) = app.state::<ScreenshotWatcher>().apply(app, enabled) {
         crate::telemetry::capture("screenshots.watch", &error);
     }
@@ -194,7 +194,7 @@ pub fn set_auto_import_screenshots(app: AppHandle, enabled: bool) -> Result<(), 
     let watcher = app.state::<ScreenshotWatcher>();
     watcher.apply(&app, enabled)?;
     let mut config = crate::settings::load(&app);
-    config.auto_import_screenshots = enabled;
+    config.add_screenshots = Some(enabled);
     if let Err(error) = crate::settings::save(&app, &config) {
         let _ = watcher.apply(&app, !enabled);
         return Err(error);
