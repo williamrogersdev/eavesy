@@ -66,7 +66,10 @@ struct CaptionUnavailable: Error {
 protocol CaptionSink: AnyObject {
     func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64)
     func engineFailed(_ reason: String)
+    /// Audio the engine let go of before recognizing it, so its text is missing words.
+    func audioDropped(_ count: Int)
 }
+
 
 /// An on-device recognizer fed 48 kHz mono float audio.
 protocol SpeechEngine: AnyObject {
@@ -285,10 +288,15 @@ final class LiveCaptions: CaptionSink {
         waitingFrames = 0
     }
 
+    /// The first loss is said at once (`captions_dropped`): a dictation that
+    /// pastes before `captions_done` must still know its text has gaps.
     private func countDropped(_ count: Int) {
+        guard count > 0 else { return }
         lock.lock()
+        let first = dropped == 0
         dropped += count
         lock.unlock()
+        if first { emit(["event": "captions_dropped", "track": track, "dropped": count]) }
     }
 
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {
@@ -387,6 +395,10 @@ final class LiveCaptions: CaptionSink {
         queue.async { [weak self] in self?.turnOff(reason) }
     }
 
+    func audioDropped(_ count: Int) {
+        countDropped(count)
+    }
+
     static func pcmBuffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
         guard
             let buffer = AVAudioPCMBuffer(
@@ -421,6 +433,10 @@ private final class EngineSink: CaptionSink {
 
     func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
         captions?.recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs)
+    }
+
+    func audioDropped(_ count: Int) {
+        captions?.audioDropped(count)
     }
 
     func engineFailed(_ reason: String) {
