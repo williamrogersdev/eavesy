@@ -238,6 +238,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/meetings/$id/regenerate': {
     POST: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/regenerate', {}), status: 404 } },
   },
+  '/api/meetings/$id/translate': {
+    POST: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/translate', { to: 'en' }), status: 404 } },
+  },
   '/api/meetings/list': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/meetings/list' }, excludes: [MEETING, RECORDING] } },
   },

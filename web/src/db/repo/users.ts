@@ -4,6 +4,7 @@ import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { users } from '../schema';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
+import { AUTO_LANGUAGE } from '@/lib/transcription/language';
 import { trackEvent } from '../../server/observability';
 
 export async function ensureClerkUser(
@@ -40,7 +41,7 @@ export async function ensureClerkUser(
     displayName: args.displayName,
     phoneNumber: args.phoneNumber,
     defaultTranscriptionEngine: 'whisper',
-    defaultLanguage: 'en',
+    defaultLanguage: AUTO_LANGUAGE,
     isAnonymous: false,
     createdAt: now,
     updatedAt: now,
@@ -67,7 +68,7 @@ export async function ensureAnonymousUser(
     id,
     anonymousSessionToken: sessionToken,
     defaultTranscriptionEngine: 'whisper',
-    defaultLanguage: 'en',
+    defaultLanguage: AUTO_LANGUAGE,
     isAnonymous: true,
     createdAt: now,
     updatedAt: now,
@@ -220,7 +221,7 @@ export async function transcriptionPrefs(db: AppDb, userId: string): Promise<Tra
     .where(eq(users.id, userId))
     .limit(1);
   return {
-    language: rows[0]?.defaultLanguage || 'en',
+    language: rows[0]?.defaultLanguage || AUTO_LANGUAGE,
     vocabulary: parseVocabulary(rows[0]?.customVocabularyJson),
   };
 }

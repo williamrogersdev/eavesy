@@ -5,7 +5,7 @@ import { getDb } from '@/db/client';
 import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
-import { isTranscriptionLanguage } from '@/lib/transcription/language';
+import { isNotesLanguage, isTranscriptionLanguage } from '@/lib/transcription/language';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveActor } from '@/server/auth';
@@ -17,6 +17,7 @@ const updateSchema = z.object({
   phoneNumber: z.string().max(40).nullable().optional(),
   defaultTranscriptionEngine: z.literal('whisper').optional(),
   defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
+  notesLanguage: z.string().refine(isNotesLanguage, 'unsupported language').nullable().optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
@@ -54,6 +55,7 @@ export const Route = createFileRoute('/api/me')({
           onboardingCompleted: !!u.onboardingCompletedAt,
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
+          notesLanguage: u.notesLanguage ?? null,
           customVocabulary: parseVocabulary(u.customVocabularyJson),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
@@ -86,6 +88,7 @@ export const Route = createFileRoute('/api/me')({
         if (body.phoneNumber !== undefined) patch.phoneNumber = body.phoneNumber;
         if (body.defaultTranscriptionEngine) patch.defaultTranscriptionEngine = body.defaultTranscriptionEngine;
         if (body.defaultLanguage) patch.defaultLanguage = body.defaultLanguage;
+        if (body.notesLanguage !== undefined) patch.notesLanguage = body.notesLanguage;
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;

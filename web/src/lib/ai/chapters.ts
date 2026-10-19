@@ -17,7 +17,7 @@ export const CHAPTERS_SCHEMA = {
   },
 } as const;
 
-export const CHAPTER_INSTRUCTIONS = `Chapters: divide the meeting into chapters, roughly one per 5-10 minutes of discussion, between 2 and 12. Each chapter's "start" is copied exactly from the [mm:ss] or [h:mm:ss] timestamp of the line where it begins, and the first chapter starts at the first line. Titles are 2-6 words in the transcript's language. Return an empty list for meetings under three minutes.`;
+export const CHAPTER_INSTRUCTIONS = `Chapters: divide the meeting into chapters, roughly one per 5-10 minutes of discussion, between 2 and 12. Each chapter's "start" is copied exactly from the [mm:ss] or [h:mm:ss] timestamp of the line where it begins, and the first chapter starts at the first line. Titles are 2-6 words. Return an empty list for meetings under three minutes.`;
 
 export function clock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1_000));
