@@ -16,7 +16,6 @@
 //! (seven files kept), plus stderr in debug builds.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock, RwLock};
@@ -112,31 +111,20 @@ fn init_logging() -> Option<WorkerGuard> {
     guard
 }
 
-/// Keeps the messages of the last log lines (info and up) to send with the
-/// next error. Structured fields are left out; only the message is scrubbed
-/// and sent.
+/// Keeps the level and module of the last log lines (info and up) to send
+/// with the next error. Message text is never kept: it can carry user text
+/// the scrubber does not recognise.
 struct BreadcrumbLayer;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BreadcrumbLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
         let metadata = event.metadata();
-        let mut line = format!("{} {}:", metadata.level(), metadata.target());
-        event.record(&mut FieldWriter(&mut line));
+        let line = format!("{} {}", metadata.level(), metadata.target());
         if let Ok(mut crumbs) = BREADCRUMBS.lock() {
             if crumbs.len() == MAX_BREADCRUMBS {
                 crumbs.pop_front();
             }
             crumbs.push_back(line);
-        }
-    }
-}
-
-struct FieldWriter<'a>(&'a mut String);
-
-impl tracing::field::Visit for FieldWriter<'_> {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            let _ = write!(self.0, " {value:?}");
         }
     }
 }
@@ -347,6 +335,8 @@ pub fn scrub_text(text: &str) -> String {
 
 /// Log a failed operation and report it to PostHog. Issues group by
 /// operation and reason; the scrubbed detail is the exception value.
+/// Delivery is best effort: a report still in flight when the app quits is
+/// lost.
 pub fn capture(operation: &'static str, detail: &str) {
     let reason = reason(detail);
     let detail = scrub_text(detail);
@@ -485,7 +475,7 @@ mod tests {
             detail: "upload failed for dana@example.com reading /Users/dana/Eavesy/Secret plans/audio.m4a",
             handled: true,
         };
-        let breadcrumbs = ["INFO eavesy::sync: opened /Users/dana/Eavesy/Secret plans/notes.md".to_owned()];
+        let breadcrumbs = ["INFO eavesy_lib::sync".to_owned()];
         let event = exception_event("phc_test", &report, &breadcrumbs);
 
         assert_eq!(event["event"], "$exception");
@@ -495,7 +485,7 @@ mod tests {
         let exception = &properties["$exception_list"][0];
         assert_eq!(exception["type"], "sync.run");
         assert_eq!(exception["value"], "upload failed for [email] reading ~/…");
-        assert_eq!(properties["breadcrumbs"][0], "INFO eavesy::sync: opened ~/…");
+        assert_eq!(properties["breadcrumbs"][0], "INFO eavesy_lib::sync");
         let text = event.to_string();
         assert!(!text.contains("Secret plans"));
         assert!(!text.contains("dana@example.com"));

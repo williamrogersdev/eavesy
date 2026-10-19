@@ -14,8 +14,8 @@ where, in which release) without carrying anything a user wrote or said.
 | Stack trace (function, file, line) | Stack-frame local variables |
 | Route / URL path and HTTP method | Query strings and URL fragments |
 | Release, environment, `service` tag | Request and response bodies |
-| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, the last 50 info-and-up app log lines on the Mac) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
-| Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames |
+| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines; on the Mac, the level and module of the last 50 info-and-up log lines, without their text) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
+| Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames (PostHog sees the Mac's IP on ingest; see below) |
 | Job kind, meeting id, attempt count | Any context key that looks like content or a credential (`text`, `transcript`, `summary`, `notes`, `body`, `title`, `token`, `key`, `secret`, `email`, …) |
 
 Free text (messages, exception values, breadcrumb messages, tags) is passed
@@ -62,7 +62,8 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
   `$exception` events, grouped by `$exception_fingerprint` =
   `desktop:<operation>:<reason>`, at most 100 per launch, anonymous with no
   person profile), the Rust scrubber, and the app log. Mac breadcrumbs carry
-  only each log line's message, not its structured fields. PostHog sees the
+  only each log line's level and module, never its text. Delivery is best
+  effort. PostHog sees the
   sender's IP address on ingest; turn on *Discard client IP data* in the
   PostHog project settings so it isn't stored. Recording folders are named after meeting
   titles, which can contain spaces, colons and quotes, so any path under the

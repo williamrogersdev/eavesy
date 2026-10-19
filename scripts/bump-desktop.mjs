@@ -64,7 +64,9 @@ export function insertRelease(changelog, version, date, generated) {
   const bodyEnd = next === -1 ? changelog.length : next + 1;
   const unreleased = changelog.slice(bodyStart, bodyEnd).trim();
   if (unreleased && generated) {
-    console.error(`Using [Unreleased] as written; not adding these generated entries:\n${generated}\n`);
+    const note = `Using [Unreleased] as written; not adding these generated entries:\n\n${generated}\n`;
+    console.error(note);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${note}\n`);
   }
   const body = unreleased || generated;
   if (!body) throw new Error('Nothing to release: [Unreleased] is empty and no desktop changes since the last tag');

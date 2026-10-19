@@ -45,6 +45,7 @@ jobs:
           VERSION="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
           TAG="desktop-v$VERSION"
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
             TAGGED="$(git rev-parse "refs/tags/$TAG^{commit}")"
             if [[ "$TAGGED" != "$GITHUB_SHA" ]]; then
               echo "::error::$TAG already points at $TAGGED, not $GITHUB_SHA. Bump the version again instead of reusing it."
