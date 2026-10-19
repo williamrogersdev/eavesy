@@ -31,10 +31,12 @@ pub fn misplaced() -> Option<Misplaced> {
     }
 }
 
-fn classify(exe: &Path, on_temp_volume: impl FnOnce(&Path) -> bool) -> Option<Misplaced> {
+/// `on_temp_volume` is `None` when the volumes can't be compared; then a
+/// `/Volumes` path is assumed to be another drive, and anything else is not.
+fn classify(exe: &Path, on_temp_volume: impl FnOnce(&Path) -> Option<bool>) -> Option<Misplaced> {
     let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))?;
     let translocated = bundle.to_string_lossy().contains("/AppTranslocation/");
-    if !translocated && on_temp_volume(bundle) {
+    if !translocated && on_temp_volume(bundle).unwrap_or_else(|| volume_root(bundle).is_none()) {
         return None;
     }
     let volume = if translocated { None } else { volume_root(bundle) };
@@ -46,12 +48,9 @@ fn volume_root(bundle: &Path) -> Option<PathBuf> {
     Some(Path::new("/Volumes").join(parts.next()?))
 }
 
-fn same_volume(a: &Path, b: &Path) -> bool {
+fn same_volume(a: &Path, b: &Path) -> Option<bool> {
     use std::os::unix::fs::MetadataExt;
-    match (std::fs::metadata(a), std::fs::metadata(b)) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev(),
-        _ => true,
-    }
+    Some(std::fs::metadata(a).ok()?.dev() == std::fs::metadata(b).ok()?.dev())
 }
 
 /// On launch from a disk image, asks to move Eavesy into Applications so
@@ -124,6 +123,10 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
     if output.status.success() {
         return Ok(Some(target));
     }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !needs_admin(&stderr) {
+        return admin_copy_outcome(false, &stderr).map(|_| None);
+    }
     // /Applications isn't writable for this user: ask for an admin password.
     let script = format!(
         "do shell script {} with administrator privileges",
@@ -143,6 +146,10 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
+fn needs_admin(stderr: &str) -> bool {
+    stderr.contains("Permission denied") || stderr.contains("Operation not permitted")
+}
+
 fn admin_copy_outcome(success: bool, stderr: &str) -> Result<bool, String> {
     if success {
         return Ok(true);
@@ -155,16 +162,46 @@ fn admin_copy_outcome(success: bool, stderr: &str) -> Result<bool, String> {
     Err(if stderr.is_empty() { "copying to Applications failed".into() } else { stderr.to_string() })
 }
 
-/// Waits for this process to exit, ejects the volume only if it is a mounted
-/// disk image (never a real drive), then opens the copy in Applications.
+/// Waits for this process to exit, ejects the disk image if one is given, then
+/// opens the copy in Applications.
 const RELAUNCH_SCRIPT: &str = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
-if [ -n "$3" ] && hdiutil info | awk -F'\t' -v v="$3" '$NF == v { found = 1 } END { exit !found }'; then
-  hdiutil detach "$3" -quiet
-fi
+if [ -n "$3" ]; then hdiutil detach "$3" -quiet; fi
 open "$2"
 "#;
 
+/// Only volumes `hdiutil` lists as mounted disk images are ejected, never a real drive.
+fn mounted_disk_image(volume: &Path) -> bool {
+    let volume = volume.canonicalize().unwrap_or_else(|_| volume.to_path_buf());
+    match Command::new("hdiutil").args(["info", "-plist"]).output() {
+        Ok(output) if output.status.success() => lists_mount_point(&String::from_utf8_lossy(&output.stdout), &volume),
+        Ok(output) => {
+            crate::telemetry::capture("install_location.hdiutil", &String::from_utf8_lossy(&output.stderr));
+            false
+        }
+        Err(e) => {
+            crate::telemetry::capture("install_location.hdiutil", &e.to_string());
+            false
+        }
+    }
+}
+
+fn lists_mount_point(plist: &str, volume: &Path) -> bool {
+    let wanted = format!("<string>{}</string>", xml_escape(&volume.to_string_lossy()));
+    let mut lines = plist.lines().map(str::trim);
+    while let Some(line) = lines.next() {
+        if line == "<key>mount-point</key>" && lines.next() == Some(wanted.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn xml_escape(value: &str) -> String {
+    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 fn relaunch_from(app: &AppHandle, target: &Path, volume: Option<&Path>) {
+    let volume = volume.filter(|v| mounted_disk_image(v));
     let spawned = Command::new("/bin/sh")
         .args(["-c", RELAUNCH_SCRIPT, "sh"])
         .arg(std::process::id().to_string())
@@ -175,6 +212,7 @@ fn relaunch_from(app: &AppHandle, target: &Path, volume: Option<&Path>) {
         Ok(_) => app.exit(0),
         Err(e) => {
             crate::telemetry::capture("install_location.relaunch", &e.to_string());
+            let _ = Command::new("open").arg("-R").arg(target).spawn();
             let handle = app.clone();
             let message = format!(
                 "Eavesy was copied to {}. Quit this copy, eject the disk image, then open Eavesy from Applications.",
@@ -211,23 +249,23 @@ mod tests {
     fn another_volume_is_misplaced() {
         let exe = Path::new("/Volumes/Eavesy/Eavesy.app").join(EXE);
         assert_eq!(
-            classify(&exe, |_| false),
+            classify(&exe, |_| Some(false)),
             Some(Misplaced { bundle: "/Volumes/Eavesy/Eavesy.app".into(), volume: Some("/Volumes/Eavesy".into()) })
         );
         let drive = Path::new("/Volumes/Work/Apps/Eavesy.app").join(EXE);
-        assert_eq!(classify(&drive, |_| false).unwrap().volume, Some("/Volumes/Work".into()));
+        assert_eq!(classify(&drive, |_| Some(false)).unwrap().volume, Some("/Volumes/Work".into()));
     }
 
     #[test]
     fn a_translocated_copy_is_misplaced_but_nothing_is_ejected() {
         let exe = Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app").join(EXE);
-        assert_eq!(classify(&exe, |_| true).unwrap().volume, None);
+        assert_eq!(classify(&exe, |_| Some(true)).unwrap().volume, None);
     }
 
     #[test]
     fn the_system_volume_is_fine() {
-        assert_eq!(classify(&Path::new("/Applications/Eavesy.app").join(EXE), |_| true), None);
-        assert_eq!(classify(Path::new("/Users/me/eavesy/desktop/src-tauri/target/debug/eavesy"), |_| false), None);
+        assert_eq!(classify(&Path::new("/Applications/Eavesy.app").join(EXE), |_| Some(true)), None);
+        assert_eq!(classify(Path::new("/Users/me/eavesy/desktop/src-tauri/target/debug/eavesy"), |_| Some(false)), None);
     }
 
     /// A scratch disk image, detached and deleted even if the test fails.
@@ -267,8 +305,33 @@ mod tests {
     #[test]
     fn a_mounted_disk_image_is_on_another_volume_than_temp() {
         let image = ScratchImage::mount();
-        assert!(!same_volume(&image.mount, &std::env::temp_dir()));
-        assert!(same_volume(&image.root, &std::env::temp_dir()));
+        assert_eq!(same_volume(&image.mount, &std::env::temp_dir()), Some(false));
+        assert_eq!(same_volume(&image.root, &std::env::temp_dir()), Some(true));
+        assert!(mounted_disk_image(&image.mount));
+        assert!(!mounted_disk_image(Path::new("/")));
+    }
+
+    #[test]
+    fn an_unreadable_location_is_judged_by_its_path() {
+        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app").join(EXE);
+        assert!(classify(&dmg, |_| None).is_some());
+        assert_eq!(classify(&Path::new("/Applications/Eavesy.app").join(EXE), |_| None), None);
+    }
+
+    #[test]
+    fn only_listed_mount_points_count_as_disk_images() {
+        let plist = "<dict>\n\t<key>mount-point</key>\n\t<string>/Volumes/Eavesy</string>\n</dict>";
+        assert!(lists_mount_point(plist, Path::new("/Volumes/Eavesy")));
+        assert!(!lists_mount_point(plist, Path::new("/Volumes/Eavesy 1")));
+        assert!(!lists_mount_point(plist, Path::new("/Volumes/Work")));
+        let amp = "<key>mount-point</key>\n<string>/Volumes/A &amp; B</string>";
+        assert!(lists_mount_point(amp, Path::new("/Volumes/A & B")));
+    }
+
+    #[test]
+    fn only_permission_failures_ask_for_a_password() {
+        assert!(needs_admin("ditto: /Applications/Eavesy.app: Permission denied"));
+        assert!(!needs_admin("ditto: No space left on device"));
     }
 
     #[test]
