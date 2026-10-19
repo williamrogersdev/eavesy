@@ -44,7 +44,10 @@ export function toggleTranslation(showing: boolean, untried: number): { showing:
   return showing ? { showing: false, load: false } : { showing: true, load: untried > 0 };
 }
 
-/** Pages through the translate endpoint until it has nothing left or stops making progress. */
+/**
+ * Pages through the translate endpoint until it has nothing left or a page adds
+ * no new lines. Returns the ids that came back and whether the server finished.
+ */
 export async function requestTranslations({
   meetingId,
   target,
@@ -55,8 +58,8 @@ export async function requestTranslations({
   target: string;
   onPage: (entries: [string, unknown][]) => void;
   fetchImpl?: typeof fetch;
-}): Promise<void> {
-  let previousCount = -1;
+}): Promise<{ ids: Set<string>; complete: boolean }> {
+  const ids = new Set<string>();
   for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
     const res = await fetchImpl(`/api/meetings/${meetingId}/translate`, {
       method: 'POST',
@@ -68,8 +71,11 @@ export async function requestTranslations({
     const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
     const entries = typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
     onPage(entries);
+    const before = ids.size;
+    for (const [id] of entries) ids.add(id);
     const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
-    if (remaining === 0 || entries.length === previousCount) break;
-    previousCount = entries.length;
+    if (remaining === 0) return { ids, complete: true };
+    if (ids.size === before) break;
   }
+  return { ids, complete: false };
 }

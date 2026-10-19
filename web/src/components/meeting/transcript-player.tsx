@@ -597,12 +597,13 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
     setError(null);
     const sources = new Map(lines.map((line) => [line.id, line.text]));
     try {
-      await requestTranslations({
+      const result = await requestTranslations({
         meetingId,
         target,
         onPage: (entries) => setDone((previous) => mergeTranslations(previous, sources, entries)),
       });
-      for (const [id, text] of sources) attempted.current.add(`${id}\n${text}`);
+      const tried = result.complete || result.ids.size === 0 ? [...sources.keys()] : [...result.ids];
+      for (const id of tried) attempted.current.add(`${id}\n${sources.get(id)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not translate.');
       setShowing(false);

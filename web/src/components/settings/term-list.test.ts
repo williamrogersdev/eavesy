@@ -39,7 +39,7 @@ describe('term input parsing', () => {
     expect(addTerms(['a', 'b'], 'c, d', 3)).toEqual(['a', 'b', 'c']);
   });
 
-  test('a commit after the list already changed builds on the latest list', () => {
+  test('adding to a list that already grew keeps every earlier term', () => {
     const afterSuggestion = ['D1', 'Tauri'];
     expect(addTerms(afterSuggestion, 'wrangler', 10)).toEqual(['D1', 'Tauri', 'wrangler']);
   });

@@ -31,9 +31,9 @@ function draftOf(project: ProjectSummary): Draft {
   return {
     name: project.name,
     about: project.about ?? '',
-    vocabulary: project.vocabulary,
+    vocabulary: [...project.vocabulary],
     people: project.people ?? '',
-    match: project.match,
+    match: [...project.match],
   };
 }
 

@@ -36,7 +36,7 @@ describe('transcript translation', () => {
     const pages = [{ lines: { a: 'Hi' }, remaining: 1 }, { lines: { b: 'Bye' }, remaining: 0 }];
     const urls: string[] = [];
     const seen: [string, unknown][][] = [];
-    await requestTranslations({
+    const result = await requestTranslations({
       meetingId: 'm1',
       target: 'en',
       onPage: (entries) => seen.push(entries),
@@ -47,5 +47,19 @@ describe('transcript translation', () => {
     });
     expect(urls).toEqual(['/api/meetings/m1/translate', '/api/meetings/m1/translate']);
     expect(seen).toEqual([[['a', 'Hi']], [['b', 'Bye']]]);
+    expect(result).toEqual({ ids: new Set(['a', 'b']), complete: true });
+  });
+
+  test('stops when a page adds no new lines and reports it did not finish', async () => {
+    const pages = [{ lines: { a: 'Hi' }, remaining: 5 }, { lines: { b: 'Bye' }, remaining: 4 }, { lines: { b: 'Bye' }, remaining: 4 }];
+    let calls = 0;
+    const result = await requestTranslations({
+      meetingId: 'm1',
+      target: 'en',
+      onPage: () => {},
+      fetchImpl: (async () => Response.json(pages[calls++])) as unknown as typeof fetch,
+    });
+    expect(calls).toBe(3);
+    expect(result).toEqual({ ids: new Set(['a', 'b']), complete: false });
   });
 });
