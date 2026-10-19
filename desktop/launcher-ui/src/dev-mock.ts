@@ -13,7 +13,7 @@ function sampleRecordings(now: number) {
   return [
     { id: 'r1', title: 'Dictation', started_at_ms: now - 0.2 * HOUR, duration_sec: 14, source: 'dictation', status: 'complete', has_audio: true, transcript: 'Remind me to send Priya the revised onboarding deck before Thursday, and ask whether the pricing page copy is final.' },
     { id: 'r2', title: 'Screenshot', started_at_ms: now - 0.9 * HOUR, duration_sec: 0, source: 'screenshot', status: 'complete', has_audio: false },
-    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which stays opt-in.' },
+    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which is now on by default.' },
     { id: 'r4', title: 'Note', started_at_ms: now - day - 3 * HOUR, duration_sec: 0, source: 'note', status: 'complete', has_audio: false, transcript: 'Ideas for the onboarding email:\n- lead with the mascot\n- one screenshot, not three' },
     { id: 'r5', title: 'Talk', started_at_ms: now - day - 5 * HOUR, duration_sec: 42, source: 'mic', status: 'processing', has_audio: true },
   ];
@@ -31,7 +31,7 @@ export function installDevMock(): void {
   const live = params.has('live');
   const settings = {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
-    recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, auto_import_screenshots: false,
+    recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
   };
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },

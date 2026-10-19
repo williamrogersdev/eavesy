@@ -2,6 +2,7 @@
 @import "../components/launcher/ui/tokens.css";
 @import "../components/launcher/ui/ui.css";
 @import "../components/launcher/panel.css";
+@import "./marketing.css";
 
 :root {
   --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
@@ -42,6 +43,29 @@
   --color-primary-foreground: var(--primary-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-round: var(--ev-font-round);
+  --font-text: var(--ev-font-text);
+
+  --color-ev-paper: var(--ev-paper);
+  --color-ev-well: var(--ev-well);
+  --color-ev-raised: var(--ev-raised);
+  --color-ev-line: var(--ev-line);
+  --color-ev-line-strong: var(--ev-line-strong);
+  --color-ev-ink: var(--ev-ink);
+  --color-ev-ink-2: var(--ev-ink-2);
+  --color-ev-ink-3: var(--ev-ink-3);
+  --color-ev-slate: var(--ev-slate);
+  --color-ev-slate-hover: var(--ev-slate-hover);
+  --color-ev-slate-soft: var(--ev-slate-soft);
+  --color-ev-on-slate: var(--ev-on-slate);
+  --color-ev-honey: var(--ev-honey);
+  --color-ev-honey-soft: var(--ev-honey-soft);
+  --color-ev-honey-ink: var(--ev-honey-ink);
+  --color-ev-rec: var(--ev-rec);
+  --color-ev-leaf: var(--ev-leaf);
+  --color-ev-leaf-soft: var(--ev-leaf-soft);
+  --color-ev-warn-ink: var(--ev-warn-ink);
+  --color-ev-warn-soft: var(--ev-warn-soft);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -214,65 +238,3 @@ summary,
   background: color-mix(in srgb, var(--foreground) 18%, transparent);
   border-radius: 9999px;
 }
-
-.prose {
-  color: color-mix(in oklab, var(--foreground) 82%, transparent);
-  font-size: 1rem;
-  line-height: 1.75;
-}
-.prose > :first-child { margin-top: 0; }
-.prose > :last-child { margin-bottom: 0; }
-.prose h1, .prose h2, .prose h3, .prose h4 {
-  color: var(--foreground);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  scroll-margin-top: 6rem;
-}
-.prose h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 1rem; }
-.prose h2 { font-size: 1.5rem; line-height: 1.25; margin: 2.5rem 0 1rem; }
-.prose h3 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
-.prose h4 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
-.prose p { margin: 1rem 0; }
-.prose a {
-  color: #fca5a5;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-color: color-mix(in oklab, #fca5a5 40%, transparent);
-}
-.prose a:hover { text-decoration-color: #fca5a5; }
-.prose strong { color: var(--foreground); font-weight: 600; }
-.prose ul, .prose ol { margin: 1rem 0; padding-left: 1.4rem; }
-.prose ul { list-style: disc; }
-.prose ol { list-style: decimal; }
-.prose li { margin: 0.4rem 0; }
-.prose li::marker { color: var(--muted-foreground); }
-.prose blockquote {
-  margin: 1.5rem 0;
-  padding: 0.25rem 0 0.25rem 1.1rem;
-  border-left: 3px solid var(--accent);
-  color: var(--muted-foreground);
-  font-style: italic;
-}
-.prose code {
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.875em;
-  background: color-mix(in oklab, var(--foreground) 8%, transparent);
-  padding: 0.15em 0.4em;
-  border-radius: 6px;
-}
-.prose pre {
-  margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #0c0c12 !important;
-  overflow-x: auto;
-  font-size: 0.85rem;
-  line-height: 1.6;
-}
-.prose pre code { background: transparent; padding: 0; font-size: inherit; }
-.prose hr { margin: 2.5rem 0; border: 0; border-top: 1px solid var(--border); }
-.prose img { border-radius: 12px; border: 1px solid var(--border); margin: 1.5rem 0; }
-.prose table { width: 100%; margin: 1.5rem 0; border-collapse: collapse; font-size: 0.9rem; }
-.prose th, .prose td { border: 1px solid var(--border); padding: 0.6rem 0.85rem; text-align: left; }
-.prose th { background: color-mix(in oklab, var(--foreground) 5%, transparent); font-weight: 600; color: var(--foreground); }
