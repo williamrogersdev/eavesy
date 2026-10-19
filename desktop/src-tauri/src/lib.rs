@@ -17,6 +17,7 @@ mod hotkeys;
 mod hud;
 mod imports;
 mod install_location;
+mod stray_copies;
 #[cfg(target_os = "macos")]
 mod cf;
 mod cloud_pull;
@@ -229,6 +230,8 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             install_location::offer_move_on_launch(&handle);
+            #[cfg(target_os = "macos")]
+            stray_copies::clean_up_in_background();
             #[cfg(desktop)]
             updates::check_in_background(&handle);
             vocabulary::refresh(&handle);

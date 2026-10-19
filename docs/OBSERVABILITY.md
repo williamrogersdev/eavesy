@@ -57,6 +57,7 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `recording_started` | Mac app, when the capture engine is launched (an attempt; a later engine failure is reported as an error) | `kind` (`audio`, `screen`, `dictation`) |
 | `app_launched` | Mac app | `install_location` (`applications`, `user_applications`, `translocated`, `other_volume`, `build_folder`, `other`, `unbundled`, `unknown`), `previous_version` (what this install location ran last), `setup_completed`, `paired` |
 | `update_available`, `update_installed` | Mac app | `version` |
+| `stray_copies_found` | Mac app, when other copies of Eavesy are registered with macOS | `unregistered`, `failed`, `newer` (counts) |
 
 Every Mac app event also carries `$app_version`, `$os_version` and
 `environment`, so a breakdown of `app_launched` by `$app_version` and
