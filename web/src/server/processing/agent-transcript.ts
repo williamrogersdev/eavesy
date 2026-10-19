@@ -12,9 +12,15 @@ import { reportError } from '@/server/observability';
 import { openUserKeys } from '@/server/secret-box';
 import type { Db, ProcessingEnv } from './shared';
 
-export async function handleAgentTranscript(meetingId: string, db: Db, env: ProcessingEnv) {
+export async function handleAgentTranscript(
+  meetingId: string,
+  db: Db,
+  env: ProcessingEnv,
+  opts: { onlyIfMissing?: boolean } = {},
+) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
+  if (opts.onlyIfMissing && meeting.agentTranscriptMd) return;
 
   const lines = await db
     .select({

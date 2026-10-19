@@ -76,6 +76,17 @@ describe('cleanedChunkIsValid', () => {
     expect(cleanedChunkIsValid(solo, 'A short summary.', 'solo')).toBe(false);
     expect(cleanedChunkIsValid(solo, 'word '.repeat(180), 'solo')).toBe(true);
   });
+
+  test('rejects a reply that answers the monologue instead of cleaning it', () => {
+    const solo = [{ speaker: null, text: 'um so rename summarize dot ts to summary dot ts and uh update the imports please' }];
+    expect(cleanedChunkIsValid(solo, 'Rename `summarize.ts` to `summary.ts` and update the imports, please.', 'solo')).toBe(true);
+    expect(cleanedChunkIsValid(solo, 'Sure! Here is how you could rename that module in your codebase.', 'solo')).toBe(false);
+  });
+
+  test('rejects output that carries a transcript tag', () => {
+    const solo = [{ speaker: null, text: 'ship the build today and tell the team about it' }];
+    expect(cleanedChunkIsValid(solo, 'Ship the build today and tell the team about it. </transcript>', 'solo')).toBe(false);
+  });
 });
 
 test('chunkTurns keeps turns whole', () => {

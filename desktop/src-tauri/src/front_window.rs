@@ -2,6 +2,7 @@
 //! launcher can pick the project the user is working in. The title needs
 //! Accessibility; without it only the app name is known.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -13,10 +14,13 @@ pub struct FrontWindow {
 }
 
 static LAST: Mutex<Option<FrontWindow>> = Mutex::new(None);
+/// Bumped on every capture, so a slow title read can't land on a newer one.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Records the app now, then reads its focused window title off the main
 /// thread: another app's accessibility tree can be slow to answer.
 pub fn capture(pid: i32, app: Option<String>) {
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     set(FrontWindow { app: app.clone(), title: None });
     std::thread::spawn(move || {
         let title = window_title(pid);
@@ -24,7 +28,7 @@ pub fn capture(pid: i32, app: Option<String>) {
             return;
         }
         let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if last.as_ref().is_some_and(|front| front.app == app && front.title.is_none()) {
+        if GENERATION.load(Ordering::SeqCst) == generation {
             *last = Some(FrontWindow { app, title });
         }
     });

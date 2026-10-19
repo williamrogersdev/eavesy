@@ -545,15 +545,17 @@ fn spawn_capture(
             &title,
             context.blurb,
             started_at_ms,
-        )
-        .and_then(|()| match context.project_id {
-            Some(project_id) => crate::sqlite::set_session_project(app, &id, project_id),
-            None => Ok(()),
-        }) {
+        ) {
             let _ = child.kill();
             let _ = child.wait();
             discard();
             return Err(error);
+        }
+        // The project is a convenience: a recording without one is still a recording.
+        if let Some(project_id) = context.project_id {
+            if let Err(error) = crate::sqlite::set_session_project(app, &id, project_id) {
+                eprintln!("{error}");
+            }
         }
     }
     if let Err(error) = crate::sqlite::with_open(app, |conn| crate::live_transcript::begin_metrics(conn, &id, now_ms()))

@@ -57,19 +57,21 @@ async function cleanChunk(
   kind: TranscriptKind,
   context: string | null,
 ): Promise<string> {
+  // A tag the speakers can't guess, so nothing said in the recording can close it early.
+  const tag = `transcript-${crypto.randomUUID().slice(0, 8)}`;
   const response = await client.messages.create({
     model: MODELS.transcriptCleanup,
     max_tokens: 8_192,
     system: kind === 'conversation' ? conversationPrompt(context) : soloPrompt(context),
-    messages: [{ role: 'user', content: `<transcript>\n${renderTurns(chunk)}\n</transcript>` }],
+    messages: [{ role: 'user', content: `<${tag}>\n${renderTurns(chunk)}\n</${tag}>` }],
   });
   if (response.stop_reason !== 'end_turn') throw new Error(`cleanup stopped: ${response.stop_reason}`);
-  return response.content
-    .map((block) => (block.type === 'text' ? block.text : ''))
-    .join('')
-    .replace(/^\s*<transcript>\s*/, '')
-    .replace(/\s*<\/transcript>\s*$/, '')
-    .trim();
+  const text = response.content.map((block) => (block.type === 'text' ? block.text : '')).join('').trim();
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const start = text.startsWith(open) ? open.length : 0;
+  const end = text.endsWith(close) ? text.length - close.length : text.length;
+  return text.slice(start, end).trim();
 }
 
 export interface AgentTranscriptResult {

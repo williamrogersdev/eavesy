@@ -129,6 +129,24 @@ export function chunkTurns(turns: Turn[], maxChars: number): Turn[][] {
   return chunks;
 }
 
+function words(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+}
+
+/**
+ * Cleanup only removes and reformats words, so nearly every word it returns
+ * was said. A reply that answers or rewrites the transcript fails this.
+ */
+function mostlyTheSameWords(input: Turn[], cleaned: string): boolean {
+  const said = new Set(input.flatMap((turn) => words(`${turn.speaker ?? ''} ${turn.text}`)));
+  const returned = words(cleaned);
+  if (returned.length === 0) return false;
+  const kept = returned.filter((word) => said.has(word)).length;
+  return kept / returned.length >= MIN_WORD_OVERLAP;
+}
+
+const MIN_WORD_OVERLAP = 0.8;
+
 /**
  * Whether a model's cleanup of a chunk kept its shape: every conversation turn
  * still there, in order, with its label; a monologue not cut down or padded.
@@ -138,7 +156,9 @@ export function cleanedChunkIsValid(input: Turn[], output: string, kind: Transcr
   if (!cleaned) return false;
   const inputChars = input.reduce((sum, turn) => sum + turn.text.length, 0);
   if (cleaned.length < inputChars * 0.3 || cleaned.length > inputChars * 1.4 + 400) return false;
-  if (kind === 'solo') return !/^<\/?transcript\b/m.test(cleaned);
+  if (/<\/?transcript/i.test(cleaned)) return false;
+  if (!mostlyTheSameWords(input, cleaned)) return false;
+  if (kind === 'solo') return true;
   const labels = cleaned
     .split(/\n\s*\n/)
     .map((block) => block.trim())

@@ -43,6 +43,9 @@ pub async fn agent_transcript(app: AppHandle, recording_id: String) -> Option<St
         .ok()
         .flatten()
         .unwrap_or(recording_id);
+    if !is_plain_id(&remote_id) {
+        return None;
+    }
     let response = client()?
         .get(format!("{}/api/sessions/{remote_id}/result", credential.base))
         .bearer_auth(credential.token)
@@ -142,6 +145,11 @@ fn contains_word(text: &str, needle: &str) -> bool {
     })
 }
 
+/// Ids are interpolated into an authenticated URL path: letters, digits, `-` and `_` only.
+fn is_plain_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn agent_markdown(body: &Value) -> Option<String> {
     let edited = body.get("transcriptOverrideMd").and_then(Value::as_str).filter(|text| !text.trim().is_empty());
     if edited.is_some() {
@@ -165,6 +173,15 @@ mod tests {
         let edited = serde_json::json!({ "agentTranscriptMd": "Ship it.", "transcriptOverrideMd": "# Mine" });
         assert_eq!(agent_markdown(&edited), None);
         assert_eq!(agent_markdown(&serde_json::json!({ "agentTranscriptMd": "  " })), None);
+    }
+
+    #[test]
+    fn only_plain_ids_reach_the_cloud_url() {
+        assert!(is_plain_id("mtg_01HZX-abc"));
+        assert!(!is_plain_id("../devices"));
+        assert!(!is_plain_id("a/b"));
+        assert!(!is_plain_id("a?b"));
+        assert!(!is_plain_id(""));
     }
 
     fn choice(follow: bool, pinned: Option<&str>) -> ProjectChoice {

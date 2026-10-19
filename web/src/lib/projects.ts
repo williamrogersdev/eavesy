@@ -86,10 +86,6 @@ export function matchProject<T extends Pick<Project, 'name' | 'match'>>(
 }
 
 /**
- * Text Whisper is conditioned on: project terms first so they are spelled
- * right, then the user's note for this recording.
- */
-/**
  * The words a project wants spelled right: its vocabulary, then the names in
  * its people line. Transcription puts them ahead of the user's own words.
  */
