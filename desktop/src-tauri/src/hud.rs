@@ -74,7 +74,21 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
         message: None,
         notice: None,
     });
+    // Every stop ends in Saved, Done or Failed. Should one ever not, the
+    // control must not stay stuck saying it is writing.
+    let app = app.clone();
+    let session_id = session_id.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(STOPPING_TIMEOUT);
+        let now = current();
+        if now.phase == Phase::Transcribing && now.session_id.as_deref() == Some(session_id.as_str()) {
+            set_state(&app, HudState { session_id: Some(session_id), ..HudState::idle() });
+        }
+    });
 }
+
+/// Longer than any stop takes to seal its files and paste.
+const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 const DEFAULT_SIZE: (f64, f64) = (272.0, 40.0);
 

@@ -27,11 +27,15 @@ pub fn cue_for(was_recording: bool, now_recording: bool, failed: bool) -> Option
     }
 }
 
+/// Off the caller's thread: the setting is read from disk, and the HUD
+/// update that triggers the cue must not wait for it.
 pub fn play(app: &AppHandle, cue: Cue) {
-    if !crate::settings::load(app).capture_sounds() {
-        return;
-    }
-    let _ = app.run_on_main_thread(move || imp::play(cue.name()));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if crate::settings::load(&app).capture_sounds() {
+            let _ = app.run_on_main_thread(move || imp::play(cue.name()));
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]

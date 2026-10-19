@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,7 +150,13 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         };
         match how {
             Delivery::InEavesy => {
-                let _ = app.emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() });
+                let handed_over = app
+                    .emit_to("main", "dictation:text", DictationText { session_id: session_id.clone(), text: text.clone() })
+                    .is_ok()
+                    && panel_wants_it(&app);
+                if !handed_over {
+                    how = Delivery::CopiedNoTextBox;
+                }
             }
             Delivery::Pasted => {
                 get_launcher_out_of_the_way(&app);
@@ -193,7 +199,8 @@ struct DictationText {
 static PANEL_WANTS_DICTATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The panel has a box of its own waiting for dictation (setup's practice
-/// box). Dictation goes there directly: a synthetic ⌘V can't be aimed at it.
+/// box). Dictation goes there directly, but only while the panel is open and
+/// focused: a synthetic ⌘V can't be aimed at it.
 pub fn set_panel_wants_dictation(wants: bool) {
     PANEL_WANTS_DICTATION.store(wants, std::sync::atomic::Ordering::SeqCst);
 }
@@ -205,7 +212,9 @@ fn panel_wants_it(app: &AppHandle) -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        let _ = tx.send(crate::panel::is_visible(&handle));
+        let focused = crate::panel::is_visible(&handle)
+            && handle.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false));
+        let _ = tx.send(focused);
     });
     rx.recv_timeout(Duration::from_millis(300)).unwrap_or(false)
 }

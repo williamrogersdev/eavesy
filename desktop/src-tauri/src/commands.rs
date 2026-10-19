@@ -48,8 +48,20 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
     paste_text(&app, &text)
 }
 
+/// The user's own clipboard while a paste is waiting to put it back, and
+/// which paste may do so: a newer paste takes over the restore.
+static RESTORE: std::sync::Mutex<(u64, Option<String>)> = std::sync::Mutex::new((0, None));
+
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
-    let previous = app.clipboard().read_text().ok();
+    let (generation, previous) = {
+        let mut restore = RESTORE.lock().unwrap_or_else(|e| e.into_inner());
+        // A restore still pending holds the real clipboard; the clipboard now
+        // holds the previous paste's words.
+        let previous = restore.1.take().or_else(|| app.clipboard().read_text().ok());
+        restore.0 += 1;
+        restore.1 = previous.clone();
+        (restore.0, previous)
+    };
 
     app.clipboard()
         .write_text(text.to_string())
@@ -59,6 +71,8 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     {
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
+            // The words stay on the clipboard for ⌘V: nothing is put back.
+            RESTORE.lock().unwrap_or_else(|e| e.into_inner()).1 = None;
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
                  clipboard — press ⌘V to paste it now."
@@ -80,7 +94,11 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(400));
-            let _ = app.clipboard().write_text(prev);
+            let mut restore = RESTORE.lock().unwrap_or_else(|e| e.into_inner());
+            if restore.0 == generation {
+                restore.1 = None;
+                let _ = app.clipboard().write_text(prev);
+            }
         });
     }
 
