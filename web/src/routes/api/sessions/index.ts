@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetings } from '@/db/schema';
 import * as meetingsRepo from '@/db/repo/meetings';
@@ -19,6 +19,37 @@ const createSessionSchema = z.object({
 export const Route = createFileRoute('/api/sessions/')({
   server: {
     handlers: {
+      // Finished meetings this device did not record, so a second Mac can show them.
+      GET: async ({ request }) => {
+        let actor;
+        try {
+          actor = await resolveIngestActor(request);
+        } catch {
+          return Response.json({ error: 'unauthenticated' }, { status: 401 });
+        }
+        const limit = Math.min(Math.max(Number(new URL(request.url).searchParams.get('limit')) || 50, 1), 200);
+        const items = await getDb()
+          .select({
+            id: meetings.id,
+            title: meetings.title,
+            startedAt: meetings.startedAt,
+            durationSec: meetings.durationSec,
+            source: meetings.source,
+            updatedAt: meetings.updatedAt,
+          })
+          .from(meetings)
+          .where(
+            and(
+              eq(meetings.userId, actor.userId),
+              eq(meetings.status, 'complete'),
+              isNull(meetings.deletedAt),
+              actor.deviceId ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId)) : undefined,
+            ),
+          )
+          .orderBy(desc(meetings.startedAt))
+          .limit(limit);
+        return Response.json({ items });
+      },
       POST: async ({ request }) => {
         let actor;
         try {

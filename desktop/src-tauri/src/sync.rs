@@ -30,7 +30,7 @@ struct PartResponse {
 }
 
 #[derive(Deserialize)]
-struct ResultSegment {
+pub(crate) struct ResultSegment {
     #[serde(rename = "startMs")]
     start_ms: i64,
     text: String,
@@ -40,7 +40,7 @@ struct ResultSegment {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ResultSummary {
+pub(crate) struct ResultSummary {
     tldr: String,
     decisions_json: String,
     action_items_json: String,
@@ -50,15 +50,15 @@ struct ResultSummary {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ResultResponse {
+pub(crate) struct ResultResponse {
     status: String,
-    title: String,
-    transcript: Vec<ResultSegment>,
-    summary: Option<ResultSummary>,
-    summary_override_md: Option<String>,
-    transcript_override_md: Option<String>,
+    pub(crate) title: String,
+    pub(crate) transcript: Vec<ResultSegment>,
+    pub(crate) summary: Option<ResultSummary>,
+    pub(crate) summary_override_md: Option<String>,
+    pub(crate) transcript_override_md: Option<String>,
     #[serde(default)]
-    notes_md: String,
+    pub(crate) notes_md: String,
     /// Every uploaded part is transcribed, so the transcript is final even
     /// while the summary is still being written. Older servers don't send it.
     #[serde(default)]
@@ -93,6 +93,8 @@ fn idle_pause() -> Duration {
     }
 }
 const ERROR_BACKOFF_MS: i64 = 15_000;
+/// How often meetings recorded on the user's other devices are looked for.
+const CLOUD_PULL_INTERVAL: Duration = Duration::from_secs(60);
 /// Retry interval while the server does not support segments-only finalize yet.
 const SEGMENTS_ONLY_RETRY_MS: i64 = 10 * 60 * 1_000;
 
@@ -185,7 +187,7 @@ fn is_permanent(error: &anyhow::Error) -> bool {
 
 /// Where and how the sync loop talks to the server.
 pub(crate) struct Api {
-    client: Client,
+    pub(crate) client: Client,
     base: String,
 }
 
@@ -209,7 +211,7 @@ impl Api {
         Ok(slot.as_ref().expect("just set"))
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
 
@@ -258,6 +260,7 @@ pub async fn run(app: AppHandle) -> Result<()> {
     let mut api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
     let mut recovery_retried = Instant::now();
+    let mut pulled: Option<(String, Instant)> = None;
 
     loop {
         if recovery_retried.elapsed() >= RECOVERY_RETRY {
@@ -293,6 +296,21 @@ pub async fn run(app: AppHandle) -> Result<()> {
                     set_signed_out(&app, false);
                 }
                 if outcome == Pass::Idle {
+                    let due = pulled.as_ref().is_none_or(|(pulled_token, at)| *pulled_token != token || at.elapsed() >= CLOUD_PULL_INTERVAL);
+                    if due {
+                        pulled = Some((token.clone(), Instant::now()));
+                        match crate::fs_writer::recordings_root(&app) {
+                            Ok(root) => match crate::cloud_pull::pull(&app, &api, &token, &root).await {
+                                Ok(arrived) if arrived > 0 => {
+                                    // More may be waiting: come back sooner.
+                                    pulled = Some((token.clone(), Instant::now() - CLOUD_PULL_INTERVAL + Duration::from_secs(2)));
+                                }
+                                Ok(_) => {}
+                                Err(error) => eprintln!("cloud pull: {error:#}"),
+                            },
+                            Err(error) => eprintln!("cloud pull: {error}"),
+                        }
+                    }
                     idle(idle_pause()).await;
                 } else {
                     sleep(Duration::from_millis(250)).await;
@@ -363,9 +381,10 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
 
 async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<bool> {
     if let Some(edit) = sqlite::next_file_edit(app).map_err(|error| anyhow!(error))? {
-        if let Some(remote_id) = sqlite::remote_meeting_id(app, &edit.local_session_id)
+        let remote_id = sqlite::remote_meeting_id(app, &edit.local_session_id)
             .map_err(|error| anyhow!(error))?
-        {
+            .or_else(|| crate::cloud_pull::is_pulled(app, &edit.local_session_id).then(|| edit.local_session_id.clone()));
+        if let Some(remote_id) = remote_id {
             let result = upload_file_edit(api, token, &remote_id, &edit).await;
             match result {
                 Ok(()) => sqlite::mark_operation_done(app, &edit.operation_id)
@@ -613,7 +632,7 @@ async fn upload_file_edit(
 }
 
 /// Runs blocking file or database work on tokio's blocking pool.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T> {
+pub(crate) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(work)
         .await
         .context("local sync work stopped")?
@@ -639,7 +658,7 @@ fn spoken_words(markdown: &str) -> String {
         .join(" ")
 }
 
-fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {
+pub(crate) fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {
     let mut output = format!("# {title}\n\n## Transcript\n\n");
     let mut previous: Option<&str> = None;
     for segment in segments {
@@ -663,7 +682,7 @@ fn render_transcript(title: &str, segments: &[ResultSegment]) -> String {
     output
 }
 
-fn render_summary(summary: &ResultSummary) -> String {
+pub(crate) fn render_summary(summary: &ResultSummary) -> String {
     let mut output = format!("# Summary\n\n{}\n", summary.tldr.trim());
     append_json_items(&mut output, "Decisions", &summary.decisions_json);
     append_json_items(&mut output, "Action items", &summary.action_items_json);
@@ -837,7 +856,7 @@ async fn read_range(path: &Path, offset: i64, length: usize) -> Result<Vec<u8>> 
     Ok(bytes)
 }
 
-async fn http_error(operation: &str, response: reqwest::Response) -> anyhow::Error {
+pub(crate) async fn http_error(operation: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if status == StatusCode::UNAUTHORIZED {
