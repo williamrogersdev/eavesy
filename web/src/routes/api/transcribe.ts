@@ -90,7 +90,13 @@ export const Route = createFileRoute('/api/transcribe')({
         const voiceNote = url.searchParams.get('voice') === '1';
 
         try {
-          const result = await transcribeAudioFile({ audio, language, vocabulary: prefs.vocabulary, voiceNote });
+          const result = await transcribeAudioFile({
+            audio,
+            language,
+            vocabulary: prefs.vocabulary,
+            spoken: prefs.spoken,
+            voiceNote,
+          });
           return Response.json({
             text: result.text,
             language: result.language ?? language,

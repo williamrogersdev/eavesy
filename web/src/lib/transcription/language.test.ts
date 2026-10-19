@@ -4,8 +4,11 @@ import {
   isNotesLanguage,
   isTranscriptionLanguage,
   languageName,
+  languagesFromLocales,
+  normalizeSpokenLanguages,
   notesLanguageRule,
   retryLanguage,
+  spokenLanguages,
   whisperLanguage,
 } from './language';
 
@@ -71,5 +74,46 @@ describe('notesLanguageRule', () => {
     expect(notesLanguageRule('en')).toContain('in English, translating');
     expect(notesLanguageRule(null)).toContain('language most of the meeting was spoken in');
     expect(notesLanguageRule('auto')).toContain('language most of the meeting was spoken in');
+  });
+});
+
+describe('retryLanguage with the languages the user speaks', () => {
+  const spoken = ['en', 'es'];
+
+  test('a fairly sure detection outside them is steered to the meeting, else their first', () => {
+    expect(retryLanguage({ setting: 'auto', detected: 'cy', probability: 0.72, established: 'en', spoken })).toBe('en');
+    expect(retryLanguage({ setting: 'auto', detected: 'gl', probability: 0.8, established: 'es', spoken })).toBe('es');
+    expect(retryLanguage({ setting: 'auto', detected: 'nl', probability: 0.7, established: null, spoken })).toBe('en');
+  });
+
+  test('a near-certain other language, or one of theirs, is kept', () => {
+    expect(retryLanguage({ setting: 'auto', detected: 'de', probability: 0.97, established: 'en', spoken })).toBeUndefined();
+    expect(retryLanguage({ setting: 'auto', detected: 'es', probability: 0.7, established: null, spoken })).toBeUndefined();
+  });
+
+  test('a meeting that has been in another language all along is left there', () => {
+    expect(retryLanguage({ setting: 'auto', detected: 'de', probability: 0.7, established: 'de', spoken })).toBeUndefined();
+  });
+});
+
+describe('spoken languages', () => {
+  test('keeps offered languages once, in order, up to five', () => {
+    expect(normalizeSpokenLanguages(['ES', 'en', 'es', 'auto', 'klingon', 3, 'fr', 'de', 'it', 'pt'])).toEqual([
+      'es',
+      'en',
+      'fr',
+      'de',
+      'it',
+    ]);
+  });
+
+  test('falls back to a fixed language from before, else none', () => {
+    expect(spokenLanguages({ spokenLanguagesJson: '["fr","en"]', defaultLanguage: 'auto' })).toEqual(['fr', 'en']);
+    expect(spokenLanguages({ spokenLanguagesJson: null, defaultLanguage: 'de' })).toEqual(['de']);
+    expect(spokenLanguages({ spokenLanguagesJson: 'nope', defaultLanguage: 'auto' })).toEqual([]);
+  });
+
+  test('reads browser locales', () => {
+    expect(languagesFromLocales(['en-GB', 'en-US', 'es-419', 'nb-NO', 'xx'])).toEqual(['en', 'es', 'no']);
   });
 });

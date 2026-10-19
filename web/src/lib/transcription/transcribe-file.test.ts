@@ -96,6 +96,32 @@ describe('Workers AI file transcription', () => {
     expect(input.initial_prompt).toBe('Weekly sync with Priya Priya Raman.');
   });
 
+  test('an unsure detection outside the languages the user speaks is redone in theirs', async () => {
+    const asked: unknown[] = [];
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      language: 'auto',
+      spoken: ['en', 'es'],
+      ai: {
+        run(_model, value) {
+          const language = (value as { language?: string }).language;
+          asked.push(language);
+          return Promise.resolve(
+            language === 'en'
+              ? { text: 'Send me the deck', segments: [{ start: 0, end: 1, text: 'Send me the deck' }] }
+              : {
+                  text: 'Sendt mi ze dek',
+                  transcription_info: { language: 'nl', language_probability: 0.64 },
+                  segments: [{ start: 0, end: 1, text: 'Sendt mi ze dek' }],
+                },
+          );
+        },
+      },
+    });
+    expect(asked).toEqual([undefined, 'en']);
+    expect(result).toMatchObject({ text: 'Send me the deck', language: 'en' });
+  });
+
   test('drops lines Whisper invents on silence and rebuilds the text from what is left', async () => {
     const result = await transcribeAudioFile({
       audio: new Uint8Array([1]),

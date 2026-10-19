@@ -6,7 +6,7 @@ import { MODELS } from '@/lib/ai/client';
 import { summarizeMeeting } from '@/lib/ai/summarize';
 import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
-import { retryLanguage, whisperLanguage } from '@/lib/transcription/language';
+import { retryLanguage, spokenLanguages, whisperLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
@@ -62,6 +62,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
     vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson)],
+    spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
   const language = whisperLanguage(meeting.language) ?? transcription.language ?? null;
@@ -230,13 +231,14 @@ export async function handleTranscribeSegment(
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
       const transcriber = new WorkersAiSegmentTranscriber(env.AI);
+      const prefs = await userPrefs(db, meeting.userId);
       const request = {
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
         vocabulary: [
           ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
-          ...(await userVocabulary(db, meeting.userId)),
+          ...prefs.vocabulary,
         ],
       };
       let transcription = await transcriber.transcribe(request);
@@ -247,6 +249,7 @@ export async function handleTranscribeSegment(
           detected: transcription.language,
           probability: transcription.languageProbability,
           established: await establishedLanguage(db, meetingId),
+          spoken: prefs.spoken,
         });
         if (retry) {
           const again = await transcriber.transcribe({ ...request, language: retry });
@@ -357,13 +360,20 @@ export async function handleTranscribeSegment(
   }
 }
 
-async function userVocabulary(db: Db, userId: string): Promise<string[]> {
+async function userPrefs(db: Db, userId: string): Promise<{ vocabulary: string[]; spoken: string[] }> {
   const row = await db
-    .select({ customVocabularyJson: users.customVocabularyJson })
+    .select({
+      customVocabularyJson: users.customVocabularyJson,
+      spokenLanguagesJson: users.spokenLanguagesJson,
+      defaultLanguage: users.defaultLanguage,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  return parseVocabulary(row[0]?.customVocabularyJson);
+  return {
+    vocabulary: parseVocabulary(row[0]?.customVocabularyJson),
+    spoken: row[0] ? spokenLanguages(row[0]) : [],
+  };
 }
 
 /** The language most of the meeting has been spoken in so far, by amount of text. */
