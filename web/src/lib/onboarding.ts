@@ -17,3 +17,22 @@ export function newProjectNames(names: readonly string[], existing: readonly str
   }
   return out;
 }
+
+/**
+ * The project field after a change: names finished with a comma become
+ * projects and the text after the last comma stays as the draft. With
+ * `finish`, the whole draft is taken, as on Enter, blur or submit.
+ */
+export function takeProjectDraft(
+  projects: readonly string[],
+  draft: string,
+  finish = false,
+): { projects: string[]; draft: string } {
+  const cut = finish ? draft.length : draft.lastIndexOf(',');
+  if (cut < 0) return { projects: [...projects], draft };
+  const added = newProjectNames(draft.slice(0, cut).split(','), projects);
+  return {
+    projects: [...projects, ...added].slice(0, MAX_ONBOARDING_PROJECTS),
+    draft: finish ? '' : draft.slice(cut + 1).trimStart(),
+  };
+}

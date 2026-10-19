@@ -8,7 +8,7 @@ import { AppAlert } from '@/components/ui/app-page';
 import { appReturnPath } from '@/lib/auth-return';
 import { isRecord, optionalString } from '@/lib/json';
 import { useRouter } from '@/lib/next-compat/navigation';
-import { MAX_ONBOARDING_PROJECTS } from '@/lib/onboarding';
+import { MAX_ONBOARDING_PROJECTS, takeProjectDraft } from '@/lib/onboarding';
 import { languagesFromLocales } from '@/lib/transcription/language';
 
 const NEXT_STEPS = [
@@ -46,16 +46,10 @@ function OnboardingPage() {
     };
   }, []);
 
-  const addProject = (raw: string) => {
-    setProjectDraft('');
-    setProjects((current) => {
-      const next = [...current];
-      for (const part of raw.split(',')) {
-        const name = part.trim().replace(/\s+/g, ' ');
-        if (name && !next.some((project) => project.toLowerCase() === name.toLowerCase())) next.push(name);
-      }
-      return next.slice(0, MAX_ONBOARDING_PROJECTS);
-    });
+  const editProjects = (draft: string, finish = false) => {
+    const next = takeProjectDraft(projects, draft, finish);
+    setProjects(next.projects);
+    setProjectDraft(next.draft);
   };
 
   async function finishSetup(event: React.FormEvent) {
@@ -69,7 +63,7 @@ function OnboardingPage() {
         body: JSON.stringify({
           displayName: displayName.trim(),
           spokenLanguages: spoken,
-          projects: [...projects, ...projectDraft.split(',')],
+          projects: takeProjectDraft(projects, projectDraft, true).projects,
         }),
       });
       if (!response.ok) throw new Error('Could not finish setup. Please try again.');
@@ -137,21 +131,17 @@ function OnboardingPage() {
                 <input
                   id="onboarding-projects"
                   value={projectDraft}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    if (next.includes(',')) addProject(next);
-                    else setProjectDraft(next);
-                  }}
+                  onChange={(event) => editProjects(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && projectDraft.trim()) {
                       event.preventDefault();
-                      addProject(projectDraft);
+                      editProjects(projectDraft, true);
                     }
                     if (event.key === 'Backspace' && !projectDraft && projects.length > 0) {
                       setProjects((current) => current.slice(0, -1));
                     }
                   }}
-                  onBlur={() => addProject(projectDraft)}
+                  onBlur={() => editProjects(projectDraft, true)}
                   placeholder={projects.length === 0 ? 'Acme redesign, Thesis…' : 'Add another'}
                   className="h-7 min-w-[8rem] flex-1 bg-transparent px-1 text-sm outline-none focus-visible:outline-none!"
                 />
