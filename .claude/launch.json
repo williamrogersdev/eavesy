@@ -35,19 +35,6 @@
       ],
       "port": 1420,
       "autoPort": true
-    },
-    {
-      "name": "audit-launcher",
-      "cwd": "desktop/launcher-ui",
-      "runtimeExecutable": "bun",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--",
-        "--port",
-        "1441"
-      ],
-      "port": 1441
     }
   ]
 }
