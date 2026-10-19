@@ -9,7 +9,7 @@ import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { useLiveLines } from './use-live-lines';
 
-const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Done'] as const;
+const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Try it'] as const;
 
 export function SetupView({
   step,
@@ -131,11 +131,15 @@ export function SetupView({
         ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
         : !pasteOn
           ? 'One more and I can type for you, right where your cursor is.'
-        : 'Lovely. The rest just makes me more useful.',
+          : fnInUse && permissions?.inputMonitoring === false
+            ? 'One more so I can hear a tap of fn.'
+            : 'Lovely. That’s everything I need.',
     'Two keys are all you need. You can change them any time.',
     heard
-      ? "Heard you. That's it, I'll be in the menu bar."
-      : "That's it. I'll be in the menu bar, under the roof icon.",
+      ? "Heard you. That's it, I'll be in the menu bar, under the roof icon."
+      : listening
+        ? "I'm listening. Tap again when you're done."
+        : "Go on, say something. I'll show you what I heard.",
   ][step];
 
   const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
@@ -188,18 +192,7 @@ export function SetupView({
             onRelaunch={onRelaunch}
           />
         </div>
-        <h3 className="ev-card-title ev-onb-later">Later is fine</h3>
-        <div className="ev-card">
-          <PermissionChecklist
-            permissions={permissions}
-            checking={checking}
-            fnInUse={fnInUse}
-            only={['notifications', 'screen']}
-            onRequest={onRequest}
-            onOpenSettings={onOpenPrivacy}
-            onRelaunch={onRelaunch}
-          />
-        </div>
+        {!micOn && <p className="ev-onb-note">Allow the microphone to continue. Screenshots, video and notifications can wait for Settings.</p>}
       </>
     );
     footer = <>{back}{next('Continue', !micOn, micOn ? undefined : 'Allow the microphone first')}</>;
@@ -221,7 +214,9 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Try it once</h2>
         <p className="ev-onb-lead">
-          Click in the box, then {usesFnKey(talk) ? <>tap <Kbd keys="fn" /></> : <>hold <Kbd keys={talk} /></>} and say something.
+          {usesFnKey(talk)
+            ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
+            : <>Hold <Kbd keys={talk} />, say something, then let go. Your words land in the box.</>}
         </p>
         <textarea
           ref={tryBox}

@@ -76,6 +76,10 @@ export function Launcher() {
   const [actionsSel, setActionsSel] = useState(0);
   const captureBusy = useRef(false);
   const [starting, setStarting] = useState(false);
+  // A screenshot is being taken: the toolbar waits, but nothing is recording.
+  const [shooting, setShooting] = useState(false);
+  // A capture started elsewhere (hotkey, HUD) whose mic is still opening.
+  const [opening, setOpening] = useState(false);
   const [view, setView] = useState<'setup' | 'list' | 'context' | 'settings'>(
     desktop ? 'setup' : 'list',
   );
@@ -273,7 +277,9 @@ export function Launcher() {
           setRecording({ session, mode });
           setView('list');
           setElapsed(0);
-          await hidePanel();
+          // Talk pastes into the app underneath, and Video records the screen:
+          // both need the panel gone. A meeting keeps its live bar in view.
+          if (source === 'mic' || mode === 'screen') await hidePanel();
         }
       } catch (e) {
         flash(errMsg(e, 'Could not start recording'), 8000);
@@ -297,10 +303,14 @@ export function Launcher() {
     if (!recording || captureBusy.current) return;
     captureBusy.current = true;
     const id = recording.session.session_id;
+    const kind = recording.mode === 'screen' ? 'video' : recording.session.source === 'mic' ? 'talk' : 'meeting';
     try {
       await stopCapture(id);
-      setRecording(null);
-      flash('Recording saved');
+      // The HUD says what happened to a Talk; the capture state decides when
+      // the live bar goes (a dictation is still being written down).
+      const status = await getCaptureStatus().catch(() => null);
+      if (!status || status.sessionId !== id || !['recording', 'transcribing'].includes(status.phase)) setRecording(null);
+      if (kind !== 'talk') flash('Saved');
       await refreshRecordings();
       setQuery('');
       setSelected(0);
@@ -317,6 +327,11 @@ export function Launcher() {
       const applyCaptureState = (state: CaptureStatus) => {
         if (disposed) return;
         setCapturePhase(state.phase);
+        setOpening(state.phase === 'recording' && !state.sessionId);
+        if (state.phase === 'transcribing') {
+          // Stopped and being written down: the live bar stays until the words land.
+          return;
+        }
         if (state.phase === 'recording' && state.sessionId) {
           setRecording((current) => current?.session.session_id === state.sessionId ? current : {
             session: { session_id: state.sessionId!, started_at_ms: state.startedAtMs ?? Date.now(), mode: state.mode ?? 'audio', source: 'mic' },
@@ -391,7 +406,7 @@ export function Launcher() {
     : null;
   const live: LiveCapture | null = recording
     ? { sessionId: recording.session.session_id, kind: liveKind ?? 'talk', phase: capturePhase === 'transcribing' ? 'thinking' : 'listening', elapsed }
-    : starting
+    : (starting && !preflighting) || opening
       ? { sessionId: null, kind: 'talk', phase: 'listening', elapsed: 0 }
       : null;
 
@@ -399,12 +414,12 @@ export function Launcher() {
     runTask(async () => {
       if (captureBusy.current) return;
       captureBusy.current = true;
-      setStarting(true);
+      setShooting(true);
       try {
         await captureScreenshot();
       } finally {
         captureBusy.current = false;
-        setStarting(false);
+        setShooting(false);
       }
     }, 'Screenshot didn’t work');
   }, [runTask]);
@@ -486,11 +501,13 @@ export function Launcher() {
 
   const goSettings = useCallback(() => {
     if (desktop) {
+      // From setup, Back returns to the same step instead of the empty list.
+      settingsFromSetup.current = view === 'setup';
       setView('settings');
       return;
     }
-    runTask(() => router.push('/app/settings'), 'Could not open settings');
-  }, [desktop, router, runTask]);
+    runTask(() => router.push('/app/settings'), 'Couldn’t open settings');
+  }, [desktop, router, runTask, view]);
 
   // Document-level keys for the history view, so they work wherever focus is
   // (the panel div only gets keys while it has focus): ⌘V pastes, / searches,
@@ -682,7 +699,7 @@ export function Launcher() {
         {desktop && view === 'list' && (
           <CaptureToolbar
             live={live}
-            busy={starting}
+            busy={starting || shooting}
             dictationHotkey={dictationHotkey}
             onTalk={() => runTask(() => beginRecording('audio', { source: 'mic', dictation: true }))}
             onMeeting={() => runTask(() => beginRecording('audio', { source: 'mixed' }))}
@@ -771,6 +788,7 @@ export function Launcher() {
             <CaptureHistory
               recordings={recordings}
               live={live}
+              dictationHotkey={dictationHotkey}
               signedIn={account !== null}
               onSignIn={() => runTask(connectAccount, 'Couldn’t connect your account')}
               flash={flash}

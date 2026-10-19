@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { AudioLines, Camera, ChevronDown, Clapperboard, Square, Users } from 'lucide-react';
 import { clock } from './history-model';
-import { Mascot, ToolbarSegment, ToolbarShelf } from './ui';
+import { talkHint, FN } from './shortcut-keys';
+import { Kbd, Mascot, ToolbarSegment, ToolbarShelf } from './ui';
 import { useLiveLines } from './use-live-lines';
 
 export type CaptureKind = 'talk' | 'meeting' | 'video';
@@ -44,8 +45,8 @@ export function CaptureToolbar({
   onVideo: () => void;
   onStop: () => void;
 }) {
-  const fn = dictationHotkey === 'Fn' || dictationHotkey === 'fn';
-  if (live) return <div className="ev-toolbar"><LiveBar live={live} onStop={onStop} /></div>;
+  const fn = dictationHotkey === FN || dictationHotkey === 'fn';
+  if (live) return <div className="ev-toolbar"><LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} /></div>;
   return (
     <div className="ev-toolbar">
       <ToolbarShelf>
@@ -53,7 +54,7 @@ export function CaptureToolbar({
           icon={AudioLines}
           label="Talk"
           kbd={fn ? 'fn' : undefined}
-          hint={fn ? 'Hold fn to talk. Let go to paste.' : `Talk, then paste where your cursor is${dictationHotkey ? ` (${dictationHotkey})` : ''}`}
+          hint={talkHint(fn ? FN : dictationHotkey)}
           disabled={busy}
           onClick={onTalk}
         />
@@ -68,7 +69,7 @@ export function CaptureToolbar({
 const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
 
 /** The shelf while a capture runs. Click it to see more of what has been heard. */
-function LiveBar({ live, onStop }: { live: LiveCapture; onStop: () => void }) {
+function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
   const [open, setOpen] = useState(false);
   const lines = useLiveLines(live.sessionId, 4);
   const thinking = live.phase === 'thinking';
@@ -76,7 +77,7 @@ function LiveBar({ live, onStop }: { live: LiveCapture; onStop: () => void }) {
   const last = lines.at(-1)?.text ?? '';
   const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
   return (
-    <div className="ev-livebar" data-phase={live.phase} data-open={open || undefined} aria-live="polite">
+    <div className="ev-livebar" data-phase={live.phase} data-open={open || undefined}>
       <div className="ev-livebar-row">
         <button
           type="button"
@@ -86,17 +87,18 @@ function LiveBar({ live, onStop }: { live: LiveCapture; onStop: () => void }) {
           onClick={() => setOpen((v) => !v)}
         >
           <span className="ev-livebar-mark" aria-hidden>
-            <Mascot size={16} state={thinking ? 'thinking' : 'listening'} recording={!thinking && started} />
+            <Mascot size={16} state={thinking ? 'thinking' : started ? 'listening' : 'idle'} recording={!thinking && started} />
           </span>
-          <span className="ev-livebar-label">{label}</span>
+          <span className="ev-livebar-label" aria-live="polite">{label}</span>
           {started && !thinking && <span className="ev-livebar-time">{clock(live.elapsed)}</span>}
           <span className="ev-livebar-words"><bdi>{open ? '' : last}</bdi></span>
           <ChevronDown size={14} strokeWidth={1.75} className="ev-livebar-chev" aria-hidden />
         </button>
-        {!thinking && (
-          <button type="button" className="ev-livebar-stop" onClick={onStop} title="Stop and save" aria-label="Stop and save">
+        {!thinking && started && (
+          <button type="button" className="ev-livebar-stop" onClick={onStop} title={`Stop and save${stopKey ? ` (${stopKey})` : ''}`} aria-label={`Stop and save${stopKey ? ` (${stopKey})` : ''}`}>
             <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden />
             Stop
+            {stopKey && <Kbd keys={stopKey} />}
           </button>
         )}
       </div>
@@ -109,7 +111,7 @@ function LiveBar({ live, onStop }: { live: LiveCapture; onStop: () => void }) {
               </p>
             ))
           ) : (
-            <p className="ev-livebar-empty">{thinking ? 'Almost there…' : 'Say something. Your words show up here as you talk.'}</p>
+            <p className="ev-livebar-empty">{thinking ? 'Almost there…' : started ? 'Say something. Your words show up here as you talk.' : 'Opening the mic…'}</p>
           )}
         </div>
       </div>

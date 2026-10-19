@@ -308,11 +308,11 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
 /// The HUD grows to show its running transcript, and shrinks back after.
 /// Returns whether the transcript opens above the bar.
 #[tauri::command]
-pub async fn set_hud_expanded(app: AppHandle, expanded: bool) -> Result<bool, String> {
+pub async fn set_hud_expanded(app: AppHandle, expanded: bool, up: Option<bool>) -> Result<bool, String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = sender.send(crate::hud::set_expanded_on_main(&handle, expanded));
+        let _ = sender.send(crate::hud::set_expanded_on_main(&handle, expanded, up));
     })
     .map_err(|error| format!("could not resize the capture control: {error}"))?;
     receiver.await.map_err(|error| format!("could not resize the capture control: {error}"))

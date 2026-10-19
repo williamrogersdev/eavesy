@@ -569,7 +569,8 @@ fn spawn_capture(
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
             mode: Some(mode.to_string()),
-            started_at_ms: Some(started_at_ms),
+            // The timer counts from the mic going live, not from the key press.
+            started_at_ms: Some(now_ms()),
             message: None,
             notice: None,
         },
@@ -1020,8 +1021,9 @@ fn finish_stopped_capture(
         .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
-    // A dictation that pasted already shows its words in the HUD.
-    if !pasted_early {
+    // A dictation that pasted already shows its words in the HUD; one still
+    // waiting for its words stays on "Writing it down…" until they arrive.
+    if !pasted_early && !dictation {
         crate::hud::set_state(
             &app,
             crate::hud::HudState {

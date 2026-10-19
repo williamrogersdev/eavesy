@@ -352,6 +352,7 @@
   color: #fff;
   font: 600 12.5px/1 var(--ev-font-round);
 }
+.ev-livebar-stop .ev-kbd kbd { background: rgb(255 255 255 / 0.22); box-shadow: none; color: #fff; }
 .ev-livebar-stop:hover { background: color-mix(in srgb, var(--ev-rec) 88%, #000); }
 .ev-livebar-stop:active { transform: scale(0.97); }
 .ev-livebar-stop:focus-visible { outline: none; box-shadow: var(--ev-focus); }

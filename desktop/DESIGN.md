@@ -79,7 +79,7 @@ Rules:
 | No speech detected | No speech detected. | Didn't hear any words in this one. The audio is still saved. |
 | Transcribe failed | Couldn't transcribe this one. The audio is saved. | Transcription failed. The audio is saved. **[Try again]** |
 | Not signed in row | Saved on this Mac. Sign in to get the transcript. | Saved on this Mac. **[Sign in]** to get a transcript. |
-| Fn button | Use Fn / Globe tap | Use `fn` (hold to talk) |
+| Fn button | Use Fn / Globe tap | Use `fn` (tap to talk) |
 | Fn conflict | (none) | Your Mac uses `fn` for emoji right now. In Keyboard settings, set "Press 🌐 key to" → "Do Nothing". **[Open Keyboard settings]** |
 | Start failure | Could not start recording | Couldn't start recording: microphone access is off. **[Open Microphone settings]** |
 | Screenshot failure | Could not take the screenshot | Screenshot didn't work: Screen Recording access is off. **[Open settings]** |
@@ -324,7 +324,7 @@ never by audio routing:
 
 | segment | what it does | hint / tooltip |
 |---|---|---|
-| **Talk** `fn` | Dictation. Mic only, types at your cursor. Runs in the HUD. | "Hold fn to talk. Let go to paste." |
+| **Talk** `fn` | Dictation. Mic only, types at your cursor. Runs in the HUD. | "Tap fn and talk. Tap it again to paste where your cursor is." |
 | **Meeting** | Records you and the other side of a call (mic + computer audio). Runs in the HUD until stopped, and saves a Meeting row with a summary. | "Records both sides of a call" |
 | **Screenshot** | Area capture, saved to history. | (user's shortcut if set) |
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
@@ -439,7 +439,10 @@ recording view, resize the panel or move existing rows. The current tall
 the default flow.
 
 1. **Start** (hotkey, Talk, Meeting, or HUD): the HUD owns the session and
-   turns red at once, with a quiet start sound (Settings → Sounds). The panel
+   turns red once the mic is live, with a quiet start sound (Settings →
+   Sounds). Its transcript sheet opens with it and echoes the words as they
+   are heard, in the quieter ink ("Your words show up here as you talk"
+   until the first one), and stays open through "Writing it down…". The panel
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.

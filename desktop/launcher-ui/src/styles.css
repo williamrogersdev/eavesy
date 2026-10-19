@@ -156,11 +156,12 @@ body {
   -webkit-user-select: none;
   transition: border-color var(--ev-d-state) ease;
 }
+/* A window taller than one bar (the transcript, or a tall control): a card, not a pill. */
+@media (min-height: 68px) { .eavesy-control { border-radius: 16px; } }
 /* Room for the transcript sheet: square off into a card. */
 .eavesy-control:has(.ctl-transcript) { border-radius: 16px; }
 .eavesy-control[data-phase="recording"] {
   border-color: color-mix(in srgb, var(--ev-rec) 80%, transparent);
-  background: color-mix(in srgb, var(--ev-rec) 16%, var(--ev-hud));
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 0 0 1px color-mix(in srgb, var(--ev-rec) 35%, transparent);
 }
 /* Low on the screen the transcript opens above the bar, which stays put. */
@@ -192,6 +193,9 @@ body {
 }
 .eavesy-control[data-grow="up"] .ctl-transcript { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
 .ctl-transcript p + p { margin-top: 4px; }
+/* While recording the words sit back: a quiet echo of what is being heard. */
+.eavesy-control[data-phase="recording"] .ctl-transcript { color: var(--ev-hud-ink-2); }
+.ctl-transcript-hint { font-style: italic; opacity: 0.75; }
 .ctl-transcript-notice { color: #9fe0bd; font-weight: 600; }
 .eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
 
@@ -236,8 +240,9 @@ body {
 .ctl-done { display: inline-flex; align-items: center; gap: 4px; color: #9fe0bd; font-weight: 600; }
 .ctl-writing { animation: ctl-breathe 1.2s ease-in-out infinite; }
 @keyframes ctl-breathe { 50% { opacity: 0.55; } }
-.eavesy-control[data-phase="recording"] .ctl-actions .ctl-btn:first-child { color: #fff; background: var(--ev-rec); }
-.eavesy-control[data-phase="recording"] .ctl-actions .ctl-btn:first-child:hover { background: color-mix(in srgb, var(--ev-rec) 85%, #fff); }
+.eavesy-control[data-phase="recording"] .ctl-stop { color: #fff; background: var(--ev-rec); padding: 0 9px; }
+.eavesy-control[data-phase="recording"] .ctl-stop:hover:not(:disabled) { color: #fff; background: color-mix(in srgb, var(--ev-rec) 85%, #fff); }
+.ctl-stop .ctl-label { display: inline; }
 @media (prefers-reduced-motion: reduce) {
   .ctl-rec, .ctl-writing { animation: none; }
 }

@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState, type MouseEvent } from 'react';
-import { Camera, Check, History, Mic, Square, Video, X } from 'lucide-react';
+import { AudioLines, Camera, Check, Clapperboard, History, Square, X } from 'lucide-react';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
+import { clock } from '@/components/launcher/history-model';
 import { errMsg } from '@/lib/desktop/errors';
 import {
   addCaption,
@@ -52,11 +53,19 @@ document.body.style.background = 'transparent';
 
 function elapsedLabel(startedAtMs: number | null, now: number): string {
   if (!startedAtMs) return '';
-  const total = Math.max(0, Math.floor((now - startedAtMs) / 1000));
-  const mm = String(Math.floor(total / 60)).padStart(2, '0');
-  const ss = String(total % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
+  return clock(Math.max(0, Math.floor((now - startedAtMs) / 1000)));
 }
+
+/** The same rule the window uses: in the lower half of its screen, or too low to grow down. */
+function lowOnScreen(): boolean {
+  const top = (window.screen as Screen & { availTop?: number }).availTop ?? 0;
+  const height = window.screen.availHeight;
+  const middle = window.screenY + window.outerHeight / 2;
+  return middle > top + height / 2 || window.screenY + window.outerHeight + TRANSCRIPT_ROOM > top + height;
+}
+
+/** Matches `TRANSCRIPT_HEIGHT` in hud.rs. */
+const TRANSCRIPT_ROOM = 96;
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -86,6 +95,8 @@ function Hud() {
   // Whether the window has grown to make room for that transcript, and which way.
   const [expanded, setExpanded] = useState(false);
   const [growsUp, setGrowsUp] = useState(false);
+  // Bumped each time the control is shown again, having lost its room.
+  const [shown, setShown] = useState(0);
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -173,20 +184,37 @@ function Hud() {
   };
 
   const transcript = hudTranscript(state, running);
-  const showTranscript = transcript.text !== '' || transcript.notice !== null;
+  // From the moment the mic is live until the words land, the strip stays
+  // open: what is being heard is always in view, and the HUD never shrinks
+  // and grows again between stopping and pasting.
+  const listening = state?.phase === 'recording' && !!state.sessionId;
+  const hint = listening ? 'Your words show up here as you talk' : state?.phase === 'transcribing' && state.sessionId ? 'Almost there…' : null;
+  const showTranscript = hint !== null || transcript.text !== '' || transcript.notice !== null;
 
-  // Asked again on every phase: a control hidden and shown again has lost its room.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void tauri()?.event?.listen('hud:shown', () => setShown((n) => n + 1))
+      .then((off) => { if (disposed) off(); else unlisten = off; });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  // The direction is chosen here, before the window moves, so the layout and
+  // the window change together: the bar never jumps. Low on the screen the
+  // transcript opens above the bar.
   useEffect(() => {
     let cancelled = false;
-    void invoke('set_hud_expanded', { expanded: showTranscript })
-      .then((up) => {
+    const up = showTranscript ? (expanded ? growsUp : lowOnScreen()) : false;
+    if (showTranscript) setGrowsUp(up);
+    void invoke('set_hud_expanded', { expanded: showTranscript, up })
+      .then(() => {
         if (cancelled) return;
-        setGrowsUp(showTranscript && up === true);
         setExpanded(showTranscript);
+        if (!showTranscript) setGrowsUp(false);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showTranscript, state?.phase, state?.sessionId]);
+  }, [showTranscript, state?.phase, state?.sessionId, shown]);
 
   useEffect(() => {
     if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
@@ -207,14 +235,17 @@ function Hud() {
   if (!state) return null;
 
   const recording = state.phase === 'recording';
-  const liveCaptions = recording && !expanded
+  // Recording with no session yet: the mic is still opening.
+  const opening = recording && !state.sessionId;
+  const live = recording && !opening;
+  const liveCaptions = live && !expanded
     ? ['mic', 'system']
         .map((track) => captions[track])
         .filter((c): c is LiveCaption => !!c && c.sessionId === state.sessionId && !!c.text.trim())
     : [];
   const labelled = liveCaptions.length > 1;
   const closable = !recording && state.phase !== 'transcribing';
-  const busy = starting || recording || state.phase === 'transcribing';
+  const busy = starting || state.phase === 'transcribing';
 
   const pressSurface = (e: MouseEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
@@ -240,32 +271,41 @@ function Hud() {
   };
 
   return (
-    <div aria-label={recording ? 'Eavesy recording' : 'Eavesy'} data-phase={state.phase} data-grow={growsUp ? 'up' : undefined} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
+    <div aria-label={live ? 'Eavesy recording' : 'Eavesy'} data-phase={opening ? 'starting' : state.phase} data-grow={growsUp ? 'up' : undefined} onMouseDown={pressSurface} onMouseEnter={loadShortcut} className="launcher-scope ev eavesy-control">
       <div className="ctl-bar">
       <div className="ctl-grid">
-        <button type="button" onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : act('show_launcher')} aria-label={recording ? 'Stop recording' : 'Open Eavesy'} title={recording ? 'Stop recording' : 'Open Eavesy'} className="ctl-mark">
-          <Mascot size={18} state={mascotState(state.phase)} recording={recording} />
+        <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-mark">
+          <Mascot size={18} state={opening ? 'idle' : mascotState(state.phase)} />
         </button>
         <div className="ctl-title" title={actionError ?? undefined}>
-          {recording && <span className="ctl-rec" aria-hidden />}
-          {recording && <span className="ctl-timer">{elapsedLabel(state.startedAtMs, now)}</span>}
-          {recording && liveCaptions.length === 0 && <span className="ctl-quiet">{state.sessionId ? 'Listening' : 'Starting…'}</span>}
+          {live && <span className="ctl-rec" aria-hidden />}
+          {live && <span className="ctl-timer">{elapsedLabel(state.startedAtMs, now)}</span>}
+          {opening && <span className="ctl-quiet ctl-writing">Starting…</span>}
+          {live && liveCaptions.length === 0 && <span className="ctl-quiet">Listening</span>}
           {liveCaptions.map((c) => (
             <span key={c.track} aria-live="polite" title={c.text} data-final={c.isFinal || undefined} className="ctl-caption">
               <bdi>{labelled && <span className="ctl-caption-label">{trackLabel(c.track)}</span>}{captionTail(c.text, 120)}</bdi>
             </span>
           ))}
           {state.phase === 'transcribing' && <span className="ctl-quiet ctl-writing">Writing it down…</span>}
-          {state.phase === 'done' && !transcript.notice && state.mode === 'audio' && transcript.text && (
-            <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Pasted</span>
+          {state.phase === 'done' && state.mode === 'audio' && transcript.text && (
+            <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />{transcript.notice ? 'Copied' : 'Pasted'}</span>
           )}
+          {state.phase === 'done' && state.mode === 'video' && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Saved</span>}
           {state.phase === 'saved' && <span className="ctl-done"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Saved</span>}
+          {state.phase === 'failed' && !actionError && <span className="ctl-error" title={state.message ?? undefined}>Didn’t work</span>}
           {actionError && <span role="alert" title={actionError} className="ctl-error">{actionError}</span>}
         </div>
         <div className="ctl-actions">
-          <button type="button" disabled={starting || state.phase === 'transcribing'} onClick={() => recording ? act('stop_capture', { sessionId: state.sessionId }) : void startRecording()} aria-label={recording ? 'Stop & save' : 'Start voice note'} title={`${recording ? 'Stop & save' : 'Record microphone'}${shortcut ? ` (${shortcut})` : ''}`} className="ctl-btn">{recording ? <Square className="h-3 w-3" fill="currentColor" /> : <Mic className="h-3.5 w-3.5" />}<span className="ctl-label">{recording ? 'Stop' : 'Mic'}</span></button>
-          <button type="button" disabled={busy} onClick={() => void startRecording('image')} aria-label="Take screenshot" title="Take screenshot" className="ctl-btn"><Camera className="h-3.5 w-3.5" /><span className="ctl-label">Screenshot</span></button>
-          <button type="button" disabled={busy} onClick={() => void startRecording('video')} aria-label="Record screen video" title="Record screen video and audio" className="ctl-btn"><Video className="h-3.5 w-3.5" /><span className="ctl-label">Video</span></button>
+          {recording ? (
+            <button type="button" disabled={opening} onClick={() => act('stop_capture', { sessionId: state.sessionId })} aria-label={`Stop and save${shortcut ? ` (${shortcut})` : ''}`} title={`Stop and save${shortcut ? ` (${shortcut})` : ''}`} className="ctl-btn ctl-stop"><Square className="h-3 w-3" fill="currentColor" /><span className="ctl-label">Stop</span></button>
+          ) : (
+            <>
+              <button type="button" disabled={busy} onClick={() => void startRecording()} aria-label={`Talk${shortcut ? ` (${shortcut})` : ''}`} title={`Talk, then paste where your cursor is${shortcut ? ` (${shortcut})` : ''}`} className="ctl-btn"><AudioLines className="h-3.5 w-3.5" /><span className="ctl-label">Talk</span></button>
+              <button type="button" disabled={busy} onClick={() => void startRecording('image')} aria-label="Take screenshot" title="Take screenshot" className="ctl-btn"><Camera className="h-3.5 w-3.5" /><span className="ctl-label">Screenshot</span></button>
+              <button type="button" disabled={busy} onClick={() => void startRecording('video')} aria-label="Record screen video" title="Record your screen and mic" className="ctl-btn"><Clapperboard className="h-3.5 w-3.5" /><span className="ctl-label">Video</span></button>
+            </>
+          )}
         </div>
         <div className="ctl-tools">
           <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn"><History className="h-3.5 w-3.5" /></button>
@@ -273,7 +313,9 @@ function Hud() {
         </div>
       </div>
       </div>
-      {expanded && showTranscript && <HudTranscript text={transcript.text} notice={transcript.notice} />}
+      {expanded && showTranscript && (
+        <HudTranscript text={transcript.text} notice={transcript.notice} hint={hint} />
+      )}
     </div>
   );
 }
@@ -301,8 +343,10 @@ function hudTranscript(state: HudState | null, running: RunningTranscript): { te
   const message = state.message?.trim() || null;
   switch (state.phase) {
     case 'recording':
-    case 'saved':
+    case 'transcribing':
       return { text: heard, notice: null };
+    case 'saved':
+      return { text: heard, notice: state.notice ?? null };
     case 'done':
       return { text: message ?? heard, notice: state.notice ?? null };
     case 'failed':

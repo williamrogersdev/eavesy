@@ -41,6 +41,7 @@ import {
   type HistoryFilter,
 } from './history-model';
 import type { LiveCapture } from './capture-toolbar';
+import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
 import { Bubble, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
 
@@ -306,6 +307,7 @@ function CaptureRow({
 export function CaptureHistory({
   recordings,
   live,
+  dictationHotkey,
   signedIn,
   onSignIn,
   flash,
@@ -317,6 +319,8 @@ export function CaptureHistory({
 }: {
   recordings: Recording[];
   live: LiveCapture | null;
+  /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
+  dictationHotkey: string;
   signedIn: boolean;
   onSignIn: () => void;
   flash: Flash;
@@ -388,7 +392,9 @@ export function CaptureHistory({
         <div className="ev-empty">
           <Mascot size={72} state="idle" />
           <Bubble tail="bottom">
-            It’s quiet up here. Hold <Kbd keys="fn" /> and talk, or drop something in below.
+            It’s quiet up here. {dictationHotkey === FN || !dictationHotkey
+              ? <>Tap <Kbd keys="fn" /> and talk,</>
+              : <>Hold <Kbd keys={dictationHotkey} /> and talk,</>} or drop something in below.
           </Bubble>
           <span className="ev-empty-pointer" aria-hidden />
         </div>

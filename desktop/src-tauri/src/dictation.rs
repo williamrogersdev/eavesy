@@ -174,8 +174,11 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 eprintln!("dictation: could not copy the text: {error}");
             }
         }
+        // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
-        if current.phase != crate::hud::Phase::Recording || current.session_id.as_deref() == Some(session_id.as_str()) {
+        let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
+            && current.session_id.as_deref() != Some(session_id.as_str());
+        if !busy_elsewhere {
             crate::hud::set_state(&app, crate::hud::HudState {
                 phase: crate::hud::Phase::Done,
                 session_id: Some(session_id),

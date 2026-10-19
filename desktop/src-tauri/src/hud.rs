@@ -34,6 +34,11 @@ pub struct HudState {
 
 impl HudState {
     pub fn idle() -> Self { Self { phase: Phase::Idle, session_id: None, mode: None, started_at_ms: None, message: None, notice: None } }
+
+    /// Recording with a session: the engine is running and the mic is live.
+    pub fn is_live(&self) -> bool {
+        self.phase == Phase::Recording && self.session_id.is_some()
+    }
 }
 static CURRENT: std::sync::Mutex<Option<HudState>> = std::sync::Mutex::new(None);
 pub fn current() -> HudState {
@@ -42,11 +47,13 @@ pub fn current() -> HudState {
 
 pub fn set_state(app: &AppHandle, state: HudState) {
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
-    let was_recording = previous.is_some_and(|previous| previous.phase == Phase::Recording);
-    if let Some(cue) = crate::sounds::cue_for(was_recording, state.phase == Phase::Recording, state.phase == Phase::Failed) {
+    // The sound and the red tray glyph mean the mic is live, not that a key
+    // was pressed: a recording still starting has no session yet.
+    let was_live = previous.is_some_and(|previous| previous.is_live());
+    if let Some(cue) = crate::sounds::cue_for(was_live, state.is_live(), state.phase == Phase::Failed) {
         crate::sounds::play(app, cue);
     }
-    crate::tray::set_recording(app, state.phase == Phase::Recording);
+    crate::tray::set_recording(app, state.is_live());
     let _ = app.emit_to("main", "capture:state", state.clone());
     let Some(window) = app.get_webview_window("hud") else {
         return;
@@ -107,7 +114,9 @@ fn expanded() -> Option<(f64, f64)> {
 /// The HUD asks for it once it has words to show. Returns whether the
 /// transcript opens above the bar: a control in the lower half grows upwards,
 /// moving the window so the bar itself stays exactly where it was.
-pub fn set_expanded_on_main(app: &AppHandle, expand: bool) -> bool {
+/// `up` is the HUD's own choice, made before it asks so its layout and the
+/// window move together; without it the same rule is applied here.
+pub fn set_expanded_on_main(app: &AppHandle, expand: bool, up: Option<bool>) -> bool {
     let Some(window) = app.get_webview_window("hud") else { return false };
     let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
         return false;
@@ -119,8 +128,10 @@ pub fn set_expanded_on_main(app: &AppHandle, expand: bool) -> bool {
         (true, None) => {
             let bottom = crate::placement::work_area_at(app, position.x + size.width / 2.0, position.y + 1.0)
                 .map_or(f64::MAX, |area| area.1 + area.3);
-            let up = crate::placement::in_lower_half(app, position.x + size.width / 2.0, position.y, size.height)
-                || position.y + size.height + TRANSCRIPT_HEIGHT > bottom;
+            let up = up.unwrap_or_else(|| {
+                crate::placement::in_lower_half(app, position.x + size.width / 2.0, position.y, size.height)
+                    || position.y + size.height + TRANSCRIPT_HEIGHT > bottom
+            });
             // Remember the growth only once the window really grew, so a
             // failed resize is never subtracted from the saved frame.
             if window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT)).is_err() {
@@ -213,8 +224,10 @@ fn show_unchecked(app: &AppHandle) {
         return;
     }
     if !window.is_visible().unwrap_or(false) {
-        // Shown afresh at the saved frame: any transcript room is gone.
+        // Shown afresh at the saved frame: any transcript room is gone, so
+        // the HUD asks for it again.
         *EXPANDED.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        let _ = window.emit_to("hud", "hud:shown", ());
         match prefs.frame.filter(|frame| on_screen(app, frame)) {
             Some(frame) => {
                 let _ = window.set_size(tauri::LogicalSize::new(frame.width, frame.height));

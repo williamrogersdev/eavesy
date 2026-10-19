@@ -110,11 +110,12 @@ fn pressed(app: &AppHandle, can_hold: bool) {
     std::thread::spawn(move || {
         let (active, starting) = active_session(&app);
         match on_press(active, starting) {
-            OnPress::Ignore => {}
+            // A second tap while the mic is still opening: stop as soon as it is open.
+            OnPress::Ignore => press().stop_when_ready = true,
             OnPress::Stop(id) => {
                 *press() = Press::default();
                 crate::hud::show_stopping(&app, &id);
-                crate::dictation::note_shortcut_press();
+                note_press_in_background();
                 stop(&app, id);
             }
             OnPress::Start => {
@@ -138,7 +139,7 @@ fn released(app: &AppHandle) {
             let app = app.clone();
             std::thread::spawn(move || {
                 crate::hud::show_stopping(&app, &id);
-                crate::dictation::note_shortcut_press();
+                note_press_in_background();
                 stop(&app, id);
             });
         }
@@ -150,19 +151,25 @@ pub fn toggle(app: &AppHandle) {
     pressed(app, false);
 }
 
+/// Where the cursor is right now: the paste goes back there. Looking it up
+/// can take a while in some apps, so it never holds up the mic or the stop;
+/// whoever needs the target looks it up afresh if this hasn't finished.
+fn note_press_in_background() {
+    std::thread::spawn(crate::dictation::note_shortcut_press);
+}
+
 fn start(app: &AppHandle, pressed_at: Instant) {
-    // Say so at once, with its sound: the engine takes a moment to open the
-    // mic, and finding the text box under the cursor can take a moment too.
+    // Say "Starting…" at once: the engine takes a moment to open the mic. The
+    // red state, the timer and the start sound wait until it really is open.
     crate::hud::set_state(app, crate::hud::HudState {
         phase: crate::hud::Phase::Recording,
         session_id: None,
         mode: Some("audio".to_string()),
-        started_at_ms: Some(chrono::Utc::now().timestamp_millis()),
+        started_at_ms: None,
         message: None,
         notice: None,
     });
-    // Where the cursor is right now: the paste goes back there.
-    crate::dictation::note_shortcut_press();
+    note_press_in_background();
     let result = crate::audio::start_audio_capture(
         app,
         &app.state::<Captures>(),
