@@ -85,6 +85,19 @@ pub fn remote_meeting_id<R: Runtime>(app: &AppHandle<R>, local_session_id: &str)
         .map_err(|error| format!("resolve cloud meeting for external edit: {error}"))
 }
 
+/// Cloud meetings this Mac recorded itself.
+pub fn remote_meeting_ids<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
+    let conn = open(app)?;
+    let mut statement = conn
+        .prepare("SELECT remote_meeting_id FROM recording_sessions WHERE remote_meeting_id IS NOT NULL")
+        .map_err(|error| format!("list cloud meetings recorded here: {error}"))?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .and_then(Iterator::collect)
+        .map_err(|error| format!("list cloud meetings recorded here: {error}"));
+    ids
+}
+
 pub fn mark_operation_done<R: Runtime>(
     app: &AppHandle<R>,
     operation_id: &str,
