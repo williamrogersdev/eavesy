@@ -174,6 +174,7 @@ export async function handleSummarize(
     rolling: !mode.final,
     recorderName: rendered.recorderName,
     chapters: wantChapters,
+    notesLanguage: userRow?.notesLanguage,
   });
   const model = summaryModel(!mode.final);
   const generatedByModel = plan.summary.apiKey ? `byo-anthropic:${model}` : model;

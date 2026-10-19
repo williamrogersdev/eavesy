@@ -21,6 +21,8 @@ export const MODELS = {
   rollingNotes: 'claude-haiku-5-5',
   /** Cleans finished transcripts up for pasting into an agent: many short requests. */
   transcriptCleanup: 'claude-haiku-5-5',
+  /** Transcript translation: many short lines, latency-sensitive. */
+  translate: 'claude-haiku-5-5',
   vision: 'claude-sonnet-4-6',
   embed: 'voyage-3',
 } as const;

@@ -6,6 +6,8 @@ export interface MeSummary {
   email?: string;
   displayName?: string;
   hasMac: boolean;
+  /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
+  notesLanguage: string | null;
 }
 
 function parseMe(value: unknown): MeSummary | null {
@@ -15,6 +17,7 @@ function parseMe(value: unknown): MeSummary | null {
     email: typeof record.email === 'string' ? record.email : undefined,
     displayName: typeof record.displayName === 'string' ? record.displayName : undefined,
     hasMac: record.hasMac === true,
+    notesLanguage: typeof record.notesLanguage === 'string' ? record.notesLanguage : null,
   };
 }
 

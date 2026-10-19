@@ -216,6 +216,93 @@ describe('segment transcription', () => {
       { start_ms: 2 * 240_000 + 1_500, text: 'hi' },
     ]);
   });
+
+  test('labels each line with the language it was heard in', async () => {
+    const t = setup({
+      transcribe: () => ({
+        text: 'hola',
+        transcription_info: { language: 'es', language_probability: 0.98 },
+        segments: [{ start: 0, end: 1, text: 'hola' }],
+      }),
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.addSegment(0, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(t.sqlite.query('SELECT language FROM transcript_segments').all()).toEqual([{ language: 'es' }]);
+  });
+
+  test('an unsure detection is retried in the language the meeting has been in', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return language === 'es'
+          ? { text: 'vale', transcription_info: { language: 'es' }, segments: [{ start: 0, end: 1, text: 'vale' }] }
+          : {
+              text: 'bale',
+              transcription_info: { language: 'gl', language_probability: 0.38 },
+              segments: [{ start: 0, end: 1, text: 'bale' }],
+            };
+      },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(asked).toEqual([undefined, 'es']);
+    expect(t.sqlite.query('SELECT text, language FROM transcript_segments ORDER BY start_ms').all()).toEqual([
+      { text: 'Buenos días a todos', language: 'es' },
+      { text: 'vale', language: 'es' },
+    ]);
+  });
+
+  test('a retry that hears nothing keeps the first pass', async () => {
+    const t = setup({
+      transcribe: (_audio, { language }) =>
+        language === 'es'
+          ? { text: '', segments: [] }
+          : {
+              text: 'bale',
+              transcription_info: { language: 'gl', language_probability: 0.38 },
+              segments: [{ start: 0, end: 1, text: 'bale' }],
+            },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(t.sqlite.query(`SELECT text, language FROM transcript_segments WHERE id != 't0'`).all()).toEqual([
+      { text: 'bale', language: 'gl' },
+    ]);
+  });
+
+  test('a confident switch of language is kept', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return {
+          text: 'right, in English then',
+          transcription_info: { language: 'en', language_probability: 0.95 },
+          segments: [{ start: 0, end: 1, text: 'right, in English then' }],
+        };
+      },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(asked).toEqual([undefined]);
+    expect(t.sqlite.query(`SELECT language FROM transcript_segments WHERE id != 't0'`).all()).toEqual([
+      { language: 'en' },
+    ]);
+  });
 });
 
 describe('rolling summary', () => {

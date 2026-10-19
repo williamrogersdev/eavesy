@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { notesLanguageRule } from '@/lib/transcription/language';
 import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
 import { MODELS } from './client';
 
@@ -80,6 +81,8 @@ export interface MeetingSummaryRequest {
   rolling: boolean;
   recorderName?: string;
   chapters?: boolean;
+  /** The language to write notes in; absent keeps the meeting's own. */
+  notesLanguage?: string | null;
 }
 
 function schemaFor(args: MeetingSummaryRequest) {
@@ -112,7 +115,8 @@ Rules:
 - The title is 5-8 words.
 - Action items are concrete commitments; include an owner only when the transcript makes it explicit.
 - Decisions are concluded, not proposals still under debate.
-- Do not invent facts or attribution. Omit anything the transcript does not support.${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
+- Do not invent facts or attribution. Omit anything the transcript does not support.
+- ${notesLanguageRule(args.notesLanguage)}${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
 }
 
 export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reason' | 'content'>) {
