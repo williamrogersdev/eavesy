@@ -145,8 +145,9 @@ fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> D
     }
 }
 
-/// Delivers a dictation the moment it has text: pasted at the cursor when it
-/// is still in the text box it was in, otherwise put on the clipboard. Never
+/// Delivers a dictation the moment it has text, tidied first: pasted at the
+/// cursor when it is still in the text box it was in, otherwise put on the
+/// clipboard. Never
 /// opens the launcher, and the HUD says which happened. Called once per
 /// dictation: it takes the paste target, so the cloud transcript that follows
 /// does not paste a second time.
@@ -159,6 +160,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
+        let text = crate::transcribe::polish_dictation(&app, &text);
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {
