@@ -83,11 +83,11 @@ export function isHallucination(
  * Whisper can read its prompt back on near-silent audio, which for the custom
  * words is a bare list: "Eavesy, Priya Raman, Kubernetes." A line counts as
  * that only when it is nothing but `minTerms` or more of the user's words and
- * Whisper was not sure it heard speech. One word, or a word in a sentence, is
+ * Whisper scored it as likely not speech; with no score it is kept. One word, or a word in a sentence, is
  * always kept.
  */
 function readsBackGlossary(line: WhisperLine, glossary: readonly string[], minTerms: number): boolean {
-  if (line.noSpeechProb !== undefined && line.noSpeechProb <= 0.3) return false;
+  if (line.noSpeechProb === undefined || line.noSpeechProb <= 0.3) return false;
   const terms = glossary.map((term) => normalize(term).split(' ').filter(Boolean)).filter((term) => term.length > 0);
   const tokens = normalize(line.text).split(' ').filter(Boolean);
   if (terms.length < minTerms || tokens.length === 0) return false;
