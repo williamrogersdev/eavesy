@@ -36,6 +36,7 @@ mod transcribe;
 mod tray;
 mod ui;
 mod updates;
+mod vocabulary;
 
 use tauri::Manager;
 
@@ -210,6 +211,7 @@ pub fn run() {
 
             #[cfg(desktop)]
             updates::check_in_background(&handle);
+            vocabulary::refresh(&handle);
 
             tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
             let sync_handle = handle.clone();

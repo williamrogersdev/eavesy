@@ -19,11 +19,12 @@ describe('WorkersAiSegmentTranscriber', () => {
       audio: new Uint8Array([1, 2, 3]),
       language: 'en',
       contextBlurb: 'Alice and Bob discuss launch readiness.',
+      vocabulary: ['Eavesy', 'Kubernetes'],
     });
 
     expect(input).toMatchObject({
       language: 'en',
-      initial_prompt: 'Alice and Bob discuss launch readiness.',
+      initial_prompt: 'Alice and Bob discuss launch readiness. Eavesy, Kubernetes.',
       vad_filter: true,
     });
     expect(result.segments).toEqual([

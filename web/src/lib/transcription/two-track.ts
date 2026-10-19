@@ -60,9 +60,13 @@ export interface WhisperLine {
  * "bye": a stock phrase is then dropped only when Whisper itself doubted there
  * was speech, not merely because it gave no score.
  */
-export function isHallucination(line: WhisperLine, opts: { lenient?: boolean } = {}): boolean {
+export function isHallucination(
+  line: WhisperLine,
+  opts: { lenient?: boolean; glossary?: readonly string[] } = {},
+): boolean {
   const text = line.text.trim();
   if (!text) return true;
+  if (opts.glossary && readsBackGlossary(line, opts.glossary, opts.lenient ? 3 : 2)) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
@@ -73,6 +77,32 @@ export function isHallucination(line: WhisperLine, opts: { lenient?: boolean } =
   if (!stock) return false;
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
+}
+
+/**
+ * Whisper can read its prompt back on near-silent audio, which for the custom
+ * words is a bare list: "Eavesy, Priya Raman, Kubernetes." A line counts as
+ * that only when it is nothing but `minTerms` or more of the user's words and
+ * Whisper scored it as likely not speech; with no score it is kept. One word, or a word in a sentence, is
+ * always kept.
+ */
+function readsBackGlossary(line: WhisperLine, glossary: readonly string[], minTerms: number): boolean {
+  if (line.noSpeechProb === undefined || line.noSpeechProb <= 0.3) return false;
+  const terms = glossary.map((term) => normalize(term).split(' ').filter(Boolean)).filter((term) => term.length > 0);
+  const tokens = normalize(line.text).split(' ').filter(Boolean);
+  if (terms.length < minTerms || tokens.length === 0) return false;
+  // The most whole glossary terms that tile the line end to end, or -1.
+  const most: number[] = new Array<number>(tokens.length + 1).fill(-1);
+  most[0] = 0;
+  for (let at = 0; at < tokens.length; at += 1) {
+    if (most[at] < 0) continue;
+    for (const term of terms) {
+      if (term.every((word, i) => tokens[at + i] === word)) {
+        most[at + term.length] = Math.max(most[at + term.length], most[at] + 1);
+      }
+    }
+  }
+  return most[tokens.length] >= minTerms;
 }
 
 export interface AttributedLine {

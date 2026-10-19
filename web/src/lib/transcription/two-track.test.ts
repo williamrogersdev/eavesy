@@ -113,3 +113,21 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'something', noSpeechProb: 0.9 })).toBe(true);
   });
 });
+
+describe('glossary read-back', () => {
+  const glossary = ['Eavesy', 'Priya Raman', 'Kubernetes'];
+
+  test('drops a bare list of the custom words Whisper read back from its prompt', () => {
+    expect(isHallucination({ text: 'Eavesy, Priya Raman, Kubernetes.', noSpeechProb: 0.6 }, { glossary })).toBe(true);
+    expect(isHallucination({ text: 'Priya Raman, Eavesy.', noSpeechProb: 0.5 }, { glossary })).toBe(true);
+  });
+
+  test('keeps real speech that uses the custom words', () => {
+    expect(isHallucination({ text: 'Priya Raman.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Kubernetes.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Ask Priya Raman about Eavesy.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.05 }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary, lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Priya Raman, Kubernetes.' }, { glossary })).toBe(false);
+  });
+});

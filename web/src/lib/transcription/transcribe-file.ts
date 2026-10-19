@@ -3,6 +3,7 @@ import type { TranscriptSegment } from './types';
 import { audioBase64 } from './base64';
 import { whisperLanguage } from './language';
 import { isHallucination } from './two-track';
+import { whisperPrompt } from './vocabulary';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -27,6 +28,7 @@ export async function transcribeAudioFile(opts: {
   audio: Buffer | Uint8Array;
   language?: string | null;
   contextBlurb?: string | null;
+  vocabulary?: readonly string[];
   voiceNote?: boolean;
   ai?: FileTranscriptionRunner;
 }): Promise<FileTranscriptionResult> {
@@ -37,6 +39,7 @@ export async function transcribeAudioFile(opts: {
 
   const bytes = opts.audio instanceof Uint8Array ? opts.audio : new Uint8Array(opts.audio);
   const language = whisperLanguage(opts.language);
+  const prompt = whisperPrompt({ contextBlurb: opts.contextBlurb, vocabulary: opts.vocabulary });
   const run = async (vadFilter: boolean) =>
     mapWhisperResult(
       await ai.run(WHISPER_MODEL, {
@@ -45,18 +48,21 @@ export async function transcribeAudioFile(opts: {
         ...(language ? { language } : {}),
         vad_filter: vadFilter,
         condition_on_previous_text: false,
-        ...(opts.contextBlurb ? { initial_prompt: opts.contextBlurb } : {}),
+        ...(prompt ? { initial_prompt: prompt } : {}),
       }),
       language,
     );
 
   const first = await run(true);
-  const heard = keepHeard(first, { lenient: opts.voiceNote });
+  const heard = keepHeard(first, { lenient: opts.voiceNote, glossary: opts.vocabulary });
   if (heard.segments.length > 0 || !opts.voiceNote) return heard;
-  return keepHeard(await run(false), { lenient: false });
+  return keepHeard(await run(false), { lenient: false, glossary: opts.vocabulary });
 }
 
-function keepHeard(result: FileTranscriptionResult, opts: { lenient?: boolean }): FileTranscriptionResult {
+function keepHeard(
+  result: FileTranscriptionResult,
+  opts: { lenient?: boolean; glossary?: readonly string[] },
+): FileTranscriptionResult {
   const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };
 }
