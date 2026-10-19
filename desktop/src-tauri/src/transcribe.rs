@@ -108,8 +108,12 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
     });
 }
 
-/// How long a paste waits for the tidied words before it types them as heard.
-const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a paste waits for the tidied words before it types them as heard:
+/// past this the user has likely moved on from the box they spoke into.
+const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// One client for every polish, so each dictation reuses a warm connection.
+static POLISH_CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
 
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
@@ -128,12 +132,10 @@ pub fn polish_dictation(app: &AppHandle, text: &str) -> String {
 }
 
 fn polish_with(credential: &settings::Credential, text: &str, timeout: std::time::Duration) -> Result<String, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = POLISH_CLIENT.get_or_init(reqwest::blocking::Client::new);
     let resp = client
         .post(format!("{}/api/dictations/polish", credential.base.trim_end_matches('/')))
+        .timeout(timeout)
         .bearer_auth(&credential.token)
         .json(&serde_json::json!({ "text": text }))
         .send()

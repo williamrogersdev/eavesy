@@ -47,6 +47,8 @@ const CASES: Case[] = [
   },
 ];
 
+const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const key = process.env.ANTHROPIC_API_KEY;
 if (!key) {
   console.log('Set ANTHROPIC_API_KEY to run the polish bench.');
@@ -63,8 +65,12 @@ for (const item of CASES) {
   });
   const ms = Date.now() - started;
   const lower = result.text.toLowerCase();
-  const lost = item.keep.filter((word) => !result.text.includes(word));
-  const kept = (item.drop ?? []).filter((word) => new RegExp(`\\b${word}\\b`).test(lower));
+  // The user's own words must come back spelled exactly; anything else in any case.
+  const exact = new Set(item.vocabulary ?? []);
+  const lost = item.keep.filter((word) =>
+    exact.has(word) ? !result.text.includes(word) : !lower.includes(word.toLowerCase()),
+  );
+  const kept = (item.drop ?? []).filter((word) => new RegExp(`\\b${escape(word)}\\b`).test(lower));
   const misses = [
     ...(result.polished ? [] : ['fell back']),
     ...lost.map((word) => `lost "${word}"`),

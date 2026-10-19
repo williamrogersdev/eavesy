@@ -14,6 +14,16 @@ export function anthropicForUser(userKey: string): Anthropic {
   return new Anthropic({ apiKey: userKey });
 }
 
+/** The user's own key when they brought one, else the platform's; null when neither is set. */
+export function anthropicOrNull(userKey?: string | null): Anthropic | null {
+  if (userKey) return anthropicForUser(userKey);
+  try {
+    return anthropic();
+  } catch {
+    return null;
+  }
+}
+
 export const MODELS = {
   summary: 'claude-sonnet-4-6',
   /** Rolling notes while a meeting is live: frequent, short, latency-sensitive. */

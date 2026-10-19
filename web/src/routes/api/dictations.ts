@@ -2,11 +2,13 @@ import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as dictationsRepo from '@/db/repo/dictations';
+import * as usersRepo from '@/db/repo/users';
 import { transcriptionPrefs } from '@/db/repo/users';
 import { polishDictation } from '@/lib/ai/agent-transcript';
-import { anthropic } from '@/lib/ai/client';
+import { anthropicOrNull } from '@/lib/ai/client';
 import { applyTemplate } from '@/lib/ai/clean-dictation';
 import { combinedContext } from '@/lib/projects';
+import { resolveModelPlan } from '@/lib/providers/router';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { meetingFolderSlug } from '@/lib/utils';
 import { guardUserQuota } from '@/server/rate-limit';
@@ -48,8 +50,10 @@ export const Route = createFileRoute('/api/dictations')({
         try {
           if (templatePrompt) cleaned = await applyTemplate(transcription.text, templatePrompt);
           else {
+            const user = actor.isAnonymous ? null : await usersRepo.getById(db, actor.userId);
+            const client = anthropicOrNull(resolveModelPlan(user).summary.apiKey);
             const context = combinedContext(null, null, prefs.vocabulary);
-            cleaned = (await polishDictation(anthropic(), { text: transcription.text, context })).text;
+            cleaned = (await polishDictation(client, { text: transcription.text, context })).text;
           }
         } catch (err) {
           console.warn('[dictation] cleanup failed', err);

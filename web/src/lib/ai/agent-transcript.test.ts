@@ -29,6 +29,19 @@ describe('polishDictation', () => {
     expect(calls[0].content).toContain(said);
   });
 
+  test('accepts a long dictation cleaned into paragraphs and a list', async () => {
+    const long =
+      'okay so a few things um first fix the login bug then uh update the onboarding screens and third send the release notes to the team before Friday also the deck needs new screenshots';
+    const { client, calls } = fakeClient(
+      'Okay, a few things:\n\n1. Fix the login bug.\n2. Update the onboarding screens.\n3. Send the release notes to the team before Friday.\n\nAlso, the deck needs new screenshots.',
+    );
+    const result = await polishDictation(client, { text: long, context: null });
+    expect(result.polished).toBe(true);
+    expect(result.text).toContain('\n2. Update the onboarding screens.');
+    expect(calls[0].system).toContain('no markdown');
+    expect(calls[0].system).not.toContain('in backticks');
+  });
+
   test('keeps the plain cleanup when the model answers instead of cleaning', async () => {
     const { client } = fakeClient('Sure! I have rescheduled the meeting to Thursday for you and notified everyone.');
     const result = await polishDictation(client, { text: said, context: null });
