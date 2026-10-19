@@ -66,9 +66,10 @@ pub struct Settings {
     /// On-device live captions for meetings and voice notes (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_captions: Option<bool>,
-    /// Copy new macOS screenshots into the history (off unless turned on).
-    #[serde(default)]
-    pub auto_import_screenshots: bool,
+    /// Copy new macOS screenshots into the history (on unless turned off). A new
+    /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_screenshots: Option<bool>,
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
@@ -83,6 +84,10 @@ impl Settings {
 
     pub fn live_captions(&self) -> bool {
         self.live_captions.unwrap_or(true)
+    }
+
+    pub fn add_screenshots(&self) -> bool {
+        self.add_screenshots.unwrap_or(true)
     }
 
     pub fn capture_sounds(&self) -> bool {
@@ -109,7 +114,7 @@ impl Default for Settings {
             api_base_url: None,
             segment_sec: None,
             live_captions: None,
-            auto_import_screenshots: false,
+            add_screenshots: None,
             capture_sounds: None,
         }
     }
@@ -491,6 +496,19 @@ mod tests {
         )
         .unwrap();
         assert!(saved.live_captions(), "settings saved before this existed");
+    }
+
+    #[test]
+    fn screenshots_are_added_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.add_screenshots());
+        settings.add_screenshots = Some(false);
+        assert!(!settings.add_screenshots());
+        let saved: Settings = serde_json::from_str(
+            r#"{"toggle_hotkey":"a","dictation_hotkey":"b","auto_import_screenshots":false}"#,
+        )
+        .unwrap();
+        assert!(saved.add_screenshots(), "the old off-by-default value");
     }
 
     #[derive(Default)]

@@ -357,8 +357,8 @@ export interface Settings {
   launcher_position?: LauncherPosition;
   /** Absent means on. */
   live_captions?: boolean;
-  /** Copy new macOS screenshots into the history. */
-  auto_import_screenshots?: boolean;
+  /** Copy new macOS screenshots into the history. Absent means on. */
+  add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
 }
