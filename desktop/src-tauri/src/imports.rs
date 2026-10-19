@@ -326,8 +326,10 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             Err(error) => Err(error.to_string()),
         };
         if let Err(error) = trashed {
-            let _ = store::append(&app, recording);
-            undismiss();
+            match store::append(&app, recording) {
+                Ok(()) => undismiss(),
+                Err(append_error) => eprintln!("delete: could not put {id} back after the Trash refused: {append_error}"),
+            }
             let _ = app.emit("recordings:updated", ());
             return Err(error);
         }

@@ -29,7 +29,9 @@ export const Route = createFileRoute('/api/sessions/')({
         }
         const search = new URL(request.url).searchParams;
         const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
-        const offset = Math.min(Math.max(Math.floor(Number(search.get('offset')) || 0), 0), 100_000);
+        const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
+        // Past the cap the list reads as ended, so a client paging through wraps around.
+        if (offset > 100_000) return Response.json({ items: [] });
         const items = await getDb()
           .select({
             id: meetings.id,

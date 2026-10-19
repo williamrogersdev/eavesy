@@ -52,6 +52,7 @@ describe('GET /api/sessions', () => {
     expect(await ids('?limit=1')).toEqual(['m_other']);
     expect(await ids('?limit=1&offset=1')).toEqual(['m_web']);
     expect(await ids('?limit=1&offset=2')).toEqual([]);
+    expect(await ids('?offset=1000000')).toEqual([]);
   });
 
   it('lists every finished meeting for a caller without a device', async () => {

@@ -156,17 +156,24 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         }
         let listed: CloudMeetings = response.json().await.context("decode cloud meetings")?;
         let last_page = listed.items.len() < PAGE;
-        let next = if last_page { 0 } else if offset > 0 { offset + PAGE } else { state.scan_offset };
-        if next != state.scan_offset {
-            update_state(app, |state| state.scan_offset = next).map_err(|error| anyhow!(error))?;
-        }
         wanted.extend(
             listed
                 .items
                 .into_iter()
                 .filter(|meeting| !known.contains(&meeting.id) && !failed_recently(&meeting.id)),
         );
-        if last_page || wanted.len() >= PER_PULL {
+        let enough = wanted.len() >= PER_PULL;
+        // A page this pull did not take everything from is read again next time.
+        let next = match (last_page, offset > 0, enough) {
+            (true, _, _) => 0,
+            (false, true, true) => offset,
+            (false, true, false) => offset + PAGE,
+            (false, false, _) => state.scan_offset,
+        };
+        if next != state.scan_offset {
+            update_state(app, |state| state.scan_offset = next).map_err(|error| anyhow!(error))?;
+        }
+        if last_page || enough {
             break;
         }
         if index == offsets.len() - 1 {
@@ -526,5 +533,40 @@ mod tests {
         let state = load_state(handle).unwrap();
         assert!(state.pulled.contains("remote-1"));
         assert!(!state.dismissed.contains("remote-1"));
+    }
+
+    #[tokio::test]
+    async fn a_page_the_pull_did_not_finish_is_read_again() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let dismissed = |range: std::ops::Range<usize>| -> Vec<serde_json::Value> {
+            range.map(|index| listed(&format!("known-{index}"), "Known")).collect()
+        };
+        update_state(handle, |state| state.dismissed.extend((0..PAGE * 2).map(|index| format!("known-{index}")))).unwrap();
+        let mut second: Vec<serde_json::Value> = (0..PER_PULL + 1).map(|index| listed(&format!("new-{index}"), "New")).collect();
+        second.extend(dismissed(PAGE..PAGE * 2 - PER_PULL - 1));
+        for (offset, items) in [(0, dismissed(0..PAGE)), (PAGE, second), (PAGE * 2, Vec::new())] {
+            Mock::given(method("GET"))
+                .and(path("/api/sessions"))
+                .and(wiremock::matchers::query_param("offset", offset.to_string()))
+                .respond_with(listing(serde_json::Value::Array(items)))
+                .mount(&server)
+                .await;
+        }
+        for index in 0..=PER_PULL {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/sessions/new-{index}/result")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(result_body("New")))
+                .mount(&server)
+                .await;
+        }
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), PER_PULL);
+        assert_eq!(load_state(handle).unwrap().scan_offset, PAGE, "the page with one meeting left is read again");
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+        assert_eq!(load_state(handle).unwrap().scan_offset, 0);
     }
 }
