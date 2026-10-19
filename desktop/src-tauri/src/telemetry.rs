@@ -492,8 +492,12 @@ mod tests {
                 "could not create ~/…",
             ),
             (
-                "recording at /Volumes/Archive/Meetings/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
+                "recording at /Volumes/Réunions/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
                 "recording at <recordings>/…: No such file or directory (os error 2)",
+            ),
+            (
+                "open file:///Volumes/Réunions/Board offsite/notes.md: Permission denied (os error 13)",
+                "open <recordings>/…: Permission denied (os error 13)",
             ),
             (
                 "file:///private/var/folders/xy/Board offsite.m4a missing",
@@ -505,18 +509,10 @@ mod tests {
                 "The file “…” couldn’t be opened.",
             ),
         ];
-        super::set_recordings_root(std::path::Path::new("/Volumes/Archive/Meetings"));
+        super::set_recordings_root(std::path::Path::new("/Volumes/Réunions"));
         for (input, expected) in cases {
             assert_eq!(scrub_text(input), expected, "input: {input}");
         }
-    }
-
-    #[test]
-    fn file_urls_under_a_non_ascii_root_are_scrubbed() {
-        super::set_recordings_root(std::path::Path::new("/Volumes/Réunions"));
-        let scrubbed = scrub_text("open file:///Volumes/Réunions/Board offsite/notes.md: Permission denied (os error 13)");
-        assert!(!scrubbed.contains("Board offsite"), "{scrubbed}");
-        assert!(scrubbed.ends_with(": Permission denied (os error 13)"), "{scrubbed}");
     }
 
     #[test]
