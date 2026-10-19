@@ -6,6 +6,7 @@ import { anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { toTurns, transcriptKind } from '@/lib/transcription/agent-transcript';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { reportError } from '@/server/observability';
 import { openUserKeys } from '@/server/secret-box';
@@ -40,7 +41,7 @@ export async function handleAgentTranscript(meetingId: string, db: Db, env: Proc
   const result = await buildAgentTranscript(apiKey ? anthropicForUser(apiKey) : null, {
     turns,
     kind,
-    context: combinedContext(meeting.contextBlurb, project),
+    context: combinedContext(meeting.contextBlurb, project, parseVocabulary(userRow?.customVocabularyJson)),
     meta: {
       title: meeting.title,
       startedAt: meeting.startedAt,

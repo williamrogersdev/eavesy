@@ -30,6 +30,11 @@ describe('matchProject', () => {
   });
 });
 
+test('combinedContext adds the user\'s custom words after the project', () => {
+  expect(combinedContext('Standup.', null, ['Kubernetes'])).toBe('More terms (spell exactly like this): Kubernetes\n\nStandup.');
+  expect(combinedContext(null, null, [])).toBeNull();
+});
+
 test('projectTerms lists the vocabulary, then the names in the people line', () => {
   expect(projectTerms({ vocabulary: ['Tauri', 'D1'], people: 'Maya (design), Alex' })).toEqual(['Tauri', 'D1', 'Maya', 'Alex']);
   expect(projectTerms(null)).toEqual([]);

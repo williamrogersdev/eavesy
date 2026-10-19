@@ -115,7 +115,12 @@ export function projectContext(project: Project | null | undefined): string {
   return lines.join('\n');
 }
 
-export function combinedContext(contextBlurb: string | null | undefined, project: Project | null | undefined) {
-  const parts = [projectContext(project), contextBlurb?.trim() ?? ''].filter(Boolean);
+export function combinedContext(
+  contextBlurb: string | null | undefined,
+  project: Project | null | undefined,
+  userVocabulary: readonly string[] = [],
+) {
+  const words = userVocabulary.length > 0 ? `More terms (spell exactly like this): ${userVocabulary.join(', ')}` : '';
+  const parts = [projectContext(project), words, contextBlurb?.trim() ?? ''].filter(Boolean);
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
