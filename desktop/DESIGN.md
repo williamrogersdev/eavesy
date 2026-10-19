@@ -147,8 +147,10 @@ never animates to ask for attention.
   one coral dot. Paused/mic off uses closed-eye dashes. It is never a
   microphone.
 - **App icon:** cream `#FBF7F0` squircle with the Little Snoop at 78% scale,
-  lens raised. Coat `#2B2523`, band `#4A403C`, lens `#FF5A3C`. The icon is
-  the one place the coral shows without a recording: it's the brand mark.
+  lens raised. Coat `#2B2523`, band `#4A403C`, lens `#FF5A3C`. The static
+  brand mark (app icon, favicon `web/public/icon.svg`, OG image) is the one
+  place the coral shows without a recording. Anything live, the `Mascot`
+  component included, shows it only while recording.
 - **Wordmark:** "eavesy" in charcoal with a coral full stop.
 - **Toasts:** 16px happy/confused glyph before the text.
 

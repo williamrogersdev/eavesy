@@ -4,7 +4,8 @@ import { useId, type CSSProperties } from 'react';
  * Eavesy: the Little Snoop, a charcoal bean in a fedora. The hat lifts off
  * its brow only while the mic is live, and the coral lens appears only while
  * recording. That makes the character the privacy indicator, so never fake
- * `listening` or `recording`.
+ * `listening` or `recording`. The static brand mark (app icon, favicon, OG
+ * image) is the one exception: it always shows the lens (desktop/DESIGN.md §3).
  *
  * Calm by default: it holds a pose and blinks now and then. It never animates
  * to ask for attention. Under reduced motion it holds the pose only (the hat
@@ -77,7 +78,7 @@ const CSS = `
   .evm *{animation:none!important;transition:none!important}
   .evm-z{opacity:0}
   .evm-bob{transform:none!important}
-  .evm-listening .evm-hat{transform:translateY(-3px)!important}
+  .evm-listening .evm-hat{transform:translateY(-3px) rotate(-3deg)!important}
 }
 `;
 
@@ -150,7 +151,7 @@ export function Mascot({
                 <circle className="evm-glint" cx="47.8" cy="49.8" r="1.3" />
               </g>
             )}
-            {recording && mini && <circle className="evm-rec" cx="51" cy="52" r="7" />}
+            {recording && mini && <circle className="evm-rec" cx="51" cy="50" r="7" />}
           </g>
         </g>
 
