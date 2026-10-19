@@ -1,6 +1,7 @@
 'use client';
 
-import { CheckCircle2, Loader2 } from 'lucide-react';
+import { Check } from 'lucide-react';
+import { Mascot } from '@/components/launcher/ui';
 
 export function ProcessingProgress({
   hasTranscript,
@@ -15,23 +16,26 @@ export function ProcessingProgress({
     { label: 'Building your brief', done: hasBrief, active: hasTranscript && !hasBrief },
   ];
   return (
-    <div role="status" aria-label="Recording processing progress" className="rounded-md border border-border bg-muted/30 px-3 py-2.5">
-      <p className="text-sm font-medium">Your recording is safe. Eavesy is finishing the useful part.</p>
+    <div role="status" aria-label="Recording processing progress" className="flex items-start gap-3 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3">
+      <Mascot size={36} state="thinking" />
+      <div className="min-w-0 flex-1">
+      <p className="font-round text-sm font-bold text-ev-ink">Your recording is safe. I&apos;m writing it down.</p>
       <ol className="mt-2 grid gap-1.5 sm:grid-cols-3">
         {steps.map((step) => (
-          <li key={step.label} className="flex items-center gap-2 text-xs text-muted-foreground">
+          <li key={step.label} className={step.done || step.active ? 'flex items-center gap-2 text-xs text-ev-ink' : 'flex items-center gap-2 text-xs text-ev-ink-3'}>
             {step.done ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-accent" />
+              <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-ev-leaf text-ev-paper"><Check className="h-2.5 w-2.5" strokeWidth={3} /></span>
             ) : step.active ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />
+              <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-ev-slate-soft border-t-ev-slate" />
             ) : (
-              <span className="h-4 w-4 shrink-0 rounded-full border border-border" />
+              <span className="h-4 w-4 shrink-0 rounded-full shadow-[inset_0_0_0_1.5px_var(--ev-line-strong)]" />
             )}
             {step.label}
           </li>
         ))}
       </ol>
-      <p className="mt-2 text-xs text-muted-foreground">You can leave this page; processing continues automatically.</p>
+      <p className="mt-2 text-xs text-ev-ink-2">You can leave this page. It keeps going without you.</p>
+      </div>
     </div>
   );
 }

@@ -436,13 +436,17 @@ fn spawn_capture(
     if mode == "screen" {
         args.extend(["--mic".into(), if mic { "true" } else { "false" }.into()]);
     } else {
-        // Captions run in the system language; on-device recognition either
-        // supports it or says it doesn't. Dictation always runs them for its
-        // paste; meetings and voice notes only with the Live captions setting.
+        // Captions run in the account's transcription language, or with
+        // `auto` start in the system's and follow what is spoken. Dictation
+        // always runs them for its paste; meetings and voice notes only with
+        // the Live captions setting.
         if dictation {
             args.extend(["--captions".into(), "mic".into()]);
         } else if crate::settings::load(app).live_captions() {
             args.extend(["--captions".into(), "all".into()]);
+        }
+        if let Some(language) = crate::vocabulary::cached_language(app) {
+            args.extend(["--language".into(), language.into()]);
         }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
@@ -815,6 +819,44 @@ fn stream_events(
     stopped_on_its_own(&app, &session_id, warning);
     });
     rx
+}
+
+/// Tells a recording's capture engine what language the cloud heard last, so
+/// captions set to follow the spoken language can move to it. True once the
+/// engine has the line. The write goes to a copy of the engine's stdin, taken
+/// under the lock, and never waits: if the engine has stopped reading, the
+/// hint fails and the poller sends it again next time.
+pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
+    use std::os::fd::{AsFd, AsRawFd};
+    let Some(language) = crate::vocabulary::clean_language(language) else { return false };
+    let stdin = {
+        let captures = app.state::<Captures>();
+        let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(session) = sessions.get(session_id) else { return false };
+        match session.stdin.as_fd().try_clone_to_owned() {
+            Ok(fd) => std::fs::File::from(fd),
+            Err(_) => return false,
+        }
+    };
+    let line = format!("{}\n", serde_json::json!({ "language": language }));
+    write_without_waiting(stdin.as_raw_fd(), line.as_bytes())
+}
+
+/// One write to a pipe that may be full: all of `bytes` or nothing. Lines this
+/// short are under PIPE_BUF, so the write is atomic. The pipe's flags are
+/// shared with the engine's own stdin, so they are put back straight after;
+/// a "stop" that meets them in between still falls back to the stop timeout.
+fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
+    // SAFETY: `fd` is an open descriptor owned by the caller for this call.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+            return false;
+        }
+        let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+        libc::fcntl(fd, libc::F_SETFL, flags);
+        usize::try_from(written).is_ok_and(|written| written == bytes.len())
+    }
 }
 
 fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>) {
@@ -1330,6 +1372,30 @@ fn reap_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hint_to_an_engine_that_stopped_reading_fails_instead_of_waiting() {
+        use std::os::fd::AsRawFd;
+        let mut child = Command::new("/bin/sleep").arg("5").stdin(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let fd = stdin.as_raw_fd();
+        assert!(write_without_waiting(fd, b"{\"language\":\"es\"}\n"));
+        let chunk = [b'x'; 4096];
+        let mut full = false;
+        for _ in 0..1024 {
+            if !write_without_waiting(fd, &chunk) {
+                full = true;
+                break;
+            }
+        }
+        assert!(full, "the pipe filled without blocking");
+        assert!(!write_without_waiting(fd, b"{\"language\":\"fr\"}\n"));
+        // SAFETY: reading the flags of an open descriptor.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert_eq!(flags & libc::O_NONBLOCK, 0, "the engine's stdin is left blocking");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     #[test]
     fn capture_log_is_rotated_once_it_is_large() {

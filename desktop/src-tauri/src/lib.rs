@@ -16,6 +16,7 @@ mod shortcut_conflicts;
 mod hotkeys;
 mod hud;
 mod imports;
+mod install_location;
 #[cfg(target_os = "macos")]
 mod cf;
 mod cloud_pull;
@@ -215,6 +216,8 @@ pub fn run() {
                 hotkeys::show_launcher(&handle);
             }
 
+            #[cfg(target_os = "macos")]
+            install_location::offer_move_on_launch(&handle);
             #[cfg(desktop)]
             updates::check_in_background(&handle);
             vocabulary::refresh(&handle);

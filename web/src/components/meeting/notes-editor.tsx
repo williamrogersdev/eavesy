@@ -46,16 +46,16 @@ export function NotesEditor({ meetingId, initial }: { meetingId: string; initial
 
   return (
     <Section
-      title="My notes"
+      title="Your notes"
       action={
         status === 'saving' ? (
-          <span className="text-xs text-muted-foreground">Saving…</span>
+          <span className="text-xs text-ev-ink-3">Saving…</span>
         ) : status === 'saved' ? (
-          <span className="inline-flex items-center gap-1 text-xs text-accent">
+          <span className="inline-flex items-center gap-1 text-xs text-ev-leaf">
             <Check className="h-3 w-3" /> Saved
           </span>
         ) : status === 'error' ? (
-          <button type="button" onClick={() => void save(value)} className="text-xs font-medium text-danger hover:underline">
+          <button type="button" onClick={() => void save(value)} className="text-xs font-medium text-ev-warn-ink hover:underline">
             Not saved · Retry
           </button>
         ) : null
@@ -69,8 +69,8 @@ export function NotesEditor({ meetingId, initial }: { meetingId: string; initial
           void save(value);
         }}
         rows={5}
-        placeholder="Add your own notes — they're saved to this meeting and included when you export."
-        className="w-full rounded-md border border-border bg-background p-3 text-sm leading-relaxed outline-none focus:border-accent/50"
+        placeholder="Jot anything down. It's saved with this recording and included in Copy for AI and exports."
+        className="w-full resize-y rounded-[var(--ev-r-ctl)] bg-ev-well p-3 text-sm leading-relaxed text-ev-ink outline-none placeholder:text-ev-ink-3 focus:bg-ev-paper focus:shadow-[var(--ev-focus)]"
       />
     </Section>
   );

@@ -1,0 +1,63 @@
+---
+title: Screenshots, clipboard and notes
+description: Keep a screenshot, whatever you copied, a quick note, or a file you drop in.
+category: Capturing
+order: 13
+---
+
+Not everything an agent needs is a recording. The launcher also keeps
+screenshots, clipboard text and images, notes, and files.
+
+On the Mac, these stay on your disk. They are not uploaded, so they don't
+appear on the web or over MCP.
+
+## Screenshots
+
+Open the launcher with **⌘⇧Space** and choose **Screenshot**, then pick an
+area of your screen. Screenshots need macOS 14 or later and the Screen
+Recording permission.
+
+Screenshots you take with macOS itself can be added too. Turn on
+**Settings → Screenshots → Add macOS screenshots automatically**.
+
+## Clipboard
+
+Copy something, open the launcher, and press **⌘V**. Text is saved as a note
+and an image is saved as a PNG.
+
+## Notes
+
+Press **N** in the launcher to jump to the composer and write a quick note. The
+composer also takes pasted text and dropped files.
+
+## Import files
+
+Drop a file onto the launcher to keep a copy of it:
+
+- images (PNG, JPEG, HEIC, GIF, WebP, TIFF, BMP) are kept as images,
+- Markdown and plain text files become notes, up to 1 MB, and
+- audio (M4A, MP3, WAV, AAC, AIFF, CAF, FLAC) and video (MP4, MOV, M4V) files
+  are kept as they are.
+
+The capture takes the file's name as its title.
+
+Folders can't be dropped. Drop the files inside instead.
+
+## What gets saved
+
+Each item gets its own folder in your recordings folder, with one file and a
+`capture.json`: `note.md` for notes, `image.png` for images, or
+`screenshot.png` for screenshots. Imported files keep their extension, for
+example `image.jpg` or `audio.mp3`. See [your files](/docs/session-folder-format) for
+names and layout.
+
+## On the web
+
+The web app has its own capture bar for screenshots, screen and webcam video,
+and audio. Those are uploaded to your account. See
+[Eavesy on the web](/docs/browser-recorder).
+
+## Next
+
+- [Your files](/docs/session-folder-format)
+- [Give your agent context](/docs/context-for-agents)

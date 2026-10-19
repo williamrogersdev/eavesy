@@ -151,14 +151,14 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
   };
 
   const isLive = state === 'recording' || state === 'paused';
-  const panel = 'flex w-full flex-col gap-3 rounded-lg border border-border p-4';
+  const panel = 'flex w-full flex-col gap-3 rounded-[var(--ev-r-pop)] border border-ev-line p-4';
 
   if (!isLive && uploadError && unsaved && !finishing) {
     return (
       <div role="alert" className={panel}>
         <div>
           <p className="text-sm font-medium">Your recording hasn’t finished uploading</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-xs text-ev-ink-2">
             It’s safe on this page. Check your connection and try again, or download a copy. ({uploadError})
           </p>
         </div>
@@ -177,10 +177,10 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
   if (!isLive && finishing) {
     return (
       <div role="status" className={cn(panel, 'flex-row items-center')}>
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-ev-ink-2" />
         <div>
           <p className="text-sm font-medium">Finishing your upload…</p>
-          <p className="text-xs text-muted-foreground">Keep this page open for a moment.</p>
+          <p className="text-xs text-ev-ink-2">Keep this page open for a moment.</p>
         </div>
       </div>
     );
@@ -196,22 +196,22 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
             onClick={() => void handleStart()}
             disabled={starting}
             aria-label={starting ? 'Requesting recording permission' : 'Start recording'}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-danger text-white transition hover:brightness-110 active:scale-95 disabled:cursor-wait disabled:opacity-60"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-slate transition hover:bg-action-hover active:scale-95 disabled:cursor-wait disabled:opacity-60"
           >
             {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
           </button>
           <div className="min-w-0">
             <p className="text-sm font-medium">{starting ? 'Starting…' : 'Start recording'}</p>
-            <p className="text-xs text-muted-foreground">Your browser will ask to use the microphone.</p>
+            <p className="text-xs text-ev-ink-2">Your browser will ask to use the microphone.</p>
           </div>
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
+        <label className="flex items-center gap-2 text-xs text-ev-ink-2 select-none">
           <input
             type="checkbox"
             checked={captureSystemAudio}
             onChange={(e) => setCaptureSystemAudio(e.target.checked)}
             disabled={starting}
-            className="h-3.5 w-3.5 rounded border-border accent-[var(--accent)]"
+            className="h-3.5 w-3.5 rounded border-ev-line accent-[var(--accent)]"
           />
           Also record audio from a shared tab or screen
         </label>
@@ -220,12 +220,12 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
   }
 
   return (
-    <div className={cn(panel, 'sticky top-2 z-40 flex-row items-center bg-background')}>
+    <div className={cn(panel, 'sticky top-2 z-40 flex-row items-center bg-ev-paper')}>
       <span
         className={cn('h-2.5 w-2.5 shrink-0 rounded-full bg-danger', state === 'recording' ? 'animate-recording-pulse' : 'opacity-40')}
       />
-      <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
-      <span className="text-xs text-muted-foreground">{state === 'paused' ? 'Paused' : 'Recording'}</span>
+      <span className="font-round text-sm tabular-nums">{formatDuration(elapsed)}</span>
+      <span className="text-xs text-ev-ink-2">{state === 'paused' ? 'Paused' : 'Recording'}</span>
       <span className="hidden items-center gap-3 sm:flex">
         <LevelMeter label="mic" level={micLevel} />
         {captureSystemAudio ? <LevelMeter label="tab" level={systemLevel} /> : null}
@@ -249,9 +249,9 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
 
 function LevelMeter({ label, level }: { label: string; level: number }) {
   return (
-    <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+    <span className="flex items-center gap-1.5 text-[10px] text-ev-ink-2">
       {label}
-      <span className="flex h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+      <span className="flex h-1.5 w-14 overflow-hidden rounded-full bg-ev-well">
         <span className="h-full bg-foreground/60 transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
       </span>
     </span>

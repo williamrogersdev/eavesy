@@ -49,6 +49,14 @@ struct CaptionSummary: Equatable {
     }
 }
 
+/// How a `LiveCaptions.switchEngine` request ended.
+enum EngineSwitch: Equatable {
+    case switched
+    /// A later switch was asked for before this one's engine was ready.
+    case superseded
+    case unavailable(String)
+}
+
 struct CaptionUnavailable: Error {
     let reason: String
 }
@@ -65,7 +73,8 @@ protocol SpeechEngine: AnyObject {
     var name: String { get }
     func start(sink: CaptionSink) throws
     func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws
-    /// Ends input and reports any last finals, then calls `done`.
+    /// Ends input and reports any last finals, then calls `done`. Also called,
+    /// to let it go, on an engine that never started; it must still call `done`.
     func finish(_ done: @escaping () -> Void)
 }
 
@@ -76,6 +85,9 @@ protocol SpeechEngine: AnyObject {
 /// `maxBacklog`, and audio held while the engine is not ready yet (say, while
 /// the permission prompt is up) at `maxWaitingFrames`, oldest dropped first.
 /// Every dropped buffer is counted and reported in `captions_done`.
+/// `switchEngine` swaps in another engine mid-recording (another language):
+/// the old one keeps its audio and settles its last finals, the new one takes
+/// every buffer from then on, so no audio is lost or captioned twice.
 final class LiveCaptions: CaptionSink {
     /// Buffers queued for the engine; past this it is not keeping up.
     static let maxBacklog = 500
@@ -93,16 +105,29 @@ final class LiveCaptions: CaptionSink {
     private var failed = false
     private var finishing = false
     private var backlog = 0
+    private let onFinal: ((String, Int64) -> Void)?
+    /// The sink each engine reports to; a replaced engine's can no longer turn captions off.
+    private var sinks: [EngineSink] = []
+    /// Replaced engines still settling their last finals.
+    private let draining = DispatchGroup()
+    /// The latest `switchEngine` request; an earlier one that answers late loses.
+    private var switches = 0
+    /// Switches asked for whose engine has not answered yet.
+    private var pendingSwitches = 0
+    /// Why the first engine could not run, while a switch might still.
+    private var firstFailure: String?
 
     /// `makeEngine` may answer later (authorization and model checks are async);
     /// audio fed meanwhile is held, up to `maxWaitingFrames`.
     init(
         track: String,
         emit: @escaping ([String: Any]) -> Void,
+        onFinal: ((String, Int64) -> Void)? = nil,
         makeEngine: (@escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void) -> Void
     ) {
         self.track = track
         self.emit = emit
+        self.onFinal = onFinal
         self.queue = DispatchQueue(label: "com.eavesy.swiftaudio.captions.\(track)")
         makeEngine { [weak self] result in
             self?.queue.async { self?.engineReady(result) }
@@ -154,17 +179,91 @@ final class LiveCaptions: CaptionSink {
             self.finishing = true
             self.lock.unlock()
             self.dropWaiting()
+            let draining = self.draining
             guard let engine = self.engine, !self.failed else {
-                done.signal()
+                draining.notify(queue: .global()) { done.signal() }
                 return
             }
-            engine.finish { done.signal() }
+            engine.finish { draining.notify(queue: .global()) { done.signal() } }
         }
         let timedOut = done.wait(timeout: .now() + timeout) == .timedOut
         lock.lock()
         let summary = CaptionSummary(dropped: dropped, timedOut: timedOut, failed: failed)
         lock.unlock()
         emit(summary.json(track: track))
+    }
+
+    /// Moves captions to the engine `makeEngine` answers with, once it has
+    /// started. Before the first engine is ready, the new one takes its place.
+    /// `outcome` says whether captions moved, a later switch overtook this
+    /// one, or nothing changed and why.
+    func switchEngine(
+        _ makeEngine: (@escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void) -> Void,
+        outcome: @escaping (EngineSwitch) -> Void
+    ) {
+        lock.lock()
+        switches += 1
+        pendingSwitches += 1
+        let request = switches
+        lock.unlock()
+        makeEngine { [weak self] result in
+            guard let self else { return }
+            self.queue.async { self.replaceEngine(result, request: request, outcome: outcome) }
+        }
+    }
+
+    /// Called on `queue`.
+    private func replaceEngine(
+        _ result: Result<SpeechEngine, CaptionUnavailable>, request: Int, outcome: (EngineSwitch) -> Void
+    ) {
+        lock.lock()
+        pendingSwitches -= 1
+        lock.unlock()
+        defer { giveUpIfNothingLeft() }
+        let next: SpeechEngine
+        switch result {
+        case .failure(let reason):
+            outcome(.unavailable(reason.reason))
+            return
+        case .success(let engine):
+            next = engine
+        }
+        lock.lock()
+        let latest = request == switches
+        lock.unlock()
+        guard latest else {
+            next.finish {}
+            outcome(.superseded)
+            return
+        }
+        guard !isOff else {
+            next.finish {}
+            outcome(.unavailable("captions are off"))
+            return
+        }
+        guard let old = engine else {
+            if let failure = install(next) {
+                outcome(.unavailable(failure))
+            } else {
+                outcome(.switched)
+            }
+            return
+        }
+        let sink = EngineSink(self)
+        do {
+            try next.start(sink: sink)
+        } catch {
+            outcome(.unavailable("speech engine did not start: \(error.localizedDescription)"))
+            return
+        }
+        sinks.last?.retire()
+        sinks.append(sink)
+        engine = next
+        draining.enter()
+        let draining = self.draining
+        old.finish { draining.leave() }
+        emit(CaptionStatus.live(engine: next.name).json(track: track))
+        outcome(.switched)
     }
 
     /// Called on `queue`.
@@ -195,24 +294,55 @@ final class LiveCaptions: CaptionSink {
     private func engineReady(_ result: Result<SpeechEngine, CaptionUnavailable>) {
         switch result {
         case .failure(let unavailable):
-            turnOff(unavailable.reason)
+            // A switch that answered first already has captions running, and
+            // one still to answer may yet.
+            guard engine == nil else { return }
+            firstFailure = unavailable.reason
+            giveUpIfNothingLeft()
         case .success(let engine):
-            guard !isOff else { return }
-            do {
-                try engine.start(sink: self)
-            } catch {
-                turnOff("speech engine did not start: \(error.localizedDescription)")
+            guard self.engine == nil else {
+                engine.finish {}
                 return
             }
-            self.engine = engine
-            emit(CaptionStatus.live(engine: engine.name).json(track: track))
-            let held = waiting
-            waiting.removeAll()
-            waitingFrames = 0
-            for (buffer, atMs) in held {
-                guarded { try engine.append(buffer, atMs: atMs) }
+            guard !isOff else { return }
+            if let failure = install(engine) {
+                firstFailure = failure
+                giveUpIfNothingLeft()
             }
         }
+    }
+
+    /// Called on `queue`: the first engine failed and no switch is left to
+    /// take its place, so captions are off.
+    private func giveUpIfNothingLeft() {
+        guard engine == nil, let reason = firstFailure else { return }
+        lock.lock()
+        let pending = pendingSwitches
+        lock.unlock()
+        guard pending == 0 else { return }
+        firstFailure = nil
+        turnOff(reason)
+    }
+
+    /// Called on `queue`: the first engine to run, fed the audio held for it.
+    /// Nil once it runs, else why it did not start.
+    private func install(_ engine: SpeechEngine) -> String? {
+        let sink = EngineSink(self)
+        do {
+            try engine.start(sink: sink)
+        } catch {
+            return "speech engine did not start: \(error.localizedDescription)"
+        }
+        sinks.append(sink)
+        self.engine = engine
+        emit(CaptionStatus.live(engine: engine.name).json(track: track))
+        let held = waiting
+        waiting.removeAll()
+        waitingFrames = 0
+        for (buffer, atMs) in held {
+            guarded { try engine.append(buffer, atMs: atMs) }
+        }
+        return nil
     }
 
     private func guarded(_ work: () throws -> Void) {
@@ -250,6 +380,7 @@ final class LiveCaptions: CaptionSink {
         lock.unlock()
         guard !off else { return }
         emit(CaptionEvent(track: track, text: trimmed, isFinal: isFinal, startMs: startMs, endMs: endMs).json)
+        if isFinal { onFinal?(trimmed, endMs) }
     }
 
     func engineFailed(_ reason: String) {
@@ -267,5 +398,39 @@ final class LiveCaptions: CaptionSink {
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         return buffer
+    }
+}
+
+/// Stands between one engine and its captions. Engines hold their sink weakly,
+/// so `LiveCaptions` keeps these. Once its engine is replaced, a failure while
+/// it settles is not a reason to turn captions off; its last finals still count.
+private final class EngineSink: CaptionSink {
+    private weak var captions: LiveCaptions?
+    private let lock = NSLock()
+    private var retired = false
+
+    init(_ captions: LiveCaptions) {
+        self.captions = captions
+    }
+
+    func retire() {
+        lock.lock()
+        retired = true
+        lock.unlock()
+    }
+
+    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
+        captions?.recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs)
+    }
+
+    func engineFailed(_ reason: String) {
+        lock.lock()
+        let replaced = retired
+        lock.unlock()
+        if replaced {
+            FileHandle.standardError.write(Data("replaced caption engine: \(reason)\n".utf8))
+        } else {
+            captions?.engineFailed(reason)
+        }
     }
 }

@@ -94,12 +94,31 @@ tracks while a meeting or voice note records (`--captions all`):
 - **Cleanup:** the table is cleared when the recording completes or fails. A
   deleted meeting (`meeting_not_found`) stops the polling for that recording.
 
+## Caption language
+
+Live captions and dictation caption in the account's transcription language,
+which Rust caches from `/api/devices/me` and passes as `--language`:
+
+- **A fixed language** captions in that language, in the user's own regional
+  variant when the system speaks it, else the variant for their region, else
+  the language's most common one. If no recognizer on the Mac speaks it,
+  captions stay in the system language.
+- **`auto`** starts in the system language and follows what is spoken. Rust
+  sends the sidecar `{"language":"es"}` on stdin when the language most of the
+  newest cloud lines were heard in (each line's `language` in the transcript
+  delta) changes.
+  The sidecar also runs `NLLanguageRecognizer` over recent caption finals and
+  switches only on strong evidence, since a recognizer in the wrong language
+  mostly writes its own. Every track moves together; the old engine settles
+  its last finals while the new one takes the audio from then on. A language
+  no recognizer speaks, or whose engine fails to start, is not tried again.
+
 ## Dictation
 
 Dictation (the dictation hotkey, the launcher's Dictate button and the "Start
 dictation" command) records and uploads like any voice note, so it appears in
 web history and search, and crash recovery covers it. It also runs on-device
-Apple Speech on the mic, in the system language, with `--captions mic`:
+Apple Speech on the mic with `--captions mic`, in the caption language below.
 
 - **Engines:** SpeechAnalyzer on macOS 26 when the language model is installed
   (otherwise it starts the download and uses the fallback), and

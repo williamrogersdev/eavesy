@@ -32,16 +32,16 @@ export function TermInput({
   return (
     <div className="flex flex-col gap-1.5">
       <div
-        className="flex min-h-9 flex-wrap items-center gap-1 rounded-md border border-border bg-background px-1.5 py-1 focus-within:border-accent/60"
+        className="flex min-h-9 flex-wrap items-center gap-1 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-1.5 py-1 focus-within:border-ev-slate"
       >
         {value.map((term) => (
-          <span key={term} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+          <span key={term} className="inline-flex items-center gap-1 rounded bg-ev-well px-1.5 py-0.5 font-mono text-xs">
             {term}
             <button
               type="button"
               onClick={() => onChange(value.filter((item) => item !== term))}
               aria-label={`Remove ${term}`}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-ev-ink-2 hover:text-ev-ink"
             >
               <X className="h-3 w-3" />
             </button>
@@ -67,18 +67,18 @@ export function TermInput({
           aria-label={label}
           placeholder={value.length >= max ? '' : placeholder}
           disabled={value.length >= max}
-          className="h-6 min-w-[8rem] flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground/70"
+          className="h-6 min-w-[8rem] flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-ev-ink-2"
         />
       </div>
       {offered.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1 text-xs text-ev-ink-2">
           <span>Suggested from recent recordings:</span>
           {offered.map((term) => (
             <button
               key={term}
               type="button"
               onClick={() => onChange(cleanList([...value, term], max))}
-              className={cn('inline-flex items-center gap-0.5 rounded border border-dashed border-border px-1.5 py-0.5 font-mono hover:bg-muted hover:text-foreground')}
+              className={cn('inline-flex items-center gap-0.5 rounded border border-dashed border-ev-line px-1.5 py-0.5 font-mono hover:bg-[var(--ev-hover)] hover:text-ev-ink')}
             >
               <Plus className="h-3 w-3" />
               {term}

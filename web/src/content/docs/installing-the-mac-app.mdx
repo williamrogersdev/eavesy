@@ -1,69 +1,86 @@
 ---
-title: Installing the Mac app
-description: Download, install, and grant the permissions Eavesy needs to capture your screen and audio.
+title: Install the Mac app
+description: Requirements, installing with the DMG or Homebrew, the permissions Eavesy asks for, and signing in.
 category: Getting started
 order: 2
 ---
 
-The Mac app is where Eavesy does its best work — capturing your screen and the
-audio your Mac plays, alongside your microphone, with no length limit and files
-written straight to your disk.
-
 ## Requirements
 
-- **macOS 13 (Ventura) or later**
-- Apple silicon (Intel Macs are not supported yet)
-- ~150 MB of disk space, plus room for your recordings
+- A Mac with Apple silicon. Intel Macs are not supported.
+- macOS 13 Ventura or later. Screenshots need macOS 14 Sonoma or later.
 
-## Install with Homebrew
+There is no Windows, Linux, iPhone or iPad app. On other devices you can
+[use Eavesy in the browser](/docs/browser-recorder).
 
-If you use [Homebrew](https://brew.sh), one command installs the app:
+## Install
+
+**Download the DMG.** Get it from [eavesy.com/download/mac](/download/mac),
+open it, and drag Eavesy into Applications.
+
+**Or use Homebrew:**
 
 ```bash
 brew install --cask williamrogersdev/eavesy/eavesy
 ```
 
-Eavesy keeps itself up to date, so you don&rsquo;t need `brew upgrade` for it.
-To remove it later, run `brew uninstall --cask eavesy` (add `--zap` to also
-delete its settings, caches, and logs; your recordings in `~/Eavesy` are kept).
+Eavesy updates itself, so you don't need `brew upgrade` for it. To remove it,
+run `brew uninstall --cask eavesy`. Add `--zap` to also remove its settings,
+caches and logs. Your recordings in `~/Eavesy` are kept either way.
 
-## Or install the download in three steps
+Builds are signed and notarized by Apple, so they open like any other app.
 
-1. **Download** the app from [eavesy.com/download/mac](/download/mac).
-2. **Open the `.dmg`** and drag **Eavesy** into your Applications folder.
-3. **Launch it** from Applications (or Spotlight).
-
-<Callout type="note" title="First launch">
-Because the app is distributed outside the App Store, macOS may ask you to
-confirm the first launch. If you see a Gatekeeper prompt, open
-**System Settings → Privacy &amp; Security**, scroll to the bottom, and click
-**Open Anyway**.
+<Callout type="note" title="If macOS still blocks it">
+If you see a warning on first launch, open **System Settings → Privacy &amp;
+Security**, scroll down, and choose **Open Anyway**.
 </Callout>
 
-## Grant permissions
+## Permissions
 
-To capture a full session, Eavesy needs two macOS permissions. It will prompt
-you the first time you record — or you can grant them ahead of time in
-**System Settings → Privacy &amp; Security**:
+Eavesy asks for each permission the first time a feature needs it. Only the
+microphone is required. You can review all of them in the Mac app under
+**Settings → Permissions**, or choose **Run setup again** to walk through them.
 
-- **Screen &amp; System Audio Recording** — lets Eavesy capture what&rsquo;s on
-  screen and the audio your Mac is playing (your call&rsquo;s other side).
-- **Microphone** — captures your voice.
+| Permission | Needed for | Required |
+| --- | --- | --- |
+| Microphone | Talk, meetings and video | Yes |
+| Speech Recognition | On-device text for Talk and live captions | No |
+| Accessibility | Pasting text where your cursor is | No |
+| Input Monitoring | Using `fn` as the Talk key | No |
+| Notifications | Letting you know when something finishes | No |
+| Screen Recording | Screenshots, video, and the other side of a meeting | No |
 
-<Callout type="privacy">
-Permissions are enforced by macOS. Eavesy only captures while a recording is
-running. Eavesy does not train models on your content; see
-[Privacy &amp; your data](/docs/privacy-and-data) for each processor&rsquo;s policy.
+<Callout type="warning">
+macOS applies some new grants only after Eavesy reopens. If the permissions
+list offers to reopen Eavesy, let it.
 </Callout>
 
-## Set your save location
+Without Speech Recognition there are no live captions, and Talk text waits for
+the cloud transcript, so it needs you to be signed in.
 
-Open **Settings → Recordings folder** and choose where sessions are written. Point it at a
-folder you already sync, or at your [Obsidian](/integrations/obsidian) vault, and
-each capture lands there automatically as Markdown, JSON, and audio.
+## Sign in, or stay local
+
+The first time you open Eavesy, you can sign in at eavesy.com or choose
+**Stay local for now**. Both are fine.
+
+- **Local only:** captures, on-device text and live captions all work. Nothing
+  is uploaded.
+- **Signed in:** recordings also get a cloud transcript and brief, and show up
+  in search, chat and over MCP. Recordings you make in the browser are copied
+  into your Mac's folder too.
+
+The Mac app stores one thing in your Keychain: the device token it gets when
+you sign in. Sign out from **Settings → Account** at any time.
+
+## Choose where files go
+
+Captures are saved to `~/Eavesy/Recordings` by default. Change it under
+**Settings → Recordings folder**. You can point it at a synced folder or a
+notes vault. See [your files](/docs/session-folder-format) for what goes in
+each folder.
 
 ## Next
 
-- [Record your first session](/docs/recording-your-first-meeting)
-- [Capturing screen &amp; audio](/docs/capturing-screen-and-audio)
+- [Talk and dictation](/docs/talk-and-dictation)
+- [Meetings](/docs/meetings)
 - [Keyboard shortcuts](/docs/keyboard-shortcuts)

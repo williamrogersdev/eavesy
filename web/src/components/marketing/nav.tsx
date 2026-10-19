@@ -5,6 +5,8 @@ import { Link } from '@/components/ui/app-link';
 import { usePathname } from '@/lib/next-compat/navigation';
 import { Menu, X } from 'lucide-react';
 import { Mascot } from '@/components/launcher/ui';
+import { GithubMark } from '@/components/github-mark';
+import { siteConfig } from '@/lib/site';
 import { PRIMARY_NAV } from './content';
 import { DownloadButton } from './ui';
 import { cn } from '@/lib/utils';
@@ -59,6 +61,15 @@ export function Nav() {
         </nav>
 
         <div className="flex items-center gap-1.5">
+          <a
+            href={siteConfig.github}
+            aria-label="Eavesy on GitHub"
+            title="Eavesy on GitHub"
+            className="hidden min-h-9 items-center gap-2 rounded-full px-3 font-round text-sm font-semibold text-ev-ink-2 transition hover:bg-ev-well hover:text-ev-ink sm:flex"
+          >
+            <GithubMark className="h-[18px] w-[18px]" />
+            <span className="hidden lg:inline">GitHub</span>
+          </a>
           <Link
             href="/sign-in"
             className="hidden min-h-9 items-center rounded-full px-3.5 font-round text-sm font-semibold text-ev-ink-2 transition hover:bg-ev-well hover:text-ev-ink sm:flex"
@@ -92,6 +103,13 @@ export function Nav() {
                 {item.label}
               </Link>
             ))}
+            <a
+              href={siteConfig.github}
+              className="flex min-h-11 items-center gap-2 rounded-xl px-3 transition hover:bg-ev-well"
+            >
+              <GithubMark className="h-4 w-4" />
+              GitHub
+            </a>
             <div className="mt-2 flex flex-col gap-2 border-t border-ev-line pt-2">
               <Link
                 href="/sign-in"
