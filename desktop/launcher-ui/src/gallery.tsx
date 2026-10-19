@@ -47,7 +47,7 @@ function Gallery() {
           <input aria-label="Mic level" type="range" min={0} max={1} step={0.01} value={level} onChange={(e) => setLevel(+e.target.value)} />
         </section>
         <ToolbarShelf>
-          <ToolbarSegment icon={AudioLines} label="Talk" kbd="fn" hint="Hold fn to talk. Let go to paste." dimmed={live} />
+          <ToolbarSegment icon={AudioLines} label="Talk" kbd="fn" hint="Tap fn and talk. Tap it again to paste where your cursor is." dimmed={live} />
           <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" active={live} elapsed="12:40" onClick={() => setLive(!live)} />
           <ToolbarSegment icon={Camera} label="Screenshot" dimmed={live} />
           <ToolbarSegment icon={Clapperboard} label="Video" dimmed={live} />
@@ -93,7 +93,7 @@ function Gallery() {
         </Card>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <Mascot size={72} />
-          <Bubble tail="left">It&apos;s quiet up here. Hold <Kbd keys="fn" /> and talk, or drop something in below.</Bubble>
+          <Bubble tail="left">It&apos;s quiet up here. Tap <Kbd keys="fn" /> and talk, or drop something in below.</Bubble>
         </div>
         <label style={{ font: 'var(--ev-t-small)' }}><input type="checkbox" checked={drag} onChange={(e) => setDrag(e.target.checked)} /> drag active</label>
         <div style={{ position: 'relative', height: 160, borderRadius: 16, background: 'var(--ev-paper)', boxShadow: 'var(--ev-e-3)', overflow: 'hidden' }}>

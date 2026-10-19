@@ -12,6 +12,7 @@ import {
   isDesktop,
   setLauncherPosition,
   setLiveCaptions,
+  setCaptureSounds,
   checkPermissions,
   checkForUpdates,
   getAppInfo,
@@ -141,9 +142,10 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
 }
 
 const SPOTS: { value: LauncherPosition; label: string; className: string }[] = [
-  { value: 'top_left', label: 'Top left', className: 'left-2' },
-  { value: 'top_center', label: 'Top center', className: 'left-1/2 -translate-x-1/2' },
-  { value: 'top_right', label: 'Top right', className: 'right-2' },
+  { value: 'top_left', label: 'Top left', className: 'top-4 left-2' },
+  { value: 'top_center', label: 'Top center', className: 'top-4 left-1/2 -translate-x-1/2' },
+  { value: 'top_right', label: 'Top right', className: 'top-4 right-2' },
+  { value: 'bottom_center', label: 'Bottom center', className: 'bottom-1 left-1/2 -translate-x-1/2' },
 ];
 
 function PositionPicker({ value, custom, disabled, onPick }: {
@@ -174,7 +176,7 @@ function PositionPicker({ value, custom, disabled, onPick }: {
               disabled={disabled}
               onClick={() => onPick(spot.value)}
               className={cn(
-                'group absolute top-4 flex h-6 w-[30%] items-center justify-center rounded-md transition-colors disabled:cursor-default',
+                'group absolute flex h-6 w-[30%] items-center justify-center rounded-md transition-colors disabled:cursor-default',
                 spot.className,
                 selected ? 'bg-[var(--ev-slate-soft)]' : 'hover:bg-[var(--ev-hover)]',
               )}
@@ -222,6 +224,15 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [captionsBusy, setCaptionsBusy] = useState(false);
   const [speech, setSpeech] = useState<boolean | undefined>(permissions?.speech);
   const captionsOn = settings?.live_captions ?? true;
+  const soundsOn = settings?.capture_sounds ?? true;
+  const [soundsBusy, setSoundsBusy] = useState(false);
+  const toggleSounds = (next: boolean) => {
+    setSoundsBusy(true);
+    void setCaptureSounds(next)
+      .then(() => setSettings((current) => current ? { ...current, capture_sounds: next } : current))
+      .catch(() => {})
+      .finally(() => setSoundsBusy(false));
+  };
   const [shotFolder, setShotFolder] = useState<string | null>(null);
   const [shotsBusy, setShotsBusy] = useState(false);
   const [shotsError, setShotsError] = useState<string | null>(null);
@@ -297,6 +308,18 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
               <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
             </div>
           </Card>
+        )}
+
+        {isDesktop() && (
+          <Section title="Sounds">
+            <Switch
+              checked={soundsOn}
+              onCheckedChange={toggleSounds}
+              disabled={!settings || soundsBusy}
+              label="Play a sound when recording starts and stops"
+              hint="A quiet tick as the mic goes live, and a pop when it stops."
+            />
+          </Section>
         )}
 
         {isDesktop() && (

@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +102,8 @@ fn get_launcher_out_of_the_way(app: &AppHandle) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Pasted,
+    /// Typed into Eavesy's own panel (the setup's practice box), which has focus.
+    InEavesy,
     /// On the clipboard: Eavesy may not paste (no Accessibility permission).
     CopiedNoAccessibility,
     /// On the clipboard: the cursor is not in a text box any more.
@@ -112,7 +114,7 @@ impl Delivery {
     /// What the HUD says, or None to show the words themselves.
     pub fn notice(self) -> Option<&'static str> {
         match self {
-            Delivery::Pasted => None,
+            Delivery::Pasted | Delivery::InEavesy => None,
             Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
             Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
         }
@@ -141,13 +143,29 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        get_launcher_out_of_the_way(&app);
-        let mut how = delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()));
-        if how == Delivery::Pasted && crate::commands::paste_text(&app, &text).is_err() {
-            // Say what actually stopped it: the permission, or anything else.
-            how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
+        let mut how = if panel_wants_it(&app) {
+            Delivery::InEavesy
+        } else {
+            delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
+        };
+        match how {
+            Delivery::InEavesy => {
+                // The box says when it has the words; without that they go on
+                // the clipboard and the HUD says so.
+                if !hand_to_panel(&app, &session_id, &text) {
+                    how = Delivery::CopiedNoTextBox;
+                }
+            }
+            Delivery::Pasted => {
+                get_launcher_out_of_the_way(&app);
+                if crate::commands::paste_text(&app, &text).is_err() {
+                    // Say what actually stopped it: the permission, or anything else.
+                    how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
+                }
+            }
+            _ => {}
         }
-        if how != Delivery::Pasted {
+        if matches!(how, Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox) {
             // A failed paste may have left the text on the clipboard already;
             // writing it again makes sure it is there whatever step failed.
             use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -155,8 +173,11 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 eprintln!("dictation: could not copy the text: {error}");
             }
         }
+        // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
-        if current.phase != crate::hud::Phase::Recording || current.session_id.as_deref() == Some(session_id.as_str()) {
+        let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
+            && current.session_id.as_deref() != Some(session_id.as_str());
+        if !busy_elsewhere {
             crate::hud::set_state(&app, crate::hud::HudState {
                 phase: crate::hud::Phase::Done,
                 session_id: Some(session_id),
@@ -167,6 +188,66 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             });
         }
     });
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DictationText {
+    session_id: String,
+    text: String,
+}
+
+/// How long the panel has to confirm it put the words in its box.
+const PANEL_ACK_TIMEOUT: Duration = Duration::from_millis(1500);
+
+static PANEL_ACK: std::sync::Mutex<Option<(String, std::sync::mpsc::Sender<()>)>> = std::sync::Mutex::new(None);
+
+/// Sends the words to the panel's box and waits for it to confirm it took them.
+fn hand_to_panel(app: &AppHandle, session_id: &str, text: &str) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    *PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), tx));
+    let sent = app
+        .emit_to("main", "dictation:text", DictationText { session_id: session_id.to_string(), text: text.to_string() })
+        .is_ok();
+    let taken = sent && rx.recv_timeout(PANEL_ACK_TIMEOUT).is_ok();
+    let mut slot = PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().is_some_and(|(id, _)| id == session_id) {
+        *slot = None;
+    }
+    taken
+}
+
+/// The panel put a dictation's words in its box.
+pub fn ack_panel_dictation(session_id: &str) {
+    let slot = PANEL_ACK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((id, tx)) = slot.as_ref() {
+        if id == session_id {
+            let _ = tx.send(());
+        }
+    }
+}
+
+static PANEL_WANTS_DICTATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The panel has a box of its own waiting for dictation (setup's practice
+/// box). Dictation goes there directly, but only while the panel is open and
+/// focused: a synthetic ⌘V can't be aimed at it.
+pub fn set_panel_wants_dictation(wants: bool) {
+    PANEL_WANTS_DICTATION.store(wants, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn panel_wants_it(app: &AppHandle) -> bool {
+    if !PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
+        return false;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let focused = crate::panel::is_visible(&handle)
+            && handle.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false));
+        let _ = tx.send(focused);
+    });
+    rx.recv_timeout(Duration::from_millis(300)).unwrap_or(false)
 }
 
 fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
