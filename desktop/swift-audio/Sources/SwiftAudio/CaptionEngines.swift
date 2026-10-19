@@ -10,6 +10,7 @@ import Speech
 enum CaptionEngines {
     static func make(
         locale: Locale,
+        vocabulary: [String] = [],
         completion: @escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void
     ) {
         // Asking without a usage description kills the process (TCC), so check first.
@@ -27,7 +28,7 @@ enum CaptionEngines {
             Task {
                 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
-                        switch await AnalyzerEngine.make(locale: locale) {
+                        switch await AnalyzerEngine.make(locale: locale, vocabulary: vocabulary) {
                         case .success(let engine):
                             completion(.success(engine))
                             return
@@ -36,7 +37,7 @@ enum CaptionEngines {
                         }
                     }
                 #endif
-                completion(SFSpeechEngine.make(locale: locale))
+                completion(SFSpeechEngine.make(locale: locale, vocabulary: vocabulary))
             }
         }
     }
@@ -65,6 +66,7 @@ final class SFSpeechEngine: SpeechEngine {
 
     let name = "sfspeech"
     private let recognizer: SFSpeechRecognizer
+    private let vocabulary: [String]
     private let lock = NSLock()
     private weak var sink: CaptionSink?
     private var current: Window?
@@ -79,9 +81,10 @@ final class SFSpeechEngine: SpeechEngine {
         var quietMs: Int64 = 0
         var settled = false
 
-        init(startMs: Int64) {
+        init(startMs: Int64, vocabulary: [String]) {
             self.startMs = startMs
             self.lastMs = startMs
+            request.contextualStrings = vocabulary
             request.requiresOnDeviceRecognition = true
             request.shouldReportPartialResults = true
             request.addsPunctuation = true
@@ -89,18 +92,19 @@ final class SFSpeechEngine: SpeechEngine {
         }
     }
 
-    static func make(locale: Locale) -> Result<SpeechEngine, CaptionUnavailable> {
+    static func make(locale: Locale, vocabulary: [String] = []) -> Result<SpeechEngine, CaptionUnavailable> {
         guard let recognizer = SFSpeechRecognizer(locale: locale) else {
             return .failure(CaptionUnavailable(reason: "no recognizer for \(locale.identifier)"))
         }
         guard recognizer.supportsOnDeviceRecognition else {
             return .failure(CaptionUnavailable(reason: "on-device recognition unsupported for \(locale.identifier)"))
         }
-        return .success(SFSpeechEngine(recognizer: recognizer))
+        return .success(SFSpeechEngine(recognizer: recognizer, vocabulary: vocabulary))
     }
 
-    private init(recognizer: SFSpeechRecognizer) {
+    private init(recognizer: SFSpeechRecognizer, vocabulary: [String]) {
         self.recognizer = recognizer
+        self.vocabulary = vocabulary
     }
 
     func start(sink: CaptionSink) throws {
@@ -152,7 +156,7 @@ final class SFSpeechEngine: SpeechEngine {
 
     /// Called with `lock` held.
     private func openWindow(atMs: Int64) -> Window {
-        let window = Window(startMs: atMs)
+        let window = Window(startMs: atMs, vocabulary: vocabulary)
         open += 1
         window.task = recognizer.recognitionTask(with: window.request) { [weak self, weak window] result, error in
             guard let self, let window else { return }
@@ -210,6 +214,7 @@ final class SFSpeechEngine: SpeechEngine {
     final class AnalyzerEngine: SpeechEngine {
         let name = "speech-analyzer"
         private let transcriber: SpeechTranscriber
+        private let vocabulary: [String]
         private let format: AVAudioFormat
         private var analyzer: SpeechAnalyzer?
         private var converter: AVAudioConverter?
@@ -218,7 +223,7 @@ final class SFSpeechEngine: SpeechEngine {
         private var results: Task<Void, Never>?
         private var running: Task<Void, Never>?
 
-        static func make(locale: Locale) async -> Result<SpeechEngine, CaptionUnavailable> {
+        static func make(locale: Locale, vocabulary: [String]) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
                 return .failure(CaptionUnavailable(reason: "transcriber unavailable on this Mac"))
             }
@@ -246,11 +251,12 @@ final class SFSpeechEngine: SpeechEngine {
             guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
                 return .failure(CaptionUnavailable(reason: "no compatible audio format"))
             }
-            return .success(AnalyzerEngine(transcriber: transcriber, format: format))
+            return .success(AnalyzerEngine(transcriber: transcriber, vocabulary: vocabulary, format: format))
         }
 
-        private init(transcriber: SpeechTranscriber, format: AVAudioFormat) {
+        private init(transcriber: SpeechTranscriber, vocabulary: [String], format: AVAudioFormat) {
             self.transcriber = transcriber
+            self.vocabulary = vocabulary
             self.format = format
             (input, feed) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
         }
@@ -276,8 +282,14 @@ final class SFSpeechEngine: SpeechEngine {
                 }
             }
             let input = self.input
+            let vocabulary = self.vocabulary
             running = Task { [weak sink] in
                 do {
+                    if !vocabulary.isEmpty {
+                        let context = AnalysisContext()
+                        context.contextualStrings[.general] = vocabulary
+                        try? await analyzer.setContext(context)
+                    }
                     try await analyzer.start(inputSequence: input)
                 } catch {
                     sink?.engineFailed(error.localizedDescription)

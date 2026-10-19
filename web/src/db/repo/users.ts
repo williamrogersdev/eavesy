@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { users } from '../schema';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 
 export async function ensureClerkUser(
   db: AppDb,
@@ -202,12 +203,25 @@ export async function getById(db: AppDb, userId: string) {
   return rows[0] ? openUserKeys(rows[0]) : null;
 }
 
-/** The language the user transcribes in, or `auto` to let Whisper detect it. */
-export async function transcriptionLanguage(db: AppDb, userId: string): Promise<string> {
+export interface TranscriptionPrefs {
+  /** A Whisper language code, or `auto` to let Whisper detect it. */
+  language: string;
+  /** Words to recognize as the user spells them. */
+  vocabulary: string[];
+}
+
+export async function transcriptionPrefs(db: AppDb, userId: string): Promise<TranscriptionPrefs> {
   const rows = await db
-    .select({ defaultLanguage: users.defaultLanguage })
+    .select({ defaultLanguage: users.defaultLanguage, customVocabularyJson: users.customVocabularyJson })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  return rows[0]?.defaultLanguage || 'en';
+  return {
+    language: rows[0]?.defaultLanguage || 'en',
+    vocabulary: parseVocabulary(rows[0]?.customVocabularyJson),
+  };
+}
+
+export async function transcriptionLanguage(db: AppDb, userId: string): Promise<string> {
+  return (await transcriptionPrefs(db, userId)).language;
 }

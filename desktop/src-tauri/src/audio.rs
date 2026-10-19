@@ -446,6 +446,10 @@ fn spawn_capture(
             "--segment-sec".into(),
             crate::settings::load(app).segment_sec().to_string().into(),
         ]);
+        if let Some(words) = crate::vocabulary::sidecar_arg(&crate::vocabulary::cached(app)) {
+            args.extend(["--vocabulary".into(), words.into()]);
+        }
+        crate::vocabulary::refresh(app);
     }
 
     let cold = || -> Result<crate::standby::Started, String> {

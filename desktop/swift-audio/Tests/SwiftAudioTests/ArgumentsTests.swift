@@ -20,4 +20,9 @@ final class ArgumentsTests: XCTestCase {
         XCTAssertEqual(hardCapSec(forSegmentSec: 60), 90)
         XCTAssertEqual(hardCapSec(forSegmentSec: 240), 300)
     }
+
+    func testVocabularyIsOneWordOrPhrasePerLine() {
+        XCTAssertEqual(parse([]).vocabulary, [])
+        XCTAssertEqual(parse(["--vocabulary", "Eavesy\n Priya Raman \n\nKubernetes"]).vocabulary, ["Eavesy", "Priya Raman", "Kubernetes"])
+    }
 }
