@@ -108,7 +108,7 @@ rm -rf "$old"
 if [ -e "$dst" ]; then mv "$dst" "$old"; fi
 if ditto "$src" "$dst"; then rm -rf "$old" || true; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
 xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
-if [ -n "$3" ]; then chown -R "$3" "$dst" || true; fi
+if [ -n "$3" ]; then chown -R "$3" "$dst" || echo "eavesy:chown-failed"; fi
 "#;
 
 /// `Ok(None)` when the user cancelled the admin password prompt.
@@ -135,6 +135,9 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
     }
     let script = admin_command(bundle, &target, owner.as_deref());
     let output = Command::new("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
+    if String::from_utf8_lossy(&output.stdout).contains("eavesy:chown-failed") {
+        crate::telemetry::capture("install_location.owner", "couldn't hand the copy in Applications back to the user");
+    }
     let stderr = String::from_utf8_lossy(&output.stderr);
     match admin_copy_outcome(output.status.success(), &stderr) {
         Ok(true) => Ok(Some(target)),
@@ -383,7 +386,11 @@ mod tests {
         std::fs::write(src.join("Contents/version"), "new").unwrap();
         std::fs::create_dir_all(dst.join("Contents")).unwrap();
         std::fs::write(dst.join("Contents/version"), "old").unwrap();
-        let owner = current_owner().unwrap();
+        let owner = {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::metadata(std::env::temp_dir()).unwrap();
+            format!("{}:{}", meta.uid(), meta.gid())
+        };
         let status =
             Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&src).arg(&dst).arg(&owner).status().unwrap();
         assert!(status.success());
