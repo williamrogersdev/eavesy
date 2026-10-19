@@ -1,28 +1,23 @@
 //! Error reporting and the app log.
 //!
-//! Errors and panics go to PostHog error tracking as `$exception` events when
-//! a project key was compiled in (`EAVESY_POSTHOG_KEY`); without one nothing
-//! leaves the Mac. Events keep the failing operation and the error text so a
-//! report is actionable, but the text is scrubbed first. Recording folders are
-//! named after meeting titles, so any path under the recordings root, a home
+//! Sentry events keep the failing operation and the error text so a report is
+//! actionable, but the text is scrubbed first. Recording folders are named
+//! after meeting titles, so any path under the recordings root, a home
 //! directory, `/Volumes` or `/private` collapses to a placeholder (keeping a
 //! trailing OS error such as "Permission denied"); only app-owned paths with
 //! generated names survive. Tokens, API keys, emails, IPs, query strings and
-//! quoted file names are replaced. Audio, transcripts, notes and summaries are
-//! never attached. Events are anonymous: a random id per launch and no person
-//! profile.
+//! quoted file names are replaced. Audio,
+//! transcripts, notes and summaries are never attached.
 //!
 //! App logs go to a daily-rotating file in `~/Library/Logs/<identifier>`
 //! (seven files kept), plus stderr in debug builds.
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
+use std::sync::{OnceLock, RwLock};
 
 use regex::{Captures, Regex};
-use serde_json::{json, Value};
+use sentry::integrations::tracing::EventFilter;
+use sentry::protocol::{Breadcrumb, Event, Level, Value};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
@@ -30,38 +25,27 @@ use tracing_subscriber::prelude::*;
 const IDENTIFIER: &str = "com.eavesy.desktop";
 pub const LOG_FILE_PREFIX: &str = "eavesy";
 const MAX_TEXT: usize = 1_000;
-const MAX_BREADCRUMBS: usize = 50;
-const MAX_EVENTS_PER_LAUNCH: usize = 100;
-const DEFAULT_POSTHOG_HOST: &str = "https://us.i.posthog.com";
-const SEND_TIMEOUT: Duration = Duration::from_secs(10);
-const PANIC_SEND_TIMEOUT: Duration = Duration::from_secs(3);
-
-static BREADCRUMBS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
-static EVENTS_SENT: AtomicUsize = AtomicUsize::new(0);
 
 pub struct Guards {
+    _sentry: sentry::ClientInitGuard,
     _log: Option<WorkerGuard>,
 }
 
 pub fn init() -> Guards {
-    Guards { _log: init_logging() }
-}
-
-fn posthog_key() -> Option<&'static str> {
-    option_env!("EAVESY_POSTHOG_KEY").map(str::trim).filter(|key| !key.is_empty())
-}
-
-fn posthog_endpoint() -> String {
-    let host = option_env!("EAVESY_POSTHOG_HOST")
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-        .unwrap_or(DEFAULT_POSTHOG_HOST);
-    format!("{}/i/v0/e/", host.trim_end_matches('/'))
-}
-
-fn launch_id() -> &'static str {
-    static ID: OnceLock<String> = OnceLock::new();
-    ID.get_or_init(|| uuid::Uuid::new_v4().to_string())
+    let log = init_logging();
+    let dsn = option_env!("SENTRY_DSN").unwrap_or("");
+    let options = sentry::ClientOptions::default()
+        .release(env!("CARGO_PKG_VERSION"))
+        .environment(if cfg!(debug_assertions) { "development" } else { "production" })
+        .send_default_pii(false)
+        .traces_sample_rate(0.0)
+        .max_breadcrumbs(50)
+        .before_breadcrumb(|breadcrumb| Some(scrub_breadcrumb(breadcrumb)))
+        .before_send(|event| Some(sanitize_event(event)));
+    Guards {
+        _sentry: sentry::init((dsn, options)),
+        _log: log,
+    }
 }
 
 /// `~/Library/Logs/com.eavesy.desktop`, the same folder Tauri's
@@ -91,113 +75,29 @@ fn init_logging() -> Option<WorkerGuard> {
     };
     let stderr_layer = cfg!(debug_assertions)
         .then(|| tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+    // Log lines become breadcrumbs on the next reported error; `capture`
+    // sends the error itself, so nothing here creates events.
+    let sentry_layer = sentry::integrations::tracing::layer().event_filter(|metadata| {
+        match *metadata.level() {
+            tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO => {
+                EventFilter::Breadcrumb
+            }
+            _ => EventFilter::Ignore,
+        }
+    });
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::filter::LevelFilter::INFO)
         .with(file_layer)
         .with(stderr_layer)
-        .with(posthog_key().map(|_| BreadcrumbLayer))
+        .with(sentry_layer)
         .try_init();
 
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let detail = scrub_text(&info.to_string());
-        tracing::error!(target: "panic", "{detail}");
-        let report = Report { kind: "panic", operation: "panic", reason: "panic", detail: &detail, handled: false };
-        if let Some(sent) = send(report, PANIC_SEND_TIMEOUT) {
-            let _ = sent.recv_timeout(PANIC_SEND_TIMEOUT + Duration::from_millis(500));
-        }
-        default_hook(info);
+    // The Sentry panic integration chains to this hook, so panics land in the
+    // log file as well as in Sentry.
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(target: "panic", "{}", scrub_text(&info.to_string()));
     }));
     guard
-}
-
-/// Keeps the level and module of the last log lines (info and up) to send
-/// with the next error. Message text is never kept: it can carry user text
-/// the scrubber does not recognise.
-struct BreadcrumbLayer;
-
-impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BreadcrumbLayer {
-    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        let metadata = event.metadata();
-        let line = format!("{} {}", metadata.level(), metadata.target());
-        if let Ok(mut crumbs) = BREADCRUMBS.lock() {
-            if crumbs.len() == MAX_BREADCRUMBS {
-                crumbs.pop_front();
-            }
-            crumbs.push_back(line);
-        }
-    }
-}
-
-struct Report<'a> {
-    kind: &'a str,
-    operation: &'a str,
-    reason: &'a str,
-    detail: &'a str,
-    handled: bool,
-}
-
-/// The PostHog `$exception` event. Every free-text field is scrubbed here.
-fn exception_event(api_key: &str, report: &Report<'_>, breadcrumbs: &[String]) -> Value {
-    json!({
-        "api_key": api_key,
-        "event": "$exception",
-        "distinct_id": launch_id(),
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "properties": {
-            "$process_person_profile": false,
-            "$lib": "eavesy-desktop",
-            "$app_version": env!("CARGO_PKG_VERSION"),
-            "$os": "macOS",
-            "environment": if cfg!(debug_assertions) { "development" } else { "production" },
-            "operation": report.operation,
-            "reason": report.reason,
-            "$exception_fingerprint": format!("desktop:{}:{}", report.operation, report.reason),
-            "$exception_list": [{
-                "type": report.kind,
-                "value": scrub_text(report.detail),
-                "mechanism": { "handled": report.handled, "synthetic": false },
-            }],
-            "breadcrumbs": breadcrumbs.iter().map(|line| scrub_text(line)).collect::<Vec<_>>(),
-        },
-    })
-}
-
-/// Sends on its own thread; the receiver fires once the request finished.
-fn send(report: Report<'_>, timeout: Duration) -> Option<mpsc::Receiver<()>> {
-    let api_key = posthog_key()?;
-    let mut sent = EVENTS_SENT.load(Ordering::Relaxed);
-    loop {
-        if sent >= MAX_EVENTS_PER_LAUNCH {
-            return None;
-        }
-        match EVENTS_SENT.compare_exchange_weak(sent, sent + 1, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(current) => sent = current,
-        }
-    }
-    let breadcrumbs: Vec<String> = BREADCRUMBS
-        .try_lock()
-        .map(|crumbs| crumbs.iter().cloned().collect())
-        .unwrap_or_default();
-    let event = exception_event(api_key, &report, &breadcrumbs);
-    let (done, finished) = mpsc::channel();
-    std::thread::Builder::new()
-        .name("error-report".into())
-        .spawn(move || {
-            if let Ok(client) = reqwest::blocking::Client::builder()
-                .timeout(timeout)
-                .build()
-            {
-                let _ = client.post(posthog_endpoint()).json(&event).send();
-            }
-            let _ = done.send(());
-        })
-        .inspect_err(|_| {
-            EVENTS_SENT.fetch_sub(1, Ordering::Relaxed);
-        })
-        .ok()?;
-    Some(finished)
 }
 
 fn patterns() -> &'static [(Regex, &'static str)] {
@@ -338,14 +238,59 @@ pub fn scrub_text(text: &str) -> String {
     out
 }
 
-/// Log a failed operation and report it to PostHog. Issues group by
-/// operation and reason; the scrubbed detail is the exception value.
-/// Delivery is best effort: a report still in flight when the app quits is
-/// lost.
+fn scrub_value(value: &mut Value) {
+    match value {
+        Value::String(text) => *text = scrub_text(text),
+        Value::Array(items) => items.iter_mut().for_each(scrub_value),
+        Value::Object(map) => map.values_mut().for_each(scrub_value),
+        _ => {}
+    }
+}
+
+fn scrub_breadcrumb(mut breadcrumb: Breadcrumb) -> Breadcrumb {
+    breadcrumb.message = breadcrumb.message.map(|message| scrub_text(&message));
+    breadcrumb.data.values_mut().for_each(scrub_value);
+    breadcrumb
+}
+
+fn sanitize_event(mut event: Event<'static>) -> Event<'static> {
+    event.request = None;
+    event.user = None;
+    event.server_name = None;
+    event.extra.values_mut().for_each(scrub_value);
+    for breadcrumb in &mut event.breadcrumbs.values {
+        *breadcrumb = scrub_breadcrumb(std::mem::take(breadcrumb));
+    }
+    event.message = event.message.map(|message| scrub_text(&message));
+    if let Some(entry) = &mut event.logentry {
+        entry.message = scrub_text(&entry.message);
+        entry.params.iter_mut().for_each(scrub_value);
+    }
+    for exception in &mut event.exception {
+        exception.value = exception.value.as_deref().map(scrub_text);
+        if let Some(stacktrace) = &mut exception.stacktrace {
+            for frame in &mut stacktrace.frames {
+                frame.abs_path = frame.abs_path.as_deref().map(scrub_text);
+                frame.vars.clear();
+            }
+        }
+    }
+    event
+}
+
+/// Log a failed operation and report it to Sentry. Issues group by operation
+/// and reason; the scrubbed detail is the event message.
 pub fn capture(operation: &'static str, detail: &str) {
     let reason = reason(detail);
     let detail = scrub_text(detail);
-    send(Report { kind: operation, operation, reason, detail: &detail, handled: true }, SEND_TIMEOUT);
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("operation", operation);
+            scope.set_tag("reason", reason);
+            scope.set_fingerprint(Some(&["desktop", operation, reason]));
+        },
+        || sentry::capture_message(&format!("{operation}: {detail}"), Level::Error),
+    );
     tracing::error!(operation, reason, "{detail}");
 }
 
@@ -395,7 +340,9 @@ fn reason(detail: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{exception_event, reason, scrub_text, Report};
+    use sentry::protocol::{Breadcrumb, Event, Exception, Frame, Stacktrace};
+
+    use super::{reason, sanitize_event, scrub_text};
 
     #[test]
     fn failure_reasons_are_fixed_categories() {
@@ -473,26 +420,37 @@ mod tests {
 
     #[test]
     fn telemetry_keeps_the_error_but_not_user_data() {
-        let report = Report {
-            kind: "sync.run",
-            operation: "sync.run",
-            reason: "file_read",
-            detail: "upload failed for dana@example.com reading /Users/dana/Eavesy/Secret plans/audio.m4a",
-            handled: true,
-        };
-        let breadcrumbs = ["INFO eavesy_lib::sync".to_owned()];
-        let event = exception_event("phc_test", &report, &breadcrumbs);
+        let mut event = Event::default();
+        event.message = Some("upload failed for dana@example.com".to_owned());
+        event.server_name = Some("personal-mac".into());
+        event.extra.insert("detail".to_owned(), "/Users/dana/Eavesy/Secret plans/notes.md".into());
+        event.breadcrumbs.values.push(Breadcrumb {
+            message: Some("opened /Users/dana/Eavesy/Secret plans/audio.m4a".to_owned()),
+            ..Default::default()
+        });
+        event.exception.values.push(Exception {
+            value: Some("called `Result::unwrap()` on /Users/dana/Eavesy/Secret plans/audio.m4a".to_owned()),
+            stacktrace: Some(Stacktrace {
+                frames: vec![Frame {
+                    abs_path: Some("/Users/runner/work/eavesy/desktop/src-tauri/src/sync.rs".to_owned()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
 
-        assert_eq!(event["event"], "$exception");
-        let properties = &event["properties"];
-        assert_eq!(properties["$process_person_profile"], false);
-        assert_eq!(properties["$exception_fingerprint"], "desktop:sync.run:file_read");
-        let exception = &properties["$exception_list"][0];
-        assert_eq!(exception["type"], "sync.run");
-        assert_eq!(exception["value"], "upload failed for [email] reading ~/…");
-        assert_eq!(properties["breadcrumbs"][0], "INFO eavesy_lib::sync");
-        let text = event.to_string();
-        assert!(!text.contains("Secret plans"));
-        assert!(!text.contains("dana@example.com"));
+        let event = sanitize_event(event);
+        assert_eq!(event.message.as_deref(), Some("upload failed for [email]"));
+        assert!(event.server_name.is_none());
+        assert_eq!(event.extra["detail"], "~/…");
+        assert_eq!(event.breadcrumbs.values[0].message.as_deref(), Some("opened ~/…"));
+        let exception = &event.exception.values[0];
+        assert_eq!(exception.value.as_deref(), Some("called `Result::unwrap()` on ~/…"));
+        assert_eq!(
+            exception.stacktrace.as_ref().unwrap().frames[0].abs_path.as_deref(),
+            Some("~/…")
+        );
+        assert!(!format!("{event:?}").contains("Secret plans"));
     }
 }

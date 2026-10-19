@@ -1,9 +1,8 @@
 # Observability
 
-Eavesy reports errors from five surfaces: the web Worker, the processing
-Worker, the MCP Worker and the browser report to Sentry; the Mac app reports
-to PostHog error tracking. Each is off unless its DSN or project key is
-configured. Reports are meant to be actionable (what failed,
+Eavesy reports errors to Sentry from five surfaces: the web Worker, the
+processing Worker, the MCP Worker, the browser, and the Mac app. Each is off
+unless its DSN is configured. Reports are meant to be actionable (what failed,
 where, in which release) without carrying anything a user wrote or said.
 
 ## What is sent and what is not
@@ -14,8 +13,8 @@ where, in which release) without carrying anything a user wrote or said.
 | Stack trace (function, file, line) | Stack-frame local variables |
 | Route / URL path and HTTP method | Query strings and URL fragments |
 | Release, environment, `service` tag | Request and response bodies |
-| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines; on the Mac, the level and module of the last 50 info-and-up log lines, without their text) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
-| Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames (PostHog sees the Mac's IP on ingest; see below) |
+| Breadcrumbs (fetch/navigation URLs, status codes, warning/error console lines, app log lines on the Mac) | Headers, cookies, `Authorization`, DOM click/input breadcrumbs (they carry `title`/`aria-label` text such as meeting titles), info-level console output |
+| Opaque user id (`user_…`) on reports that name one | Emails, IP addresses, usernames |
 | Job kind, meeting id, attempt count | Any context key that looks like content or a credential (`text`, `transcript`, `summary`, `notes`, `body`, `title`, `token`, `key`, `secret`, `email`, …) |
 
 Free text (messages, exception values, breadcrumb messages, tags) is passed
@@ -58,14 +57,8 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
   build time; without it the bundle contains no Sentry code. Router error
   boundaries report through `reportClientError`. No session replay, no DOM
   breadcrumbs.
-- `desktop/src-tauri/src/telemetry.rs` — Mac app error reporting (PostHog
-  `$exception` events, grouped by `$exception_fingerprint` =
-  `desktop:<operation>:<reason>`, at most 100 per launch, anonymous with no
-  person profile), the Rust scrubber, and the app log. Mac breadcrumbs carry
-  only each log line's level and module, never its text. Delivery is best
-  effort. PostHog sees the
-  sender's IP address on ingest; turn on *Discard client IP data* in the
-  PostHog project settings so it isn't stored. Recording folders are named after meeting
+- `desktop/src-tauri/src/telemetry.rs` — Mac app Sentry init, the Rust
+  scrubber, and the app log. Recording folders are named after meeting
   titles, which can contain spaces, colons and quotes, so any path under the
   configured recordings root becomes `<recordings>/…` and any other path under
   `/Users`, `/Volumes` or `/private` becomes `~/…`, `/Volumes/…` or
@@ -83,10 +76,11 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | Workers release | `SENTRY_RELEASE` | Set to the git SHA by the deploy workflow (`--var`) |
 | Browser | `VITE_SENTRY_DSN` | GitHub Actions variable, written to `web/.env.production` at build |
 | Browser release | `VITE_SENTRY_RELEASE` | Git SHA, set by the deploy workflow |
-| Mac app | `EAVESY_POSTHOG_KEY`, `EAVESY_POSTHOG_HOST` | Compile time; `DESKTOP_POSTHOG_KEY` / `DESKTOP_POSTHOG_HOST` repository variables in the release workflow |
+| Mac app | `SENTRY_DSN` | Optional compile-time environment variable for local builds |
 
-`desktop/scripts/build-macos-release.sh` warns when `EAVESY_POSTHOG_KEY` is
-empty and builds an app that reports nothing.
+`desktop/scripts/build-macos-release.sh` can build without `SENTRY_DSN`.
+The release workflow does not require a Sentry secret. When the DSN is unset,
+Sentry reporting is disabled; local app logs and diagnostics remain available.
 
 Tracing is sampled at 5% on the Workers and in the browser (same-origin API
 calls only get trace headers). The Mac app sends no traces.
@@ -102,7 +96,7 @@ own `capture.log` under the app data folder.
 clipboard: app version, macOS version and architecture, the last 200 app log
 lines (spanning yesterday's file, so a bundle copied after midnight is not
 empty) and the last 100 `capture.log` lines, each scrubbed with the same rules
-as error reports. Nothing is uploaded; the user decides where to paste it.
+as Sentry events. Nothing is uploaded; the user decides where to paste it.
 
 ## Latency metric
 

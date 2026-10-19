@@ -117,6 +117,9 @@ these values into chat.
 | `TAURI_SIGNING_PRIVATE_KEY` | Contents of the updater Minisign private key. **Use the existing key.** A new key orphans every installed copy. | `gh secret set TAURI_SIGNING_PRIVATE_KEY --env macos-signing < ~/.tauri/eavesy-updater.key` |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The key's password | Only if the key has one; the local scripts use an empty password. GitHub can't store an empty secret, and an unset secret is passed as an empty string, so skip it in that case. |
 
+Sentry is optional. The release workflow does not require `DESKTOP_SENTRY_DSN`.
+For a local build with Sentry reporting, export `SENTRY_DSN` before building.
+
 **Instead of the Apple ID set** you can use an App Store Connect API key. It
 doesn't expire with your password and isn't tied to your 2FA. Create it at
 App Store Connect → Users and Access → Integrations → Team Keys with the
@@ -136,19 +139,7 @@ set whenever `APPLE_ID` is present.
 | `CLOUDFLARE_API_TOKEN` | secret | A **new, narrow** token, `eavesy-release-r2`: account permission *Workers R2 Storage Edit* (add *Account Settings Read* if Wrangler asks), this account only. Don't reuse the broad deploy token from [DEPLOY.md](DEPLOY.md). `gh secret set CLOUDFLARE_API_TOKEN --env macos-release` |
 | `CLOUDFLARE_ACCOUNT_ID` | variable | Same account ID as production: `gh variable set CLOUDFLARE_ACCOUNT_ID --env macos-release` |
 
-### 4. Error reporting (repository variables, optional)
-
-The app reports errors and crashes to PostHog error tracking when a project
-key is compiled in. The project API key (`phc_…`) is public by design, so it
-is a variable, not a secret. Without it the build still succeeds and the app
-reports nothing.
-
-| Name | Value |
-| --- | --- |
-| `DESKTOP_POSTHOG_KEY` | PostHog → Project settings → Project API key. `gh variable set DESKTOP_POSTHOG_KEY` |
-| `DESKTOP_POSTHOG_HOST` | Only for the EU cloud or self-hosting, e.g. `https://eu.i.posthog.com`. Defaults to `https://us.i.posthog.com`. |
-
-### 5. Release token (repository secret)
+### 4. Release token (repository secret)
 
 | Name | Value |
 | --- | --- |
@@ -162,7 +153,7 @@ start), this repository doesn't let Actions open PRs, and the
 put a reminder in your calendar; when it lapses, both workflows fail with a
 message pointing here.
 
-### 6. Homebrew tap token (repository secret)
+### 5. Homebrew tap token (repository secret)
 
 | Name | Value |
 | --- | --- |
@@ -174,7 +165,7 @@ containing exactly one `version "…"` line and one `sha256 "…"` line, and a
 versioned `url`, for example
 `https://github.com/williamrogersdev/eavesy/releases/download/desktop-v#{version}/Eavesy_#{version}_aarch64.dmg`.
 
-### 7. Dry run
+### 6. Dry run
 
 Run the workflow manually from `main` (Actions → macOS release → Run
 workflow). It exercises every signing and notarization secret and publishes
