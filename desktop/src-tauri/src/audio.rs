@@ -934,7 +934,7 @@ fn stop_capture_inner(
     crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
-    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions);
+    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions, started_at_ms);
 
     let result = match await_done(events, STOP_TIMEOUT) {
         Ok(done) => finish_stopped_capture(
@@ -1148,13 +1148,14 @@ const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
 /// straight away, before the engine has sealed its files or anything is
 /// stored. Returns false when there is nothing trustworthy to paste yet; the
 /// clip then goes to Whisper once it is saved.
-fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>) -> bool {
+fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>, started_at_ms: i64) -> bool {
     let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
     while std::time::Instant::now() < deadline && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done() {
         std::thread::sleep(Duration::from_millis(15));
     }
     crate::dictation::rearm_at_stop(session_id);
-    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste();
+    let clip_ms = chrono::Utc::now().timestamp_millis() - started_at_ms;
+    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste(clip_ms);
     match decision {
         Paste::OnDevice(text) => {
             crate::dictation::deliver_dictation(app, session_id, &text);

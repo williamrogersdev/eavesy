@@ -43,6 +43,11 @@ pub enum Paste {
     Whisper(String),
 }
 
+/// How close to the end of the clip the on-device words must reach for the
+/// quick paste: a recognizer running behind has only the start of what was
+/// said, sometimes a single "yeah", and pasting that loses the rest.
+pub const QUICK_PASTE_SLACK_MS: i64 = 3_000;
+
 /// The captions of one recording, and how they ended.
 #[derive(Debug, Default)]
 pub struct CaptionLog {
@@ -87,10 +92,23 @@ impl CaptionLog {
 
     /// What to paste the moment a dictation stops, without waiting for the
     /// recognizer to finish cleanly: every final plus what it was still
-    /// hearing. Only a recognizer that could not run, failed, or lost audio
-    /// (or heard nothing) sends the clip to Whisper instead.
-    pub fn quick_paste(&self) -> Paste {
-        self.decide(false)
+    /// hearing, as long as those words reach close to the end of the
+    /// `clip_ms`-long clip. A recognizer that could not run, failed, lost
+    /// audio, heard nothing or is still behind sends the clip to Whisper.
+    pub fn quick_paste(&self, clip_ms: i64) -> Paste {
+        match self.decide(false) {
+            Paste::OnDevice(_) if self.heard_until() < clip_ms - QUICK_PASTE_SLACK_MS => Paste::Whisper(format!(
+                "on-device words stop at {:.1}s of a {:.1}s clip",
+                self.heard_until() as f64 / 1000.0,
+                clip_ms as f64 / 1000.0
+            )),
+            decision => decision,
+        }
+    }
+
+    /// Where in the clip the last word the recognizer reported ends.
+    fn heard_until(&self) -> i64 {
+        self.finals.iter().chain(self.partials.values()).map(|c| c.end_ms).max().unwrap_or(0)
     }
 
     /// The on-device text, if every bit of the clip reached the recognizer and
@@ -328,7 +346,7 @@ mod tests {
         log.finish(CaptionsDone { dropped: 2, timed_out: false, failed: false });
         log.finish(CLEAN);
         assert!(matches!(log.paste(), Paste::Whisper(_)));
-        assert!(matches!(log.quick_paste(), Paste::Whisper(_)));
+        assert!(matches!(log.quick_paste(1_000), Paste::Whisper(_)));
     }
 
     #[test]
@@ -337,14 +355,26 @@ mod tests {
         log.record(&caption("Send it", true, 0));
         log.record(&caption("today", false, 900));
         assert!(!log.is_done());
-        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
+        assert_eq!(log.quick_paste(2_000), Paste::OnDevice("Send it today".into()));
         log.finish(CaptionsDone { timed_out: true, ..CLEAN });
-        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
-        assert!(matches!(CaptionLog::default().quick_paste(), Paste::Whisper(_)), "nothing heard");
+        assert_eq!(log.quick_paste(2_000), Paste::OnDevice("Send it today".into()));
+        assert!(matches!(CaptionLog::default().quick_paste(2_000), Paste::Whisper(_)), "nothing heard");
         let mut failed = CaptionLog::default();
         failed.record(&caption("x", true, 0));
         failed.finish(CaptionsDone { failed: true, ..CLEAN });
-        assert!(matches!(failed.quick_paste(), Paste::Whisper(_)));
+        assert!(matches!(failed.quick_paste(2_000), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn a_recognizer_that_is_behind_never_pastes_just_the_start() {
+        // 40 seconds said; the recognizer has only got to the first word.
+        let mut log = CaptionLog::default();
+        log.record(&caption("Yeah", false, 0));
+        assert!(matches!(log.quick_paste(40_000), Paste::Whisper(_)));
+        // Words up to near the end: a short pause before stopping is fine.
+        log.record(&caption("Yeah, so the plan is this.", true, 0));
+        log.record(&caption("and that's it", false, 37_000));
+        assert_eq!(log.quick_paste(40_000), Paste::OnDevice("Yeah, so the plan is this. and that's it".into()));
     }
 
     #[test]

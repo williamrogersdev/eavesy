@@ -58,6 +58,12 @@ struct CaptionUnavailable: Error {
 protocol CaptionSink: AnyObject {
     func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64)
     func engineFailed(_ reason: String)
+    /// Audio the engine let go of before recognizing it, so its text is missing words.
+    func audioDropped(_ count: Int)
+}
+
+extension CaptionSink {
+    func audioDropped(_ count: Int) {}
 }
 
 /// An on-device recognizer fed 48 kHz mono float audio.
@@ -324,6 +330,10 @@ final class LiveCaptions: CaptionSink {
         queue.async { [weak self] in self?.turnOff(reason) }
     }
 
+    func audioDropped(_ count: Int) {
+        countDropped(count)
+    }
+
     static func pcmBuffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
         guard
             let buffer = AVAudioPCMBuffer(
@@ -358,6 +368,10 @@ private final class EngineSink: CaptionSink {
 
     func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
         captions?.recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs)
+    }
+
+    func audioDropped(_ count: Int) {
+        captions?.audioDropped(count)
     }
 
     func engineFailed(_ reason: String) {

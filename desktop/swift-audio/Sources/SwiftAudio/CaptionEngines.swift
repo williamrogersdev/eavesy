@@ -222,6 +222,7 @@ final class SFSpeechEngine: SpeechEngine {
         private let feed: AsyncStream<AnalyzerInput>.Continuation
         private var results: Task<Void, Never>?
         private var running: Task<Void, Never>?
+        private weak var sink: CaptionSink?
 
         static func make(locale: Locale, vocabulary: [String]) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
@@ -262,6 +263,7 @@ final class SFSpeechEngine: SpeechEngine {
         }
 
         func start(sink: CaptionSink) throws {
+            self.sink = sink
             let analyzer = SpeechAnalyzer(modules: [transcriber])
             self.analyzer = analyzer
             converter = AVAudioConverter(from: AudioRecorder.mixFormat, to: format)
@@ -303,7 +305,11 @@ final class SFSpeechEngine: SpeechEngine {
 
         func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
             guard let converted = convert(buffer) else { return }
-            feed.yield(AnalyzerInput(buffer: converted, bufferStartTime: CMTime(value: atMs, timescale: 1000)))
+            // A recognizer that falls behind loses the oldest audio here: say
+            // so, or its text looks whole while missing what was said first.
+            if case .dropped = feed.yield(AnalyzerInput(buffer: converted, bufferStartTime: CMTime(value: atMs, timescale: 1000))) {
+                sink?.audioDropped(1)
+            }
         }
 
         func finish(_ done: @escaping () -> Void) {
