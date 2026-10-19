@@ -6,22 +6,24 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const APPLICATIONS: &str = "/Applications";
 
-pub const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from a disk image or another read-only location, so it can't replace itself. \
+pub const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from a disk image or another drive, so it can't replace itself. \
 Quit Eavesy, drag it into your Applications folder, eject the disk image, then open Eavesy from Applications and update again.";
 
-/// Where the running Eavesy.app lives, when that place can't be updated in
-/// place: a read-only volume such as a mounted disk image, or a Gatekeeper
-/// translocation mount.
+/// Where the running Eavesy.app lives, when the updater can't swap it in place.
+/// The updater moves the old bundle into the system temp folder, so the bundle
+/// must be on the same volume: a mounted disk image, another drive or a
+/// Gatekeeper translocation mount all fail with EXDEV.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Misplaced {
     pub bundle: PathBuf,
-    /// The disk image to eject once Eavesy has been copied out of it.
+    /// The volume Eavesy was opened from, ejected after the move if it's a disk image.
     pub volume: Option<PathBuf>,
 }
 
 pub fn misplaced() -> Option<Misplaced> {
     match std::env::current_exe() {
-        Ok(exe) => classify(&exe, can_write_in),
+        Ok(exe) => classify(&exe, |bundle| same_volume(bundle, &std::env::temp_dir())),
+        // updates::install_error still explains the EXDEV failure if this check can't run.
         Err(e) => {
             crate::telemetry::capture("install_location.locate", &e.to_string());
             None
@@ -29,17 +31,14 @@ pub fn misplaced() -> Option<Misplaced> {
     }
 }
 
-fn classify(exe: &Path, writable: impl FnOnce(&Path) -> bool) -> Option<Misplaced> {
+fn classify(exe: &Path, on_temp_volume: impl FnOnce(&Path) -> bool) -> Option<Misplaced> {
     let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))?;
-    let path = bundle.to_string_lossy();
-    if path.contains("/AppTranslocation/") {
-        return Some(Misplaced { bundle: bundle.to_path_buf(), volume: None });
-    }
-    let volume = volume_root(bundle)?;
-    if writable(bundle.parent()?) {
+    let translocated = bundle.to_string_lossy().contains("/AppTranslocation/");
+    if !translocated && on_temp_volume(bundle) {
         return None;
     }
-    Some(Misplaced { bundle: bundle.to_path_buf(), volume: Some(volume) })
+    let volume = if translocated { None } else { volume_root(bundle) };
+    Some(Misplaced { bundle: bundle.to_path_buf(), volume })
 }
 
 fn volume_root(bundle: &Path) -> Option<PathBuf> {
@@ -47,11 +46,12 @@ fn volume_root(bundle: &Path) -> Option<PathBuf> {
     Some(Path::new("/Volumes").join(parts.next()?))
 }
 
-fn can_write_in(dir: &Path) -> bool {
-    let probe = dir.join(format!(".eavesy-write-probe-{}", std::process::id()));
-    let writable = std::fs::File::create(&probe).is_ok();
-    let _ = std::fs::remove_file(&probe);
-    writable
+fn same_volume(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => true,
+    }
 }
 
 /// On launch from a disk image, asks to move Eavesy into Applications so
@@ -140,11 +140,20 @@ fn copy_to_applications(bundle: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Waits for this process to exit, ejects the volume only if it is a mounted
+/// disk image (never a real drive), then opens the copy in Applications.
+const RELAUNCH_SCRIPT: &str = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
+if [ -n "$3" ] && hdiutil info | awk -F'\t' -v v="$3" '$NF == v { found = 1 } END { exit !found }'; then
+  hdiutil detach "$3" -quiet
+fi
+open "$2"
+"#;
+
 fn relaunch_from(app: &AppHandle, target: &Path, volume: Option<&Path>) {
     let spawned = Command::new("/bin/sh")
         .args([
             "-c",
-            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; [ -n "$3" ] && hdiutil detach "$3" -quiet; open "$2""#,
+            RELAUNCH_SCRIPT,
             "sh",
         ])
         .arg(std::process::id().to_string())
@@ -172,30 +181,35 @@ mod tests {
     const EXE: &str = "Contents/MacOS/eavesy";
 
     #[test]
-    fn a_read_only_disk_image_is_misplaced_and_ejected_after_the_move() {
+    fn another_volume_is_misplaced() {
         let exe = Path::new("/Volumes/Eavesy/Eavesy.app").join(EXE);
         assert_eq!(
             classify(&exe, |_| false),
             Some(Misplaced { bundle: "/Volumes/Eavesy/Eavesy.app".into(), volume: Some("/Volumes/Eavesy".into()) })
         );
-    }
-
-    #[test]
-    fn a_writable_external_drive_is_left_alone() {
-        assert_eq!(classify(&Path::new("/Volumes/Work/Apps/Eavesy.app").join(EXE), |_| true), None);
+        let drive = Path::new("/Volumes/Work/Apps/Eavesy.app").join(EXE);
+        assert_eq!(classify(&drive, |_| false).unwrap().volume, Some("/Volumes/Work".into()));
     }
 
     #[test]
     fn a_translocated_copy_is_misplaced_but_nothing_is_ejected() {
         let exe = Path::new("/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app").join(EXE);
-        let found = classify(&exe, |_| true).unwrap();
-        assert_eq!(found.volume, None);
+        assert_eq!(classify(&exe, |_| true).unwrap().volume, None);
     }
 
     #[test]
-    fn applications_and_dev_builds_are_fine() {
-        assert_eq!(classify(&Path::new("/Applications/Eavesy.app").join(EXE), |_| false), None);
+    fn the_system_volume_is_fine() {
+        assert_eq!(classify(&Path::new("/Applications/Eavesy.app").join(EXE), |_| true), None);
         assert_eq!(classify(Path::new("/Users/me/eavesy/desktop/src-tauri/target/debug/eavesy"), |_| false), None);
+    }
+
+    #[test]
+    fn the_mounted_disk_image_is_on_another_volume_than_temp() {
+        let dmg = Path::new("/Volumes/Eavesy/Eavesy.app");
+        if dmg.exists() {
+            assert!(!same_volume(dmg, &std::env::temp_dir()));
+        }
+        assert!(same_volume(&std::env::temp_dir(), &std::env::temp_dir()));
     }
 
     #[test]
