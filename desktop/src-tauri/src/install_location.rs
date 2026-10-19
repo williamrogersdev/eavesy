@@ -108,6 +108,7 @@ rm -rf "$old"
 if [ -e "$dst" ]; then mv "$dst" "$old"; fi
 if ditto "$src" "$dst"; then rm -rf "$old" || true; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
 xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
+if [ -n "$3" ]; then chown -R "$3" "$dst"; fi
 "#;
 
 /// `Ok(None)` when the user cancelled the admin password prompt.
@@ -131,10 +132,12 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
     let script = format!(
         "do shell script {} with administrator privileges",
         applescript_string(&format!(
-            "/bin/sh -c {} sh {} {}",
+            "/bin/sh -c {} sh {} {} {}",
             shell_quote(COPY_SCRIPT),
             shell_quote(&bundle.to_string_lossy()),
-            shell_quote(&target.to_string_lossy())
+            shell_quote(&target.to_string_lossy()),
+            // Run as root, the copy would be root's; hand it back so updates don't need a password.
+            shell_quote(&std::env::var("USER").unwrap_or_default())
         ))
     );
     let output = Command::new("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
