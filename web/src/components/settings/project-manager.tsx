@@ -71,12 +71,14 @@ export function ProjectManager() {
   const close = () => {
     setFormOpen(false);
     setEditingId(null);
+    setDeletingId(null);
     setDraft(EMPTY);
   };
 
   const edit = (project: ProjectSummary) => {
     setFormOpen(true);
     setEditingId(project.id);
+    setDeletingId(null);
     setDraft(draftOf(project));
     setMessage(null);
   };
@@ -95,11 +97,18 @@ export function ProjectManager() {
     try {
       if (editingId) await updateProject(editingId, fields);
       else await createProject(fields);
-      await load();
-      setMessage(editingId ? 'Project saved.' : 'Project created.');
-      close();
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Could not save the project.');
+      setBusy(false);
+      return;
+    }
+    const saved = editingId ? 'Project saved.' : 'Project created.';
+    close();
+    try {
+      await load();
+      setMessage(saved);
+    } catch {
+      setMessage(`${saved} Reload the page to see the latest list.`);
     } finally {
       setBusy(false);
     }
@@ -125,8 +134,8 @@ export function ProjectManager() {
     }
   };
 
-  const field = 'w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
-  const label = 'text-xs font-medium text-muted-foreground';
+  const field = 'w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
+  const label = 'text-xs font-medium text-ev-ink-2';
   return (
     <AppSection
       id="projects"
@@ -143,14 +152,14 @@ export function ProjectManager() {
       )}
     >
       {items.length ? (
-        <ul className="divide-y divide-border rounded-md border border-border">
+        <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
           {items.map((project) => (
             <li key={project.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="flex min-w-0 items-center gap-2">
-                <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <FolderOpen className="h-4 w-4 shrink-0 text-ev-ink-2" />
                 <div className="min-w-0">
                   <p className="truncate text-sm">{project.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate text-xs text-ev-ink-2">
                     {project.about || `${project.vocabulary.length} term${project.vocabulary.length === 1 ? '' : 's'}`}
                     {` · ${project.recordingCount} recording${project.recordingCount === 1 ? '' : 's'}`}
                   </p>
@@ -165,7 +174,7 @@ export function ProjectManager() {
                   onClick={() => void remove(project)}
                   disabled={busy}
                   aria-label={deletingId === project.id ? `Confirm deleting ${project.name}` : `Delete ${project.name}`}
-                  className={cn(appButton('ghost', 'sm'), 'text-danger hover:text-danger')}
+                  className={cn(appButton('ghost', 'sm'), 'text-ev-warn-ink hover:text-ev-warn-ink')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   {deletingId === project.id ? 'Confirm' : null}
@@ -175,11 +184,11 @@ export function ProjectManager() {
           ))}
         </ul>
       ) : formOpen ? null : (
-        <p className="text-xs text-muted-foreground">No projects yet. Create one for each codebase or client you record about.</p>
+        <p className="text-xs text-ev-ink-2">No projects yet. Create one for each codebase or client you record about.</p>
       )}
 
       {formOpen ? (
-        <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+        <div className="flex flex-col gap-3 rounded-[var(--ev-r-ctl)] border border-ev-line p-3">
           <div className="flex items-center justify-between">
             <p className={label}>{editingId ? 'Edit project' : 'New project'}</p>
             <button type="button" onClick={close} aria-label="Close project editor" className={appButton('ghost', 'sm')}>
@@ -207,7 +216,7 @@ export function ProjectManager() {
               placeholder="Mac meeting recorder. TanStack Start on Cloudflare Workers, Tauri and Swift desktop app."
               className={cn(field, 'py-2 leading-relaxed')}
             />
-            <span className="text-[11px] text-muted-foreground">One or two lines. Summaries treat it as background.</span>
+            <span className="text-[11px] text-ev-ink-2">One or two lines. Summaries treat it as background.</span>
           </label>
           <div className="flex flex-col gap-1">
             <span className={label}>Vocabulary</span>
@@ -219,7 +228,7 @@ export function ProjectManager() {
               max={PROJECT_LIMITS.vocabulary}
               suggestions={suggestions}
             />
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[11px] text-ev-ink-2">
               Names, libraries and identifiers you say often. Transcription spells these right; the first few dozen count most.
             </span>
           </div>
@@ -242,7 +251,7 @@ export function ProjectManager() {
               placeholder={draft.name.trim() || 'repo or folder name'}
               max={PROJECT_LIMITS.match}
             />
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[11px] text-ev-ink-2">
               The Mac app picks this project when the app you&apos;re in shows one of these words, like a repo name in
               Cursor or Terminal. Empty means the project name.
             </span>
@@ -255,7 +264,7 @@ export function ProjectManager() {
           </div>
         </div>
       ) : null}
-      {message ? <p aria-live="polite" className="text-xs text-muted-foreground">{message}</p> : null}
+      {message ? <p aria-live="polite" className="text-xs text-ev-ink-2">{message}</p> : null}
     </AppSection>
   );
 }

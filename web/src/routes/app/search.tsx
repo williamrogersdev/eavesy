@@ -62,7 +62,7 @@ function SearchPage() {
 
       <form onSubmit={run} role="search" className="relative">
         <label htmlFor="semantic-search" className="sr-only">Search recordings and dictations</label>
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ev-ink-2" />
         <input
           id="semantic-search"
           type="search"
@@ -70,10 +70,10 @@ function SearchPage() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="What did Sarah say about the launch in May?"
           autoFocus
-          className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-9 text-sm outline-none focus:border-accent/50"
+          className="h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper pl-9 pr-9 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
         />
         {loading ? (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-ev-ink-2" />
         ) : null}
       </form>
 
@@ -87,27 +87,27 @@ function SearchPage() {
         />
       ) : null}
 
-      <ul aria-live="polite" className="flex flex-col divide-y divide-border">
+      <ul aria-live="polite" className="flex flex-col divide-y divide-ev-line">
         {items.map((item, i) => (
           <li key={item.kind === 'meeting' ? item.meeting.id : `dictation-${i}`}>
             {item.kind === 'meeting' ? (
               <Link
                 href={`/app/meetings/${item.meeting.id}`}
-                className="-mx-2 block rounded-md px-2 py-3 transition hover:bg-muted"
+                className="-mx-2 block rounded-[var(--ev-r-ctl)] px-2 py-3 transition hover:bg-[var(--ev-hover)]"
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="truncate text-sm font-medium">{item.meeting.title}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-xs text-ev-ink-2">
                     {new Date(item.meeting.startedAt).toLocaleDateString()}
                   </span>
                 </div>
                 {item.excerpt ? (
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.excerpt}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-ev-ink-2">{item.excerpt}</p>
                 ) : null}
               </Link>
             ) : (
               <div className="py-3">
-                <div className="text-xs text-muted-foreground">Dictation</div>
+                <div className="text-xs text-ev-ink-2">Dictation</div>
                 <p className="mt-1 line-clamp-3 text-sm">{item.excerpt}</p>
               </div>
             )}

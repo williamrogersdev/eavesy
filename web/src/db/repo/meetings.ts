@@ -1,7 +1,7 @@
-import { and, desc, eq, isNull, lt, max } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, lt, max } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
+import { devices, meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
 import { transcriptionLanguage } from './users';
 import {
   decode,
@@ -146,7 +146,10 @@ export async function listForUser(db: AppDb, args: { userId: string; limit?: num
     .limit(args.limit ?? 50);
 }
 
-export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number }) {
+export async function listSummariesForUser(
+  db: AppDb,
+  args: { userId: string; limit?: number; before?: number },
+) {
   return await db
     .select({
       id: meetings.id,
@@ -157,13 +160,21 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
       durationSec: meetings.durationSec,
       source: meetings.source,
       platform: meetings.platform,
+      deviceName: devices.name,
       status: meetings.status,
       folderId: meetings.folderId,
       createdAt: meetings.createdAt,
       updatedAt: meetings.updatedAt,
     })
     .from(meetings)
-    .where(and(eq(meetings.userId, args.userId), isNull(meetings.deletedAt)))
+    .leftJoin(devices, eq(devices.id, meetings.deviceId))
+    .where(
+      and(
+        eq(meetings.userId, args.userId),
+        isNull(meetings.deletedAt),
+        args.before === undefined ? undefined : lt(meetings.startedAt, args.before),
+      ),
+    )
     .orderBy(desc(meetings.startedAt))
     .limit(args.limit ?? 50);
 }
@@ -171,8 +182,9 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
 export async function getFull(db: AppDb, args: { meetingId: string; userId: string }) {
   const [meetingRows, summaryRow, notesRow, segments, segmentStamp] = await db.batch([
     db
-      .select()
+      .select({ ...getTableColumns(meetings), deviceName: devices.name })
       .from(meetings)
+      .leftJoin(devices, eq(devices.id, meetings.deviceId))
       .where(
         and(
           eq(meetings.id, args.meetingId),

@@ -22,12 +22,12 @@ const STAGES = [
   {
     n: '01',
     title: 'Drop something in',
-    body: 'In the Mac app, open the launcher with a hotkey, then press ⌘V to save text or an image from your clipboard, or take a screenshot, dictate, or record your screen, system audio, and microphone. Each one is saved as a capture. Dropping in messages or orders from other apps directly is not available yet; for now, copy and paste them.',
+    body: 'In the Mac app, press ⌘⇧D to talk, or open the launcher with ⌘⇧Space to record a meeting (your mic and the call’s audio), record a video of your screen, or take a screenshot. Press ⌘V to keep what’s on your clipboard, or drop a file in. Each one is saved as a folder on your disk, with or without an account.',
   },
   {
     n: '02',
     title: 'Eavesy turns it into Markdown',
-    body: 'Text and images are saved as they are. Audio is transcribed and summarized into structured Markdown with a title, TL;DR, decisions, and action items. Long recordings are sealed into recoverable segments, so a network interruption or restart does not lose the session. Transcripts arrive a little after the audio is processed, not as live captions.',
+    body: 'Text and images are saved as they are. While you record, live captions are made on your Mac. When you’re signed in, the audio also uploads in segments for a cloud transcript and a brief with a title, summary, decisions, and action items. Segments mean a dropped connection or a restart doesn’t lose the recording.',
   },
   {
     n: '03',
@@ -37,7 +37,7 @@ const STAGES = [
   {
     n: '04',
     title: 'Or let your agent come get it',
-    body: 'Captures live in a folder on your disk as Markdown and JSON, so an agent with filesystem access can read them directly. Signed-in accounts can also add the hosted MCP server to Claude, ChatGPT or Claude Code by URL and let an agent search recordings and dictations.',
+    body: 'Captures live in a folder on your disk as Markdown and JSON, so an agent with file access can read them directly. Signed-in accounts can also add the MCP server to Claude, ChatGPT or Claude Code by URL and let an agent search recordings and dictations.',
   },
 ];
 

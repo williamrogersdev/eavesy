@@ -49,7 +49,7 @@ export function ActionsMenu({
               </span>
               <span className="flex-1 truncate">{a.label}</span>
               {a.hint && (
-                <span className="font-mono text-[11px] text-muted-foreground">
+                <span className="font-round text-[11px] text-muted-foreground">
                   {a.hint}
                 </span>
               )}

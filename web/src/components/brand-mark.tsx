@@ -1,26 +1,19 @@
+import { Mascot, type MascotState } from '@/components/launcher/ui';
 import { cn } from '@/lib/utils';
 
+/** The Eavesy mark: the mascot itself (desktop/DESIGN.md §3). Decorative. */
 export function BrandMark({
+  size = 28,
+  state = 'idle',
   className,
-  dotClassName,
 }: {
+  size?: number;
+  state?: MascotState;
   className?: string;
-  dotClassName?: string;
 }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'flex items-center justify-center rounded-[28%] bg-[#111113]',
-        className,
-      )}
-    >
-      <span
-        className={cn(
-          'block aspect-square w-[38%] rounded-full bg-[var(--signal)]',
-          dotClassName,
-        )}
-      />
+    <span aria-hidden="true" className={cn('flex w-fit shrink-0', className)}>
+      <Mascot size={size} state={state} />
     </span>
   );
 }
