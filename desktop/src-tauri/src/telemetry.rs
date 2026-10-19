@@ -111,13 +111,21 @@ fn install_id() -> &'static str {
     })
 }
 
-/// The version that ran last time, read before this launch records its own,
-/// so `app_launched` can show whether an update actually took effect.
-pub fn previous_version() -> Option<String> {
-    let path = dirs::data_dir()?.join(IDENTIFIER).join("last-version");
+/// The version this copy ran last time, read before this launch records its
+/// own, so `app_launched` can show whether an update actually took effect.
+/// Kept per install location so a stray copy doesn't overwrite it.
+pub fn previous_version(location: &str) -> Option<String> {
+    let path = dirs::data_dir()?.join(IDENTIFIER).join(format!("last-version-{location}"));
     let previous = std::fs::read_to_string(&path).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
-    let _ = path.parent().map(std::fs::create_dir_all);
-    let _ = std::fs::write(&path, env!("CARGO_PKG_VERSION"));
+    if previous.as_deref() != Some(env!("CARGO_PKG_VERSION")) {
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, env!("CARGO_PKG_VERSION")));
+        if let Err(error) = written {
+            capture("telemetry.last_version", &error.to_string());
+        }
+    }
     previous
 }
 
@@ -161,6 +169,15 @@ fn enqueue(event: &str, properties: Value, done: Option<mpsc::Sender<()>>) -> bo
 /// text the user wrote, said or named.
 pub fn track(event: &'static str, properties: Value) {
     enqueue(event, properties, None);
+}
+
+/// A product event sent just before the app quits or relaunches: waits up
+/// to `wait` for the send so it isn't lost with the process.
+pub fn track_before_exit(event: &'static str, properties: Value, wait: Duration) {
+    let (done, sent) = mpsc::channel();
+    if enqueue(event, properties, Some(done)) {
+        let _ = sent.recv_timeout(wait);
+    }
 }
 
 /// Recent app log lines, scrubbed as they are recorded, sent with each error

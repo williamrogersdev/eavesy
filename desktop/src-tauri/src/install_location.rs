@@ -49,7 +49,7 @@ fn location_label(exe: &Path) -> &'static str {
         "translocated"
     } else if bundle.parent() == Some(Path::new(APPLICATIONS)) {
         "applications"
-    } else if path.contains("/target/") && path.contains("/bundle/") {
+    } else if is_cargo_bundle(bundle) {
         "build_folder"
     } else if path.starts_with("/Volumes/") {
         "other_volume"
@@ -58,6 +58,12 @@ fn location_label(exe: &Path) -> &'static str {
     } else {
         "other"
     }
+}
+
+/// `…/target/<profile>/bundle/macos/Eavesy.app`, as `cargo tauri build` lays it out.
+fn is_cargo_bundle(bundle: &Path) -> bool {
+    let parts: Vec<_> = bundle.components().rev().skip(1).take(4).map(|c| c.as_os_str()).collect();
+    matches!(parts.as_slice(), [macos, bundle, _profile, target] if *macos == "macos" && *bundle == "bundle" && *target == "target")
 }
 
 /// `on_temp_volume` is `None` when the volumes can't be compared; then a
@@ -304,6 +310,7 @@ mod tests {
             ("/private/var/folders/x/T/AppTranslocation/ABC/d/Eavesy.app/Contents/MacOS/eavesy", "translocated"),
             ("/Users/dana/eavesy/desktop/src-tauri/target/debug/bundle/macos/Eavesy.app/Contents/MacOS/eavesy", "build_folder"),
             ("/Users/dana/Downloads/Eavesy.app/Contents/MacOS/eavesy", "other"),
+            ("/Users/dana/target/stuff/bundle/Eavesy.app/Contents/MacOS/eavesy", "other"),
             ("/Users/dana/eavesy/desktop/src-tauri/target/debug/eavesy", "unbundled"),
         ];
         for (exe, expected) in cases {
