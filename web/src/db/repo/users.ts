@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { users } from '../schema';
+import { trackEvent } from '../../server/observability';
 
 export async function ensureClerkUser(
   db: AppDb,
@@ -43,7 +44,9 @@ export async function ensureClerkUser(
     createdAt: now,
     updatedAt: now,
   });
-  return (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
+  const created = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
+  trackEvent(id, 'user_signed_up');
+  return created;
 }
 
 export async function ensureAnonymousUser(

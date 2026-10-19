@@ -7,7 +7,7 @@ import type {
   VectorizeIndex,
   Ai,
 } from '@cloudflare/workers-types';
-import { captureMessage, sentryOptions, withSentry } from '../../../web/src/server/observability';
+import { captureMessage, withErrorReporting } from '../../../web/src/server/observability';
 
 import {
   deadLetterQueue,
@@ -28,7 +28,9 @@ export interface Env extends ProcessingEnv {
   PROCESSING_QUEUE: Queue<ProcessingMessage>;
   AI: Ai;
   ANTHROPIC_API_KEY: string;
-  SENTRY_DSN?: string;
+  POSTHOG_KEY?: string;
+  POSTHOG_HOST?: string;
+  RELEASE?: string;
 }
 
 export const worker = {
@@ -43,7 +45,6 @@ export const worker = {
     if (batch.queue === 'eavesy-processing-dlq') {
       await deadLetterQueue(batch, env, (failure) => {
         captureMessage('Processing job exhausted automatic retries', {
-          level: 'error',
           tags: {
             job_kind: failure.kind,
             failure_outcome: failure.outcome,
@@ -432,7 +433,4 @@ async function rollupDay(db: D1Database, dayAt: number, observedAt: number): Pro
     .run();
 }
 
-export default withSentry<Env, ProcessingMessage>(
-  (env: Env) => sentryOptions(env, { service: 'processing' }),
-  { ...worker },
-);
+export default withErrorReporting<Env, ProcessingMessage>({ service: 'processing' }, { ...worker });

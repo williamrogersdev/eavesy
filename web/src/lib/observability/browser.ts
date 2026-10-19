@@ -1,48 +1,52 @@
-// Browser error reporting. Off unless VITE_SENTRY_DSN is set at build time;
-// the SDK is loaded lazily so builds without a DSN never download it.
-import { PRIVATE_DATA_COLLECTION, scrubBreadcrumb, scrubEvent, scrubStreamedSpan } from './scrub';
+// Browser analytics and error tracking (PostHog). Off unless VITE_POSTHOG_KEY
+// is set at build time; the SDK is loaded lazily so builds without a key
+// never download it, and it never fetches remote scripts.
+import { scrubAnalyticsEvent } from './scrub';
 
-type BrowserSentry = typeof import('@sentry/browser');
+type PostHog = (typeof import('posthog-js/dist/module.no-external'))['default'];
 
-const DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
-const TRACES_SAMPLE_RATE = 0.05;
+const KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
+const HOST = (import.meta.env.VITE_POSTHOG_HOST as string | undefined) || 'https://us.i.posthog.com';
 
-let loading: Promise<BrowserSentry | null> | null = null;
+let loading: Promise<PostHog | null> | null = null;
 
-function load(): Promise<BrowserSentry | null> {
-  if (!DSN || typeof window === 'undefined') return Promise.resolve(null);
-  loading ??= import('@sentry/browser')
-    .then((Sentry) => {
-      Sentry.init({
-        dsn: DSN,
-        release: import.meta.env.VITE_SENTRY_RELEASE as string | undefined,
-        environment: import.meta.env.MODE,
-        dataCollection: PRIVATE_DATA_COLLECTION,
-        tracesSampleRate: TRACES_SAMPLE_RATE,
-        // Same-origin API calls only; never send trace headers to third parties.
-        tracePropagationTargets: [/^\/(?!\/)/],
-        // DOM breadcrumbs carry title/aria-label text (meeting and chapter titles).
-        integrations: [
-          Sentry.browserTracingIntegration(),
-          Sentry.breadcrumbsIntegration({ dom: false }),
-        ],
-        initialScope: { tags: { service: 'browser' } },
-        beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
-        beforeSend: (event) => scrubEvent(event),
-        beforeSendTransaction: (event) => scrubEvent(event),
-        beforeSendSpan: (span) => scrubStreamedSpan(span),
+function load(): Promise<PostHog | null> {
+  if (!KEY || typeof window === 'undefined') return Promise.resolve(null);
+  loading ??= Promise.all([
+    import('posthog-js/dist/module.no-external'),
+    import('posthog-js/dist/exception-autocapture'),
+  ])
+    .then(([{ default: posthog }]) => {
+      posthog.init(KEY, {
+        api_host: HOST,
+        defaults: '2026-01-30',
+        capture_pageview: 'history_change',
+        capture_pageleave: true,
+        // Clicks and inputs carry on-page text (meeting and note titles).
+        autocapture: false,
+        rageclick: false,
+        capture_dead_clicks: false,
+        capture_heatmaps: false,
+        disable_session_recording: true,
+        disable_surveys: true,
+        disable_web_experiments: true,
+        disable_external_dependency_loading: true,
+        person_profiles: 'identified_only',
+        capture_exceptions: { capture_console_errors: false },
+        before_send: (event) => (event ? scrubAnalyticsEvent(event) : null),
+        loaded: (client) => client.register({ service: 'browser', release: import.meta.env.VITE_RELEASE as string | undefined }),
       });
-      return Sentry;
+      return posthog;
     })
     .catch(() => null);
   return loading;
 }
 
-export function initBrowserErrorReporting(): void {
+export function initBrowserAnalytics(): void {
   void load();
 }
 
 /** Errors caught by a React/router boundary never reach window.onerror. */
 export function reportClientError(error: unknown): void {
-  void load().then((Sentry) => Sentry?.captureException(error));
+  void load().then((posthog) => posthog?.captureException(error));
 }

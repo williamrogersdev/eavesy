@@ -48,7 +48,7 @@ const PROCESSORS = [
   { name: 'Cloudflare', role: 'Hosting, storage, database & queues' },
   { name: 'Clerk', role: 'Authentication' },
   { name: 'OpenRouter', role: 'Optional bring-your-own AI connection' },
-  { name: 'Sentry (optional)', role: 'Scrubbed error reports when enabled; never recording content' },
+  { name: 'PostHog', role: 'Product analytics & scrubbed error reports; never recording content' },
 ];
 
 function SecurityPage() {

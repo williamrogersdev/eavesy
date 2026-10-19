@@ -202,6 +202,9 @@ if [[ -n "${EAVESY_API_BASE:-}" && ! "$EAVESY_API_BASE" =~ ^https://[^/[:space:]
   exit 1
 fi
 
+if [[ -z "${EAVESY_POSTHOG_KEY:-}" ]]; then
+  echo "⚠ EAVESY_POSTHOG_KEY is not set: this build will not report errors or usage (desktop/BUILD.md)" >&2
+fi
 echo "▸ Tauri signed app and updater build"
 build_status=0
 run_tauri_build || build_status=$?

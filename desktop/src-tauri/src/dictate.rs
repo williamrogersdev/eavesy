@@ -180,6 +180,7 @@ fn start(app: &AppHandle, pressed_at: Instant) {
     );
     match result {
         Ok(session) => {
+            crate::telemetry::track("dictation_started", serde_json::json!({}));
             let stop_now = std::mem::take(&mut press().stop_when_ready);
             if stop_now {
                 stop(app, session.session_id);
