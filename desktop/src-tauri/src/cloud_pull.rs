@@ -50,6 +50,10 @@ struct PullState {
     /// Pulled meetings the user deleted on this Mac: never brought back.
     #[serde(default)]
     dismissed: BTreeSet<String>,
+    /// Where the last pull stopped reading the cloud list, so a long history is
+    /// read a few pages per pull instead of the newest pages every time.
+    #[serde(default)]
+    scan_offset: usize,
 }
 
 #[derive(Deserialize)]
@@ -106,14 +110,24 @@ pub fn is_pulled<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
     load_state(app).is_ok_and(|state| state.pulled.contains(id))
 }
 
-/// Called before a capture is deleted: a pulled meeting stays deleted on this Mac.
-pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+/// Called before a capture is deleted: a pulled meeting stays deleted on this
+/// Mac. Returns whether it was a pulled meeting, for `undismiss`.
+pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String> {
     if !load_state(app)?.pulled.contains(id) {
-        return Ok(());
+        return Ok(false);
     }
     update_state(app, |state| {
         state.pulled.remove(id);
         state.dismissed.insert(id.to_string());
+    })?;
+    Ok(true)
+}
+
+/// Undoes `dismiss` when the delete did not go through.
+pub fn undismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    update_state(app, |state| {
+        state.dismissed.remove(id);
+        state.pulled.insert(id.to_string());
     })
 }
 
@@ -122,13 +136,17 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
     let state = load_state(app).map_err(|error| anyhow!(error))?;
     let mut known: HashSet<String> = store::load_all(app).into_iter().map(|recording| recording.id).collect();
     known.extend(sqlite::remote_meeting_ids(app).map_err(|error| anyhow!(error))?);
-    known.extend(state.dismissed);
+    known.extend(state.dismissed.iter().cloned());
 
+    // The newest page first, for meetings recorded since the last pull, then
+    // onward from where the last pull stopped; the end of the list starts over.
+    let resume = state.scan_offset.max(PAGE);
+    let offsets: Vec<usize> = std::iter::once(0).chain((0..MAX_PAGES - 1).map(|page| resume + page * PAGE)).collect();
     let mut wanted = Vec::new();
-    for page in 0..MAX_PAGES {
+    for (index, &offset) in offsets.iter().enumerate() {
         let response = api
             .client
-            .get(api.url(&format!("/api/sessions?limit={PAGE}&offset={}", page * PAGE)))
+            .get(api.url(&format!("/api/sessions?limit={PAGE}&offset={offset}")))
             .bearer_auth(token)
             .send()
             .await
@@ -138,6 +156,10 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         }
         let listed: CloudMeetings = response.json().await.context("decode cloud meetings")?;
         let last_page = listed.items.len() < PAGE;
+        let next = if last_page { 0 } else if offset > 0 { offset + PAGE } else { state.scan_offset };
+        if next != state.scan_offset {
+            update_state(app, |state| state.scan_offset = next).map_err(|error| anyhow!(error))?;
+        }
         wanted.extend(
             listed
                 .items
@@ -146,6 +168,9 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         );
         if last_page || wanted.len() >= PER_PULL {
             break;
+        }
+        if index == offsets.len() - 1 {
+            eprintln!("cloud pull: read {MAX_PAGES} pages; continuing from offset {} next time", offset + PAGE);
         }
     }
 
@@ -234,22 +259,31 @@ fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecord
     let folder = fs_writer::allocate_recording_folder(root, &recording.title, started)?;
     recording.folder_path = Some(folder.to_string_lossy().into_owned());
     let id = recording.id.clone();
+    let mut dismissed = false;
     let saved = fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, Some(&id), recording.notes.as_deref())
         .and_then(|()| update_state(app, |state| {
-            state.pulled.insert(id.clone());
+            // Checked again under the same lock as the mark: a delete may have landed meanwhile.
+            dismissed = state.dismissed.contains(&id);
+            if !dismissed {
+                state.pulled.insert(id.clone());
+            }
         }))
         .and_then(|()| {
+            if dismissed {
+                return Ok(());
+            }
             store::append(app, recording).inspect_err(|_| {
-                let _ = update_state(app, |state| {
+                if let Err(error) = update_state(app, |state| {
                     state.pulled.remove(&id);
-                });
+                }) {
+                    eprintln!("cloud pull: could not unmark {id} after a failed save: {error}");
+                }
             })
         });
-    if let Err(error) = saved {
+    if saved.is_err() || dismissed {
         let _ = std::fs::remove_dir_all(&folder);
-        return Err(error);
     }
-    Ok(true)
+    saved.map(|()| !dismissed)
 }
 
 #[cfg(test)]
@@ -430,5 +464,67 @@ mod tests {
         sqlite::enqueue_file_edit(handle, "remote-1", "summary", "# Brief\n\nEdited", "hash").unwrap();
         crate::sync::pass(handle, &api, "token").await;
         assert!(sqlite::next_file_edit(handle).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_long_history_is_read_onward_from_where_the_last_pull_stopped() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let known: Vec<serde_json::Value> = (0..PAGE).map(|index| listed(&format!("known-{index}"), "Known")).collect();
+        for index in 0..PAGE {
+            update_state(handle, |state| {
+                state.dismissed.insert(format!("known-{index}"));
+            })
+            .unwrap();
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .respond_with(listing(serde_json::Value::Array(known.clone())))
+            .mount(&server)
+            .await;
+        for page in 1..MAX_PAGES {
+            Mock::given(method("GET"))
+                .and(path("/api/sessions"))
+                .and(wiremock::matchers::query_param("offset", (page * PAGE).to_string()))
+                .respond_with(listing(serde_json::Value::Array(known.clone())))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("offset", (MAX_PAGES * PAGE).to_string()))
+            .respond_with(listing(serde_json::json!([listed("oldest", "Oldest")])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/oldest/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Oldest")))
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 0, "the first pull reads only its share of pages");
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1, "the next one carries on and reaches the oldest");
+        assert_eq!(load_state(handle).unwrap().scan_offset, 0, "the end of the list starts over");
+    }
+
+    #[test]
+    fn a_failed_delete_puts_a_pulled_meeting_back() {
+        let (app, _scratch) = app();
+        let handle = app.handle();
+        update_state(handle, |state| {
+            state.pulled.insert("remote-1".into());
+        })
+        .unwrap();
+        assert!(!dismiss(handle, "local-only").unwrap());
+        assert!(dismiss(handle, "remote-1").unwrap());
+        undismiss(handle, "remote-1").unwrap();
+        let state = load_state(handle).unwrap();
+        assert!(state.pulled.contains("remote-1"));
+        assert!(!state.dismissed.contains("remote-1"));
     }
 }

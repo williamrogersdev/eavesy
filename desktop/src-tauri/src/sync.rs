@@ -306,7 +306,13 @@ pub async fn run(app: AppHandle) -> Result<()> {
                                 // More may be waiting: come back sooner.
                                 Ok(Ok(arrived)) if arrived > 0 => wait = Duration::from_secs(2),
                                 Ok(Ok(_)) => {}
+                                Ok(Err(error)) if is_unauthorized(&error) => {
+                                    set_signed_out(&app, true);
+                                    rejected = Some((token.clone(), Instant::now()));
+                                }
                                 Ok(Err(error)) => eprintln!("cloud pull: {error:#}"),
+                                // Dropping the pull mid-flight can leave a save running on
+                                // the blocking pool; save() is safe alongside the next pull.
                                 Err(_) => eprintln!("cloud pull: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
                             },
                             Err(error) => eprintln!("cloud pull: {error}"),

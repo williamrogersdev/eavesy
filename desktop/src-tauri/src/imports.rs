@@ -307,8 +307,18 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             return Err("That capture's folder is outside your Eavesy folder, so it was left alone.".into());
         }
     }
-    crate::cloud_pull::dismiss(&app, &id)?;
-    store::remove(&app, &id)?;
+    let dismissed = crate::cloud_pull::dismiss(&app, &id)?;
+    let undismiss = || {
+        if dismissed {
+            if let Err(error) = crate::cloud_pull::undismiss(&app, &id) {
+                eprintln!("cloud pull: could not restore {id} after a failed delete: {error}");
+            }
+        }
+    };
+    if let Err(error) = store::remove(&app, &id) {
+        undismiss();
+        return Err(error);
+    }
     if let Some(folder) = folder {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let trashed = match app.run_on_main_thread(move || { let _ = sender.send(move_to_trash(&folder)); }) {
@@ -317,6 +327,7 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
         };
         if let Err(error) = trashed {
             let _ = store::append(&app, recording);
+            undismiss();
             let _ = app.emit("recordings:updated", ());
             return Err(error);
         }
