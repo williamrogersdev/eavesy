@@ -288,7 +288,7 @@ fn patterns() -> &'static [(Regex, &'static str)] {
 }
 
 /// Recordings-root paths the watcher is using, as given and canonicalized.
-static RECORDINGS_ROOTS: RwLock<Vec<(usize, Regex)>> = RwLock::new(Vec::new());
+static RECORDINGS_ROOTS: RwLock<Vec<Regex>> = RwLock::new(Vec::new());
 
 pub fn set_recordings_root(root: &Path) {
     let mut roots = vec![root.to_string_lossy().into_owned()];
@@ -299,8 +299,7 @@ pub fn set_recordings_root(root: &Path) {
     let compiled = roots
         .iter()
         .filter_map(|root| {
-            let pattern = Regex::new(&format!("(?:file://)?{}{PATH_REST}", regex::escape(root))).ok()?;
-            Some((root.len(), pattern))
+            Regex::new(&format!("(?:file://)?{}({PATH_REST})", regex::escape(root))).ok()
         })
         .collect();
     if let Ok(mut current) = RECORDINGS_ROOTS.write() {
@@ -361,9 +360,9 @@ fn opaque_run() -> &'static Regex {
 pub fn scrub_text(text: &str) -> String {
     let mut out = text.to_owned();
     if let Ok(roots) = RECORDINGS_ROOTS.read() {
-        for (root_len, pattern) in roots.iter() {
+        for pattern in roots.iter() {
             out = pattern
-                .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[0][*root_len..]))
+                .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[1]))
                 .into_owned();
         }
     }
@@ -493,8 +492,12 @@ mod tests {
                 "could not create ~/…",
             ),
             (
-                "recording at /Volumes/Archive/Meetings/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
+                "recording at /Volumes/Réunions/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
                 "recording at <recordings>/…: No such file or directory (os error 2)",
+            ),
+            (
+                "open file:///Volumes/Réunions/Board offsite/notes.md: Permission denied (os error 13)",
+                "open <recordings>/…: Permission denied (os error 13)",
             ),
             (
                 "file:///private/var/folders/xy/Board offsite.m4a missing",
@@ -506,7 +509,7 @@ mod tests {
                 "The file “…” couldn’t be opened.",
             ),
         ];
-        super::set_recordings_root(std::path::Path::new("/Volumes/Archive/Meetings"));
+        super::set_recordings_root(std::path::Path::new("/Volumes/Réunions"));
         for (input, expected) in cases {
             assert_eq!(scrub_text(input), expected, "input: {input}");
         }
