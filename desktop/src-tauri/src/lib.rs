@@ -121,8 +121,6 @@ pub fn run() {
             commands::show_launcher,
             commands::dismiss_hud,
             commands::close_hud,
-            commands::hud_sheet_opens_up,
-            commands::set_hud_sheet,
             commands::account_info,
             projects::list_projects,
             projects::agent_transcript,

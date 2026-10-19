@@ -36,7 +36,7 @@
   --ev-warn-ink: #9a5b00; /* errors use warn, not coral: coral means recording */
   --ev-warn-soft: #fff0d6;
   /* HUD glass (same in both modes: it sits over any app) */
-  --ev-hud: rgb(33 28 26 / 0.66);
+  --ev-hud: rgb(22 19 18 / 0.97);
   --ev-hud-line: rgb(255 240 220 / 0.14);
   --ev-hud-ink: #f6efe4;
   --ev-hud-ink-2: rgb(246 239 228 / 0.62);
