@@ -143,6 +143,7 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
     let resume = state.scan_offset.max(PAGE);
     let offsets: Vec<usize> = std::iter::once(0).chain((0..MAX_PAGES - 1).map(|page| resume + page * PAGE)).collect();
     let mut wanted = Vec::new();
+    let mut next_offset = state.scan_offset;
     for (index, &offset) in offsets.iter().enumerate() {
         let response = api
             .client
@@ -164,15 +165,12 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         );
         let enough = wanted.len() >= PER_PULL;
         // A page this pull did not take everything from is read again next time.
-        let next = match (last_page, offset > 0, enough) {
+        next_offset = match (last_page, offset > 0, enough) {
             (true, _, _) => 0,
             (false, true, true) => offset,
             (false, true, false) => offset + PAGE,
-            (false, false, _) => state.scan_offset,
+            (false, false, _) => next_offset,
         };
-        if next != state.scan_offset {
-            update_state(app, |state| state.scan_offset = next).map_err(|error| anyhow!(error))?;
-        }
         if last_page || enough {
             break;
         }
@@ -206,6 +204,10 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
                 mark_failed(&meeting.id);
             }
         }
+    }
+    // Saved once the downloads are done, so a pull cut short reads the same pages again.
+    if next_offset != state.scan_offset {
+        update_state(app, |state| state.scan_offset = next_offset).map_err(|error| anyhow!(error))?;
     }
     if arrived > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {

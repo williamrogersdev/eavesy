@@ -326,12 +326,15 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             Err(error) => Err(error.to_string()),
         };
         if let Err(error) = trashed {
-            match store::append(&app, recording) {
-                Ok(()) => undismiss(),
-                Err(append_error) => eprintln!("delete: could not put {id} back after the Trash refused: {append_error}"),
-            }
+            // Undone either way: a pulled meeting that could not be put back is
+            // then pulled again, rather than lost on this Mac.
+            undismiss();
+            let restored = store::append(&app, recording);
             let _ = app.emit("recordings:updated", ());
-            return Err(error);
+            return Err(match restored {
+                Ok(()) => error,
+                Err(append_error) => format!("{error} It also could not be put back in your history: {append_error}"),
+            });
         }
     }
     let _ = app.emit("recordings:updated", ());

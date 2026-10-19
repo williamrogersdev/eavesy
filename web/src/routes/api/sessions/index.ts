@@ -7,6 +7,9 @@ import * as meetingsRepo from '@/db/repo/meetings';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardBurst } from '@/server/rate-limit';
 
+/** Past this offset the list reads as ended, so a client paging through wraps around. */
+const MAX_LIST_OFFSET = 100_000;
+
 const createSessionSchema = z.object({
   clientSessionId: z.string().uuid(),
   title: z.string().trim().min(1).max(200).optional(),
@@ -30,8 +33,7 @@ export const Route = createFileRoute('/api/sessions/')({
         const search = new URL(request.url).searchParams;
         const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
-        // Past the cap the list reads as ended, so a client paging through wraps around.
-        if (offset > 100_000) return Response.json({ items: [] });
+        if (offset > MAX_LIST_OFFSET) return Response.json({ items: [] });
         const items = await getDb()
           .select({
             id: meetings.id,
