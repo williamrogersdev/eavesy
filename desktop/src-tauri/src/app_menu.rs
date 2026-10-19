@@ -9,7 +9,7 @@
 //! the app that was in front before, so pasting into that app still works.
 
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
+    menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
     AppHandle,
 };
 
@@ -26,6 +26,8 @@ pub const WHATS_NEW: &str = "app_whats_new";
 pub const CONTACT: &str = "app_contact";
 pub const SETUP: &str = "app_setup";
 pub const COPY_DIAGNOSTICS: &str = "app_copy_diagnostics";
+const WINDOW_MENU: &str = "app_window_menu";
+const HELP_MENU: &str = "app_help_menu";
 
 pub fn version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
@@ -91,8 +93,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, HIDE_CONTROL, "Hide Capture Control", true, None::<&str>)?,
         ],
     )?;
-    let window = Submenu::with_items(
+    let window = Submenu::with_id_and_items(
         app,
+        WINDOW_MENU,
         "Window",
         true,
         &[
@@ -102,8 +105,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::bring_all_to_front(app, None)?,
         ],
     )?;
-    let help = Submenu::with_items(
+    let help = Submenu::with_id_and_items(
         app,
+        HELP_MENU,
         "Help",
         true,
         &[
@@ -115,14 +119,19 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, COPY_DIAGNOSTICS, "Copy Diagnostics", true, None::<&str>)?,
         ],
     )?;
-    window.set_as_windows_menu_for_nsapp()?;
-    help.set_as_help_menu_for_nsapp()?;
     Menu::with_items(app, &[&eavesy, &edit, &capture, &view, &window, &help])
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     imp::hide_full_screen_item();
-    app.set_menu(build(app)?)?;
+    let menu = build(app)?;
+    if let Some(MenuItemKind::Submenu(window)) = menu.get(WINDOW_MENU) {
+        window.set_as_windows_menu_for_nsapp()?;
+    }
+    if let Some(MenuItemKind::Submenu(help)) = menu.get(HELP_MENU) {
+        help.set_as_help_menu_for_nsapp()?;
+    }
+    app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
         handle(app, event.id.as_ref());
     });
@@ -141,13 +150,13 @@ pub fn handle(app: &AppHandle, id: &str) -> bool {
         RECORD => crate::hotkeys::trigger_dictation(app),
         SHOW_RECORDINGS => crate::commands::show_launcher(app.clone()),
         OPEN_WEB_APP => {
-            let _ = crate::commands::open_web_app(app.clone());
+            if let Err(error) = crate::commands::open_web_app(app.clone(), None) {
+                crate::telemetry::capture("app_menu.open_web_app", &error);
+            }
         }
         SHOW_CONTROL => crate::hud::set_hidden_on_main(app, false),
         HIDE_CONTROL => crate::hud::set_hidden_on_main(app, true),
-        HELP => open_site(app, "/docs"),
-        WHATS_NEW => open_site(app, "/changelog"),
-        CONTACT => open_site(app, "/contact"),
+        HELP | WHATS_NEW | CONTACT => open_site(app, site_path(id).unwrap_or("/")),
         SETUP => crate::commands::show_setup(app.clone()),
         COPY_DIAGNOSTICS => crate::diagnostics::copy(app),
         _ => return false,
@@ -156,6 +165,15 @@ pub fn handle(app: &AppHandle, id: &str) -> bool {
 }
 
 // Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
+fn site_path(id: &str) -> Option<&'static str> {
+    match id {
+        HELP => Some("/docs"),
+        WHATS_NEW => Some("/changelog"),
+        CONTACT => Some("/contact"),
+        _ => None,
+    }
+}
+
 #[allow(deprecated)]
 fn open_site(app: &AppHandle, path: &str) {
     use tauri_plugin_shell::ShellExt;
@@ -304,12 +322,15 @@ mod imp {
     }
 
     /// AppKit adds Enter Full Screen to a menu titled View; the launcher is a floating panel, so
-    /// that item would only break it.
+    /// that item would only break it. This applies to every Eavesy window, and as a registered
+    /// default it lives only in memory, never in the preferences file.
     pub fn hide_full_screen_item() {
         unsafe {
             let key = NSString::alloc(nil).init_str("NSFullScreenMenuItemEverywhere");
+            let value: id = msg_send![class!(NSNumber), numberWithBool: NO];
+            let registered: id = msg_send![class!(NSDictionary), dictionaryWithObject: value forKey: key];
             let defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-            let _: () = msg_send![defaults, setBool: NO forKey: key];
+            let _: () = msg_send![defaults, registerDefaults: registered];
             let _: () = msg_send![key, release];
         }
     }
@@ -340,4 +361,18 @@ mod imp {
     pub fn return_focus() {}
     pub fn hide_full_screen_item() {}
     pub fn order_front_about_panel(_version: &str) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_items_open_their_pages_and_other_ids_are_not_links() {
+        assert_eq!(site_path(HELP), Some("/docs"));
+        assert_eq!(site_path(WHATS_NEW), Some("/changelog"));
+        assert_eq!(site_path(CONTACT), Some("/contact"));
+        assert_eq!(site_path(SETUP), None);
+        assert!(!crate::base_url::DEFAULT_BASE.ends_with('/'));
+    }
 }
