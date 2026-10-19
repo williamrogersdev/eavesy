@@ -74,6 +74,7 @@ pub(super) fn migrate(conn: &Connection) -> Result<(), String> {
     add_column_if_missing(conn, "recording_sessions", "segment_dir", "TEXT")?;
     add_column_if_missing(conn, "recording_sessions", "next_attempt_at", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "recording_sessions", "archive_missing", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "recording_sessions", "project_id", "TEXT")?;
     conn.execute_batch(crate::live_transcript::SCHEMA)
         .map_err(|e| format!("initialize live transcript: {e}"))?;
     migrate_segments(conn)

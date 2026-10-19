@@ -11,6 +11,7 @@ mod fs_writer;
 mod fs_watcher;
 #[cfg(target_os = "macos")]
 mod fn_key;
+mod front_window;
 mod shortcut_conflicts;
 mod hotkeys;
 mod hud;
@@ -24,6 +25,7 @@ mod make_room;
 mod panel;
 mod permissions;
 mod placement;
+mod projects;
 mod recovery;
 mod screenshot_watcher;
 mod settings;
@@ -118,6 +120,9 @@ pub fn run() {
             commands::close_hud,
             commands::set_hud_expanded,
             commands::account_info,
+            projects::list_projects,
+            projects::agent_transcript,
+            front_window::front_window,
             commands::disconnect_account,
             commands::open_web_app,
             commands::show_setup,

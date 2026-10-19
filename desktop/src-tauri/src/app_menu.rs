@@ -156,8 +156,22 @@ mod imp {
             let pid: i32 = msg_send![front, processIdentifier];
             if pid > 0 && pid != own_pid() {
                 PREVIOUS.store(pid, Ordering::SeqCst);
+                let name: id = msg_send![front, localizedName];
+                crate::front_window::capture(pid, ns_string(name));
             }
         }
+    }
+
+    unsafe fn ns_string(value: id) -> Option<String> {
+        if value == nil {
+            return None;
+        }
+        let bytes: *const std::os::raw::c_char = msg_send![value, UTF8String];
+        if bytes.is_null() {
+            return None;
+        }
+        let text = std::ffi::CStr::from_ptr(bytes).to_string_lossy().trim().to_string();
+        (!text.is_empty()).then_some(text)
     }
 
     pub fn activate_app() {

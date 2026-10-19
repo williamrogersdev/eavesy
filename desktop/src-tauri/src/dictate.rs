@@ -176,6 +176,7 @@ fn start(app: &AppHandle, pressed_at: Instant) {
         Some("mic".to_string()),
         None,
         Some(true),
+        None,
         pressed_at,
     );
     match result {
