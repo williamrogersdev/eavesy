@@ -103,7 +103,7 @@ export function TemplateManager() {
     }
   };
 
-  const field = 'w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
+  const field = 'w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
   return (
     <AppSection
       title="Brief templates"
@@ -115,12 +115,12 @@ export function TemplateManager() {
       )}
     >
       {items.length ? (
-        <ul className="divide-y divide-border rounded-md border border-border">
+        <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
           {items.map((template) => (
             <li key={template.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm">{template.name}</p>
-                <p className="truncate text-xs text-muted-foreground">{template.description || template.systemPrompt}</p>
+                <p className="truncate text-xs text-ev-ink-2">{template.description || template.systemPrompt}</p>
               </div>
               <div className="flex shrink-0 gap-0.5">
                 <button type="button" onClick={() => edit(template)} aria-label={`Edit ${template.name}`} className={appButton('ghost', 'sm')}>
@@ -131,7 +131,7 @@ export function TemplateManager() {
                   onClick={() => void remove(template.id)}
                   disabled={busy}
                   aria-label={deletingId === template.id ? `Confirm deleting ${template.name}` : `Delete ${template.name}`}
-                  className={cn(appButton('ghost', 'sm'), 'text-danger hover:text-danger')}
+                  className={cn(appButton('ghost', 'sm'), 'text-ev-warn-ink hover:text-ev-warn-ink')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   {deletingId === template.id ? 'Confirm' : null}
@@ -143,9 +143,9 @@ export function TemplateManager() {
       ) : null}
 
       {formOpen ? (
-        <div className="flex flex-col gap-2 rounded-md border border-border p-3">
+        <div className="flex flex-col gap-2 rounded-[var(--ev-r-ctl)] border border-ev-line p-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground">{editingId ? 'Edit template' : 'New template'}</p>
+            <p className="text-xs font-medium text-ev-ink-2">{editingId ? 'Edit template' : 'New template'}</p>
             <button type="button" onClick={reset} aria-label="Close template editor" className={appButton('ghost', 'sm')}>
               <X className="h-3.5 w-3.5" />
             </button>
@@ -161,7 +161,7 @@ export function TemplateManager() {
           </div>
         </div>
       ) : null}
-      {message ? <p aria-live="polite" className="text-xs text-muted-foreground">{message}</p> : null}
+      {message ? <p aria-live="polite" className="text-xs text-ev-ink-2">{message}</p> : null}
     </AppSection>
   );
 }

@@ -263,12 +263,12 @@ function SettingsPage() {
     return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
   }
   if (!me) {
-    return <AppPage width="compact"><p role="status" className="text-sm text-muted-foreground">Loading settings…</p></AppPage>;
+    return <AppPage width="compact"><p role="status" className="text-sm text-ev-ink-2">Loading settings…</p></AppPage>;
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
   const vocabularyChanged = vocabularyFromText(vocabulary).join('\n') !== me.customVocabulary.join('\n');
-  const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
+  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
 
   return (
     <AppPage width="compact">
@@ -282,8 +282,8 @@ function SettingsPage() {
         <AppAlert tone="info">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              Approve code <span className="font-mono font-semibold">{pairCode}</span> to connect this Mac.
-              {pairResult ? <span className="block text-xs text-muted-foreground">{pairResult}</span> : null}
+              Approve code <span className="font-round font-semibold">{pairCode}</span> to connect this Mac.
+              {pairResult ? <span className="block text-xs text-ev-ink-2">{pairResult}</span> : null}
             </span>
             <button
               type="button"
@@ -379,7 +379,7 @@ function SettingsPage() {
                 setVocabulary(e.target.value);
                 setSaved(false);
               }}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/60"
+              className="w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm outline-none focus:border-ev-slate"
             />
             {vocabularyChanged ? (
               <button
@@ -452,7 +452,7 @@ function SettingsPage() {
         description="A connection that lets Claude, Codex or another assistant search your recordings. Connections are read-only unless you allow writes, and last 90 days."
         action={
           <span className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
               <input
                 type="checkbox"
                 checked={mcpAllowWrite}
@@ -478,7 +478,7 @@ function SettingsPage() {
                 rows={newMcpConfig.split('\n').length}
                 wrap="off"
                 aria-label="New MCP configuration"
-                className="min-w-0 flex-1 resize-none rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+                className="min-w-0 flex-1 resize-none rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1 font-mono text-xs text-ev-ink"
               />
               <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
@@ -490,13 +490,13 @@ function SettingsPage() {
           </AppAlert>
         ) : null}
         {mcpTokens.length ? (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
             {mcpTokens.map((token) => (
               <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                 <span className="min-w-0">
                   <span className="block truncate">
                     {token.name}
-                    <span className="ml-2 text-xs text-muted-foreground">
+                    <span className="ml-2 text-xs text-ev-ink-2">
                       {token.canWrite ? 'read & write · ' : 'read-only · '}
                       {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
                       {token.expiresAt
@@ -507,7 +507,7 @@ function SettingsPage() {
                     </span>
                   </span>
                   {token.usesLegacyUrl ? (
-                    <span className="block text-xs text-danger">
+                    <span className="block text-xs text-ev-warn-ink">
                       Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
                     </span>
                   ) : null}
@@ -616,7 +616,7 @@ function Row({
         <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm">
           {label}
         </Label>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+        {hint ? <p className="text-xs text-ev-ink-2">{hint}</p> : null}
       </div>
       <div className="flex min-w-0 flex-1 justify-start sm:justify-end">{children}</div>
     </div>

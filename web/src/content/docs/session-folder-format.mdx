@@ -1,65 +1,81 @@
 ---
-title: The session folder format
-description: Exactly what Eavesy writes to disk for every session, so you (or an agent) can read it reliably.
-category: For AI agents
-order: 21
+title: Your files
+description: Exactly what the Mac app writes to disk for each capture, so you or an agent can read it reliably.
+category: Your files
+order: 30
 ---
 
-Every session the Mac app records is written as a self-contained folder of plain
-files. Nothing is proprietary — it&rsquo;s all Markdown, JSON, and standard
-audio, so any tool or agent can read it.
+The Mac app saves every capture as a folder of plain files. It's all Markdown,
+JSON, images and standard audio and video, so any editor, script or agent can
+read it.
 
-## Folder layout
+## Where they live
+
+Captures go in `~/Eavesy/Recordings` unless you change it under
+**Settings → Recordings folder** in the Mac app.
+
+## Folder names
+
+Each folder is named `<date> <title>`, using the local date and the title the
+capture had when it started:
+
+| Capture | Folder name |
+| --- | --- |
+| Talk | `2026-06-15 Voice memo` |
+| Meeting | `2026-06-15 Meeting recording` |
+| Video | `2026-06-15 Screen recording` |
+| Clipboard text | `2026-06-15 Note` |
+| Clipboard image | `2026-06-15 Pasted image` |
+| Imported file | `2026-06-15` followed by the file's name |
+
+Screenshots taken from the launcher are the exception. Their folder is named
+`Screenshot-` followed by an ID.
+
+Folders are never renamed, even after the brief suggests a better title. That
+keeps paths stable for your scripts and agents. Characters that aren't safe in
+file names are dropped, and titles are cut at 80 characters.
+
+If a folder with the same name already exists, Eavesy adds the start time,
+like `2026-06-15 Meeting recording (14-30)`. A third one the same minute gets
+`(14-30-2)`, and so on. Existing files are never reused.
+
+## Recordings
+
+Talk, meetings and videos look like this:
 
 ```text
-~/Eavesy/Recordings/2026-06-15 Design review/
-├── summary.md       # the structured brief
-├── transcript.md    # the full, timestamped transcript
-├── notes.md         # your editable notes
-├── meeting.json     # machine-readable metadata
-├── audio.m4a        # canonical audio for transcription and playback
-└── screen.mp4       # present when screen capture was enabled
+2026-06-15 Meeting recording/
+├── summary.md
+├── transcript.md
+├── notes.md
+├── meeting.json
+├── audio.m4a
+└── screen.mp4
 ```
 
-The folder name is the **date plus a slug of the title**, so sessions sort
-chronologically and are easy to scan. You choose the parent directory in
-**Settings → Recordings folder**. If two sessions have the same title on the same day,
-Eavesy adds the capture time (and a counter when necessary) so existing audio
-and Markdown are never reused.
+| File | What it holds |
+| --- | --- |
+| `summary.md` | The brief. A placeholder until the cloud brief arrives. |
+| `transcript.md` | The on-device text at first, then the cloud transcript. |
+| `notes.md` | Your own notes. Eavesy never writes AI output here. |
+| `meeting.json` | Metadata for scripts and agents. |
+| `audio.m4a` | The audio. |
+| `screen.mp4` | The screen, for videos only. |
 
-You can edit `summary.md`, `transcript.md`, or `notes.md` in Obsidian, VS Code,
-or any plain-text editor. The Mac app detects genuine content changes, keeps the
-newest edit durable while offline, and synchronizes it after the Mac reconnects.
-An Eavesy-generated refresh never overwrites a file whose contents changed on
-disk.
+You can edit `summary.md`, `transcript.md` and `notes.md` in any editor. When
+you're signed in, your edits sync to your account. Eavesy never overwrites a
+file you've changed.
 
-## `summary.md`
-
-The human- and agent-friendly brief: a title, TL;DR, decisions, owner-tagged
-action items, and open questions — the same content you can copy and paste into
-an agent.
-
-## `transcript.md`
-
-The complete transcript in Markdown. Editable, exportable, and the source of
-truth the summary is built from.
-
-## `notes.md`
-
-Your own Markdown notes. Eavesy creates this file with every recording and
-preserves it independently from AI-generated output.
-
-## `meeting.json`
-
-Structured metadata for programmatic use. Read this when you want to ingest
-sessions into a script or pipeline rather than read prose:
+## meeting.json
 
 ```json
 {
   "schemaVersion": 1,
-  "id": "meeting-id",
+  "id": "local-id",
+  "remoteMeetingId": "account-id",
   "title": "Design review",
-  "date": "2026-06-15T15:00:00Z",
+  "date": "2026-06-15T15:00:00+00:00",
+  "startedAt": 1781535600000,
   "durationSeconds": 1820,
   "source": "mixed",
   "status": "complete",
@@ -73,15 +89,43 @@ sessions into a script or pipeline rather than read prose:
 }
 ```
 
-<Callout type="note">
-Field names are descriptive and stable. If you&rsquo;re building automation on
-top of `meeting.json`, treat unknown fields as additive — we add, we don&rsquo;t
-rename.
-</Callout>
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | The format version. Currently `1`. |
+| `id` | The ID on this Mac. |
+| `remoteMeetingId` | The ID in your account, or `null` if it hasn't synced. |
+| `title` | The current title, which may differ from the folder name. |
+| `date` | When it started, as an ISO 8601 timestamp. |
+| `startedAt` | When it started, in milliseconds since 1970. |
+| `durationSeconds` | Length in seconds. |
+| `source` | `mic` for Talk, `mixed` for a meeting, `screen` for video. |
+| `status` | Where processing is, for example `processing` or `complete`. |
+| `files` | The file names in this folder. `audio` or `video` is `null` when absent. |
 
-## Using it with agents
+If you build on `meeting.json`, ignore fields you don't recognize. New fields
+may be added.
 
-Because everything is on disk in open formats, an agent with filesystem access
-can read a session with no API. See
-[Context for AI agents](/docs/context-for-agents) for patterns, and
-[Exporting &amp; your files](/docs/exporting-and-files) for moving it elsewhere.
+## Screenshots, clipboard and notes
+
+These folders hold one file and a `capture.json`:
+
+```text
+2026-06-15 Note/
+├── note.md
+└── capture.json
+```
+
+The file is `note.md`, `image.png` or `screenshot.png`. Imported files keep
+their extension, such as `image.jpg` or `audio.mp3`. These captures stay on
+your Mac and are never uploaded.
+
+## Recordings from the browser
+
+When the Mac app is signed in, recordings you make on the web are copied into
+the same folder with their transcript and brief. Their audio is not
+downloaded.
+
+## Next
+
+- [Give your agent context](/docs/context-for-agents)
+- [Privacy and your data](/docs/privacy-and-data)
