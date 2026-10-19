@@ -73,7 +73,7 @@ no person profiles either.
 - `web/src/server/observability.ts` — the Workers' PostHog client: a plain
   `fetch` to the capture endpoint, deferred with `waitUntil`.
   `withErrorReporting` reports anything that escapes a fetch, queue or
-  scheduled handler and rethrows; `reportError` and `captureMessage` report
+  scheduled handler and rethrows; each Worker wraps its entry point once (its `service` name labels every event); `reportError` and `captureMessage` report
   handled failures; `trackEvent` sends product events.
 - `web/src/lib/observability/browser.ts` — browser init. `posthog-js` is
   loaded lazily, only when `VITE_POSTHOG_KEY` was set at build time; without

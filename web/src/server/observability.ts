@@ -16,12 +16,15 @@ export interface ReportingOptions {
 
 export const DEFAULT_POSTHOG_HOST = 'https://us.i.posthog.com';
 
-let reporting: ReportingOptions = { service: 'web' };
+// Each Worker has one entry point wrapped once; reportError, captureMessage
+// and trackEvent, called deep inside it, use that wrapper's service name.
+let defaultService = 'web';
 
 type Properties = Record<string, unknown>;
 
 function send(
   env: ObservabilityEnv | undefined,
+  service: string,
   event: string,
   distinctId: string | undefined,
   properties: Properties,
@@ -32,11 +35,11 @@ function send(
   const body = {
     api_key: key,
     event,
-    distinct_id: distinctId ?? `eavesy-${reporting.service}`,
+    distinct_id: distinctId ?? `eavesy-${service}`,
     timestamp: new Date().toISOString(),
     properties: {
       ...properties,
-      service: reporting.service,
+      service,
       environment: env.ENVIRONMENT ?? 'production',
       ...(env.RELEASE ? { release: env.RELEASE } : {}),
       $lib: 'eavesy-worker',
@@ -47,6 +50,7 @@ function send(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(3_000),
   }).then(
     () => undefined,
     () => undefined,
@@ -87,6 +91,7 @@ export function reportError(message: string, error: unknown, context: Record<str
   defer(
     send(
       runtimeEnv(),
+      defaultService,
       '$exception',
       userId,
       exceptionEvent(error, true, { failure: scrubText(message), details: scrubValue(context) }),
@@ -98,7 +103,7 @@ export function reportError(message: string, error: unknown, context: Record<str
 export function captureMessage(message: string, opts: { tags?: Record<string, string> } = {}) {
   console.error(JSON.stringify({ message, ...opts.tags }));
   defer(
-    send(runtimeEnv(), '$exception', undefined, {
+    send(runtimeEnv(), defaultService, '$exception', undefined, {
       $exception_list: [{ type: message, value: message, mechanism: { handled: true, synthetic: true } }],
       $exception_fingerprint: message,
       ...(opts.tags ? { details: scrubValue(opts.tags) } : {}),
@@ -108,7 +113,7 @@ export function captureMessage(message: string, opts: { tags?: Record<string, st
 
 /** A product event for a known user. Never pass content: ids, kinds and counts only. */
 export function trackEvent(userId: string, event: string, properties: Properties = {}) {
-  defer(send(runtimeEnv(), event, userId, properties));
+  defer(send(runtimeEnv(), defaultService, event, userId, properties));
 }
 
 type Handler<E, Q> = ExportedHandler<E, Q>;
@@ -121,10 +126,17 @@ export function withErrorReporting<E extends ObservabilityEnv, Q = unknown>(
   options: ReportingOptions,
   handler: Handler<E, Q>,
 ): Handler<E, Q> {
-  reporting = options;
+  defaultService = options.service;
   const wrapped: Handler<E, Q> = { ...handler };
-  const report = (env: E, ctx: ExecutionContext, error: unknown, properties: Properties) =>
-    ctx.waitUntil(send(env, '$exception', undefined, exceptionEvent(error, false, properties)) ?? Promise.resolve());
+  // Telemetry must never replace the error it is reporting.
+  const report = (env: E, ctx: ExecutionContext, error: unknown, properties: () => Properties) => {
+    try {
+      const pending = send(env, options.service, '$exception', undefined, exceptionEvent(error, false, properties()));
+      if (pending) ctx.waitUntil(pending);
+    } catch {
+      // ignored
+    }
+  };
 
   if (handler.fetch) {
     const fetchHandler = handler.fetch;
@@ -132,10 +144,10 @@ export function withErrorReporting<E extends ObservabilityEnv, Q = unknown>(
       try {
         return await fetchHandler.call(handler, request, env, ctx);
       } catch (error) {
-        report(env, ctx, error, {
+        report(env, ctx, error, () => ({
           $current_url: scrubUrl(request.url, options),
           method: request.method,
-        });
+        }));
         throw error;
       }
     };
@@ -146,7 +158,7 @@ export function withErrorReporting<E extends ObservabilityEnv, Q = unknown>(
       try {
         await queueHandler.call(handler, batch, env, ctx);
       } catch (error) {
-        report(env, ctx, error, { queue: batch.queue });
+        report(env, ctx, error, () => ({ queue: batch.queue }));
         throw error;
       }
     };
@@ -157,7 +169,7 @@ export function withErrorReporting<E extends ObservabilityEnv, Q = unknown>(
       try {
         await scheduledHandler.call(handler, controller, env, ctx);
       } catch (error) {
-        report(env, ctx, error, { cron: controller.cron });
+        report(env, ctx, error, () => ({ cron: controller.cron }));
         throw error;
       }
     };

@@ -44,8 +44,9 @@ export async function ensureClerkUser(
     createdAt: now,
     updatedAt: now,
   });
+  const created = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
   trackEvent(id, 'user_signed_up');
-  return (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
+  return created;
 }
 
 export async function ensureAnonymousUser(

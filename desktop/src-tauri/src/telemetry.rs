@@ -16,7 +16,6 @@
 //! (seven files kept), plus stderr in debug builds.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -57,14 +56,15 @@ fn posthog_endpoint() -> String {
 
 type Outgoing = (Value, Option<mpsc::Sender<()>>);
 
-static SENDER: OnceLock<Option<Mutex<mpsc::Sender<Outgoing>>>> = OnceLock::new();
+static SENDER: OnceLock<Option<Mutex<mpsc::SyncSender<Outgoing>>>> = OnceLock::new();
+const QUEUE_LIMIT: usize = 64;
 
-/// One background thread posts events in order; a full or failed send is
-/// dropped rather than retried, so telemetry never slows the app down.
+/// One background thread posts events in order; an event that finds the
+/// queue full, or whose send fails, is dropped rather than retried, so telemetry never slows the app down.
 fn start_sender() {
     SENDER.get_or_init(|| {
         posthog_key()?;
-        let (tx, rx) = mpsc::channel::<Outgoing>();
+        let (tx, rx) = mpsc::sync_channel::<Outgoing>(QUEUE_LIMIT);
         std::thread::Builder::new()
             .name("posthog".into())
             .spawn(move || {
@@ -138,8 +138,9 @@ fn event_body(event: &str, properties: Value) -> Value {
 
 fn enqueue(event: &str, properties: Value, done: Option<mpsc::Sender<()>>) -> bool {
     let Some(Some(sender)) = SENDER.get() else { return false };
-    let Ok(sender) = sender.lock() else { return false };
-    sender.send((event_body(event, properties), done)).is_ok()
+    // try_lock: a panic while this thread holds the lock must not deadlock.
+    let Ok(sender) = sender.try_lock() else { return false };
+    sender.try_send((event_body(event, properties), done)).is_ok()
 }
 
 /// A product event. Properties must be fixed categories or counts, never
@@ -154,43 +155,38 @@ static RECENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 fn recent_logs() -> Vec<String> {
     RECENT_LOGS
-        .lock()
+        .try_lock()
         .map(|lines| lines.iter().cloned().collect())
         .unwrap_or_default()
 }
 
 struct RecentLogs;
 
+/// Keeps only the log message: structured fields can carry anything the
+/// call site had in hand, so they never reach a report.
 #[derive(Default)]
-struct LineVisitor {
-    message: String,
-    fields: String,
-}
+struct MessageVisitor(String);
 
-impl tracing::field::Visit for LineVisitor {
+impl tracing::field::Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.message = format!("{value:?}");
-        } else {
-            let _ = write!(self.fields, " {}={value:?}", field.name());
+            self.0 = format!("{value:?}");
         }
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
         if field.name() == "message" {
-            self.message = value.to_owned();
-        } else {
-            let _ = write!(self.fields, " {}={value}", field.name());
+            self.0 = value.to_owned();
         }
     }
 }
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RecentLogs {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        let mut line = LineVisitor::default();
-        event.record(&mut line);
+        let mut message = MessageVisitor::default();
+        event.record(&mut message);
         let metadata = event.metadata();
-        let text = scrub_text(&format!("{} {}: {}{}", metadata.level(), metadata.target(), line.message, line.fields));
+        let text = scrub_text(&format!("{} {}: {}", metadata.level(), metadata.target(), message.0));
         if let Ok(mut lines) = RECENT_LOGS.lock() {
             if lines.len() == RECENT_LOG_LINES {
                 lines.pop_front();
@@ -234,7 +230,8 @@ fn init_logging() -> Option<WorkerGuard> {
         .with(RecentLogs)
         .try_init();
 
-    std::panic::set_hook(Box::new(|info| {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
         let message = scrub_text(&info.to_string());
         tracing::error!(target: "panic", "{message}");
         let location = info
@@ -246,6 +243,7 @@ fn init_logging() -> Option<WorkerGuard> {
         if enqueue("$exception", panic_properties(&message, &location), Some(done)) {
             let _ = sent.recv_timeout(Duration::from_secs(3));
         }
+        previous(info);
     }));
     guard
 }
@@ -292,7 +290,7 @@ fn patterns() -> &'static [(Regex, &'static str)] {
 }
 
 /// Recordings-root paths the watcher is using, as given and canonicalized.
-static RECORDINGS_ROOTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+static RECORDINGS_ROOTS: RwLock<Vec<(usize, Regex)>> = RwLock::new(Vec::new());
 
 pub fn set_recordings_root(root: &Path) {
     let mut roots = vec![root.to_string_lossy().into_owned()];
@@ -300,8 +298,15 @@ pub fn set_recordings_root(root: &Path) {
         roots.push(canonical.to_string_lossy().into_owned());
     }
     roots.retain(|root| root.len() > 1);
+    let compiled = roots
+        .iter()
+        .filter_map(|root| {
+            let pattern = Regex::new(&format!("(?:file://)?{}{PATH_REST}", regex::escape(root))).ok()?;
+            Some((root.len(), pattern))
+        })
+        .collect();
     if let Ok(mut current) = RECORDINGS_ROOTS.write() {
-        *current = roots;
+        *current = compiled;
     }
 }
 
@@ -358,13 +363,10 @@ fn opaque_run() -> &'static Regex {
 pub fn scrub_text(text: &str) -> String {
     let mut out = text.to_owned();
     if let Ok(roots) = RECORDINGS_ROOTS.read() {
-        for root in roots.iter() {
-            let pattern = format!("(?:file://)?{}{PATH_REST}", regex::escape(root));
-            if let Ok(pattern) = Regex::new(&pattern) {
-                out = pattern
-                    .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[0][root.len()..]))
-                    .into_owned();
-            }
+        for (root_len, pattern) in roots.iter() {
+            out = pattern
+                .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[0][*root_len..]))
+                .into_owned();
         }
     }
     out = app_path().replace_all(&out, "<app>$1").into_owned();
@@ -558,6 +560,18 @@ mod tests {
         let serialized = body.to_string();
         assert!(!serialized.contains("Secret plans"));
         assert!(!serialized.contains("dana"));
+    }
+
+    #[test]
+    fn recent_logs_keep_the_message_but_not_fields() {
+        use tracing_subscriber::prelude::*;
+        let subscriber = tracing_subscriber::registry().with(super::RecentLogs);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(title = "Board layoffs with Dana", "recording stopped");
+        });
+        let logs = super::recent_logs();
+        assert!(logs.iter().any(|line| line.ends_with("recording stopped")));
+        assert!(!logs.iter().any(|line| line.contains("Board layoffs")));
     }
 
     #[test]
