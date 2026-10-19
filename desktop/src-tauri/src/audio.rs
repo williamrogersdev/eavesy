@@ -378,8 +378,12 @@ pub fn start_audio_capture(
     let dictation = dictation.unwrap_or(false) && source == "mic";
     let context = SessionContext { blurb: context_blurb.as_deref(), project_id: project_id.as_deref() };
     let result = spawn_capture(app, state, "audio", &source, false, context, dictation, asked_at);
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_audio", error);
+    match &result {
+        Ok(_) => crate::telemetry::track(
+            "recording_started",
+            serde_json::json!({ "kind": if dictation { "dictation" } else { "audio" } }),
+        ),
+        Err(error) => crate::telemetry::capture("capture.start_audio", error),
     }
     result
 }
@@ -391,8 +395,9 @@ pub fn start_screen_capture(
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
     let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), SessionContext::default(), false, Instant::now());
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_screen", error);
+    match &result {
+        Ok(_) => crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" })),
+        Err(error) => crate::telemetry::capture("capture.start_screen", error),
     }
     result
 }
@@ -861,29 +866,24 @@ fn stream_events(
 
 /// Tells a recording's capture engine what language the cloud heard last, so
 /// captions set to follow the spoken language can move to it. True once the
-/// engine has the line. The write goes to a copy of the engine's stdin, taken
-/// under the lock, and never waits: if the engine has stopped reading, the
-/// hint fails and the poller sends it again next time.
+/// engine has the line. The write never waits: if the engine has stopped
+/// reading, the hint fails and the poller sends it again next time. It runs
+/// under the captures lock, so it never overlaps the "stop" line, which is
+/// only written once the session has left the map.
 pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::AsRawFd;
     let Some(language) = crate::vocabulary::clean_language(language) else { return false };
-    let stdin = {
-        let captures = app.state::<Captures>();
-        let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(session) = sessions.get(session_id) else { return false };
-        match session.stdin.as_fd().try_clone_to_owned() {
-            Ok(fd) => std::fs::File::from(fd),
-            Err(_) => return false,
-        }
-    };
     let line = format!("{}\n", serde_json::json!({ "language": language }));
-    write_without_waiting(stdin.as_raw_fd(), line.as_bytes())
+    let captures = app.state::<Captures>();
+    let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(session) = sessions.get(session_id) else { return false };
+    write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
 }
 
 /// One write to a pipe that may be full: all of `bytes` or nothing. Lines this
-/// short are under PIPE_BUF, so the write is atomic. The pipe's flags are
-/// shared with the engine's own stdin, so they are put back straight after;
-/// a "stop" that meets them in between still falls back to the stop timeout.
+/// short are under PIPE_BUF, so the write is atomic. The flags belong to the
+/// engine's stdin, so they are put back before returning; callers keep every
+/// other write to it from running meanwhile.
 fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
     // SAFETY: `fd` is an open descriptor owned by the caller for this call.
     unsafe {
@@ -891,7 +891,12 @@ fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
         if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
             return false;
         }
-        let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+        let written = loop {
+            let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+            if written >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                break written;
+            }
+        };
         libc::fcntl(fd, libc::F_SETFL, flags);
         usize::try_from(written).is_ok_and(|written| written == bytes.len())
     }
