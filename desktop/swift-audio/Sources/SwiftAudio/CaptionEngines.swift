@@ -52,10 +52,16 @@ enum CaptionEngines {
 }
 
 /// SFSpeechRecognizer with on-device recognition required. A request only
-/// settles its text when its audio ends, so the request is rolled over every
+/// settles its text when its audio ends, so the request is rolled over after
 /// `rolloverMs` of audio to turn partials into finals as the recording goes.
+/// It rolls over at the next pause, so no word is cut in half, and at
+/// `rolloverCapMs` whatever is being said.
 final class SFSpeechEngine: SpeechEngine {
     static let rolloverMs: Int64 = 30_000
+    static let rolloverCapMs: Int64 = 45_000
+    /// How long the audio has to stay below `pauseRms` to count as a pause.
+    static let pauseMs: Int64 = 250
+    static let pauseRms: Float = 0.01
 
     let name = "sfspeech"
     private let recognizer: SFSpeechRecognizer
@@ -70,6 +76,7 @@ final class SFSpeechEngine: SpeechEngine {
         var task: SFSpeechRecognitionTask?
         let startMs: Int64
         var lastMs: Int64
+        var quietMs: Int64 = 0
         var settled = false
 
         init(startMs: Int64) {
@@ -103,13 +110,31 @@ final class SFSpeechEngine: SpeechEngine {
     func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
         lock.lock()
         defer { lock.unlock() }
-        if let window = current, atMs - window.startMs >= Self.rolloverMs {
+        let window = current ?? openWindow(atMs: atMs)
+        window.request.append(buffer)
+        let durationMs = Int64(Double(buffer.frameLength) / buffer.format.sampleRate * 1000)
+        window.lastMs = atMs + durationMs
+        window.quietMs = Self.rms(buffer) < Self.pauseRms ? window.quietMs + durationMs : 0
+        if Self.rollsOver(elapsedMs: window.lastMs - window.startMs, quietMs: window.quietMs) {
             window.request.endAudio()
             current = nil
         }
-        let window = current ?? openWindow(atMs: atMs)
-        window.request.append(buffer)
-        window.lastMs = atMs + Int64(Double(buffer.frameLength) / buffer.format.sampleRate * 1000)
+    }
+
+    static func rollsOver(elapsedMs: Int64, quietMs: Int64) -> Bool {
+        elapsedMs >= rolloverCapMs || (elapsedMs >= rolloverMs && quietMs >= pauseMs)
+    }
+
+    /// Audio it can't measure counts as loud, so it never passes for a pause.
+    /// An empty buffer counts as quiet: it adds no time, so it can't end one either.
+    static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard buffer.frameLength > 0 else { return 0 }
+        guard let samples = buffer.floatChannelData?[0] else { return 1 }
+        var sum: Float = 0
+        for i in 0..<Int(buffer.frameLength) {
+            sum += samples[i] * samples[i]
+        }
+        return (sum / Float(buffer.frameLength)).squareRoot()
     }
 
     func finish(_ done: @escaping () -> Void) {

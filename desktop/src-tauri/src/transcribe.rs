@@ -18,7 +18,7 @@ pub fn spawn(
                 "Pair this Mac with your Eavesy account before transcribing recordings."
                     .to_string()
             })
-            .and_then(|credential| run(&media_path, is_video, &credential));
+            .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS));
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
@@ -94,33 +94,89 @@ pub fn spawn(
 /// that transcript is pasted once it is ready instead.
 pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
     std::thread::spawn(move || {
-        let Some(credential) = settings::device_credential(&app) else { return };
-        match run(&audio, false, &credential) {
+        let Some(credential) = settings::device_credential(&app) else {
+            no_paste(&app, &id, "Saved. Sign in to have it typed for you");
+            return;
+        };
+        match run(&audio, false, true, &credential, &PASTE_RETRY_DELAYS) {
             Ok(text) => crate::dictation::deliver_dictation(&app, &id, &text),
-            Err(error) => crate::telemetry::capture("dictation.whisper_paste", &error),
+            Err(error) => {
+                crate::telemetry::capture("dictation.whisper_paste", &error);
+                no_paste(&app, &id, "Saved. The words will be in History");
+            }
         }
     });
 }
 
+/// A dictation whose words could not be had in time: say it is saved, so
+/// "Writing it down…" doesn't hang.
+fn no_paste(app: &AppHandle, id: &str, notice: &str) {
+    let current = crate::hud::current();
+    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(id) {
+        crate::hud::set_state(app, crate::hud::HudState {
+            phase: crate::hud::Phase::Saved,
+            session_id: Some(id.to_string()),
+            mode: Some("audio".to_string()),
+            started_at_ms: None,
+            message: None,
+            notice: Some(notice.to_string()),
+        });
+    }
+}
+
 const CHUNK_SECS: usize = 4 * 60;
 const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
+/// A paste is only worth waiting a moment for: after that the user has moved
+/// on, and the stored recording is transcribed with full retries anyway.
+const PASTE_RETRY_DELAYS: [u64; 1] = [2];
+/// How many pieces of a long recording upload at once.
+const PIECES_AT_ONCE: usize = 3;
 
-fn run(media_path: &Path, is_video: bool, credential: &settings::Credential) -> Result<String, String> {
+/// `voice` marks the user's own mic alone (a dictation), which the server
+/// filters more gently and retries when quiet speech is cut.
+fn run(
+    media_path: &Path,
+    is_video: bool,
+    voice: bool,
+    credential: &settings::Credential,
+    delays: &[u64],
+) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(180))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut texts = Vec::new();
-    for (bytes, filename, mime) in prepare(media_path, is_video)? {
-        let text = with_retry(|| transcribe_piece(&client, &bytes, &filename, &mime, credential))?;
-        if !text.trim().is_empty() {
-            texts.push(text.trim().to_string());
-        }
-    }
+    let pieces = prepare(media_path, is_video)?;
+    let texts = in_order_at_once(&pieces, PIECES_AT_ONCE, |(bytes, filename, mime)| {
+        with_retry(delays, || transcribe_piece(&client, bytes, filename, mime, voice, credential))
+    })?;
+    let texts: Vec<&str> = texts.iter().map(|text| text.trim()).filter(|text| !text.is_empty()).collect();
     if texts.is_empty() {
         return Err("empty transcript".to_string());
     }
     Ok(texts.join("\n"))
+}
+
+/// Runs `work` on up to `width` items at a time and returns the results in
+/// the items' order, or the first error.
+fn in_order_at_once<T: Sync, R: Send>(
+    items: &[T],
+    width: usize,
+    work: impl Fn(&T) -> Result<R, String> + Sync,
+) -> Result<Vec<R>, String> {
+    let mut results = Vec::with_capacity(items.len());
+    for batch in items.chunks(width.max(1)) {
+        let batch_results: Vec<Result<R, String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = batch.iter().map(|item| scope.spawn(|| work(item))).collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap_or_else(|_| Err("transcription worker panicked".to_string())))
+                .collect()
+        });
+        for result in batch_results {
+            results.push(result?);
+        }
+    }
+    Ok(results)
 }
 
 enum PieceError {
@@ -128,8 +184,8 @@ enum PieceError {
     Fatal(String),
 }
 
-fn with_retry(mut attempt: impl FnMut() -> Result<String, PieceError>) -> Result<String, String> {
-    for delay in RETRY_DELAYS.iter().map(Some).chain(std::iter::once(None)) {
+fn with_retry(delays: &[u64], mut attempt: impl FnMut() -> Result<String, PieceError>) -> Result<String, String> {
+    for delay in delays.iter().map(Some).chain(std::iter::once(None)) {
         match attempt() {
             Ok(text) => return Ok(text),
             Err(PieceError::Fatal(e)) => return Err(e),
@@ -147,6 +203,7 @@ fn transcribe_piece(
     bytes: &[u8],
     filename: &str,
     mime: &str,
+    voice: bool,
     credential: &settings::Credential,
 ) -> Result<String, PieceError> {
     let part = reqwest::blocking::multipart::Part::bytes(bytes.to_vec())
@@ -154,7 +211,11 @@ fn transcribe_piece(
         .mime_str(mime)
         .map_err(|e| PieceError::Fatal(e.to_string()))?;
     let form = reqwest::blocking::multipart::Form::new().part("audio", part);
-    let url = format!("{}/api/transcribe", credential.base.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/transcribe{}",
+        credential.base.trim_end_matches('/'),
+        if voice { "?voice=1" } else { "" }
+    );
 
     let resp = client
         .post(&url)
@@ -325,9 +386,32 @@ mod tests {
     }
 
     #[test]
+    fn pieces_run_together_but_come_back_in_order() {
+        let items: Vec<u64> = (0..7).collect();
+        let running = std::sync::atomic::AtomicUsize::new(0);
+        let peak = std::sync::atomic::AtomicUsize::new(0);
+        let results = in_order_at_once(&items, 3, |item| {
+            let now = running.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(20 * (7 - item)));
+            running.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(item * 10)
+        });
+        assert_eq!(results, Ok((0..7).map(|item| item * 10).collect()));
+        assert_eq!(peak.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_failed_piece_fails_the_transcript() {
+        let items = [1, 2, 3, 4];
+        let result = in_order_at_once(&items, 2, |item| if *item == 3 { Err("HTTP 400".to_string()) } else { Ok(*item) });
+        assert_eq!(result, Err("HTTP 400".to_string()));
+    }
+
+    #[test]
     fn retries_transient_failures_but_not_fatal_ones() {
         let mut calls = 0;
-        let fatal = with_retry(|| {
+        let fatal = with_retry(&RETRY_DELAYS, || {
             calls += 1;
             Err(PieceError::Fatal("401".into()))
         });

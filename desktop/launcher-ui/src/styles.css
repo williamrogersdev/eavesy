@@ -156,24 +156,33 @@ body {
   -webkit-user-select: none;
   transition: border-color var(--ev-d-state) ease;
 }
+/* A window taller than one bar (the transcript, or a tall control): a card, not a pill. */
+@media (min-height: 68px) { .eavesy-control { border-radius: 16px; } }
 /* Room for the transcript sheet: square off into a card. */
 .eavesy-control:has(.ctl-transcript) { border-radius: 16px; }
 .eavesy-control[data-phase="recording"] {
-  border-color: color-mix(in srgb, var(--ev-rec) 65%, transparent);
+  border-color: color-mix(in srgb, var(--ev-rec) 80%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 0 0 1px color-mix(in srgb, var(--ev-rec) 35%, transparent);
 }
+/* Low on the screen the transcript opens above the bar, which stays put. */
+.eavesy-control[data-grow="up"] { flex-direction: column-reverse; }
 
-/* The bar keeps its own height when the transcript opens under it. */
+/* The bar never gives up its height: if the window has not grown yet, the
+   transcript is the part that waits, never drawn over the bar. */
 .ctl-bar {
   container-type: size;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 38px;
 }
 .ctl-transcript {
-  flex: none;
-  height: 72px;
+  flex: 0 1 96px;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px 14px 10px;
+  padding: 10px 14px 10px;
   border-top: 1px solid var(--ev-hud-line);
+  /* Older lines fade out under the top edge instead of being cut in half. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
   font: var(--ev-t-body);
   font-size: 12.5px;
   line-height: 1.45;
@@ -182,6 +191,11 @@ body {
   user-select: text;
   -webkit-user-select: text;
 }
+.eavesy-control[data-grow="up"] .ctl-transcript { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
+.ctl-transcript p + p { margin-top: 4px; }
+/* While recording the words sit back: a quiet echo of what is being heard. */
+.eavesy-control[data-phase="recording"] .ctl-transcript { color: var(--ev-hud-ink-2); }
+.ctl-transcript-hint { font-style: italic; opacity: 0.75; }
 .ctl-transcript-notice { color: #9fe0bd; font-weight: 600; }
 .eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
 
@@ -206,7 +220,31 @@ body {
 .ctl-mark:hover { background: rgb(255 255 255 / 0.12); }
 .ctl-timer {
   font-variant-numeric: tabular-nums;
-  color: var(--ev-hud-ink-2);
+  font-weight: 600;
+  color: var(--ev-hud-ink);
+}
+/* The one unmistakable sign the mic is live. */
+.ctl-rec {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--ev-rec);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent);
+  animation: ctl-rec-pulse 1.4s ease-out infinite;
+}
+@keyframes ctl-rec-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+.ctl-done { display: inline-flex; align-items: center; gap: 4px; color: #9fe0bd; font-weight: 600; }
+.ctl-writing { animation: ctl-breathe 1.2s ease-in-out infinite; }
+@keyframes ctl-breathe { 50% { opacity: 0.55; } }
+.eavesy-control[data-phase="recording"] .ctl-stop { color: #fff; background: var(--ev-rec); padding: 0 9px; }
+.eavesy-control[data-phase="recording"] .ctl-stop:hover:not(:disabled) { color: #fff; background: color-mix(in srgb, var(--ev-rec) 85%, #fff); }
+.ctl-stop .ctl-label { display: inline; }
+@media (prefers-reduced-motion: reduce) {
+  .ctl-rec, .ctl-writing { animation: none; }
 }
 .ctl-quiet { color: var(--ev-hud-ink-2); }
 .ctl-error {

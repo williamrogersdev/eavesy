@@ -25,13 +25,9 @@ import {
   copyCaptureMedia,
   copyText,
   deleteCapture,
-  liveTranscript,
-  onLiveCaption,
-  onLiveTranscript,
   pasteToFrontmost,
   revealInFinder,
 } from '@/lib/desktop/bridge';
-import { liveView, type LiveCaption, type LiveLine } from '@/lib/desktop/live-captions';
 import type { Recording } from '@/lib/launcher/types';
 import {
   clock,
@@ -44,21 +40,15 @@ import {
   visibleRecordings,
   type HistoryFilter,
 } from './history-model';
-import type { CaptureKind } from './capture-toolbar';
+import type { LiveCapture } from './capture-toolbar';
+import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
 import { Bubble, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
 
 export { plainTranscript };
+export type { LiveCapture };
 
 /** A capture running now, shown as one height-locked row at the top of Today. */
-export interface LiveCapture {
-  /** Null while it is still starting. */
-  sessionId: string | null;
-  kind: CaptureKind;
-  /** `thinking` once stopped, while the words are written down. */
-  phase: 'listening' | 'thinking';
-  elapsed: number;
-}
 
 const KIND: Record<Recording['source'], { label: string; icon: LucideIcon }> = {
   mic: { label: 'Voice note', icon: AudioLines },
@@ -314,53 +304,10 @@ function CaptureRow({
   );
 }
 
-/** The newest line heard in a live capture: cloud lines, else what the Mac is still hearing. */
-function useLastLiveLine(sessionId: string | null): string {
-  const [lines, setLines] = useState<LiveLine[]>([]);
-  const [partials, setPartials] = useState<Record<string, LiveCaption>>({});
-  useEffect(() => {
-    if (!sessionId) return;
-    let disposed = false;
-    const offs: (() => void)[] = [];
-    const reload = () => {
-      void liveTranscript(sessionId).then((next) => { if (!disposed) setLines(next); }).catch(() => {});
-    };
-    reload();
-    void Promise.all([
-      onLiveTranscript((id) => { if (id === sessionId) reload(); }),
-      onLiveCaption((caption) => {
-        if (caption.sessionId === sessionId) setPartials((prev) => ({ ...prev, [caption.track]: caption }));
-      }),
-    ]).then((listeners) => { if (disposed) listeners.forEach((off) => off()); else offs.push(...listeners); });
-    return () => { disposed = true; offs.forEach((off) => off()); };
-  }, [sessionId]);
-  return liveView(lines, Object.values(partials), 1).at(-1)?.text ?? '';
-}
-
-const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
-
-function LiveRow({ live }: { live: LiveCapture }) {
-  const line = useLastLiveLine(live.sessionId);
-  const thinking = live.phase === 'thinking';
-  return (
-    <article className="ev-row" data-live="true" data-phase={live.phase} aria-label="Capture in progress" aria-live="polite">
-      <span className="ev-disc-kind" aria-hidden>
-        <Mascot size={16} state={thinking ? 'thinking' : 'listening'} recording={!thinking && live.sessionId !== null} />
-      </span>
-      <header className="ev-rh">
-        <span className="ev-rh-kind">
-          {thinking ? 'Writing it down…' : live.sessionId ? LIVE_LABEL[live.kind] : 'Starting…'}
-        </span>
-        {!thinking && live.sessionId && <span>· {clock(live.elapsed)}</span>}
-      </header>
-      <div className="ev-livetext"><bdi>{line || (thinking ? '' : ' ')}</bdi></div>
-    </article>
-  );
-}
-
 export function CaptureHistory({
   recordings,
   live,
+  dictationHotkey,
   signedIn,
   onSignIn,
   flash,
@@ -372,6 +319,8 @@ export function CaptureHistory({
 }: {
   recordings: Recording[];
   live: LiveCapture | null;
+  /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
+  dictationHotkey: string;
   signedIn: boolean;
   onSignIn: () => void;
   flash: Flash;
@@ -396,12 +345,7 @@ export function CaptureHistory({
     [recordings, filter, query, liveId],
   );
   const counts = useMemo(() => countByFilter(recordings), [recordings]);
-  const groups = useMemo(() => {
-    const grouped = groupByDay(visible, now);
-    if (!live) return grouped;
-    if (grouped[0]?.label === 'Today') return grouped;
-    return [{ label: 'Today', items: [] }, ...grouped];
-  }, [visible, now, live]);
+  const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
 
   const empty = recordings.length === 0 && !live;
   const searching = query.trim() !== '' || filter !== 'all';
@@ -448,27 +392,23 @@ export function CaptureHistory({
         <div className="ev-empty">
           <Mascot size={72} state="idle" />
           <Bubble tail="bottom">
-            It’s quiet up here. Hold <Kbd keys="fn" /> and talk, or drop something in below.
+            It’s quiet up here. {dictationHotkey === FN || !dictationHotkey
+              ? <>Tap <Kbd keys="fn" /> and talk,</>
+              : <>Hold <Kbd keys={dictationHotkey} /> and talk,</>} or drop something in below.
           </Bubble>
           <span className="ev-empty-pointer" aria-hidden />
         </div>
       ) : (
         <div ref={scrollRef} data-capture-history className="ev-scroll">
-          {groups.map((group, index) => (
+          {groups.map((group) => (
             <section key={group.label} className="ev-group" aria-label={group.label}>
               <h2 className="ev-gh">{group.label}</h2>
-              {/* The live row and the capture it becomes share a key (the session id),
-                  so the finished row morphs in place instead of replacing it. */}
-              {[
-                ...(index === 0 && live && group.label === 'Today'
-                  ? [<div key={live.sessionId ?? 'starting'} className="ev-grow"><LiveRow live={live} /></div>]
-                  : []),
-                ...group.items.map((rec) => (
-                  <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
-                    <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
-                  </div>
-                )),
-              ]}
+              {/* The toolbar shows a capture while it runs; it joins the list once it is written down. */}
+              {group.items.map((rec) => (
+                <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
+                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
+                </div>
+              ))}
             </section>
           ))}
           {searching && visible.length === 0 && (

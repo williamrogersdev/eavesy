@@ -3,12 +3,13 @@
 import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
-import type { AccountInfo, Permissions, PrivacyPane } from '@/lib/desktop/bridge';
+import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
 import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
+import { useLiveLines } from './use-live-lines';
 
-const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Done'] as const;
+const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Try it'] as const;
 
 export function SetupView({
   step,
@@ -19,6 +20,7 @@ export function SetupView({
   permissions,
   checking,
   listening,
+  liveSessionId,
   dictationHotkey,
   toggleHotkey,
   onConnect,
@@ -39,6 +41,8 @@ export function SetupView({
   checking: SetupPermissionKind | null;
   /** A dictation is recording right now (the mic is live). */
   listening: boolean;
+  /** The recording running now, for its words as they are heard. */
+  liveSessionId: string | null;
   dictationHotkey: string;
   toggleHotkey: string;
   onConnect: () => void;
@@ -60,6 +64,34 @@ export function SetupView({
   const pasteOn = permissions?.accessibility === true;
   const talk = dictationHotkey || '⌘⇧D';
   const shortcuts = useShortcuts(onShortcutsChanged);
+  const tryBox = useRef<HTMLTextAreaElement>(null);
+  const hearing = useLiveLines(step === 3 && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
+  // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
+  useEffect(() => {
+    if (step !== 3) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void setDictationInPanel(true).catch(() => {});
+    void onDictationText((text, sessionId) => {
+      const box = tryBox.current;
+      const caret = box ? { start: box.selectionStart, end: box.selectionEnd } : null;
+      setTried((current) => {
+        const start = caret?.start ?? current.length;
+        const end = caret?.end ?? current.length;
+        const before = current.slice(0, start);
+        const joined = before && !/\s$/.test(before) ? `${before} ${text}` : `${before}${text}`;
+        return joined + current.slice(end);
+      });
+      setPasted(true);
+      tryBox.current?.focus();
+      void ackDictationText(sessionId).catch(() => {});
+    }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    return () => {
+      disposed = true;
+      off?.();
+      void setDictationInPanel(false).catch(() => {});
+    };
+  }, [step]);
 
   // Signing in finishes in the browser; when it does, move on by ourselves.
   // (The step lives in the launcher, so this runs as an effect, not during render.)
@@ -100,11 +132,15 @@ export function SetupView({
         ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
         : !pasteOn
           ? 'One more and I can type for you, right where your cursor is.'
-        : 'Lovely. The rest just makes me more useful.',
+          : fnInUse && permissions?.inputMonitoring === false
+            ? 'One more so I can hear a tap of fn.'
+            : 'Lovely. That’s everything I need.',
     'Two keys are all you need. You can change them any time.',
     heard
-      ? "Heard you. That's it, I'll be in the menu bar."
-      : "That's it. I'll be in the menu bar, under the roof icon.",
+      ? "Heard you. That's it, I'll be in the menu bar, under the roof icon."
+      : listening
+        ? "I'm listening. Tap again when you're done."
+        : "Go on, say something. I'll show you what I heard.",
   ][step];
 
   const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
@@ -157,18 +193,7 @@ export function SetupView({
             onRelaunch={onRelaunch}
           />
         </div>
-        <h3 className="ev-card-title ev-onb-later">Later is fine</h3>
-        <div className="ev-card">
-          <PermissionChecklist
-            permissions={permissions}
-            checking={checking}
-            fnInUse={fnInUse}
-            only={['notifications', 'screen']}
-            onRequest={onRequest}
-            onOpenSettings={onOpenPrivacy}
-            onRelaunch={onRelaunch}
-          />
-        </div>
+        {!micOn && <p className="ev-onb-note">Allow the microphone to continue. Screenshots, video and notifications can wait for Settings.</p>}
       </>
     );
     footer = <>{back}{next('Continue', !micOn, micOn ? undefined : 'Allow the microphone first')}</>;
@@ -190,9 +215,14 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Try it once</h2>
         <p className="ev-onb-lead">
-          Click in the box, then {usesFnKey(talk) ? <>tap <Kbd keys="fn" /></> : <>hold <Kbd keys={talk} /></>} and say something.
+          {usesFnKey(talk)
+            ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
+            : <>Hold <Kbd keys={talk} />, say something, then let go. Your words land in the box.</>}
         </p>
         <textarea
+          ref={tryBox}
+          autoFocus
+          data-listening={listening || undefined}
           className="ev-onb-try"
           value={tried}
           onChange={(event) => {
@@ -201,7 +231,7 @@ export function SetupView({
             if (inputType === 'insertFromPaste') setPasted(true);
             else if (!event.target.value.trim()) setPasted(false);
           }}
-          placeholder="Your words land here…"
+          placeholder={listening ? 'Listening… keep talking' : 'Your words land here…'}
           rows={3}
           aria-label="Try dictation here"
         />
@@ -209,7 +239,7 @@ export function SetupView({
           {heard ? (
             <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
           ) : listening ? (
-            'Listening…'
+            <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
           ) : pasteOn ? (
             'Nothing to send anywhere. This box is just for practice.'
           ) : (

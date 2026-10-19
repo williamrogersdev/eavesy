@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetings } from '@/db/schema';
 import * as meetingsRepo from '@/db/repo/meetings';
+import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardBurst } from '@/server/rate-limit';
 
@@ -13,7 +14,12 @@ const MAX_LIST_OFFSET = 100_000;
 const createSessionSchema = z.object({
   clientSessionId: z.string().uuid(),
   title: z.string().trim().min(1).max(200).optional(),
-  language: z.string().trim().min(2).max(10).default('en'),
+  language: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .optional()
+    .transform((language) => (language && isTranscriptionLanguage(language) ? language : undefined)),
   contextBlurb: z.string().trim().max(4_000).optional(),
   localFolderSlug: z.string().trim().max(200).optional(),
   archiveFormat: z.enum(['m4a', 'webm', 'opus']).default('m4a'),

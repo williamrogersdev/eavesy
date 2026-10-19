@@ -95,7 +95,8 @@ export const Route = createFileRoute('/api/captures')({
               transcriptStatus = visual.empty ? 'failed' : 'complete';
             } else if (audioFile && audioFile.size > 0) {
               const audioBytes = new Uint8Array(await audioFile.arrayBuffer());
-              const result = await transcribeAudioFile({ audio: audioBytes, language: 'en' });
+              const language = await usersRepo.transcriptionLanguage(getDb(), actor.userId);
+              const result = await transcribeAudioFile({ audio: audioBytes, language });
               transcript = result.text?.trim() || null;
               transcriptStatus = transcript ? 'complete' : 'failed';
             }

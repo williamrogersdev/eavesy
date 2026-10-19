@@ -3,8 +3,8 @@ import { INTEGRATIONS } from './content';
 export function Marquee() {
   const row = [...INTEGRATIONS, ...INTEGRATIONS];
   return (
-    <section className="border-y border-white/[0.06] bg-white/[0.015] py-8">
-      <p className="mb-6 text-center text-xs font-medium uppercase tracking-widest text-white/50">
+    <section className="ev-shelf-band py-8">
+      <p className="mb-6 text-center text-xs font-medium text-ev-ink-2">
         Capture from the tools you use. Send context to the tools you choose.
       </p>
       <div className="relative overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_12%,#000_88%,transparent)]">
@@ -13,7 +13,7 @@ export function Marquee() {
             <span
               key={i}
               aria-hidden={i >= INTEGRATIONS.length ? true : undefined}
-              className="whitespace-nowrap text-lg font-medium text-white/50"
+              className="whitespace-nowrap text-lg font-medium text-ev-ink-2"
             >
               {name}
             </span>

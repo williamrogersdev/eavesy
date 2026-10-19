@@ -57,18 +57,18 @@ function HowItWorksPage() {
         />
       </PageHero>
 
-      <section className="border-t border-white/[0.06] px-6 py-16">
+      <section className="border-t border-ev-line px-6 py-16">
         <Container className="max-w-3xl">
           <div className="flex flex-col gap-px">
             {STAGES.map((stage) => (
               <div
                 key={stage.n}
-                className="flex gap-6 border-b border-white/[0.06] py-8 last:border-0"
+                className="flex gap-6 border-b border-ev-line py-8 last:border-0"
               >
-                <div className="text-2xl font-semibold text-white/50">{stage.n}</div>
+                <div className="text-2xl font-semibold text-ev-ink-2">{stage.n}</div>
                 <div>
-                  <h2 className="text-xl font-semibold text-white">{stage.title}</h2>
-                  <p className="mt-2 leading-relaxed text-white/55">{stage.body}</p>
+                  <h2 className="text-xl font-semibold text-ev-ink">{stage.title}</h2>
+                  <p className="mt-2 leading-relaxed text-ev-ink-2">{stage.body}</p>
                 </div>
               </div>
             ))}

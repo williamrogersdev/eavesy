@@ -79,7 +79,7 @@ Rules:
 | No speech detected | No speech detected. | Didn't hear any words in this one. The audio is still saved. |
 | Transcribe failed | Couldn't transcribe this one. The audio is saved. | Transcription failed. The audio is saved. **[Try again]** |
 | Not signed in row | Saved on this Mac. Sign in to get the transcript. | Saved on this Mac. **[Sign in]** to get a transcript. |
-| Fn button | Use Fn / Globe tap | Use `fn` (hold to talk) |
+| Fn button | Use Fn / Globe tap | Use `fn` (tap to talk) |
 | Fn conflict | (none) | Your Mac uses `fn` for emoji right now. In Keyboard settings, set "Press 🌐 key to" → "Do Nothing". **[Open Keyboard settings]** |
 | Start failure | Could not start recording | Couldn't start recording: microphone access is off. **[Open Microphone settings]** |
 | Screenshot failure | Could not take the screenshot | Screenshot didn't work: Screen Recording access is off. **[Open settings]** |
@@ -324,7 +324,7 @@ never by audio routing:
 
 | segment | what it does | hint / tooltip |
 |---|---|---|
-| **Talk** `fn` | Dictation. Mic only, types at your cursor. Runs in the HUD. | "Hold fn to talk. Let go to paste." |
+| **Talk** `fn` | Dictation. Mic only, types at your cursor. Runs in the HUD. | "Tap fn and talk. Tap it again to paste where your cursor is." |
 | **Meeting** | Records you and the other side of a call (mic + computer audio). Runs in the HUD until stopped, and saves a Meeting row with a summary. | "Records both sides of a call" |
 | **Screenshot** | Area capture, saved to history. | (user's shortcut if set) |
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
@@ -438,36 +438,34 @@ recording view, resize the panel or move existing rows. The current tall
 "Starting capture…" view with a big "Stop & save" button is removed from
 the default flow.
 
-1. **Start** (hotkey, Talk, Meeting, or HUD): the HUD owns the session. The panel is
-   untouched if it's closed. If it's open, a **live row** appears at the top
-   of "Today". Its height is reserved before it renders (one 56px row:
-   header plus one transcript line), so the list shifts once, smoothly,
-   with a 240ms height animation from 0 that pushes rows down. Nothing
-   appears and then disappears.
-2. **Live row:** the kind icon disc becomes a 16px listening mascot with the
-   red peak dot, inside a 1.5px rec-tinted ring. The header reads
-   "Listening · 0:07" (or "Meeting · 12:40"). The row has no Stop button of
-   its own: Stop lives in the toolbar segment, in the HUD and on the hotkey.
-   Two red controls would compete. The body shows the last transcript
-   line, single-line, clipped from the start so the newest words stay
-   visible. The row height is fixed at 56px while live.
-3. **Stop:** the row stays in place. The mascot turns `thinking` and the
-   header reads "Writing it down…". Height doesn't change.
-4. **Done:** the row **morphs in place** into the finished capture. The
-   mascot disc cross-fades to the kind icon (160ms) and the body text
-   cross-fades to the final transcript. Only then can the height grow to the
-   clamped size, over 320ms with `--ev-ease-out`, and only downward. Rows
-   below glide down; nothing above it moves. The HUD shows a quiet "Pasted" or
-   "Saved". The row doesn't celebrate.
-5. **Failure / no speech:** the same morph, ending in the warn-coloured line
-   with its fix button. The HUD shows `confused` for 1.6s.
+1. **Start** (hotkey, Talk, Meeting, or HUD): the HUD owns the session and
+   turns red once the mic is live, with a quiet start sound (Settings →
+   Sounds). Its transcript sheet opens with it and echoes the words as they
+   are heard, in the quieter ink ("Your words show up here as you talk"
+   until the first one), and stays open through "Writing it down…". The panel
+   is untouched if it's closed. If it's open, the **capture toolbar becomes
+   the live bar**: the one place the panel says it is recording. Nothing is
+   added to the list, so nothing below it moves.
+2. **Live bar:** a 16px listening mascot with the red peak dot in a
+   rec-tinted ring, "Listening · 0:07" (or "Meeting · 12:40"), the newest
+   words clipped from the start, and the panel's only red control, Stop.
+   Clicking the bar opens it downward to show the last few lines heard.
+3. **Stop:** the stop sound plays and the HUD reads "Writing it down…" the
+   moment the key is pressed, before the paste target is looked up. The live
+   bar shows the same, without Stop.
+4. **Done:** the finished capture grows into the top of "Today" and the
+   toolbar comes back. The HUD shows "✓ Pasted" (or "Saved") over the words,
+   older lines fading under the bar instead of being cut. A control in the
+   lower half of the screen opens its transcript above the bar, so the bar
+   never moves.
+5. **Failure / no speech:** the warn-coloured line with its fix button. The
+   HUD shows `confused` for 1.6s.
 6. **The full recording view** is reachable only on purpose: "Open live
-   view" in the live row's ⋯ menu or in the HUD menu. It isn't used for
+   view" in the HUD menu. It isn't used for
    dictation.
 
-Implementation notes: key the live row by session id, so the finished
-capture is the same React node with the same key. Animate height with a
-measured `grid-template-rows: 0fr → 1fr` wrapper, never `display` toggles.
+Implementation notes: animate height with a measured
+`grid-template-rows: 0fr → 1fr` wrapper, never `display` toggles.
 Keep scroll anchored (`overflow-anchor: auto`). If the user has scrolled
 down, insert above without moving their view and show a "1 new" slate pill
 at the top.

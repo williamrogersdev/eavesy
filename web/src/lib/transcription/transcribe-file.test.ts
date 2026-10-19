@@ -67,8 +67,78 @@ describe('Workers AI file transcription', () => {
 
     expect(received).toEqual({
       model: '@cf/openai/whisper-large-v3-turbo',
-      input: { audio: 'AQID', task: 'transcribe', language: 'es' },
+      input: {
+        audio: 'AQID',
+        task: 'transcribe',
+        language: 'es',
+        vad_filter: true,
+        condition_on_previous_text: false,
+      },
     });
     expect(result.segments).toEqual([]);
+  });
+
+  test('lets Whisper detect the language when set to auto', async () => {
+    let input: Record<string, unknown> = {};
+    await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      language: 'auto',
+      contextBlurb: 'Weekly sync with Priya',
+      ai: {
+        run(_model, value) {
+          input = value as Record<string, unknown>;
+          return Promise.resolve({ text: '' });
+        },
+      },
+    });
+    expect('language' in input).toBe(false);
+    expect(input.initial_prompt).toBe('Weekly sync with Priya');
+  });
+
+  test('drops lines Whisper invents on silence and rebuilds the text from what is left', async () => {
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      ai: {
+        run: () =>
+          Promise.resolve({
+            text: 'Ship it on Friday. Thank you.',
+            segments: [
+              { start: 0, end: 2, text: ' Ship it on Friday.', no_speech_prob: 0.02 },
+              { start: 2, end: 3, text: ' Thank you.', no_speech_prob: 0.6 },
+              { start: 3, end: 4, text: ' la la la la la la', compression_ratio: 3.1 },
+            ],
+          }),
+      },
+    });
+    expect(result.text).toBe('Ship it on Friday.');
+    expect(result.segments.map((segment) => segment.text)).toEqual(['Ship it on Friday.']);
+  });
+
+  test('a voice note keeps a real short reply and retries without VAD when it hears nothing', async () => {
+    const vad: unknown[] = [];
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      voiceNote: true,
+      ai: {
+        run(_model, value) {
+          const input = value as { vad_filter: boolean };
+          vad.push(input.vad_filter);
+          return Promise.resolve(
+            input.vad_filter
+              ? { text: '', segments: [] }
+              : { text: 'call mom', segments: [{ start: 0, end: 1, text: 'call mom', no_speech_prob: 0.4 }] },
+          );
+        },
+      },
+    });
+    expect(vad).toEqual([true, false]);
+    expect(result.text).toBe('call mom');
+
+    const thanks = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      voiceNote: true,
+      ai: { run: () => Promise.resolve({ text: 'Thank you.', segments: [{ start: 0, end: 1, text: 'Thank you.', no_speech_prob: 0.2 }] }) },
+    });
+    expect(thanks.text).toBe('Thank you.');
   });
 });

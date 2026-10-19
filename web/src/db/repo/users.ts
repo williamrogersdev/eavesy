@@ -201,3 +201,13 @@ export async function getById(db: AppDb, userId: string) {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   return rows[0] ? openUserKeys(rows[0]) : null;
 }
+
+/** The language the user transcribes in, or `auto` to let Whisper detect it. */
+export async function transcriptionLanguage(db: AppDb, userId: string): Promise<string> {
+  const rows = await db
+    .select({ defaultLanguage: users.defaultLanguage })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return rows[0]?.defaultLanguage || 'en';
+}
