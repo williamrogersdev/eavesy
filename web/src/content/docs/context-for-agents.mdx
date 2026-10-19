@@ -1,52 +1,33 @@
 ---
-title: Context for AI agents
-description: Turn any session into clean, structured context you can paste into — or point — your AI agent.
-category: For AI agents
-order: 20
+title: Give your agent context
+description: Three ways to hand what you captured to an AI agent, by pasting, by pointing it at your folder, or over MCP.
+category: Agents
+order: 40
 ---
 
-Eavesy exists to solve one problem: your AI agent didn&rsquo;t see the
-message, the screenshot, the call, or the hallway decision — so it&rsquo;s working
-blind. Whatever you drop into Eavesy becomes context your agent can actually
-use. There are three ways to hand it over: paste it, point at the files, or
-connect over [MCP](/docs/connect-mcp).
+Your agent didn't see the call, the screenshot or the message you copied.
+Eavesy keeps those as Markdown, and there are three ways to hand them over.
 
-## Paste the brief
+## Paste it
 
-The fastest path. After any recording, copy the Markdown brief and paste it into
-Claude, Cursor, ChatGPT, or any agent. Because it&rsquo;s clean Markdown with a
-TL;DR, decisions, and action items, the model gets the full picture in one shot —
-no copy-pasting raw transcript and hoping it sorts it out.
+Copy a brief, a transcript or a note from the launcher or the web app, and
+paste it into your agent's chat. Briefs are already split into a summary,
+decisions and action items, so the agent spends less effort finding what
+matters.
 
 <Callout type="tip">
-Pair a paste with a prompt like *&ldquo;Here&rsquo;s the brief from my call with
-the design team — draft the follow-up tasks as a checklist.&rdquo;* The structure
-in the brief does the heavy lifting.
+Add a short instruction with the paste, like "Here's the brief from my design
+review. Turn the action items into a checklist."
 </Callout>
 
-## Connect over MCP
+## Point it at your folder
 
-Let the agent look things up itself. Add `https://mcp.eavesy.com` as a
-connector by URL in Claude.ai, ChatGPT or Claude Code, sign in to Eavesy and
-approve it, and the agent can search your recordings and dictations. There is
-no token to copy, and the connection is read-only unless you allow writes. In
-Claude Code it's one command:
-
-```bash
-claude mcp add --transport http eavesy https://mcp.eavesy.com
-```
-
-See [Connect an agent over MCP](/docs/connect-mcp) for each client, the
-Claude Code plugin, and pasted tokens for clients without OAuth.
-
-## Point an agent at the folder
-
-With the Mac app, every recording is a folder of plain files on your disk
-([the session folder format](/docs/session-folder-format)). That means an agent
-with filesystem access can read them directly:
+The Mac app writes every capture as plain files in `~/Eavesy/Recordings`. An
+agent that can read files, like a coding agent in your terminal, can search
+and read them directly. No account or API is needed.
 
 ```text
-~/Eavesy/Recordings/2026-06-15 Design review/
+~/Eavesy/Recordings/2026-06-15 Meeting recording/
 ├── summary.md
 ├── transcript.md
 ├── notes.md
@@ -54,33 +35,33 @@ with filesystem access can read them directly:
 └── audio.m4a
 ```
 
-Clipboard notes, pasted images, and screenshots are saved in the same folder
-root with different files (`note.md`, `image.png`, or `screenshot.png`, plus
-`capture.json`). Point a coding agent, a local assistant, or a script at your Eavesy directory and
-it can search, summarize, and reason over everything you&rsquo;ve ever recorded —
-no API, no export step.
+Screenshots and clipboard captures sit in the same place as `screenshot.png`,
+`image.png` or `note.md`. See [your files](/docs/session-folder-format) for
+the full format.
 
-## Shape the context with a template
+You can also point your recordings folder at a notes vault, so captures show
+up next to your other notes.
 
-Different agents want context shaped differently. A coding agent wants file
-paths and explicit TODOs; a research assistant wants quotes and open questions.
-Open a completed recording and choose a built-in coding, research, customer, or
-meeting format before selecting **Regenerate**. You can also create reusable
-[custom templates](/docs/templates) in **Settings** or edit the final Markdown
-directly.
+## Connect over MCP
 
-## Why this beats a raw transcript
+Let the agent look things up itself. Add `https://mcp.eavesy.com` as a
+connector, sign in to Eavesy, and approve it. The agent can then search your
+recordings and dictations. Connections are read-only unless you allow writes.
 
-- **Structured, not a wall of text** — decisions and actions are already
-  extracted, so the model spends its context budget on reasoning, not parsing.
-- **Markdown the model already understands** — headings and lists map cleanly to
-  how LLMs read documents.
-- **Yours, on disk** — no vendor API in the loop; the files are local and
-  portable.
+```bash
+claude mcp add --transport http eavesy https://mcp.eavesy.com
+```
+
+MCP reads from your account, so it only sees recordings that have synced. See
+[Connect an agent over MCP](/docs/connect-mcp) for each client.
+
+## Shape the brief for the agent
+
+A coding agent wants file paths and TODOs. A research assistant wants findings
+and open questions. Regenerate a brief with a built-in format, or make your own
+[template](/docs/templates).
 
 ## Next
 
 - [Connect an agent over MCP](/docs/connect-mcp)
-- [The session folder format](/docs/session-folder-format)
-- [Custom templates](/docs/templates)
-- [Finding past sessions](/docs/finding-past-sessions)
+- [Your files](/docs/session-folder-format)

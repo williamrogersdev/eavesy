@@ -22,18 +22,21 @@ function PrivacyPage() {
         <h2 className="text-lg font-semibold">What we promise</h2>
         <ul className="ml-5 list-disc space-y-2">
           <li>
-            <strong>Local + cloud, both real.</strong> On desktop, every meeting lives as a real
-            folder on your disk — Markdown summary, full transcript, audio, JSON metadata — in
-            addition to the cloud copy. You can open these in Obsidian, drag them to Dropbox,
-            or inspect them in VS Code.
+            <strong>Local first.</strong> In the Mac app, every capture is a real folder on
+            your disk: Markdown, JSON metadata, and audio, video or images. You can use it
+            without an account. When you sign in, recordings also get a cloud copy for
+            transcripts, briefs, search and sync. Screenshots, clipboard captures and notes
+            from the Mac app are never uploaded. Anything you capture in the web app, including
+            screenshots and screen or webcam video, is stored in your account.
           </li>
           <li>
             <strong>Encrypted in transit and at rest.</strong> TLS protects data in transit.
             Cloudflare-managed encryption protects R2 objects and D1 data at rest.
           </li>
           <li>
-            <strong>API keys in your OS keychain</strong> on desktop. Encrypted at rest in the
-            cloud for web/mobile.
+            <strong>Keys stay where they belong.</strong> The Mac app keeps only its device
+            token in your macOS Keychain. If you bring your own AI keys, you enter them on the web
+            and they are stored encrypted.
           </li>
           <li>
             <strong>Analytics and error reports never receive recording content</strong>, audio,
@@ -51,12 +54,12 @@ function PrivacyPage() {
             follows the provider privacy settings you control there.
           </li>
           <li>
-            <strong>Portable export.</strong> Export everything from Settings, or a meeting bundle or
-            capture from its detail page; Mac sessions also remain as normal local files.
+            <strong>Portable export.</strong> Export everything from Settings → Your data, or a
+            single recording from its page. Mac captures are already normal local files.
           </li>
           <li>
             <strong>Deletion that includes cloud copies.</strong> Delete any recording, or your
-            whole account from Settings. Cloud copies (audio, transcripts, search index) are
+            whole account from Settings → Your data. Cloud copies (audio, transcripts, search index) are
             permanently removed within a day; local folders remain under your control.
           </li>
         </ul>
@@ -79,9 +82,10 @@ function PrivacyPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">BYO keys</h2>
         <p>
-          Settings lets you connect OpenRouter or supply your own Anthropic key for summaries
-          and chat. When configured, those calls bill to your account. Calls still flow through
-          Eavesy so the service can assemble the requested context and prompts.
+          In the web app, Settings → AI providers lets you connect OpenRouter or add your own
+          Anthropic API key for summaries and chat. Keys are stored encrypted. When configured,
+          those calls bill to your account. Calls still flow through Eavesy so the service can
+          assemble the requested context and prompts.
         </p>
       </section>
     </main>

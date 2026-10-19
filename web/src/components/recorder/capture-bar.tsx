@@ -266,9 +266,9 @@ export function CaptureBar() {
       ) : null}
 
       {recording ? (
-        <div className="flex h-9 items-center gap-2 rounded-full bg-danger pl-3 pr-1 text-white">
+        <div className="flex h-9 items-center gap-2 rounded-full bg-ev-rec pl-3 pr-1 text-white">
           <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
-          <span className="font-mono text-sm font-semibold tabular-nums">{formatDuration(elapsed)}</span>
+          <span className="font-round text-sm font-semibold tabular-nums">{formatDuration(elapsed)}</span>
           <span className="hidden sm:inline-flex"><Waveform /></span>
           <span className="hidden text-xs font-medium opacity-90 min-[440px]:inline">
             Recording {mode === 'audio' ? 'audio' : mode === 'webcam' ? 'video' : 'screen'}
@@ -297,17 +297,17 @@ export function CaptureBar() {
       {(recording && mode !== 'audio') ||
       phase === 'review' ||
       phase === 'saving' ? (
-        <div className="absolute right-3 top-[calc(100%+0.5rem)] z-50 max-h-[min(72vh,640px)] w-[min(560px,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-border bg-background p-3 shadow-lg sm:right-4">
+        <div className="absolute right-3 top-[calc(100%+0.5rem)] z-50 max-h-[min(72vh,640px)] w-[min(560px,calc(100vw-1.5rem))] overflow-y-auto rounded-[var(--ev-r-pop)] border border-ev-line bg-ev-paper p-3 shadow-[var(--ev-e-3)] sm:right-4">
           <div>
             {phase !== 'recording' && captured ? (
-              <p className="mb-2 text-xs font-medium text-muted-foreground">
+              <p className="mb-2 text-xs font-medium text-ev-ink-2">
                 Review your {captured.kind === 'image' ? 'screenshot' : captured.kind}
               </p>
             ) : null}
             {recording && mode !== 'audio' ? (
               <video
                 ref={previewVideoRef}
-                className="max-h-64 w-full rounded-md border border-border bg-black object-contain"
+                className="max-h-64 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-black object-contain"
                 playsInline
               />
             ) : null}
@@ -317,19 +317,19 @@ export function CaptureBar() {
                 {captured.kind === 'audio' && captured.url ? (
                   <audio controls src={captured.url} className="w-full" />
                 ) : captured.kind === 'video' && captured.url ? (
-                  <video controls src={captured.url} className="max-h-64 w-full rounded-md border border-border bg-black" />
+                  <video controls src={captured.url} className="max-h-64 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-black" />
                 ) : captured.url ? (
-                  <img src={captured.url} alt="Screenshot" className="max-h-64 w-full rounded-md border border-border object-contain" />
+                  <img src={captured.url} alt="Screenshot" className="max-h-64 w-full rounded-[var(--ev-r-ctl)] border border-ev-line object-contain" />
                 ) : null}
 
-                {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
+                {error ? <p role="alert" className="text-sm text-ev-warn-ink">{error}</p> : null}
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void save()}
                     disabled={phase === 'saving'}
-                    className="flex h-8 items-center gap-1.5 rounded-md bg-action px-3 text-[13px] font-medium text-white hover:bg-action-hover disabled:opacity-60"
+                    className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] text-ev-on-slate hover:bg-action-hover disabled:opacity-60"
                   >
                     {phase === 'saving' ? (
                       <>
@@ -346,7 +346,7 @@ export function CaptureBar() {
                       type="button"
                       onClick={download}
                       disabled={phase === 'saving'}
-                      className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-muted-foreground hover:bg-muted disabled:opacity-60"
+                      className="flex h-8 items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line px-2.5 text-[13px] text-ev-ink-2 hover:bg-[var(--ev-hover)] disabled:opacity-60"
                     >
                       <Download className="h-4 w-4" /> Download
                     </button>
@@ -355,11 +355,11 @@ export function CaptureBar() {
                     type="button"
                     onClick={reset}
                     disabled={phase === 'saving'}
-                    className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-muted-foreground hover:bg-muted disabled:opacity-60"
+                    className="flex h-8 items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line px-2.5 text-[13px] text-ev-ink-2 hover:bg-[var(--ev-hover)] disabled:opacity-60"
                   >
                     <Trash2 className="h-4 w-4" /> Discard
                   </button>
-                  <span className="w-full text-xs leading-relaxed text-muted-foreground sm:ml-auto sm:w-auto">
+                  <span className="w-full text-xs leading-relaxed text-ev-ink-2 sm:ml-auto sm:w-auto">
                     {captured.kind === 'audio'
                       ? 'Saves to your meetings with a transcript + summary after Stop.'
                       : 'Saves to your Captures library.'}
@@ -372,7 +372,7 @@ export function CaptureBar() {
       ) : null}
 
       {error && phase === 'idle' ? (
-        <p role="alert" className="absolute right-3 top-[calc(100%+0.5rem)] z-50 max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-xs text-danger shadow-lg sm:right-4">{error}</p>
+        <p role="alert" className="absolute right-3 top-[calc(100%+0.5rem)] z-50 max-w-sm rounded-[var(--ev-r-pop)] border border-ev-line bg-ev-paper px-3 py-2 text-xs text-ev-warn-ink shadow-[var(--ev-e-3)] sm:right-4">{error}</p>
       ) : null}
     </div>
   );
@@ -393,7 +393,7 @@ function CaptureButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+      className="flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--ev-r-pop)] px-2.5 text-xs font-medium text-ev-ink-2 transition hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       <Icon className="h-4 w-4" />
       <span className="hidden xl:inline">{label}</span>

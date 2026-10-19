@@ -39,10 +39,10 @@ export function CopyContextButton({ data }: { data: MeetingData }) {
           .catch(() => setFailed(true));
       }}
       className={cn(
-        'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium text-white transition',
+        'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 font-round text-[13px] font-bold transition',
         failed
-          ? 'bg-danger hover:brightness-105'
-          : 'bg-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-muted-foreground/45',
+          ? 'bg-ev-warn-soft text-ev-warn-ink'
+          : 'bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover disabled:cursor-not-allowed disabled:bg-ev-well disabled:text-ev-ink-3 disabled:shadow-none',
       )}
       title={ready
         ? 'Copy summary, notes & transcript as Markdown — paste into Claude or any AI'
@@ -89,7 +89,7 @@ export function CopyButton({
           })
           .catch(() => setFailed(true));
       }}
-      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
       {failed ? 'Copy failed' : copied ? 'Copied' : label}

@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
+import { ProjectManager } from '@/components/settings/project-manager';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
-import { TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
+import { NOTES_LANGUAGES, TRANSCRIPTION_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS, vocabularyFromText } from '@/lib/transcription/vocabulary';
 
 interface Me {
@@ -18,6 +19,7 @@ interface Me {
   isAnonymous: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
+  notesLanguage: string | null;
   customVocabulary: string[];
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
@@ -136,16 +138,16 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (defaultLanguage: string) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage'>>) => {
     const previous = me;
     setSaved(false);
     setError(null);
-    if (previous) setMe({ ...previous, defaultLanguage });
+    if (previous) setMe({ ...previous, ...change });
     try {
       const response = await fetch('/api/me', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ defaultLanguage }),
+        body: JSON.stringify(change),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       void refreshMe();
@@ -261,12 +263,12 @@ function SettingsPage() {
     return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
   }
   if (!me) {
-    return <AppPage width="compact"><p role="status" className="text-sm text-muted-foreground">Loading settings…</p></AppPage>;
+    return <AppPage width="compact"><p role="status" className="text-sm text-ev-ink-2">Loading settings…</p></AppPage>;
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
   const vocabularyChanged = vocabularyFromText(vocabulary).join('\n') !== me.customVocabulary.join('\n');
-  const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
+  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
 
   return (
     <AppPage width="compact">
@@ -280,8 +282,8 @@ function SettingsPage() {
         <AppAlert tone="info">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              Approve code <span className="font-mono font-semibold">{pairCode}</span> to connect this Mac.
-              {pairResult ? <span className="block text-xs text-muted-foreground">{pairResult}</span> : null}
+              Approve code <span className="font-round font-semibold">{pairCode}</span> to connect this Mac.
+              {pairResult ? <span className="block text-xs text-ev-ink-2">{pairResult}</span> : null}
             </span>
             <button
               type="button"
@@ -324,19 +326,38 @@ function SettingsPage() {
       <AppSection title="Transcription">
         <Row
           label="Spoken language"
-          hint="What you and the people you record speak. Detect automatically handles any language, and a fixed one is more accurate."
+          hint="Detect automatically follows whatever language people speak, line by line, even when a call switches between languages. Pick one only if every meeting is in it."
           htmlFor="settings-language"
         >
           <select
             id="settings-language"
             value={me.defaultLanguage}
-            onChange={(e) => void saveLanguage(e.target.value)}
+            onChange={(e) => void saveLanguage({ defaultLanguage: e.target.value })}
             className={`${input} sm:w-56`}
           >
             {TRANSCRIPTION_LANGUAGES.some((language) => language.code === me.defaultLanguage) ? null : (
               <option value={me.defaultLanguage}>{me.defaultLanguage}</option>
             )}
             {TRANSCRIPTION_LANGUAGES.map((language) => (
+              <option key={language.code} value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row
+          label="Notes language"
+          hint="Notes are written in this language, and transcripts in any other language get a Translate button. Same as the meeting keeps each meeting in the language it was spoken in."
+          htmlFor="settings-notes-language"
+        >
+          <select
+            id="settings-notes-language"
+            value={me.notesLanguage ?? ''}
+            onChange={(e) => void saveLanguage({ notesLanguage: e.target.value || null })}
+            className={`${input} sm:w-56`}
+          >
+            <option value="">Same as the meeting</option>
+            {NOTES_LANGUAGES.map((language) => (
               <option key={language.code} value={language.code}>
                 {language.label}
               </option>
@@ -358,7 +379,7 @@ function SettingsPage() {
                 setVocabulary(e.target.value);
                 setSaved(false);
               }}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/60"
+              className="w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm outline-none focus:border-ev-slate"
             />
             {vocabularyChanged ? (
               <button
@@ -373,6 +394,8 @@ function SettingsPage() {
           </div>
         </Row>
       </AppSection>
+
+      <ProjectManager />
 
       <TemplateManager />
 
@@ -429,7 +452,7 @@ function SettingsPage() {
         description="A connection that lets Claude, Codex or another assistant search your recordings. Connections are read-only unless you allow writes, and last 90 days."
         action={
           <span className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
               <input
                 type="checkbox"
                 checked={mcpAllowWrite}
@@ -455,7 +478,7 @@ function SettingsPage() {
                 rows={newMcpConfig.split('\n').length}
                 wrap="off"
                 aria-label="New MCP configuration"
-                className="min-w-0 flex-1 resize-none rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+                className="min-w-0 flex-1 resize-none rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1 font-mono text-xs text-ev-ink"
               />
               <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
@@ -467,13 +490,13 @@ function SettingsPage() {
           </AppAlert>
         ) : null}
         {mcpTokens.length ? (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
             {mcpTokens.map((token) => (
               <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                 <span className="min-w-0">
                   <span className="block truncate">
                     {token.name}
-                    <span className="ml-2 text-xs text-muted-foreground">
+                    <span className="ml-2 text-xs text-ev-ink-2">
                       {token.canWrite ? 'read & write · ' : 'read-only · '}
                       {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
                       {token.expiresAt
@@ -484,7 +507,7 @@ function SettingsPage() {
                     </span>
                   </span>
                   {token.usesLegacyUrl ? (
-                    <span className="block text-xs text-danger">
+                    <span className="block text-xs text-ev-warn-ink">
                       Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
                     </span>
                   ) : null}
@@ -533,6 +556,7 @@ function parseMe(value: unknown): Me | null {
     isAnonymous: value.isAnonymous,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
+    notesLanguage: typeof value.notesLanguage === 'string' ? value.notesLanguage : null,
     customVocabulary: Array.isArray(value.customVocabulary)
       ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
       : [],
@@ -592,7 +616,7 @@ function Row({
         <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm">
           {label}
         </Label>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+        {hint ? <p className="text-xs text-ev-ink-2">{hint}</p> : null}
       </div>
       <div className="flex min-w-0 flex-1 justify-start sm:justify-end">{children}</div>
     </div>

@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { meetings } from '@/db/schema';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as projectsRepo from '@/db/repo/projects';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardBurst } from '@/server/rate-limit';
@@ -22,6 +23,7 @@ const createSessionSchema = z.object({
     .transform((language) => (language && isTranscriptionLanguage(language) ? language : undefined)),
   contextBlurb: z.string().trim().max(4_000).optional(),
   localFolderSlug: z.string().trim().max(200).optional(),
+  projectId: z.string().trim().min(1).max(100).optional(),
   archiveFormat: z.enum(['m4a', 'webm', 'opus']).default('m4a'),
 });
 
@@ -101,12 +103,16 @@ export const Route = createFileRoute('/api/sessions/')({
           });
         }
 
+        const projectId = parsed.data.projectId && (await projectsRepo.ownsProject(db, actor.userId, parsed.data.projectId))
+          ? parsed.data.projectId
+          : undefined;
         const meetingId = await meetingsRepo.start(db, {
           userId: actor.userId,
           source: actor.deviceId ? 'desktop' : 'web',
           title: parsed.data.title,
           language: parsed.data.language,
           contextBlurb: parsed.data.contextBlurb,
+          folderId: projectId,
           localFolderSlug: parsed.data.localFolderSlug,
           deviceId: actor.deviceId,
           clientSessionId: parsed.data.clientSessionId,

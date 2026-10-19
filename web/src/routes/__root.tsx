@@ -76,7 +76,7 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="ev h-full antialiased">
       <head>
         <HeadContent />
       </head>

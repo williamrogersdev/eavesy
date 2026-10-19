@@ -63,10 +63,12 @@ When you stop, say which condition hit, what's left, and the PR link.
 ## Desktop releases
 
 Agents may cut Mac app releases when the user asks, following
-`docs/RELEASING.md`: bump the version and CHANGELOG in a PR, then once it is
-merged, tag that merge commit `desktop-vX.Y.Z` and push only that tag
-(`git push origin desktop-vX.Y.Z`, never `--tags`). Then see the workflow
-through: the publish approval and the Homebrew cask PR.
+`docs/RELEASING.md`: `gh workflow run release-desktop.yml -f bump=patch` (or
+`minor`) opens the version-bump PR with auto-merge, and the tag is pushed
+automatically when it lands. Drive that PR to merged like any other, then see
+the macOS release run through: the publish approval and the Homebrew cask PR.
+If you ever tag by hand, push only that tag (`git push origin
+desktop-vX.Y.Z`, never `--tags`).
 
 ## Hard rules
 

@@ -29,7 +29,7 @@ function RecordPage() {
         }}
       />
       <div aria-live="polite">
-        {stage === 'opening' ? <p className="text-sm text-muted-foreground">Opening your transcript and brief…</p> : null}
+        {stage === 'opening' ? <p className="text-sm text-ev-ink-2">Opening your transcript and brief…</p> : null}
       </div>
     </AppPage>
   );

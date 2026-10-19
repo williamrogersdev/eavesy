@@ -1,53 +1,57 @@
 ---
-title: Custom templates
-description: Shape completed briefs with built-in formats or your own reusable instructions.
-category: Using Eavesy
-order: 12
+title: Briefs and templates
+description: What a brief contains, and how to reshape it with a built-in format, your own template, or a direct edit.
+category: Transcripts and briefs
+order: 21
 ---
 
-A meeting, customer conversation, research session, and coding walkthrough each
-need different notes. Eavesy lets you reshape a completed brief without changing
-the source transcript.
+When a recording finishes processing, Eavesy writes a brief on top of the
+transcript. Briefs need an account.
+
+## What's in a brief
+
+- a title and a short summary,
+- decisions that were made,
+- action items, with owners and due dates when they were mentioned, and
+- open questions.
+
+It's plain Markdown, so you can paste it straight into an agent. It's also
+saved as `summary.md` in the recording's folder on a signed-in Mac.
 
 ## Use a built-in format
 
-Open a completed recording and pick a format from the menu above the brief, then choose **Regenerate**:
+Open a completed recording on the web, pick a format above the brief, and
+choose **Regenerate**:
 
-- **Standard brief** for balanced decisions, actions, and open questions,
-- **Meeting notes** for owners, due dates, blockers, and follow-up,
-- **Coding session** for goals, files, commands, attempts, evidence, and next steps,
-- **Research session** for questions, findings, sources mentioned, and uncertainty, or
-- **Customer conversation** for goals, pain points, objections, commitments, and follow-up.
+- **Standard brief** for decisions, actions and open questions,
+- **Meeting notes** for owners, due dates, blockers and follow-up,
+- **Coding session** for goals, files, commands, attempts and next steps,
+- **Research session** for questions, findings, sources and uncertainty, or
+- **Customer conversation** for goals, pain points, objections and
+  commitments.
 
-Select **Regenerate** to create the new brief. Regeneration keeps the transcript
-intact. If you edited the current brief, Eavesy asks you to confirm before
-replacing it.
+Regenerating never changes the transcript. If you edited the brief, Eavesy
+asks before replacing it.
 
-## Create your own
+## Make your own template
 
-Go to **Settings → Brief templates**. Give the template a clear name and write
-instructions describing the sections, emphasis, and constraints you want. You
-do not need to paste the transcript into the instructions; Eavesy adds it when
-you regenerate a recording.
+Go to **Settings → Brief templates** in the web app. Give the template a name
+and describe the sections and emphasis you want. You don't need to include the
+transcript. Eavesy adds it when you regenerate.
 
-For example, a sales template could request:
+For example, a sales template could ask for the prospect, pain points,
+objections, and the next step with an owner. A coding template could ask for
+file paths, decisions, TODOs and test results.
 
-- Prospect and company
-- Pain points raised
-- Objections
-- Next step and owner
+## Edit the brief
 
-A coding-agent template could emphasize file paths, decisions, explicit TODOs,
-test evidence, and the exact next step.
+Choose **Edit** to change the wording yourself. **Restore generated** brings
+back the last generated version.
 
-## Edit the Markdown directly
-
-Choose **Edit** when you want precise wording instead of another AI
-pass. Saving creates an editable version while preserving the generated data.
-Use **Restore generated** to discard the edit and return to the last
-generated result.
+On a Mac, you can also edit `summary.md` in any editor. Eavesy never overwrites
+a file you've changed.
 
 ## Next
 
-- [Transcripts &amp; summaries](/docs/transcripts-and-summaries)
-- [Context for AI agents](/docs/context-for-agents)
+- [Search and chat](/docs/search-and-chat)
+- [Give your agent context](/docs/context-for-agents)

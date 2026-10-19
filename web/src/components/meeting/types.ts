@@ -21,12 +21,17 @@ export interface MeetingMeta {
   startedAt: number;
   durationSec?: number | null;
   platform?: string | null;
+  source?: string | null;
+  deviceName?: string | null;
   status: string;
   statusError?: string | null;
   audioR2Key?: string | null;
   speakerNamesJson?: string | null;
   summaryOverrideMd?: string | null;
   transcriptOverrideMd?: string | null;
+  agentTranscriptMd?: string | null;
+  transcriptKind?: 'solo' | 'conversation' | null;
+  folderId?: string | null;
 }
 export interface MeetingData {
   meeting: MeetingMeta;

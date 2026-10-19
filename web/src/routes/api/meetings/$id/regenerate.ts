@@ -76,6 +76,7 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
             customTemplatePrompt: templatePrompt,
             openRouter: plan.openRouter,
             byoApiKey: plan.summary.apiKey,
+            notesLanguage: user?.notesLanguage,
           });
         } catch (error) {
           console.error('[meeting-regenerate] failed', error);

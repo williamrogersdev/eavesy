@@ -9,7 +9,7 @@ describe('WorkersAiSegmentTranscriber', () => {
         input = value;
         return {
           text: 'Hello world',
-          transcription_info: { language: 'en', duration: 2.5 },
+          transcription_info: { language: 'en', language_probability: 0.97, duration: 2.5 },
           segments: [{ start: 0.25, end: 1.75, text: ' Hello world ' }],
         };
       },
@@ -30,6 +30,7 @@ describe('WorkersAiSegmentTranscriber', () => {
     expect(result.segments).toEqual([
       { startMs: 250, endMs: 1750, text: 'Hello world', isFinal: true },
     ]);
+    expect(result).toMatchObject({ language: 'en', languageProbability: 0.97 });
   });
 
   test('falls back to one segment when Whisper only returns full text', async () => {

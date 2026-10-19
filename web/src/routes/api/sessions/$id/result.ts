@@ -51,6 +51,7 @@ export const Route = createFileRoute('/api/sessions/$id/result')({
           title: meeting.title,
           summaryOverrideMd: meeting.summaryOverrideMd,
           transcriptOverrideMd: meeting.transcriptOverrideMd,
+          agentTranscriptMd: meeting.agentTranscriptMd,
           notesMd: noteRows[0]?.contentMd ?? '',
           transcriptReady: transcriptReady(meeting.status, parts),
           transcript,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as transcriptsRepo from '@/db/repo/transcripts';
+import { refreshAgentTranscriptLater } from '@/server/agent-transcript-refresh';
 import { resolveActor } from '@/server/auth';
 
 const patchSchema = z
@@ -18,6 +19,7 @@ const restoreSchema = z.object({
   speakerId: z.string().max(60).nullable(),
   text: z.string().min(1).max(10_000),
   confidence: z.number().nullable().optional(),
+  language: z.string().regex(/^[a-z]{2,3}$/).nullable().optional(),
   isEdited: z.boolean().optional(),
   isFinal: z.boolean().optional(),
 });
@@ -47,6 +49,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
           segmentId: params.lineId,
           ...parsed.data,
         });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true });
       },
 
@@ -58,6 +61,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
           segmentId: params.lineId,
         });
         if (!deleted) return Response.json({ error: 'not found' }, { status: 404 });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true, line: deleted });
       },
 
@@ -70,10 +74,12 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
           id: params.lineId,
           meetingId: meeting.id,
           confidence: null,
+          language: null,
           isEdited: false,
           isFinal: true,
           ...parsed.data,
         });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true });
       },
     },

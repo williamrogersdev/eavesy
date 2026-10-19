@@ -13,6 +13,7 @@ import {
 import { deadLetterQueue, handleTerminalFailure } from './processing/failure';
 import { handleProcessRecording, handleTranscribeSegment } from './processing/transcribe';
 import { handleSummarize } from './processing/summarize';
+import { handleAgentTranscript } from './processing/agent-transcript';
 import { handleEmbedDictation, handleEmbedMeeting } from './processing/embed';
 import { handleCleanup, handlePurgeAccount } from './processing/cleanup';
 
@@ -104,6 +105,9 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       return;
     case 'embed':
       await handleEmbedMeeting(message.meetingId, db, env);
+      return;
+    case 'agent-transcript':
+      await handleAgentTranscript(message.meetingId, db, env, { onlyIfMissing: message.onlyIfMissing });
       return;
     case 'embed-dictation':
       await handleEmbedDictation(message.dictationId, db, env);

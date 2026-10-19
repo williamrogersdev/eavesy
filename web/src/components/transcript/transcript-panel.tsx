@@ -21,10 +21,10 @@ export function TranscriptPanel({
   const markdown = hasText ? `# ${title}\n\n${transcript!.trim()}\n` : '';
 
   return (
-    <section className="rounded-lg border border-border bg-background">
-      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+    <section className="rounded-[var(--ev-r-pop)] border border-ev-line bg-ev-paper">
+      <header className="flex items-center justify-between gap-2 border-b border-ev-line px-4 py-2.5">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <FileText className="h-4 w-4 text-muted-foreground" />
+          <FileText className="h-4 w-4 text-ev-ink-2" />
           {title}
         </div>
         {hasText ? (
@@ -37,17 +37,17 @@ export function TranscriptPanel({
 
       <div className="px-4 py-3 text-sm">
         {status === 'processing' || status === 'pending' ? (
-          <p className="flex items-center gap-2 text-muted-foreground">
+          <p className="flex items-center gap-2 text-ev-ink-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Transcribing…
           </p>
         ) : status === 'failed' ? (
-          <p className="text-muted-foreground">
+          <p className="text-ev-ink-2">
             Transcription failed{error ? `: ${error}` : ''}.
           </p>
         ) : status === 'none' || !transcript?.trim() ? (
-          <p className="text-muted-foreground">No transcript available.</p>
+          <p className="text-ev-ink-2">No transcript available.</p>
         ) : (
-          <p className="whitespace-pre-wrap leading-relaxed text-foreground">{transcript.trim()}</p>
+          <p className="whitespace-pre-wrap leading-relaxed text-ev-ink">{transcript.trim()}</p>
         )}
       </div>
     </section>
@@ -82,7 +82,7 @@ export function CopyButton({
         void handleCopy();
       }}
       className={cn(
-        'flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted',
+        'flex items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line px-2 py-1 text-xs font-medium text-ev-ink-2 hover:bg-[var(--ev-hover)]',
         className,
       )}
     >

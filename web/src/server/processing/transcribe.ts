@@ -1,9 +1,12 @@
-import { and, eq, gte, inArray, isNull, lt, lte, ne, or } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
 import { encode } from '@/db/codec';
+import * as projectsRepo from '@/db/repo/projects';
 import { MODELS } from '@/lib/ai/client';
 import { summarizeMeeting } from '@/lib/ai/summarize';
+import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
+import { retryLanguage, whisperLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
@@ -53,13 +56,15 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
+  const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: parseVocabulary(userRow?.customVocabularyJson),
+    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson)],
     ai: env.AI,
   });
+  const language = whisperLanguage(meeting.language) ?? transcription.language ?? null;
 
   await runBatched(db, transcription.segments.map((segment, index) => {
     const id = `web_${meetingId}_${index}_${segment.startMs}`;
@@ -73,6 +78,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
         speakerId: segment.speakerId,
         text: segment.text,
         confidence: segment.confidence,
+        language,
         isEdited: false,
         isFinal: true,
       })
@@ -83,6 +89,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
           endMs: segment.endMs,
           text: segment.text,
           confidence: segment.confidence,
+          language,
           isFinal: true,
         },
       });
@@ -98,9 +105,10 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     const plan = resolveModelPlan(user);
     const summary = await summarizeMeeting({
       transcript: fullText,
-      contextBlurb: meeting.contextBlurb ?? undefined,
+      contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
+      notesLanguage: userRow?.notesLanguage,
     });
     const generatedByModel = plan.openRouter
       ? 'openrouter:anthropic/claude-sonnet-4.6'
@@ -150,6 +158,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   if (!user?.isAnonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    if (fullText.trim()) await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   }
 }
 
@@ -225,9 +234,28 @@ export async function handleTranscribeSegment(
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
-        vocabulary: await userVocabulary(db, meeting.userId),
+        vocabulary: [
+          ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
+          ...(await userVocabulary(db, meeting.userId)),
+        ],
       };
-      const transcription = await transcriber.transcribe(request);
+      let transcription = await transcriber.transcribe(request);
+      let language = whisperLanguage(meeting.language) ?? transcription.language;
+      if (!whisperLanguage(meeting.language) && transcription.segments.length > 0) {
+        const retry = retryLanguage({
+          setting: meeting.language,
+          detected: transcription.language,
+          probability: transcription.languageProbability,
+          established: await establishedLanguage(db, meetingId),
+        });
+        if (retry) {
+          const again = await transcriber.transcribe({ ...request, language: retry });
+          if (again.segments.length > 0) {
+            transcription = again;
+            language = again.language ?? retry;
+          }
+        }
+      }
       const speakerId = speakerForTrack(track);
       const glossary = request.vocabulary;
       let lines = transcription.segments.filter(
@@ -237,7 +265,8 @@ export async function handleTranscribeSegment(
       // the user's own note, so give it one more pass without VAD, keeping the
       // strict filter so silence does not turn into "Thank you."
       if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
-        const retry = await transcriber.transcribe({ ...request, vadFilter: false });
+        const retry = await transcriber.transcribe({ ...request, language, vadFilter: false });
+        language ??= retry.language;
         lines = retry.segments.filter((relative) => !isHallucination(relative, { glossary }));
       }
 
@@ -262,6 +291,7 @@ export async function handleTranscribeSegment(
             speakerId,
             text: relative.text,
             confidence: relative.confidence,
+            language: language ?? null,
             isFinal: true,
             isEdited: false,
           })
@@ -273,6 +303,7 @@ export async function handleTranscribeSegment(
               speakerId,
               text: relative.text,
               confidence: relative.confidence,
+              language: language ?? null,
               isFinal: true,
             },
           });
@@ -333,6 +364,19 @@ async function userVocabulary(db: Db, userId: string): Promise<string[]> {
     .where(eq(users.id, userId))
     .limit(1);
   return parseVocabulary(row[0]?.customVocabularyJson);
+}
+
+/** The language most of the meeting has been spoken in so far, by amount of text. */
+async function establishedLanguage(db: Db, meetingId: string): Promise<string | undefined> {
+  const weight = sql<number>`sum(length(${transcriptSegments.text}))`;
+  const row = await db
+    .select({ language: transcriptSegments.language, weight })
+    .from(transcriptSegments)
+    .where(and(eq(transcriptSegments.meetingId, meetingId), isNotNull(transcriptSegments.language)))
+    .groupBy(transcriptSegments.language)
+    .orderBy(desc(weight))
+    .limit(1);
+  return row[0]?.language ?? undefined;
 }
 
 /** Whether any part of the meeting recorded the computer's audio: a two-sided call. */

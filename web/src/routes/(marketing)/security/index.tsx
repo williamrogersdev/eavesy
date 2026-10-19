@@ -45,7 +45,7 @@ const PILLARS = [
 
 const PROCESSORS = [
   { name: 'Anthropic', role: 'AI summaries & extraction under commercial API policy' },
-  { name: 'Cloudflare', role: 'Hosting, storage, database & queues' },
+  { name: 'Cloudflare', role: 'Hosting, storage, database & queues, plus Workers AI transcription and search embeddings' },
   { name: 'Clerk', role: 'Authentication' },
   { name: 'OpenRouter', role: 'Optional bring-your-own AI connection' },
   { name: 'PostHog', role: 'Product analytics & scrubbed error reports; never recording content' },
@@ -57,7 +57,7 @@ function SecurityPage() {
       <PageHero
         eyebrow="Security & privacy"
         title="Built so your conversations stay yours"
-        description="Your meetings are some of the most sensitive data you produce. Eavesy is designed local-first and privacy-first, with clear, auditable practices."
+        description="Your meetings are some of the most sensitive data you produce. Eavesy is local-first and open source, so you can check how it handles them."
       >
         <Breadcrumbs
           items={[

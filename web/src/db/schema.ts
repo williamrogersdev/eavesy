@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -30,6 +31,8 @@ export const users = sqliteTable(
     defaultLanguage: text('default_language').notNull().default('en'),
     /** Words to recognize as spelled here (names, jargon), as a JSON array of strings. */
     customVocabularyJson: text('custom_vocabulary_json'),
+    /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
+    notesLanguage: text('notes_language'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),
@@ -126,6 +129,8 @@ export const meetings = sqliteTable(
     speakerNamesJson: text('speaker_names_json'),
     summaryOverrideMd: text('summary_override_md'),
     transcriptOverrideMd: text('transcript_override_md'),
+    agentTranscriptMd: text('agent_transcript_md'),
+    transcriptKind: text('transcript_kind', { enum: ['solo', 'conversation'] }),
     localFilesUpdatedAt: integer('local_files_updated_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
@@ -141,6 +146,7 @@ export const meetings = sqliteTable(
     uniqueIndex('meetings_client_session_uq').on(t.clientSessionId),
     index('meetings_expires_idx').on(t.expiresAt),
     uniqueIndex('meetings_share_slug_uq').on(t.shareSlug),
+    index('meetings_folder_idx').on(t.folderId).where(sql`folder_id IS NOT NULL`),
   ],
 );
 
@@ -206,10 +212,33 @@ export const transcriptSegments = sqliteTable(
     speakerId: text('speaker_id'),
     text: text('text').notNull(),
     confidence: real('confidence'),
+    /** The language this line was heard in, as a Whisper code. */
+    language: text('language'),
     isEdited: integer('is_edited', { mode: 'boolean' }).notNull().default(false),
     isFinal: integer('is_final', { mode: 'boolean' }).notNull().default(true),
   },
   (t) => [index('segments_meeting_start_idx').on(t.meetingId, t.startMs)],
+);
+
+/** A transcript line translated into another language, kept while the line's text is unchanged. */
+export const transcriptTranslations = sqliteTable(
+  'transcript_translations',
+  {
+    segmentId: text('segment_id')
+      .notNull()
+      .references(() => transcriptSegments.id, { onDelete: 'cascade' }),
+    meetingId: text('meeting_id')
+      .notNull()
+      .references(() => meetings.id, { onDelete: 'cascade' }),
+    language: text('language').notNull(),
+    sourceText: text('source_text').notNull(),
+    text: text('text').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.segmentId, t.language] }),
+    index('translations_meeting_language_idx').on(t.meetingId, t.language),
+  ],
 );
 
 export const summaries = sqliteTable(
@@ -359,6 +388,12 @@ export const folders = sqliteTable(
     name: text('name').notNull(),
     parentId: text('parent_id'),
     sortOrder: integer('sort_order').notNull().default(0),
+    about: text('about'),
+    vocabularyJson: text('vocabulary_json').notNull().default('[]'),
+    people: text('people'),
+    matchJson: text('match_json').notNull().default('[]'),
+    createdAt: integer('created_at'),
+    updatedAt: integer('updated_at'),
   },
   (t) => [index('folders_user_idx').on(t.userId)],
 );

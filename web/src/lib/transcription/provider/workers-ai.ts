@@ -71,6 +71,9 @@ function mapResult(result: unknown, fallbackLanguage?: string): SegmentTranscrip
     text,
     segments,
     language: typeof info.language === 'string' ? info.language : fallbackLanguage,
+    ...(typeof info.language_probability === 'number'
+      ? { languageProbability: info.language_probability }
+      : {}),
     durationSec: typeof info.duration === 'number' ? info.duration : undefined,
   };
 }

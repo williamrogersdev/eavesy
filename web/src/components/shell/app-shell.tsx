@@ -2,31 +2,31 @@
 
 import {
   Apple,
-  Camera,
   ChevronsUpDown,
-  Image as ImageIcon,
   Keyboard,
   LayoutGrid,
   LogOut,
   Menu,
   Mic,
-  Monitor,
   Search,
   Settings,
-  Video,
   X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { BrandMark } from '@/components/brand-mark';
+import { GithubMark } from '@/components/github-mark';
 import { DropButton } from '@/components/drops/drop-button';
 import { DropsProvider } from '@/components/drops/drops-provider';
 import { CaptureBar } from '@/components/recorder/capture-bar';
+import { KindIcon } from '@/components/library/kind';
+import { appButton } from '@/components/ui/app-page';
 import { Link } from '@/components/ui/app-link';
 import { type LibItem, useLibraryItems } from '@/lib/api/use-library';
 import { useMe } from '@/lib/api/use-me';
 import { isDesktop } from '@/lib/desktop/bridge';
 import { usePathname, useRouter } from '@/lib/next-compat/navigation';
 import { useSignOut } from '@/lib/use-sign-out';
+import { siteConfig } from '@/lib/site';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
@@ -83,10 +83,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <DropsProvider>
-      <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-background">
+      <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-ev-paper">
         <a
           href="#app-content"
-          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition focus:translate-y-0"
+          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-full bg-ev-slate px-3 py-2 font-round text-sm font-bold text-ev-on-slate transition focus:translate-y-0"
         >
           Skip to content
         </a>
@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               type="button"
               aria-label="Close navigation"
               onClick={closeMobileNav}
-              className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-[2px]"
+              className="absolute inset-0 cursor-default bg-[rgb(42_34_51/0.38)] backdrop-blur-[2px]"
             />
             <div
               ref={drawerRef}
@@ -116,7 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 type="button"
                 aria-label="Close navigation"
                 onClick={closeMobileNav}
-                className="absolute right-3 top-3 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -126,7 +126,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <MobileHeader menuButtonRef={menuButtonRef} onMenu={() => setMobileNavOpen(true)} />
-          <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:px-4">
+          <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-ev-line bg-ev-paper px-3 sm:px-5">
             <TopSearch />
             <DropButton />
             <CaptureBar />
@@ -148,24 +148,24 @@ function MobileHeader({
   onMenu: () => void;
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3 lg:hidden">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-ev-line px-3 lg:hidden">
       <button
         ref={menuButtonRef}
         type="button"
         onClick={onMenu}
         aria-label="Open navigation"
-        className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="grid h-9 w-9 place-items-center rounded-full text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
       >
         <Menu className="h-5 w-5" />
       </button>
-      <Link href="/app" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-        <BrandMark className="h-7 w-7" />
+      <Link href="/app" className="flex items-center gap-2 font-round text-[15px] font-extrabold text-ev-ink">
+        <BrandMark size={28} />
         Eavesy
       </Link>
       <Link
         href="/app/record"
         aria-label="New recording"
-        className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-white hover:bg-action-hover"
+        className="grid h-9 w-9 place-items-center rounded-full bg-ev-slate text-ev-on-slate hover:bg-ev-slate-hover"
       >
         <Mic className="h-4 w-4" />
       </Link>
@@ -176,18 +176,18 @@ function MobileHeader({
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const desktop = isDesktop();
   const { items, loading } = useLibraryItems();
-  const recent = items.slice(0, 18);
+  const recent = items.slice(0, 10);
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-hidden border-r border-border bg-muted/45 shadow-xl shadow-black/5 lg:shadow-none">
+    <aside className="flex h-full w-full flex-col overflow-hidden border-r border-ev-line bg-ev-well shadow-[var(--ev-e-3)] lg:shadow-none">
       <div className="px-4 py-4">
         <Link
           href="/app"
           onClick={onNavigate}
-          className="flex w-fit items-center gap-2.5 font-semibold tracking-tight"
+          className="flex w-fit items-center gap-2 font-round text-[16px] font-extrabold text-ev-ink"
         >
-          <BrandMark className="h-8 w-8" />
-          <span className="text-[15px]">Eavesy</span>
+          <BrandMark size={30} />
+          <span>Eavesy</span>
         </Link>
       </div>
 
@@ -195,9 +195,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <Link
           href="/app/record"
           onClick={onNavigate}
-          className="flex h-9 items-center justify-center gap-2 rounded-lg bg-action px-3 text-sm font-medium text-white transition hover:bg-action-hover"
+          className={cn(appButton('primary'), 'w-full')}
         >
-          <Mic className="h-4 w-4" strokeWidth={2.5} />
+          <Mic className="h-4 w-4" strokeWidth={2} />
           New recording
         </Link>
       </div>
@@ -206,11 +206,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="mt-4 flex min-h-0 flex-1 flex-col pt-1">
         <div className="flex items-center justify-between px-4 pb-2">
-          <span className="text-xs font-medium text-muted-foreground">Recent</span>
+          <span className="font-round text-xs font-bold text-ev-ink-2">Recent</span>
           <Link
             href="/app"
             onClick={onNavigate}
-            className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+            className="rounded-full px-2 py-0.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
           >
             View all
           </Link>
@@ -219,11 +219,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           {loading && recent.length === 0 ? (
             <div className="space-y-1 px-1 py-1" aria-label="Loading recent items">
               {Array.from({ length: 5 }).map((_, index) => (
-                <div key={index} className="h-8 animate-pulse rounded-lg bg-background/70" />
+                <div key={index} className="h-8 animate-pulse rounded-[var(--ev-r-ctl)] bg-ev-paper/70" />
               ))}
             </div>
           ) : recent.length === 0 ? (
-            <p className="px-2 py-2 text-xs leading-relaxed text-muted-foreground">
+            <p className="px-2 py-2 text-xs leading-relaxed text-ev-ink-2">
               Your newest recordings and captures will appear here.
             </p>
           ) : (
@@ -235,6 +235,15 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       {!desktop ? <DownloadCard onNavigate={onNavigate} /> : null}
+      <a
+        href={siteConfig.github}
+        target="_blank"
+        rel="noreferrer"
+        className="mx-2 mb-2 flex h-8 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 font-round text-[13px] font-semibold text-ev-ink-2 transition hover:bg-[var(--ev-hover)] hover:text-ev-ink"
+      >
+        <GithubMark className="h-3.5 w-3.5" />
+        Open source on GitHub
+      </a>
       <AccountFooter onNavigate={onNavigate} />
     </aside>
   );
@@ -256,13 +265,13 @@ function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
             onClick={onNavigate}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm transition',
+              'flex h-9 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 font-round text-[14px] font-semibold transition',
               active
-                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                ? 'bg-ev-slate-soft text-ev-slate'
+                : 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
             )}
           >
-            <Icon className={cn('h-4 w-4', active && 'text-accent')} />
+            <Icon className="h-4 w-4" strokeWidth={1.75} />
             {item.label}
           </Link>
         );
@@ -281,16 +290,16 @@ function RecentRow({ item, onNavigate }: { item: LibItem; onNavigate?: () => voi
       title={item.title}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition',
+        'group flex h-8 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 text-[13px] transition',
         active
-          ? 'bg-background text-foreground shadow-sm'
-          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+          ? 'bg-ev-raised text-ev-ink shadow-[var(--ev-e-2)]'
+          : 'text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink',
       )}
     >
-      <TypeIcon item={item} className="h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover:text-accent" />
+      <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-3 group-hover:text-ev-slate" />
       <span className="min-w-0 flex-1 truncate">{item.title}</span>
       {item.kind === 'meeting' && item.status && item.status !== 'complete' ? (
-        <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" title={item.status} />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ev-slate" title="Writing it down…" />
       ) : null}
     </Link>
   );
@@ -303,7 +312,7 @@ function DownloadCard({ onNavigate }: { onNavigate?: () => void }) {
     <Link
       href="/download/mac"
       onClick={onNavigate}
-      className="mx-2 mb-2 flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] text-muted-foreground transition hover:bg-background/70 hover:text-foreground"
+      className="mx-2 mb-1 flex h-8 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 font-round text-[13px] font-semibold text-ev-ink-2 transition hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       <Apple className="h-3.5 w-3.5" />
       Get the Mac app
@@ -369,7 +378,7 @@ function TopSearch() {
   return (
     <div className="min-w-0 flex-1">
       <div ref={ref} className="relative w-full max-w-xl">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ev-ink-3" strokeWidth={1.75} />
         <input
           role="combobox"
           aria-autocomplete="list"
@@ -389,22 +398,22 @@ function TopSearch() {
           aria-expanded={open && Boolean(query.trim())}
           aria-controls={listId}
           aria-activedescendant={open && results[active] ? `${listId}-${active}` : undefined}
-          className="h-9 w-full rounded-lg border border-transparent bg-muted/60 pl-9 pr-3 text-sm outline-none transition focus:border-accent/50 focus:bg-background"
+          className="h-9 w-full rounded-[var(--ev-r-ctl)] bg-ev-well pl-9 pr-3 font-round text-[13.5px] text-ev-ink outline-none transition placeholder:text-ev-ink-3 focus:bg-ev-raised focus:shadow-[var(--ev-focus)]"
         />
 
         {open && query.trim() ? (
           <div
             id={listId}
             role="listbox"
-            className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-lg border border-border bg-background py-1 shadow-lg"
+            className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-[var(--ev-r-pop)] bg-ev-raised p-1 shadow-[0_0_0_0.5px_var(--ev-line-strong),var(--ev-e-2)]"
           >
             {navigationError ? (
-              <p role="alert" className="border-b border-border px-3 py-2 text-xs text-danger">
+              <p role="alert" className="border-b border-ev-line px-3 py-2 text-xs text-ev-warn-ink">
                 {navigationError}
               </p>
             ) : null}
             {results.length === 0 ? (
-              <p className="px-3 py-3 text-sm text-muted-foreground">No title matches yet.</p>
+              <p className="px-3 py-3 text-sm text-ev-ink-2">No title matches yet.</p>
             ) : (
               results.map((item, index) => (
                 <button
@@ -416,13 +425,13 @@ function TopSearch() {
                   onMouseEnter={() => setActive(index)}
                   onClick={() => go(item.href)}
                   className={cn(
-                    'flex h-9 w-full items-center gap-2.5 px-3 text-left text-sm',
-                    index === active ? 'bg-muted' : 'hover:bg-muted',
+                    'flex h-9 w-full items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 text-left text-sm',
+                    index === active ? 'bg-ev-slate-soft text-ev-slate' : 'hover:bg-[var(--ev-hover)]',
                   )}
                 >
-                  <TypeIcon item={item} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-2" />
                   <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-xs text-ev-ink-2">
                     {new Date(item.createdAt).toLocaleDateString()}
                   </span>
                 </button>
@@ -431,7 +440,7 @@ function TopSearch() {
             <Link
               href={`/app/search?q=${encodeURIComponent(query.trim())}`}
               onClick={() => setOpen(false)}
-              className="flex h-9 items-center gap-2 border-t border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="mt-1 flex h-9 items-center gap-2 rounded-[var(--ev-r-ctl)] border-t border-ev-line px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
             >
               <Search className="h-3.5 w-3.5" />
               Search inside transcripts for “{query.trim()}”
@@ -441,22 +450,6 @@ function TopSearch() {
       </div>
     </div>
   );
-}
-
-function TypeIcon({ item, className }: { item: LibItem; className?: string }) {
-  if (item.kind === 'meeting') return <Mic className={className} />;
-  switch (item.captureMode) {
-    case 'screenshot':
-      return <Camera className={className} />;
-    case 'webcam':
-      return <Video className={className} />;
-    case 'screen':
-      return <Monitor className={className} />;
-    case 'audio':
-      return <Mic className={className} />;
-    default:
-      return <ImageIcon className={className} />;
-  }
 }
 
 function AccountFooter({ onNavigate }: { onNavigate?: () => void }) {
@@ -489,18 +482,18 @@ function AccountFooter({ onNavigate }: { onNavigate?: () => void }) {
     .join('');
 
   return (
-    <div ref={ref} className="relative border-t border-border p-3">
+    <div ref={ref} className="relative border-t border-ev-line p-3">
       {open ? (
-        <div className="absolute bottom-[calc(100%-0.25rem)] left-3 right-3 z-50 overflow-hidden rounded-lg border border-border bg-background py-1 shadow-lg">
+        <div className="absolute bottom-[calc(100%-0.25rem)] left-3 right-3 z-50 overflow-hidden rounded-[var(--ev-r-pop)] bg-ev-raised p-1 shadow-[0_0_0_0.5px_var(--ev-line-strong),var(--ev-e-2)]">
           <Link
             href="/app/settings"
             onClick={() => {
               setOpen(false);
               onNavigate?.();
             }}
-            className="flex h-9 items-center gap-2.5 px-3 text-sm hover:bg-muted"
+            className="flex h-9 items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 font-round text-[13.5px] font-semibold hover:bg-[var(--ev-hover)]"
           >
-            <Settings className="h-4 w-4 text-muted-foreground" />
+            <Settings className="h-4 w-4 text-ev-ink-2" strokeWidth={1.75} />
             Account settings
           </Link>
           <SignOut />
@@ -511,16 +504,16 @@ function AccountFooter({ onNavigate }: { onNavigate?: () => void }) {
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex h-10 w-full items-center gap-2.5 rounded-md px-1.5 text-left transition hover:bg-background/70"
+        className="flex h-11 w-full items-center gap-2.5 rounded-[var(--ev-r-pop)] px-1.5 text-left transition hover:bg-[var(--ev-hover)]"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-action text-xs font-semibold text-white">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ev-honey-soft font-round text-xs font-extrabold text-ev-honey-ink">
           {initials || '?'}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{me?.email ?? 'Signed in'}</span>
+          <span className="block truncate font-round text-sm font-bold text-ev-ink">{name}</span>
+          <span className="block truncate text-xs text-ev-ink-2">{me?.email ?? 'Signed in'}</span>
         </span>
-        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ChevronsUpDown className="h-4 w-4 shrink-0 text-ev-ink-3" strokeWidth={1.75} />
       </button>
     </div>
   );
@@ -543,7 +536,7 @@ function SignOut() {
         });
       }}
       disabled={signingOut}
-      className="flex h-9 w-full items-center gap-2.5 border-t border-border px-3 text-left text-sm text-danger hover:bg-danger-soft disabled:cursor-wait disabled:opacity-60"
+      className="flex h-9 w-full items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 text-left font-round text-[13.5px] font-semibold text-ev-warn-ink hover:bg-ev-warn-soft disabled:cursor-wait disabled:opacity-60"
     >
       <LogOut className="h-4 w-4" />
       {failed ? 'Sign out failed · Try again' : signingOut ? 'Signing out…' : 'Sign out'}
