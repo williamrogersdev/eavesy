@@ -196,7 +196,7 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
             onClick={() => void handleStart()}
             disabled={starting}
             aria-label={starting ? 'Requesting recording permission' : 'Start recording'}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-slate transition hover:bg-action-hover active:scale-95 disabled:cursor-wait disabled:opacity-60"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-coat transition hover:bg-action-hover active:scale-95 disabled:cursor-wait disabled:opacity-60"
           >
             {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
           </button>

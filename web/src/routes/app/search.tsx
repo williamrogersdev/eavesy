@@ -70,7 +70,7 @@ function SearchPage() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="What did Sarah say about the launch in May?"
           autoFocus
-          className="h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper pl-9 pr-9 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
+          className="h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper pl-9 pr-9 text-sm outline-none focus:border-ev-coat focus:shadow-[var(--ev-focus)]"
         />
         {loading ? (
           <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-ev-ink-2" />

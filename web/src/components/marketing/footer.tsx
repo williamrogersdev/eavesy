@@ -29,7 +29,7 @@ export function Footer() {
             </div>
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ev-ink-2">
               Open source under the Apache License 2.0.{' '}
-              <Link href="/docs/open-source" className="text-ev-ink underline underline-offset-2 transition hover:text-ev-slate">
+              <Link href="/docs/open-source" className="text-ev-ink underline underline-offset-2 transition hover:text-ev-coat">
                 Read the code or host your own.
               </Link>
             </p>
@@ -41,7 +41,7 @@ export function Footer() {
               <ul className="mt-4 space-y-2.5 text-sm">
                 {col.links.map((link) => (
                   <li key={link.label}>
-                    <Link href={link.href} className="text-ev-ink transition hover:text-ev-slate">{link.label}</Link>
+                    <Link href={link.href} className="text-ev-ink transition hover:text-ev-coat">{link.label}</Link>
                   </li>
                 ))}
               </ul>
@@ -54,7 +54,7 @@ export function Footer() {
             <Mascot size={16} state="sleeping" />
             © {new Date().getFullYear()} Eavesy. Open source under Apache-2.0.
           </span>
-          <a href={siteConfig.github} className="inline-flex items-center gap-1.5 transition hover:text-ev-slate">
+          <a href={siteConfig.github} className="inline-flex items-center gap-1.5 transition hover:text-ev-coat">
             <GithubMark className="h-4 w-4" />
             williamrogersdev/eavesy
           </a>

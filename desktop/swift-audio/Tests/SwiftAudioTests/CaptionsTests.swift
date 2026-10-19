@@ -379,6 +379,22 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(done?["failed"] as? Bool, false)
     }
 
+    func testAudioAnEngineLetsGoOfIsSaidAtOnceAndCounted() {
+        let events = Events()
+        let engine = FakeEngine()
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(engine)) }
+        captions.feed([Float](repeating: 0.1, count: 4_800), atMs: 0)
+        let deadline = Date().addingTimeInterval(1)
+        while engine.appended.isEmpty, Date() < deadline { usleep(1_000) }
+        XCTAssertNotNil(engine.sink)
+        engine.sink?.audioDropped(2)
+        engine.sink?.audioDropped(1)
+        XCTAssertEqual(events.named("captions_dropped").count, 1, "the first loss is enough to know")
+        XCTAssertEqual(events.named("captions_dropped").first?["dropped"] as? Int, 2)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(events.named("captions_done").first?["dropped"] as? Int, 3)
+    }
+
     func testFinishReportsATimeoutAndAFailure() {
         final class Stuck: SpeechEngine {
             let name = "stuck"

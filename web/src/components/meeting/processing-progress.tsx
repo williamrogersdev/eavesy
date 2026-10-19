@@ -26,7 +26,7 @@ export function ProcessingProgress({
             {step.done ? (
               <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-ev-leaf text-ev-paper"><Check className="h-2.5 w-2.5" strokeWidth={3} /></span>
             ) : step.active ? (
-              <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-ev-slate-soft border-t-ev-slate" />
+              <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-ev-coat-soft border-t-ev-coat" />
             ) : (
               <span className="h-4 w-4 shrink-0 rounded-full shadow-[inset_0_0_0_1.5px_var(--ev-line-strong)]" />
             )}

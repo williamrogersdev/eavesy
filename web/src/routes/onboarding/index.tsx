@@ -82,7 +82,7 @@ function OnboardingPage() {
           <BrandMark size={32} /> Eavesy
         </div>
         <div className="mt-10">
-          <p className="font-round text-sm font-bold text-ev-slate">One-minute setup</p>
+          <p className="font-round text-sm font-bold text-ev-coat">One-minute setup</p>
           <h1 className="mt-2 font-round text-3xl font-extrabold tracking-tight">Make the workspace yours</h1>
           <p className="mt-2 max-w-md text-sm leading-relaxed text-ev-ink-2">
             Three quick things so your first recording comes out right. You can change them later in Settings.
@@ -102,7 +102,7 @@ function OnboardingPage() {
               autoFocus
               autoComplete="name"
               placeholder="Jane Doe"
-              className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
+              className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat focus:shadow-[var(--ev-focus)]"
             />
           </div>
 
@@ -113,9 +113,9 @@ function OnboardingPage() {
             <p className="text-xs leading-relaxed text-ev-ink-2">
               A client, a product, a class. Each becomes a project: recordings get filed under it and Eavesy learns its names and terms.
             </p>
-            <div className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1.5 focus-within:border-ev-slate focus-within:shadow-[var(--ev-focus)]">
+            <div className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1.5 focus-within:border-ev-coat focus-within:shadow-[var(--ev-focus)]">
               {projects.map((project) => (
-                <span key={project} className="ev-chip bg-ev-slate-soft text-ev-slate shadow-none">
+                <span key={project} className="ev-chip bg-ev-coat-soft text-ev-coat shadow-none">
                   {project}
                   <button
                     type="button"
@@ -160,7 +160,7 @@ function OnboardingPage() {
           <button
             type="submit"
             disabled={saving || !displayName.trim()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-action px-4 font-round text-sm font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-action px-4 font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating your workspace…</> : <>Open your workspace <ArrowRight className="h-4 w-4" /></>}
           </button>
@@ -180,7 +180,7 @@ function OnboardingPage() {
           <ol className="mt-6 space-y-5">
             {NEXT_STEPS.map((item, index) => (
               <li key={item} className="flex gap-3 text-sm leading-relaxed text-ev-ink-2">
-                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ev-slate-soft font-round text-xs font-extrabold text-ev-slate">{index + 1}</span>
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ev-coat-soft font-round text-xs font-extrabold text-ev-coat">{index + 1}</span>
                 {item}
               </li>
             ))}

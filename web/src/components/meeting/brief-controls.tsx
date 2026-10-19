@@ -176,7 +176,7 @@ export function BriefControls({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={16}
-            className="mt-2 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper p-3 text-sm leading-relaxed text-ev-ink outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
+            className="mt-2 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper p-3 text-sm leading-relaxed text-ev-ink outline-none focus:border-ev-coat focus:shadow-[var(--ev-focus)]"
           />
           <div className="mt-2 flex justify-end gap-1.5">
             <button type="button" onClick={() => setEditing(false)} className={appButton('ghost', 'sm')}>Cancel</button>

@@ -52,7 +52,7 @@ export function Nav() {
               aria-current={isActive(pathname, item.href) ? 'page' : undefined}
               className={cn(
                 'flex min-h-9 items-center rounded-full px-3.5 transition hover:bg-ev-well hover:text-ev-ink',
-                isActive(pathname, item.href) && 'bg-ev-slate-soft text-ev-slate hover:bg-ev-slate-soft hover:text-ev-slate',
+                isActive(pathname, item.href) && 'bg-ev-coat-soft text-ev-coat hover:bg-ev-coat-soft hover:text-ev-coat',
               )}
             >
               {item.label}

@@ -270,7 +270,7 @@ function SettingsPage() {
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
   const vocabularyChanged = vocabularyFromText(vocabulary).join('\n') !== me.customVocabulary.join('\n');
-  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate';
+  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
 
   return (
     <AppPage width="compact">
@@ -371,7 +371,7 @@ function SettingsPage() {
                 setVocabulary(e.target.value);
                 setSaved(false);
               }}
-              className="w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm outline-none focus:border-ev-slate"
+              className="w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm outline-none focus:border-ev-coat"
             />
             {vocabularyChanged ? (
               <button

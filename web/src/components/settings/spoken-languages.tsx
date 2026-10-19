@@ -20,7 +20,7 @@ export function SpokenLanguages({
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {value.map((code) => (
-        <span key={code} className="ev-chip bg-ev-slate-soft text-ev-slate shadow-none">
+        <span key={code} className="ev-chip bg-ev-coat-soft text-ev-coat shadow-none">
           {languageName(code)}
           <button
             type="button"

@@ -8,7 +8,7 @@ export function Comparison() {
   return (
     <section className="px-6 py-24">
       <div className="mx-auto max-w-2xl text-center">
-        <SectionLabel><ShieldCheck className="h-3.5 w-3.5 text-ev-slate" /> The difference</SectionLabel>
+        <SectionLabel><ShieldCheck className="h-3.5 w-3.5 text-ev-coat" /> The difference</SectionLabel>
         <h2 className="mt-5 text-4xl font-extrabold tracking-tight sm:text-5xl">Local files. No bots. No lock-in.</h2>
       </div>
       <div className="mx-auto mt-12 max-w-3xl overflow-hidden rounded-2xl border border-ev-line">
@@ -27,9 +27,9 @@ export function Comparison() {
               <span className="mb-1 block text-[11px] font-semibold text-ev-ink-2 sm:hidden">Meeting bots</span>
               {row.them}
             </div>
-            <div className="mt-2 flex items-start gap-2 rounded-lg bg-ev-slate-soft p-3 text-ev-ink sm:mt-0 sm:rounded-none sm:bg-transparent sm:p-4">
+            <div className="mt-2 flex items-start gap-2 rounded-lg bg-ev-coat-soft p-3 text-ev-ink sm:mt-0 sm:rounded-none sm:bg-transparent sm:p-4">
               <Check className="mt-0.5 h-4 w-4 shrink-0 text-ev-ink" strokeWidth={2.5} />
-              <span><span className="mb-1 block text-[11px] font-semibold text-ev-slate sm:hidden">Eavesy</span>{row.us}</span>
+              <span><span className="mb-1 block text-[11px] font-semibold text-ev-coat sm:hidden">Eavesy</span>{row.us}</span>
             </div>
           </div>
         ))}

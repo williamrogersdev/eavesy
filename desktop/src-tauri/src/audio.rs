@@ -159,6 +159,12 @@ impl CaptureEvent {
         })
     }
 
+    /// Audio a recognizer lost while the recording was still going.
+    fn captions_dropped(&self) -> Option<i64> {
+        (self.event == "captions_dropped").then_some(())?;
+        Some(self.dropped.unwrap_or(1))
+    }
+
     fn captions_done(&self) -> Option<CaptionsDone> {
         (self.event == "captions_done").then_some(())?;
         Some(CaptionsDone {
@@ -643,6 +649,34 @@ pub fn prepare_standby(app: &AppHandle) {
     });
 }
 
+/// Gets Apple's on-device speech model ready in the background at launch:
+/// reserved for Eavesy and downloaded if missing. Without it every recording
+/// falls back to the older recognizer, whose captions lag by ~30 s.
+pub fn prepare_speech_model(app: &AppHandle) {
+    let Ok(bin) = capture_bin(app) else { return };
+    let language = crate::vocabulary::cached_language(app);
+    std::thread::spawn(move || {
+        let mut command = Command::new(bin);
+        command.arg("--prepare-speech");
+        if let Some(language) = language {
+            command.args(["--language", language.as_str()]);
+        }
+        match command.output() {
+            Ok(output) => {
+                let line = String::from_utf8_lossy(&output.stdout);
+                let state = serde_json::from_str::<serde_json::Value>(line.trim().lines().last().unwrap_or(""))
+                    .ok()
+                    .and_then(|value| Some((value.get("locale")?.as_str()?.to_string(), value.get("state")?.as_str()?.to_string())));
+                match state {
+                    Some((locale, state)) => tracing::info!(locale, state, "speech model for {locale}: {state}"),
+                    None => tracing::warn!("speech model check gave no answer"),
+                }
+            }
+            Err(error) => tracing::warn!("speech model check did not run: {error}"),
+        }
+    });
+}
+
 /// How long the press waited for its first audio, in the app log (which goes
 /// into copied diagnostics). `audio_from_ms` is when that audio begins, from
 /// the engine's own start: anything said before it was never recorded.
@@ -789,6 +823,10 @@ fn stream_events(
                     let _ = app.emit("recording:captions_status", &status);
                     continue;
                 }
+                if let Some(count) = ev.captions_dropped() {
+                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_dropped(count);
+                    continue;
+                }
                 if let Some(done) = ev.captions_done() {
                     captions.lock().unwrap_or_else(|e| e.into_inner()).finish(done);
                     continue;
@@ -828,29 +866,24 @@ fn stream_events(
 
 /// Tells a recording's capture engine what language the cloud heard last, so
 /// captions set to follow the spoken language can move to it. True once the
-/// engine has the line. The write goes to a copy of the engine's stdin, taken
-/// under the lock, and never waits: if the engine has stopped reading, the
-/// hint fails and the poller sends it again next time.
+/// engine has the line. The write never waits: if the engine has stopped
+/// reading, the hint fails and the poller sends it again next time. It runs
+/// under the captures lock, so it never overlaps the "stop" line, which is
+/// only written once the session has left the map.
 pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::AsRawFd;
     let Some(language) = crate::vocabulary::clean_language(language) else { return false };
-    let stdin = {
-        let captures = app.state::<Captures>();
-        let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(session) = sessions.get(session_id) else { return false };
-        match session.stdin.as_fd().try_clone_to_owned() {
-            Ok(fd) => std::fs::File::from(fd),
-            Err(_) => return false,
-        }
-    };
     let line = format!("{}\n", serde_json::json!({ "language": language }));
-    write_without_waiting(stdin.as_raw_fd(), line.as_bytes())
+    let captures = app.state::<Captures>();
+    let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(session) = sessions.get(session_id) else { return false };
+    write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
 }
 
 /// One write to a pipe that may be full: all of `bytes` or nothing. Lines this
-/// short are under PIPE_BUF, so the write is atomic. The pipe's flags are
-/// shared with the engine's own stdin, so they are put back straight after;
-/// a "stop" that meets them in between still falls back to the stop timeout.
+/// short are under PIPE_BUF, so the write is atomic. The flags belong to the
+/// engine's stdin, so they are put back before returning; callers keep every
+/// other write to it from running meanwhile.
 fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
     // SAFETY: `fd` is an open descriptor owned by the caller for this call.
     unsafe {
@@ -858,7 +891,12 @@ fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
         if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
             return false;
         }
-        let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+        let written = loop {
+            let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+            if written >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                break written;
+            }
+        };
         libc::fcntl(fd, libc::F_SETFL, flags);
         usize::try_from(written).is_ok_and(|written| written == bytes.len())
     }
@@ -965,7 +1003,7 @@ fn stop_capture_inner(
     crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
-    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions);
+    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions, started_at_ms);
 
     let result = match await_done(events, STOP_TIMEOUT) {
         Ok(done) => finish_stopped_capture(
@@ -1179,13 +1217,15 @@ const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
 /// straight away, before the engine has sealed its files or anything is
 /// stored. Returns false when there is nothing trustworthy to paste yet; the
 /// clip then goes to Whisper once it is saved.
-fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>) -> bool {
+fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>, started_at_ms: i64) -> bool {
+    // How long the clip is, measured as it stops: the wait below adds no audio.
+    let clip_ms = now_ms() - started_at_ms;
     let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
     while std::time::Instant::now() < deadline && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done() {
         std::thread::sleep(Duration::from_millis(15));
     }
     crate::dictation::rearm_at_stop(session_id);
-    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste();
+    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste(clip_ms);
     match decision {
         Paste::OnDevice(text) => {
             crate::dictation::deliver_dictation(app, session_id, &text);

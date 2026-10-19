@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "productName": "Eavesy",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.eavesy.desktop",
   "build": {
     "frontendDist": "frontend-shell",
@@ -50,7 +50,7 @@
         "minWidth": 196,
         "minHeight": 36,
         "maxWidth": 560,
-        "maxHeight": 200,
+        "maxHeight": 320,
         "resizable": true,
         "decorations": false,
         "transparent": true,

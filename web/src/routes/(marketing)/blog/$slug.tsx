@@ -63,7 +63,7 @@ function BlogPostPage() {
 
           <header className="mb-10">
             {post.frontmatter.category && (
-              <span className="inline-flex items-center rounded-full border border-ev-slate/40 bg-ev-slate-soft px-2.5 py-1 text-[11px] font-medium text-ev-slate">
+              <span className="inline-flex items-center rounded-full border border-ev-coat/40 bg-ev-coat-soft px-2.5 py-1 text-[11px] font-medium text-ev-coat">
                 {post.frontmatter.category}
               </span>
             )}
@@ -104,7 +104,7 @@ function BlogPostPage() {
           <div className="mt-12 border-t border-ev-line pt-8">
             <Link
               href="/blog"
-              className="inline-flex items-center gap-2 text-sm font-medium text-ev-slate transition hover:text-ev-slate-hover"
+              className="inline-flex items-center gap-2 text-sm font-medium text-ev-coat transition hover:text-ev-coat-hover"
             >
               <ArrowLeft className="h-4 w-4" /> All posts
             </Link>

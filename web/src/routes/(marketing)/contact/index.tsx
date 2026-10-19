@@ -54,7 +54,7 @@ function ContactPage() {
                   key={channel.label}
                   className="flex items-start gap-3 rounded-2xl border border-ev-line bg-ev-raised p-5"
                 >
-                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-well text-ev-slate">
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-well text-ev-coat">
                     <Icon className="h-4 w-4" />
                   </span>
                   <div>

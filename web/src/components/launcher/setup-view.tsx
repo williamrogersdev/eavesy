@@ -137,7 +137,7 @@ export function SetupView({
             : 'Lovely. That’s everything I need.',
     'Two keys are all you need. You can change them any time.',
     heard
-      ? "Heard you. That's it, I'll be in the menu bar, under the roof icon."
+      ? "Heard you. That's it, I'll be in the menu bar, under the hat icon."
       : listening
         ? "I'm listening. Tap again when you're done."
         : "Go on, say something. I'll show you what I heard.",
