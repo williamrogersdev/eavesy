@@ -28,9 +28,11 @@ jobs:
       EAVESY_MCP_DOMAIN: ${{ vars.EAVESY_MCP_DOMAIN }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # One release id for the web, processing and MCP Workers and the browser
-      # bundle, so a Sentry issue maps straight to a commit.
-      SENTRY_RELEASE: ${{ github.sha }}
-      VITE_SENTRY_RELEASE: ${{ github.sha }}
+      # bundle, so a PostHog error maps straight to a commit.
+      RELEASE: ${{ github.sha }}
+      VITE_RELEASE: ${{ github.sha }}
+      # PostHog project API key (public, phc_…). Unset ships no analytics.
+      POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
     steps:
       - name: Check deploy configuration
         env:
@@ -60,7 +62,6 @@ jobs:
         env:
           CLERK_PK: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
           MAC_DMG_URL: ${{ vars.VITE_MAC_DMG_URL }}
-          BROWSER_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
         run: |
           {
             echo "VITE_CLERK_PUBLISHABLE_KEY=$CLERK_PK"
@@ -70,7 +71,7 @@ jobs:
             echo "VITE_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app"
             echo "VITE_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app"
             if [ -n "$MAC_DMG_URL" ]; then echo "VITE_MAC_DMG_URL=$MAC_DMG_URL"; fi
-            if [ -n "$BROWSER_SENTRY_DSN" ]; then echo "VITE_SENTRY_DSN=$BROWSER_SENTRY_DSN"; fi
+            if [ -n "$POSTHOG_KEY" ]; then echo "VITE_POSTHOG_KEY=$POSTHOG_KEY"; fi
           } > web/.env.production
 
       - name: Build

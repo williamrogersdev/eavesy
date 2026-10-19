@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
-mock.module('cloudflare:workers', () => ({ env: {} }));
+mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 const {
   crossesRollingNotesBoundary,
   DROP_TTL_MS,

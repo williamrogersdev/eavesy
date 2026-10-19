@@ -100,9 +100,7 @@ these values into chat.
 | `APPLE_TEAM_ID` | 10-character team ID | `security find-identity -v -p codesigning` shows it in parentheses after the identity name. Then `gh secret set APPLE_TEAM_ID --env macos-signing`. |
 | `TAURI_SIGNING_PRIVATE_KEY` | Contents of the updater Minisign private key. **Use the existing key.** A new key orphans every installed copy. | `gh secret set TAURI_SIGNING_PRIVATE_KEY --env macos-signing < ~/.tauri/eavesy-updater.key` |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The key's password | Only if the key has one; the local scripts use an empty password. GitHub can't store an empty secret, and an unset secret is passed as an empty string, so skip it in that case. |
-
-Sentry is optional. The release workflow does not require `DESKTOP_SENTRY_DSN`.
-For a local build with Sentry reporting, export `SENTRY_DSN` before building.
+| `DESKTOP_POSTHOG_KEY` (variable, optional) | PostHog project API key (`phc_…`), compiled into the app as `EAVESY_POSTHOG_KEY` for error tracking and product events. Without it the build sends nothing. | PostHog → Project settings → Project API key. Then `gh variable set DESKTOP_POSTHOG_KEY --env macos-signing --body phc_…`. |
 
 **Instead of the Apple ID set** you can use an App Store Connect API key. It
 doesn't expire with your password and isn't tied to your 2FA. Create it at

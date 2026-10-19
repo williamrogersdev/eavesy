@@ -5,7 +5,7 @@ import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
 import { createFakeEnv, delivery } from '@/server/testing/fake-env';
 
-mock.module('cloudflare:workers', () => ({ env: {} }));
+mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 const { queue } = await import('@/server/processing-worker');
 import { BENCH, type TruthLine } from './common';
 
