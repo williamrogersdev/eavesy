@@ -158,46 +158,70 @@ body {
 }
 /* A window taller than one bar (the transcript, or a tall control): a card, not a pill. */
 @media (min-height: 68px) { .eavesy-control { border-radius: 16px; } }
-/* Room for the transcript sheet: square off into a card. */
-.eavesy-control:has(.ctl-transcript) { border-radius: 16px; }
+/* A sheet open under (or over) the bar: square off into a card. */
+.eavesy-control:has(.ctl-sheet) { border-radius: 16px; }
 .eavesy-control[data-phase="recording"] {
   border-color: color-mix(in srgb, var(--ev-rec) 80%, transparent);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 0 0 1px color-mix(in srgb, var(--ev-rec) 35%, transparent);
 }
-/* Low on the screen the transcript opens above the bar, which stays put. */
+/* Low on the screen the sheet opens above the bar, which stays put. */
 .eavesy-control[data-grow="up"] { flex-direction: column-reverse; }
 
-/* The bar never gives up its height: if the window has not grown yet, the
-   transcript is the part that waits, never drawn over the bar. */
+/* The bar never gives up its height: until the window has grown, the sheet
+   is the part that waits, never drawn over the bar. */
 .ctl-bar {
   container-type: size;
   flex: 1 1 auto;
   min-height: 38px;
 }
-.ctl-transcript {
-  flex: 0 1 96px;
+.ctl-sheet {
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 14px 10px;
   border-top: 1px solid var(--ev-hud-line);
-  /* Older lines fade out under the top edge instead of being cut in half. */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
   font: var(--ev-t-body);
   font-size: 12.5px;
   line-height: 1.45;
   color: var(--ev-hud-ink);
-  white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
 }
-.eavesy-control[data-grow="up"] .ctl-transcript { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
-.ctl-transcript p + p { margin-top: 4px; }
+.eavesy-control[data-grow="up"] .ctl-sheet { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
+.ctl-sheet-content { padding: 9px 12px 9px 14px; }
+.ctl-sheet-content > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ctl-sheet-content > p + p { margin-top: 4px; }
 /* While recording the words sit back: a quiet echo of what is being heard. */
-.eavesy-control[data-phase="recording"] .ctl-transcript { color: var(--ev-hud-ink-2); }
-.ctl-transcript-hint { font-style: italic; opacity: 0.75; }
-.ctl-transcript-notice { color: #9fe0bd; font-weight: 600; }
-.eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
+.eavesy-control[data-phase="recording"] .ctl-sheet { color: var(--ev-hud-ink-2); }
+.ctl-sheet-hint { font-style: italic; opacity: 0.75; }
+.ctl-sheet-notice { color: #9fe0bd; font-weight: 600; font-size: 11.5px; }
+.eavesy-control[data-phase="failed"] .ctl-sheet-notice { color: #ffc9b5; }
+/* What to do with what was just captured, kept in view under the words. */
+.ctl-sheet-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 6px -6px -9px 0;
+  padding: 4px 0 6px;
+  background: var(--ev-hud);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ctl-sheet-footer .ctl-sheet-notice { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-sheet-spacer { flex: 1; }
+.ctl-sheet-btn { flex: none; padding: 0 8px; color: var(--ev-hud-ink); font-size: 12px; white-space: nowrap; }
+.ctl-shot {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgb(255 255 255 / 0.06);
+  cursor: zoom-in;
+}
+.ctl-shot img { display: block; width: 100%; max-height: 150px; object-fit: contain; }
+.ctl-shot-wait { display: block; height: 96px; }
 
 .ctl-grid {
   display: grid;

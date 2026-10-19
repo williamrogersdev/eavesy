@@ -99,61 +99,90 @@ const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60)
 
 const DEFAULT_SIZE: (f64, f64) = (272.0, 40.0);
 
-/// How much taller the HUD gets to show the running transcript under its bar.
-const TRANSCRIPT_HEIGHT: f64 = 96.0;
+/// The tallest sheet the HUD opens under (or over) its bar.
+const MAX_SHEET: f64 = 260.0;
 
-/// Extra height the HUD has now for its transcript, and how far it moved up
-/// to make room at the bottom of the screen. Never saved as the user's frame.
+/// The sheet the HUD has open now: its height, and how far the window's top
+/// moved up for it. Never saved as the user's frame.
 static EXPANDED: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
 
 fn expanded() -> Option<(f64, f64)> {
     *EXPANDED.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-/// Grows the HUD to show the transcript with its bar, or shrinks it back.
-/// The HUD asks for it once it has words to show. Returns whether the
-/// transcript opens above the bar: a control in the lower half grows upwards,
-/// moving the window so the bar itself stays exactly where it was.
-/// `up` is the HUD's own choice, made before it asks so its layout and the
-/// window move together; without it the same rule is applied here.
-pub fn set_expanded_on_main(app: &AppHandle, expand: bool, up: Option<bool>) -> bool {
-    let Some(window) = app.get_webview_window("hud") else { return false };
+/// Whether a sheet `extra` tall opens above a bar at `y`: below it in the top
+/// half of the screen, above it in the bottom half, and whichever way it fits
+/// inside the work area `(top, height)`, so it never runs off the screen.
+fn opens_up(area: Option<(f64, f64)>, y: f64, height: f64, extra: f64) -> bool {
+    let Some((top, area_height)) = area else { return false };
+    let room_above = y - top;
+    let room_below = top + area_height - (y + height);
+    let lower_half = y + height / 2.0 > top + area_height / 2.0;
+    if lower_half {
+        room_above >= extra || room_above > room_below
+    } else {
+        room_below < extra && room_above > room_below
+    }
+}
+
+fn bar_frame(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
     let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
-        return false;
+        return None;
     };
     let position = position.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
-    let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
-    match (expand, *state) {
-        (true, None) => {
-            let bottom = crate::placement::work_area_at(app, position.x + size.width / 2.0, position.y + 1.0)
-                .map_or(f64::MAX, |area| area.1 + area.3);
-            let up = up.unwrap_or_else(|| {
-                crate::placement::in_lower_half(app, position.x + size.width / 2.0, position.y, size.height)
-                    || position.y + size.height + TRANSCRIPT_HEIGHT > bottom
-            });
-            // Remember the growth only once the window really grew, so a
-            // failed resize is never subtracted from the saved frame.
-            if window.set_size(tauri::LogicalSize::new(size.width, size.height + TRANSCRIPT_HEIGHT)).is_err() {
-                return false;
-            }
-            let lifted = up
-                && window.set_position(tauri::LogicalPosition::new(position.x, position.y - TRANSCRIPT_HEIGHT)).is_ok();
-            *state = Some((TRANSCRIPT_HEIGHT, if lifted { TRANSCRIPT_HEIGHT } else { 0.0 }));
-            lifted
-        }
-        (true, Some((_, lift))) => lift > 0.0,
-        (false, Some((extra, lift))) => {
-            *state = None;
-            drop(state);
-            let _ = window.set_size(tauri::LogicalSize::new(size.width, (size.height - extra).max(DEFAULT_SIZE.1)));
-            if lift > 0.0 {
-                let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y + lift));
-            }
-            false
-        }
-        (false, None) => false,
+    let (extra, lift) = expanded().unwrap_or((0.0, 0.0));
+    Some((position.x, position.y + lift, size.width, (size.height - extra).max(DEFAULT_SIZE.1)))
+}
+
+/// Which way the HUD's sheet opens, asked before it opens so the HUD lays
+/// itself out first and the bar never jumps.
+pub fn sheet_opens_up(app: &AppHandle, extra: f64) -> bool {
+    if let Some((_, lift)) = expanded() {
+        return lift > 0.0;
     }
+    let Some(window) = app.get_webview_window("hud") else { return false };
+    let Some((x, y, width, height)) = bar_frame(&window) else { return false };
+    let area = crate::placement::work_area_at(app, x + width / 2.0, y + 1.0).map(|area| (area.1, area.3));
+    opens_up(area, y, height, extra.clamp(0.0, MAX_SHEET))
+}
+
+/// Opens, resizes or closes the sheet under the HUD's bar, with the bar held
+/// exactly where it is. `extra` is the sheet's height; 0 closes it. Returns
+/// whether the sheet is above the bar, or None when the window could not
+/// make the room.
+pub fn set_sheet_on_main(app: &AppHandle, extra: f64) -> Option<bool> {
+    let window = app.get_webview_window("hud")?;
+    let extra = extra.clamp(0.0, MAX_SHEET).round();
+    let up = if extra > 0.0 { sheet_opens_up(app, extra) } else { expanded().is_some_and(|(_, lift)| lift > 0.0) };
+    let (_, _, _, bar_height) = bar_frame(&window)?;
+    let mut state = EXPANDED.lock().unwrap_or_else(|error| error.into_inner());
+    let Some((height, next)) = sheet_change(*state, extra, up, bar_height) else {
+        return Some(state.map_or(up, |(_, lift)| lift > 0.0));
+    };
+    if !imp::set_height(&window, height, up) {
+        return None;
+    }
+    *state = next;
+    Some(up)
+}
+
+/// What asking for a sheet `extra` tall does to a window whose sheet is
+/// `current` (height, lift): None when it already is that tall, else the
+/// window's new height and the sheet after. A sheet above the bar lifts the
+/// window's top by its height; closing it puts everything back.
+fn sheet_change(current: Option<(f64, f64)>, extra: f64, up: bool, bar_height: f64) -> Option<(f64, Option<(f64, f64)>)> {
+    let extra = extra.clamp(0.0, MAX_SHEET).round();
+    let now = current.map_or(0.0, |(extra, _)| extra);
+    if (now - extra).abs() < 1.0 {
+        return None;
+    }
+    Some((bar_height + extra, (extra > 0.0).then_some((extra, if up { extra } else { 0.0 }))))
+}
+
+/// The user closed the control with its X: it stays hidden while idle.
+pub fn hidden_by_user(app: &AppHandle) -> bool {
+    prefs(app).hidden
 }
 
 fn is_active(phase: &Phase) -> bool {
@@ -293,16 +322,9 @@ fn follow_panel(app: &AppHandle) {
 fn save_frame(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     if !window.is_visible().unwrap_or(false) { return; }
-    let (Ok(scale), Ok(position), Ok(size)) =
-        (window.scale_factor(), window.outer_position(), window.outer_size())
-    else {
-        return;
-    };
-    let position = position.to_logical::<f64>(scale);
-    let size = size.to_logical::<f64>(scale);
-    // While the transcript shows, save the frame the HUD returns to.
-    let (extra, lift) = expanded().unwrap_or((0.0, 0.0));
-    let frame = HudFrame { x: position.x, y: position.y + lift, width: size.width, height: size.height - extra };
+    // While a sheet is open, save the frame the HUD returns to: its bar.
+    let Some((x, y, width, height)) = bar_frame(&window) else { return };
+    let frame = HudFrame { x, y, width, height };
     if prefs(app).frame != Some(frame) {
         update_prefs(app, |config| config.hud_frame = Some(frame));
     }
@@ -318,6 +340,25 @@ mod imp {
 
     pub fn hide(app: &AppHandle) {
         if let Ok(panel) = app.get_webview_panel("hud") { panel.order_out(None); }
+    }
+
+    /// Sets the window's height in one step, keeping its top edge or, when
+    /// `keep_bottom`, its bottom edge where it is: the bar never jumps.
+    pub fn set_height(window: &WebviewWindow, height: f64, keep_bottom: bool) -> bool {
+        use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
+        use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+        let Ok(ns_window) = window.ns_window() else { return false };
+        let ns_window = ns_window as id;
+        unsafe {
+            let mut frame: NSRect = msg_send![ns_window, frame];
+            // Cocoa's origin is the bottom-left corner.
+            if !keep_bottom {
+                frame.origin.y -= height - frame.size.height;
+            }
+            frame.size.height = height;
+            let _: () = msg_send![ns_window, setFrame: frame display: true];
+        }
+        true
     }
 
     const NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL: i32 = 1 << 7;
@@ -359,5 +400,69 @@ mod imp {
     pub fn hide(app: &AppHandle) { if let Some(window) = app.get_webview_window("hud") { let _ = window.hide(); } }
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
+    }
+    pub fn set_height(window: &WebviewWindow, height: f64, keep_bottom: bool) -> bool {
+        let (Ok(scale), Ok(position), Ok(size)) = (window.scale_factor(), window.outer_position(), window.outer_size()) else {
+            return false;
+        };
+        let position = position.to_logical::<f64>(scale);
+        let size = size.to_logical::<f64>(scale);
+        if window.set_size(tauri::LogicalSize::new(size.width, height)).is_err() { return false; }
+        if keep_bottom {
+            let _ = window.set_position(tauri::LogicalPosition::new(position.x, position.y - (height - size.height)));
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{opens_up, sheet_change, MAX_SHEET};
+
+    #[test]
+    fn a_sheet_below_the_bar_grows_the_window_without_lifting_it() {
+        assert_eq!(sheet_change(None, 120.0, false, 40.0), Some((160.0, Some((120.0, 0.0)))));
+    }
+
+    #[test]
+    fn a_sheet_above_the_bar_lifts_the_window_by_its_height() {
+        assert_eq!(sheet_change(None, 120.0, true, 40.0), Some((160.0, Some((120.0, 120.0)))));
+        // Growing keeps it lifted by the whole sheet.
+        assert_eq!(sheet_change(Some((120.0, 120.0)), 200.0, true, 40.0), Some((240.0, Some((200.0, 200.0)))));
+    }
+
+    #[test]
+    fn closing_the_sheet_returns_the_window_to_its_bar() {
+        assert_eq!(sheet_change(Some((120.0, 120.0)), 0.0, true, 40.0), Some((40.0, None)));
+        assert_eq!(sheet_change(None, 0.0, false, 40.0), None);
+    }
+
+    #[test]
+    fn a_sheet_is_capped_and_small_changes_are_ignored() {
+        assert_eq!(sheet_change(None, 900.0, false, 40.0), Some((40.0 + MAX_SHEET, Some((MAX_SHEET, 0.0)))));
+        assert_eq!(sheet_change(Some((120.0, 0.0)), 120.4, false, 40.0), None);
+    }
+
+    const AREA: Option<(f64, f64)> = Some((25.0, 1000.0));
+
+    #[test]
+    fn a_bar_at_the_top_opens_its_sheet_below() {
+        assert!(!opens_up(AREA, 30.0, 40.0, 200.0));
+    }
+
+    #[test]
+    fn a_bar_at_the_bottom_opens_its_sheet_above() {
+        assert!(opens_up(AREA, 950.0, 40.0, 200.0));
+    }
+
+    #[test]
+    fn the_sheet_opens_the_way_it_fits() {
+        // Low with too little room either way: the side with more room.
+        assert!(opens_up(Some((0.0, 400.0)), 200.0, 40.0, 260.0));
+    }
+
+    #[test]
+    fn with_no_screen_found_the_sheet_opens_below() {
+        assert!(!opens_up(None, 900.0, 40.0, 200.0));
     }
 }
