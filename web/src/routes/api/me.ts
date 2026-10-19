@@ -6,6 +6,7 @@ import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
+import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveActor } from '@/server/auth';
 
@@ -17,6 +18,7 @@ const updateSchema = z.object({
   defaultTranscriptionEngine: z.literal('whisper').optional(),
   defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
+  customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
 
 export const Route = createFileRoute('/api/me')({
@@ -52,6 +54,7 @@ export const Route = createFileRoute('/api/me')({
           onboardingCompleted: !!u.onboardingCompletedAt,
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
+          customVocabulary: parseVocabulary(u.customVocabularyJson),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
           hasOpenRouterKey: !!u.byoOpenRouterKey,
@@ -83,6 +86,10 @@ export const Route = createFileRoute('/api/me')({
         if (body.phoneNumber !== undefined) patch.phoneNumber = body.phoneNumber;
         if (body.defaultTranscriptionEngine) patch.defaultTranscriptionEngine = body.defaultTranscriptionEngine;
         if (body.defaultLanguage) patch.defaultLanguage = body.defaultLanguage;
+        if (body.customVocabulary) {
+          const vocabulary = normalizeVocabulary(body.customVocabulary);
+          patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;
+        }
         await db.update(users).set(patch).where(eq(users.id, actor.userId));
         await activityRepo.log(db, { userId: actor.userId, eventType: 'settings.update' });
         return Response.json({ ok: true });

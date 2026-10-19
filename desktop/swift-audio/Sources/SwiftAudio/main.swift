@@ -35,7 +35,7 @@ let captions = Dictionary(
         (
             track,
             LiveCaptions(track: track.rawValue, emit: EventEmitter.emit) { ready in
-                CaptionEngines.make(locale: args.locale, completion: ready)
+                CaptionEngines.make(locale: args.locale, vocabulary: args.vocabulary, completion: ready)
             }
         )
     })

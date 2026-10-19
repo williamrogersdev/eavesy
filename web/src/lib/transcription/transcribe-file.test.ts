@@ -84,6 +84,7 @@ describe('Workers AI file transcription', () => {
       audio: new Uint8Array([1]),
       language: 'auto',
       contextBlurb: 'Weekly sync with Priya',
+      vocabulary: ['Priya Raman'],
       ai: {
         run(_model, value) {
           input = value as Record<string, unknown>;
@@ -92,7 +93,7 @@ describe('Workers AI file transcription', () => {
       },
     });
     expect('language' in input).toBe(false);
-    expect(input.initial_prompt).toBe('Weekly sync with Priya');
+    expect(input.initial_prompt).toBe('Weekly sync with Priya Priya Raman.');
   });
 
   test('drops lines Whisper invents on silence and rebuilds the text from what is left', async () => {

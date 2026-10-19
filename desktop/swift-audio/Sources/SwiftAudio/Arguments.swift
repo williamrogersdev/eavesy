@@ -26,6 +26,8 @@ struct Arguments {
     let captions: Set<Track>
     /// Locale for captions: the user's own region when it speaks `--language`.
     let locale: Locale
+    /// Words the recognizer should expect, from `--vocabulary`, one per line.
+    let vocabulary: [String]
 
     static func parse(_ argv: [String]) -> Arguments {
         var dict: [String: String] = [:]
@@ -81,7 +83,18 @@ struct Arguments {
             segmentDir: segmentDir,
             segmentSec: segmentSec,
             captions: captions,
-            locale: locale)
+            locale: locale,
+            vocabulary: parseVocabulary(dict["vocabulary"]))
+    }
+
+    /// The host sends at most 100 words; this holds to that whatever it sends.
+    static func parseVocabulary(_ raw: String?) -> [String] {
+        Array(
+            (raw ?? "")
+                .split(separator: "\n")
+                .map { String($0.trimmingCharacters(in: .whitespaces).prefix(60)) }
+                .filter { !$0.isEmpty }
+                .prefix(100))
     }
 
     /// The cloud transcribes in one language; caption in the same one, keeping

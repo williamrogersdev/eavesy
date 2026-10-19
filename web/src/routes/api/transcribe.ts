@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
-import { transcriptionLanguage } from '@/db/repo/users';
+import { transcriptionPrefs } from '@/db/repo/users';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -83,16 +83,14 @@ export const Route = createFileRoute('/api/transcribe')({
         if (limited) return limited;
 
         const url = new URL(request.url);
+        const prefs = await transcriptionPrefs(getDb(), actor.userId);
         const requested = url.searchParams.get('language')?.trim().toLowerCase();
-        const language =
-          requested && isTranscriptionLanguage(requested)
-            ? requested
-            : await transcriptionLanguage(getDb(), actor.userId);
+        const language = requested && isTranscriptionLanguage(requested) ? requested : prefs.language;
         // `voice=1` marks the user's own mic alone, such as a dictation.
         const voiceNote = url.searchParams.get('voice') === '1';
 
         try {
-          const result = await transcribeAudioFile({ audio, language, voiceNote });
+          const result = await transcribeAudioFile({ audio, language, vocabulary: prefs.vocabulary, voiceNote });
           return Response.json({
             text: result.text,
             language: result.language ?? language,
