@@ -67,7 +67,9 @@ Only Apple Silicon (`aarch64`) is built, which matches the local scripts.
 2. When it merges, the tag is pushed and the macOS release run starts on its
    own.
 3. Wait for the draft release. Install its DMG on a clean Mac account and test
-   recording, pairing and the update check.
+   recording, pairing and the update check. Also open Eavesy straight from the
+   mounted DMG: it must offer **Move to Applications**, then relaunch from
+   `/Applications` with the disk image ejected. Updates only work from there.
 4. Approve the `publish` job (Actions run → Review deployments → `macos-release`).
 5. Merge the cask PR in `homebrew-eavesy`. The workflow has already checked
    that the cask URL serves the published DMG with the same sha256.
