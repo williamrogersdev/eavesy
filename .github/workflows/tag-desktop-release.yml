@@ -1,0 +1,73 @@
+name: Tag desktop release
+
+# Pushes desktop-vX.Y.Z when a version bump lands on main. The tag push starts
+# macos-release.yml. The tag is pushed with RELEASE_TOKEN because tags pushed
+# with the default token start no workflows and the desktop-v* ruleset only
+# lets admins create them.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - desktop/src-tauri/tauri.conf.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag desktop-vX.Y.Z
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    steps:
+      - name: Check release token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Repository secret RELEASE_TOKEN is not set (docs/RELEASING.md). Tag this commit by hand: git tag desktop-vX.Y.Z $GITHUB_SHA && git push origin desktop-vX.Y.Z"
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Tag if the version is new
+        run: |
+          VERSION="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
+          TAG="desktop-v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAGGED="$(git rev-parse "refs/tags/$TAG^{commit}")"
+            if [[ "$TAGGED" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already points at $TAGGED, not $GITHUB_SHA. Bump the version again instead of reusing it."
+              exit 1
+            fi
+            echo "$TAG already exists at this commit; nothing to do."
+            exit 0
+          fi
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' desktop/src-tauri/Cargo.toml | head -1)"
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "::error file=desktop/src-tauri/Cargo.toml::Cargo.toml has $CARGO_VERSION, tauri.conf.json has $VERSION"
+            exit 1
+          fi
+          NOTES="$(awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md)"
+          if ! grep -q '[^[:space:]]' <<< "$NOTES"; then
+            echo "::error file=CHANGELOG.md::No '## [$VERSION]' section with content; not tagging."
+            exit 1
+          fi
+          LOGIN="$(gh api user --jq .login)"
+          ID="$(gh api user --jq .id)"
+          git config user.name "$LOGIN"
+          git config user.email "$ID+$LOGIN@users.noreply.github.com"
+          git tag -a "$TAG" -m "Eavesy for Mac $VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+          echo "Pushed $TAG at $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
