@@ -3,7 +3,10 @@ import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as dictationsRepo from '@/db/repo/dictations';
 import { transcriptionPrefs } from '@/db/repo/users';
-import { applyTemplate, cleanDictation } from '@/lib/ai/clean-dictation';
+import { polishDictation } from '@/lib/ai/agent-transcript';
+import { anthropic } from '@/lib/ai/client';
+import { applyTemplate } from '@/lib/ai/clean-dictation';
+import { combinedContext } from '@/lib/projects';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { meetingFolderSlug } from '@/lib/utils';
 import { guardUserQuota } from '@/server/rate-limit';
@@ -44,7 +47,10 @@ export const Route = createFileRoute('/api/dictations')({
         let cleaned: string | undefined;
         try {
           if (templatePrompt) cleaned = await applyTemplate(transcription.text, templatePrompt);
-          else cleaned = await cleanDictation(transcription.text);
+          else {
+            const context = combinedContext(null, null, prefs.vocabulary);
+            cleaned = (await polishDictation(anthropic(), { text: transcription.text, context })).text;
+          }
         } catch (err) {
           console.warn('[dictation] cleanup failed', err);
         }

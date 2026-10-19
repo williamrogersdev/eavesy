@@ -108,6 +108,50 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
     });
 }
 
+/// How long a paste waits for the tidied words before it types them as heard.
+const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A dictation's words as the user would have typed them: fillers, stutters
+/// and false starts gone, punctuated, their own words spelled their way. The
+/// words as heard when the Mac isn't signed in or the server can't help in time.
+pub fn polish_dictation(app: &AppHandle, text: &str) -> String {
+    let Some(credential) = settings::device_credential(app) else {
+        return text.to_string();
+    };
+    match polish_with(&credential, text, POLISH_TIMEOUT) {
+        Ok(polished) => polished,
+        Err(error) => {
+            eprintln!("dictation: typing the words as heard ({error})");
+            text.to_string()
+        }
+    }
+}
+
+fn polish_with(credential: &settings::Credential, text: &str, timeout: std::time::Duration) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(format!("{}/api/dictations/polish", credential.base.trim_end_matches('/')))
+        .bearer_auth(&credential.token)
+        .json(&serde_json::json!({ "text": text }))
+        .send()
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("polish HTTP {}", resp.status()));
+    }
+    #[derive(serde::Deserialize)]
+    struct Body {
+        text: String,
+    }
+    let polished = resp.json::<Body>().map_err(|e| format!("bad response: {e}"))?.text;
+    if polished.trim().is_empty() {
+        return Err("empty polish".to_string());
+    }
+    Ok(polished)
+}
+
 /// A dictation whose words could not be had in time: say it is saved, so
 /// "Writing it down…" doesn't hang.
 fn no_paste(app: &AppHandle, id: &str, notice: &str) {
@@ -417,5 +461,65 @@ mod tests {
         });
         assert_eq!(fatal, Err("401".to_string()));
         assert_eq!(calls, 1);
+    }
+
+    fn polish_server() -> (tokio::runtime::Runtime, wiremock::MockServer) {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let server = runtime.block_on(wiremock::MockServer::start());
+        (runtime, server)
+    }
+
+    fn credential(server: &wiremock::MockServer) -> settings::Credential {
+        settings::Credential { base: format!("{}/", server.uri()), token: "device-token".into() }
+    }
+
+    #[test]
+    fn polish_returns_the_tidied_words() {
+        use wiremock::matchers::{body_json, header, method, path};
+        let (runtime, server) = polish_server();
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .and(header("authorization", "Bearer device-token"))
+                .and(body_json(serde_json::json!({ "text": "um so ship it ship it today" })))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "text": "So ship it today.", "polished": true }),
+                ))
+                .mount(&server),
+        );
+        let polished = polish_with(&credential(&server), "um so ship it ship it today", POLISH_TIMEOUT);
+        assert_eq!(polished, Ok("So ship it today.".to_string()));
+    }
+
+    #[test]
+    fn polish_gives_up_on_errors_empty_text_and_slow_servers() {
+        use wiremock::matchers::method;
+        let (runtime, server) = polish_server();
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .respond_with(wiremock::ResponseTemplate::new(429))
+                .up_to_n_times(1)
+                .mount(&server),
+        );
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": " " })))
+                .up_to_n_times(1)
+                .mount(&server),
+        );
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "text": "Late." }))
+                        .set_delay(std::time::Duration::from_millis(500)),
+                )
+                .mount(&server),
+        );
+        let credential = credential(&server);
+        let short = std::time::Duration::from_millis(100);
+        assert!(polish_with(&credential, "words", short).unwrap_err().contains("429"));
+        assert_eq!(polish_with(&credential, "words", short), Err("empty polish".to_string()));
+        assert!(polish_with(&credential, "words", short).is_err());
     }
 }
