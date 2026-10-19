@@ -98,37 +98,32 @@ bunx wrangler secret put ANTHROPIC_API_KEY
 
 Workers AI transcription and embeddings use the `AI` binding and do not need
 an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
-authenticates token hashes stored in D1. `SENTRY_DSN` is optional for all three
-Workers; when absent, error reporting is disabled without affecting request or
-queue handling. If enabled later, keep it as a Worker secret and use separate
-projects per environment. `OPS_METRICS_TOKEN` protects the aggregate-only
+authenticates token hashes stored in D1. PostHog is optional for all three
+Workers; without a key, error reporting is disabled without affecting request
+or queue handling. `OPS_METRICS_TOKEN` protects the aggregate-only
 operations endpoint and must be generated independently of user/device tokens.
 
-### Error reporting (optional, strongly recommended)
+### Errors and analytics (optional, strongly recommended)
 
-All three Workers report to Sentry when `SENTRY_DSN` is set, and do nothing
-extra when it isn't. Queue jobs that fail permanently and anything that lands
-in the dead-letter queue are reported explicitly. Reports keep the scrubbed
-error message, route, method and release; headers, cookies, bodies, query
-strings, emails and tokens are never sent, and the MCP Worker also drops the
-URL path. The deploy workflow passes the commit SHA as `SENTRY_RELEASE`. See
-[OBSERVABILITY.md](OBSERVABILITY.md).
+All three Workers and the browser send errors and product events to PostHog
+when the GitHub Actions variable `POSTHOG_KEY` holds a PostHog project API key
+(`phc_…`, public by design), and do nothing extra when it isn't set. The
+deploy workflow passes it to the Workers as a var and writes it into
+`web/.env.production` as `VITE_POSTHOG_KEY`; leave it unset to ship no
+PostHog code to browsers. Queue jobs that fail permanently and anything that
+lands in the dead-letter queue are reported explicitly. Reports keep the
+scrubbed error message, route, method and release; headers, cookies, bodies,
+query strings, emails and tokens are never sent, and the MCP Worker also
+drops the URL path. The deploy workflow passes the commit SHA as `RELEASE`.
+See [OBSERVABILITY.md](OBSERVABILITY.md).
 
 ```bash
-cd web && bunx wrangler secret put SENTRY_DSN
-cd ../workers/processing && bunx wrangler secret put SENTRY_DSN
-cd ../mcp && bunx wrangler secret put SENTRY_DSN
+gh variable set POSTHOG_KEY --env production --body phc_…
 ```
 
-For browser errors, set the GitHub Actions variable `VITE_SENTRY_DSN` (a
-browser DSN is public by design); the deploy workflow writes it into
-`web/.env.production`. Leave it unset to ship no Sentry code to browsers.
-
-The desktop app reads `SENTRY_DSN` at **compile time**, and
-`build-macos-release.sh` refuses to build a release without it (set
-`EAVESY_ALLOW_NO_SENTRY=1` to opt out deliberately). In CI it comes from the
-`DESKTOP_SENTRY_DSN` secret; authentication uses the paired-device credential
-in Keychain.
+The desktop app reads `EAVESY_POSTHOG_KEY` at **compile time**; in CI it
+comes from the `DESKTOP_POSTHOG_KEY` variable. A build without it sends
+nothing. Authentication uses the paired-device credential in Keychain.
 
 ## Database migrations
 
