@@ -126,8 +126,10 @@ final class SFSpeechEngine: SpeechEngine {
     }
 
     /// Audio it can't measure counts as loud, so it never passes for a pause.
+    /// An empty buffer counts as quiet: it adds no time, so it can't end one either.
     static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
-        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 1 }
+        guard buffer.frameLength > 0 else { return 0 }
+        guard let samples = buffer.floatChannelData?[0] else { return 1 }
         var sum: Float = 0
         for i in 0..<Int(buffer.frameLength) {
             sum += samples[i] * samples[i]
