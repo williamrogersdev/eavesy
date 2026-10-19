@@ -33,7 +33,7 @@ export function ProjectPicker({
     <span className="inline-flex h-6 items-center gap-1 rounded-full bg-ev-well px-2.5">
       <FolderOpen className="h-3.5 w-3.5" aria-hidden />
       <select
-        value={known ? projectId ?? '' : ''}
+        value={projectId ?? ''}
         disabled={saving}
         aria-label="Project"
         onChange={(event) => {
@@ -52,6 +52,7 @@ export function ProjectPicker({
         className="max-w-[12rem] cursor-pointer truncate rounded bg-transparent font-round text-[12.5px] font-semibold text-ev-ink-2 outline-none hover:text-ev-ink focus-visible:shadow-[var(--ev-focus)]"
       >
         <option value="">No project</option>
+        {projectId && !known ? <option value={projectId}>Unknown project</option> : null}
         {projects.map((project) => (
           <option key={project.id} value={project.id}>{project.name}</option>
         ))}

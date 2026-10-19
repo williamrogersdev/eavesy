@@ -419,7 +419,7 @@ function Line({
           />
         ) : (
           <div onClick={onPlay} className="cursor-pointer">
-            <p>{translation ?? line.text}</p>
+            <p>{translation || line.text}</p>
             {translation ? (
               <p className="text-xs text-ev-ink-3" lang={line.language ?? undefined}>
                 {line.text}

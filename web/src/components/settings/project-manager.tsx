@@ -71,12 +71,14 @@ export function ProjectManager() {
   const close = () => {
     setFormOpen(false);
     setEditingId(null);
+    setDeletingId(null);
     setDraft(EMPTY);
   };
 
   const edit = (project: ProjectSummary) => {
     setFormOpen(true);
     setEditingId(project.id);
+    setDeletingId(null);
     setDraft(draftOf(project));
     setMessage(null);
   };
@@ -95,11 +97,18 @@ export function ProjectManager() {
     try {
       if (editingId) await updateProject(editingId, fields);
       else await createProject(fields);
-      await load();
-      setMessage(editingId ? 'Project saved.' : 'Project created.');
-      close();
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Could not save the project.');
+      setBusy(false);
+      return;
+    }
+    const saved = editingId ? 'Project saved.' : 'Project created.';
+    close();
+    try {
+      await load();
+      setMessage(saved);
+    } catch {
+      setMessage(`${saved} Reload the page to see the latest list.`);
     } finally {
       setBusy(false);
     }
