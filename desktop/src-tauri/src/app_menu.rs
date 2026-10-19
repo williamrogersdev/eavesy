@@ -122,6 +122,11 @@ pub fn return_focus() {
     imp::return_focus();
 }
 
+/// The app in front right now (pid and name), unless it is Eavesy.
+pub fn frontmost() -> Option<(i32, Option<String>)> {
+    imp::frontmost()
+}
+
 /// Whether Eavesy is the active app.
 pub fn is_active() -> bool {
     imp::is_active()
@@ -147,18 +152,25 @@ mod imp {
     }
 
     pub fn remember_frontmost() {
+        if let Some((pid, name)) = frontmost() {
+            PREVIOUS.store(pid, Ordering::SeqCst);
+            crate::front_window::capture(pid, name);
+        }
+    }
+
+    pub fn frontmost() -> Option<(i32, Option<String>)> {
         unsafe {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: id = msg_send![workspace, frontmostApplication];
             if front == nil {
-                return;
+                return None;
             }
             let pid: i32 = msg_send![front, processIdentifier];
-            if pid > 0 && pid != own_pid() {
-                PREVIOUS.store(pid, Ordering::SeqCst);
-                let name: id = msg_send![front, localizedName];
-                crate::front_window::capture(pid, ns_string(name));
+            if pid <= 0 || pid == own_pid() {
+                return None;
             }
+            let name: id = msg_send![front, localizedName];
+            Some((pid, ns_string(name)))
         }
     }
 
@@ -226,6 +238,9 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 mod imp {
     pub fn remember_frontmost() {}
+    pub fn frontmost() -> Option<(i32, Option<String>)> {
+        None
+    }
     pub fn activate_app() {}
     pub fn is_active() -> bool {
         false

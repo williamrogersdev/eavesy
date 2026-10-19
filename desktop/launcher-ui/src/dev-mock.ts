@@ -46,6 +46,12 @@ export function installDevMock(): void {
     get_screenshot_folder: '~/Desktop',
     get_app_info: { name: 'Eavesy', version: '0.2.0', update: { state: 'upToDate', currentVersion: '0.2.0' } },
     capture_media: '/mock/shot.png',
+    list_projects: params.has('noprojects') ? [] : [
+      { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1'], people: null, match: [], recordingCount: 12 },
+      { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: 'Maya, Alex', match: ['acme'], recordingCount: 3 },
+    ],
+    front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
+    agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };
   if (params.has('setup')) installSetupMock(results);

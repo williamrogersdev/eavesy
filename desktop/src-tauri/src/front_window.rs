@@ -30,6 +30,11 @@ pub fn capture(pid: i32, app: Option<String>) {
     });
 }
 
+/// The app and window title, read now. Blocks for up to a third of a second.
+pub fn read(pid: i32, app: Option<String>) -> FrontWindow {
+    FrontWindow { app, title: window_title(pid) }
+}
+
 fn set(front: FrontWindow) {
     *LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(front);
 }

@@ -6,9 +6,12 @@ import { useState } from 'react';
 export function ContextView({
   onBack,
   onStart,
+  projectName,
 }: {
   onBack: () => void;
   onStart: (contextBlurb?: string) => void;
+  /** The project the recording goes into, if any. */
+  projectName?: string;
 }) {
   const [context, setContext] = useState('');
   const start = () => onStart(context.trim() || undefined);
@@ -34,6 +37,11 @@ export function ContextView({
           Optional: add participant names, the project, or the outcome you care about. This becomes
           private ground truth for the summary when speaker labels are unavailable.
         </p>
+        {projectName && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Goes into <span className="font-medium text-foreground">{projectName}</span>, with its terms and people.
+          </p>
+        )}
         <textarea
           id="meeting-context"
           value={context}

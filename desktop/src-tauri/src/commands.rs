@@ -519,9 +519,24 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
 #[tauri::command]
 // Shell::open is deprecated in favour of tauri-plugin-opener; migrating adds a plugin and capability change, so it is left for a separate change.
 #[allow(deprecated)]
-pub fn open_web_app(app: AppHandle) -> Result<(), String> {
+pub fn open_web_app(app: AppHandle, path: Option<String>) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
-    app.shell().open(format!("{}/app", crate::sync::api_base()), None).map_err(|e| e.to_string())
+    let url = format!("{}/app{}", crate::sync::api_base(), web_app_path(path.as_deref()));
+    app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
+/// A page under /app, such as `/settings#projects`; anything else opens /app.
+fn web_app_path(path: Option<&str>) -> &str {
+    match path {
+        Some(path)
+            if path.starts_with('/')
+                && !path.starts_with("//")
+                && path.chars().all(|c| c.is_ascii_alphanumeric() || "/-_#".contains(c)) =>
+        {
+            path
+        }
+        _ => "",
+    }
 }
 
 #[tauri::command]
@@ -588,4 +603,15 @@ pub fn show_notice(app: AppHandle, title: String, body: String) {
 /// Returns whether a lone fn tap will be reported while suspended.
 pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyError> {
     hotkeys::suspend(&app, suspended)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_plain_app_pages_open_in_the_browser() {
+        assert_eq!(super::web_app_path(Some("/settings#projects")), "/settings#projects");
+        assert_eq!(super::web_app_path(Some("//evil.example")), "");
+        assert_eq!(super::web_app_path(Some("/a?b=c")), "");
+        assert_eq!(super::web_app_path(None), "");
+    }
 }

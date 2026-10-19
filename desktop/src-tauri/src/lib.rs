@@ -122,6 +122,7 @@ pub fn run() {
             commands::account_info,
             projects::list_projects,
             projects::agent_transcript,
+            projects::set_project_choice,
             front_window::front_window,
             commands::disconnect_account,
             commands::open_web_app,
