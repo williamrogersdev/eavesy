@@ -197,6 +197,13 @@
       "when": 1792439172366,
       "tag": "0027_projects_agent_transcript",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1792439747807,
+      "tag": "0028_auto_detect_language",
+      "breakpoints": true
     }
   ]
 }
