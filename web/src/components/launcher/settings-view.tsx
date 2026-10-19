@@ -178,13 +178,13 @@ function PositionPicker({ value, custom, disabled, onPick }: {
               className={cn(
                 'group absolute flex h-6 w-[30%] items-center justify-center rounded-md transition-colors disabled:cursor-default',
                 spot.className,
-                selected ? 'bg-[var(--ev-slate-soft)]' : 'hover:bg-[var(--ev-hover)]',
+                selected ? 'bg-[var(--ev-coat-soft)]' : 'hover:bg-[var(--ev-hover)]',
               )}
             >
               <span
                 className={cn(
                   'h-2.5 w-12 rounded-full transition-colors',
-                  selected ? 'bg-[var(--ev-slate)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
+                  selected ? 'bg-[var(--ev-coat)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
                 )}
               />
             </button>

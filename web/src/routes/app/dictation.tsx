@@ -123,7 +123,7 @@ function DictationPage() {
             type="button"
             onClick={() => void start()}
             aria-label="Start dictation"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-slate transition hover:bg-action-hover active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-coat transition hover:bg-action-hover active:scale-95"
           >
             <Mic className="h-5 w-5" />
           </button>
@@ -193,7 +193,7 @@ function Section({
   onCopy: () => void;
 }) {
   return (
-    <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-slate bg-ev-slate-soft' : 'border-ev-line')}>
+    <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-coat bg-ev-coat-soft' : 'border-ev-line')}>
       <div className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs font-medium text-ev-ink-2">
           {primary ? <Sparkles className="h-3.5 w-3.5" /> : null}

@@ -32,7 +32,7 @@ export function TermInput({
   return (
     <div className="flex flex-col gap-1.5">
       <div
-        className="flex min-h-9 flex-wrap items-center gap-1 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-1.5 py-1 focus-within:border-ev-slate"
+        className="flex min-h-9 flex-wrap items-center gap-1 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-1.5 py-1 focus-within:border-ev-coat"
       >
         {value.map((term) => (
           <span key={term} className="inline-flex items-center gap-1 rounded bg-ev-well px-1.5 py-0.5 font-mono text-xs">

@@ -5,7 +5,7 @@ export function Bento() {
   return (
     <section className="px-6 py-20 sm:py-24">
       <div className="mx-auto mb-12 max-w-2xl text-center">
-        <p className="font-round text-sm font-bold text-ev-slate">What you can drop in</p>
+        <p className="font-round text-sm font-bold text-ev-coat">What you can drop in</p>
         <h2 className="mt-4 text-balance text-3xl font-extrabold tracking-tight sm:text-5xl">
           One place for everything your AI needs to see.
         </h2>
@@ -29,11 +29,11 @@ function BentoCard({ item }: { item: BentoItem }) {
     <div
       className={cn(
         'group relative overflow-hidden rounded-2xl border border-ev-line p-6 transition hover:-translate-y-0.5 hover:border-ev-line-strong',
-        highlight ? 'bg-ev-slate-soft' : 'bg-ev-raised',
+        highlight ? 'bg-ev-coat-soft' : 'bg-ev-raised',
         span && 'lg:col-span-2',
       )}
     >
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-ev-well text-ev-slate">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-ev-well text-ev-coat">
         <Icon className="h-5 w-5" />
       </div>
       <h3 className="mt-4 font-semibold">{title}</h3>

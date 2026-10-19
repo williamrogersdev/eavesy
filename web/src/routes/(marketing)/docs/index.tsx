@@ -59,7 +59,7 @@ function DocsHomePage() {
       <div className="relative overflow-hidden rounded-[28px] bg-ev-raised p-7 shadow-[inset_0_0_0_1px_var(--ev-line)] sm:p-10">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-ev-honey-soft blur-3xl"
+          className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-ev-manila-soft blur-3xl"
         />
         <div className="relative flex items-start justify-between gap-6">
           <div className="min-w-0">
@@ -73,7 +73,7 @@ function DocsHomePage() {
             <div className="mt-6 flex flex-wrap gap-2">
               <Link
                 href="/docs/installing-the-mac-app"
-                className={`${BUTTON} bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover`}
+                className={`${BUTTON} bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover`}
               >
                 Install the Mac app
                 <ArrowRight className="h-4 w-4" />
@@ -98,12 +98,12 @@ function DocsHomePage() {
             href={href}
             className="group rounded-2xl bg-ev-raised p-5 shadow-[inset_0_0_0_1px_var(--ev-line)] transition hover:bg-ev-well"
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ev-slate-soft text-ev-slate">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ev-coat-soft text-ev-coat">
               <Icon className="h-4.5 w-4.5" />
             </span>
             <h2 className="mt-3 flex items-center gap-1.5 font-round font-bold text-ev-ink">
               {title}
-              <ArrowRight className="h-3.5 w-3.5 text-ev-ink-3 transition group-hover:translate-x-0.5 group-hover:text-ev-slate" />
+              <ArrowRight className="h-3.5 w-3.5 text-ev-ink-3 transition group-hover:translate-x-0.5 group-hover:text-ev-coat" />
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-ev-ink-2">{desc}</p>
           </Link>
@@ -142,7 +142,7 @@ function DocsHomePage() {
                           className="group flex min-h-9 items-center justify-between gap-2 rounded-xl px-3 text-sm text-ev-ink transition hover:bg-ev-well"
                         >
                           {doc.frontmatter.title}
-                          <ArrowRight className="h-3.5 w-3.5 flex-none text-ev-ink-3 transition group-hover:translate-x-0.5 group-hover:text-ev-slate" />
+                          <ArrowRight className="h-3.5 w-3.5 flex-none text-ev-ink-3 transition group-hover:translate-x-0.5 group-hover:text-ev-coat" />
                         </Link>
                       </li>
                     ))}
@@ -154,7 +154,7 @@ function DocsHomePage() {
         </section>
       )}
 
-      <section className="mt-14 flex flex-col gap-5 rounded-[28px] bg-ev-slate p-7 text-ev-on-slate sm:flex-row sm:items-center sm:justify-between sm:p-9">
+      <section className="mt-14 flex flex-col gap-5 rounded-[28px] bg-ev-coat p-7 text-ev-on-coat sm:flex-row sm:items-center sm:justify-between sm:p-9">
         <div className="flex items-start gap-4">
           <GithubMark className="mt-1 h-7 w-7 flex-none" />
           <div>
@@ -169,14 +169,14 @@ function DocsHomePage() {
         <div className="flex flex-wrap gap-2 sm:flex-none">
           <a
             href={siteConfig.github}
-            className={`${BUTTON} bg-ev-on-slate text-ev-slate hover:opacity-90`}
+            className={`${BUTTON} bg-ev-on-coat text-ev-coat hover:opacity-90`}
           >
             <GithubMark className="h-4 w-4" />
             View the repo
           </a>
           <Link
             href="/docs/open-source"
-            className={`${BUTTON} text-ev-on-slate shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ev-on-slate)_40%,transparent)] hover:bg-ev-slate-hover`}
+            className={`${BUTTON} text-ev-on-coat shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ev-on-coat)_40%,transparent)] hover:bg-ev-coat-hover`}
           >
             Self-hosting
           </Link>
@@ -187,7 +187,7 @@ function DocsHomePage() {
         <div>
           <h2 className="font-round text-lg font-bold text-ev-ink">Still stuck?</h2>
           <p className="mt-1 text-sm text-ev-ink-2">
-            Check <Link href="/docs/troubleshooting" className="text-ev-slate underline underline-offset-2">troubleshooting</Link>,
+            Check <Link href="/docs/troubleshooting" className="text-ev-coat underline underline-offset-2">troubleshooting</Link>,
             open an issue, or email us.
           </p>
         </div>

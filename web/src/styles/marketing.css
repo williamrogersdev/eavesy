@@ -1,7 +1,7 @@
 /*
  * eavesy.com public pages. Same standard as the app (desktop/DESIGN.md):
- * plaster surfaces, plum ink, slate roof for actions, honey for warmth,
- * red only for "recording right now". The layout root carries `.ev .ev-site`.
+ * cream surfaces, charcoal ink, the coat for actions, manila for warmth,
+ * coral only for "recording right now". The layout root carries `.ev .ev-site`.
  */
 
 @layer base {
@@ -11,13 +11,13 @@
     --muted: var(--ev-well);
     --muted-foreground: var(--ev-ink-2);
     --border: var(--ev-line);
-    --accent: var(--ev-slate);
-    --accent-hover: var(--ev-slate-hover);
-    --accent-soft: var(--ev-slate-soft);
-    --action: var(--ev-slate);
-    --action-hover: var(--ev-slate-hover);
-    --primary: var(--ev-slate);
-    --primary-foreground: var(--ev-on-slate);
+    --accent: var(--ev-coat);
+    --accent-hover: var(--ev-coat-hover);
+    --accent-soft: var(--ev-coat-soft);
+    --action: var(--ev-coat);
+    --action-hover: var(--ev-coat-hover);
+    --primary: var(--ev-coat);
+    --primary-foreground: var(--ev-on-coat);
 
     background: var(--ev-paper);
     color: var(--ev-ink);
@@ -31,16 +31,16 @@
   }
 
   .ev-site ::selection {
-    background: var(--ev-honey-soft);
-    color: var(--ev-honey-ink);
+    background: var(--ev-manila-soft);
+    color: var(--ev-manila-ink);
   }
 }
 
 @layer components {
-  /* Porch-light glow behind page heroes. */
+  /* Desk-lamp glow behind page heroes. */
   .ev-roofline {
     background:
-      radial-gradient(60% 70% at 50% 0%, color-mix(in srgb, var(--ev-honey) 18%, transparent), transparent 70%),
+      radial-gradient(60% 70% at 50% 0%, color-mix(in srgb, var(--ev-manila) 18%, transparent), transparent 70%),
       linear-gradient(180deg, var(--ev-well), var(--ev-paper) 70%);
   }
 
@@ -74,13 +74,13 @@
 .ev-site .prose h4 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
 .ev-site .prose p { margin: 1rem 0; }
 .ev-site .prose a {
-  color: var(--ev-slate);
+  color: var(--ev-coat);
   font-weight: 550;
   text-decoration: underline;
   text-underline-offset: 3px;
-  text-decoration-color: color-mix(in srgb, var(--ev-slate) 35%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--ev-coat) 35%, transparent);
 }
-.ev-site .prose a:hover { text-decoration-color: var(--ev-slate); }
+.ev-site .prose a:hover { text-decoration-color: var(--ev-coat); }
 .ev-site .prose strong { color: var(--ev-ink); font-weight: 650; }
 .ev-site .prose ul, .ev-site .prose ol { margin: 1rem 0; padding-left: 1.4rem; }
 .ev-site .prose ul { list-style: disc; }
@@ -91,8 +91,8 @@
   margin: 1.5rem 0;
   padding: 0.75rem 1rem;
   border-radius: var(--ev-r-pop);
-  background: var(--ev-honey-soft);
-  color: var(--ev-honey-ink);
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
 }
 .ev-site .prose code {
   font-family: var(--font-geist-mono), ui-monospace, monospace;

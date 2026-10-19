@@ -3,23 +3,23 @@
 # requires-python = ">=3.9"
 # dependencies = ["numpy"]
 # ///
-"""Menu bar glyphs (desktop/DESIGN.md §3): the mascot's roof chevron and two
-eye dots. Never a microphone.
+"""Menu bar glyphs (desktop/DESIGN.md §3): the mascot's fedora and two eyes
+peeking under the brim. Never a microphone.
 
     uv run gen_tray.py .
 
 - tray.png / tray@2x.png: black on transparent, used as a macOS template image
   so the menu bar tints it for light and dark.
 - tray-recording.png / @2x: not a template. Same glyph in a mid-tone that reads
-  on light and dark menu bars, with the red porch light on the roof peak.
+  on light and dark menu bars, with the coral recording light at its lower right.
 """
 import sys
 
 from mascot_raster import Canvas, paint_mini_glyph
 
-# Glyph bounds in viewBox units: roof caps reach x 0.5..63.5, y 4.5; eyes end ~43.2.
-GLYPH_W, GLYPH_TOP, GLYPH_BOTTOM = 63.0, 1.0, 43.5
-MID = (0x8A, 0x7F, 0x96)
+# Glyph bounds in viewBox units: brim spans x 2..62, crown top y 8.5, eyes end ~48.8.
+GLYPH_W, GLYPH_TOP, GLYPH_BOTTOM = 60.0, 8.5, 49.0
+MID = (0x8A, 0x80, 0x78)
 
 
 def render(size, recording=False):

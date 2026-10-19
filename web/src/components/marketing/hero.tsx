@@ -18,7 +18,7 @@ export function Hero() {
           <h1 className="mt-8 text-balance font-round text-[42px] font-extrabold leading-[1.04] sm:leading-[1.02] tracking-tight text-ev-ink sm:text-6xl lg:text-[56px] xl:text-[60px]">
             Drop it in.
             <br />
-            <span className="text-ev-slate">Paste it to your AI.</span>
+            <span className="text-ev-coat">Paste it to your AI.</span>
           </h1>
 
           <p className="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-ev-ink-2">

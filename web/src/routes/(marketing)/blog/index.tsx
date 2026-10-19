@@ -23,7 +23,7 @@ export const Route = createFileRoute('/(marketing)/blog/')({
 
 function CategoryChip({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-ev-slate/40 bg-ev-slate-soft px-2.5 py-1 text-[11px] font-medium text-ev-slate">
+    <span className="inline-flex items-center rounded-full border border-ev-coat/40 bg-ev-coat-soft px-2.5 py-1 text-[11px] font-medium text-ev-coat">
       {label}
     </span>
   );
@@ -49,7 +49,7 @@ function FeaturedCard({ post }: { post: Entry<PostFrontmatter> }) {
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-ev-slate-soft blur-3xl transition-opacity duration-500 group-hover:opacity-100 sm:opacity-70"
+        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-ev-coat-soft blur-3xl transition-opacity duration-500 group-hover:opacity-100 sm:opacity-70"
       />
       <div className="relative flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -64,7 +64,7 @@ function FeaturedCard({ post }: { post: Entry<PostFrontmatter> }) {
         <p className="max-w-2xl text-base leading-relaxed text-ev-ink-2">
           {post.frontmatter.description}
         </p>
-        <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-ev-slate transition group-hover:gap-2.5 group-hover:text-ev-slate-hover">
+        <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-ev-coat transition group-hover:gap-2.5 group-hover:text-ev-coat-hover">
           Read guide
           <ArrowUpRight className="h-4 w-4" />
         </span>

@@ -29,7 +29,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
             </Bubble>
           </div>
           <h1 className="mt-8 text-balance font-round text-4xl font-extrabold tracking-tight text-ev-ink xl:text-[44px]">
-            Drop it in. <span className="text-ev-slate">Paste it to your AI.</span>
+            Drop it in. <span className="text-ev-coat">Paste it to your AI.</span>
           </h1>
           <ul className="mt-8 space-y-3">
             {BENEFITS.map((benefit) => (
@@ -44,7 +44,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
         </div>
         <a
           href={siteConfig.github}
-          className="relative flex w-fit items-center gap-2 font-round text-xs font-semibold text-ev-ink-2 hover:text-ev-slate"
+          className="relative flex w-fit items-center gap-2 font-round text-xs font-semibold text-ev-ink-2 hover:text-ev-coat"
         >
           <GithubMark className="h-3.5 w-3.5" /> Open source · Plain files on your Mac · No meeting bot
         </a>

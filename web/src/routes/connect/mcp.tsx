@@ -152,7 +152,7 @@ function ConnectMcpPage() {
               type="button"
               onClick={() => void decide('approve')}
               disabled={busy}
-              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full bg-ev-slate font-round text-sm font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-ev-slate-hover disabled:opacity-60"
+              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full bg-ev-coat font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover disabled:opacity-60"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Allow

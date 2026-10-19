@@ -9,33 +9,28 @@ import zlib
 
 import numpy as np
 
-BODY = [  # cubic segments of the body path, viewBox units
-    ((32, 15), (46.5, 15), (54, 27), (54, 40)),
-    ((54, 40), (54, 51.5), (45, 58.5), (32, 58.5)),
-    ((32, 58.5), (19, 58.5), (10, 51.5), (10, 40)),
-    ((10, 40), (10, 27), (17.5, 15), (32, 15)),
-]
-
-INK = (0x2A, 0x22, 0x33)
-HONEY = (0xF6, 0xB9, 0x3B)
-SHADE = (0xE3, 0x9E, 0x1E)
-ROOF = (0x4B, 0x3A, 0x78)
-CHEEK = (0xF5, 0x9B, 0xA0)
-HIGHLIGHT = (0xFF, 0xF8, 0xEE)
-REC = (0xFF, 0x3B, 0x30)
-PLASTER = (0xF3, 0xEC, 0xE3)
+COAT = (0x2B, 0x25, 0x23)
+BAND = (0x4A, 0x40, 0x3C)
+EYE = (0xFB, 0xF7, 0xF0)
+REC = (0xFF, 0x5A, 0x3C)
+PAPER = (0xFB, 0xF7, 0xF0)
 
 
-def body_polygon(steps=48):
-    pts = []
-    for p0, p1, p2, p3 in BODY:
-        for i in range(steps):
-            t = i / steps
-            mt = 1 - t
-            x = mt**3 * p0[0] + 3 * mt * mt * t * p1[0] + 3 * mt * t * t * p2[0] + t**3 * p3[0]
-            y = mt**3 * p0[1] + 3 * mt * mt * t * p1[1] + 3 * mt * t * t * p2[1] + t**3 * p3[1]
-            pts.append((x, y))
-    return pts
+def cubic(p0, p1, p2, p3, steps=32):
+    out = []
+    for i in range(steps):
+        t = i / steps
+        mt = 1 - t
+        out.append((mt**3 * p0[0] + 3 * mt * mt * t * p1[0] + 3 * mt * t * t * p2[0] + t**3 * p3[0],
+                    mt**3 * p0[1] + 3 * mt * mt * t * p1[1] + 3 * mt * t * t * p2[1] + t**3 * p3[1]))
+    return out
+
+
+def crown_polygon():
+    """The fedora crown, CROWN in mascot.tsx."""
+    return (cubic((13.5, 27), (13.8, 16.5), (19.5, 8.5), (26.5, 8.5))
+            + quad((26.5, 8.5), (32, 11.5), (37.5, 8.5))[:-1]
+            + cubic((37.5, 8.5), (44.5, 8.5), (50.2, 16.5), (50.5, 27)))
 
 
 def quad(p0, c, p1, steps=24):
@@ -137,32 +132,34 @@ def encode_png(pixels):
             + chunk(b'IEND', b''))
 
 
-def paint_full_mascot(cv, clip=None):
+def paint_hat(cv, color, band=None, brim_ry=5.0, clip=None):
+    hat = np.minimum(cv.d_ellipse(32, 27, 30, brim_ry), cv.d_polygon(crown_polygon()))
+    cv.paint(hat, color, clip=clip)
+    if band is not None:
+        crown_cov = cv.coverage(cv.d_polygon(crown_polygon()))
+        strip = cv.d_round_rect(10, 20, 44, 4.6, 0.01)
+        cv.paint(strip, band, clip=crown_cov if clip is None else crown_cov * clip)
+
+
+def paint_full_mascot(cv, clip=None, lens=True):
     """Full-detail idle mascot (no ground shadow: the icon crops the body)."""
-    body = cv.d_polygon(body_polygon())
-    cv.paint(body, HONEY, clip=clip)
-    body_cov = cv.coverage(body)
-    band = cv.d_polyline([(8, 33.5), (32, 13.5), (56, 33.5)], 2.5)
-    cv.paint(band, SHADE, 0.45, clip=body_cov if clip is None else body_cov * clip)
-    for cx in (17.6, 46.4):
-        cv.paint(cv.d_ellipse(cx, 44.6, 3.6, 2.2), CHEEK, 0.7, clip=clip)
-    for cx in (24, 40):
-        cv.paint(cv.d_ellipse(cx, 37.5, 3.2, 4.2), INK, clip=clip)
-    for cx in (25.2, 41.2):
-        cv.paint(cv.d_circle(cx, 35.8, 1.15), HIGHLIGHT, clip=clip)
-    cv.paint(cv.d_polyline(quad((29.2, 45.4), (32, 48.2), (34.8, 45.4)), 0.9), INK, clip=clip)
-    cv.paint(cv.d_round_rect(43, 9.5, 5.2, 10, 1.4), ROOF, clip=clip)
-    roof = np.minimum(cv.d_segment((32, 9), (5, 31), 4), cv.d_segment((32, 9), (59, 31), 4))
-    cv.paint(roof, ROOF, clip=clip)
+    cv.paint(cv.d_ellipse(32, 41, 21, 17), COAT, clip=clip)
+    for cx in (25, 39):
+        cv.paint(cv.d_ellipse(cx, 42, 3.8, 5.4), EYE, clip=clip)
+    paint_hat(cv, COAT, band=BAND, clip=clip)
+    if lens:
+        cv.paint(cv.d_segment((53, 56), (59, 63), 1.7), BAND, clip=clip)
+        cv.paint(cv.d_circle(49.5, 51.5, 7.6), COAT, clip=clip)
+        cv.paint(cv.d_circle(49.5, 51.5, 5), REC, clip=clip)
+        cv.paint(cv.d_circle(47.8, 49.8, 1.3), (255, 255, 255), 0.7, clip=clip)
 
 
-def paint_mini_glyph(cv, roof_color, eye_color, recording=False):
-    """Tray detail: roof chevron + two eye dots (mascot.tsx `mini`)."""
-    roof = np.minimum(cv.d_segment((32, 9), (5, 31), 4.5), cv.d_segment((32, 9), (59, 31), 4.5))
-    cv.paint(roof, roof_color)
-    for cx in (24, 40):
-        cv.paint(cv.d_ellipse(cx, 37.5, 3.2 * 1.35, 4.2 * 1.35), eye_color)
+def paint_mini_glyph(cv, hat_color, eye_color, recording=False):
+    """Tray detail: fedora + two eyes peeking under the brim (mascot.tsx `mono`)."""
+    paint_hat(cv, hat_color, brim_ry=5.6)
+    for cx in (25, 39):
+        cv.paint(cv.d_ellipse(cx, 42, 3.8 * 1.25, 5.4 * 1.25), eye_color)
     if recording:
-        # Porch light: a red dot on the roof peak, cut out of the roof so it reads at 18pt.
-        cv.erase(cv.coverage(cv.d_circle(32, 9, 9.5)))
-        cv.paint(cv.d_circle(32, 9, 7.5), REC)
+        # The coral light, cut out of the glyph so it reads at 18pt.
+        cv.erase(cv.coverage(cv.d_circle(51, 50, 9)))
+        cv.paint(cv.d_circle(51, 50, 7), REC)

@@ -184,7 +184,7 @@ export function TranscriptPlayer({
             <button
               type="button"
               onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover active:scale-95"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-95"
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
@@ -200,7 +200,7 @@ export function TranscriptPlayer({
                 step={250}
                 value={Math.min(nowMs, durationMs || nowMs)}
                 onChange={(e) => seek(Number(e.target.value), playing)}
-                className="w-full accent-[var(--ev-slate)]"
+                className="w-full accent-[var(--ev-coat)]"
                 aria-label="Seek"
               />
               {durationMs
@@ -231,7 +231,7 @@ export function TranscriptPlayer({
                       onClick={() => seek(chapter.startMs)}
                       className={cn(
                         'flex w-full items-baseline gap-2 rounded-[var(--ev-r-ctl)] px-2 py-1 text-left text-sm text-ev-ink hover:bg-[var(--ev-hover)]',
-                        activeChapter === i && 'bg-ev-slate-soft font-semibold text-ev-slate',
+                        activeChapter === i && 'bg-ev-coat-soft font-semibold text-ev-coat',
                       )}
                     >
                       <span className="w-12 shrink-0 font-round text-xs tabular-nums text-ev-ink-3">
@@ -303,7 +303,7 @@ export function TranscriptPlayer({
             return (
               <div key={line.id}>
                 {heading ? (
-                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-slate first:mt-1">
+                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-coat first:mt-1">
                     {heading}
                   </h3>
                 ) : null}
@@ -337,7 +337,7 @@ export function TranscriptPlayer({
       {undo ? (
         <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ev-raised px-4 py-2 text-sm text-ev-ink shadow-[var(--ev-e-3)]">
           Line deleted.
-          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-slate hover:underline">
+          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-coat hover:underline">
             Undo
           </button>
         </div>
@@ -387,13 +387,13 @@ function Line({
       ref={ref}
       className={cn(
         'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded-[var(--ev-r-ctl)] px-2 py-1.5',
-        active ? 'bg-ev-slate-soft' : 'hover:bg-[var(--ev-hover)]',
+        active ? 'bg-ev-coat-soft' : 'hover:bg-[var(--ev-hover)]',
       )}
     >
       <button
         type="button"
         onClick={onPlay}
-        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-slate"
+        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-coat"
         title="Play from here"
       >
         {clockLabel(line.startMs)}

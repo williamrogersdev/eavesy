@@ -66,7 +66,7 @@ function IntegrationsPage() {
                       <p className="mt-4 flex-1 text-sm leading-relaxed text-ev-ink-2">
                         {integration.tagline}
                       </p>
-                      <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-ev-slate transition group-hover:gap-2">
+                      <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-ev-coat transition group-hover:gap-2">
                         See how <ArrowRight className="h-4 w-4" />
                       </span>
                     </Link>

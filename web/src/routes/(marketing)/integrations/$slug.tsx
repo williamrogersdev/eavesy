@@ -108,7 +108,7 @@ function IntegrationDetailPage() {
                   className="group flex items-center justify-between rounded-xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
                 >
                   <span className="text-sm font-medium text-ev-ink">{o.name}</span>
-                  <ArrowRight className="h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-slate" />
+                  <ArrowRight className="h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-coat" />
                 </Link>
               ))}
             </div>

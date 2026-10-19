@@ -21,15 +21,15 @@
   --muted-foreground: var(--ev-ink-2);
   --border: var(--ev-line);
   --signal: var(--ev-rec);
-  --accent: var(--ev-slate);
-  --accent-hover: var(--ev-slate-hover);
-  --accent-soft: var(--ev-slate-soft);
-  --action: var(--ev-slate);
-  --action-hover: var(--ev-slate-hover);
+  --accent: var(--ev-coat);
+  --accent-hover: var(--ev-coat-hover);
+  --accent-soft: var(--ev-coat-soft);
+  --action: var(--ev-coat);
+  --action-hover: var(--ev-coat-hover);
   --danger: var(--ev-warn-ink);
   --danger-soft: var(--ev-warn-soft);
-  --primary: var(--ev-slate);
-  --primary-foreground: var(--ev-on-slate);
+  --primary: var(--ev-coat);
+  --primary-foreground: var(--ev-on-coat);
   color-scheme: light dark;
 }
 
@@ -62,13 +62,13 @@
   --color-ev-ink: var(--ev-ink);
   --color-ev-ink-2: var(--ev-ink-2);
   --color-ev-ink-3: var(--ev-ink-3);
-  --color-ev-slate: var(--ev-slate);
-  --color-ev-slate-hover: var(--ev-slate-hover);
-  --color-ev-slate-soft: var(--ev-slate-soft);
-  --color-ev-on-slate: var(--ev-on-slate);
-  --color-ev-honey: var(--ev-honey);
-  --color-ev-honey-soft: var(--ev-honey-soft);
-  --color-ev-honey-ink: var(--ev-honey-ink);
+  --color-ev-coat: var(--ev-coat);
+  --color-ev-coat-hover: var(--ev-coat-hover);
+  --color-ev-coat-soft: var(--ev-coat-soft);
+  --color-ev-on-coat: var(--ev-on-coat);
+  --color-ev-manila: var(--ev-manila);
+  --color-ev-manila-soft: var(--ev-manila-soft);
+  --color-ev-manila-ink: var(--ev-manila-ink);
   --color-ev-rec: var(--ev-rec);
   --color-ev-leaf: var(--ev-leaf);
   --color-ev-leaf-soft: var(--ev-leaf-soft);
@@ -90,8 +90,8 @@ body {
 }
 
 ::selection {
-  background: var(--ev-honey-soft);
-  color: var(--ev-honey-ink);
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
 }
 
 button:not(:disabled),
