@@ -30,15 +30,17 @@ if CommandLine.arguments.contains("--standby") {
 
 let args = Arguments.parse(argv)
 
+let languages = CaptionLanguages(locale: args.locale, follows: args.followsSpeech, vocabulary: args.vocabulary)
 let captions = Dictionary(
     uniqueKeysWithValues: args.captions.map { track in
         (
             track,
-            LiveCaptions(track: track.rawValue, emit: EventEmitter.emit) { ready in
+            LiveCaptions(track: track.rawValue, emit: EventEmitter.emit, onFinal: languages.heard) { ready in
                 CaptionEngines.make(locale: args.locale, vocabulary: args.vocabulary, completion: ready)
             }
         )
     })
+languages.captions = Array(captions.values)
 
 let recorder: Recorder
 switch args.mode {
@@ -94,6 +96,7 @@ installSignalHandler(SIGTERM)
 let stdinThread = Thread {
     while let line = stdinLines.next() {
         if line == "stop" { break }
+        if let language = CaptionLanguage.hint(line) { languages.cloudHeard(language) }
     }
     gracefulStop()
 }

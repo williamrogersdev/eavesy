@@ -168,9 +168,96 @@ final class CaptionsTests: XCTestCase {
 
     func testCaptionLocaleKeepsTheRegionalVariantOfTheCloudLanguage() {
         let gb = Locale(identifier: "en_GB")
-        XCTAssertEqual(Arguments.captionLocale(language: "en", current: gb).identifier, "en_GB")
-        XCTAssertEqual(Arguments.captionLocale(language: "en", current: Locale(identifier: "fr_FR")).identifier, "en")
-        XCTAssertEqual(Arguments.captionLocale(language: nil, current: gb).identifier, "en_GB")
+        let supported = ["en-US", "en-GB", "fr-FR", "fr-CA", "es-ES", "es-MX"].map(Locale.init(identifier:))
+        XCTAssertEqual(Arguments.captionLocale(language: "en", current: gb, supported: supported).identifier, "en_GB")
+        XCTAssertEqual(
+            Arguments.captionLocale(language: "en", current: Locale(identifier: "fr_FR"), supported: supported)
+                .identifier, "en-US")
+        XCTAssertEqual(
+            Arguments.captionLocale(language: "es", current: Locale(identifier: "en_MX"), supported: supported)
+                .identifier, "es-MX")
+        XCTAssertEqual(Arguments.captionLocale(language: nil, current: gb, supported: supported).identifier, "en_GB")
+        XCTAssertEqual(Arguments.captionLocale(language: "auto", current: gb, supported: supported).identifier, "en_GB")
+        XCTAssertEqual(
+            Arguments.captionLocale(language: "sw", current: gb, supported: supported).identifier, "en_GB",
+            "a language no recognizer here speaks keeps the system's")
+        XCTAssertEqual(
+            Arguments.captionLocale(language: "en", current: Locale(identifier: "fr_FR"), supported: []).identifier, "en")
+    }
+
+    func testAutoLanguageFollowsSpeechAndAFixedOneDoesNot() {
+        let base = ["SwiftAudio", "--mode", "audio", "--out", "/tmp/a.m4a", "--source", "mic"]
+        XCTAssertTrue(Arguments.parse(base + ["--language", "auto"]).followsSpeech)
+        XCTAssertFalse(Arguments.parse(base + ["--language", "es"]).followsSpeech)
+        XCTAssertFalse(Arguments.parse(base).followsSpeech)
+    }
+
+    func testSwitchingEnginesHandsOverWithoutLosingAudio() {
+        let events = Events()
+        let first = FakeEngine()
+        let second = FakeEngine()
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
+        captions.feed(samples, atMs: 0)
+        captions.feed(samples, atMs: 10)
+        var unavailable: [String] = []
+        captions.switchEngine({ $0(.success(second)) }, unavailable: { unavailable.append($0) })
+        captions.feed(samples, atMs: 20)
+        captions.feed(samples, atMs: 30)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(first.appended, [0, 10])
+        XCTAssertEqual(second.appended, [20, 30])
+        XCTAssertTrue(first.finished, "the replaced engine settles its last finals")
+        XCTAssertTrue(second.finished)
+        XCTAssertTrue(unavailable.isEmpty)
+        XCTAssertEqual(events.named("caption").count, 2, "both engines' last words are kept")
+        XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live", "live"])
+        XCTAssertEqual(events.named("captions_done").first?["failed"] as? Bool, false)
+    }
+
+    func testAFailedSwitchKeepsTheEngineCaptionsHave() {
+        let events = Events()
+        let first = FakeEngine()
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
+        captions.feed(samples, atMs: 0)
+        let reported = expectation(description: "unavailable")
+        captions.switchEngine({ $0(.failure(CaptionUnavailable(reason: "no model for es-ES"))) }, unavailable: {
+            XCTAssertEqual($0, "no model for es-ES")
+            reported.fulfill()
+        })
+        wait(for: [reported], timeout: 1)
+        captions.feed(samples, atMs: 10)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(first.appended, [0, 10])
+        XCTAssertEqual(events.named("captions_status").compactMap { $0["status"] as? String }, ["live"])
+    }
+
+    func testAReplacedEngineFailingWhileItSettlesLeavesCaptionsOn() {
+        let events = Events()
+        let first = FakeEngine()
+        let second = FakeEngine()
+        let captions = LiveCaptions(track: "mic", emit: events.emit) { $0(.success(first)) }
+        captions.feed(samples, atMs: 0)
+        captions.switchEngine({ $0(.success(second)) }, unavailable: { _ in })
+        captions.feed(samples, atMs: 10)
+        let deadline = Date().addingTimeInterval(1)
+        while second.appended.isEmpty, Date() < deadline { usleep(1_000) }
+        first.sink?.engineFailed("cancelled")
+        captions.feed(samples, atMs: 20)
+        captions.finish(timeout: 1)
+        XCTAssertEqual(second.appended, [10, 20])
+        XCTAssertFalse(events.named("captions_status").contains { $0["status"] as? String == "unavailable" })
+    }
+
+    func testFinalsReachTheLanguageFollower() {
+        let engine = FakeEngine()
+        var finals: [String] = []
+        let captions = LiveCaptions(track: "mic", emit: { _ in }, onFinal: { text, _ in finals.append(text) }) {
+            $0(.success(engine))
+        }
+        captions.feed(samples, atMs: 0)
+        captions.finish(timeout: 1)
+        engine.sink?.recognized(text: "partial", isFinal: false, startMs: 0, endMs: 1)
+        XCTAssertEqual(finals, ["last words"])
     }
 
     func testAudioHeldBeforeTheEngineIsReadyKeepsOnlyTheLatestTenSeconds() {

@@ -24,8 +24,10 @@ struct Arguments {
     let segmentSec: Double
     /// Tracks to caption live on-device; empty when captions are off.
     let captions: Set<Track>
-    /// Locale for captions: the user's own region when it speaks `--language`.
+    /// Locale captions start in: the user's own region when it speaks `--language`.
     let locale: Locale
+    /// `--language auto`: captions follow the language being spoken.
+    let followsSpeech: Bool
     /// Words the recognizer should expect, from `--vocabulary`, one per line.
     let vocabulary: [String]
 
@@ -73,7 +75,11 @@ struct Arguments {
             ?? defaultSegmentSec
 
         let captions = mode == .audio ? parseCaptions(dict["captions"], source: source) : []
-        let locale = captionLocale(language: dict["language"], current: Locale.current)
+        let language = dict["language"]
+        let locale =
+            captions.isEmpty
+            ? Locale.current
+            : captionLocale(language: language, current: Locale.current, supported: CaptionLanguage.supportedLocales())
 
         return Arguments(
             mode: mode,
@@ -84,6 +90,7 @@ struct Arguments {
             segmentSec: segmentSec,
             captions: captions,
             locale: locale,
+            followsSpeech: language?.lowercased() == CaptionLanguage.auto,
             vocabulary: parseVocabulary(dict["vocabulary"]))
     }
 
@@ -97,12 +104,12 @@ struct Arguments {
                 .prefix(100))
     }
 
-    /// The cloud transcribes in one language; caption in the same one, keeping
-    /// the user's regional variant (en-GB, en-AU) when the system already speaks it.
-    static func captionLocale(language: String?, current: Locale) -> Locale {
+    /// Caption in the cloud's fixed language, keeping the user's regional
+    /// variant (en-GB, en-AU) when the system already speaks it. `auto`, no
+    /// language, or one no recognizer here speaks leaves the system's own.
+    static func captionLocale(language: String?, current: Locale, supported: [Locale]) -> Locale {
         guard let language, !language.isEmpty else { return current }
-        if current.language.languageCode?.identifier == language { return current }
-        return Locale(identifier: language)
+        return CaptionLanguage.locale(for: language, current: current, supported: supported) ?? current
     }
 
     /// `--captions mic|system|all`, limited to the tracks the source records.

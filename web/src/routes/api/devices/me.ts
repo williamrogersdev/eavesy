@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { deviceTokens, users } from '@/db/schema';
+import { AUTO_LANGUAGE } from '@/lib/transcription/language';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor, sha256Hex } from '@/server/device-auth';
 
@@ -22,6 +23,7 @@ export const Route = createFileRoute('/api/devices/me')({
               email: users.email,
               displayName: users.displayName,
               customVocabularyJson: users.customVocabularyJson,
+              defaultLanguage: users.defaultLanguage,
             })
             .from(users)
             .where(eq(users.id, actor.userId))
@@ -31,6 +33,7 @@ export const Route = createFileRoute('/api/devices/me')({
           email: user?.email ?? null,
           name: user?.displayName ?? null,
           vocabulary: parseVocabulary(user?.customVocabularyJson),
+          language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },
       DELETE: async ({ request }) => {
