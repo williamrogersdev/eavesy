@@ -28,6 +28,16 @@ describe('credit routing and accounting', () => {
     expect(t.calls[0]).toContain(`/accounts/${'11111111111111111111111111111111'}/ai/run/`);
     expect((t.sqlite.query("SELECT reserved_microusd n FROM ai_credit_budgets WHERE scope='programme'").get() as { n: number }).n).toBe(5130);
   });
+  test('daily rejection rolls back the programme debit and usage row', async () => {
+    const t = setup('1');
+    const day = new Date().toISOString().slice(0, 10);
+    t.sqlite.run('INSERT INTO ai_credit_budgets(scope,reserved_microusd) VALUES (?,?)', [`day:${day}`, 1_000_000]);
+    const ai = createAiRunner(t.env, 'test', t.transport);
+    await expect(ai.run(MODEL, { text: ['hello'] })).rejects.toThrow('budget');
+    expect(t.calls).toHaveLength(0);
+    expect(t.sqlite.query("SELECT * FROM ai_credit_budgets WHERE scope='programme'").get()).toBeNull();
+    expect((t.sqlite.query('SELECT count(*) n FROM ai_credit_usage').get() as {n:number}).n).toBe(0);
+  });
   test('timeouts and provider errors retain reservations and never expose provider bodies', async () => {
     const t = setup();
     const ai = createAiRunner(t.env, 'test', async () => new Response('private submitted words', { status: 429 }));

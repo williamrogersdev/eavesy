@@ -1,3 +1,4 @@
+import { guardUserQuota } from '@/server/rate-limit';
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
@@ -12,6 +13,8 @@ export const Route = createFileRoute('/api/library/ask')({ server: { handlers: {
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
     if (actor.isAnonymous) return Response.json({ error: 'Sign in to ask your library' }, { status: 403 });
+    const limited = await guardUserQuota(actor.userId, 'chat');
+    if (limited) return limited;
     const env = getCloudflareContext<ProcessingEnv>().env;
     if (!creditsConfigured(env)) return Response.json({ error: 'Library answers are not enabled yet.' }, { status: 503 });
     const parsed = input.safeParse(await request.json().catch(() => null));

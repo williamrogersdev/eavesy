@@ -81,19 +81,25 @@ export function createAiRunner(env: CreditEnv, purpose: string, transport: typeo
       const dayLimit = limit(env.AI_CREDITS_DAILY_BUDGET_USD);
       const amount = reservation(model, input);
       const day = new Date().toISOString().slice(0, 10);
-      // Each atomic conditional debit fails closed. An interruption between debits
-      // only over-reserves; it can never enable excess spend. No automatic refunds.
-      for (const [scope, ceiling] of [['programme', totalLimit], [`day:${day}`, dayLimit]] as const) {
-        await env.DB.prepare('INSERT OR IGNORE INTO ai_credit_budgets(scope) VALUES (?)').bind(scope).run();
-        const row = await env.DB.prepare(`UPDATE ai_credit_budgets SET reserved_microusd = reserved_microusd + ?
-          WHERE scope = ? AND reserved_microusd + ? <= ? RETURNING scope`)
-          .bind(amount, scope, amount, ceiling).first();
-        if (!row) throw new Error('AI credit budget exhausted');
-      }
       const id = crypto.randomUUID();
-      await env.DB.prepare(`INSERT INTO ai_credit_usage
-        (id, account_id, model, purpose, reserved_microusd, state, created_at) VALUES (?, ?, ?, ?, ?, 'running', ?)`)
-        .bind(id, accountId, model, purpose.slice(0, 80), amount, Date.now()).run();
+      try {
+        // D1 batch is a transaction. A failed guard violates NOT NULL and rolls
+        // back both scopes and the usage row, before any network request.
+        await env.DB.batch([
+          env.DB.prepare('INSERT OR IGNORE INTO ai_credit_budgets(scope) VALUES (?)').bind('programme'),
+          env.DB.prepare('INSERT OR IGNORE INTO ai_credit_budgets(scope) VALUES (?)').bind(`day:${day}`),
+          env.DB.prepare(`INSERT INTO ai_credit_budgets(scope, reserved_microusd)
+            SELECT '__rejected_reservation', NULL WHERE
+            (SELECT reserved_microusd FROM ai_credit_budgets WHERE scope = 'programme') + ? > ?
+            OR (SELECT reserved_microusd FROM ai_credit_budgets WHERE scope = ?) + ? > ?`)
+            .bind(amount, totalLimit, `day:${day}`, amount, dayLimit),
+          env.DB.prepare('UPDATE ai_credit_budgets SET reserved_microusd = reserved_microusd + ? WHERE scope IN (?, ?)')
+            .bind(amount, 'programme', `day:${day}`),
+          env.DB.prepare(`INSERT INTO ai_credit_usage
+            (id, account_id, model, purpose, reserved_microusd, state, created_at) VALUES (?, ?, ?, ?, ?, 'running', ?)`)
+            .bind(id, accountId, model, purpose.slice(0, 80), amount, Date.now()),
+        ]);
+      } catch { throw new Error('AI credit budget exhausted or unavailable'); }
       try {
         const response = await transport(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
           method: 'POST',

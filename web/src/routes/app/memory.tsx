@@ -11,9 +11,11 @@ function Memory() {
   const [indexing, setIndexing] = useState(false);
   const [indexMessage, setIndexMessage] = useState('');
   async function reindex() {
-    setIndexing(true); setError(''); let cursor: string | null = null; let queued = 0;
+    setIndexing(true); setError(''); let cursor: string | null = null; let queued = 0; const seen = new Set<string>(); let pages = 0;
     try {
       do {
+        if (++pages > 20 || (cursor && seen.has(cursor))) throw new Error('Indexing stopped at its page limit. Retry later.');
+        if (cursor) seen.add(cursor);
         const r: Response = await fetch('/api/library/reindex', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cursor: cursor ?? undefined }) });
         const data: { error?: string; queued: number; cursor: string | null } = await r.json<{ error?: string; queued: number; cursor: string | null }>();
         if (!r.ok) throw new Error(data.error ?? 'Could not index library');

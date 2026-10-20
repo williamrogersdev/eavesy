@@ -40,5 +40,8 @@ export async function answerLibrary(ai: WorkersAiRunner, question: string, sourc
   });
   const response = (result as { response?: unknown })?.response;
   if (response === undefined || response === null) throw new Error('Missing library response');
-  return validateLibraryAnswer(typeof response === 'string' ? JSON.parse(response) : response, sources);
+  let reply: unknown;
+  try { reply = typeof response === 'string' ? JSON.parse(response) : response; }
+  catch { throw new Error('Invalid library response'); }
+  return validateLibraryAnswer(reply, sources);
 }
