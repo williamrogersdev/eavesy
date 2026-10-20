@@ -79,6 +79,7 @@ export function addCaption(state: RunningTranscript, caption: LiveCaption): Runn
     const longest = Math.max(previous.endMs - previous.startMs, caption.endMs - caption.startMs);
     if (previous.track !== caption.track) return false;
     if (previous.startMs === caption.startMs) return true;
+    if (previous.isFinal && caption.isFinal) return false;
     if (overlap <= 0 || overlap <= longest / 2) return false;
     const normalize = (text: string) => ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
     const left = normalize(previous.text);

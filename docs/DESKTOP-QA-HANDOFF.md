@@ -48,7 +48,7 @@ permission to test also authorizes sending messages to other people.
 
 ## Evidence already obtained
 
-- Rust: 269 passing after review, two intentionally ignored tests; the speech fixture is an
+- Rust: 270 passing after review, two intentionally ignored tests; the speech fixture is an
   opt-in integration test. The persistence regression reads the physical registry
   and transcript file, checks the queued edit, and applies later device/cloud
   results. It includes empty corrections, reverting to original text, an
@@ -106,7 +106,8 @@ permission to test also authorizes sending messages to other people.
 
 Install web and launcher dependencies with Bun and install Playwright Chromium.
 Start `bun run dev --host 127.0.0.1` in `desktop/launcher-ui`, then from repository
-root run `node desktop/bench/check-hud-preview.mjs`.
+root run `node desktop/bench/check-hud-preview.mjs`. Set `EAVESY_HUD_URL`
+if using a different server URL.
 
 On macOS, run the speech/Cocoa fixture with a valid local signing identity:
 

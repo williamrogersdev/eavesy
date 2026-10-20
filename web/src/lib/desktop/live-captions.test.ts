@@ -118,7 +118,7 @@ it('slightly overlapping recognition windows preserve both settled phrases', () 
   let state = addCaption(EMPTY_RUNNING, { sessionId: 'overlap', track: 'mic', text: 'First sentence.', isFinal: true, startMs: 0, endMs: 1000 });
   state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Next sentence.', isFinal: true, startMs: 900, endMs: 2000 });
   expect(runningText(state)).toBe('First sentence. Next sentence.');
-  state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Corrected first sentence.', isFinal: true, startMs: 10, endMs: 1000 });
+  state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Corrected first sentence.', isFinal: true, startMs: 0, endMs: 1000 });
   expect(runningText(state)).toBe('Corrected first sentence. Next sentence.');
 });
 
@@ -126,4 +126,10 @@ it('heavily overlapping windows keep substantially different final text', () => 
   let state = addCaption(EMPTY_RUNNING, { sessionId: 'heavy', track: 'mic', text: 'Please bring the red notebook.', isFinal: true, startMs: 0, endMs: 2000 });
   state = addCaption(state, { sessionId: 'heavy', track: 'mic', text: 'Then close the kitchen window.', isFinal: true, startMs: 500, endMs: 2500 });
   expect(runningText(state)).toBe('Please bring the red notebook. Then close the kitchen window.');
+});
+
+it('does not discard a contained final spoken at a different start', () => {
+  let state = addCaption(EMPTY_RUNNING, { sessionId: 'contained', track: 'mic', text: 'Okay.', isFinal: true, startMs: 0, endMs: 2000 });
+  state = addCaption(state, { sessionId: 'contained', track: 'mic', text: 'Okay. Then close the window.', isFinal: true, startMs: 500, endMs: 2500 });
+  expect(runningText(state)).toBe('Okay. Okay. Then close the window.');
 });

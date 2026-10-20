@@ -65,7 +65,10 @@ fn same_phrase(a: &Caption, b: &Caption) -> bool {
     let overlap = a.end_ms.min(b.end_ms) - a.start_ms.max(b.start_ms);
     let longest = (a.end_ms - a.start_ms).max(b.end_ms - b.start_ms);
     if a.track != b.track { return false; }
+    // Track/start identifies the recognizer hypothesis; its final text may
+    // differ completely from the provisional text at that same audio offset.
     if a.start_ms == b.start_ms { return true; }
+    if a.is_final && b.is_final { return false; }
     if overlap <= 0 || overlap <= longest / 2 { return false; }
     let normalize = |text: &str| format!(" {} ", text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).collect::<Vec<_>>().join(" "));
@@ -331,7 +334,7 @@ mod tests {
         log.record(&next);
         assert_eq!(log.spoken_text(), "First sentence. Next sentence.");
         let mut revision = first.clone();
-        revision.start_ms = 10;
+        revision.start_ms = 0;
         revision.text = "Corrected first sentence.".into();
         log.record(&revision);
         assert_eq!(log.spoken_text(), "Corrected first sentence. Next sentence.");
@@ -347,6 +350,18 @@ mod tests {
         log.record(&first);
         log.record(&next);
         assert_eq!(log.spoken_text(), "Please bring the red notebook. Then close the kitchen window.");
+    }
+
+    #[test]
+    fn a_contained_final_at_a_different_start_is_still_spoken() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("Okay.", true, 0);
+        first.end_ms = 2_000;
+        let mut next = caption("Okay. Then close the window.", true, 500);
+        next.end_ms = 2_500;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "Okay. Okay. Then close the window.");
     }
 
     #[test]

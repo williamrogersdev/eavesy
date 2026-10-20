@@ -1,3 +1,6 @@
+// Install web/ and desktop/launcher-ui dependencies and Playwright Chromium.
+// Start the launcher dev server (default 127.0.0.1:1420), then run this script.
+// Set EAVESY_HUD_URL to test a different preview server.
 import { createRequire } from 'node:module';
 const requireWeb = createRequire(new URL('../../web/package.json', import.meta.url));
 const { chromium } = requireWeb('@playwright/test');
@@ -34,7 +37,7 @@ try {
       event:{listen:async (event,fn) => { const list=listeners.get(event)??[];list.push(fn);listeners.set(event,list);return ()=>listeners.set(event,list.filter(f=>f!==fn)); }}
     };
   });
-  await page.goto('http://127.0.0.1:1420/hud.html');
+  await page.goto(process.env.EAVESY_HUD_URL ?? 'http://127.0.0.1:1420/hud.html');
   const editor=page.getByRole('textbox',{name:'Edit transcript preview'});
   await editor.waitFor();
   await page.clock.fastForward(14_900);
