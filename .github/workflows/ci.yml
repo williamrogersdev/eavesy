@@ -86,15 +86,26 @@ jobs:
             echo "VITE_APP_URL=https://eavesy.com"
           } > web/.env.production
       # Build must run before typecheck: it generates src/routeTree.gen.ts
-      # (gitignored), which tsc needs to resolve the route tree types.
+      # (gitignored), which the type checker needs to resolve the route tree types.
       - name: Build
         working-directory: web
         run: bun run build
       - name: Typecheck
         run: |
-          (cd web && bunx tsc --noEmit)
-          (cd workers/processing && bunx tsc --noEmit)
-          (cd workers/mcp && bunx tsc --noEmit)
+          (cd web && bun run typecheck)
+          (cd workers/processing && bun run typecheck)
+          (cd workers/mcp && bun run typecheck)
+      # Keep upstream diagnostics visible while the pinned tsrs is experimental.
+      # tsrs remains the required gate; this reference check is advisory.
+      - name: TypeScript reference (advisory)
+        continue-on-error: true
+        run: |
+          status=0
+          (cd web && bun run typecheck:tsc) || status=1
+          (cd workers/processing && bun run typecheck:tsc) || status=1
+          (cd workers/mcp && bun run typecheck:tsc) || status=1
+          (cd web && bun run typecheck:tsc --project test/tsconfig.json) || status=1
+          exit "$status"
       - name: Lint
         working-directory: web
         run: bun run lint

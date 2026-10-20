@@ -76,13 +76,13 @@ CI runs exactly these (see `.github/workflows/ci.yml`):
 # web + workers
 cd web
 bun run build
-bunx tsc --noEmit
+bun run typecheck
 bun run lint
 bun test src                     # unit tests
 bun run test:workers             # Miniflare-based worker tests, no credentials
 bun bench/score.ts --check       # two-track transcription bench
-(cd ../workers/processing && bunx tsc --noEmit && bunx wrangler deploy --dry-run --outdir /tmp/p)
-(cd ../workers/mcp && bunx tsc --noEmit && bunx wrangler deploy --dry-run --outdir /tmp/m)
+(cd ../workers/processing && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/p)
+(cd ../workers/mcp && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/m)
 
 # desktop
 cd desktop/src-tauri && cargo test --locked

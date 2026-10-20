@@ -19,6 +19,9 @@
     "db:apply:remote": "cd web && ../scripts/cf bunx wrangler d1 migrations apply eavesy --remote",
     "desktop:dev": "cd desktop/src-tauri && bunx @tauri-apps/cli dev",
     "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build",
+    "typecheck:tsrs": "cd web && bun run typecheck:tsrs",
+    "typecheck:tsc": "cd web && bun run typecheck:tsc",
+    "typecheck:bench": "bun scripts/benchmark-typecheck.ts",
     "lint:bench": "bun scripts/benchmark-lint.ts"
   },
   "devDependencies": {
