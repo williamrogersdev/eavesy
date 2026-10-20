@@ -102,3 +102,15 @@ export async function loadRecordingDetails(rec: Recording): Promise<Recording> {
   if (!detail) throw new Error('That capture is no longer available');
   return { ...detail, detailsLoaded: true };
 }
+
+/** Refresh the loaded range in place, stopping early when deletions shorten it. */
+export async function reloadRecordingPages(pages: number, query: string, filter: string): Promise<RecordingPage> {
+  let next = await loadRecordingPage(0, query, filter);
+  const items = [...next.items];
+  const seen = new Set(items.map((row) => row.id));
+  for (let i = 1; i < pages && next.nextOffset !== null; i++) {
+    next = await loadRecordingPage(next.nextOffset, query, filter);
+    for (const row of next.items) if (!seen.has(row.id)) { seen.add(row.id); items.push(row); }
+  }
+  return { ...next, items };
+}

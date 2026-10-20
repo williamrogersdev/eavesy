@@ -50,10 +50,10 @@ export function installDevMock(): void {
       const q = String(query).toLowerCase().trim().split(/\s+/).filter(Boolean);
       const visible = recordings.filter((row) => (filter === 'all' || category(row) === filter) && q.every((word) => `${row.title} ${row.transcript ?? ''}`.toLowerCase().includes(word)));
       const start = Number(offset); const count = Number(limit);
-      return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048 })), next_offset: start + count < visible.length ? start + count : null,
+      return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048, revision: 1 })), next_offset: start + count < visible.length ? start + count : null,
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
-    get_recording: ({ id }: Record<string, unknown>) => recordings.find((row) => row.id === id) ?? null,
+    get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },
@@ -76,7 +76,7 @@ export function installDevMock(): void {
   const listeners = new Map<string, Handler[]>();
   const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
   const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
-  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), get copiedText() { return copiedText; } };
+  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), get copiedText() { return copiedText; } };
   if (params.has('settings')) setTimeout(() => emit('launcher:settings'), 400);
   window.__TAURI__ = {
     core: {

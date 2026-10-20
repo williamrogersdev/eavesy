@@ -30,9 +30,7 @@
   "measured_sources_sha256": {
     "desktop/src-tauri/src/history.rs": "05f02ed12c21734addfb4cb7d2267d9faf1ed2c8fb996ef7501bb631cdea74f7",
     "desktop/src-tauri/src/store.rs": "bd0a8627c216f69e92535806b6b6bcded8d0c3a89d8701325430589a11e0e737",
-    "desktop/src-tauri/src/fs_watcher.rs": "a91c5bb87b300a4a60e316a97283d68cc1fb78d6be33170b5b55073654dfce59",
-    "desktop/bench/history.rs": "38c429a706f2eb0113a3c35ce40648383185d087212a4f83ca22a5bf251dff7d",
-    "desktop/bench/history-legacy.rs": "2c9d9db221aeafdae95febc639ca50882a940de8ca22368e67f7b8ad3f9a1d1e"
+    "desktop/src-tauri/src/fs_watcher.rs": "a91c5bb87b300a4a60e316a97283d68cc1fb78d6be33170b5b55073654dfce59"
   },
   "timings": [
     {

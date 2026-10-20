@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useMemo } from 'react';
 import { copyText, pasteToFrontmost, revealInFinder } from '@/lib/desktop/bridge';
+import { loadRecordingDetails } from '@/lib/launcher/data';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown, recordingMarkdown } from './format';
@@ -47,8 +48,6 @@ export function useRecordingActions({
     }
     if (!currentRec) return [];
     const rec = currentRec;
-    const transcript = rec.transcript ?? '';
-    const summary = rec.summary ?? '';
     const close = () => setActionsOpen(false);
     return [
       {
@@ -57,7 +56,7 @@ export function useRecordingActions({
         icon: <CornerDownLeft className="h-4 w-4" />,
         hint: '⌘↵',
         run: async () => {
-          await pasteToFrontmost(transcript);
+          await pasteToFrontmost((await loadRecordingDetails(rec)).transcript ?? '');
           close();
           if (!desktop) flash('Transcript copied — paste anywhere');
         },
@@ -68,7 +67,7 @@ export function useRecordingActions({
         icon: <Copy className="h-4 w-4" />,
         hint: '⌘C',
         run: async () => {
-          await copyText(transcript);
+          await copyText((await loadRecordingDetails(rec)).transcript ?? '');
           close();
           flash('Transcript copied');
         },
@@ -79,7 +78,8 @@ export function useRecordingActions({
         icon: <FileText className="h-4 w-4" />,
         hint: '⌘⇧C',
         run: async () => {
-          await copyText(summary || transcript);
+          const detail = await loadRecordingDetails(rec);
+          await copyText(detail.summary || detail.transcript || '');
           close();
           flash('Summary copied');
         },
@@ -89,7 +89,7 @@ export function useRecordingActions({
         label: 'Copy as Markdown',
         icon: <Copy className="h-4 w-4" />,
         run: async () => {
-          await copyText(recordingMarkdown(rec));
+          await copyText(recordingMarkdown(await loadRecordingDetails(rec)));
           close();
           flash('Markdown copied');
         },
@@ -111,8 +111,8 @@ export function useRecordingActions({
         label: 'Download as Markdown',
         icon: <Download className="h-4 w-4" />,
         hint: '⌘D',
-        run: () => {
-          downloadMarkdown(rec);
+        run: async () => {
+          downloadMarkdown(await loadRecordingDetails(rec));
           close();
         },
       },

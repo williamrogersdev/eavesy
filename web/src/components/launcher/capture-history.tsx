@@ -224,7 +224,7 @@ function CaptureRow({
   const kind = kindOf(rec);
   const Icon = kind.icon;
   const [detail, setDetail] = useState<Recording | null>(null);
-  const current = detail?.id === rec.id && detail.revision === rec.revision ? detail : rec;
+  const current = detail?.id === rec.id && (detail.revision ?? 0) >= (rec.revision ?? 0) ? detail : rec;
   const text = plainTranscript(current.transcript ?? '');
   const expand = async () => {
     try { setDetail(await loadRecordingDetails(rec)); }
@@ -332,6 +332,7 @@ export async function agentText(rec: Recording): Promise<{ text: string; cleaned
 
 export function CaptureHistory({
   recordings,
+  refreshRevision,
   live,
   dictationHotkey,
   signedIn,
@@ -344,6 +345,7 @@ export function CaptureHistory({
   onRetry,
 }: {
   recordings: Recording[];
+  refreshRevision: number;
   live: LiveCapture | null;
   /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
   dictationHotkey: string;
@@ -365,7 +367,7 @@ export function CaptureHistory({
     return () => window.clearInterval(timer);
   }, []);
 
-  const history = useHistoryPage(recordings, query, filter);
+  const history = useHistoryPage(refreshRevision, query, filter);
   const rows = history.page?.items ?? recordings;
   const liveId = live?.sessionId ?? null;
   const visible = useMemo(

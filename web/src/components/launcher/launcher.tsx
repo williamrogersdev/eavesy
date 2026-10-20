@@ -70,6 +70,7 @@ export function Launcher() {
   const now = useRef(Date.now()).current;
 
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -156,6 +157,7 @@ export function Launcher() {
   const refreshRecordings = useCallback(async () => {
     try {
       setRecordings(await loadRecordings(now));
+      setHistoryRevision((revision) => revision + 1);
       setLoadError(null);
     } catch (error) {
       setLoadError(errMsg(error, 'Could not load recordings'));
@@ -795,6 +797,7 @@ export function Launcher() {
           <div className="ev-history">
             <CaptureHistory
               recordings={recordings}
+              refreshRevision={historyRevision}
               live={live}
               dictationHotkey={dictationHotkey}
               signedIn={account !== null}
