@@ -93,7 +93,8 @@ describe('concurrent transcribe jobs', () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const ai = {
-      run: vi.fn(async () => {
+      run: vi.fn(async (model: string) => {
+        if (model.includes("llama")) return { response: { edits: [] } };
         await gate;
         return { text: 'hello', segments: [{ start: 0, end: 1, text: 'hello' }] };
       }),
@@ -113,7 +114,7 @@ describe('concurrent transcribe jobs', () => {
     release();
     await running;
 
-    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(ai.run.mock.calls.filter(([model]) => model.includes('whisper'))).toHaveLength(1);
     const firstResult = await getQueueResult(first, createExecutionContext());
     const secondResult = await getQueueResult(second, createExecutionContext());
     expect(firstResult.explicitAcks).toEqual(['first']);
@@ -135,13 +136,13 @@ describe('concurrent transcribe jobs', () => {
       .bind(Date.now() - 60 * 60 * 1000, 'mseg_stale')
       .run();
 
-    const ai = { run: vi.fn(async () => ({ text: 'back', segments: [{ start: 0, end: 1, text: 'back' }] })) };
+    const ai = { run: vi.fn(async (model: string) => model.includes('llama') ? { response: { edits: [] } } : { text: 'back', segments: [{ start: 0, end: 1, text: 'back' }] }) };
     const batch = createMessageBatch<ProcessingMessage>('eavesy-processing', [
       { id: 'redelivered', timestamp: new Date(), attempts: 2, body: { kind: 'transcribe-segment', meetingId: 'meet_stale', idx: 0 } },
     ]);
     await worker.queue(batch, runtimeEnv(mockQueue().binding, ai));
 
-    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(ai.run.mock.calls.filter(([model]) => model.includes('whisper'))).toHaveLength(1);
     expect(
       await row<{ transcribe_status: string }>('SELECT transcribe_status FROM meeting_segments WHERE id = ?', 'mseg_stale'),
     ).toEqual({ transcribe_status: 'complete' });

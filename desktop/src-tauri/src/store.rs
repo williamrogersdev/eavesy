@@ -194,6 +194,10 @@ pub fn save_preview_transcript<R: Runtime>(
     id: &str,
     content: &str,
 ) -> Result<(), String> {
+    save_transcript(app, id, content, None)
+}
+
+fn save_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, content: &str, expected: Option<&str>) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     if content.len() > 5 * 1024 * 1024 {
         return Err("Transcript is too large".into());
@@ -202,6 +206,9 @@ pub fn save_preview_transcript<R: Runtime>(
     let previous = history
         .get(id)?
         .ok_or_else(|| "Recording is still being saved. Please retry.".to_string())?;
+    if expected.is_some_and(|original| previous.transcript.as_deref() != Some(original)) {
+        return Err("Transcript changed; reopen it before correcting".into());
+    }
     let folder = previous
         .folder_path
         .as_deref()
@@ -212,6 +219,8 @@ pub fn save_preview_transcript<R: Runtime>(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("Could not read saved transcript: {error}")),
     };
+    let raw_path = Path::new(folder).join("transcript.raw.md");
+    let raw_created = !raw_path.exists() && previous.transcript.is_some();
     let hash = hex::encode(Sha256::digest(content.as_bytes()));
     let mut recording = previous.clone();
     recording.transcript = Some(content.to_string());
@@ -224,6 +233,7 @@ pub fn save_preview_transcript<R: Runtime>(
             rusqlite::params![path.to_string_lossy()],
         )
         .map_err(|error| error.to_string())?;
+        if raw_created { crate::fs_writer::atomic_write(&raw_path, previous.transcript.as_deref().unwrap_or_default().as_bytes())?; }
         crate::fs_writer::atomic_write(&path, content.as_bytes())?;
         history.put(&recording)?;
         tx.commit().map_err(|error| error.to_string())
@@ -237,8 +247,9 @@ pub fn save_preview_transcript<R: Runtime>(
         } else {
             Ok(())
         };
+        let restore_raw = if raw_created && raw_path.exists() { std::fs::remove_file(&raw_path).map_err(|e| e.to_string()) } else { Ok(()) };
         let restore_history = history.put(&previous);
-        restore
+        restore.and(restore_raw)
             .and(restore_history)
             .map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
         return Err(error);
@@ -465,6 +476,35 @@ mod persistence_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn deliberate_correction_saves_original_and_rejects_stale_text() {
+        let root = std::env::temp_dir().join(format!("eavesy-correction-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        crate::sqlite::initialize(app.handle()).unwrap();
+        let mut rec = recording("correction".into());
+        rec.transcript = Some("Open a pool request.".into());
+        rec.folder_path = Some(root.to_string_lossy().into_owned());
+        append(app.handle(), rec).unwrap();
+        correct_transcript(app.handle(), "correction", "stale", "wrong").unwrap_err();
+        std::fs::write(root.join("transcript.md"), "Open a pool request.").unwrap();
+        crate::sqlite::with_open(app.handle(), |conn| conn.execute_batch(
+            "CREATE TRIGGER fail_correction BEFORE INSERT ON pending_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END;"
+        )).unwrap().unwrap();
+        assert!(correct_transcript(app.handle(), "correction", "Open a pool request.", "Must roll back.").is_err());
+        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pool request.");
+        assert!(!root.join("transcript.raw.md").exists());
+        crate::sqlite::with_open(app.handle(), |conn| conn.execute_batch("DROP TRIGGER fail_correction")).unwrap().unwrap();
+        correct_transcript(app.handle(), "correction", "Open a pool request.", "Open a pull request.").unwrap();
+        assert_eq!(load_all(app.handle())[0].transcript.as_deref(), Some("Open a pull request."));
+        assert_eq!(std::fs::read_to_string(root.join("transcript.raw.md")).unwrap(), "Open a pool request.");
+        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pull request.");
+        correct_transcript(app.handle(), "correction", "Open a pool request.", "stale again").unwrap_err();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn preview_corrections_persist_and_survive_later_transcription() {
         let root =
             std::env::temp_dir().join(format!("eavesy-preview-save-{}", uuid::Uuid::new_v4()));
@@ -585,4 +625,9 @@ mod persistence_tests {
         assert!(save_preview_transcript(app, "missing", "must not disappear").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+/// A deliberate human edit wins over later transcription and sync results.
+pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &str, corrected: &str) -> Result<(), String> {
+    save_transcript(app, id, corrected, Some(original))
 }

@@ -1,3 +1,4 @@
+import type { LearnedCorrection } from '@/lib/dictionary/learning';
 import type Anthropic from '@anthropic-ai/sdk';
 import { MODELS } from './client';
 import {
@@ -142,17 +143,27 @@ const MIN_POLISH_WORDS = 4;
  */
 export async function polishDictation(
   client: Anthropic | null,
-  args: { text: string; context: string | null },
+  args: { text: string; context: string | null; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[] },
 ): Promise<{ text: string; polished: boolean }> {
   const said = args.text.trim();
   const plain = stripFillers(said);
-  if (!client || said.split(/\s+/).length < MIN_POLISH_WORDS) return { text: plain, polished: false };
+  if (!client || (!args.hasCorrections && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
     const candidate = await cleanChunk(client, turns, dictationPrompt(args.context));
-    if (cleanedChunkIsValid(turns, candidate, 'solo')) return { text: candidate, polished: true };
+    const known = (args.corrections ?? []).filter(entry => said.toLowerCase().includes(entry.from.toLowerCase())).map(entry => entry.to).join(' ');
+    const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
+    if (cleanedChunkIsValid(validationInput, candidate, 'solo') && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])) return { text: candidate, polished: true };
   } catch {
     // The model-free cleanup below still beats the raw words.
   }
   return { text: plain, polished: false };
+}
+
+function preservesSpellings(raw: string, candidate: string, spellings: string[]): boolean {
+  return spellings.every(term => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu');
+    return (candidate.match(pattern)?.length ?? 0) >= (raw.match(pattern)?.length ?? 0);
+  });
 }

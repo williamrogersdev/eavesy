@@ -1,4 +1,5 @@
 'use client';
+import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 
 import {
   AudioLines,
@@ -253,6 +254,7 @@ function CaptureRow({
   </>;
   else if (text) body = <>
     <Body key={rec.revision} text={text} query={query} onExpand={current.transcriptTruncated ? expand : undefined} />
+    {signedIn && spoken && current.transcript && <CorrectionEditor id={rec.id} original={current.transcript} loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''} onSaved={() => flash("Corrections saved")} />}
     {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (!signedIn && spoken && rec.status !== 'complete') body = (

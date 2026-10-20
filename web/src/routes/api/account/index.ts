@@ -4,7 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as usersRepo from '@/db/repo/users';
-import { captures, deviceTokens, dictations, mcpTokens, meetings, users } from '@/db/schema';
+import { captures, deviceTokens, dictations, mcpTokens, meetings, personalDictionary, users } from '@/db/schema';
 import { resolveActor } from '@/server/auth';
 import { reportError } from '@/server/observability';
 import { enqueue } from '@/server/queue';
@@ -33,6 +33,7 @@ export const Route = createFileRoute('/api/account/')({
         }
 
         const now = Date.now();
+        await db.delete(personalDictionary).where(eq(personalDictionary.userId, actor.userId));
         await db
           .update(deviceTokens)
           .set({ revokedAt: now })

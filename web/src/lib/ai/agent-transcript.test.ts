@@ -51,3 +51,13 @@ describe('polishDictation', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+test('short dictations use learned context and keep confirmed spellings', async () => {
+  const { client, calls } = fakeClient('Open a pull request.');
+  const result = await polishDictation(client, { text: 'Open a pool request.', context: 'Human correction: pool -> pull', hasCorrections: true, corrections: [{ from: 'pool', to: 'pull' }] });
+  expect(calls).toHaveLength(1);
+  expect(result.text).toBe('Open a pull request.');
+  const wrong = fakeClient('The information was transcribed and typed in the saved transcript.');
+  const text = 'The information was transcribed and kept in the saved transcript.';
+  expect(await polishDictation(wrong.client, { text, context: null, confirmedSpellings: ['kept'] })).toEqual({ text, polished: false });
+});

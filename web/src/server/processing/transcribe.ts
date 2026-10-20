@@ -1,3 +1,5 @@
+import * as dictionary from '@/db/repo/dictionary';
+import { repairTranscriptSegments, repairAi } from '@/lib/ai/repair-transcript';
 import { guardedImportWrite } from './import-guard';
 import { createAiRunner } from '@/lib/ai/credit-runner';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
@@ -58,18 +60,20 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
+  const entries = await dictionary.list(db, meeting.userId);
   const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
+    vocabulary: [...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
     spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
   const language = whisperLanguage(meeting.language) ?? transcription.language ?? null;
 
-  await runBatched(db, transcription.segments.map((segment, index) => {
+  const repaired = await repairTranscriptSegments(transcription.segments, { dictionary: entries, ai: repairAi(env) });
+  await runBatched(db, repaired.map((segment, index) => {
     const id = `web_${meetingId}_${index}_${segment.startMs}`;
     return db
       .insert(transcriptSegments)
@@ -80,6 +84,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
         endMs: segment.endMs,
         speakerId: segment.speakerId,
         text: segment.text,
+        rawText: segment.rawText,
         confidence: segment.confidence,
         language,
         isEdited: false,
@@ -91,16 +96,18 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
           startMs: segment.startMs,
           endMs: segment.endMs,
           text: segment.text,
+        rawText: segment.rawText,
           confidence: segment.confidence,
           language,
           isFinal: true,
         },
+        setWhere: eq(transcriptSegments.isEdited, false),
       });
   }));
 
   if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
 
-  const fullText = transcription.segments
+  const fullText = repaired
     .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
     .join('\n');
   const now = Date.now();
@@ -234,11 +241,13 @@ export async function handleTranscribeSegment(
       const audio = new Uint8Array(await object.arrayBuffer());
       const transcriber = new WorkersAiSegmentTranscriber(meeting.source === 'import' ? createAiRunner(env, 'import-transcription') : env.AI);
       const prefs = await userPrefs(db, meeting.userId);
+      const entries = await dictionary.list(db, meeting.userId);
       const request = {
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
         vocabulary: [
+          ...entries.map(e => e.to),
           ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
           ...prefs.vocabulary,
         ],
@@ -277,7 +286,8 @@ export async function handleTranscribeSegment(
 
       const current = await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1);
       if (!current[0] || current[0].deletedAt || (meeting.source === 'import' && current[0].status === 'failed')) return;
-      const writes = lines.map((relative) => {
+      const repaired = await repairTranscriptSegments(lines, { dictionary: entries, ai: repairAi(env) });
+      const writes = repaired.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
         const absoluteEnd = Math.max(
@@ -297,6 +307,7 @@ export async function handleTranscribeSegment(
             endMs: absoluteEnd,
             speakerId,
             text: relative.text,
+            rawText: relative.rawText,
             confidence: relative.confidence,
             language: language ?? null,
             isFinal: true,
@@ -309,10 +320,12 @@ export async function handleTranscribeSegment(
               endMs: absoluteEnd,
               speakerId,
               text: relative.text,
+            rawText: relative.rawText,
               confidence: relative.confidence,
               language: language ?? null,
               isFinal: true,
             },
+            setWhere: eq(transcriptSegments.isEdited, false),
           });
       });
       if (meeting.source === 'import') {

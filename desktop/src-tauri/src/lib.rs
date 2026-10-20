@@ -39,6 +39,8 @@ mod sync;
 mod sqlite;
 mod standby;
 mod transcribe;
+mod learning;
+mod paste_learning;
 mod tray;
 mod ui;
 mod updates;
@@ -111,6 +113,8 @@ pub fn run() {
             fs_writer::reveal_in_finder,
             commands::copy_text,
             commands::paste_to_frontmost,
+            learning::dictionary_request,
+            learning::correct_recording,
             commands::hide_panel,
             commands::list_recordings,
             commands::get_recording,
