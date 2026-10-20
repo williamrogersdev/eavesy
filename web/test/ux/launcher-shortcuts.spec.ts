@@ -12,9 +12,14 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
       core: { convertFileSrc: () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf2kAAAAASUVORK5CYII=', invoke: async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
         calls.push({ command, args });
         let result: unknown = null;
-        if (command === 'list_recordings') result = [{ id: 'note-1', title: 'Quick note', started_at_ms: Date.now(), status: 'complete', transcript: '# Quick note\n\n## Transcript\n\n[00:00:00] Send the revised proposal tomorrow.' }];
-        if (command === 'list_recordings' && visual) result = [{ id: 'image-1', title: 'Screenshot', started_at_ms: Date.now(), source: 'screenshot', status: 'complete' }, { id: 'video-1', title: 'Screen recording', started_at_ms: Date.now() - 1000, source: 'screen', status: 'complete', has_video: true }];
-        if (command === 'list_recordings' && timeline) result = Array.from({ length: 20 }, (_, index) => ({ id: `note-${index}`, title: `Note ${index}`, started_at_ms: Date.now() - index * 60000, status: 'complete', transcript: `Saved note ${index}.\nA second line of text.` }));
+        if (command === 'list_recordings' || command === 'get_recording') result = [{ id: 'note-1', title: 'Quick note', started_at_ms: Date.now(), status: 'complete', transcript: '# Quick note\n\n## Transcript\n\n[00:00:00] Send the revised proposal tomorrow.' }];
+        if ((command === 'list_recordings' || command === 'get_recording') && visual) result = [{ id: 'image-1', title: 'Screenshot', started_at_ms: Date.now(), source: 'screenshot', status: 'complete' }, { id: 'video-1', title: 'Screen recording', started_at_ms: Date.now() - 1000, source: 'screen', status: 'complete', has_video: true }];
+        if ((command === 'list_recordings' || command === 'get_recording') && timeline) result = Array.from({ length: 20 }, (_, index) => ({ id: `note-${index}`, title: `Note ${index}`, started_at_ms: Date.now() - index * 60000, status: 'complete', transcript: `Saved note ${index}.\nA second line of text.` }));
+        if ((command === 'list_recordings' || command === 'get_recording') && Array.isArray(result)) {
+          const items = result as Record<string, unknown>[];
+          if (command === 'get_recording') result = items.find((row) => row.id === args?.id) ?? null;
+          else result = { items, next_offset: null, counts: { all: items.length, voice: visual ? 0 : items.length, meetings: 0, screens: visual ? items.length : 0, notes: 0 } };
+        }
         if (command === 'capture_media') result = '/saved/capture.png';
         if (command === 'get_settings') result = { toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Cmd+Shift+D' };
         if (command === 'get_setup_status') result = { paired: true, completed };

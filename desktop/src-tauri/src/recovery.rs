@@ -182,7 +182,7 @@ fn save_local_recording<R: Runtime>(
     has_audio: bool,
     status: &str,
 ) -> Result<(), String> {
-    let existing = store::load_all(app).into_iter().find(|recording| recording.id == session.id);
+    let existing = store::get(app, &session.id)?;
     let recording = match existing {
         Some(mut recording) => {
             if recording.status != status || recording.has_audio != has_audio {

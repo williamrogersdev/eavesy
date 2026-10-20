@@ -156,20 +156,20 @@ struct ManifestIdentity {
 
 fn reconcile_folder_locations<R: Runtime>(app: &AppHandle<R>, root: &Path) -> Result<()> {
     let discovered = discover_manifest_folders(root)?;
-    let recordings = store::load_all(app);
+    let recordings = store::locations(app).map_err(anyhow::Error::msg)?;
     let mut moved = Vec::new();
 
-    for recording in recordings {
-        let Some(candidates) = discovered.get(&recording.id) else {
+    for (id, folder) in recordings {
+        let Some(candidates) = discovered.get(&id) else {
             continue;
         };
-        let current = recording.folder_path.as_deref().map(Path::new);
+        let current = folder.as_deref().map(Path::new);
         let Some(target) = unique_relocation_target(current, candidates) else {
             continue;
         };
-        sqlite::relocate_recording_folder(app, &recording.id, target)
+        sqlite::relocate_recording_folder(app, &id, target)
             .map_err(anyhow::Error::msg)?;
-        store::set_folder_path(app, &recording.id, target).map_err(anyhow::Error::msg)?;
+        store::set_folder_path(app, &id, target).map_err(anyhow::Error::msg)?;
         moved.push(target.to_path_buf());
     }
 
@@ -249,13 +249,19 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
 }
 
 fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
-    for recording in store::load_all(app) {
-        let Some(folder) = recording.folder_path.as_deref().map(Path::new) else {
-            continue;
+    let folders = match store::folders(app) {
+        Ok(folders) => folders,
+        Err(error) => { crate::telemetry::capture("filesystem.startup-reconcile", &error); return; }
+    };
+    // One indexed body read per recording, reused for its three editable files.
+    for (id, folder) in folders {
+        let recording = match store::get(app, &id) {
+            Ok(Some(recording)) => recording,
+            Ok(None) => continue,
+            Err(error) => { crate::telemetry::capture("filesystem.startup-reconcile", &error); continue; }
         };
         for filename in ["summary.md", "transcript.md", "notes.md"] {
-            let path = folder.join(filename);
-            if let Err(error) = reconcile_path(app, &path) {
+            if let Err(error) = reconcile_recording(app, &Path::new(&folder).join(filename), &recording) {
                 crate::telemetry::capture("filesystem.startup-reconcile", &error.to_string());
             }
         }
@@ -263,26 +269,22 @@ fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn reconcile_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<()> {
-    let Some(role) = file_role(path) else {
-        return Ok(());
-    };
+    if file_role(path).is_none() { return Ok(()); }
+    let parent = path.parent().context("edited file has no parent folder")?;
+    let Some(recording) = store::by_folder(app, parent).map_err(anyhow::Error::msg)? else { return Ok(()); };
+    reconcile_recording(app, path, &recording)
+}
+
+fn reconcile_recording<R: Runtime>(app: &AppHandle<R>, path: &Path, recording: &store::StoredRecording) -> Result<()> {
+    let Some(role) = file_role(path) else { return Ok(()); };
     let parent = path.parent().context("edited file has no parent folder")?;
     let file_name = path.file_name().context("edited file has no name")?;
-    let parent_key = canonical(parent);
-    let Some(recording) = store::load_all(app).into_iter().find(|recording| {
-        recording.folder_path.as_deref().is_some_and(|folder| {
-            let folder = Path::new(folder);
-            folder == parent || canonical(folder) == parent_key
-        })
-    }) else {
-        return Ok(());
-    };
     let owned_path = Path::new(recording.folder_path.as_deref().unwrap_or_default()).join(file_name);
     let path = owned_path.as_path();
 
     if !path.is_file() {
         if parent.is_dir() {
-            fs_writer::restore_missing_editable_file(Some(app), path, &recording, role)
+            fs_writer::restore_missing_editable_file(Some(app), path, recording, role)
                 .map_err(anyhow::Error::msg)?;
             let _ = app.emit("recordings:updated", ());
         }
@@ -291,7 +293,7 @@ fn reconcile_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<()> {
 
     let bytes = read_bounded(path)?;
     let hash = sha256_hex(&bytes);
-    let expected_hash = fs_writer::expected_editable_content(&recording, role)
+    let expected_hash = fs_writer::expected_editable_content(recording, role)
         .map(|content| sha256_hex(content.as_bytes()));
     match sqlite::classify_file_observation(app, path, &hash, expected_hash.as_deref())
         .map_err(anyhow::Error::msg)?
@@ -313,10 +315,6 @@ fn reconcile_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<()> {
         .map_err(anyhow::Error::msg)?;
     let _ = app.emit("recordings:updated", ());
     Ok(())
-}
-
-fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>> {
@@ -553,6 +551,19 @@ mod tests {
 
         drop(restarted);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_reattaches_a_manifest_folder_when_the_history_has_no_path() {
+        let root=std::env::temp_dir().join(format!("eavesy-unlinked-{}",uuid::Uuid::new_v4()));
+        let folder=root.join("meeting");std::fs::create_dir_all(&folder).unwrap();
+        let app=isolated_mock_app(&root);sqlite::initialize(app.handle()).unwrap();
+        let mut recording=sample_recording(&folder);recording.folder_path=None;
+        store::append(app.handle(),recording).unwrap();
+        std::fs::write(folder.join("meeting.json"),r#"{"id":"meeting-1"}"#).unwrap();
+        reconcile_folder_locations(app.handle(),&root).unwrap();
+        assert_eq!(store::get(app.handle(),"meeting-1").unwrap().unwrap().folder_path.as_deref(),folder.to_str());
+        drop(app);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

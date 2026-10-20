@@ -28,6 +28,14 @@ export function installDevMock(): void {
   if (!params.has('mock')) return;
   const now = Date.now();
   const recordings = params.has('empty') ? [] : sampleRecordings(now);
+  if (params.has('history')) {
+    recordings.splice(0, recordings.length, ...Array.from({ length: 56 }, (_, i) => ({
+      id: `history-${i}`, title: `History fixture ${i}`, started_at_ms: now - i * HOUR,
+      duration_sec: 3600, source: 'both', status: 'complete', has_audio: true,
+      transcript: `Capture ${i}. ${'Synthetic meeting words. '.repeat(200)} ${i === 55 ? 'hidden-search-needle' : 'full-transcript-tail'}`,
+    })));
+  }
+  let copiedText = '';
   const live = params.has('live');
   const settings = {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
@@ -37,7 +45,16 @@ export function installDevMock(): void {
     get_setup_status: { paired: true, completed: true },
     account_info: { name: 'Robin Avery', email: 'robin@example.com' },
     get_settings: settings,
-    list_recordings: recordings,
+    list_recordings: ({ offset = 0, limit = 50, query = '', filter = 'all' }: Record<string, unknown>) => {
+      const category = (row: (typeof recordings)[number]) => row.source === 'both' ? 'meetings' : row.source === 'screenshot' ? 'screens' : row.source === 'note' ? 'notes' : 'voice';
+      const q = String(query).toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const visible = recordings.filter((row) => (filter === 'all' || category(row) === filter) && q.every((word) => `${row.title} ${row.transcript ?? ''}`.toLowerCase().includes(word)));
+      const start = Number(offset); const count = Number(limit);
+      return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048, revision: 1 })), next_offset: start + count < visible.length ? start + count : null,
+        counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
+    },
+    get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
+    copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },
     get_hud_state: live
@@ -59,7 +76,7 @@ export function installDevMock(): void {
   const listeners = new Map<string, Handler[]>();
   const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
   const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
-  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap') };
+  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), get copiedText() { return copiedText; } };
   if (params.has('settings')) setTimeout(() => emit('launcher:settings'), 400);
   window.__TAURI__ = {
     core: {
