@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const useLocalTestBindings = process.env.EAVESY_LOCAL_TEST === '1';
 
 export default defineConfig(({ command }) => ({
-  // Preserve Vite 6's browser floor when adopting the newer bundler.
+  // Preserve Vite 6's browser floor; keep in sync with desktop/launcher-ui/vite.config.ts.
   environments: {
     client: { build: { target: ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14'] } },
   },

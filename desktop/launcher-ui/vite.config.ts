@@ -25,6 +25,7 @@ export default defineConfig({
     },
   },
   build: {
+    // Match the browser floor in web/vite.config.ts.
     target: ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14'],
     outDir: path.resolve(dir, '../src-tauri/frontend-shell'),
     emptyOutDir: true,
