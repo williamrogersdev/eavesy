@@ -2,10 +2,43 @@
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(not(unix))]
+use std::sync::Mutex;
+
+#[cfg(unix)]
+type SharedFile = Arc<File>;
+#[cfg(not(unix))]
+type SharedFile = Arc<Mutex<File>>;
+
+fn shared_file(file: File) -> SharedFile {
+    #[cfg(unix)]
+    {
+        Arc::new(file)
+    }
+    #[cfg(not(unix))]
+    {
+        Arc::new(Mutex::new(file))
+    }
+}
+
+fn read_at(file: &SharedFile, buffer: &mut [u8], position: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::FileExt::read_at(file.as_ref(), buffer, position)
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = file
+            .lock()
+            .map_err(|_| io::Error::other("audio file lock poisoned"))?;
+        file.seek(SeekFrom::Start(position))?;
+        file.read(buffer)
+    }
+}
 
 pub(crate) struct AudioPiece {
-    file: Arc<Mutex<File>>,
+    file: SharedFile,
     offset: u64,
     length: u64,
     header: Vec<u8>,
@@ -30,7 +63,7 @@ impl AudioPiece {
 }
 
 struct FileSlice {
-    file: Arc<Mutex<File>>,
+    file: SharedFile,
     position: u64,
     remaining: u64,
 }
@@ -40,17 +73,11 @@ impl Read for FileSlice {
         if self.remaining == 0 || buffer.is_empty() {
             return Ok(0);
         }
-        // The lock covers disk IO only, never network IO. Independent body
-        // cursors must not race on the shared file's seek position.
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| io::Error::other("audio file lock poisoned"))?;
-        file.seek(SeekFrom::Start(self.position))?;
         let limit = buffer
             .len()
             .min(self.remaining.min(usize::MAX as u64) as usize);
-        let count = file.read(&mut buffer[..limit])?;
+        // Positional IO on macOS/Unix needs neither a shared cursor nor a lock.
+        let count = read_at(&self.file, &mut buffer[..limit], self.position)?;
         if count == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -86,7 +113,7 @@ impl PreparedAudio {
             .len();
         Ok(Self {
             pieces: vec![AudioPiece {
-                file: Arc::new(Mutex::new(file)),
+                file: shared_file(file),
                 offset: 0,
                 length,
                 header: Vec::new(),
@@ -123,7 +150,7 @@ impl PreparedAudio {
         if chunk > u32::MAX as u64 - 36 {
             return Err("WAV chunk exceeds RIFF limit".into());
         }
-        let file = Arc::new(Mutex::new(file));
+        let file = shared_file(file);
         let mut position = 0;
         while position < length {
             let count = chunk.min(length - position);

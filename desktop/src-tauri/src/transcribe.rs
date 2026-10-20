@@ -355,10 +355,11 @@ fn transcode_to_wav(input: &Path) -> Option<PathBuf> {
         .arg(input)
         .arg(&out)
         .status()
-        .ok()?;
-    if status.success() && out.exists() {
+        .ok();
+    if status.is_some_and(|status| status.success()) && out.exists() {
         Some(out)
     } else {
+        let _ = std::fs::remove_file(&out);
         None
     }
 }
@@ -384,6 +385,28 @@ mod tests {
     }
 
     #[test]
+    fn streamed_wav_preserves_legacy_duplicate_and_truncated_chunks() {
+        use std::io::Read;
+        let source = wav(16_000 * 5 + 7, true);
+        let mut duplicate_data = source.clone();
+        duplicate_data.extend_from_slice(b"data\x04\0\0\0\x01\x02\x03\x04");
+        let mut duplicate_format = source.clone();
+        duplicate_format.extend_from_slice(b"fmt \x10\0\0\0");
+        duplicate_format.extend_from_slice(&source[20..36]);
+        let truncated = source[..source.len() - 5].to_vec();
+        for source in [duplicate_data, duplicate_format, truncated] {
+            let expected = split_wav(&source, 2).unwrap();
+            let path = std::env::temp_dir().join(format!("eavesy-stream-legacy-{}.wav", uuid::Uuid::new_v4()));
+            std::fs::write(&path, source).unwrap();
+            let prepared = crate::audio_upload::PreparedAudio::converted_wav(path, 2).unwrap();
+            let actual: Vec<Vec<u8>> = prepared.pieces.iter().map(|piece| {
+                let mut bytes = Vec::new(); piece.reader().read_to_end(&mut bytes).unwrap(); bytes
+            }).collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
     fn streamed_multipart_body_is_replayed_on_retry() {
         use std::io::Read;
         use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
@@ -396,10 +419,13 @@ mod tests {
         let mut expected = Vec::new(); piece.reader().read_to_end(&mut expected).unwrap();
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = attempts.clone();
-        let (runtime, server) = polish_server();
+        let (runtime, server) = mock_server();
         runtime.block_on(Mock::given(method("POST"))
             .and(request_path("/api/transcribe"))
-            .and(move |request: &wiremock::Request| request.body.windows(expected.len()).any(|bytes| bytes == expected))
+            .and(move |request: &wiremock::Request| {
+                request.headers.get("content-length").and_then(|value| value.to_str().ok()).and_then(|value| value.parse::<usize>().ok()) == Some(request.body.len())
+                    && request.body.windows(expected.len()).any(|bytes| bytes == expected)
+            })
             .respond_with(move |_: &wiremock::Request| {
                 if observed.fetch_add(1, Ordering::SeqCst) == 0 { ResponseTemplate::new(503) }
                 else { ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": "replayed" })) }
@@ -492,7 +518,7 @@ mod tests {
         assert_eq!(calls, 1);
     }
 
-    fn polish_server() -> (tokio::runtime::Runtime, wiremock::MockServer) {
+    fn mock_server() -> (tokio::runtime::Runtime, wiremock::MockServer) {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let server = runtime.block_on(wiremock::MockServer::start());
         (runtime, server)
@@ -505,7 +531,7 @@ mod tests {
     #[test]
     fn polish_returns_the_tidied_words() {
         use wiremock::matchers::{body_json, header, method, path};
-        let (runtime, server) = polish_server();
+        let (runtime, server) = mock_server();
         runtime.block_on(
             wiremock::Mock::given(method("POST"))
                 .and(path("/api/dictations/polish"))
@@ -523,7 +549,7 @@ mod tests {
     #[test]
     fn polish_gives_up_on_errors_empty_text_and_slow_servers() {
         use wiremock::matchers::method;
-        let (runtime, server) = polish_server();
+        let (runtime, server) = mock_server();
         runtime.block_on(
             wiremock::Mock::given(method("POST"))
                 .respond_with(wiremock::ResponseTemplate::new(429))
