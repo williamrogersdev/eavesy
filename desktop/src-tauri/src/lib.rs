@@ -47,6 +47,10 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _error_reporting = telemetry::init();
+    #[cfg(target_os = "macos")]
+    if install_location::open_existing_installation() {
+        return;
+    }
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             hotkeys::show_launcher(app);

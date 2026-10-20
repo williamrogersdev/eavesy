@@ -70,6 +70,12 @@ Only Apple Silicon (`aarch64`) is built, which matches the local scripts.
    recording, pairing and the update check. Also open Eavesy straight from the
    mounted DMG: it must offer **Move to Applications**, then relaunch from
    `/Applications` with the disk image ejected. Updates only work from there.
+   With Eavesy already installed (including through Homebrew), open a second
+   downloaded or renamed copy: it should open the installed app without
+   replacing it or starting another capture engine. Also test a first install
+   from Downloads: the move should create `/Applications/Eavesy.app`, even if
+   the source was named `Eavesy 2.app`. Debug and Cargo bundle builds should
+   remain usable in their build folders.
 4. Approve the `publish` job (Actions run → Review deployments → `macos-release`).
 5. Merge the cask PR in `homebrew-eavesy`. The workflow has already checked
    that the cask URL serves the published DMG with the same sha256.

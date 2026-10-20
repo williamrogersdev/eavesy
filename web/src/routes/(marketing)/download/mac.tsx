@@ -117,6 +117,9 @@ function DownloadMacPage() {
             <div className="mt-8 max-w-md">
               <p className="font-round text-[13px] font-bold text-ev-ink-2">Prefer Homebrew?</p>
               <CopyCommand text={BREW} />
+              <p className="mt-3 text-sm leading-relaxed text-ev-ink-2">
+                Both install the same app in Applications. Already have Eavesy? Open it and choose Update instead of installing another copy.
+              </p>
             </div>
           </div>
 
@@ -172,7 +175,7 @@ function DownloadMacPage() {
 const BREW = 'brew install --cask williamrogersdev/eavesy/eavesy';
 
 const STEPS = [
-  { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications.' },
+  { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications. If Eavesy is already there, replace it rather than keep both.' },
   { title: 'Allow the mic', body: 'Setup asks for the microphone. Screen Recording and the rest are optional.' },
   { title: 'Sign in, if you like', body: 'Free sign-in adds cloud transcripts, briefs and sync. You can stay local.' },
   { title: 'Press ⌘⇧Space', body: 'Opens Eavesy from anywhere. ⌘⇧D starts Talk and types where your cursor is.' },
