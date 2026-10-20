@@ -15,7 +15,7 @@ import {
 } from '@/lib/transcription/language';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
-import { resolveActor } from '@/server/auth';
+import { resolveIngestActor } from '@/server/device-auth';
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -33,10 +33,10 @@ const updateSchema = z.object({
 export const Route = createFileRoute('/api/me')({
   server: {
     handlers: {
-      GET: async () => {
+      GET: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -77,7 +77,7 @@ export const Route = createFileRoute('/api/me')({
       PATCH: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -85,6 +85,8 @@ export const Route = createFileRoute('/api/me')({
         if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const body = parsedBody.data;
         const db = getDb();
+        const fromMac = 'deviceId' in actor;
+        if (fromMac && 'byoAnthropicKey' in body) return Response.json({ error: 'sign_in_on_web' }, { status: 403 });
         if ('byoAnthropicKey' in body) {
           await usersRepo.updateByoKeys(db, actor.userId, {
             anthropicKey: body.byoAnthropicKey,

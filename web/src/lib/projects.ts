@@ -12,7 +12,7 @@ export const PROJECT_LIMITS = {
   about: 600,
   people: 400,
   term: 60,
-  vocabulary: 60,
+  vocabulary: 200,
   match: 12,
 } as const;
 

@@ -11,3 +11,4 @@ export { Segmented, type SegmentedOption } from './segmented';
 export { StatusDisc, type DiscStatus } from './status-disc';
 export { Switch } from './switch';
 export { ToolbarSegment, ToolbarShelf } from './toolbar-segment';
+export { TagInput } from './tag-input';
