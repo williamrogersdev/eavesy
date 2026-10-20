@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
+import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
 import { errMsg } from '@/lib/desktop/errors';
@@ -52,7 +52,7 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'wide' | 'shot';
+type Size = 'pill' | 'wide' | 'result' | 'shot';
 
 function sizeFor(state: HudState): Size {
   const video = state.mode === 'video';
@@ -68,11 +68,12 @@ function sizeFor(state: HudState): Size {
     case 'done':
       if (state.mode === 'image') return 'shot';
       if (video) return 'pill';
-      return state.message?.trim() || state.notice ? 'wide' : 'pill';
+      if (state.message?.trim()) return 'result';
+      return state.notice ? 'wide' : 'pill';
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [248, 40], wide: [360, 64], shot: [360, 172] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [360, 64], result: [360, 100], shot: [360, 172] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -116,6 +117,8 @@ function Hud() {
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  // The Mac's own recognizer could not run for this recording: no live words.
+  const [captionsOff, setCaptionsOff] = useState<string | null>(null);
   // The result the pointer has already visited: once it leaves, a short grace.
   const visited = useRef<string | null>(null);
   const loadShortcut = () => {
@@ -153,7 +156,11 @@ function Hud() {
         setRunning((current) => addCaption(current, caption));
         if (caption.text.trim()) setVoice(1);
       });
-      if (disposed) off?.(); else unlisten = off;
+      const offStatus = await tauri()?.event?.listen('recording:captions_status', (e) => {
+        const status = e.payload as { sessionId: string; live: boolean };
+        setCaptionsOff(status.live ? null : status.sessionId);
+      });
+      if (disposed) { off?.(); offStatus?.(); } else unlisten = () => { off?.(); offStatus?.(); };
     })().catch(() => {});
     return () => { disposed = true; unlisten?.(); };
   }, []);
@@ -250,7 +257,7 @@ function Hud() {
     if (hovered) { visited.current = key; return; }
     const timeout = window.setTimeout(() => {
       void invoke('dismiss_hud', { sessionId }).catch(() => {});
-    }, visited.current === key ? 2500 : size === 'pill' ? 3500 : 7000);
+    }, visited.current === key ? 2500 : size === 'pill' ? 3500 : size === 'result' ? 9000 : 7000);
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, size, hovered]);
 
@@ -297,7 +304,7 @@ function Hud() {
 
   const mark = (
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-mark">
-      <Mascot size={22} detail="medium" state={opening ? 'idle' : mascotState(state.phase)} level={voice} recording={live} />
+      <Mascot size={20} detail="medium" state={opening ? 'idle' : mascotState(state.phase)} level={voice} recording={live} />
     </button>
   );
   const close = (
@@ -307,7 +314,10 @@ function Hud() {
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn ctl-icon"><History className="h-3.5 w-3.5" /></button>
   );
   const copyWords = (
-    <button type="button" className="ctl-btn" onClick={() => copy('copy_text', { text: words })}><Copy className="h-3.5 w-3.5" />{copied ? 'Copied' : 'Copy'}</button>
+    <button type="button" className="ctl-btn ctl-primary" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
+  );
+  const expand = (
+    <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-btn ctl-icon"><Maximize2 className="h-3.5 w-3.5" /></button>
   );
 
   let top: ReactNode;
@@ -330,10 +340,12 @@ function Hud() {
         <button type="button" disabled={opening} onClick={() => act('stop_capture', { sessionId: state.sessionId })} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
-    if (!video) below = <Ticker text={heard} hint={opening ? 'Opening the mic…' : `Go ahead, I'm listening${shortcut ? `. ${shortcut} to paste` : ''}`} />;
+    const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
+    const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    if (!video) below = <Ticker text={heard} hint={opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`} />;
   } else if (state.phase === 'transcribing') {
     top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
-    if (!video) below = <Ticker text={heard} hint="Almost there…" working />;
+    if (!video) below = <Ticker text={heard} hint="Turning your words into text…" working />;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>
@@ -350,19 +362,23 @@ function Hud() {
         {imageSrc ? <img src={imageSrc} alt="" draggable={false} /> : <span className="ctl-shot-wait" />}
       </button>
     );
-  } else if (state.phase === 'done' && size === 'wide') {
-    const stamp = notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>;
+  } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
+    const stamp = notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">On clipboard</Stamp> : <Stamp tone="leaf">Pasted</Stamp>;
     top = (
       <>
         {mark}
         {stamp}
+        {notice && !notPasted && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {words && copyWords}
+        {expand}
         {close}
       </>
     );
-    below = <p className="ctl-line ctl-words" title={notice ?? words}>{words || notice}</p>;
+    below = words
+      ? <p className="ctl-words" title={words}>{words}</p>
+      : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
     top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{close}</>;
   } else if (state.phase === 'failed') {
@@ -378,8 +394,6 @@ function Hud() {
         <button type="button" disabled={busy} onClick={() => void startRecording('image')} aria-label="Take screenshot" title="Take screenshot" className="ctl-btn ctl-icon"><Camera className="h-3.5 w-3.5" /></button>
         <button type="button" disabled={busy} onClick={() => void startRecording('video')} aria-label="Record screen video" title="Record your screen and mic" className="ctl-btn ctl-icon"><Clapperboard className="h-3.5 w-3.5" /></button>
         <span className="ctl-fill" />
-        <span className="ctl-sep" aria-hidden />
-        {history}
         {close}
       </>
     );
@@ -403,7 +417,7 @@ function Hud() {
 
 /** A rubber stamp on the case file: what just happened to the capture. */
 function Stamp({ tone, children }: { tone: 'leaf' | 'manila' | 'warn'; children: ReactNode }) {
-  return <span className="ctl-stamp" data-tone={tone} role="status">{children}</span>;
+  return <span className="ctl-stamp" data-tone={tone} role="status">{tone === 'leaf' && <Check className="h-3 w-3" strokeWidth={3} />}{children}</span>;
 }
 
 /** Bars that move with the voice: tall while words are arriving, a low idle sway in the quiet. */
