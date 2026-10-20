@@ -48,8 +48,13 @@ use tauri::Manager;
 pub fn run() {
     let _error_reporting = telemetry::init();
     #[cfg(target_os = "macos")]
-    if install_location::open_existing_installation() {
-        return;
+    match install_location::open_existing_installation() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(message) => {
+            install_location::show_launch_error(&message);
+            return;
+        }
     }
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
