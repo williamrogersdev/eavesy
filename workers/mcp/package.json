@@ -6,14 +6,18 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "../../scripts/cf wrangler deploy"
+    "deploy": "../../scripts/cf wrangler deploy",
+    "typecheck": "tsrs --noEmit",
+    "typecheck:tsrs": "tsrs --noEmit",
+    "typecheck:tsc": "tsc --noEmit"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
-    "wrangler": "^4.151.0",
-    "typescript": "^5.9.3"
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.0"
   }
 }

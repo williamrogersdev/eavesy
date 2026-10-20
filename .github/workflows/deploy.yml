@@ -90,9 +90,9 @@ jobs:
         run: bun run build
       - name: Typecheck
         run: |
-          (cd web && bunx tsc --noEmit)
-          (cd workers/processing && bunx tsc --noEmit)
-          (cd workers/mcp && bunx tsc --noEmit)
+          (cd web && bun run typecheck)
+          (cd workers/processing && bun run typecheck)
+          (cd workers/mcp && bun run typecheck)
       - name: Lint
         working-directory: web
         run: bunx eslint . --max-warnings 0
