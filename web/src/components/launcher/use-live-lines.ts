@@ -2,29 +2,30 @@
 
 import { useEffect, useState } from 'react';
 import { liveTranscript, onLiveCaption, onLiveTranscript } from '@/lib/desktop/bridge';
-import { liveView, type LiveCaption, type LiveLine, type LiveRow } from '@/lib/desktop/live-captions';
+import { addCaption, EMPTY_RUNNING, liveView, type RunningTranscript, type LiveLine, type LiveRow } from '@/lib/desktop/live-captions';
 
 /** The newest lines heard in a live capture: cloud lines, then what the Mac is still hearing. */
 export function useLiveLines(sessionId: string | null, keep: number): LiveRow[] {
   const [lines, setLines] = useState<LiveLine[]>([]);
-  const [partials, setPartials] = useState<Record<string, LiveCaption>>({});
+  const [running, setRunning] = useState<RunningTranscript>(EMPTY_RUNNING);
   useEffect(() => {
     setLines([]);
-    setPartials({});
+    setRunning(EMPTY_RUNNING);
     if (!sessionId) return;
     let disposed = false;
     const offs: (() => void)[] = [];
+    let revision = 0;
     const reload = () => {
-      void liveTranscript(sessionId).then((next) => { if (!disposed) setLines(next); }).catch(() => {});
+      const request = ++revision;
+      void liveTranscript(sessionId).then((next) => { if (!disposed && request === revision) setLines(next); }).catch(() => {});
     };
-    reload();
     void Promise.all([
       onLiveTranscript((id) => { if (id === sessionId) reload(); }),
       onLiveCaption((caption) => {
-        if (caption.sessionId === sessionId) setPartials((prev) => ({ ...prev, [caption.track]: caption }));
+        if (!disposed && caption.sessionId === sessionId) setRunning((prev) => addCaption(prev, caption));
       }),
-    ]).then((listeners) => { if (disposed) listeners.forEach((off) => off()); else offs.push(...listeners); });
+    ]).then((listeners) => { if (disposed) listeners.forEach((off) => off()); else { offs.push(...listeners); reload(); } });
     return () => { disposed = true; offs.forEach((off) => off()); };
   }, [sessionId]);
-  return liveView(lines, Object.values(partials), keep);
+  return liveView(lines, [...running.finals, ...Object.values(running.partials)], keep);
 }

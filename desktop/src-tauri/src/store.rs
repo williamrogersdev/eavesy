@@ -186,6 +186,66 @@ fn spoken_word_count(text: &str) -> usize {
         .count()
 }
 
+/// Save a deliberate correction under the same lock as cloud results. The
+/// transcript, one history row and the sync outbox are restored if either
+/// durable store fails; unrelated recordings are never copied or rewritten.
+pub fn save_preview_transcript<R: Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    content: &str,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    if content.len() > 5 * 1024 * 1024 {
+        return Err("Transcript is too large".into());
+    }
+    let mut history = history(app)?;
+    let previous = history
+        .get(id)?
+        .ok_or_else(|| "Recording is still being saved. Please retry.".to_string())?;
+    let folder = previous
+        .folder_path
+        .as_deref()
+        .ok_or_else(|| "Recording folder is still being saved. Please retry.".to_string())?;
+    let path = Path::new(folder).join("transcript.md");
+    let old_file = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Could not read saved transcript: {error}")),
+    };
+    let hash = hex::encode(Sha256::digest(content.as_bytes()));
+    let mut recording = previous.clone();
+    recording.transcript = Some(content.to_string());
+    let saved = crate::sqlite::with_open_mut(app, |conn| -> Result<(), String> {
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        crate::sqlite::enqueue_file_edit_in(&tx, id, "transcript", content, &hash)?;
+        crate::sqlite::record_file_observation_in(&tx, &path, id, "transcript", &hash)?;
+        tx.execute(
+            "UPDATE filesystem_state SET last_written_hash=NULL WHERE file_path=?1",
+            rusqlite::params![path.to_string_lossy()],
+        )
+        .map_err(|error| error.to_string())?;
+        crate::fs_writer::atomic_write(&path, content.as_bytes())?;
+        history.put(&recording)?;
+        tx.commit().map_err(|error| error.to_string())
+    })
+    .and_then(|result| result);
+    if let Err(error) = saved {
+        let restore = if let Some(bytes) = old_file {
+            crate::fs_writer::atomic_write(&path, &bytes)
+        } else if path.exists() {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())
+        } else {
+            Ok(())
+        };
+        let restore_history = history.put(&previous);
+        restore
+            .and(restore_history)
+            .map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub fn apply_external_edit<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -402,6 +462,127 @@ mod persistence_tests {
         let revision = details(handle, "a").unwrap().unwrap().1;
         assert!(!poll().1);
         assert_eq!(details(handle, "a").unwrap().unwrap().1, revision);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn preview_corrections_persist_and_survive_later_transcription() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-preview-save-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        crate::sqlite::initialize(app).unwrap();
+        let folder = root.join("recording");
+        let mut recording = recording("edited".into());
+        recording.folder_path = Some(folder.to_string_lossy().into_owned());
+        recording.transcript = Some("Original transcript".into());
+        append(app, recording.clone()).unwrap();
+        crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, None, None)
+            .unwrap();
+        let data = app.path().app_data_dir().unwrap();
+        let durable = || {
+            History::open(&data.join("history.sqlite3"), &data.join("recordings.json"))
+                .unwrap()
+                .get("edited")
+                .unwrap()
+                .unwrap()
+        };
+        for correction in [
+            "Original transcript",
+            "Corrected opening.\nCorrected ending.",
+            "",
+            "Final saved correction.",
+        ] {
+            save_preview_transcript(app, "edited", correction).unwrap();
+            // Open a second database connection to verify durable state.
+            assert_eq!(durable().transcript.as_deref(), Some(correction));
+            assert_eq!(
+                std::fs::read_to_string(folder.join("transcript.md")).unwrap(),
+                correction
+            );
+            let queued = crate::sqlite::next_file_edit(app).unwrap().unwrap();
+            assert_eq!(queued.content_md, correction);
+            assert!(crate::fs_writer::has_local_edit(app, &folder.join("transcript.md")).unwrap());
+            set_transcript(
+                app,
+                "edited",
+                Some("Late device transcript".into()),
+                "processing",
+            )
+            .unwrap();
+            let (updated, _) = set_result(
+                app,
+                "edited",
+                "Cloud title",
+                "Late cloud transcript".into(),
+                None,
+                None,
+                "complete",
+                true,
+            )
+            .unwrap()
+            .unwrap();
+            crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &updated, None, None)
+                .unwrap();
+            assert_eq!(load_all(app)[0].transcript.as_deref(), Some(correction));
+            assert_eq!(
+                std::fs::read_to_string(folder.join("transcript.md")).unwrap(),
+                correction
+            );
+        }
+        // A failure after enqueueing must roll back the outbox and preserve both files.
+        crate::sqlite::with_open(app, |conn| conn.execute_batch(
+            "CREATE TRIGGER fail_preview_observation BEFORE UPDATE ON filesystem_state BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END;"
+        )).unwrap().unwrap();
+        assert!(save_preview_transcript(app, "edited", "Must not partially land").is_err());
+        assert_eq!(
+            durable().transcript.as_deref(),
+            Some("Final saved correction.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("transcript.md")).unwrap(),
+            "Final saved correction."
+        );
+        assert_eq!(
+            crate::sqlite::next_file_edit(app)
+                .unwrap()
+                .unwrap()
+                .content_md,
+            "Final saved correction."
+        );
+        crate::sqlite::with_open(app, |conn| {
+            conn.execute_batch("DROP TRIGGER fail_preview_observation")
+        })
+        .unwrap()
+        .unwrap();
+        // Deferred foreign keys let every write succeed and fail only at COMMIT.
+        crate::sqlite::with_open(app, |conn| conn.execute_batch(
+            "CREATE TABLE preview_parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE preview_commit_guard(parent_id INTEGER REFERENCES preview_parent(id) DEFERRABLE INITIALLY DEFERRED);
+             CREATE TRIGGER fail_preview_commit AFTER UPDATE ON pending_operations BEGIN INSERT INTO preview_commit_guard VALUES(99); END;"
+        )).unwrap().unwrap();
+        assert!(
+            save_preview_transcript(app, "edited", "Must roll back after both file writes")
+                .is_err()
+        );
+        assert_eq!(
+            durable().transcript.as_deref(),
+            Some("Final saved correction.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("transcript.md")).unwrap(),
+            "Final saved correction."
+        );
+        assert_eq!(
+            crate::sqlite::next_file_edit(app)
+                .unwrap()
+                .unwrap()
+                .content_md,
+            "Final saved correction."
+        );
+        crate::sqlite::with_open(app, |conn| conn.execute_batch("DROP TRIGGER fail_preview_commit; DROP TABLE preview_commit_guard; DROP TABLE preview_parent;")).unwrap().unwrap();
+        assert!(save_preview_transcript(app, "missing", "must not disappear").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

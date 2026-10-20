@@ -542,7 +542,33 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub fn get_hud_state() -> crate::hud::HudState { crate::hud::current() }
+pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
+    let mut state = crate::hud::current();
+    if state.phase == crate::hud::Phase::Done {
+        if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
+            if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+        }
+    }
+    state
+}
+
+#[tauri::command]
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
+    // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fast paste can finish just before the recording's folder is registered.
+        for _ in 0..50 {
+            let ready = store::get(&app, &session_id)?.is_some_and(|rec| rec.folder_path.is_some());
+            if ready {
+                store::save_preview_transcript(&app, &session_id, &text)?;
+                let _ = app.emit("recordings:updated", ());
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Err("Recording is still being saved. Please retry.".into())
+    }).await.map_err(|error| format!("Could not save transcript: {error}"))?
+}
 
 #[tauri::command]
 pub fn show_settings(app: AppHandle) -> Result<(), String> {

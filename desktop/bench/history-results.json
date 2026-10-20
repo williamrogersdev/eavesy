@@ -26,12 +26,11 @@
     "Allocation figures are cumulative Rust allocator requests, including reallocations; they exclude SQLite C allocations and are not peak RAM.",
     "Search timing uses a term matching all bodies and returns the first 50 matches; this is not a worst-case no-match search.",
     "No network latency, Swift capture or JavaScript rendering was measured.",
-    "This is a live list with stable timestamp/ID ordering and offset pagination. Mutations between page requests can shift offsets; recording updates trigger a reload of the loaded range, duplicate IDs are removed and obsolete request generations are discarded. It is not a multi-page database snapshot."
+    "This is a live list with stable timestamp/ID ordering and offset pagination. Mutations between page requests can shift offsets; recording updates trigger a reload of the loaded range, duplicate IDs are removed and obsolete request generations are discarded. It is not a multi-page database snapshot.",
+    "The later main-branch editable-preview integration changes only the Tauri/store wrappers. The measured history.rs and benchmark sources remain byte-for-byte identical; their measurements are retained. Integration source hashes are recorded separately."
   ],
   "measured_sources_sha256": {
     "desktop/src-tauri/src/history.rs": "8ae95ff2a62c6f010b83b61abf46bce5ae5d8245e7e9645eef11442674cd6a0e",
-    "desktop/src-tauri/src/store.rs": "fb775b945726f99bb481b2b2356be60014664488f8fb74aa1a5132182b74c096",
-    "desktop/src-tauri/src/fs_watcher.rs": "37d707f50876bcf6c953be26e4549a4128e9bcb527225fc272b7fd243151a7a9",
     "desktop/bench/history.rs": "38c429a706f2eb0113a3c35ce40648383185d087212a4f83ca22a5bf251dff7d",
     "desktop/bench/history-legacy.rs": "2c9d9db221aeafdae95febc639ca50882a940de8ca22368e67f7b8ad3f9a1d1e",
     "desktop/bench/history-alloc.rs": "6b9936776cbf01127047f3031e953a79a229dbc1fc544cc95f78c8c06c4e29f9"
@@ -408,5 +407,10 @@
     "dependency_versions": "All measured dependencies are an exact subset of desktop/src-tauri/Cargo.lock.",
     "profile": "opt-level=3, thin LTO, codegen-units=1, strip=debuginfo; same as the production release profile.",
     "standard_reproduction": "cargo run --locked --release --example history-benchmark from desktop/src-tauri compiles the same benchmark source with the desktop package dependencies."
+  },
+  "integration_sources_sha256": {
+    "desktop/src-tauri/src/store.rs": "b881e804f822a85c102fb5ad9de3c8b84cdcc77d48aeff61aebd0fbacdb2b8cb",
+    "desktop/src-tauri/src/fs_watcher.rs": "37d707f50876bcf6c953be26e4549a4128e9bcb527225fc272b7fd243151a7a9",
+    "desktop/src-tauri/src/commands.rs": "5c7c370d0073b6a755280e119b1f246b987ad01c05f7708bfeaf8ad4bf895399"
   }
 }

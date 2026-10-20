@@ -127,6 +127,7 @@ pub fn run() {
             commands::open_keyboard_settings,
             commands::set_panel_pinned,
             commands::get_hud_state,
+            commands::save_preview_transcript,
             commands::sync_status,
             commands::show_settings,
             commands::pair_device,
@@ -191,6 +192,7 @@ pub fn run() {
                 });
             }
 
+            install_location::refresh_icon();
             hud::set_state(&handle, hud::HudState::idle());
 
             if let Err(e) = app_menu::install(&handle) {

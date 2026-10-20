@@ -81,3 +81,7 @@ tauri = { version = "2.0", features = ["test"] }
 [[example]]
 name = "history-benchmark"
 path = "../bench/history.rs"
+
+# Legacy objc macros test this feature internally; it is not an app feature.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

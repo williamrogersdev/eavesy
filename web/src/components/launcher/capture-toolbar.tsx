@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Camera, ChevronDown, Clapperboard, Square, Users } from 'lucide-react';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
@@ -46,7 +46,6 @@ export function CaptureToolbar({
   onStop: () => void;
 }) {
   const fn = dictationHotkey === FN || dictationHotkey === 'fn';
-  if (live) return <div className="ev-toolbar"><LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} /></div>;
   return (
     <div className="ev-toolbar">
       <ToolbarShelf>
@@ -55,13 +54,14 @@ export function CaptureToolbar({
           label="Talk"
           kbd={fn ? 'fn' : undefined}
           hint={talkHint(fn ? FN : dictationHotkey)}
-          disabled={busy}
+          disabled={busy || !!live}
           onClick={onTalk}
         />
-        <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" disabled={busy} onClick={onMeeting} />
-        <ToolbarSegment icon={Camera} label="Screenshot" hint="Pick an area to save" disabled={busy} onClick={onScreenshot} />
-        <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" disabled={busy} onClick={onVideo} />
+        <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" disabled={busy || !!live} onClick={onMeeting} />
+        <ToolbarSegment icon={Camera} label="Screenshot" hint="Pick an area to save" disabled={busy || !!live} onClick={onScreenshot} />
+        <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" disabled={busy || !!live} onClick={onVideo} />
       </ToolbarShelf>
+      {live && <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} />}
     </div>
   );
 }
@@ -70,11 +70,16 @@ const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'M
 
 /** The shelf while a capture runs. Click it to see more of what has been heard. */
 function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const lines = useLiveLines(live.sessionId, 4);
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
-  const last = lines.at(-1)?.text ?? '';
+  const transcript = useRef<HTMLDivElement>(null);
+  const text = lines.map((line) => line.text).join(' ');
+  useEffect(() => {
+    const box = transcript.current;
+    if (box && open) box.scrollTop = box.scrollHeight;
+  }, [text, open]);
   const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
   return (
     <div className="ev-livebar" data-phase={live.phase} data-open={open || undefined}>
@@ -91,7 +96,7 @@ function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string
           </span>
           <span className="ev-livebar-label" aria-live="polite">{label}</span>
           {started && !thinking && <span className="ev-livebar-time">{clock(live.elapsed)}</span>}
-          <span className="ev-livebar-words"><bdi>{open ? '' : last}</bdi></span>
+          <span className="ev-livebar-spacer" />
           <ChevronDown size={14} strokeWidth={1.75} className="ev-livebar-chev" aria-hidden />
         </button>
         {!thinking && started && (
@@ -103,7 +108,7 @@ function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string
         )}
       </div>
       <div className="ev-livebar-more" aria-hidden={!open}>
-        <div>
+        <div ref={transcript}>
           {lines.length > 0 ? (
             lines.map((line, i) => (
               <p key={i} data-provisional={line.provisional || undefined}>
