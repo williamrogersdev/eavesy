@@ -1,270 +1,278 @@
 'use client';
 
-import { Check, FolderOpen, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
-import { AppSection, appButton } from '@/components/ui/app-page';
-import {
-  createProject,
-  deleteProject,
-  listProjects,
-  projectSuggestions,
-  updateProject,
-  type ProjectSummary,
-} from '@/lib/api/projects';
-import { PROJECT_LIMITS } from '@/lib/projects';
+import { FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AppAlert, AppEmptyState, AppPageHeader, appButton } from '@/components/ui/app-page';
+import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
+import { createProject, deleteProject, listProjects, updateProject, type ProjectSummary } from '@/lib/api/projects';
+import { projectWords } from '@/lib/projects';
 import { cn } from '@/lib/utils';
-import { TermInput } from './term-input';
+import { ProjectEditor, type ProjectSave } from './project-editor';
 
-interface Draft {
-  name: string;
-  about: string;
-  vocabulary: string[];
-  people: string;
-  match: string[];
-}
+let cache: ProjectSummary[] | null = null;
 
-const EMPTY: Draft = { name: '', about: '', vocabulary: [], people: '', match: [] };
+const PENDING = 'pending-';
 
-function draftOf(project: ProjectSummary): Draft {
-  return {
-    name: project.name,
-    about: project.about ?? '',
-    vocabulary: project.vocabulary,
-    people: project.people ?? '',
-    match: project.match,
-  };
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
 export function ProjectManager() {
-  const [items, setItems] = useState<ProjectSummary[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft>(EMPTY);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [items, setItemsState] = useState<ProjectSummary[] | null>(cache);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [retry, setRetry] = useState<ProjectSummary | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const toast = useSaveToast();
+  const changes = useRef(0);
+  const saves = useRef(new Map<string, { attempt: number; confirmed: ProjectSummary }>());
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setItems(await listProjects(signal));
+  const setItems = (update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    changes.current += 1;
+    setItemsState((current) => {
+      const next = update(current ?? []);
+      cache = next;
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const before = changes.current;
+    void listProjects(controller.signal)
+      .then((fresh) => {
+        if (changes.current !== before) return;
+        cache = fresh;
+        setItemsState(fresh);
+      })
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setLoadFailed(true);
+        setItemsState((current) => current ?? []);
+        setError('Could not load your projects. Reload the page to try again.');
+      });
+    return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal).catch((cause: unknown) => {
-      if (cause instanceof DOMException && cause.name === 'AbortError') return;
-      setMessage('Could not load your projects.');
-    });
-    return () => controller.abort();
-  }, [load]);
-
-  useEffect(() => {
-    if (!editingId) {
-      setSuggestions([]);
-      return;
-    }
-    const controller = new AbortController();
-    void projectSuggestions(editingId, controller.signal).then(setSuggestions).catch(() => setSuggestions([]));
-    return () => controller.abort();
-  }, [editingId]);
+  const startNew = () => {
+    setError(null);
+    setRetry(null);
+    setConfirming(null);
+    setEditing('new');
+  };
 
   const close = () => {
-    setFormOpen(false);
-    setEditingId(null);
-    setDeletingId(null);
-    setDraft(EMPTY);
+    setEditing(null);
+    setRetry(null);
   };
 
-  const edit = (project: ProjectSummary) => {
-    setFormOpen(true);
-    setEditingId(project.id);
-    setDeletingId(null);
-    setDraft(draftOf(project));
-    setMessage(null);
-  };
-
-  const save = async () => {
-    if (!draft.name.trim()) return;
-    setBusy(true);
-    setMessage(null);
-    const fields = {
-      name: draft.name.trim(),
-      about: draft.about.trim() || null,
-      vocabulary: draft.vocabulary,
-      people: draft.people.trim() || null,
-      match: draft.match,
-    };
-    try {
-      if (editingId) await updateProject(editingId, fields);
-      else await createProject(fields);
-    } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Could not save the project.');
-      setBusy(false);
-      return;
-    }
-    const saved = editingId ? 'Project saved.' : 'Project created.';
+  const create = (fields: ProjectSave) => {
+    const pendingId = `${PENDING}${Date.now()}`;
+    const pending: ProjectSummary = { id: pendingId, recordingCount: 0, ...fields };
+    setItems((current) => [...current, pending]);
     close();
-    try {
-      await load();
-      setMessage(saved);
-    } catch {
-      setMessage(`${saved} Reload the page to see the latest list.`);
-    } finally {
-      setBusy(false);
-    }
+    setError(null);
+    toast.show('Project created');
+    void createProject(fields)
+      .then((saved) => setItems((current) => current.map((item) => (item.id === pendingId ? saved : item))))
+      .catch((cause: unknown) => {
+        setItems((current) => current.filter((item) => item.id !== pendingId));
+        setError(cause instanceof Error ? `Could not create the project: ${cause.message}` : 'Could not create the project.');
+        setRetry(pending);
+        setEditing('new');
+      });
   };
 
-  const remove = async (project: ProjectSummary) => {
-    if (deletingId !== project.id) {
-      setDeletingId(project.id);
-      setMessage(`Click again to delete ${project.name}. Its recordings stay in your library.`);
+  const save = (project: ProjectSummary, fields: ProjectSave) => {
+    const updated = { ...project, ...fields };
+    const previous = saves.current.get(project.id);
+    const attempt = (previous?.attempt ?? 0) + 1;
+    const confirmed = previous?.confirmed ?? project;
+    saves.current.set(project.id, { attempt, confirmed });
+    setItems((current) => current.map((item) => (item.id === project.id ? updated : item)));
+    close();
+    setError(null);
+    toast.show();
+    void updateProject(project.id, fields)
+      .then(() => {
+        if (saves.current.get(project.id)?.attempt === attempt) saves.current.set(project.id, { attempt, confirmed: updated });
+      })
+      .catch((cause: unknown) => {
+        if (saves.current.get(project.id)?.attempt !== attempt) return;
+        setItems((current) => current.map((item) => (item.id === project.id ? confirmed : item)));
+        setError(cause instanceof Error ? `Could not save ${project.name}: ${cause.message}` : `Could not save ${project.name}.`);
+      });
+  };
+
+  const remove = (project: ProjectSummary) => {
+    if (confirming !== project.id) {
+      setConfirming(project.id);
       return;
     }
-    setBusy(true);
-    try {
-      await deleteProject(project.id);
-      setItems((current) => current.filter((item) => item.id !== project.id));
-      if (editingId === project.id) close();
-      setDeletingId(null);
-      setMessage('Project deleted.');
-    } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Could not delete the project.');
-    } finally {
-      setBusy(false);
-    }
+    setConfirming(null);
+    let index = -1;
+    setItems((current) => {
+      index = current.findIndex((item) => item.id === project.id);
+      return current.filter((item) => item.id !== project.id);
+    });
+    if (editing === project.id) close();
+    toast.show('Project deleted');
+    void deleteProject(project.id).catch((cause: unknown) => {
+      setItems((current) => {
+        const next = [...current];
+        if (next.some((item) => item.id === project.id)) return next;
+        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, project);
+        return next;
+      });
+      setError(cause instanceof Error ? `Could not delete ${project.name}: ${cause.message}` : `Could not delete ${project.name}.`);
+    });
   };
 
-  const field = 'w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
-  const label = 'text-xs font-medium text-ev-ink-2';
   return (
-    <AppSection
-      id="projects"
-      title="Projects"
-      description="What you're working on. A recording's project helps Eavesy spell your terms and names, and the Mac app picks it from the window you're in."
-      action={formOpen ? null : (
-        <button
-          type="button"
-          onClick={() => { close(); setFormOpen(true); setMessage(null); }}
-          className={appButton('secondary', 'sm')}
-        >
-          <Plus className="h-3.5 w-3.5" /> New
-        </button>
-      )}
-    >
-      {items.length ? (
-        <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
-          {items.map((project) => (
-            <li key={project.id} className="flex items-center justify-between gap-3 px-3 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <FolderOpen className="h-4 w-4 shrink-0 text-ev-ink-2" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm">{project.name}</p>
-                  <p className="truncate text-xs text-ev-ink-2">
-                    {project.about || `${project.vocabulary.length} term${project.vocabulary.length === 1 ? '' : 's'}`}
-                    {` · ${project.recordingCount} recording${project.recordingCount === 1 ? '' : 's'}`}
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-0.5">
-                <button type="button" onClick={() => edit(project)} aria-label={`Edit ${project.name}`} className={appButton('ghost', 'sm')}>
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void remove(project)}
-                  disabled={busy}
-                  aria-label={deletingId === project.id ? `Confirm deleting ${project.name}` : `Delete ${project.name}`}
-                  className={cn(appButton('ghost', 'sm'), 'text-ev-warn-ink hover:text-ev-warn-ink')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {deletingId === project.id ? 'Confirm' : null}
-                </button>
-              </div>
-            </li>
+    <>
+      <AppPageHeader
+        title="Projects"
+        description="One for each client, codebase or team you record about. A recording's project tells Eavesy which words to spell right, and the Mac app picks it from the window you're in."
+        action={items && items.length > 0 && editing !== 'new' ? (
+          <button type="button" onClick={startNew} className={appButton('primary')}>
+            <Plus className="h-4 w-4" /> New project
+          </button>
+        ) : null}
+      />
+
+      {error ? <AppAlert>{error}</AppAlert> : null}
+
+      {editing === 'new' ? (
+        <ProjectEditor key={retry?.id ?? 'new'} project={retry} creating onSave={create} onCancel={close} />
+      ) : null}
+
+      {items === null ? (
+        <ul aria-busy="true" aria-label="Loading projects" className="flex flex-col gap-2">
+          {[0, 1, 2].map((row) => (
+            <li key={row} className="h-[68px] animate-pulse rounded-[var(--ev-r-panel)] bg-ev-well" />
           ))}
         </ul>
-      ) : formOpen ? null : (
-        <p className="text-xs text-ev-ink-2">No projects yet. Create one for each codebase or client you record about.</p>
+      ) : items.length === 0 && loadFailed ? null : items.length === 0 && editing !== 'new' ? (
+        <AppEmptyState
+          icon={<FolderOpen />}
+          title="No projects yet"
+          description="Add the names and terms you say often, and Eavesy spells them right in every recording for that project."
+          action={(
+            <button type="button" onClick={startNew} className={appButton('primary')}>
+              <Plus className="h-4 w-4" /> Create a project
+            </button>
+          )}
+        />
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {items.map((project) =>
+            editing === project.id ? (
+              <li key={project.id}>
+                <ProjectEditor project={project} onSave={(fields) => save(project, fields)} onCancel={close} />
+              </li>
+            ) : (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                confirming={confirming === project.id}
+                onEdit={() => {
+                  setError(null);
+                  setConfirming(null);
+                  setRetry(null);
+                  setEditing(project.id);
+                }}
+                onDelete={() => remove(project)}
+                onCancelDelete={() => setConfirming(null)}
+              />
+            ),
+          )}
+        </ul>
       )}
 
-      {formOpen ? (
-        <div className="flex flex-col gap-3 rounded-[var(--ev-r-ctl)] border border-ev-line p-3">
-          <div className="flex items-center justify-between">
-            <p className={label}>{editingId ? 'Edit project' : 'New project'}</p>
-            <button type="button" onClick={close} aria-label="Close project editor" className={appButton('ghost', 'sm')}>
-              <X className="h-3.5 w-3.5" />
+      <SaveToast text={toast.text} />
+    </>
+  );
+}
+
+function ProjectRow({
+  project,
+  confirming,
+  onEdit,
+  onDelete,
+  onCancelDelete,
+}: {
+  project: ProjectSummary;
+  confirming: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  const pending = project.id.startsWith(PENDING);
+  const words = projectWords(project);
+  const shown = words.slice(0, 8);
+  return (
+    <li
+      className={cn(
+        'group flex items-start gap-3 rounded-[var(--ev-r-panel)] bg-ev-raised p-3.5 shadow-[0_0_0_0.5px_var(--ev-line-strong)] transition',
+        pending && 'opacity-70',
+      )}
+    >
+      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ev-manila-soft text-ev-manila-ink">
+        <FolderOpen className="h-4 w-4" strokeWidth={1.75} />
+      </span>
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={pending}
+        className="min-w-0 flex-1 text-left"
+      >
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="max-w-full truncate font-round text-[15px] font-bold text-ev-ink">{project.name}</span>
+          <span className="shrink-0 text-xs text-ev-ink-2">
+            {plural(project.recordingCount, 'recording')} · {plural(words.length, 'word')}
+          </span>
+        </span>
+        {project.about ? <span className="mt-0.5 block truncate text-[13px] text-ev-ink-2">{project.about}</span> : null}
+        {shown.length > 0 ? (
+          <span className="mt-2 flex flex-wrap gap-1">
+            {shown.map((word) => (
+              <span key={word} className="rounded-full bg-ev-well px-2 py-0.5 text-[12px] text-ev-ink-2">{word}</span>
+            ))}
+            {words.length > shown.length ? (
+              <span className="px-1 py-0.5 text-[12px] text-ev-ink-3">+{words.length - shown.length} more</span>
+            ) : null}
+          </span>
+        ) : null}
+      </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        {confirming ? (
+          <>
+            <button type="button" onClick={onCancelDelete} className={appButton('ghost', 'sm')}>
+              Keep
             </button>
-          </div>
-          <label className="flex flex-col gap-1">
-            <span className={label}>Name</span>
-            <input
-              value={draft.name}
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              maxLength={PROJECT_LIMITS.name}
-              placeholder="eavesy"
-              autoFocus
-              className={cn(field, 'h-9')}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className={label}>About</span>
-            <textarea
-              value={draft.about}
-              onChange={(event) => setDraft({ ...draft, about: event.target.value })}
-              maxLength={PROJECT_LIMITS.about}
-              rows={2}
-              placeholder="Mac meeting recorder. TanStack Start on Cloudflare Workers, Tauri and Swift desktop app."
-              className={cn(field, 'py-2 leading-relaxed')}
-            />
-            <span className="text-[11px] text-ev-ink-2">One or two lines. Summaries treat it as background.</span>
-          </label>
-          <div className="flex flex-col gap-1">
-            <span className={label}>Vocabulary</span>
-            <TermInput
-              label="Vocabulary"
-              value={draft.vocabulary}
-              onChange={(vocabulary) => setDraft({ ...draft, vocabulary })}
-              placeholder="Tauri, D1, wrangler…"
-              max={PROJECT_LIMITS.vocabulary}
-              suggestions={suggestions}
-            />
-            <span className="text-[11px] text-ev-ink-2">
-              Names, libraries and identifiers you say often. Transcription spells these right; the first few dozen count most.
-            </span>
-          </div>
-          <label className="flex flex-col gap-1">
-            <span className={label}>People</span>
-            <input
-              value={draft.people}
-              onChange={(event) => setDraft({ ...draft, people: event.target.value })}
-              maxLength={PROJECT_LIMITS.people}
-              placeholder="Maya (design), Alex (backend)"
-              className={cn(field, 'h-9')}
-            />
-          </label>
-          <div className="flex flex-col gap-1">
-            <span className={label}>Detect when the window title has</span>
-            <TermInput
-              label="Detect when the window title has"
-              value={draft.match}
-              onChange={(match) => setDraft({ ...draft, match })}
-              placeholder={draft.name.trim() || 'repo or folder name'}
-              max={PROJECT_LIMITS.match}
-            />
-            <span className="text-[11px] text-ev-ink-2">
-              The Mac app picks this project when the app you&apos;re in shows one of these words, like a repo name in
-              Cursor or Terminal. Empty means the project name.
-            </span>
-          </div>
-          <div className="flex justify-end">
-            <button type="button" onClick={() => void save()} disabled={busy || !draft.name.trim()} className={appButton('primary', 'sm')}>
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {editingId ? 'Save' : 'Create'}
+            <button type="button" onClick={onDelete} className={appButton('danger', 'sm')}>
+              Delete
             </button>
-          </div>
-        </div>
-      ) : null}
-      {message ? <p aria-live="polite" className="text-xs text-ev-ink-2">{message}</p> : null}
-    </AppSection>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={onEdit} disabled={pending} aria-label={`Edit ${project.name}`} className={appButton('ghost', 'sm')}>
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={pending}
+              aria-label={`Delete ${project.name}`}
+              title="Recordings stay in your library"
+              className={cn(appButton('ghost', 'sm'), 'hover:text-ev-warn-ink')}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+    </li>
   );
 }

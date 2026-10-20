@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanList, combinedContext, matchProject, projectTerms } from './projects';
+import { cleanList, combinedContext, matchProject, PROJECT_LIMITS, projectTerms, projectWords, wordsToFields } from './projects';
 
 const eavesy = { name: 'eavesy', match: [] as string[] };
 const desktop = { name: 'Desktop app', match: ['eavesy-desktop'] };
@@ -50,4 +50,31 @@ test('combinedContext joins the project and the note', () => {
     'Project: eavesy\nAbout: Mac recorder.\nTerms (spell exactly like this): D1\n\nFocus on sync.',
   );
   expect(combinedContext(null, null)).toBeNull();
+});
+
+test('projectWords merges the people line into the words without duplicates', () => {
+  expect(projectWords({ vocabulary: ['Tauri', 'Maya'], people: 'maya (design), Alex' })).toEqual(['Tauri', 'Maya', 'Alex']);
+  expect(projectWords({ vocabulary: [], people: null })).toEqual([]);
+});
+
+test('wordsToFields stores words as vocabulary and clears the people line', () => {
+  expect(wordsToFields(['Tauri', 'tauri', 'Alex'])).toEqual({ vocabulary: ['Tauri', 'Alex'], people: null });
+});
+
+test('wordsToFields keeps words past the vocabulary limit in the people line', () => {
+  const words = Array.from({ length: PROJECT_LIMITS.vocabulary + 2 }, (_, index) => `w${index}`);
+  const fields = wordsToFields(words);
+  expect(fields.vocabulary).toHaveLength(PROJECT_LIMITS.vocabulary);
+  expect(fields.people).toBe(`w${PROJECT_LIMITS.vocabulary}, w${PROJECT_LIMITS.vocabulary + 1}`);
+  expect(projectWords(fields)).toEqual(words);
+});
+
+test('wordsToFields never cuts an overflow word in half', () => {
+  const vocabulary = Array.from({ length: PROJECT_LIMITS.vocabulary }, (_, index) => `v${index}`);
+  const long = Array.from({ length: 40 }, (_, index) => `overflow-name-${index}`);
+  const people = wordsToFields([...vocabulary, ...long]).people ?? '';
+  expect(people.length).toBeLessThanOrEqual(PROJECT_LIMITS.people);
+  const kept = people.split(', ');
+  expect(kept).toEqual(long.slice(0, kept.length));
+  expect(projectWords({ vocabulary, people })).toEqual([...vocabulary, ...kept]);
 });
