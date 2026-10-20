@@ -116,9 +116,14 @@ fn app_bundle(exe: &Path) -> Option<&Path> {
 
 fn loose_bundle(exe: &Path, user_applications: Option<&Path>) -> Option<PathBuf> {
     let bundle = app_bundle(exe)?;
-    let installed = bundle.file_name().is_some_and(|name| name == APP_NAME)
-        && (bundle.parent() == Some(Path::new(APPLICATIONS)) || bundle.parent() == user_applications);
-    if is_cargo_bundle(bundle) || installed {
+    let resolved = bundle.canonicalize().unwrap_or_else(|_| bundle.to_path_buf());
+    let applications = Path::new(APPLICATIONS).canonicalize().unwrap_or_else(|_| PathBuf::from(APPLICATIONS));
+    let user_applications = user_applications.map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+    let installed = |path: &Path| {
+        path.file_name().is_some_and(|name| name == APP_NAME)
+            && (path.parent() == Some(applications.as_path()) || path.parent() == user_applications.as_deref())
+    };
+    if is_cargo_bundle(bundle) || is_cargo_bundle(&resolved) || installed(bundle) || installed(&resolved) {
         return None;
     }
     Some(bundle.to_path_buf())
@@ -544,6 +549,7 @@ mod tests {
         std::fs::create_dir_all(&installed).unwrap();
         let link = root.join(APP_NAME);
         std::os::unix::fs::symlink(&installed, &link).unwrap();
+        assert_eq!(loose_bundle(&link.join(EXE), Some(&applications)), None);
         assert_eq!(existing_installation(&link.join(EXE), &[applications], |p| p == installed), None);
         std::fs::remove_dir_all(root).unwrap();
     }
