@@ -531,6 +531,17 @@ mod tests {
         assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), "Final saved correction.");
         assert_eq!(crate::sqlite::next_file_edit(app).unwrap().unwrap().content_md, "Final saved correction.");
         crate::sqlite::with_open(app, |conn| conn.execute_batch("DROP TRIGGER fail_preview_observation")).unwrap().unwrap();
+        // Deferred foreign keys let every write succeed and fail only at COMMIT.
+        crate::sqlite::with_open(app, |conn| conn.execute_batch(
+            "CREATE TABLE preview_parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE preview_commit_guard(parent_id INTEGER REFERENCES preview_parent(id) DEFERRABLE INITIALLY DEFERRED);
+             CREATE TRIGGER fail_preview_commit AFTER UPDATE ON pending_operations BEGIN INSERT INTO preview_commit_guard VALUES(99); END;"
+        )).unwrap().unwrap();
+        assert!(save_preview_transcript(app, "edited", "Must roll back after both file writes").is_err());
+        assert_eq!(read_registry_file(&registry_path(app).unwrap()).unwrap()[0].transcript.as_deref(), Some("Final saved correction."));
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), "Final saved correction.");
+        assert_eq!(crate::sqlite::next_file_edit(app).unwrap().unwrap().content_md, "Final saved correction.");
+        crate::sqlite::with_open(app, |conn| conn.execute_batch("DROP TRIGGER fail_preview_commit; DROP TABLE preview_commit_guard; DROP TABLE preview_parent;")).unwrap().unwrap();
         assert!(save_preview_transcript(app, "missing", "must not disappear").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }

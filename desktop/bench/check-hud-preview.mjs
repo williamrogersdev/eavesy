@@ -1,4 +1,6 @@
-import { chromium } from '../../web/node_modules/playwright/index.mjs';
+import { createRequire } from 'node:module';
+const requireWeb = createRequire(new URL('../../web/package.json', import.meta.url));
+const { chromium } = requireWeb('@playwright/test');
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

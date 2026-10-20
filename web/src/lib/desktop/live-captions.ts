@@ -77,7 +77,13 @@ export function addCaption(state: RunningTranscript, caption: LiveCaption): Runn
   const samePhrase = (previous: LiveCaption) => {
     const overlap = Math.min(previous.endMs, caption.endMs) - Math.max(previous.startMs, caption.startMs);
     const longest = Math.max(previous.endMs - previous.startMs, caption.endMs - caption.startMs);
-    return previous.track === caption.track && (previous.startMs === caption.startMs || (overlap > 0 && overlap > longest / 2));
+    if (previous.track !== caption.track) return false;
+    if (previous.startMs === caption.startMs) return true;
+    if (overlap <= 0 || overlap <= longest / 2) return false;
+    const normalize = (text: string) => ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+    const left = normalize(previous.text);
+    const right = normalize(caption.text);
+    return !!left.trim() && !!right.trim() && (left.includes(right) || right.includes(left));
   };
   const partials = Object.fromEntries(Object.entries(base.partials).filter(([, previous]) => !samePhrase(previous)));
   if (!caption.isFinal) {

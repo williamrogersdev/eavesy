@@ -64,7 +64,17 @@ pub struct CaptionLog {
 fn same_phrase(a: &Caption, b: &Caption) -> bool {
     let overlap = a.end_ms.min(b.end_ms) - a.start_ms.max(b.start_ms);
     let longest = (a.end_ms - a.start_ms).max(b.end_ms - b.start_ms);
-    a.track == b.track && (a.start_ms == b.start_ms || (overlap > 0 && overlap > longest / 2))
+    if a.track != b.track { return false; }
+    if a.start_ms == b.start_ms { return true; }
+    if overlap <= 0 || overlap <= longest / 2 { return false; }
+    let normalize = |text: &str| format!(" {} ", text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).collect::<Vec<_>>().join(" "));
+    let left = normalize(&a.text);
+    let right = normalize(&b.text);
+    // Time ranges alone cannot identify a revision. Keep distinct text even
+    // when recognizer windows overlap heavily; growing partials contain their
+    // earlier text, while a corrected final at the same start replaces it.
+    !left.trim().is_empty() && !right.trim().is_empty() && (left.contains(&right) || right.contains(&left))
 }
 
 impl CaptionLog {
@@ -325,6 +335,18 @@ mod tests {
         revision.text = "Corrected first sentence.".into();
         log.record(&revision);
         assert_eq!(log.spoken_text(), "Corrected first sentence. Next sentence.");
+    }
+
+    #[test]
+    fn heavy_window_overlap_does_not_discard_distinct_text() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("Please bring the red notebook.", true, 0);
+        first.end_ms = 2_000;
+        let mut next = caption("Then close the kitchen window.", true, 500);
+        next.end_ms = 2_500;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "Please bring the red notebook. Then close the kitchen window.");
     }
 
     #[test]

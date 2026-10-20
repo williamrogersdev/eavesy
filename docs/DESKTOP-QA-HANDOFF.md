@@ -48,11 +48,12 @@ permission to test also authorizes sending messages to other people.
 
 ## Evidence already obtained
 
-- Rust: 266 passing before final review (additional overlap/lead-in regressions
-  added during review; use final CI totals), two intentionally ignored tests; the speech fixture is an
+- Rust: 269 passing after review, two intentionally ignored tests; the speech fixture is an
   opt-in integration test. The persistence regression reads the physical registry
   and transcript file, checks the queued edit, and applies later device/cloud
-  results. It includes empty corrections.
+  results. It includes empty corrections, reverting to original text, an
+  observation-write failure, and a deferred-constraint failure at commit after
+  both files have been written; each failure restores the previous saved state.
 - Swift: 59 tests passed earlier in this change set; both Apple speech engines
   built. Web build/type checks and transcript unit tests passed during development.
   Consult this PR's final checks for the complete merge validation.

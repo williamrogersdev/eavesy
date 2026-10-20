@@ -121,3 +121,9 @@ it('slightly overlapping recognition windows preserve both settled phrases', () 
   state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Corrected first sentence.', isFinal: true, startMs: 10, endMs: 1000 });
   expect(runningText(state)).toBe('Corrected first sentence. Next sentence.');
 });
+
+it('heavily overlapping windows keep substantially different final text', () => {
+  let state = addCaption(EMPTY_RUNNING, { sessionId: 'heavy', track: 'mic', text: 'Please bring the red notebook.', isFinal: true, startMs: 0, endMs: 2000 });
+  state = addCaption(state, { sessionId: 'heavy', track: 'mic', text: 'Then close the kitchen window.', isFinal: true, startMs: 500, endMs: 2500 });
+  expect(runningText(state)).toBe('Please bring the red notebook. Then close the kitchen window.');
+});

@@ -351,6 +351,8 @@ mod imp {
     /// keeping its centre and its top edge (or bottom edge when `keep_bottom`).
     /// Snap to the live Cocoa frame without animation, so repeated state
     /// changes cannot leave the renderer inside a partially resized window.
+    /// The cross-platform signature retains `_from` and `_animate`; macOS
+    /// ignores both and reads the current Cocoa frame directly.
     pub fn resize(window: &WebviewWindow, _from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, _animate: bool) {
         use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
         use tauri_nspanel::objc::{msg_send, sel, sel_impl};

@@ -555,18 +555,21 @@ pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
 
 #[tauri::command]
 pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
-    // Fast paste can finish just before the recording's folder is registered.
-    for _ in 0..50 {
-        let ready = store::load_all(&app).iter()
-            .any(|rec| rec.id == session_id && rec.folder_path.is_some());
-        if ready {
-            store::save_preview_transcript(&app, &session_id, &text)?;
-            let _ = app.emit("recordings:updated", ());
-            return Ok(());
+    // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fast paste can finish just before the recording's folder is registered.
+        for _ in 0..50 {
+            let ready = store::load_all(&app).iter()
+                .any(|rec| rec.id == session_id && rec.folder_path.is_some());
+            if ready {
+                store::save_preview_transcript(&app, &session_id, &text)?;
+                let _ = app.emit("recordings:updated", ());
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    Err("Recording is still being saved. Please retry.".into())
+        Err("Recording is still being saved. Please retry.".into())
+    }).await.map_err(|error| format!("Could not save transcript: {error}"))?
 }
 
 #[tauri::command]
