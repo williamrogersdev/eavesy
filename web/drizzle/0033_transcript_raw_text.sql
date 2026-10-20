@@ -1,0 +1,1 @@
+ALTER TABLE `transcript_segments` ADD `raw_text` text;

@@ -211,6 +211,34 @@
       "when": 1792442281026,
       "tag": "0029_spoken_languages",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1792450000030,
+      "tag": "0030_personal_dictionary",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1792450000031,
+      "tag": "0031_credit_usage_and_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1792450000032,
+      "tag": "0032_ai_credit_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1792450000033,
+      "tag": "0033_transcript_raw_text",
+      "breakpoints": true
     }
   ]
 }

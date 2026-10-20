@@ -1,3 +1,5 @@
+import { createAiRunner, LIBRARY_MODEL } from '@/lib/ai/credit-runner';
+import { creditSummary } from '@/lib/ai/credit-summary';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import {
   activityLog,
@@ -167,7 +169,8 @@ export async function handleSummarize(
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
   const project = await projectsRepo.getForMeeting(db, meeting);
-  const parsed = await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), {
+  const useCredits = env.AI_SUMMARY_PROVIDER === 'workers-ai' && meeting.source === 'import';
+  const args = {
     transcript,
     contextBlurb: combinedContext(meeting.contextBlurb, project),
     priorSummary,
@@ -175,9 +178,13 @@ export async function handleSummarize(
     recorderName: rendered.recorderName,
     chapters: wantChapters,
     notesLanguage: userRow?.notesLanguage,
-  });
-  const model = summaryModel(!mode.final);
-  const generatedByModel = plan.summary.apiKey ? `byo-anthropic:${model}` : model;
+  };
+  const parsed = useCredits ? await creditSummary(createAiRunner(env, 'import-summary'), args)
+    : await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), args);
+  const current = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+  if (!current || current.deletedAt || (useCredits && current.status === 'failed')) return;
+  const model = useCredits ? LIBRARY_MODEL : summaryModel(!mode.final);
+  const generatedByModel = useCredits ? `workers-ai:${model}` : plan.summary.apiKey ? `byo-anthropic:${model}` : model;
   const now = Date.now();
   const values = {
     ...summaryValues(parsed),

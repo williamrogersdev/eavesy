@@ -72,7 +72,7 @@ export const worker = {
     const abandoned = await env.DB.prepare(
       `SELECT m.id
          FROM meetings m
-        WHERE m.status IN ('recording', 'uploading')
+        WHERE m.source != 'import' AND m.status IN ('recording', 'uploading')
           AND m.updated_at < ?
           AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)
         LIMIT 200`,

@@ -80,6 +80,8 @@ function LibraryPage() {
         </Link>
       </header>
 
+      <nav className="flex gap-3 text-sm"><Link href="/app/import" className={appButton('secondary')}>Import recordings</Link><Link href="/app/memory" className={appButton('secondary')}>Ask your library</Link></nav>
+
       {!empty ? (
         <div className="flex flex-col gap-2.5">
           <label className="flex h-9 items-center gap-2 rounded-[var(--ev-r-ctl)] bg-ev-well px-3 text-ev-ink-3 focus-within:bg-ev-raised focus-within:shadow-[var(--ev-focus)]">
