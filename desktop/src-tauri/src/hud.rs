@@ -99,9 +99,11 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
 const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The resting pill: the snoop, Talk, Screenshot, Video, history and close.
-const DEFAULT_SIZE: (f64, f64) = (248.0, 40.0);
-/// Recording, writing it down, and the words that landed: two lines.
+const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
+/// Recording and writing it down: the bar and one line of what is heard.
 const WIDE: (f64, f64) = (360.0, 64.0);
+/// The words that landed: the bar and up to three lines, Copy at hand.
+const RESULT: (f64, f64) = (360.0, 100.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -117,7 +119,8 @@ pub fn size_for(state: &HudState) -> (f64, f64) {
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
             Some("video") => DEFAULT_SIZE,
-            _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) || state.notice.is_some() => WIDE,
+            _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) => RESULT,
+            _ if state.notice.is_some() => WIDE,
             _ => DEFAULT_SIZE,
         },
     }
@@ -176,8 +179,10 @@ pub fn hidden_by_user(app: &AppHandle) -> bool {
     prefs(app).hidden
 }
 
+/// Shown even when the user closed the pill: a capture running, and what it
+/// just produced, stay on screen until the result is dismissed.
 fn is_active(phase: &Phase) -> bool {
-    matches!(phase, Phase::Recording | Phase::Transcribing)
+    matches!(phase, Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Saved | Phase::Failed)
 }
 
 #[derive(Clone, Copy)]
@@ -229,7 +234,12 @@ pub fn show_on_main(app: &AppHandle) {
     show_unchecked(app);
 }
 
+/// The panel folds back into the pill, even one the user closed earlier: the
+/// panel's close is "collapse", and the pill's own close is how to put it away.
 pub fn collapse_from_panel_on_main(app: &AppHandle) {
+    if prefs(app).hidden {
+        update_prefs(app, |config| config.hud_hidden = false);
+    }
     follow_panel(app);
     show_unchecked(app);
 }
@@ -400,18 +410,26 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, SHOT, WIDE};
+    use super::{is_active, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, RESULT, SHOT, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
     }
 
     #[test]
-    fn talking_writing_and_the_pasted_words_share_one_size() {
+    fn talking_writing_and_the_pasted_words_share_one_width() {
         let talk = Some("audio");
         assert_eq!(size_for(&state(Phase::Recording, talk, None)), WIDE);
         assert_eq!(size_for(&state(Phase::Transcribing, talk, None)), WIDE);
-        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there"))), WIDE);
+        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there"))), RESULT);
+        assert_eq!(RESULT.0, WIDE.0);
+    }
+
+    #[test]
+    fn a_result_stays_on_screen_even_with_the_pill_put_away() {
+        assert!(is_active(&Phase::Done));
+        assert!(is_active(&Phase::Failed));
+        assert!(!is_active(&Phase::Idle));
     }
 
     #[test]
@@ -429,25 +447,25 @@ mod tests {
 
     #[test]
     fn refitting_keeps_the_centre_and_the_top_edge() {
-        assert_eq!(refit((500.0, 40.0, 248.0, 40.0), WIDE, false), (444.0, 40.0, 360.0, 64.0));
+        assert_eq!(refit((500.0, 40.0, 216.0, 36.0), WIDE, false), (428.0, 40.0, 360.0, 64.0));
     }
 
     #[test]
     fn low_on_the_screen_refitting_keeps_the_bottom_edge() {
-        assert_eq!(refit((500.0, 800.0, 248.0, 40.0), WIDE, true), (444.0, 776.0, 360.0, 64.0));
-        assert_eq!(refit((444.0, 776.0, 360.0, 64.0), DEFAULT_SIZE, true), (500.0, 800.0, 248.0, 40.0));
+        assert_eq!(refit((500.0, 800.0, 216.0, 36.0), WIDE, true), (428.0, 772.0, 360.0, 64.0));
+        assert_eq!(refit((428.0, 772.0, 360.0, 64.0), DEFAULT_SIZE, true), (500.0, 800.0, 216.0, 36.0));
     }
 
     #[test]
     fn in_cocoa_coordinates_the_top_edge_is_the_one_kept() {
-        assert_eq!(refit_cocoa((500.0, 800.0, 248.0, 40.0), WIDE, false), (444.0, 776.0, 360.0, 64.0));
-        assert_eq!(refit_cocoa((500.0, 100.0, 248.0, 40.0), WIDE, true), (444.0, 100.0, 360.0, 64.0));
+        assert_eq!(refit_cocoa((500.0, 800.0, 216.0, 36.0), WIDE, false), (428.0, 772.0, 360.0, 64.0));
+        assert_eq!(refit_cocoa((500.0, 100.0, 216.0, 36.0), WIDE, true), (428.0, 100.0, 360.0, 64.0));
     }
 
     #[test]
     fn only_the_resting_pill_is_ever_saved() {
-        assert_eq!(resting((444.0, 24.0, 360.0, 64.0), false), HudFrame { x: 500.0, y: 24.0, width: 248.0, height: 40.0 });
-        assert_eq!(resting((444.0, 776.0, 360.0, 64.0), true), HudFrame { x: 500.0, y: 800.0, width: 248.0, height: 40.0 });
-        assert_eq!(resting((488.0, 24.0, 272.0, 34.0), false), HudFrame { x: 500.0, y: 24.0, width: 248.0, height: 40.0 });
+        assert_eq!(resting((428.0, 24.0, 360.0, 64.0), false), HudFrame { x: 500.0, y: 24.0, width: 216.0, height: 36.0 });
+        assert_eq!(resting((428.0, 772.0, 360.0, 64.0), true), HudFrame { x: 500.0, y: 800.0, width: 216.0, height: 36.0 });
+        assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 500.0, y: 24.0, width: 216.0, height: 36.0 });
     }
 }

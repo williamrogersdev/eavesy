@@ -4,7 +4,6 @@ import {
   AudioLines,
   Camera,
   Clapperboard,
-  ClipboardPaste,
   Copy,
   FolderOpen,
   Image as ImageIcon,
@@ -27,7 +26,6 @@ import {
   copyText,
   deleteCapture,
   fetchAgentTranscript,
-  pasteToFrontmost,
   revealInFinder,
 } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
@@ -234,10 +232,7 @@ function CaptureRow({
     flash('Copied');
   }, 'Couldn’t copy that');
 
-  const paste = () => runTask(async () => {
-    await pasteToFrontmost(text);
-    flash('Pasted');
-  }, 'Couldn’t paste that');
+  const copyLabel = image ? 'Copy image' : video && !text ? 'Copy video' : 'Copy text';
 
   let body: ReactNode;
   if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;
@@ -271,31 +266,29 @@ function CaptureRow({
       </header>
       {body}
       <div className="ev-actions">
-        {playable && (
-          <IconButton
-            label={player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play'}
-            icon={player.playing ? Pause : Play}
-            filled
-            disabled={player.failed}
-            onClick={() => void player.toggle()}
-          />
-        )}
-        <IconButton label="Copy" icon={Copy} disabled={!image && !video && !text} onClick={copy} />
-        {text && <IconButton label="Paste at cursor" icon={ClipboardPaste} onClick={paste} />}
+        <IconButton label={copyLabel} icon={Copy} filled disabled={!image && !video && !text} onClick={copy} />
         <Menu
           align="end"
           open={menuOpen}
           onOpenChange={setMenuOpen}
           trigger={<IconButton label="More" icon={MoreHorizontal} />}
           items={[
+            ...(playable
+              ? [{
+                  label: player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play audio',
+                  icon: player.playing ? Pause : Play,
+                  disabled: player.failed,
+                  onSelect: () => void player.toggle(),
+                }]
+              : []),
             ...(text && signedIn
               ? [{
-                  label: 'Copy for AI',
+                  label: 'Copy without filler words',
                   icon: Sparkles,
                   onSelect: () => runTask(async () => {
                     const { text: agent, cleaned } = await agentText(rec);
                     await copyText(agent);
-                    flash(cleaned ? 'Copied for AI' : 'Copied. The cleaned-up version isn’t ready yet');
+                    flash(cleaned ? 'Copied without filler' : 'Copied. The tidied version isn’t ready yet');
                   }, 'Couldn’t copy that'),
                 }]
               : []),
