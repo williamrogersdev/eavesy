@@ -29,7 +29,7 @@
     "This is a live list with stable timestamp/ID ordering and offset pagination. Mutations between page requests can shift offsets; recording updates trigger a reload of the loaded range, duplicate IDs are removed and obsolete request generations are discarded. It is not a multi-page database snapshot."
   ],
   "measured_sources_sha256": {
-    "desktop/src-tauri/src/history.rs": "709c22bbc3f78f25082994649a0bf0c3725c6109c9f7593e771ebe8cdacb147b",
+    "desktop/src-tauri/src/history.rs": "bda030fd76d72c83cfc4fc60d80f395932f0d87ffe102c02b71ecd5e9e0ab81b",
     "desktop/src-tauri/src/store.rs": "fb775b945726f99bb481b2b2356be60014664488f8fb74aa1a5132182b74c096",
     "desktop/src-tauri/src/fs_watcher.rs": "37d707f50876bcf6c953be26e4549a4128e9bcb527225fc272b7fd243151a7a9",
     "desktop/bench/history.rs": "38c429a706f2eb0113a3c35ce40648383185d087212a4f83ca22a5bf251dff7d",
@@ -38,63 +38,63 @@
   },
   "timings": [
     {
-      "elapsed_ms": 33.3325,
+      "elapsed_ms": 8.342749999999999,
       "legacy_bytes": 1080532,
       "n": 10,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 1.068125,
-      "median_ms": 1.0475,
-      "min_ms": 1.000208,
+      "max_ms": 0.7022499999999999,
+      "median_ms": 0.5565,
+      "min_ms": 0.5087499999999999,
       "n": 10,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 0.185042,
-      "median_ms": 0.179459,
-      "min_ms": 0.17545899999999998,
+      "max_ms": 0.12875,
+      "median_ms": 0.12245800000000001,
+      "min_ms": 0.118458,
       "n": 10,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 16.910417,
-      "median_ms": 12.465708000000001,
-      "min_ms": 9.856834,
+      "max_ms": 9.944458999999998,
+      "median_ms": 7.998875000000001,
+      "min_ms": 6.948125,
       "n": 10,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.7025,
-      "median_ms": 0.455083,
-      "min_ms": 0.2745,
+      "max_ms": 0.26908299999999996,
+      "median_ms": 0.216042,
+      "min_ms": 0.15454199999999998,
       "n": 10,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.783291,
-      "median_ms": 0.340708,
-      "min_ms": 0.334042,
+      "max_ms": 0.5251669999999999,
+      "median_ms": 0.336792,
+      "min_ms": 0.307292,
       "n": 10,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 0.039667,
-      "median_ms": 0.027708,
-      "min_ms": 0.027375,
+      "max_ms": 0.039,
+      "median_ms": 0.027,
+      "min_ms": 0.023541,
       "n": 10,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 0.8482090000000001,
-      "median_ms": 0.710583,
-      "min_ms": 0.549334,
+      "max_ms": 0.678792,
+      "median_ms": 0.37962500000000005,
+      "min_ms": 0.258417,
       "n": 10,
       "operation": "after_search_full_history",
       "reps": 7
@@ -105,63 +105,63 @@
       "n": 10
     },
     {
-      "elapsed_ms": 594.685041,
+      "elapsed_ms": 67.037708,
       "legacy_bytes": 10805672,
       "n": 100,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 190.58904099999998,
-      "median_ms": 171.045959,
-      "min_ms": 161.304042,
+      "max_ms": 59.157125,
+      "median_ms": 58.358624999999996,
+      "min_ms": 56.05075,
       "n": 100,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 10.980334,
-      "median_ms": 4.01125,
-      "min_ms": 3.5019579999999997,
+      "max_ms": 2.4145,
+      "median_ms": 2.339167,
+      "min_ms": 2.178583,
       "n": 100,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 33.967541,
-      "median_ms": 19.377958,
-      "min_ms": 17.392625,
+      "max_ms": 19.161542,
+      "median_ms": 17.999167,
+      "min_ms": 17.233874999999998,
       "n": 100,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.33641699999999997,
-      "median_ms": 0.28391700000000003,
-      "min_ms": 0.209917,
+      "max_ms": 0.25875,
+      "median_ms": 0.16325,
+      "min_ms": 0.138667,
       "n": 100,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 5.382208,
-      "median_ms": 4.5262080000000005,
-      "min_ms": 4.351624999999999,
+      "max_ms": 9.974958,
+      "median_ms": 3.896208,
+      "min_ms": 3.502208,
       "n": 100,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 0.117125,
-      "median_ms": 0.10054099999999999,
-      "min_ms": 0.09775,
+      "max_ms": 0.11825000000000001,
+      "median_ms": 0.1005,
+      "min_ms": 0.072875,
       "n": 100,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 4.261958,
-      "median_ms": 3.414167,
-      "min_ms": 2.633,
+      "max_ms": 2.742416,
+      "median_ms": 1.7905,
+      "min_ms": 1.5135,
       "n": 100,
       "operation": "after_search_full_history",
       "reps": 7
@@ -172,63 +172,63 @@
       "n": 100
     },
     {
-      "elapsed_ms": 797.16,
+      "elapsed_ms": 505.062166,
       "legacy_bytes": 54029672,
       "n": 500,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 5937.007042,
-      "median_ms": 5043.545917,
-      "min_ms": 3923.01675,
+      "max_ms": 2116.754125,
+      "median_ms": 1901.748917,
+      "min_ms": 1763.674333,
       "n": 500,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 26.993208000000003,
-      "median_ms": 21.772084,
-      "min_ms": 20.434625,
+      "max_ms": 13.00325,
+      "median_ms": 12.630583000000001,
+      "min_ms": 12.335834,
       "n": 500,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 80.964166,
-      "median_ms": 73.07016700000001,
-      "min_ms": 68.98879199999999,
+      "max_ms": 61.846875000000004,
+      "median_ms": 59.022,
+      "min_ms": 54.087542,
       "n": 500,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.806334,
-      "median_ms": 0.319958,
-      "min_ms": 0.24774999999999997,
+      "max_ms": 0.228917,
+      "median_ms": 0.17791700000000002,
+      "min_ms": 0.118,
       "n": 500,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 74.584541,
-      "median_ms": 32.521167,
-      "min_ms": 26.906041,
+      "max_ms": 18.355916,
+      "median_ms": 17.889,
+      "min_ms": 17.505625000000002,
       "n": 500,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 1.279458,
-      "median_ms": 0.636,
-      "min_ms": 0.5975419999999999,
+      "max_ms": 0.422792,
+      "median_ms": 0.317084,
+      "min_ms": 0.282791,
       "n": 500,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 3.66,
-      "median_ms": 3.2429580000000002,
-      "min_ms": 2.986834,
+      "max_ms": 2.010708,
+      "median_ms": 1.737625,
+      "min_ms": 1.548291,
       "n": 500,
       "operation": "after_search_full_history",
       "reps": 7
@@ -241,7 +241,7 @@
   ],
   "allocations": [
     {
-      "elapsed_ms": 10.872042,
+      "elapsed_ms": 5.477459,
       "legacy_bytes": 1080532,
       "n": 10,
       "operation": "one_time_migration"
@@ -294,7 +294,7 @@
       "n": 10
     },
     {
-      "elapsed_ms": 106.357416,
+      "elapsed_ms": 61.634542,
       "legacy_bytes": 10805672,
       "n": 100,
       "operation": "one_time_migration"
@@ -347,7 +347,7 @@
       "n": 100
     },
     {
-      "elapsed_ms": 596.04125,
+      "elapsed_ms": 307.410459,
       "legacy_bytes": 54029672,
       "n": 500,
       "operation": "one_time_migration"
@@ -399,5 +399,7 @@
       "before_response_bytes": 53390783,
       "n": 500
     }
-  ]
+  ],
+  "benchmark_binary_sha256": "5220da9e2fdd9926a3dbc268642efca842ec0053da55db571f66670efe847ddc",
+  "measured_at_utc": "2026-10-20T22:01:01.378440Z"
 }
