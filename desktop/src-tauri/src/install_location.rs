@@ -5,6 +5,129 @@ use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const APPLICATIONS: &str = "/Applications";
+const APP_NAME: &str = "Eavesy.app";
+
+/// Prefer the installed app before the single-instance plugin can let a loose
+/// copy become the owner of our shared data and shortcuts. Never overwrite an
+/// installed app just because someone opened another download.
+#[cfg(target_os = "macos")]
+pub fn open_existing_installation() -> Result<bool, String> {
+    if cfg!(debug_assertions) {
+        return Ok(false);
+    }
+    let Ok(exe) = std::env::current_exe() else { return Ok(false) };
+    let mut directories = vec![PathBuf::from(APPLICATIONS)];
+    if let Some(home) = dirs::home_dir() {
+        directories.push(home.join("Applications"));
+    }
+    let mut identification_error = None;
+    let mut found = false;
+    let installed = existing_installation(&exe, &directories, |path| match is_eavesy_installation(path) {
+        Ok(known) => {
+            found |= known;
+            known
+        }
+        Err(error) => {
+            identification_error = Some(error);
+            false
+        }
+    });
+    if !found {
+        if let Some(error) = identification_error {
+            return Err(error);
+        }
+    }
+    // Both copies have the same bundle ID. Without -n, Launch Services may
+    // reactivate this loose copy instead of starting the installed executable.
+    // The installed app's single-instance plugin handles an already running app.
+    launch_existing(installed, |installed| {
+        match Command::new("/usr/bin/open").args(["-n", "-a"]).arg(installed).status() {
+            Ok(status) if status.success() => Ok(()),
+            result => {
+                crate::telemetry::capture("install_location.open_existing", &format!("{result:?}"));
+                Err(format!("Eavesy is already installed at {} but couldn't be opened. Open that app from Finder, or replace it with a fresh download. This extra copy will quit to keep your recordings and updates in one place.", installed.display()))
+            }
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn is_eavesy_installation(path: &Path) -> Result<bool, String> {
+    use objc2_foundation::{NSBundle, NSString};
+    let identifier = NSBundle::bundleWithPath(&NSString::from_str(&path.to_string_lossy()))
+        .and_then(|bundle| bundle.bundleIdentifier());
+    if identifier.is_none() && path.exists() {
+        crate::telemetry::capture("install_location.identify", "An Applications candidate exists but its bundle identifier couldn't be read");
+        return Err(format!("An app already exists at {}, but Eavesy couldn't verify it. Check that app in Finder before installing another copy. This extra copy will quit without changing your recordings.", path.display()));
+    }
+    Ok(identifier.is_some_and(|identifier| identifier.to_string() == "com.eavesy.desktop"))
+}
+
+fn launch_existing(installed: Option<PathBuf>, launch: impl FnOnce(&Path) -> Result<(), String>) -> Result<bool, String> {
+    match installed {
+        Some(path) => launch(&path).map(|()| true),
+        None => Ok(false),
+    }
+}
+
+/// Startup can fail before Tauri and its dialog plugin exist. Present a native
+/// alert on the main thread, without initializing capture or shared app state.
+#[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
+pub fn show_launch_error(message: &str) {
+    use tauri_nspanel::cocoa::base::{id, nil, YES};
+    use tauri_nspanel::cocoa::foundation::NSString;
+    use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let application: id = msg_send![class!(NSApplication), sharedApplication];
+        let alert: id = msg_send![class!(NSAlert), new];
+        let title = NSString::alloc(nil).init_str("Open your installed Eavesy app");
+        let detail = NSString::alloc(nil).init_str(message);
+        let button = NSString::alloc(nil).init_str("Quit");
+        let _: () = msg_send![alert, setMessageText: title];
+        let _: () = msg_send![alert, setInformativeText: detail];
+        let _: id = msg_send![alert, addButtonWithTitle: button];
+        let _: () = msg_send![application, activateIgnoringOtherApps: YES];
+        let _: isize = msg_send![alert, runModal];
+        let _: () = msg_send![alert, release];
+        let _: () = msg_send![title, release];
+        let _: () = msg_send![detail, release];
+        let _: () = msg_send![button, release];
+    }
+}
+
+fn existing_installation(
+    exe: &Path,
+    directories: &[PathBuf],
+    mut is_eavesy: impl FnMut(&Path) -> bool,
+) -> Option<PathBuf> {
+    let bundle = app_bundle(exe)?;
+    if is_cargo_bundle(bundle) {
+        return None;
+    }
+    let installed = directories.iter().map(|dir| dir.join(APP_NAME)).find(|path| is_eavesy(path))?;
+    let resolved = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    (resolved(bundle) != resolved(&installed)).then_some(installed)
+}
+
+fn app_bundle(exe: &Path) -> Option<&Path> {
+    exe.ancestors().find(|p| p.extension().is_some_and(|ext| ext == "app"))
+}
+
+fn loose_bundle(exe: &Path, user_applications: Option<&Path>) -> Option<PathBuf> {
+    let bundle = app_bundle(exe)?;
+    let resolved = bundle.canonicalize().unwrap_or_else(|_| bundle.to_path_buf());
+    let applications = Path::new(APPLICATIONS).canonicalize().unwrap_or_else(|_| PathBuf::from(APPLICATIONS));
+    let user_applications = user_applications.map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+    let installed = |path: &Path| {
+        path.file_name().is_some_and(|name| name == APP_NAME)
+            && (path.parent() == Some(applications.as_path()) || path.parent() == user_applications.as_deref())
+    };
+    if is_cargo_bundle(bundle) || is_cargo_bundle(&resolved) || installed(bundle) || installed(&resolved) {
+        return None;
+    }
+    Some(bundle.to_path_buf())
+}
 
 pub const MOVE_TO_APPLICATIONS: &str = "Eavesy is running from a disk image or another drive, so it can't replace itself. \
 Quit Eavesy, drag it into your Applications folder, eject the disk image, then open Eavesy from Applications and update again.";
@@ -88,11 +211,13 @@ fn same_volume(a: &Path, b: &Path) -> Option<bool> {
     Some(std::fs::metadata(a).ok()?.dev() == std::fs::metadata(b).ok()?.dev())
 }
 
-/// On launch from a disk image, asks to move Eavesy into Applications so
+/// On launch from a loose copy, asks to move Eavesy into Applications so
 /// updates, permissions and login items all point at one stable copy.
 pub fn offer_move_on_launch(app: &AppHandle) {
-    if let Some(misplaced) = misplaced() {
-        offer_move(app, misplaced, "Eavesy is running from the disk image. Move it to Applications so it can update itself and keep your permissions?");
+    let user_applications = dirs::home_dir().map(|home| home.join("Applications"));
+    let loose = std::env::current_exe().ok().and_then(|exe| loose_bundle(&exe, user_applications.as_deref()));
+    if let Some(misplaced) = misplaced().or_else(|| loose.map(|bundle| Misplaced { bundle, volume: None })) {
+        offer_move(app, misplaced, "Keep one Eavesy app in Applications, whether you installed it with Homebrew or downloaded it. Move this copy to Applications?");
     }
 }
 
@@ -127,7 +252,7 @@ fn move_and_relaunch(app: AppHandle, misplaced: Misplaced) {
             let _ = app.run_on_main_thread(move || {
                 handle
                     .dialog()
-                    .message(format!("{MOVE_TO_APPLICATIONS}\n\n({error})"))
+                    .message(format!("Eavesy couldn't move to Applications. Your app and recordings have been kept.\n\n{error}"))
                     .title("Eavesy couldn't move itself")
                     .kind(MessageDialogKind::Warning)
                     .buttons(MessageDialogButtons::Ok)
@@ -138,18 +263,44 @@ fn move_and_relaunch(app: AppHandle, misplaced: Misplaced) {
 }
 
 const COPY_SCRIPT: &str = r#"set -e
-src="$1"; dst="$2"; old="$2.eavesy-old"
-rm -rf "$old"
-if [ -e "$dst" ]; then mv "$dst" "$old"; fi
-if ditto "$src" "$dst"; then rm -rf "$old" || true; else rm -rf "$dst"; [ -e "$old" ] && mv "$old" "$dst"; exit 1; fi
-xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
-if [ -n "$3" ]; then chown -R "$3" "$dst" || echo "eavesy:chown-failed"; fi
+src="$1"; dst="$2"
+staging="$(mktemp -d "$(dirname "$dst")/.eavesy-install.XXXXXX")"
+copy="$staging/$(basename "$dst")"
+trap 'rm -rf "$staging"' EXIT
+if [ -e "$dst" ] || [ -L "$dst" ]; then echo "Eavesy is already in Applications; open the installed copy." >&2; exit 1; fi
+ditto "$src" "$copy"
+xattr -dr com.apple.quarantine "$copy" 2>/dev/null || true
+if [ -n "$3" ]; then chown -R "$3" "$copy" || echo "eavesy:chown-failed"; fi
+mv -n "$copy" "$(dirname "$dst")/"
+if [ -e "$copy" ]; then echo "Another Eavesy installation appeared; open the installed copy." >&2; exit 1; fi
 "#;
+
+/// Same-volume moves are a single atomic rename, so interruption cannot strand
+/// the only app in staging. RENAME_EXCL also refuses a concurrent installation.
+#[cfg(target_os = "macos")]
+fn move_local_bundle(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    let target = CString::new(target.as_os_str().as_bytes()).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    // Both paths are valid NUL-terminated strings for the duration of the call.
+    let status = unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
+    if status == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}
 
 /// `Ok(None)` when the user cancelled the admin password prompt.
 fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
-    let name = bundle.file_name().ok_or("the app bundle has no name")?;
-    let target = Path::new(APPLICATIONS).join(name);
+    let target = Path::new(APPLICATIONS).join(APP_NAME);
+    if target.exists() || target.is_symlink() {
+        return Err("Eavesy is already in Applications. Quit this copy and open Eavesy from Applications to update it.".into());
+    }
+    #[cfg(target_os = "macos")]
+    if same_volume(bundle, Path::new(APPLICATIONS)) == Some(true) {
+        move_local_bundle(bundle, &target).map_err(|error| {
+            format!("Eavesy couldn't move into Applications ({error}). Move it there using Finder, then open it from Applications.")
+        })?;
+        return Ok(Some(target));
+    }
     let output = Command::new("/bin/sh")
         .args(["-c", COPY_SCRIPT, "sh"])
         .arg(bundle)
@@ -301,6 +452,108 @@ mod tests {
 
     const EXE: &str = "Contents/MacOS/eavesy";
 
+    fn assert_no_staging(parent: &Path) {
+        for entry in std::fs::read_dir(parent).unwrap() {
+            assert!(!entry.unwrap().file_name().to_string_lossy().starts_with(".eavesy-install."));
+        }
+    }
+
+    #[test]
+    fn failed_handoffs_do_not_allow_the_loose_copy_to_continue() {
+        assert_eq!(launch_existing(None, |_| panic!("no installed copy to launch")), Ok(false));
+        assert_eq!(launch_existing(Some("/Applications/Eavesy.app".into()), |_| Ok(())), Ok(true));
+        assert_eq!(launch_existing(Some("/Applications/Eavesy.app".into()), |_| Err("launch failed".into())), Err("launch failed".into()));
+    }
+
+    #[test]
+    fn an_unidentifiable_candidate_requires_repair_instead_of_a_second_install() {
+        let root = std::env::temp_dir().join(format!("eavesy-invalid-bundle-{}", uuid::Uuid::new_v4()));
+        let candidate = root.join(APP_NAME);
+        assert_eq!(is_eavesy_installation(&candidate), Ok(false));
+        std::fs::create_dir_all(candidate.join("Contents")).unwrap();
+        assert!(is_eavesy_installation(&candidate).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_applications_folder_leaves_the_local_source_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("eavesy-move-denied-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source/Eavesy.app");
+        let applications = root.join("Applications");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = move_local_bundle(&source, &applications.join(APP_NAME));
+        std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(source.is_dir());
+        assert!(!applications.join(APP_NAME).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn downloads_disk_images_and_renamed_copies_use_the_installed_app() {
+        let directories = [PathBuf::from(APPLICATIONS), PathBuf::from("/Users/dana/Applications")];
+        let installed = Path::new("/Applications/Eavesy.app");
+        for source in [
+            "/Users/dana/Downloads/Eavesy.app",
+            "/Users/dana/Desktop/Eavesy.app",
+            "/Applications/Eavesy 2.app",
+            "/Users/dana/Applications/Eavesy.app",
+            "/Volumes/Eavesy/Eavesy.app",
+            "/private/var/folders/x/AppTranslocation/ABC/d/Eavesy.app",
+        ] {
+            assert_eq!(existing_installation(&Path::new(source).join(EXE), &directories, |p| p == installed), Some(installed.into()), "{source}");
+        }
+        assert_eq!(existing_installation(&installed.join(EXE), &directories, |p| p == installed), None);
+    }
+
+    #[test]
+    fn user_applications_is_supported_and_unrelated_bundles_are_ignored() {
+        let directories = [PathBuf::from(APPLICATIONS), PathBuf::from("/Users/dana/Applications")];
+        let installed = Path::new("/Users/dana/Applications/Eavesy.app");
+        let source = Path::new("/Users/dana/Downloads/Eavesy.app").join(EXE);
+        assert_eq!(existing_installation(&source, &directories, |p| p == installed), Some(installed.into()));
+        assert_eq!(existing_installation(&installed.join(EXE), &directories, |p| p == installed), None);
+        assert_eq!(existing_installation(&source, &directories, |_| false), None);
+    }
+
+    #[test]
+    fn development_builds_are_not_redirected_or_offered_a_move() {
+        for source in [
+            "/Users/dana/eavesy/desktop/src-tauri/target/release/bundle/macos/Eavesy.app/Contents/MacOS/eavesy",
+            "/Users/dana/eavesy/desktop/src-tauri/target/debug/eavesy",
+        ] {
+            assert_eq!(existing_installation(Path::new(source), &[PathBuf::from(APPLICATIONS)], |_| true), None);
+            assert_eq!(loose_bundle(Path::new(source), None), None);
+        }
+    }
+
+    #[test]
+    fn local_copies_offer_installation_but_the_installed_app_does_not() {
+        let user_applications = Path::new("/Users/dana/Applications");
+        for source in ["/Users/dana/Downloads/Eavesy.app", "/Applications/Eavesy 2.app", "/Users/dana/Desktop/Eavesy.app"] {
+            assert_eq!(loose_bundle(&Path::new(source).join(EXE), Some(user_applications)), Some(source.into()));
+        }
+        for source in ["/Applications/Eavesy.app", "/Users/dana/Applications/Eavesy.app"] {
+            assert_eq!(loose_bundle(&Path::new(source).join(EXE), Some(user_applications)), None);
+        }
+    }
+
+    #[test]
+    fn symlinks_to_the_installed_bundle_do_not_cause_a_relaunch_loop() {
+        let root = std::env::temp_dir().join(format!("eavesy-install-link-{}", uuid::Uuid::new_v4()));
+        let applications = root.join("Applications");
+        let installed = applications.join(APP_NAME);
+        std::fs::create_dir_all(&installed).unwrap();
+        let link = root.join(APP_NAME);
+        std::os::unix::fs::symlink(&installed, &link).unwrap();
+        assert_eq!(loose_bundle(&link.join(EXE), Some(&applications)), None);
+        assert_eq!(existing_installation(&link.join(EXE), &[applications], |p| p == installed), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn locations_are_fixed_categories() {
         let cases = [
@@ -349,7 +602,7 @@ mod tests {
 
     impl ScratchImage {
         fn mount() -> Self {
-            let root = std::env::temp_dir().join(format!("eavesy-dmg-test-{}", std::process::id()));
+            let root = std::env::temp_dir().join(format!("eavesy-dmg-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let scratch = ScratchImage { mount: root.join("mount"), root };
             let image = scratch.root.join("test.dmg");
@@ -430,29 +683,103 @@ mod tests {
     }
 
     #[test]
-    fn the_copy_script_replaces_an_older_install() {
+    fn an_atomic_local_move_leaves_no_duplicate_or_staging() {
         let root = std::env::temp_dir().join(format!("eavesy-move-test-{}", std::process::id()));
-        let src = root.join("src/Eavesy.app");
+        let src = root.join("src/Eavesy 2.app");
         let dst = root.join("dst/Eavesy.app");
         std::fs::create_dir_all(src.join("Contents")).unwrap();
         std::fs::write(src.join("Contents/version"), "new").unwrap();
-        std::fs::create_dir_all(dst.join("Contents")).unwrap();
-        std::fs::write(dst.join("Contents/version"), "old").unwrap();
-        let owner = {
-            use std::os::unix::fs::MetadataExt;
-            let meta = std::fs::metadata(std::env::temp_dir()).unwrap();
-            format!("{}:{}", meta.uid(), meta.gid())
-        };
-        let status =
-            Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&src).arg(&dst).arg(&owner).status().unwrap();
-        assert!(status.success());
-        {
-            use std::os::unix::fs::MetadataExt;
-            let meta = std::fs::metadata(dst.join("Contents/version")).unwrap();
-            assert_eq!(format!("{}:{}", meta.uid(), meta.gid()), owner);
-        }
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        move_local_bundle(&src, &dst).unwrap();
         assert_eq!(std::fs::read_to_string(dst.join("Contents/version")).unwrap(), "new");
-        assert!(!root.join("dst/Eavesy.app.eavesy-old").exists());
+        assert!(!src.exists());
+        assert_no_staging(dst.parent().unwrap());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_copy_script_preserves_an_existing_install_and_cleans_up() {
+        let root = std::env::temp_dir().join(format!("eavesy-existing-test-{}", uuid::Uuid::new_v4()));
+        let src = root.join("src/Eavesy 2.app");
+        let dst = root.join("dst/Eavesy.app");
+        for (bundle, version) in [(&src, "download"), (&dst, "installed")] {
+            std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+            std::fs::write(bundle.join("Contents/version"), version).unwrap();
+        }
+        let output = Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&src).arg(&dst).arg("").output().unwrap();
+        assert!(!output.status.success());
+        assert_eq!(std::fs::read_to_string(dst.join("Contents/version")).unwrap(), "installed");
+        assert_eq!(std::fs::read_to_string(src.join("Contents/version")).unwrap(), "download");
+        assert_no_staging(dst.parent().unwrap());
+        assert!(move_local_bundle(&src, &dst).is_err());
+        assert_eq!(std::fs::read_to_string(src.join("Contents/version")).unwrap(), "download");
+        assert_eq!(std::fs::read_to_string(dst.join("Contents/version")).unwrap(), "installed");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_concurrent_install_is_preserved_and_the_source_is_left_intact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("eavesy-install-race-{}", uuid::Uuid::new_v4()));
+        let src = root.join("src/Eavesy.app");
+        let dst = root.join("dst/Eavesy.app");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(src.join("Contents")).unwrap();
+        std::fs::write(src.join("Contents/version"), "download").unwrap();
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        // Simulate Homebrew finishing an installation after our existence
+        // check, while the source is safely copied into staging.
+        let shim = bin.join("mv");
+        std::fs::write(&shim, r#"#!/bin/sh
+set -e
+if [ "$1" = "-n" ]; then
+  mkdir -p "$EAVESY_TEST_TARGET/Contents"
+  echo installed > "$EAVESY_TEST_TARGET/Contents/version"
+fi
+/bin/mv "$@"
+"#).unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = Command::new("/bin/sh")
+            .args(["-c", COPY_SCRIPT, "sh"])
+            .arg(&src).arg(&dst).arg("")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("EAVESY_TEST_TARGET", &dst)
+            .output().unwrap();
+        assert!(!output.status.success());
+        assert_eq!(std::fs::read_to_string(src.join("Contents/version")).unwrap(), "download");
+        assert_eq!(std::fs::read_to_string(dst.join("Contents/version")).unwrap(), "installed\n");
+        assert_no_staging(dst.parent().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_disk_image_is_copied_and_left_mounted_for_the_relauncher() {
+        let image = ScratchImage::mount();
+        let target = image.root.join(APP_NAME);
+        let output = Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&image.mount).arg(&target).arg("").output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(target.is_dir());
+        assert!(image.mount.is_dir());
+        assert_no_staging(&image.root);
+    }
+
+    #[test]
+    fn stale_staging_from_an_interruption_does_not_block_a_retry() {
+        let root = std::env::temp_dir().join(format!("eavesy-stale-install-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source/Eavesy.app");
+        std::fs::create_dir_all(source.join("Contents")).unwrap();
+        std::fs::write(source.join("Contents/version"), "download").unwrap();
+        let stale = root.join(".eavesy-install.stale");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("keep"), "previous attempt").unwrap();
+        let target = root.join(APP_NAME);
+        let output = Command::new("/bin/sh").args(["-c", COPY_SCRIPT, "sh"]).arg(&source).arg(&target).arg("").output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(std::fs::read_to_string(source.join("Contents/version")).unwrap(), "download");
+        assert_eq!(std::fs::read_to_string(target.join("Contents/version")).unwrap(), "download");
+        assert_eq!(std::fs::read_to_string(stale.join("keep")).unwrap(), "previous attempt");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
