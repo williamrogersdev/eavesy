@@ -62,6 +62,18 @@ for (const { filePath } of referenceFiles) {
 }
 console.log(`Preserved configured rules and options for ${referenceFiles.length} ESLint files.`);
 const cases = [
+  ['inline-rule.ts', `/* eslint @typescript-eslint/no-explicit-any: off */
+export const explicit: any = 1;
+`, []],
+  ['inline-typed-rule.ts', `/* eslint @typescript-eslint/no-floating-promises: [error, { ignoreVoid: false }] */
+void Promise.resolve();
+`, ['@typescript-eslint/no-floating-promises']],
+  ['inline-rule.cjs', `/* eslint no-undef: off */
+module.exports = undeclaredLintProbe;
+`, []],
+  ['inline-global.cjs', `/* global injectedLintProbe: readonly */
+module.exports = injectedLintProbe;
+`, []],
   ['syntax.ts', 'export const explicit: any = 1;\nexport const broken = ;\n', ['fatal']],
   ['hooks.tsx', `import { useEffect, useState } from 'react';
 export function useProbe(flag: boolean, dependency: number) {

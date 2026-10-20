@@ -16,13 +16,19 @@ const args = process.argv.slice(2);
 const json = args.includes('--json');
 const files = args.filter((arg) => arg !== '--json');
 const delegatedPaths = new Set();
-const residual = new ESLint({ cwd: root, overrideConfigFile: 'eslint.oxlint.config.mjs', overrideConfig: [{
+const residual = new ESLint({ cwd: root, allowInlineConfig: false, overrideConfigFile: 'eslint.oxlint.config.mjs', overrideConfig: [{
   plugins: { 'lint-migration': { rules: { 'directives': {
     meta: { schema: [] },
     create(context) {
       // Use parser comment tokens, including multiline directives; text in
       // strings/templates must not influence which linter owns a file.
       for (const comment of context.sourceCode.getAllComments()) {
+        // Inline rule/environment/global configuration belongs to the full
+        // reference pass, which also has the original type-aware parser.
+        if (/^\s*(?:eslint(?:\s|-env\b|-enable\b)|globals?\b|exported\b)/.test(comment.value)) {
+          delegatedPaths.add(context.filename);
+          continue;
+        }
         const directive = /^\s*eslint-disable(?:-next-line|-line)?\b([\s\S]*)/.exec(comment.value);
         if (!directive) continue;
         const rules = directive[1].split('--')[0].trim().split(/[,\s]+/).filter(Boolean);
@@ -39,7 +45,7 @@ const results = await residual.lintFiles(files.length ? files : '.');
 const parseFailures = new Set(results.filter((result) => result.messages.some((message) => message.fatal)).map((result) => result.filePath));
 
 // Oxlint cannot decide whether an ESLint-only rule used a suppression. Delegate
-// the whole file to the original configuration for bare/unsupported directives,
+// the whole file to the original configuration for inline config or bare/unsupported directives,
 // including unused-directive validation. Ordinary files keep the fast path.
 let referenceResults = [];
 if (delegatedPaths.size) {
