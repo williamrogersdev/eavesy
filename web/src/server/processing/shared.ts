@@ -5,7 +5,9 @@ import type { D1Database, Queue, R2Bucket, VectorizeIndex } from '@cloudflare/wo
 import { type WorkersAiRunner } from '@/lib/ai/embed';
 import type { QueueMessage } from '@/server/queue';
 
-export interface ProcessingEnv {
+import type { CreditEnv } from '@/lib/ai/credit-runner';
+
+export interface ProcessingEnv extends CreditEnv {
   DB: D1Database;
   AUDIO_BUCKET: R2Bucket;
   VECTORIZE: VectorizeIndex;

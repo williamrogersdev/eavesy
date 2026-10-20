@@ -6,6 +6,11 @@ export const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b';
 
 export async function embedTexts(ai: WorkersAiRunner, texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
+  if (texts.length > 16) {
+    const vectors: number[][] = [];
+    for (let i = 0; i < texts.length; i += 16) vectors.push(...await embedTexts(ai, texts.slice(i, i + 16)));
+    return vectors;
+  }
   const result = await ai.run(EMBEDDING_MODEL, { text: texts });
   if (!isRecord(result) || !Array.isArray(result.data)) {
     throw new Error('Workers AI embedding response did not contain data');

@@ -213,6 +213,7 @@ export const transcriptSegments = sqliteTable(
     endMs: integer('end_ms').notNull(),
     speakerId: text('speaker_id'),
     text: text('text').notNull(),
+    rawText: text('raw_text'),
     confidence: real('confidence'),
     /** The language this line was heard in, as a Whisper code. */
     language: text('language'),
@@ -650,3 +651,35 @@ export const rateLimits = sqliteTable(
   },
   (t) => [index('rate_limits_expires_idx').on(t.expiresAt)],
 );
+
+/** File imports are deduplicated within an owner, never across users. */
+export const recordingImports = sqliteTable('recording_imports', {
+  meetingId: text('meeting_id').primaryKey().references(() => meetings.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id),
+  fingerprint: text('fingerprint').notNull(),
+  segmentCount: integer('segment_count').notNull(),
+  durationMs: integer('duration_ms').notNull(),
+  state: text('state', { enum: ['uploading', 'processing', 'cancelled'] }).notNull().default('uploading'),
+  createdAt: integer('created_at').notNull(),
+}, (t) => [uniqueIndex('recording_imports_owner_fingerprint_uq').on(t.userId, t.fingerprint)]);
+
+/** Conservative reservations are independent of Cloudflare's delayed invoice totals. */
+export const aiCreditBudgets = sqliteTable('ai_credit_budgets', {
+  scope: text('scope').primaryKey(), reservedMicrousd: integer('reserved_microusd').notNull().default(0),
+});
+export const aiCreditUsage = sqliteTable('ai_credit_usage', {
+  id: text('id').primaryKey(), accountId: text('account_id').notNull(), model: text('model').notNull(), purpose: text('purpose').notNull(),
+  reservedMicrousd: integer('reserved_microusd').notNull(), estimatedMicrousd: integer('estimated_microusd'), inputUnits: integer('input_units'), outputTokens: integer('output_tokens'),
+  pricingVersion: text('pricing_version').notNull().default('2026-10-20'), state: text('state').notNull(), createdAt: integer('created_at').notNull(), finishedAt: integer('finished_at'),
+}, (t) => [index('ai_credit_usage_created_idx').on(t.createdAt)]);
+
+/** Human-confirmed speech corrections, scoped to the authenticated account. */
+export const personalDictionary = sqliteTable('personal_dictionary', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  sourceKey: text('source_key').notNull(),
+  from: text('from_text').notNull(),
+  to: text('to_text').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, t => [uniqueIndex('personal_dictionary_user_source_uq').on(t.userId, t.sourceKey)]);

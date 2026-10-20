@@ -1,3 +1,4 @@
+import { createAiRunner } from '@/lib/ai/credit-runner';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
 import { encode } from '@/db/codec';
@@ -230,7 +231,7 @@ export async function handleTranscribeSegment(
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
-      const transcriber = new WorkersAiSegmentTranscriber(env.AI);
+      const transcriber = new WorkersAiSegmentTranscriber(meeting.source === 'import' ? createAiRunner(env, 'import-transcription') : env.AI);
       const prefs = await userPrefs(db, meeting.userId);
       const request = {
         audio,
@@ -273,6 +274,8 @@ export async function handleTranscribeSegment(
         lines = retry.segments.filter((relative) => !isHallucination(relative, { glossary }));
       }
 
+      const current = await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1);
+      if (!current[0] || current[0].deletedAt || (meeting.source === 'import' && current[0].status === 'failed')) return;
       await runBatched(db, lines.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
@@ -340,7 +343,7 @@ export async function handleTranscribeSegment(
       )
       .limit(1);
     if (
-      siblingsPending.length === 0 &&
+      meeting.source !== 'import' && siblingsPending.length === 0 &&
       crossesRollingNotesBoundary(segment) &&
       (await claimRollingNotes(db, meetingId, idx))
     ) {

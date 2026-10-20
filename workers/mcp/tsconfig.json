@@ -4,7 +4,7 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "node"],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -12,6 +12,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "paths": {
+      "@/*": ["../../web/src/*"],
       "drizzle-orm": ["../../web/node_modules/drizzle-orm"],
       "drizzle-orm/*": ["../../web/node_modules/drizzle-orm/*"]
     }
