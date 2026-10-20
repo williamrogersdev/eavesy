@@ -20,15 +20,23 @@ pub fn open_existing_installation() -> Result<bool, String> {
     if let Some(home) = dirs::home_dir() {
         directories.push(home.join("Applications"));
     }
-    let installed = existing_installation(&exe, &directories, |path| {
-        use objc2_foundation::{NSBundle, NSString};
-        let identifier = NSBundle::bundleWithPath(&NSString::from_str(&path.to_string_lossy()))
-            .and_then(|bundle| bundle.bundleIdentifier());
-        if identifier.is_none() && path.exists() {
-            crate::telemetry::capture("install_location.identify", "An Applications candidate exists but its bundle identifier couldn't be read");
+    let mut identification_error = None;
+    let mut found = false;
+    let installed = existing_installation(&exe, &directories, |path| match is_eavesy_installation(path) {
+        Ok(known) => {
+            found |= known;
+            known
         }
-        identifier.is_some_and(|identifier| identifier.to_string() == "com.eavesy.desktop")
+        Err(error) => {
+            identification_error = Some(error);
+            false
+        }
     });
+    if !found {
+        if let Some(error) = identification_error {
+            return Err(error);
+        }
+    }
     // Both copies have the same bundle ID. Without -n, Launch Services may
     // reactivate this loose copy instead of starting the installed executable.
     // The installed app's single-instance plugin handles an already running app.
@@ -41,6 +49,18 @@ pub fn open_existing_installation() -> Result<bool, String> {
             }
         }
     })
+}
+
+#[cfg(target_os = "macos")]
+fn is_eavesy_installation(path: &Path) -> Result<bool, String> {
+    use objc2_foundation::{NSBundle, NSString};
+    let identifier = NSBundle::bundleWithPath(&NSString::from_str(&path.to_string_lossy()))
+        .and_then(|bundle| bundle.bundleIdentifier());
+    if identifier.is_none() && path.exists() {
+        crate::telemetry::capture("install_location.identify", "An Applications candidate exists but its bundle identifier couldn't be read");
+        return Err(format!("An app already exists at {}, but Eavesy couldn't verify it. Check that app in Finder before installing another copy. This extra copy will quit without changing your recordings.", path.display()));
+    }
+    Ok(identifier.is_some_and(|identifier| identifier.to_string() == "com.eavesy.desktop"))
 }
 
 fn launch_existing(installed: Option<PathBuf>, launch: impl FnOnce(&Path) -> Result<(), String>) -> Result<bool, String> {
@@ -79,7 +99,7 @@ pub fn show_launch_error(message: &str) {
 fn existing_installation(
     exe: &Path,
     directories: &[PathBuf],
-    is_eavesy: impl Fn(&Path) -> bool,
+    mut is_eavesy: impl FnMut(&Path) -> bool,
 ) -> Option<PathBuf> {
     let bundle = app_bundle(exe)?;
     if is_cargo_bundle(bundle) {
@@ -227,7 +247,7 @@ fn move_and_relaunch(app: AppHandle, misplaced: Misplaced) {
             let _ = app.run_on_main_thread(move || {
                 handle
                     .dialog()
-                    .message(format!("{MOVE_TO_APPLICATIONS}\n\n({error})"))
+                    .message(format!("Eavesy couldn't move to Applications. Your app and recordings have been kept.\n\n{error}"))
                     .title("Eavesy couldn't move itself")
                     .kind(MessageDialogKind::Warning)
                     .buttons(MessageDialogButtons::Ok)
@@ -438,6 +458,33 @@ mod tests {
         assert_eq!(launch_existing(None, |_| panic!("no installed copy to launch")), Ok(false));
         assert_eq!(launch_existing(Some("/Applications/Eavesy.app".into()), |_| Ok(())), Ok(true));
         assert_eq!(launch_existing(Some("/Applications/Eavesy.app".into()), |_| Err("launch failed".into())), Err("launch failed".into()));
+    }
+
+    #[test]
+    fn an_unidentifiable_candidate_requires_repair_instead_of_a_second_install() {
+        let root = std::env::temp_dir().join(format!("eavesy-invalid-bundle-{}", uuid::Uuid::new_v4()));
+        let candidate = root.join(APP_NAME);
+        assert_eq!(is_eavesy_installation(&candidate), Ok(false));
+        std::fs::create_dir_all(candidate.join("Contents")).unwrap();
+        assert!(is_eavesy_installation(&candidate).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_applications_folder_leaves_the_local_source_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("eavesy-move-denied-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source/Eavesy.app");
+        let applications = root.join("Applications");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = move_local_bundle(&source, &applications.join(APP_NAME));
+        std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(source.is_dir());
+        assert!(!applications.join(APP_NAME).exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
