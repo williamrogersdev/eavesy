@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-20 - desktop
+
 ### Added
 
 - Personal dictionary learns human corrections in transcripts and supported pasted text fields, with review and forget controls in Settings.
