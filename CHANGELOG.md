@@ -6,6 +6,21 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-20 - desktop
+
+### Added
+
+- Mac app: tidy dictated words before they are typed ([#124](https://github.com/williamrogersdev/eavesy/pull/124))
+- Mac app: redesign the HUD as a fixed-size pill with stamped results ([#123](https://github.com/williamrogersdev/eavesy/pull/123))
+- Mac app: rebrand to the Little Snoop with a Noir & Coral palette ([#122](https://github.com/williamrogersdev/eavesy/pull/122))
+
+### Fixed
+
+- Mac app: keep the HUD's saved frame at the resting pill and resize in Cocoa ([#125](https://github.com/williamrogersdev/eavesy/pull/125))
+- Mac app: dictation pastes everything; live captions use Apple's new speech model ([#112](https://github.com/williamrogersdev/eavesy/pull/112))
+- Mac app: updater signature check runs without the Swift sidecar ([#121](https://github.com/williamrogersdev/eavesy/pull/121))
+- Mac app: HUD sheet opens below the bar and flashes a copyable preview ([#110](https://github.com/williamrogersdev/eavesy/pull/110))
+
 ## [0.5.0] - 2026-10-19 - desktop
 
 ### Added
