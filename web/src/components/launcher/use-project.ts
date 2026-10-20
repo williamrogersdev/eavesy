@@ -39,6 +39,8 @@ export interface ProjectChoice {
   detected: ProjectSummary | null;
   front: FrontWindow | null;
   setMode: (mode: ProjectMode) => void;
+  /** Fetch the projects again after one was made or changed here. */
+  reload: () => void;
 }
 
 export function resolveProject(
@@ -115,5 +117,6 @@ export function useProject(enabled: boolean): ProjectChoice {
 
   const detected = useMemo(() => matchProject(projects, front), [projects, front]);
   const active = useMemo(() => resolveProject(projects, mode, detected), [projects, mode, detected]);
-  return { projects, mode, active, detected, front, setMode };
+  const reload = useCallback(() => { void refresh(); }, [refresh]);
+  return { projects, mode, active, detected, front, setMode, reload };
 }

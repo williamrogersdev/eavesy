@@ -1,5 +1,5 @@
-/** More than this many words stops helping the recognizers. */
-export const MAX_VOCABULARY_TERMS = 100;
+/** Kept per account. Each recognizer takes the newest that fit: Whisper a prompt's worth, the Mac 100. */
+export const MAX_VOCABULARY_TERMS = 500;
 export const MAX_TERM_LENGTH = 60;
 /**
  * Whisper reads about 224 tokens of prompt and keeps the end of a longer one.

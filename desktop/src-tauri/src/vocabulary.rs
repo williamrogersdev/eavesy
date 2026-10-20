@@ -115,9 +115,10 @@ pub fn refresh(app: &AppHandle) {
 }
 
 /// One line each, so a word can't break the sidecar's line-per-word argument,
-/// and none starting `--`, which the sidecar would read as another flag.
+/// and none starting `--`, which the sidecar would read as another flag. The
+/// recognizer takes 100, so it gets the newest: words are stored oldest first.
 fn clean(words: &[String]) -> Vec<String> {
-    words
+    let words: Vec<String> = words
         .iter()
         .map(|word| word.split_whitespace().collect::<Vec<_>>().join(" "))
         .map(|word| {
@@ -128,8 +129,9 @@ fn clean(words: &[String]) -> Vec<String> {
             word.trim().to_string()
         })
         .filter(|word| !word.is_empty())
-        .take(100)
-        .collect()
+        .collect();
+    let skip = words.len().saturating_sub(100);
+    words.into_iter().skip(skip).collect()
 }
 
 #[cfg(test)]
@@ -142,6 +144,15 @@ mod tests {
             ["Eavesy", " Priya\nRaman ", "", "--mode", "-ish"].iter().map(|word| word.to_string()).collect();
         assert_eq!(sidecar_arg(&words).as_deref(), Some("Eavesy\nPriya Raman\nmode\n-ish"));
         assert_eq!(sidecar_arg(&[]), None);
+    }
+
+    #[test]
+    fn the_newest_hundred_words_reach_the_sidecar() {
+        let words: Vec<String> = (0..140).map(|i| format!("w{i}")).collect();
+        let kept = clean(&words);
+        assert_eq!(kept.len(), 100);
+        assert_eq!(kept.first().map(String::as_str), Some("w40"));
+        assert_eq!(kept.last().map(String::as_str), Some("w139"));
     }
 
     #[test]

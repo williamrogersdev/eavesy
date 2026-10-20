@@ -766,6 +766,7 @@ export function Launcher() {
             connecting={connecting}
             onCancelConnect={cancelConnect}
             onDisconnect={() => runTask(async () => { await disconnectAccount(); await refreshAccount(); flash('Signed out on this Mac'); })}
+            onProjectsChanged={project.reload}
             onShortcutsChanged={reloadShortcuts}
             onBack={() => setView('list')}
             onConnect={() => runTask(connectAccount, 'Could not connect account')}

@@ -123,6 +123,7 @@ pub fn run() {
             commands::close_hud,
             commands::account_info,
             projects::list_projects,
+            projects::account_call,
             projects::agent_transcript,
             projects::set_project_choice,
             front_window::front_window,

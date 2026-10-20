@@ -28,6 +28,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
+import { ProjectsCard, TranscriptionCard } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -198,7 +199,7 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
-export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
+export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
   onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
@@ -213,11 +214,13 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   onDisconnect: () => void;
   onOpenWeb: () => void;
   onShortcutsChanged: () => void;
+  onProjectsChanged?: () => void;
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
   const [showPermissions, setShowPermissions] = useState(false);
   const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
+  useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -294,6 +297,13 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
         <Section title="Account">
           <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
         </Section>
+
+        {isDesktop() && account && (
+          <>
+            <TranscriptionCard />
+            <ProjectsCard onChanged={onProjectsChanged} />
+          </>
+        )}
 
         <Card title="Shortcuts">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
