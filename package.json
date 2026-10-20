@@ -18,7 +18,8 @@
     "db:apply": "cd web && bunx wrangler d1 migrations apply eavesy",
     "db:apply:remote": "cd web && ../scripts/cf bunx wrangler d1 migrations apply eavesy --remote",
     "desktop:dev": "cd desktop/src-tauri && bunx @tauri-apps/cli dev",
-    "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build"
+    "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build",
+    "lint:bench": "bun scripts/benchmark-lint.ts"
   },
   "devDependencies": {
     "wrangler": "^4.111.0"
