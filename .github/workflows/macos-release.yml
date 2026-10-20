@@ -130,10 +130,10 @@ jobs:
           bun run typecheck
           bun run test
           cd ../workers/processing
-          bunx tsc --noEmit
+          bun run typecheck
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/processing-dry-run"
           cd ../mcp
-          bunx tsc --noEmit
+          bun run typecheck
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/mcp-dry-run"
 
       # The Rust build script needs the launcher UI and the SwiftAudio sidecar

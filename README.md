@@ -125,10 +125,15 @@ bun run typecheck
 bun run lint
 bun run test
 
-cd workers/processing && bunx tsc --noEmit && bunx wrangler deploy --dry-run
-cd ../mcp && bunx tsc --noEmit && bunx wrangler deploy --dry-run
+cd workers/processing && bun run typecheck && bunx wrangler deploy --dry-run
+cd ../mcp && bun run typecheck && bunx wrangler deploy --dry-run
 cd ../../desktop/src-tauri && cargo check
 ```
+
+Type checks use pinned `tsrs` in web, both Workers, and the Worker test suite.
+`bun run typecheck:tsc` provides the TypeScript fallback; `bun run typecheck:bench`
+compares both compilers across all four configurations. See
+[benchmark results](docs/TYPECHECK-BENCHMARK.md).
 
 For the macOS launcher and capture sidecar:
 
