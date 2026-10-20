@@ -574,7 +574,10 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
                         if crate::settings::device_credential(&learning_app).is_none() { return; }
                         match crate::learning::feedback(&learning_app, &original, &corrected) {
                             Ok(value) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "saved", "learned": value["learned"] })),
-                            Err(_) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "failed", "message": "Transcript saved. Dictionary could not connect; use Edit transcript to retry learning." })),
+                            Err(error) => {
+                                let failure = crate::learning::feedback_failure(&error);
+                                crate::learning::notify(&learning_app, serde_json::json!({ "status": "failed", "message": failure["warning"] }));
+                            }
                         }
                     });
                 }

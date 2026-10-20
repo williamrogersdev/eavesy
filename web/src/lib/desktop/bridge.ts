@@ -657,7 +657,7 @@ export async function dictionaryRequest<T>(method: 'GET' | 'POST' | 'PUT' | 'DEL
   return response.json();
 }
 
-export async function correctTranscript(id: string, original: string, corrected: string): Promise<{ learned: number; warning?: string }> {
+export async function correctTranscript(id: string, original: string, corrected: string): Promise<{ learned: number; warning?: string; retryable?: boolean }> {
   if (isDesktop()) return invoke('correct_recording', { id, original, corrected });
   return dictionaryRequest('POST', { dictationId: id, original, corrected });
 }

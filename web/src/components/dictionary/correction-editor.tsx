@@ -12,9 +12,9 @@ export function CorrectionEditor({ id, original, loadOriginal, onSaved }: { id: 
   const save = async () => {
     setBusy(true); setNotice('');
     try {
-      const { learned, warning } = await correctTranscript(id, baseline, text);
+      const { learned, warning, retryable } = await correctTranscript(id, baseline, text);
       onSaved(text); setEditing(false);
-      setRetryLearning(!!warning);
+      setRetryLearning(!!warning && retryable === true);
       setNotice(warning ?? (learned ? `Saved. Learned ${learned} correction${learned === 1 ? '' : 's'} for future recordings.` : 'Transcript saved. No vocabulary changes to learn.'));
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not save correction'); }
     finally { setBusy(false); }
