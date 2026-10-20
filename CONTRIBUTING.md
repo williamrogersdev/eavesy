@@ -77,7 +77,7 @@ CI runs exactly these (see `.github/workflows/ci.yml`):
 cd web
 bun run build
 bun run typecheck
-bunx eslint .
+bun run lint
 bun test src                     # unit tests
 bun run test:workers             # Miniflare-based worker tests, no credentials
 bun bench/score.ts --check       # two-track transcription bench
