@@ -221,10 +221,12 @@ export async function handleSummarize(
   const title = stringValue(parsed.title, meeting.title);
   const description = stringValue(parsed.description, meeting.description);
   if (mode.final) {
-    await db
+    const completed = await db
       .update(meetings)
       .set({ title, description, status: 'complete', statusError: partial, updatedAt: now })
-      .where(and(eq(meetings.id, meetingId), sql`${meetings.deletedAt} IS NULL`, useCredits ? sql`${meetings.status} != 'failed' AND EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${meetingId} AND state = 'processing')` : undefined));
+      .where(and(eq(meetings.id, meetingId), sql`${meetings.deletedAt} IS NULL`, useCredits ? sql`${meetings.status} != 'failed' AND EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${meetingId} AND state = 'processing')` : undefined))
+      .returning({ id: meetings.id });
+    if (!completed.length) return;
     await logMeetingComplete(db, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });

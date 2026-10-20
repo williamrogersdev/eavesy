@@ -82,7 +82,7 @@ export const Route = createFileRoute('/api/search')({
           const ai = ((env as CreditEnv).AI || creditsConfigured(env as CreditEnv)) ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
           if (!ai) return fallback();
           queryVec = (await embedTexts(ai, [q]))[0];
-        } catch { return fallback(); }
+        } catch { console.warn(JSON.stringify({ message: 'semantic search unavailable; using lexical results' })); return fallback(); }
         if (!queryVec) return fallback();
 
         const matches = await vectorize.query(queryVec, {

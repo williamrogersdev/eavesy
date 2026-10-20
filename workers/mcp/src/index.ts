@@ -357,6 +357,8 @@ interface ToolDef {
 }
 
 const TOOL_DEFS: ToolDef[] = [
+  { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, scope: 'read' },
+  { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, scope: 'read' },
   {
     name: 'search_meetings',
     description: "Search the user's meetings by title or transcript content. Returns matching meetings with an excerpt.",

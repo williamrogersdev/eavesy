@@ -316,6 +316,8 @@ export async function handleTranscribeSegment(
           });
       });
       if (meeting.source === 'import') {
+        // Completed batches remain available for resume; every later write
+        // rechecks cancellation. Cancelled recordings stay excluded from memory.
         for (let at = 0; at < writes.length; at += 50) {
           await env.DB.batch(writes.slice(at, at + 50).map(write => guardedImportWrite(env, write.toSQL(), meetingId)));
         }

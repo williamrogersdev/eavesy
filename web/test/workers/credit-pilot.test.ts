@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { createAiRunner, type CreditEnv } from '../../src/lib/ai/credit-runner';
 import { guardedImportWrite } from '../../src/server/processing/import-guard';
 import type { ProcessingEnv } from '../../src/server/processing/shared';
-import { transcriptSegments } from '../../src/db/schema';
+import { summaries, transcriptSegments } from '../../src/db/schema';
 import { insertMeeting, insertUser, testEnv } from './support';
 beforeAll(async () => { await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS); });
 it('rolls back all reservation statements on a real D1 daily-budget rejection', async () => {
@@ -32,4 +32,16 @@ it('guards transcript insert and conflict update against cancellation at write t
   await db.delete(transcriptSegments);
   await guardedImportWrite(env,query,'pilot-meeting').run();
   expect(await db.select().from(transcriptSegments)).toEqual([]);
+});
+
+it('guards the summary upsert shape and rejects SQL value expressions', async () => {
+  const db=drizzle(testEnv.DB);
+  const query=db.insert(summaries).values({id:'pilot-summary',meetingId:'pilot-meeting',tldr:'Original summary',generatedByModel:'test',generatedAt:1}).onConflictDoUpdate({target:summaries.meetingId,set:{tldr:'Replacement summary'}}).toSQL();
+  const env={DB:testEnv.DB} as ProcessingEnv;
+  await testEnv.DB.prepare("UPDATE recording_imports SET state='processing' WHERE meeting_id='pilot-meeting'").run();
+  await guardedImportWrite(env,query,'pilot-meeting').run();
+  await testEnv.DB.prepare("UPDATE recording_imports SET state='cancelled' WHERE meeting_id='pilot-meeting'").run();
+  await guardedImportWrite(env,query,'pilot-meeting').run();
+  expect((await db.select().from(summaries))[0].tldr).toBe('Original summary');
+  expect(() => guardedImportWrite(env,{sql:'insert into summaries values (coalesce(?, ?))',params:['a','b']},'pilot-meeting')).toThrow('Unsupported');
 });

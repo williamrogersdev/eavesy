@@ -210,6 +210,8 @@ describe('MCP scopes', () => {
     const { token } = await mint();
     const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
     expect(tools.map((tool) => tool.name)).toEqual([
+      'search_library',
+      'ask_library',
       'search_meetings',
       'get_meeting',
       'recent_meetings',
@@ -232,7 +234,7 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(6);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(8);
   });
 });
 

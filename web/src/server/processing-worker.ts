@@ -83,7 +83,7 @@ export async function queue(batch: MessageBatch<ProcessingMessage>, env: Process
 
 async function handle(message: ProcessingMessage, env: ProcessingEnv) {
   const db = drizzle(env.DB, { schema });
-  if ('meetingId' in message && ['transcribe-segment', 'summarize', 'rolling-summarize', 'embed', 'agent-transcript'].includes(message.kind)) {
+  if ('meetingId' in message && ['process-recording', 'transcribe-segment', 'summarize', 'rolling-summarize', 'embed', 'agent-transcript'].includes(message.kind)) {
     const job = await env.DB.prepare('SELECT state FROM recording_imports WHERE meeting_id = ?').bind(message.meetingId).first<{ state: string }>();
     if (job && ['uploading', 'cancelled'].includes(job.state)) {
       console.info(JSON.stringify({ message: 'import job skipped until finalize', kind: message.kind, meetingId: message.meetingId, state: job.state }));

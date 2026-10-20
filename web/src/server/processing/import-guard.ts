@@ -4,6 +4,9 @@ import type { ProcessingEnv } from './shared';
 export function guardedImportWrite(env: ProcessingEnv, query: { sql: string; params: unknown[] }, meetingId: string) {
   const values = /\bvalues\s*\(([^)]*)\)/i.exec(query.sql);
   if (!values || values.index === undefined) throw new Error('Unsupported guarded import write');
+  // Only the primitive placeholders emitted by these two insert builders are
+  // supported. Expressions or nested parentheses fail closed, never rewritten.
+  if (!/^(?:\s*(?:\?|null|[-0-9]+)\s*,?)+$/i.test(values[1])) throw new Error('Unsupported guarded values');
   const before = query.sql.slice(0, values.index);
   const after = query.sql.slice(values.index + values[0].length);
   const count = (values[1].match(/\?/g) ?? []).length;

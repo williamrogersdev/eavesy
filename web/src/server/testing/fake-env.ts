@@ -29,6 +29,7 @@ export function fakeD1(sqlite: Database) {
   });
   return {
     prepare: (query: string) => statement(query),
+    // Serial SQLite transactions model batch rollback; real-D1 tests are the authority.
     async batch(statements: { runSync(): unknown }[]) {
       sqlite.exec('BEGIN');
       try {
