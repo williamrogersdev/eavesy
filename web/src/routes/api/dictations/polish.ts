@@ -1,3 +1,4 @@
+import * as dictionary from '@/db/repo/dictionary';
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
@@ -41,10 +42,14 @@ export const Route = createFileRoute('/api/dictations/polish')({
         if (overQuota) return overQuota;
 
         const user = actor.isAnonymous ? null : await usersRepo.getById(getDb(), actor.userId);
+        const entries = await dictionary.list(getDb(), actor.userId);
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          context: combinedContext(null, null, parseVocabulary(user?.customVocabularyJson)),
+          hasCorrections: entries.length > 0,
+          confirmedSpellings: entries.map(e => e.to),
+          corrections: entries,
+          context: [combinedContext(null, null, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
         return Response.json(result);
       },

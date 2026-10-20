@@ -29,8 +29,10 @@ struct PartResponse {
     next_part_number: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct ResultSegment {
+    #[serde(rename = "rawText", default)]
+    raw_text: Option<String>,
     #[serde(rename = "startMs")]
     start_ms: i64,
     text: String,
@@ -551,6 +553,8 @@ async fn poll_result<R: Runtime>(
         let remote_id = remote_id.to_string();
         let title = result.title.clone();
         let transcript = transcript.clone();
+        let raw_segments: Vec<_> = result.transcript.iter().cloned().map(|mut s| { s.text = s.raw_text.take().unwrap_or(s.text); s }).collect();
+        let raw_transcript = render_transcript(&result.title, &raw_segments);
         let notes = result.notes_md.clone();
         move || -> Result<bool, String> {
             let Some((recording, changed)) =
@@ -564,6 +568,7 @@ async fn poll_result<R: Runtime>(
                 return Ok(false);
             }
             if let Some(folder) = folder {
+                std::fs::write(folder.join("transcript.raw.md"), &raw_transcript).map_err(|e| e.to_string())?;
                 fs_writer::persist_recording_artifacts(
                     Some(&app),
                     &folder,
@@ -887,9 +892,9 @@ mod tests {
     #[test]
     fn an_edited_transcript_pastes_its_words_without_markdown() {
         let segments = [
-            super::ResultSegment { start_ms: 0, text: "Hi there.".into(), speaker: Some("You".into()) },
-            super::ResultSegment { start_ms: 1_000, text: "How are you?".into(), speaker: Some("You".into()) },
-            super::ResultSegment { start_ms: 3_000, text: "Good, thanks.".into(), speaker: Some("Them".into()) },
+            super::ResultSegment { raw_text: None, start_ms: 0, text: "Hi there.".into(), speaker: Some("You".into()) },
+            super::ResultSegment { raw_text: None, start_ms: 1_000, text: "How are you?".into(), speaker: Some("You".into()) },
+            super::ResultSegment { raw_text: None, start_ms: 3_000, text: "Good, thanks.".into(), speaker: Some("Them".into()) },
         ];
         let markdown = super::render_transcript("Standup", &segments);
         assert_eq!(super::spoken_words(&markdown), "Hi there. How are you? Good, thanks.");
@@ -959,7 +964,7 @@ mod tests {
     use super::*;
 
     fn line(start_ms: i64, speaker: Option<&str>, text: &str) -> ResultSegment {
-        ResultSegment { start_ms, text: text.to_string(), speaker: speaker.map(str::to_string) }
+        ResultSegment { raw_text: None, start_ms, text: text.to_string(), speaker: speaker.map(str::to_string) }
     }
 
     #[test]

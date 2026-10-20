@@ -649,3 +649,21 @@ export async function onDragDrop(cb: (payload: DragDropPayload) => void): Promis
 export async function saveNote(text: string): Promise<void> {
   await invoke('save_note', { text });
 }
+
+export async function dictionaryRequest<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>): Promise<T> {
+  if (isDesktop()) return invoke<T>('dictionary_request', { method, body });
+  const response = await fetch('/api/dictionary', { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (!response.ok) throw new Error(response.status === 409 ? 'Transcript changed. Reopen it and try again.' : 'Could not save your dictionary. Please try again.');
+  return response.json();
+}
+
+export async function correctTranscript(id: string, original: string, corrected: string): Promise<{ learned: number; warning?: string }> {
+  if (isDesktop()) return invoke('correct_recording', { id, original, corrected });
+  return dictionaryRequest('POST', { dictationId: id, original, corrected });
+}
+
+export async function onDictionaryLearning(cb: (event: { status: string; message?: string; learned?: number }) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<{ status: string; message?: string; learned?: number }>('dictionary:learning', e => cb(e.payload));
+}
