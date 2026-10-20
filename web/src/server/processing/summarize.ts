@@ -1,3 +1,4 @@
+import { guardedImportWrite } from './import-guard';
 import { createAiRunner, LIBRARY_MODEL } from '@/lib/ai/credit-runner';
 import { creditSummary } from '@/lib/ai/credit-summary';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
@@ -196,7 +197,7 @@ export async function handleSummarize(
         }
       : {}),
   };
-  await db
+  const write = db
     .insert(summaries)
     .values({
       id: ulid(),
@@ -212,14 +213,20 @@ export async function handleSummarize(
         ? undefined
         : sql`(select status from meetings where id = ${meetingId}) in ('recording', 'uploading')`,
     });
+  if (useCredits) {
+    const result = await guardedImportWrite(env, write.toSQL(), meetingId).run();
+    if (!result.meta.changes) return;
+  } else await write;
 
   const title = stringValue(parsed.title, meeting.title);
   const description = stringValue(parsed.description, meeting.description);
   if (mode.final) {
-    await db
+    const completed = await db
       .update(meetings)
       .set({ title, description, status: 'complete', statusError: partial, updatedAt: now })
-      .where(eq(meetings.id, meetingId));
+      .where(and(eq(meetings.id, meetingId), sql`${meetings.deletedAt} IS NULL`, useCredits ? sql`${meetings.status} != 'failed' AND EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${meetingId} AND state = 'processing')` : undefined))
+      .returning({ id: meetings.id });
+    if (!completed.length) return;
     await logMeetingComplete(db, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
