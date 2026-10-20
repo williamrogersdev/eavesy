@@ -93,6 +93,29 @@ export function projectTerms(project: Pick<Project, 'vocabulary' | 'people'> | n
   return [...(project?.vocabulary ?? []), ...namesIn(project?.people)];
 }
 
+/**
+ * The one list of words the editor shows: the vocabulary, then the names from
+ * an older people line that are not already in it.
+ */
+export function projectWords(project: Pick<Project, 'vocabulary' | 'people'>): string[] {
+  return cleanList(projectTerms(project), Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * Stores edited words as vocabulary. Words past the vocabulary limit stay in
+ * the people line, which transcription also reads, so none are dropped.
+ */
+export function wordsToFields(words: string[]): Pick<Project, 'vocabulary' | 'people'> {
+  const all = cleanList(words, Number.MAX_SAFE_INTEGER);
+  let people = '';
+  for (const word of all.slice(PROJECT_LIMITS.vocabulary)) {
+    const next = people ? `${people}, ${word}` : word;
+    if (next.length > PROJECT_LIMITS.people) break;
+    people = next;
+  }
+  return { vocabulary: all.slice(0, PROJECT_LIMITS.vocabulary), people: people || null };
+}
+
 function namesIn(people: string | null | undefined): string[] {
   if (!people) return [];
   return people

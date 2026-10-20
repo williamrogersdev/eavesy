@@ -1,14 +1,16 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
-import { ProjectManager } from '@/components/settings/project-manager';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
-import { MAX_VOCABULARY_TERMS, vocabularyFromText } from '@/lib/transcription/vocabulary';
+import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
+import { ChipInput } from '@/components/ui/chip-input';
+import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
+import { Link } from '@/components/ui/app-link';
 
 interface Me {
   id: string;
@@ -58,8 +60,10 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [anthropic, setAnthropic] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [vocabulary, setVocabulary] = useState('');
-  const [savingVocabulary, setSavingVocabulary] = useState(false);
+  const vocabularySave = useRef(0);
+  const savedVocabulary = useRef<{ attempt: number; words: string[] }>({ attempt: 0, words: [] });
+  const navigate = useNavigate();
+  const toast = useSaveToast();
   const [pairing, setPairing] = useState(false);
   const [pairResult, setPairResult] = useState<string | null>(null);
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
@@ -71,7 +75,6 @@ function SettingsPage() {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('pair');
   });
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -84,6 +87,10 @@ function SettingsPage() {
     }
     return null;
   });
+
+  useEffect(() => {
+    if (window.location.hash === '#projects') void navigate({ to: '/app/projects', replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -100,7 +107,7 @@ function SettingsPage() {
         if (!account) throw new Error('Server returned invalid account settings');
         setMe(account);
         setDisplayName(account.displayName ?? '');
-        setVocabulary(account.customVocabulary.join('\n'));
+        savedVocabulary.current = { attempt: 0, words: account.customVocabulary };
       })
       .catch(() => setError('Could not load account settings.'));
     void fetch('/api/mcp-tokens')
@@ -111,7 +118,6 @@ function SettingsPage() {
 
   const save = async () => {
     setSaving(true);
-    setSaved(false);
     setError(null);
     try {
       const payload: Record<string, string> = {
@@ -125,6 +131,12 @@ function SettingsPage() {
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (!anthropic) {
+        setMe((current) => (current ? { ...current, displayName: displayName.trim() } : current));
+        void refreshMe();
+        toast.show();
+        return;
+      }
       const freshResponse = await fetch('/api/me');
       if (!freshResponse.ok) throw new Error(`Server returned ${freshResponse.status}`);
       const fresh = parseMe(await freshResponse.json());
@@ -132,7 +144,7 @@ function SettingsPage() {
       setMe(fresh);
       void refreshMe();
       setAnthropic('');
-      setSaved(true);
+      toast.show();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save settings.');
     } finally {
@@ -142,7 +154,6 @@ function SettingsPage() {
 
   const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages'>>) => {
     const previous = me;
-    setSaved(false);
     setError(null);
     if (previous) setMe({ ...previous, ...change });
     try {
@@ -153,18 +164,17 @@ function SettingsPage() {
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       void refreshMe();
-      setSaved(true);
+      toast.show();
     } catch (cause) {
       setMe(previous);
       setError(cause instanceof Error ? cause.message : 'Could not save the language.');
     }
   };
 
-  const saveVocabulary = async () => {
-    const customVocabulary = vocabularyFromText(vocabulary);
-    setSavingVocabulary(true);
-    setSaved(false);
+  const saveVocabulary = async (customVocabulary: string[]) => {
+    const attempt = ++vocabularySave.current;
     setError(null);
+    setMe((current) => (current ? { ...current, customVocabulary } : current));
     try {
       const response = await fetch('/api/me', {
         method: 'PATCH',
@@ -172,13 +182,12 @@ function SettingsPage() {
         body: JSON.stringify({ customVocabulary }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      setMe((current) => (current ? { ...current, customVocabulary } : current));
-      setVocabulary(customVocabulary.join('\n'));
-      setSaved(true);
+      if (attempt > savedVocabulary.current.attempt) savedVocabulary.current = { attempt, words: customVocabulary };
+      if (attempt === vocabularySave.current) toast.show();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save your words.');
-    } finally {
-      setSavingVocabulary(false);
+      if (attempt !== vocabularySave.current) return;
+      setMe((current) => (current ? { ...current, customVocabulary: savedVocabulary.current.words } : current));
+      setError(cause instanceof Error ? `Could not save your words: ${cause.message}` : 'Could not save your words.');
     }
   };
 
@@ -269,7 +278,6 @@ function SettingsPage() {
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
-  const vocabularyChanged = vocabularyFromText(vocabulary).join('\n') !== me.customVocabulary.join('\n');
   const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
 
   return (
@@ -278,7 +286,6 @@ function SettingsPage() {
 
       {error ? <AppAlert>{error}</AppAlert> : null}
       {notice ? <AppAlert tone={notice.kind === 'ok' ? 'success' : 'danger'}>{notice.text}</AppAlert> : null}
-      {saved ? <AppAlert tone="success">Saved.</AppAlert> : null}
 
       {pairCode ? (
         <AppAlert tone="info">
@@ -310,9 +317,9 @@ function SettingsPage() {
               type="text"
               autoComplete="name"
               value={displayName}
-              onChange={(e) => {
-                setDisplayName(e.target.value);
-                setSaved(false);
+              onChange={(e) => setDisplayName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && nameChanged && !saving) void save();
               }}
               className={input}
             />
@@ -356,38 +363,26 @@ function SettingsPage() {
             ))}
           </select>
         </Row>
-        <Row
-          label="Custom words"
-          hint={`Names, products and jargon to spell your way, one per line or separated by commas (so a phrase can’t contain one). Up to ${MAX_VOCABULARY_TERMS}.`}
-          htmlFor="settings-vocabulary"
-        >
-          <div className="flex w-full flex-col items-end gap-2">
-            <textarea
-              id="settings-vocabulary"
-              rows={4}
-              placeholder={'Eavesy\nPriya Raman\nKubernetes'}
-              value={vocabulary}
-              onChange={(e) => {
-                setVocabulary(e.target.value);
-                setSaved(false);
-              }}
-              className="w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm outline-none focus:border-ev-coat"
-            />
-            {vocabularyChanged ? (
-              <button
-                type="button"
-                onClick={() => void saveVocabulary()}
-                disabled={savingVocabulary}
-                className={appButton('primary', 'sm')}
-              >
-                {savingVocabulary ? 'Saving…' : 'Save words'}
-              </button>
-            ) : null}
+        <div className="flex flex-col gap-1.5">
+          <div>
+            <label htmlFor="settings-vocabulary" className="text-sm">Custom words</label>
+            <p className="text-xs text-ev-ink-2">
+              Names, products and jargon to spell your way in every recording. Words for one client or codebase belong
+              in <Link href="/app/projects" className="underline underline-offset-2 hover:text-ev-ink">Projects</Link>.
+            </p>
           </div>
-        </Row>
+          <ChipInput
+            id="settings-vocabulary"
+            label="Custom words"
+            value={me.customVocabulary}
+            onChange={(next) => void saveVocabulary(next)}
+            max={MAX_VOCABULARY_TERMS}
+            maxLength={MAX_TERM_LENGTH}
+            placeholder="Eavesy, Priya Raman, Kubernetes…"
+            hint="Press Enter or comma after each, or paste a list. Saves as you go."
+          />
+        </div>
       </AppSection>
-
-      <ProjectManager />
 
       <TemplateManager />
 
@@ -423,10 +418,7 @@ function SettingsPage() {
               type="password"
               placeholder="sk-ant-…"
               value={anthropic}
-              onChange={(e) => {
-                setAnthropic(e.target.value);
-                setSaved(false);
-              }}
+              onChange={(e) => setAnthropic(e.target.value)}
               autoComplete="off"
               className={input}
             />
@@ -522,6 +514,8 @@ function SettingsPage() {
       <AppSection title="Your data">
         <AccountData email={me.email} />
       </AppSection>
+
+      <SaveToast text={toast.text} />
     </AppPage>
   );
 }

@@ -3,7 +3,7 @@
 import {
   Apple,
   ChevronsUpDown,
-  Keyboard,
+  FolderOpen,
   LayoutGrid,
   LogOut,
   Menu,
@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/app', label: 'Library', icon: LayoutGrid },
-  { href: '/app/dictation', label: 'Dictation', icon: Keyboard },
+  { href: '/app/projects', label: 'Projects', icon: FolderOpen },
   { href: '/app/search', label: 'Search', icon: Search },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ] as const;
