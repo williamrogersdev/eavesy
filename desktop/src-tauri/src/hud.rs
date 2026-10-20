@@ -98,7 +98,7 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
 /// Longer than any stop takes to seal its files and paste.
 const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The resting pill: the snoop, Talk, Screenshot, Video, history and close.
+/// The resting pill: the snoop, Talk, Screenshot, Video and close.
 const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
 /// Recording and writing it down: the bar and one line of what is heard.
 const WIDE: (f64, f64) = (360.0, 64.0);
@@ -174,7 +174,8 @@ pub fn fit_on_main(app: &AppHandle) {
     imp::resize(&window, from, size, low, visible);
 }
 
-/// The user closed the control with its X: it stays hidden while idle.
+/// The user closed the control with its X: it stays hidden while idle, until
+/// the panel folds back into it, which brings the pill back.
 pub fn hidden_by_user(app: &AppHandle) -> bool {
     prefs(app).hidden
 }

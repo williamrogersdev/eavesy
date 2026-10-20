@@ -33,6 +33,51 @@ pub async fn list_projects(app: AppHandle) -> Option<Vec<Value>> {
     body.get("items").and_then(Value::as_array).cloned()
 }
 
+/// Which account endpoints the panel may call with this Mac's sign-in, and how:
+/// the settings it shares with eavesy.com (languages, custom words) and projects.
+fn account_call_allowed(method: &str, path: &str) -> bool {
+    match (method, path.strip_prefix("/api/")) {
+        ("GET" | "PATCH", Some("me")) => true,
+        ("GET" | "POST", Some("projects")) => true,
+        ("PATCH" | "DELETE", Some(rest)) => rest.strip_prefix("projects/").is_some_and(is_plain_id),
+        _ => false,
+    }
+}
+
+/// Reads or changes an account setting or project on eavesy.com as this Mac,
+/// so the panel's Settings edit the same things the website does. The answer
+/// is the endpoint's JSON; an error says why it failed.
+#[tauri::command]
+pub async fn account_call(app: AppHandle, method: String, path: String, body: Option<Value>) -> Result<Value, String> {
+    let method = method.to_ascii_uppercase();
+    if !account_call_allowed(&method, &path) {
+        return Err(format!("{method} {path} is not something the panel can change"));
+    }
+    let credential = settings::device_credential(&app).ok_or("Sign in to change this")?;
+    let client = client().ok_or("Could not reach eavesy.com")?;
+    let url = format!("{}{path}", credential.base.trim_end_matches('/'));
+    let verb = reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
+    let mut request = client.request(verb, url).bearer_auth(credential.token);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.map_err(|_| "Could not reach eavesy.com".to_string())?;
+    let status = response.status();
+    let value: Option<Value> = response.json().await.ok();
+    if status.is_success() && value.is_none() && method != "DELETE" {
+        return Err("eavesy.com sent an answer Eavesy couldn't read".into());
+    }
+    let value = value.unwrap_or(Value::Null);
+    if !status.is_success() {
+        let reason = value.get("error").and_then(Value::as_str).unwrap_or("request failed");
+        return Err(format!("eavesy.com said {reason} ({})", status.as_u16()));
+    }
+    if path == "/api/me" && method == "PATCH" {
+        crate::vocabulary::refresh(&app);
+    }
+    Ok(value)
+}
+
 /// The transcript cleaned up for an AI agent, once the cloud has made it.
 /// `recording_id` is a local session id, or the meeting id of a recording
 /// made on another Mac.
@@ -165,6 +210,18 @@ fn agent_markdown(body: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_panel_reaches_only_settings_and_projects() {
+        assert!(account_call_allowed("GET", "/api/me"));
+        assert!(account_call_allowed("PATCH", "/api/me"));
+        assert!(account_call_allowed("POST", "/api/projects"));
+        assert!(account_call_allowed("PATCH", "/api/projects/abc-123"));
+        assert!(!account_call_allowed("DELETE", "/api/me"));
+        assert!(!account_call_allowed("GET", "/api/account/export"));
+        assert!(!account_call_allowed("PATCH", "/api/projects/../me"));
+        assert!(!account_call_allowed("DELETE", "/api/projects/"));
+    }
 
     #[test]
     fn an_edited_transcript_wins_over_the_cleaned_one() {

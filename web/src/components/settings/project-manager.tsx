@@ -25,11 +25,10 @@ export function ProjectManager() {
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const toast = useSaveToast();
-  const changes = useRef(0);
-  const saves = useRef(new Map<string, { attempt: number; confirmed: ProjectSummary }>());
+  const local = useRef({ added: new Set<string>(), edited: new Set<string>(), deleted: new Set<string>() });
+  const saves = useRef(new Map<string, { attempt: number; confirmedAttempt: number; confirmed: ProjectSummary }>());
 
   const setItems = (update: (current: ProjectSummary[]) => ProjectSummary[]) => {
-    changes.current += 1;
     setItemsState((current) => {
       const next = update(current ?? []);
       cache = next;
@@ -39,12 +38,21 @@ export function ProjectManager() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const before = changes.current;
     void listProjects(controller.signal)
       .then((fresh) => {
-        if (changes.current !== before) return;
-        cache = fresh;
-        setItemsState(fresh);
+        setItemsState((current) => {
+          const { added, edited, deleted } = local.current;
+          const mine = new Map((current ?? []).map((item) => [item.id, item]));
+          const merged = fresh
+            .filter((item) => !deleted.has(item.id))
+            .map((item) => (edited.has(item.id) ? mine.get(item.id) ?? item : item));
+          const known = new Set(merged.map((item) => item.id));
+          for (const item of current ?? []) {
+            if (!known.has(item.id) && !deleted.has(item.id) && (item.id.startsWith(PENDING) || added.has(item.id))) merged.push(item);
+          }
+          cache = merged;
+          return merged;
+        });
       })
       .catch((cause: unknown) => {
         if (cause instanceof DOMException && cause.name === 'AbortError') return;
@@ -75,7 +83,10 @@ export function ProjectManager() {
     setError(null);
     toast.show('Project created');
     void createProject(fields)
-      .then((saved) => setItems((current) => current.map((item) => (item.id === pendingId ? saved : item))))
+      .then((saved) => {
+        local.current.added.add(saved.id);
+        setItems((current) => current.map((item) => (item.id === pendingId ? saved : item)));
+      })
       .catch((cause: unknown) => {
         setItems((current) => current.filter((item) => item.id !== pendingId));
         setError(cause instanceof Error ? `Could not create the project: ${cause.message}` : 'Could not create the project.');
@@ -88,19 +99,21 @@ export function ProjectManager() {
     const updated = { ...project, ...fields };
     const previous = saves.current.get(project.id);
     const attempt = (previous?.attempt ?? 0) + 1;
-    const confirmed = previous?.confirmed ?? project;
-    saves.current.set(project.id, { attempt, confirmed });
+    saves.current.set(project.id, { attempt, confirmedAttempt: previous?.confirmedAttempt ?? 0, confirmed: previous?.confirmed ?? project });
+    local.current.edited.add(project.id);
     setItems((current) => current.map((item) => (item.id === project.id ? updated : item)));
     close();
     setError(null);
     toast.show();
     void updateProject(project.id, fields)
       .then(() => {
-        if (saves.current.get(project.id)?.attempt === attempt) saves.current.set(project.id, { attempt, confirmed: updated });
+        const entry = saves.current.get(project.id);
+        if (entry && attempt > entry.confirmedAttempt) saves.current.set(project.id, { ...entry, confirmedAttempt: attempt, confirmed: updated });
       })
       .catch((cause: unknown) => {
-        if (saves.current.get(project.id)?.attempt !== attempt) return;
-        setItems((current) => current.map((item) => (item.id === project.id ? confirmed : item)));
+        const entry = saves.current.get(project.id);
+        if (!entry || entry.attempt !== attempt) return;
+        setItems((current) => current.map((item) => (item.id === project.id ? entry.confirmed : item)));
         setError(cause instanceof Error ? `Could not save ${project.name}: ${cause.message}` : `Could not save ${project.name}.`);
       });
   };
@@ -111,6 +124,7 @@ export function ProjectManager() {
       return;
     }
     setConfirming(null);
+    local.current.deleted.add(project.id);
     let index = -1;
     setItems((current) => {
       index = current.findIndex((item) => item.id === project.id);
@@ -119,6 +133,7 @@ export function ProjectManager() {
     if (editing === project.id) close();
     toast.show('Project deleted');
     void deleteProject(project.id).catch((cause: unknown) => {
+      local.current.deleted.delete(project.id);
       setItems((current) => {
         const next = [...current];
         if (next.some((item) => item.id === project.id)) return next;

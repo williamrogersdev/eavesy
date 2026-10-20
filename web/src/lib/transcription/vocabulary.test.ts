@@ -17,7 +17,7 @@ describe('custom vocabulary', () => {
   });
 
   test('caps how many words and how long each one is', () => {
-    const many = Array.from({ length: 150 }, (_, i) => `word${i}`);
+    const many = Array.from({ length: MAX_VOCABULARY_TERMS + 50 }, (_, i) => `word${i}`);
     expect(normalizeVocabulary(many)).toHaveLength(MAX_VOCABULARY_TERMS);
     expect(normalizeVocabulary(['x'.repeat(200)])[0]).toHaveLength(60);
   });

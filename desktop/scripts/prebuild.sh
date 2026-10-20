@@ -13,6 +13,10 @@ cd "$DESKTOP/swift-audio"
 # SpeechAnalyzer (live words, instant dictation paste) only compiles with
 # Swift 6.2+; an older toolchain silently leaves it out.
 SWIFT_VERSION="$(swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+).*/\1/p' | head -1)"
+if [[ "${EAVESY_ALLOW_OLD_SWIFT:-0}" != "1" && -z "$SWIFT_VERSION" ]]; then
+  echo "Could not read the Swift version from \`swift --version\`." >&2
+  exit 1
+fi
 if [[ "${EAVESY_ALLOW_OLD_SWIFT:-0}" != "1" ]] && ! printf '%s\n6.2\n' "$SWIFT_VERSION" | sort -V -C -r; then
   echo "Swift $SWIFT_VERSION is older than 6.2, so SpeechAnalyzer would be left out. Use Xcode 26 (or set EAVESY_ALLOW_OLD_SWIFT=1)." >&2
   exit 1
