@@ -156,13 +156,15 @@ export function Launcher() {
   /** Reloads the list; on failure keeps what is shown and says the list is stale. */
   const refreshRecordings = useCallback(async () => {
     try {
-      setRecordings(await loadRecordings(now));
-      setHistoryRevision((revision) => revision + 1);
+      if (desktop) {
+        // The native history owns its paginated data; do not fetch page zero twice.
+        setHistoryRevision((revision) => revision + 1);
+      } else setRecordings(await loadRecordings(now));
       setLoadError(null);
     } catch (error) {
       setLoadError(errMsg(error, 'Could not load recordings'));
     }
-  }, [now]);
+  }, [now, desktop]);
 
   /** Something landed in the history from the composer: show it and say so quietly. */
   const landed = useCallback((result?: ImportResult | null) => {

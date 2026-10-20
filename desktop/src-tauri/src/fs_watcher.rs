@@ -156,14 +156,14 @@ struct ManifestIdentity {
 
 fn reconcile_folder_locations<R: Runtime>(app: &AppHandle<R>, root: &Path) -> Result<()> {
     let discovered = discover_manifest_folders(root)?;
-    let recordings = store::folders(app).map_err(anyhow::Error::msg)?;
+    let recordings = store::locations(app).map_err(anyhow::Error::msg)?;
     let mut moved = Vec::new();
 
     for (id, folder) in recordings {
         let Some(candidates) = discovered.get(&id) else {
             continue;
         };
-        let current = Some(Path::new(&folder));
+        let current = folder.as_deref().map(Path::new);
         let Some(target) = unique_relocation_target(current, candidates) else {
             continue;
         };
@@ -551,6 +551,19 @@ mod tests {
 
         drop(restarted);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_reattaches_a_manifest_folder_when_the_history_has_no_path() {
+        let root=std::env::temp_dir().join(format!("eavesy-unlinked-{}",uuid::Uuid::new_v4()));
+        let folder=root.join("meeting");std::fs::create_dir_all(&folder).unwrap();
+        let app=isolated_mock_app(&root);sqlite::initialize(app.handle()).unwrap();
+        let mut recording=sample_recording(&folder);recording.folder_path=None;
+        store::append(app.handle(),recording).unwrap();
+        std::fs::write(folder.join("meeting.json"),r#"{"id":"meeting-1"}"#).unwrap();
+        reconcile_folder_locations(app.handle(),&root).unwrap();
+        assert_eq!(store::get(app.handle(),"meeting-1").unwrap().unwrap().folder_path.as_deref(),folder.to_str());
+        drop(app);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

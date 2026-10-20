@@ -54,3 +54,12 @@ test('refresh stops when deletions remove later pages', async () => {
   expect((await reloadRecordingPages(3, '', 'all')).items).toHaveLength(1);
   expect(requests).toBe(1);
 });
+
+
+test('a failed later page rejects the refresh instead of replacing the existing list with a partial range', async () => {
+  install(async (_cmd, args) => {
+    if (args?.offset === 50) throw new Error('Database unavailable');
+    return { items: [native], next_offset: 50, counts: { all: 100, voice: 0, meetings: 100, screens: 0, notes: 0 } };
+  });
+  await expect(reloadRecordingPages(2, '', 'all')).rejects.toThrow('Database unavailable');
+});

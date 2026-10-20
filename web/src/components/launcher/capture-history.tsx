@@ -224,7 +224,7 @@ function CaptureRow({
   const kind = kindOf(rec);
   const Icon = kind.icon;
   const [detail, setDetail] = useState<Recording | null>(null);
-  const current = detail?.id === rec.id && (detail.revision ?? 0) >= (rec.revision ?? 0) ? detail : rec;
+  const current = detail?.id === rec.id && detail.revision !== undefined && rec.revision !== undefined && detail.revision >= rec.revision ? detail : rec;
   const text = plainTranscript(current.transcript ?? '');
   const expand = async () => {
     try { setDetail(await loadRecordingDetails(rec)); }
@@ -443,7 +443,7 @@ export function CaptureHistory({
             </section>
           ))}
           {history.page?.nextOffset != null && (
-            <button type="button" className="ev-link" disabled={history.loading} onClick={() => void history.loadMore()}>
+            <button type="button" className="ev-link" disabled={history.busy} onClick={() => void history.loadMore()}>
               {history.loading ? 'Loading…' : 'Load more captures'}
             </button>
           )}

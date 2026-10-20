@@ -8,34 +8,42 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
   const [page, setPage] = useState<RecordingPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const hasPage = useRef(false);
   const generation = useRef(0);
   const loadedPages = useRef(1);
   const selection = useRef({ query, filter });
   useEffect(() => {
     const request = ++generation.current;
-    if (selection.current.query !== query || selection.current.filter !== filter) {
+    const changed = selection.current.query !== query || selection.current.filter !== filter;
+    if (changed) {
       selection.current = { query, filter };
       loadedPages.current = 1;
     }
     const pages = loadedPages.current;
     let disposed = false;
-    setLoading(true);
+    setLoading(!hasPage.current || changed);
+    setBusy(true);
+    inFlight.current = true;
     const timer = window.setTimeout(() => {
       void reloadRecordingPages(pages, query, filter).then((next) => {
-        if (!disposed && generation.current === request) { setPage(next); setError(null); }
+        if (!disposed && generation.current === request) { hasPage.current = true; setPage(next); setError(null); }
       }).catch((reason: unknown) => {
         if (!disposed && generation.current === request) setError(errMsg(reason, 'Could not load captures'));
       }).finally(() => {
-        if (!disposed && generation.current === request) setLoading(false);
+        if (!disposed && generation.current === request) { setLoading(false); setBusy(false); inFlight.current = false; }
       });
     }, query.trim() ? 150 : 0);
     return () => { disposed = true; window.clearTimeout(timer); };
   }, [refresh, query, filter]);
 
   const loadMore = useCallback(async () => {
-    if (!page || page.nextOffset === null || loading) return;
+    if (!page || page.nextOffset === null || busy || inFlight.current) return;
     const request = generation.current;
     setLoading(true);
+    setBusy(true);
+    inFlight.current = true;
     try {
       const next = await loadRecordingPage(page.nextOffset, query, filter);
       if (request !== generation.current) return;
@@ -49,8 +57,8 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
     } catch (reason) {
       if (request === generation.current) setError(errMsg(reason, 'Could not load captures'));
     } finally {
-      if (request === generation.current) setLoading(false);
+      if (request === generation.current) { setLoading(false); setBusy(false); inFlight.current = false; }
     }
-  }, [page, query, filter, loading]);
-  return { page, error, loading, loadMore };
+  }, [page, query, filter, busy]);
+  return { page, error, loading, busy, loadMore };
 }

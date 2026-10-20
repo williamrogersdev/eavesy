@@ -168,6 +168,17 @@ impl History {
         Ok(())
     }
 
+    pub fn locations(&self) -> Result<Vec<(String, Option<String>)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id,folder_path FROM history_recordings ORDER BY started_at_ms DESC,id")
+            .map_err(error)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(error)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(error)
+    }
+
     pub fn folders(&self) -> Result<Vec<(String, String)>, String> {
         let mut stmt = self.conn.prepare("SELECT id,folder_path FROM history_recordings WHERE folder_path IS NOT NULL ORDER BY started_at_ms DESC,id").map_err(error)?;
         let rows = stmt
