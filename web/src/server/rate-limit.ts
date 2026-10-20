@@ -108,6 +108,7 @@ export const USER_DAILY_QUOTAS = {
   chat: { limit: 300, failMode: 'closed' },
   regenerate: { limit: 60, failMode: 'closed' },
   translate: { limit: 600, failMode: 'closed' },
+  'library-reindex': { limit: 20, failMode: 'closed' },
   search: { limit: 1_000, failMode: 'closed' },
   export: { limit: 10, failMode: 'closed' },
   'meeting-export': { limit: 200, failMode: 'closed' },

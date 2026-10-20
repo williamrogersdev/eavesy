@@ -3,7 +3,7 @@ import { getDb } from '@/db/client';
 import { resolveActor } from '@/server/auth';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { meetings, recordingImports } from '@/db/schema';
-import { guardSpend } from '@/server/rate-limit';
+import { guardSpend, guardUserQuota } from '@/server/rate-limit';
 import { createImport } from '@/server/imports/service';
 export const Route = createFileRoute('/api/imports/')({ server: { handlers: {
   GET: async () => {
@@ -18,6 +18,8 @@ export const Route = createFileRoute('/api/imports/')({ server: { handlers: {
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
     if (actor.isAnonymous) return Response.json({ error: 'Sign in to import recordings' }, { status: 403 });
+    const quota = await guardUserQuota(actor.userId, 'process');
+    if (quota) return quota;
     const limited = await guardSpend(request, 'process', { perMin: 10, perDay: 2000 });
     if (limited) return limited;
     try { return await createImport(getDb(), actor.userId, await request.json()); }

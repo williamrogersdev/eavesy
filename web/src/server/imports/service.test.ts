@@ -9,7 +9,8 @@ function setup() {
   const t = createFakeEnv({ transcribe: () => ({ text: 'We will launch on Friday.', segments: [{ start: 0, end: 1, text: 'We will launch on Friday.' }] }) });
   t.sqlite.run("INSERT INTO users(id,created_at,updated_at) VALUES ('u1',1,1),('u2',1,1)");
   t.env.AUDIO_BUCKET.put = (async (key: string, body: Uint8Array | ReadableStream) => {
-    t.objects.set(key, body instanceof Uint8Array ? body : new Uint8Array(await new Response(body).arrayBuffer())); return {};
+    const bytes = body instanceof Uint8Array ? body : new Uint8Array(await new Response(body).arrayBuffer());
+    t.objects.set(key, bytes); return { size: bytes.length };
   }) as typeof t.env.AUDIO_BUCKET.put;
   const db = drizzle(t.env.DB, { schema });
   return { ...t, db };
