@@ -817,7 +817,7 @@ fn stream_events(
                 }
                 if let Some(status) = ev.caption_status(&session_id) {
                     if !status.live {
-                        eprintln!("live captions off: {}", status.detail.as_deref().unwrap_or("unavailable"));
+                        tracing::warn!(session_id = %session_id, reason = status.detail.as_deref().unwrap_or("unavailable"), "live captions off");
                     }
                     captions.lock().unwrap_or_else(|e| e.into_inner()).note_status(&status);
                     let _ = app.emit("recording:captions_status", &status);
@@ -839,6 +839,7 @@ fn stream_events(
                 }
                 if ev.event == "warning" {
                     let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
+                    tracing::warn!(session_id = %session_id, "capture engine: {message}");
                     crate::telemetry::capture("capture.stopped_early", &message);
                     warning = Some(message);
                     continue;

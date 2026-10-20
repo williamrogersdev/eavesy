@@ -51,6 +51,7 @@ export function installDevMock(): void {
       { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: 'Maya, Alex', match: ['acme'], recordingCount: 3 },
     ],
     front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
+    account_call: mockAccount(params.has('noprojects'), params.has('manywords')),
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };
@@ -67,7 +68,7 @@ export function installDevMock(): void {
         console.debug('[mock invoke]', cmd, args);
         if (cmd in hotkeys) return hotkeys[cmd](args ?? {}) as Promise<T>;
         const value = cmd in results ? results[cmd] : null;
-        return Promise.resolve((typeof value === 'function' ? (value as () => unknown)() : value) as T);
+        return Promise.resolve((typeof value === 'function' ? (value as (a: Record<string, unknown>) => unknown)(args ?? {}) : value) as T);
       },
     },
     event: {
@@ -155,5 +156,34 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     get_settings: () => Promise.resolve({ ...settings }),
     fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
     suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
+  };
+}
+
+/** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */
+function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<string, unknown>) => unknown {
+  const many = ['Anthropic', 'Cloudflare', 'Durable Objects', 'Vectorize', 'SpeechAnalyzer', 'ScreenCaptureKit', 'TanStack', 'Drizzle', 'Clerk', 'PostHog', 'Homebrew', 'notarytool', 'Sparkle', 'Rolldown', 'Vite', 'Zod', 'Tailwind', 'lucide', 'Bun', 'wrangler', 'Priya Raman', 'Dana Okafor', 'Mateo Silva', 'Kenji Ito', 'Aisha Khan', 'Lukas Weber'];
+  const me = {
+    spokenLanguages: ['en'],
+    customVocabulary: manyWords
+      ? Array.from({ length: 140 }, (_, i) => (i < many.length ? many[i] : `${many[i % many.length]} ${Math.floor(i / many.length) + 1}`))
+      : ['Eavesy', 'Priya Raman', 'Kubernetes'],
+  };
+  let projects = noProjects ? [] : [
+    { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1', 'wrangler'], people: null, match: [], recordingCount: 12 },
+    { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: null, match: ['acme'], recordingCount: 3 },
+  ];
+  return ({ method, path, body }) => {
+    const fields = (body ?? {}) as Record<string, unknown>;
+    if (path === '/api/me') return method === 'GET' ? me : Object.assign(me, fields) && { ok: true };
+    if (path === '/api/projects' && method === 'GET') return { items: projects };
+    if (path === '/api/projects' && method === 'POST') {
+      const project = { id: `p-${Date.now()}`, name: String(fields.name), about: null, vocabulary: [], people: null, match: [], recordingCount: 0 };
+      projects = [...projects, project];
+      return { project };
+    }
+    const id = String(path).split('/').pop();
+    if (method === 'DELETE') projects = projects.filter((p) => p.id !== id);
+    else projects = projects.map((p) => (p.id === id ? { ...p, ...fields } : p));
+    return { ok: true };
   };
 }

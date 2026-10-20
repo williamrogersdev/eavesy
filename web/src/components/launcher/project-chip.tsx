@@ -10,12 +10,12 @@ import type { ProjectChoice } from './use-project';
  * Which project the next recording goes into. Auto follows the window in
  * front (a repo name in Cursor or Terminal); picking a project pins it.
  */
-export function ProjectChip({ choice, runTask }: { choice: ProjectChoice; runTask: RunTask }) {
+export function ProjectChip({ choice, runTask, onManage }: { choice: ProjectChoice; runTask: RunTask; onManage?: () => void }) {
   const { projects, mode, active, detected, front, setMode } = choice;
   const manage: MenuItem = {
     label: projects.length ? 'Manage projects…' : 'Create a project…',
     icon: projects.length ? Settings2 : FolderPlus,
-    onSelect: () => runTask(() => openWebApp('/settings#projects'), 'Couldn’t open eavesy.com'),
+    onSelect: () => (onManage ? onManage() : runTask(() => openWebApp('/projects'), 'Couldn’t open eavesy.com')),
   };
   const items: MenuItem[] = projects.length
     ? [

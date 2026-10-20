@@ -108,7 +108,10 @@ jobs:
           exit "$status"
       - name: Lint
         working-directory: web
-        run: bunx eslint . --max-warnings 0
+        run: bun run lint
+      - name: Lint rule parity
+        working-directory: web
+        run: bun run lint:parity
       - name: Test
         working-directory: web
         run: bun test src
@@ -127,7 +130,7 @@ jobs:
     name: Desktop (Rust + Swift)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

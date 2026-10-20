@@ -103,7 +103,7 @@ export function TitleBar({
           {connecting ? 'Waiting…' : 'Sign in'}
         </Button>
       )}
-      {account && project && view === 'list' && <ProjectChip choice={project} runTask={runTask} />}
+      {account && project && view === 'list' && <ProjectChip choice={project} runTask={runTask} onManage={goSettings} />}
       {account && (
         <Menu
           align="end"

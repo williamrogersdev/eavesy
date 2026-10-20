@@ -345,6 +345,11 @@ export async function listDesktopProjects(): Promise<unknown[] | null> {
   return await invoke<unknown[] | null>('list_projects');
 }
 
+/** Reads or changes account settings and projects on eavesy.com as this Mac. */
+export async function accountCall<T = unknown>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  return await invoke<T>('account_call', { method, path, body: body ?? null });
+}
+
 /** Mirrors the launcher's project choice so the dictation hotkey files recordings the same way. */
 export async function setProjectChoice(choice: {
   follow: boolean;
