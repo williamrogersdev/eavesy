@@ -66,7 +66,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse(), ...entries.map(e => e.to)],
+    vocabulary: [...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
     spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
@@ -247,9 +247,9 @@ export async function handleTranscribeSegment(
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
         vocabulary: [
+          ...entries.map(e => e.to),
           ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
           ...prefs.vocabulary,
-          ...entries.map(e => e.to),
         ],
       };
       let transcription = await transcriber.transcribe(request);

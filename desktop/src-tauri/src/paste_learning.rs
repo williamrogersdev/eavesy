@@ -31,7 +31,6 @@ mod mac {
         fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> bool;
     }
     unsafe fn attribute(element: Ref, name: &str) -> Option<Ref> {
-        AXUIElementSetMessagingTimeout(element, 0.1);
         let key = std::ffi::CString::new(name).ok()?;
         let key = CFStringCreateWithCString(ptr::null(), key.as_ptr(), UTF8);
         let mut value = ptr::null();
@@ -65,9 +64,13 @@ mod mac {
     }
     unsafe fn focused_element() -> Option<Ref> {
         let root = AXUIElementCreateSystemWide();
+        // Match the existing dictation AX budget. On the system-wide element this
+        // bounds this process's default; app and field elements also get explicit bounds.
+        AXUIElementSetMessagingTimeout(root, 0.25);
         // Some hosts cannot resolve the system-wide focused element directly.
         // Query the focused application first, then its focused text field.
         let focused = if let Some(application) = attribute(root, "AXFocusedApplication") {
+            AXUIElementSetMessagingTimeout(application, 0.25);
             let field = attribute(application, "AXFocusedUIElement");
             CFRelease(application);
             field
@@ -81,6 +84,7 @@ mod mac {
     pub fn capture() -> Option<Target> {
         unsafe {
             let field = focused_element()?;
+            AXUIElementSetMessagingTimeout(field, 0.25);
             let role = string(field, "AXRole").unwrap_or_default();
             let subrole = string(field, "AXSubrole").unwrap_or_default();
             if !["AXTextField", "AXTextArea", "AXComboBox"].contains(&role.as_str())
@@ -165,7 +169,7 @@ mod mac {
                 if stable < 4
                     || candidate == baseline
                     || candidate.trim().is_empty()
-                    || candidate.len() > 12_000
+                    || candidate.encode_utf16().count() > 12_000
                 {
                     continue;
                 }

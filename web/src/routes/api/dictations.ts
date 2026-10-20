@@ -41,7 +41,7 @@ export const Route = createFileRoute('/api/dictations')({
         const transcription = await transcribeAudioFile({
           audio,
           language: prefs.language,
-          vocabulary: [...prefs.vocabulary, ...entries.map(e => e.to)],
+          vocabulary: [...entries.map(e => e.to), ...prefs.vocabulary],
           spoken: prefs.spoken,
           voiceNote: true,
         });

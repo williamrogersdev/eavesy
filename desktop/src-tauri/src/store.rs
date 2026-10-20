@@ -463,6 +463,7 @@ mod tests {
         std::fs::create_dir(&registry).unwrap();
         assert!(correct_transcript(app.handle(), "correction", "Open a pool request.", "Must roll back.").is_err());
         assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pool request.");
+        assert!(!root.join("transcript.raw.md").exists(), "failed corrections leave no raw file");
         std::fs::remove_dir(&registry).unwrap();
         std::fs::rename(&backup, &registry).unwrap();
         correct_transcript(app.handle(), "correction", "Open a pool request.", "Open a pull request.").unwrap();
@@ -513,10 +514,13 @@ pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &s
             Err(e) => return Err(e.to_string()),
         }
     } else { None };
+    let raw_created = file.as_ref().map(|path| path.with_file_name("transcript.raw.md")).filter(|raw| !raw.exists());
+    if let Some(raw) = &raw_created { atomic_write(raw, original.as_bytes())?; }
     if let Some(path) = &file {
-        let raw = path.with_file_name("transcript.raw.md");
-        if !raw.exists() { atomic_write(&raw, original.as_bytes())?; }
-        atomic_write(path, corrected.as_bytes())?;
+        if let Err(error) = atomic_write(path, corrected.as_bytes()) {
+            if let Some(raw) = &raw_created { std::fs::remove_file(raw).map_err(|e| format!("{error}; restoring raw transcript failed: {e}"))?; }
+            return Err(error);
+        }
     }
     rec.transcript = Some(corrected.to_string());
     if let Err(error) = write_registry(&registry, &list) {
@@ -525,7 +529,8 @@ pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &s
                 Some(bytes) => atomic_write(path, &bytes),
                 None => std::fs::remove_file(path).map_err(|e| e.to_string()),
             };
-            restored.map_err(|rollback| format!("{error}; restoring transcript failed: {rollback}"))?;
+            let raw_restored = raw_created.as_ref().map_or(Ok(()), |raw| std::fs::remove_file(raw).map_err(|e| e.to_string()));
+            restored.and(raw_restored).map_err(|rollback| format!("{error}; restoring transcript failed: {rollback}"))?;
         }
         return Err(error);
     }

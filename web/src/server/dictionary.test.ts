@@ -62,3 +62,18 @@ test('meeting transcript edits learn from human changes and preserve raw speech'
   expect(t.sqlite.query("SELECT text,raw_text,is_edited FROM transcript_segments WHERE id='s1'").get())
     .toEqual({ text: 'Open a pull request today.', raw_text: 'Open a pool request today.', is_edited: 1 });
 });
+
+test('concurrent corrections respect capacity while existing entries stay editable', async () => {
+  const t = setup();
+  t.sqlite.run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<499)
+    INSERT INTO personal_dictionary(id,user_id,source_key,from_text,to_text,created_at,updated_at)
+    SELECT 'word_'||i,'u1','source_'||i,'source_'||i,'target_'||i,1,1 FROM n`);
+  const results = await Promise.all([
+    dictionary.remember(t.db, 'u1', [{ from: 'misheard alpha', to: 'Alpha' }]),
+    dictionary.remember(t.db, 'u1', [{ from: 'misheard beta', to: 'Beta' }]),
+  ]);
+  expect(results.reduce((a, b) => a+b, 0)).toBe(1);
+  expect(await dictionary.list(t.db, 'u1')).toHaveLength(500);
+  expect(await dictionary.remember(t.db, 'u1', [{ from: 'misheard alpha', to: 'Alpha revised' }])).toBe(1);
+  expect(await dictionary.remember(t.db, 'u1', [{ from: 'misheard alpha', to: 'Alpha revised' }])).toBe(0);
+});

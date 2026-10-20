@@ -98,7 +98,7 @@ export const Route = createFileRoute('/api/transcribe')({
           const result = await transcribeAudioFile({
             audio,
             language,
-            vocabulary: [...prefs.vocabulary, ...entries.map(e => e.to)],
+            vocabulary: [...entries.map(e => e.to), ...prefs.vocabulary],
             spoken: prefs.spoken,
             voiceNote,
           });

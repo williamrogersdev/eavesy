@@ -10,6 +10,7 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
+    let changed = method != "GET";
     let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
     let mut req = client
         .request(method, format!("{base}/api/dictionary"))
@@ -21,11 +22,15 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
         .send()
         .map_err(|_| "Could not connect to your dictionary".to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Dictionary request failed ({})", response.status()));
+        let status = response.status();
+        let body = response.json::<Value>().ok();
+        let message = body.as_ref().and_then(|b| b.get("error")).and_then(Value::as_str)
+            .filter(|s| s.len() < 256).unwrap_or("Could not save your dictionary");
+        return Err(format!("{message} ({status})"));
     }
-    response
-        .json()
-        .map_err(|_| "Invalid dictionary response".to_string())
+    let value = response.json().map_err(|_| "Invalid dictionary response".to_string())?;
+    if changed { crate::vocabulary::refresh(app); }
+    Ok(value)
 }
 
 pub fn feedback(app: &AppHandle, original: &str, corrected: &str) -> Result<Value, String> {

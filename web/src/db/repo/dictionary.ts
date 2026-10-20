@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { personalDictionary } from '../schema';
 import { pid } from '../ids';
@@ -21,12 +21,17 @@ export async function remember(db: AppDb, userId: string, corrections: LearnedCo
   });
   if (!accepted.length) return 0;
   const now = Date.now();
-  const writes = accepted.map(c => db.insert(personalDictionary).values({
-    id: pid('word'), userId, sourceKey: normalizeTerm(c.from), from: c.from, to: c.to, createdAt: now, updatedAt: now,
-  }).onConflictDoUpdate({ target: [personalDictionary.userId, personalDictionary.sourceKey],
-    set: { from: c.from, to: c.to, updatedAt: now } }));
-  await db.batch(writes as [typeof writes[number], ...typeof writes[number][]]);
-  return accepted.length;
+  // Admission and the insert/upsert share one SQLite statement. Concurrent
+  // devices cannot race past the account cap, but existing words remain editable.
+  const writes = accepted.map(c => db.insert(personalDictionary).select(sql`
+    SELECT ${pid('word')}, ${userId}, ${normalizeTerm(c.from)}, ${c.from}, ${c.to}, ${now}, ${now}
+    WHERE (SELECT count(*) FROM personal_dictionary WHERE user_id = ${userId}) < 500
+       OR EXISTS (SELECT 1 FROM personal_dictionary WHERE user_id = ${userId} AND source_key = ${normalizeTerm(c.from)})
+  `).onConflictDoUpdate({ target: [personalDictionary.userId, personalDictionary.sourceKey],
+    set: { from: c.from, to: c.to, updatedAt: now } }).returning({ id: personalDictionary.id }));
+  const rows = await db.batch(writes as [typeof writes[number], ...typeof writes[number][]]);
+  // Counts successful new or changed upserts, rather than repeated observations.
+  return rows.reduce((total, result) => total + result.length, 0);
 }
 
 export async function forget(db: AppDb, userId: string, id: string) {

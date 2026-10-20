@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import * as dictionary from '@/db/repo/dictionary';
 import { deviceTokens, users } from '@/db/schema';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
-import { parseVocabulary } from '@/lib/transcription/vocabulary';
+import { parseVocabulary, normalizeVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor, sha256Hex } from '@/server/device-auth';
 
 export const Route = createFileRoute('/api/devices/me')({
@@ -32,7 +33,10 @@ export const Route = createFileRoute('/api/devices/me')({
         return Response.json({
           email: user?.email ?? null,
           name: user?.displayName ?? null,
-          vocabulary: parseVocabulary(user?.customVocabularyJson),
+          vocabulary: normalizeVocabulary([
+            ...parseVocabulary(user?.customVocabularyJson),
+            ...(await dictionary.list(getDb(), actor.userId)).reverse().map(e => e.to),
+          ].reverse()).reverse(),
           language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },

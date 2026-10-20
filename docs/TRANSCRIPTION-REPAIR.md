@@ -13,8 +13,10 @@ ignores insertions/deletions, broad rewrites, digit/negation changes, and large
 passages rather than creating arbitrary replacement rules. Source spellings
 have one current correction per account. Repeated saves are idempotent; a new
 human correction replaces an old one. The store retains at most 500 entries.
-Relevant corrections guide contextual repair; up to 80 canonical spellings
-also guide Whisper through `initial_prompt` on both one-shot and rolling audio.
+Relevant corrections guide contextual repair. Recent canonical spellings get
+priority in Whisper's bounded `initial_prompt` on both one-shot and rolling audio.
+The paired Mac refreshes its cached vocabulary after dictionary changes, so the
+on-device recognizer also receives the newest spellings without delaying capture.
 
 ## Pasting into another app
 

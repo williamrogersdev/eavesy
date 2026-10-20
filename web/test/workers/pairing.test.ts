@@ -3,6 +3,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import type { D1Database } from '@cloudflare/workers-types';
 import { drizzle } from 'drizzle-orm/d1';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import * as dictionary from '../../src/db/repo/dictionary';
 import * as dbSchema from '../../src/db/schema';
 import { registerDevice, STALE_DEVICE_MS } from '../../src/server/pair-device';
 import { Route as DevicesMeRoute } from '../../src/routes/api/devices/me';
@@ -27,6 +28,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.batch([
+    testEnv.DB.prepare('DELETE FROM personal_dictionary'),
     testEnv.DB.prepare('DELETE FROM device_tokens'),
     testEnv.DB.prepare('DELETE FROM devices'),
     testEnv.DB.prepare('DELETE FROM users'),
@@ -88,4 +90,16 @@ describe('moving a Mac between accounts', () => {
     expect(await activeTokens('owner')).toBe(0);
     expect(await activeTokens('other')).toBe(1);
   });
+});
+
+it('feeds learned spellings only to the owning Mac recognizer', async () => {
+  const token = await pair('owner');
+  await dictionary.remember(db(), 'owner', [{ from: 'repack a fi', to: 'Repackify' }]);
+  await dictionary.remember(db(), 'other', [{ from: 'private phrase', to: 'Other account secret' }]);
+  const get = (DevicesMeRoute.options as unknown as { server: { handlers: { GET: RouteHandler } } }).server.handlers.GET;
+  const response = await get({ request: new Request('https://eavesy.test/api/devices/me', { headers: { authorization: `Bearer ${token}` } }), params: {} });
+  expect(response.status).toBe(200);
+  const body = await response.json() as { vocabulary: string[] };
+  expect(body.vocabulary).toContain('Repackify');
+  expect(body.vocabulary).not.toContain('Other account secret');
 });
