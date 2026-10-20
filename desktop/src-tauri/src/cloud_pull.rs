@@ -134,7 +134,7 @@ pub fn undismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String>
 /// Downloads a few meetings this Mac does not have yet. Returns how many arrived.
 pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
     let state = load_state(app).map_err(|error| anyhow!(error))?;
-    let mut known: HashSet<String> = store::load_all(app).into_iter().map(|recording| recording.id).collect();
+    let mut known: HashSet<String> = store::ids(app).map_err(|error| anyhow!(error))?.into_iter().collect();
     known.extend(sqlite::remote_meeting_ids(app).map_err(|error| anyhow!(error))?);
     known.extend(state.dismissed.iter().cloned());
 

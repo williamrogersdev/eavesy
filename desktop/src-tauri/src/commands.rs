@@ -462,25 +462,25 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
     ))
 }
 
-// Async so reading the registry never runs on the main (UI) thread.
+// SQLite, filesystem migration, and serialization run off the UI thread.
 #[tauri::command(async)]
-pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingDto>, String> {
-    let out = store::load_all(&app)
-        .into_iter()
-        .map(|r| RecordingDto {
-            id: r.id,
-            title: r.title,
-            started_at_ms: r.started_at_ms,
-            duration_sec: r.duration_sec,
-            source: r.source,
-            status: r.status,
-            summary: r.summary,
-            transcript: r.transcript,
-            has_audio: r.has_audio,
-            has_video: r.has_video,
-        })
-        .collect();
-    Ok(out)
+pub fn list_recordings(app: AppHandle, offset: Option<usize>, limit: Option<usize>, query: Option<String>, filter: Option<String>) -> Result<store::HistoryPage, String> {
+    store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"))
+}
+
+#[derive(Serialize)]
+pub struct RecordingDetails {
+    #[serde(flatten)]
+    recording: RecordingDto,
+    revision: i64,
+}
+
+#[tauri::command(async)]
+pub fn get_recording(app: AppHandle, id: String) -> Result<Option<RecordingDetails>, String> {
+    Ok(store::details(&app, &id)?.map(|(r,revision)| RecordingDetails { revision, recording: RecordingDto {
+        id:r.id,title:r.title,started_at_ms:r.started_at_ms,duration_sec:r.duration_sec,source:r.source,status:r.status,
+        summary:r.summary,transcript:r.transcript,has_audio:r.has_audio,has_video:r.has_video,
+    }}))
 }
 
 /// Checks a shortcut before saving it: the modifier rule, the other action,
@@ -548,8 +548,7 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = crate::hud::current();
         if state.phase == crate::hud::Phase::Done {
-            if let Some(recording) = store::load_all(&app).into_iter()
-                .find(|rec| Some(&rec.id) == state.session_id.as_ref()) {
+            if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
                 if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
             }
         }
@@ -563,10 +562,9 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
     tauri::async_runtime::spawn_blocking(move || {
         // Fast paste can finish just before the recording's folder is registered.
         for _ in 0..50 {
-            let ready = store::load_all(&app).iter()
-                .any(|rec| rec.id == session_id && rec.folder_path.is_some());
+            let ready = store::get(&app, &session_id)?.is_some_and(|rec| rec.folder_path.is_some());
             if ready {
-                let original = store::load_all(&app).into_iter().find(|rec| rec.id == session_id).and_then(|rec| rec.transcript);
+                let original = store::get(&app, &session_id)?.and_then(|rec| rec.transcript);
                 store::save_preview_transcript(&app, &session_id, &text)?;
                 if let Some(original) = original.filter(|original| original != &text) {
                     let learning_app = app.clone();

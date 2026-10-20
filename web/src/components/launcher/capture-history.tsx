@@ -29,6 +29,8 @@ import {
   fetchAgentTranscript,
   revealInFinder,
 } from '@/lib/desktop/bridge';
+import { loadRecordingDetails } from '@/lib/launcher/data';
+import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
 import {
   clock,
@@ -184,7 +186,7 @@ function Highlighted({ text, query }: { text: string; query: string }) {
   );
 }
 
-function Body({ text, query, muted }: { text: string; query: string; muted?: boolean }) {
+function Body({ text, query, muted, onExpand }: { text: string; query: string; muted?: boolean; onExpand?: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const long = text.length > 220 || text.split('\n').length > 3;
   return (
@@ -193,7 +195,10 @@ function Body({ text, query, muted }: { text: string; query: string; muted?: boo
         <Highlighted text={text} query={query} />
       </div>
       {long && (
-        <button type="button" className="ev-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <button type="button" className="ev-more" aria-expanded={open} onClick={() => {
+            if (!open && onExpand) void onExpand().then(() => setOpen(true)).catch(() => {});
+            else setOpen(!open);
+          }}>
           {open ? 'Less' : 'More'}
         </button>
       )}
@@ -219,7 +224,13 @@ function CaptureRow({
   const [menuOpen, setMenuOpen] = useState(false);
   const kind = kindOf(rec);
   const Icon = kind.icon;
-  const text = plainTranscript(rec.transcript ?? '');
+  const [detail, setDetail] = useState<Recording | null>(null);
+  const current = detail?.id === rec.id && detail.revision !== undefined && rec.revision !== undefined && detail.revision >= rec.revision ? detail : rec;
+  const text = plainTranscript(current.transcript ?? '');
+  const expand = async () => {
+    try { setDetail(await loadRecordingDetails(rec)); }
+    catch (error) { flash(error instanceof Error ? error.message : 'Couldn’t load that capture', 5000, 'warn'); throw error; }
+  };
   const image = rec.source === 'screenshot' || rec.source === 'image';
   const video = !!rec.hasVideo;
   const playable = rec.hasAudio && !video && rec.status !== 'recording';
@@ -229,7 +240,7 @@ function CaptureRow({
 
   const copy = () => runTask(async () => {
     if (image || (video && !text)) await copyCaptureMedia(rec.id);
-    else await copyText(text);
+    else await copyText(plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
     flash('Copied');
   }, 'Couldn’t copy that');
 
@@ -239,11 +250,11 @@ function CaptureRow({
   if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;
   else if (video) body = <>
     <Thumb id={rec.id} video durationSec={rec.durationSec} label={kind.label} />
-    {text && <div style={{ marginTop: 6 }}><Body text={text} query={query} /></div>}
+    {text && <div style={{ marginTop: 6 }}><Body key={rec.revision} text={text} query={query} onExpand={current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
-    <Body text={text} query={query} />
-    {signedIn && spoken && rec.transcript && <CorrectionEditor id={rec.id} original={rec.transcript} onSaved={() => flash("Corrections saved")} />}
+    <Body key={rec.revision} text={text} query={query} onExpand={current.transcriptTruncated ? expand : undefined} />
+    {signedIn && spoken && current.transcript && <CorrectionEditor id={rec.id} original={current.transcript} loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''} onSaved={() => flash("Corrections saved")} />}
     {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (!signedIn && spoken && rec.status !== 'complete') body = (
@@ -318,11 +329,12 @@ function CaptureRow({
  */
 export async function agentText(rec: Recording): Promise<{ text: string; cleaned: boolean }> {
   const cleaned = await fetchAgentTranscript(rec.id).catch(() => null);
-  return cleaned ? { text: cleaned, cleaned: true } : { text: plainTranscript(rec.transcript ?? ''), cleaned: false };
+  return cleaned ? { text: cleaned, cleaned: true } : { text: plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''), cleaned: false };
 }
 
 export function CaptureHistory({
   recordings,
+  refreshRevision,
   live,
   dictationHotkey,
   signedIn,
@@ -335,6 +347,7 @@ export function CaptureHistory({
   onRetry,
 }: {
   recordings: Recording[];
+  refreshRevision: number;
   live: LiveCapture | null;
   /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
   dictationHotkey: string;
@@ -356,22 +369,25 @@ export function CaptureHistory({
     return () => window.clearInterval(timer);
   }, []);
 
+  const history = useHistoryPage(refreshRevision, query, filter);
+  const rows = history.page?.items ?? recordings;
   const liveId = live?.sessionId ?? null;
   const visible = useMemo(
-    () => visibleRecordings(recordings, filter, query).filter((rec) => rec.id !== liveId),
-    [recordings, filter, query, liveId],
+    () => (history.page ? rows : visibleRecordings(rows, filter, query)).filter((rec) => rec.id !== liveId),
+    [history.page, rows, filter, query, liveId],
   );
-  const counts = useMemo(() => countByFilter(recordings), [recordings]);
+  const counts = history.page?.counts ?? countByFilter(recordings);
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
 
-  const empty = recordings.length === 0 && !live;
+  const empty = counts.all === 0 && !live;
+  const historyError = loadError ?? history.error;
   const searching = query.trim() !== '' || filter !== 'all';
 
   return (
     <>
-      {loadError && (
+      {historyError && (
         <div role="alert" className="ev-banner">
-          <span>Couldn’t load your captures: {loadError}</span>
+          <span>Couldn’t load your captures: {historyError}</span>
           <button type="button" className="ev-link" onClick={onRetry}>Try again</button>
         </div>
       )}
@@ -428,7 +444,12 @@ export function CaptureHistory({
               ))}
             </section>
           ))}
-          {searching && visible.length === 0 && (
+          {history.page?.nextOffset != null && (
+            <button type="button" className="ev-link" disabled={history.busy} onClick={() => void history.loadMore()}>
+              {history.loading ? 'Loading…' : 'Load more captures'}
+            </button>
+          )}
+          {searching && visible.length === 0 && !history.loading && (
             <p className="ev-empty-search">
               {query.trim() ? `No captures match “${query.trim()}”.` : 'Nothing here yet.'}
             </p>

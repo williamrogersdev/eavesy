@@ -67,9 +67,7 @@ pub async fn correct_recording(
     corrected: String,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let recording = crate::store::load_all(&app)
-            .into_iter()
-            .find(|r| r.id == id)
+        let recording = crate::store::get(&app, &id)?
             .ok_or("Recording not found")?;
         if recording.transcript.as_deref() != Some(original.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());

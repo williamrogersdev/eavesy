@@ -71,6 +71,7 @@ export function Launcher() {
   const now = useRef(Date.now()).current;
 
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -165,12 +166,15 @@ export function Launcher() {
   /** Reloads the list; on failure keeps what is shown and says the list is stale. */
   const refreshRecordings = useCallback(async () => {
     try {
-      setRecordings(await loadRecordings(now));
+      if (desktop) {
+        // The native history owns its paginated data; do not fetch page zero twice.
+        setHistoryRevision((revision) => revision + 1);
+      } else setRecordings(await loadRecordings(now));
       setLoadError(null);
     } catch (error) {
       setLoadError(errMsg(error, 'Could not load recordings'));
     }
-  }, [now]);
+  }, [now, desktop]);
 
   /** Something landed in the history from the composer: show it and say so quietly. */
   const landed = useCallback((result?: ImportResult | null) => {
@@ -805,6 +809,7 @@ export function Launcher() {
           <div className="ev-history">
             <CaptureHistory
               recordings={recordings}
+              refreshRevision={historyRevision}
               live={live}
               dictationHotkey={dictationHotkey}
               signedIn={account !== null}

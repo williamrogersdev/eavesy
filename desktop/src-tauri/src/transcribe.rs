@@ -24,9 +24,7 @@ pub fn spawn(
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
                 crate::dictation::deliver(&app, &id, &text);
                 if let Some(dir) = &folder {
-                    if let Some(recording) = store::load_all(&app)
-                        .into_iter()
-                        .find(|recording| recording.id == id)
+                    if let Some(recording) = store::get(&app, &id).ok().flatten()
                     {
                         let _ = fs_writer::persist_recording_artifacts(
                             Some(&app),
@@ -40,7 +38,7 @@ pub fn spawn(
                 let current = crate::hud::current();
                 if current.session_id.as_deref() == Some(id.as_str())
                     && current.phase != crate::hud::Phase::Recording
-                    && !store::load_all(&app).iter().any(|rec| rec.id == id && rec.has_video) {
+                    && !store::get(&app, &id).ok().flatten().is_some_and(|rec| rec.has_video) {
                     crate::hud::set_state(
                         &app,
                         crate::hud::HudState {
@@ -59,7 +57,7 @@ pub fn spawn(
                 let current = crate::hud::current();
                 if current.session_id.as_deref() == Some(id.as_str())
                     && current.phase != crate::hud::Phase::Recording
-                    && !store::load_all(&app).iter().any(|rec| rec.id == id && rec.has_video) {
+                    && !store::get(&app, &id).ok().flatten().is_some_and(|rec| rec.has_video) {
                     crate::hud::set_state(
                         &app,
                         crate::hud::HudState {
