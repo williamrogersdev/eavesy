@@ -60,3 +60,11 @@ responses and credentials outside Git.
 
 Migration aliases already applied from the old checkout are documented in
 `web/drizzle/README.md`. Never reapply or delete that history.
+
+## Initial synthetic comparison
+
+After correcting structured response handling, Qwen3 30B passed 10/10 automatic
+fixture checks, Mistral Small passed 8/10 (including an unsafe interpretation of
+a quoted injection), and Llama 3.3 passed 4/10 (several malformed response
+shapes). The pilot therefore selects Qwen3 30B for answers and import summaries.
+These are small synthetic tests, not a general model-quality benchmark.

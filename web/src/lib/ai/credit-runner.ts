@@ -2,9 +2,9 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { wavDurationMs } from '../imports/wav';
 import type { WorkersAiRunner } from './embed';
 
-export const LIBRARY_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+export const LIBRARY_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 export const TEXT_MODELS: Record<string, { input: number; output: number }> = {
-  [LIBRARY_MODEL]: { input: 0.293, output: 2.253 },
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
   '@cf/qwen/qwen3-30b-a3b-fp8': { input: 0.051, output: 0.335 },
   '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 0.351, output: 0.555 },
 };
