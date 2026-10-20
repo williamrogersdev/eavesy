@@ -30,13 +30,16 @@ export const Route = createFileRoute('/api/devices/me')({
             .where(eq(users.id, actor.userId))
             .limit(1)
         )[0];
+        // Normalize in priority order, then store oldest first because the Mac
+        // takes the last 100 cached words. Confirmed spellings beat manual duplicates.
+        const learnedNewestFirst = (await dictionary.list(getDb(), actor.userId)).map(e => e.to);
+        const vocabulary = normalizeVocabulary([
+          ...learnedNewestFirst, ...parseVocabulary(user?.customVocabularyJson).reverse(),
+        ]).reverse();
         return Response.json({
           email: user?.email ?? null,
           name: user?.displayName ?? null,
-          vocabulary: normalizeVocabulary([
-            ...parseVocabulary(user?.customVocabularyJson),
-            ...(await dictionary.list(getDb(), actor.userId)).reverse().map(e => e.to),
-          ].reverse()).reverse(),
+          vocabulary,
           language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },

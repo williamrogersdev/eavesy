@@ -30,7 +30,7 @@ export async function remember(db: AppDb, userId: string, corrections: LearnedCo
   `).onConflictDoUpdate({ target: [personalDictionary.userId, personalDictionary.sourceKey],
     set: { from: c.from, to: c.to, updatedAt: now } }).returning({ id: personalDictionary.id }));
   const rows = await db.batch(writes as [typeof writes[number], ...typeof writes[number][]]);
-  // Counts successful new or changed upserts, rather than repeated observations.
+  // Counts admitted upserts; exact repeats observed before the batch are skipped.
   return rows.reduce((total, result) => total + result.length, 0);
 }
 

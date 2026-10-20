@@ -102,4 +102,24 @@ it('feeds learned spellings only to the owning Mac recognizer', async () => {
   const body = await response.json() as { vocabulary: string[] };
   expect(body.vocabulary).toContain('Repackify');
   expect(body.vocabulary).not.toContain('Other account secret');
+  const custom = Array.from({ length: 500 }, (_, i) => `custom${i}`);
+  await testEnv.DB.prepare('UPDATE users SET custom_vocabulary_json=? WHERE id=?').bind(JSON.stringify(custom), 'owner').run();
+  const again = await get({ request: new Request('https://eavesy.test/api/devices/me', { headers: { authorization: `Bearer ${token}` } }), params: {} });
+  const newest = await again.json() as { vocabulary: string[] };
+  expect(newest.vocabulary).toHaveLength(500);
+  expect(newest.vocabulary.at(-1)).toBe('Repackify');
+  expect(newest.vocabulary).toContain('custom499');
+  expect(newest.vocabulary).not.toContain('custom0');
+});
+
+it('atomically admits one of two competing dictionary inserts at capacity in D1', async () => {
+  await testEnv.DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<499)
+    INSERT INTO personal_dictionary(id,user_id,source_key,from_text,to_text,created_at,updated_at)
+    SELECT 'word_'||i,'owner','source_'||i,'source_'||i,'target_'||i,1,1 FROM n`).run();
+  const counts = await Promise.all([
+    dictionary.remember(db(), 'owner', [{ from: 'misheard alpha', to: 'Alpha' }]),
+    dictionary.remember(db(), 'owner', [{ from: 'misheard beta', to: 'Beta' }]),
+  ]);
+  expect(counts.reduce((a, b) => a+b, 0)).toBe(1);
+  expect(await dictionary.list(db(), 'owner')).toHaveLength(500);
 });

@@ -15,8 +15,9 @@ have one current correction per account. Repeated saves are idempotent; a new
 human correction replaces an old one. The store retains at most 500 entries.
 Relevant corrections guide contextual repair. Recent canonical spellings get
 priority in Whisper's bounded `initial_prompt` on both one-shot and rolling audio.
-The paired Mac refreshes its cached vocabulary after dictionary changes, so the
-on-device recognizer also receives the newest spellings without delaying capture.
+The paired Mac refreshes its cached vocabulary after its own dictionary changes
+and in the background at capture start. Web and other-device changes reach its
+next refreshed capture; capture never waits for the network.
 
 ## Pasting into another app
 

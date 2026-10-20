@@ -544,15 +544,17 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
-    let mut state = crate::hud::current();
-    if state.phase == crate::hud::Phase::Done {
-        if let Some(recording) = store::load_all(&app).into_iter()
-            .find(|rec| Some(&rec.id) == state.session_id.as_ref()) {
-            if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut state = crate::hud::current();
+        if state.phase == crate::hud::Phase::Done {
+            if let Some(recording) = store::load_all(&app).into_iter()
+                .find(|rec| Some(&rec.id) == state.session_id.as_ref()) {
+                if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+            }
         }
-    }
-    state
+        state
+    }).await.unwrap_or_else(|_| crate::hud::current())
 }
 
 #[tauri::command]

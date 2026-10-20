@@ -23,7 +23,11 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
         .map_err(|_| "Could not connect to your dictionary".to_string())?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.json::<Value>().ok();
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        let body = response.take(4097).read_to_end(&mut bytes).ok()
+            .filter(|_| bytes.len() <= 4096)
+            .and_then(|_| serde_json::from_slice::<Value>(&bytes).ok());
         let message = body.as_ref().and_then(|b| b.get("error")).and_then(Value::as_str)
             .filter(|s| s.len() < 256).unwrap_or("Could not save your dictionary");
         return Err(format!("{message} ({status})"));
