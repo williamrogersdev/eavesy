@@ -26,8 +26,21 @@ After `desktop/scripts/prebuild.sh`, reproduce on macOS with:
 desktop/scripts/benchmark-release-profile.sh
 ```
 
-The runner explicitly selects both sets of flags against the current source,
+The runner clears profile environment overrides and builds the committed tuned
+profile directly; only the explicit baseline uses overrides. A fresh-target
+reproduction produced 25,844,328 baseline bytes and the same 19,645,712 tuned
+bytes (23.98% reduction), with labelled elapsed times of 57s and 129s. The
+initial stock-profile measurement above is retained as its own observation;
+use the fresh-target runner for future comparisons.
+
+The runner validates macOS and the sidecar/HTML prebuild outputs,
 uses an isolated target directory, reports successful build times and sizes,
 and removes its temporary artifacts. It does not start the app, sign a binary,
 create a release, or publish a DMG. Test the selected optimized profile with
 `cargo test --release --locked` from desktop/src-tauri.
+
+The current macOS release workflow allows 90 minutes for its build job. The
+measured tuned build completed in roughly two minutes. No native crash-symbol
+upload workflow exists in this repository; release debug info was already off,
+and the tuned Mach-O retains rust_begin_unwind and rust_eh_personality symbols.
+A signed release/publish run was not started for this tooling change.
