@@ -95,6 +95,15 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/imports/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/imports/' }, excludes: [MEETING] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a recording only for the authenticated owner; service tests cover deduplication and isolation' },
+  },
+  '/api/imports/$': Object.fromEntries(['GET', 'PUT', 'POST', 'DELETE'].map(method => [method, {
+    unauthenticated: SIGNED_IN, scopedToCaller: 'Import service checks meeting and import ownership before any read or mutation; service tests exercise all methods across owners',
+  }])),
+  '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
+  '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },
   '/api/account/': {
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'deletes only the caller’s account' },
   },
@@ -437,6 +446,8 @@ beforeEach(async () => {
   // rate_limits only exists once the rate-limit migration has landed.
   await testEnv.DB.prepare('DELETE FROM rate_limits').run().catch(() => undefined);
   await resetTables(
+    'recording_imports',
+    'personal_dictionary',
     'transcript_segments',
     'meeting_segments',
     'summaries',
@@ -465,6 +476,7 @@ async function seedOwner() {
   await insertMeeting({ id: RECORDING, userId: OWNER, status: 'recording' });
   await testEnv.AUDIO_BUCKET.put(AUDIO_KEY, new Uint8Array([1, 2, 3]));
   await testEnv.DB.batch([
+    testEnv.DB.prepare("INSERT INTO recording_imports(meeting_id,user_id,fingerprint,segment_count,duration_ms,state,created_at) VALUES (?,?,'owner-file',1,1000,'processing',?)").bind(MEETING,OWNER,now),
     testEnv.DB.prepare(
       `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, is_final, is_edited)
        VALUES (?, ?, 0, 1000, 'Owner line', 1, 0)`,

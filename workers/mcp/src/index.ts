@@ -1,3 +1,5 @@
+import { createAiRunner, creditsConfigured, type CreditEnv } from '../../../web/src/lib/ai/credit-runner';
+import { librarySources, askLibrary } from '../../../web/src/server/library-memory';
 import { drizzle } from 'drizzle-orm/d1';
 import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
@@ -24,7 +26,7 @@ import {
   withQuery,
 } from '../../../web/src/server/mcp-oauth';
 
-interface Env {
+interface Env extends CreditEnv {
   DB: D1Database;
   AI: Ai;
   VECTORIZE: VectorizeIndex;
@@ -428,6 +430,14 @@ const TOOL_DEFS: ToolDef[] = [
 async function callTool(env: Env, userId: string, name: string, args: Record<string, any>) {
   const db = drizzle(env.DB, { schema });
   switch (name) {
+    case 'search_library':
+    case 'ask_library': {
+      const question = String(name === 'ask_library' ? args.question ?? '' : args.query ?? '').trim();
+      if (question.length < 3 || question.length > 1000) throw new Error('Question must be between 3 and 1000 characters');
+      if (name === 'ask_library' && !creditsConfigured(env)) throw new Error('Library answers are not enabled');
+      const opts = { ai: createAiRunner(env, 'mcp-library'), vectorize: env.VECTORIZE };
+      return name === 'ask_library' ? askLibrary(db, userId, question, opts) : librarySources(db, userId, question, opts);
+    }
     case 'search_meetings': {
       const query = String(args.query ?? '').trim();
       if (!query) return [];
@@ -451,7 +461,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         .orderBy(desc(schema.meetings.startedAt))
         .limit(limit);
 
-      const queryVector = (await embedTexts(env.AI, [query]))[0];
+      const queryVector = (await embedTexts(createAiRunner(env, 'mcp-search'), [query]))[0];
       const matches = await env.VECTORIZE.query(queryVector, {
         topK: limit * 3,
         filter: { userId },

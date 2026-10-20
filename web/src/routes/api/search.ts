@@ -6,7 +6,8 @@ import { getDb } from '@/db/client';
 import { embeddings, meetings, dictations } from '@/db/schema';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
-import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
+import { createAiRunner, creditsConfigured, type CreditEnv } from '@/lib/ai/credit-runner';
+import { embedTexts } from '@/lib/ai/embed';
 
 type SearchItem =
   | {
@@ -74,7 +75,7 @@ export const Route = createFileRoute('/api/search')({
 
         const { env } = getCloudflareContext();
         const vectorize = (env as { VECTORIZE?: VectorizeIndex }).VECTORIZE;
-        const ai = (env as { AI?: WorkersAiRunner }).AI;
+        const ai = (env as CreditEnv).AI || creditsConfigured(env as CreditEnv) ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
         if (!ai || !vectorize || (await guardUserQuota(actor.userId, 'search'))) {
           return Response.json({
             items: lexicalItems,
