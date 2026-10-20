@@ -7,8 +7,7 @@ Swift). Setup and the exact CI commands are in `CONTRIBUTING.md`.
 ## Definition of done: the PR is merged
 
 A task that changes code is **not finished when the PR is opened**. It is
-finished when the PR is merged into `main` (or when you hit one of the stop
-conditions below and have told the user exactly why). Don't end your turn on
+finished when the PR is merged into `main` . Don't end your turn on
 "PR created" or "draft ready for review". Keep going.
 
 The loop, every time:
@@ -44,21 +43,14 @@ The loop, every time:
 If you're picking up a session and find your own open PR from earlier, start
 at step 5 for that PR before doing anything else.
 
-## Stop and ask instead of merging when
+## You have full rein
 
-Every merge to `main` deploys straight to production (eavesy.com). Turn off
-auto-merge (`gh pr merge <n> --disable-auto`) and ask the user before merging
-if the PR:
-
-- adds a D1 migration in `web/drizzle/` that is **not purely additive**
-  (drops/renames a column or table, rewrites data, changes a constraint);
-- changes `.github/workflows/deploy.yml`, `macos-release.yml`, wrangler
-  bindings/routes, secrets handling, or auth (`web/src/start.ts`, Clerk config,
-  MCP OAuth/token scopes);
-- needs `--admin` or any bypass of branch protection to merge — never use it;
-- is still red after three real fix attempts on the same failure.
-
-When you stop, say which condition hit, what's left, and the PR link.
+This is the owner's personal project. Agents may change anything in the repo
+(workflows, wrangler config, auth, migrations, this file) and merge it once CI
+is green, without asking first. Use judgement on things that can't be undone
+(data-destroying D1 migrations, deleting user data): make them safe or
+reversible rather than stopping. If CI is still red after three real attempts
+on the same failure, say what's wrong and where.
 
 ## Desktop releases
 
