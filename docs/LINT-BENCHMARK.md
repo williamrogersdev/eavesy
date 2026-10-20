@@ -5,10 +5,10 @@ Measured October 20, 2026 on macOS arm64 against main c336719, using Oxlint
 
 | Complete command | Median | Range |
 | --- | ---: | ---: |
-| Full ESLint | 5.369 s | 5.335–5.785 s |
-| Oxlint + residual ESLint | 1.658 s | 1.644–1.670 s |
+| Full ESLint | 5.778 s | 5.598–7.105 s |
+| Oxlint + residual ESLint | 1.506 s | 1.437–1.586 s |
 
-The combined command is 3.24× faster. All runs passed. Five alternating timed
+The combined command is 3.84× faster. All runs passed. Five alternating timed
 runs follow warm-ups, without caches. Timing includes the residual ESLint pass.
 
 ## Preserved checks
@@ -23,15 +23,18 @@ Oxlint handles supported rules, including Hooks and type-aware rules. The
 pinned official compatibility plugin disables only native rules in the residual
 ESLint config, retaining unsupported no-octal, no-dupe-args and JS no-undef.
 The residual parser does not build TypeScript programs. The combined command
-fails on warnings; Oxlint checks unused suppression comments.
+fails on warnings. Oxlint checks native suppression comments; files with bare
+or ESLint-only suppression directives are delegated entirely to the original
+ESLint configuration, preserving valid and unused directive behavior. Parser
+comment tokens (not text matching) determine delegation, including multiline
+directives.
 
 `lint:parity` checks every reference ESLint file is selected by Oxlint and every
 enabled reference rule retains identical options in either pass. It checks
 intentional Hooks errors, floating promises, unsafe assignments, explicit any,
 unused variables, underscore exceptions, test-file scope, valid/unused
 suppressions, and JS undeclared identifiers. Temporary fixtures are cleaned up.
-CI runs this separately from the fast lint command. The initial audit covered
-400 files; the script reports the current count.
+CI runs this separately from the fast lint command. The script reports the current file count.
 
 These checks establish configuration coverage and representative diagnostics,
 not equivalence for every possible program. Keep the reference configuration

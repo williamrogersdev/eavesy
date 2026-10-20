@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "deploy": "../scripts/cf sh -c \"vite build && wrangler deploy ${RELEASE:+--var RELEASE:$RELEASE} ${POSTHOG_KEY:+--var POSTHOG_KEY:$POSTHOG_KEY}\"",
     "cf-typegen": "wrangler types",
-    "lint": "oxlint . --type-aware --deny-warnings --report-unused-disable-directives-severity error && eslint --config eslint.oxlint.config.mjs . --max-warnings 0",
+    "lint": "bun run lint:oxlint",
     "typecheck": "tsrs --noEmit",
     "test": "bun run test:unit && bun run test:workers",
     "test:ux": "playwright test --config playwright.ux.config.ts",
@@ -19,7 +19,7 @@
     "typecheck:tsrs": "tsrs --noEmit",
     "typecheck:tsc": "tsc --noEmit",
     "lint:eslint": "eslint . --max-warnings 0",
-    "lint:oxlint": "oxlint . --type-aware --deny-warnings --report-unused-disable-directives-severity error && eslint --config eslint.oxlint.config.mjs . --max-warnings 0",
+    "lint:oxlint": "bun scripts/lint.mjs",
     "lint:parity": "bun scripts/verify-lint-parity.mjs"
   },
   "dependencies": {

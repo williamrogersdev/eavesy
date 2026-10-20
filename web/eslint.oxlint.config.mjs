@@ -1,4 +1,5 @@
 import oxlint from 'eslint-plugin-oxlint';
+import { fileURLToPath } from 'node:url';
 import original from './eslint.config.mjs';
 
 // Keep ESLint's original configuration as the migration contract and fallback.
@@ -15,7 +16,7 @@ const withoutTypePrograms = original.map((entry) => {
 
 export default [
   ...withoutTypePrograms,
-  ...(await oxlint.buildFromConfigFile(new URL('./.oxlintrc.json', import.meta.url).pathname)),
+  ...(await oxlint.buildFromConfigFile(fileURLToPath(new URL('./.oxlintrc.json', import.meta.url)))),
   // Suppressions for rules now owned by Oxlint are validated by Oxlint instead.
   { linterOptions: { reportUnusedDisableDirectives: 'off' } },
 ];
