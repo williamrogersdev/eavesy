@@ -12,11 +12,24 @@ const original = new ESLint({ cwd: root, overrideConfigFile: 'eslint.config.mjs'
 const residualLint = new ESLint({ cwd: root, overrideConfigFile: 'eslint.oxlint.config.mjs' });
 const config = JSON.parse(readFileSync(path.join(root, '.oxlintrc.json'), 'utf8'));
 const ruleMap = JSON.parse(readFileSync(path.join(root, 'lint-rule-map.json'), 'utf8'));
+const compiled = spawnSync(path.join(root, 'node_modules/.bin/oxlint'), ['--print-config', '--disable-nested-config'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+if (compiled.error || compiled.status !== 0) throw new Error(`Oxlint configuration did not compile: ${compiled.error?.message ?? compiled.stderr}`);
+const validated = JSON.parse(compiled.stdout);
+if (!validated.options?.typeAware || !['typescript', 'react'].every((plugin) => validated.plugins.includes(plugin))) throw new Error('Required native plugins or type-aware mode are disabled');
+const severity = { deny: 2, warn: 1, allow: 0 };
+const normalizeNative = (value) => typeof value === 'string' ? [severity[value]] : [severity[value[0]], ...value[1]];
+if (validated.overrides.length !== config.overrides.length) throw new Error('Native override compilation changed scope');
+for (let i = 0; i < config.overrides.length; i++) {
+  if (JSON.stringify(validated.overrides[i].files) !== JSON.stringify(config.overrides[i].files)) throw new Error('Native override globs changed scope');
+  for (const [rule, value] of Object.entries(config.overrides[i].rules ?? {})) {
+    if (JSON.stringify(normalizeNative(validated.overrides[i].rules[rule])) !== JSON.stringify(value)) throw new Error(`Oxlint compiled different options for ${rule}`);
+  }
+}
 
 // Every enabled ESLint rule must remain enabled with the same options in
 // either the native configuration or the residual ESLint pass, for every file.
 const referenceFiles = await original.lintFiles('.');
-const listing = spawnSync(path.join(root, 'node_modules/.bin/oxlint'), ['--debug', 'files', '.'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+const listing = spawnSync(path.join(root, 'node_modules/.bin/oxlint'), ['--disable-nested-config', '--debug', 'files', '.'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
 if (listing.error || listing.status !== 0) throw new Error(`Oxlint file listing failed: ${listing.error?.message ?? listing.stderr}`);
 const nativeFiles = new Set(listing.stdout.trim().split(/\r?\n/).map((file) => path.resolve(root, file)));
 if (!referenceFiles.length || !nativeFiles.has(path.join(root, 'eslint.config.mjs'))) throw new Error('Empty or unexpected lint file listing');
@@ -56,6 +69,10 @@ const _allowed = 1;
   ['scope.test.ts', `Promise.resolve();
 export const explicit: any = 1;
 `, ['@typescript-eslint/no-explicit-any']],
+  ['aliases.test.ts', `export const kept = 1;
+new Array();
+0;
+`, ['@typescript-eslint/no-array-constructor', '@typescript-eslint/no-unused-expressions']],
   ['suppression.ts', `// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const explicit: any = 1;
 `, []],
@@ -66,6 +83,9 @@ export const value = 1;
 module.exports = 1;
 `, ['unused-disable']],
   ['valid-fallback.cjs', `// eslint-disable-next-line no-undef
+module.exports = undeclaredLintProbe;
+`, []],
+  ['described-fallback.cjs', `  // eslint-disable-next-line   no-undef -- injected by a host
 module.exports = undeclaredLintProbe;
 `, []],
   ['mixed-fallback.cjs', `/* eslint-disable no-debugger,

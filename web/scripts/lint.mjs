@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const ruleMap = JSON.parse(readFileSync(path.join(root, 'lint-rule-map.json'), 'utf8'));
+const inverseRules = new Map();
+for (const [eslintRule, nativeRule] of Object.entries(ruleMap)) {
+  if (nativeRule === null) continue;
+  if (!inverseRules.has(nativeRule)) inverseRules.set(nativeRule, []);
+  inverseRules.get(nativeRule).push(eslintRule);
+}
 const args = process.argv.slice(2);
 const json = args.includes('--json');
 const files = args.filter((arg) => arg !== '--json');
@@ -39,7 +45,7 @@ if (delegatedPaths.size) {
 }
 
 const native = spawnSync(path.join(root, 'node_modules/.bin/oxlint'), [
-  '--type-aware', '--report-unused-disable-directives-severity', 'error', '--format', 'json', ...(files.length ? files : ['.']),
+  '--disable-nested-config', '--type-aware', '--report-unused-disable-directives-severity', 'error', '--format', 'json', ...(files.length ? files : ['.']),
 ], { cwd: root, encoding: 'utf8', timeout: 120_000, maxBuffer: 20 * 1024 * 1024 });
 if (native.error || native.status === null || native.status > 1) throw new Error(`Oxlint failed: ${native.error?.message ?? native.stderr}`);
 let diagnostics;
@@ -52,13 +58,24 @@ for (const diagnostic of diagnostics) {
   if (delegatedPaths.has(filePath)) continue;
   const span = diagnostic.labels?.[0]?.span;
   const match = /^(\w[\w-]*)\((.*)\)$/.exec(diagnostic.code ?? '');
-  let ruleId = match?.[2] ?? null;
-  if (match?.[1] === 'typescript') ruleId = `@typescript-eslint/${ruleId}`;
-  if (match?.[1] === 'react' || match?.[1] === 'react-hooks') ruleId = `react-hooks/${ruleId}`;
-  if (ruleId === 'no-unused-vars' && /\.[cm]?tsx?$/.test(filePath)) ruleId = '@typescript-eslint/no-unused-vars';
-  if (diagnostic.code?.includes('unused-disable')) ruleId = null;
+  let ruleId = null;
+  if (diagnostic.code) {
+    if (!match) throw new Error(`Unmapped Oxlint diagnostic: ${diagnostic.code}`);
+    const scope = match[1] === 'react-hooks' ? 'react' : match[1];
+    let nativeName = scope === 'eslint' ? match[2] : `${scope}/${match[2]}`;
+    // Some TypeScript extension rules are implemented by core native rules.
+    if (!inverseRules.has(nativeName) && scope === 'typescript' && inverseRules.get(match[2])?.includes(`@typescript-eslint/${match[2]}`)) nativeName = match[2];
+    const candidates = inverseRules.get(nativeName);
+    if (!candidates?.length) throw new Error(`Unmapped Oxlint diagnostic: ${diagnostic.code}; update lint-rule-map.json`);
+    const typescript = /\.[cm]?tsx?$/.test(filePath);
+    ruleId = candidates.find((candidate) => candidate.startsWith('@typescript-eslint/') === typescript) ?? candidates[0];
+  }
+  // In this pinned Oxlint version, unused directives have no code and this
+  // exact message. Parser diagnostics likewise have no ESLint rule id.
+  const unusedDirective = !diagnostic.code && diagnostic.message === 'Unused eslint-disable directive (no problems were reported).';
   const message = { ruleId, severity: diagnostic.severity === 'warning' ? 1 : 2,
-    message: diagnostic.message, line: span?.line ?? 1, column: span?.column ?? 1 };
+    message: diagnostic.message, line: span?.line ?? 1, column: span?.column ?? 1,
+    fatal: !diagnostic.code && !unusedDirective };
   let result = byPath.get(filePath);
   if (!result) { result = { filePath, messages: [] }; combined.push(result); byPath.set(filePath, result); }
   result.messages.push(message);
