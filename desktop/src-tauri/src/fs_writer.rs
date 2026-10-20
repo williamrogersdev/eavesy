@@ -106,9 +106,7 @@ pub async fn write_meeting_folder(
 
 #[tauri::command]
 pub fn reveal_in_finder(app: AppHandle, meeting_id: String) -> Result<(), String> {
-    let target = crate::store::load_all(&app)
-        .into_iter()
-        .find(|recording| recording.id == meeting_id)
+    let target = crate::store::get(&app, &meeting_id)?
         .and_then(|recording| recording.folder_path)
         .unwrap_or(meeting_id);
 

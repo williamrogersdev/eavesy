@@ -34,5 +34,6 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     retry_unauthorized_segments(&conn)?;
     prune_done_operations(&conn, chrono::Utc::now().timestamp_millis())?;
     drop(conn);
+    crate::store::initialize(app)?;
     recover_interrupted(app)
 }

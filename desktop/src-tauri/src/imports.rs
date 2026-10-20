@@ -287,9 +287,7 @@ fn clipboard_file_paths() -> Vec<PathBuf> { Vec::new() }
 /// gone is fine; if the Trash refuses, the capture is put back.
 #[tauri::command]
 pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
-    let recording = store::load_all(&app)
-        .into_iter()
-        .find(|recording| recording.id == id)
+    let recording = store::get(&app, &id)?
         .ok_or("That capture is already gone.")?;
     let live = app.state::<audio::Captures>().is_busy() && crate::hud::current().session_id.as_deref() == Some(id.as_str());
     if recording.status == "recording" || live {

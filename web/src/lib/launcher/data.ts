@@ -15,6 +15,8 @@ function normalize(value: unknown): Recording | null {
     status: normalizeStatus(value.status),
     summary: optionalString(value.summary),
     transcript: optionalString(value.transcript),
+    transcriptTruncated: value.transcript_truncated === true,
+    revision: numberValue(value.revision),
     hasAudio: booleanValue(value.has_audio) ?? booleanValue(value.hasAudio) ?? false,
     hasVideo: booleanValue(value.has_video) ?? booleanValue(value.hasVideo) ?? false,
   };
@@ -46,8 +48,9 @@ export async function loadRecordings(now: number): Promise<Recording[]> {
   if (isDesktop()) {
     // Errors propagate: an empty list here would read as "you have no recordings".
     const { core } = window.__TAURI__!;
-    const rows = await core.invoke<unknown[]>('list_recordings');
-    return (rows ?? []).map(normalize).filter((row): row is Recording => row !== null);
+    const page = await core.invoke<NativePage>('list_recordings', { offset: 0, limit: 50 });
+    return normalizeRows(page.items);
+
   }
 
   try {
@@ -68,4 +71,34 @@ export async function loadRecordings(now: number): Promise<Recording[]> {
   }
 
   return mockRecordings(now);
+}
+
+export interface RecordingPage {
+  items: Recording[];
+  nextOffset: number | null;
+  counts: { all: number; voice: number; meetings: number; screens: number; notes: number };
+}
+interface NativePage {
+  items: unknown[];
+  next_offset: number | null;
+  counts: RecordingPage['counts'];
+}
+function normalizeRows(rows: unknown[]): Recording[] {
+  return rows.map(normalize).filter((row): row is Recording => row !== null);
+}
+
+export async function loadRecordingPage(offset = 0, query = '', filter = 'all'): Promise<RecordingPage> {
+  const t = window.__TAURI__;
+  if (!t) throw new Error('Capture history is unavailable outside the desktop app');
+  const page = await t.core.invoke<NativePage>('list_recordings', { offset, limit: 50, query, filter });
+  return { items: normalizeRows(page.items), nextOffset: page.next_offset, counts: page.counts };
+}
+
+/** Copy/expand always asks for the current complete record, never its preview. */
+export async function loadRecordingDetails(rec: Recording): Promise<Recording> {
+  if (!isDesktop() || rec.detailsLoaded) return rec;
+  const value = await window.__TAURI__!.core.invoke<unknown>('get_recording', { id: rec.id });
+  const detail = normalize(value);
+  if (!detail) throw new Error('That capture is no longer available');
+  return { ...detail, detailsLoaded: true };
 }

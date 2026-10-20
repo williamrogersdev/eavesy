@@ -110,7 +110,7 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
 }
 
 fn media_path(app: &AppHandle, id: &str) -> Result<(PathBuf, bool), String> {
-    let recording = store::load_all(app).into_iter().find(|rec| rec.id == id).ok_or("Capture not found.")?;
+    let recording = store::get(app, id)?.ok_or("Capture not found.")?;
     let image = matches!(recording.source.as_str(), "screenshot" | "image");
     if !image && !recording.has_video && !recording.has_audio { return Err("This capture has no saved media.".into()); }
     let path = if let Some(folder) = recording.folder_path {

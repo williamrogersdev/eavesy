@@ -33,6 +33,7 @@ mod recovery;
 mod screenshot_watcher;
 mod settings;
 mod sounds;
+mod history;
 mod store;
 mod sync;
 mod sqlite;
@@ -112,6 +113,7 @@ pub fn run() {
             commands::paste_to_frontmost,
             commands::hide_panel,
             commands::list_recordings,
+            commands::get_recording,
             commands::get_settings,
             commands::set_launcher_position,
             commands::get_setup_status,
