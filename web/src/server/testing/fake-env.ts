@@ -11,6 +11,10 @@ export function fakeD1(sqlite: Database) {
     async all() {
       return { results: sqlite.query(query).all(...(params as never[])), success: true, meta: {} };
     },
+    runSync() {
+      const result = sqlite.query(query).run(...(params as never[]));
+      return { results: [], success: true, meta: { changes: result.changes } };
+    },
     async run() {
       const result = sqlite.query(query).run(...(params as never[]));
       return { results: [], success: true, meta: { changes: result.changes } };
@@ -25,8 +29,14 @@ export function fakeD1(sqlite: Database) {
   });
   return {
     prepare: (query: string) => statement(query),
-    async batch(statements: { run(): Promise<unknown> }[]) {
-      return Promise.all(statements.map((s) => s.run()));
+    // Serial SQLite transactions model batch rollback; real-D1 tests are the authority.
+    async batch(statements: { runSync(): unknown }[]) {
+      sqlite.exec('BEGIN');
+      try {
+        const results = statements.map(s => s.runSync());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) { sqlite.exec('ROLLBACK'); throw error; }
     },
     async exec(query: string) {
       sqlite.exec(query);

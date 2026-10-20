@@ -92,7 +92,11 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
     if (!format || !Number.isSafeInteger(size) || size <= 0 || size > MAX_IMPORT_BYTES || !request.body) return json('Unsupported archive format or size');
     const key = `users/${userId}/meetings/${id}/import/original.${format}`;
     // Request bodies carry a known length in Workers; R2 streams without buffering.
-    await env.AUDIO_BUCKET.put(key, request.body as unknown as Parameters<ProcessingEnv['AUDIO_BUCKET']['put']>[1], { httpMetadata: { contentType } });
+    const stored = await env.AUDIO_BUCKET.put(key, request.body as unknown as Parameters<ProcessingEnv['AUDIO_BUCKET']['put']>[1], { httpMetadata: { contentType } });
+    if (stored.size !== size) {
+      await env.AUDIO_BUCKET.delete(key);
+      return json('Archive byte count does not match declared length');
+    }
     await db.update(meetings).set({ audioR2Key: key, audioFormat: format, audioBytes: size, updatedAt: Date.now() }).where(eq(meetings.id, id));
     return Response.json({ ok: true });
   }
@@ -105,7 +109,8 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
       db.update(meetings).set({ status: 'processing', statusError: null, durationSec: Math.round(job.durationMs / 1000), audioDurationSec: Math.round(job.durationMs / 1000), endedAt: Date.now(), updatedAt: Date.now() }).where(and(eq(meetings.id, id), isNull(meetings.deletedAt), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'processing')`)),
     ]);
     const active = (await db.select().from(recordingImports).where(eq(recordingImports.meetingId, id)).limit(1))[0];
-    if (active?.state !== 'processing') return json('Import is no longer active', 409);
+    const activeMeeting = (await db.select().from(meetings).where(eq(meetings.id, id)).limit(1))[0];
+    if (active?.state !== 'processing' || activeMeeting?.status !== 'processing' || activeMeeting.deletedAt) return json('Import is no longer active', 409);
     // Re-publishing restores handoff after a partial Queue failure. Consumers are idempotent.
     for (const segment of segments) if (segment.transcribeStatus !== 'complete') await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', meetingId: id, idx: segment.idx });
     await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: id });

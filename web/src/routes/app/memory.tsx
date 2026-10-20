@@ -9,18 +9,21 @@ function Memory() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [indexing, setIndexing] = useState(false);
+  const [resumeCursor, setResumeCursor] = useState<string | null>(null);
   const [indexMessage, setIndexMessage] = useState('');
   async function reindex() {
-    setIndexing(true); setError(''); let cursor: string | null = null; let queued = 0;
+    setIndexing(true); setError(''); let cursor: string | null = resumeCursor; let queued = 0; const seen = new Set<string>(); let pages = 0;
     try {
       do {
+        if (++pages > 20 || (cursor && seen.has(cursor))) throw new Error('Indexing stopped at its page limit. Retry later.');
+        if (cursor) seen.add(cursor);
         const r: Response = await fetch('/api/library/reindex', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cursor: cursor ?? undefined }) });
         const data: { error?: string; queued: number; cursor: string | null } = await r.json<{ error?: string; queued: number; cursor: string | null }>();
         if (!r.ok) throw new Error(data.error ?? 'Could not index library');
-        queued += data.queued; cursor = data.cursor;
+        queued += data.queued; cursor = data.cursor; setResumeCursor(cursor);
       } while (cursor);
       setIndexMessage(`Queued ${queued} recordings for indexing. Processing continues in the cloud.`);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not index library'); }
+    } catch (e) { setIndexMessage(`Queued ${queued} recordings before stopping. Processing continues in the cloud. You can continue from the saved position after the daily limit resets.`); setError(e instanceof Error ? e.message : 'Could not index library'); }
     finally { setIndexing(false); }
   }
   async function ask() {
@@ -51,7 +54,7 @@ function Memory() {
         </blockquote>)}
       </li>)}</ul>
     </div>
-    <button className="rounded border px-3 py-2 text-sm" disabled={indexing} onClick={() => void reindex()}>{indexing ? 'Queueing…' : 'Refresh library index'}</button>
+    <button className="rounded border px-3 py-2 text-sm" disabled={indexing} onClick={() => void reindex()}>{indexing ? 'Queueing…' : resumeCursor ? 'Continue indexing' : 'Refresh library index'}</button>
     <p role="status" className="text-sm text-muted-foreground">{indexMessage}</p>
     <Link href="/app/import" className="text-accent">Import recordings →</Link>
   </div>;
