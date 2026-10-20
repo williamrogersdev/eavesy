@@ -220,6 +220,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
   const [showPermissions, setShowPermissions] = useState(false);
   const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
+  useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);

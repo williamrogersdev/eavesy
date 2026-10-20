@@ -102,18 +102,11 @@ export function projectWords(project: Pick<Project, 'vocabulary' | 'people'>): s
 }
 
 /**
- * Stores edited words as vocabulary. Words past the vocabulary limit stay in
- * the people line, which transcription also reads, so none are dropped.
+ * Stores edited words as vocabulary and retires the old people line, whose
+ * names the editor already shows as words. The editor holds to the limit.
  */
 export function wordsToFields(words: string[]): Pick<Project, 'vocabulary' | 'people'> {
-  const all = cleanList(words, Number.MAX_SAFE_INTEGER);
-  let people = '';
-  for (const word of all.slice(PROJECT_LIMITS.vocabulary)) {
-    const next = people ? `${people}, ${word}` : word;
-    if (next.length > PROJECT_LIMITS.people) break;
-    people = next;
-  }
-  return { vocabulary: all.slice(0, PROJECT_LIMITS.vocabulary), people: people || null };
+  return { vocabulary: cleanList(words, PROJECT_LIMITS.vocabulary), people: null };
 }
 
 function namesIn(people: string | null | undefined): string[] {

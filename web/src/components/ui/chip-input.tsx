@@ -92,9 +92,9 @@ export function ChipInput({
     />
   );
 
-  const footer = (hint || showCount || field.long) ? (
+  const footer = (hint || showCount || field.long || field.duplicate) ? (
     <div className="flex items-start justify-between gap-3 text-[11.5px] text-ev-ink-2">
-      <span>{hint}</span>
+      <span>{field.duplicate && !field.long ? `“${field.draft.trim()}” is already in the list.` : hint}</span>
       <span className="flex shrink-0 items-center gap-2.5">
         {field.long ? (
           <>

@@ -35,9 +35,9 @@ export function useChipField({ value, onChange, max, maxLength }: {
   const commit = (text: string) => {
     const parts = splitChips(text);
     if (parts.length > 0 && full) return;
-    setDraft('');
-    if (parts.length === 0) return;
     const next = addChips(value, parts, { max, maxLength });
+    if (parts.length > 0 && next.length === value.length) return;
+    setDraft('');
     if (next.length !== value.length) onChange(next);
   };
 
@@ -77,6 +77,6 @@ export function useChipField({ value, onChange, max, maxLength }: {
         onChange(value.slice(0, -1));
       }
     },
-    onBlur: () => { if (!long) commit(draft); },
+    onBlur: () => { if (!long && !duplicate) commit(draft); },
   };
 }

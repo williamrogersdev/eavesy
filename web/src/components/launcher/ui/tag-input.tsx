@@ -64,6 +64,7 @@ export function TagInput({ value, onChange, placeholder, max = Infinity, label, 
       <div className={cn('ev-tags', className)} data-disabled={disabled || undefined} onClick={() => input.current?.focus()}>
         {chips}
         {box}
+        {field.duplicate && <span className="ev-tags-note">Already added</span>}
       </div>
     );
   }
