@@ -29,7 +29,7 @@ export function useRouter() {
 }
 
 export function useParams<T extends Record<string, string> = Record<string, string>>(): T {
-  return useTSParams({ strict: false } as never) as T;
+  return useTSParams({ strict: false } as never);
 }
 
 export function redirect(href: string): never {

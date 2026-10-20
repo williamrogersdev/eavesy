@@ -21,7 +21,8 @@
     "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build",
     "typecheck:tsrs": "cd web && bun run typecheck:tsrs",
     "typecheck:tsc": "cd web && bun run typecheck:tsc",
-    "typecheck:bench": "bun scripts/benchmark-typecheck.ts"
+    "typecheck:bench": "bun scripts/benchmark-typecheck.ts",
+    "lint:bench": "bun scripts/benchmark-lint.ts"
   },
   "devDependencies": {
     "wrangler": "^4.111.0"
