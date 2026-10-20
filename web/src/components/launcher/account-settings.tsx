@@ -58,7 +58,7 @@ export function TranscriptionCard() {
   }, []);
 
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const patch = useCallback((body: Record<string, unknown>) => {
     setError(null);
@@ -129,6 +129,8 @@ function ProjectEditor({ project, onChange, onDelete }: {
 }) {
   const [name, setName] = useState(project.name);
   const [about, setAbout] = useState(project.about ?? '');
+  useEffect(() => setName(project.name), [project.name]);
+  useEffect(() => setAbout(project.about ?? ''), [project.about]);
   return (
     <div className="flex flex-col gap-3 px-3 pb-3">
       <div className="ev-field">
@@ -196,13 +198,16 @@ export function ProjectsCard({ onChanged }: { onChanged?: () => void }) {
 
   const pendingFields = useRef(new Map<string, ProjectFields>());
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const saveLater = useLaterSave<null>(async () => {
     const batch = [...pendingFields.current];
     pendingFields.current.clear();
     await Promise.all(batch.map(([id, fields]) => accountCall('PATCH', `/api/projects/${id}`, fields)
       .then(() => onChanged?.())
-      .catch((e: unknown) => { if (mounted.current) setError(errMsg(e, 'Couldn’t save that project.')); })));
+      .catch((e: unknown) => {
+        pendingFields.current.set(id, { ...fields, ...pendingFields.current.get(id) });
+        if (mounted.current) setError(errMsg(e, 'Couldn’t save that project. It will try again with your next change.'));
+      })));
   });
   const change = (id: string, fields: ProjectFields) => {
     setError(null);
@@ -250,7 +255,7 @@ export function ProjectsCard({ onChanged }: { onChanged?: () => void }) {
             <span className="ev-set-hint shrink-0">{project.vocabulary.length ? `${project.vocabulary.length} words` : 'No words yet'}</span>
             {open === project.id ? <ChevronDown className="h-4 w-4 shrink-0" aria-hidden /> : <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />}
           </button>
-          {open === project.id && <ProjectEditor key={`${project.name}\n${project.about ?? ''}`} project={project} onChange={(fields) => change(project.id, fields)} onDelete={() => remove(project.id)} />}
+          {open === project.id && <ProjectEditor project={project} onChange={(fields) => change(project.id, fields)} onDelete={() => remove(project.id)} />}
         </div>
       ))}
       <div className="ev-set-row">
