@@ -345,7 +345,7 @@ fn save(conn: &Connection, row: &StoredRecording) -> Result<(), String> {
     conn.execute("INSERT INTO history_recordings(id,title,title_search,started_at_ms,duration_sec,source,status,has_audio,has_video,folder_path,folder_key,category,preview,truncated)
         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
         ON CONFLICT(id) DO UPDATE SET title=excluded.title,title_search=excluded.title_search,started_at_ms=excluded.started_at_ms,duration_sec=excluded.duration_sec,source=excluded.source,status=excluded.status,has_audio=excluded.has_audio,has_video=excluded.has_video,folder_path=excluded.folder_path,folder_key=excluded.folder_key,category=excluded.category,preview=excluded.preview,truncated=excluded.truncated,revision=revision+1",
-        params![row.id,row.title,row.title.to_lowercase(),row.started_at_ms,row.duration_sec,row.source,row.status,row.has_audio,row.has_video,row.folder_path,key,category,row.transcript.as_ref().map(|_|preview.as_str()),preview.len()<text.len()]).map_err(error)?;
+        params![row.id,row.title,row.title.to_lowercase(),row.started_at_ms,row.duration_sec,row.source,row.status,row.has_audio,row.has_video,row.folder_path,key,category,row.transcript.as_ref().map(|_|preview.as_str()),preview.len()<plain.len()]).map_err(error)?;
     let search = format!("{} {}", plain, row.summary.as_deref().unwrap_or_default()).to_lowercase();
     conn.execute("INSERT INTO history_content(id,summary,transcript,notes,search_text) VALUES (?1,?2,?3,?4,?5)
         ON CONFLICT(id) DO UPDATE SET summary=excluded.summary,transcript=excluded.transcript,notes=excluded.notes,search_text=excluded.search_text
@@ -523,6 +523,40 @@ mod tests {
         drop(history);
         assert_eq!(fixture.open().unwrap().get("a").unwrap(), Some(changed));
     }
+    #[test]
+    fn preview_truncation_uses_plain_text_and_unicode_boundaries() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        for (text, truncated) in [
+            (
+                "# Title\n\n## Transcript\n\n[00:00:01] hello".to_string(),
+                false,
+            ),
+            ("é".repeat(2048), false),
+            ("é".repeat(2049), true),
+        ] {
+            let mut recording = row("a");
+            recording.transcript = Some(text.clone());
+            history.put(&recording).unwrap();
+            let page = history.page(0, 50, "", "all").unwrap();
+            assert_eq!(page.items[0].transcript_truncated, truncated);
+            assert_eq!(
+                page.items[0].transcript.as_deref(),
+                Some(
+                    plain_transcript(&text)
+                        .chars()
+                        .take(2048)
+                        .collect::<String>()
+                        .as_str()
+                )
+            );
+            assert_eq!(
+                history.get("a").unwrap().unwrap().transcript.as_deref(),
+                Some(text.as_str())
+            );
+        }
+    }
+
     #[test]
     fn folder_index_handles_canonical_aliases_and_relocation() {
         let fixture = Fixture::new();
