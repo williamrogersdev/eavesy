@@ -1,5 +1,6 @@
 import * as dictionary from '@/db/repo/dictionary';
 import { repairTranscriptSegments, repairAi } from '@/lib/ai/repair-transcript';
+import { guardedImportWrite } from './import-guard';
 import { createAiRunner } from '@/lib/ai/credit-runner';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
@@ -286,7 +287,7 @@ export async function handleTranscribeSegment(
       const current = await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1);
       if (!current[0] || current[0].deletedAt || (meeting.source === 'import' && current[0].status === 'failed')) return;
       const repaired = await repairTranscriptSegments(lines, { dictionary: entries, ai: repairAi(env) });
-      await runBatched(db, repaired.map((relative) => {
+      const writes = repaired.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
         const absoluteEnd = Math.max(
@@ -326,7 +327,14 @@ export async function handleTranscribeSegment(
             },
             setWhere: eq(transcriptSegments.isEdited, false),
           });
-      }));
+      });
+      if (meeting.source === 'import') {
+        // Completed batches remain available for resume; every later write
+        // rechecks cancellation. Cancelled recordings stay excluded from memory.
+        for (let at = 0; at < writes.length; at += 50) {
+          await env.DB.batch(writes.slice(at, at + 50).map(write => guardedImportWrite(env, write.toSQL(), meetingId)));
+        }
+      } else await runBatched(db, writes);
       if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
     }
 

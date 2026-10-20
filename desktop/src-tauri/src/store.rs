@@ -456,6 +456,15 @@ mod tests {
         rec.folder_path = Some(root.to_string_lossy().into_owned());
         append(app.handle(), rec).unwrap();
         correct_transcript(app.handle(), "correction", "stale", "wrong").unwrap_err();
+        std::fs::write(root.join("transcript.md"), "Open a pool request.").unwrap();
+        let registry = registry_path(app.handle()).unwrap();
+        let backup = registry.with_extension("backup");
+        std::fs::rename(&registry, &backup).unwrap();
+        std::fs::create_dir(&registry).unwrap();
+        assert!(correct_transcript(app.handle(), "correction", "Open a pool request.", "Must roll back.").is_err());
+        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pool request.");
+        std::fs::remove_dir(&registry).unwrap();
+        std::fs::rename(&backup, &registry).unwrap();
         correct_transcript(app.handle(), "correction", "Open a pool request.", "Open a pull request.").unwrap();
         assert_eq!(load_all(app.handle())[0].transcript.as_deref(), Some("Open a pull request."));
         assert_eq!(std::fs::read_to_string(root.join("transcript.raw.md")).unwrap(), "Open a pool request.");
