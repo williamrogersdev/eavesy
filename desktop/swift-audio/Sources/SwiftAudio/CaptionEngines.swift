@@ -70,6 +70,9 @@ final class SFSpeechEngine: SpeechEngine {
     private let lock = NSLock()
     private weak var sink: CaptionSink?
     private var current: Window?
+    // A rolled-over request still owns words. Keep its window alive until
+    // its final callback; the task callback deliberately captures it weakly.
+    private var drainingWindows: [Window] = []
     private var finishing: (() -> Void)?
     private var open = 0
 
@@ -158,6 +161,7 @@ final class SFSpeechEngine: SpeechEngine {
     private func openWindow(atMs: Int64) -> Window {
         let window = Window(startMs: atMs, vocabulary: vocabulary)
         open += 1
+        drainingWindows.append(window)
         window.task = recognizer.recognitionTask(with: window.request) { [weak self, weak window] result, error in
             guard let self, let window else { return }
             self.handle(window: window, result: result, error: error)
@@ -191,6 +195,8 @@ final class SFSpeechEngine: SpeechEngine {
             return
         }
         window.settled = true
+        if current === window { current = nil }
+        drainingWindows.removeAll { $0 === window }
         open -= 1
         let done = open == 0 ? finishing : nil
         if done != nil { finishing = nil }

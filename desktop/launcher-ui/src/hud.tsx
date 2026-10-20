@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
+import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
 import { errMsg } from '@/lib/desktop/errors';
@@ -73,7 +74,7 @@ function sizeFor(state: HudState): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [360, 64], result: [360, 100], shot: [360, 172] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [400, 142], result: [400, 142], shot: [360, 172] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -114,13 +115,49 @@ function Hud() {
   const [running, setRunning] = useState<RunningTranscript>(browserPreviewWords);
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
-  const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{ sessionId: string | null; text: string } | null>(null);
+  const [saveRevision, setSaveRevision] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const pendingEdit = useRef<{ sessionId: string; text: string } | null>(null);
+  const latestEdit = useRef<{ sessionId: string; text: string } | null>(null);
+  const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  const flushEdit = (): Promise<boolean> => {
+    const edit = pendingEdit.current;
+    if (!edit) return saveQueue.current;
+    pendingEdit.current = null;
+    setSaving(true);
+    setSaveError(null);
+    const task = saveQueue.current.then(async () => {
+      try {
+        await invoke('save_preview_transcript', edit);
+        return true;
+      } catch (error) {
+        // Keep the latest correction available for retry; never silently dismiss it.
+        if (latestEdit.current !== edit) return false;
+        if (!pendingEdit.current) pendingEdit.current = edit;
+        setSaveError(errMsg(error, 'Could not save transcript'));
+        return false;
+      }
+    });
+    saveQueue.current = task;
+    void task.then(() => { if (saveQueue.current === task) { setSaving(false); setSaveRevision((revision) => revision + 1); } });
+    return task;
+  };
+  useEffect(() => {
+    if (!pendingEdit.current) return;
+    const timer = window.setTimeout(() => { void flushEdit(); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   // The Mac's own recognizer could not run for this recording: no live words.
   const [captionsOff, setCaptionsOff] = useState<string | null>(null);
-  // The result the pointer has already visited: once it leaves, a short grace.
-  const visited = useRef<string | null>(null);
+  const transcriptBox = useRef<HTMLDivElement>(null);
+  const lines = useLiveLines(state?.sessionId ?? null, 12);
+  const currentSession = useRef(state?.sessionId);
+  currentSession.current = state?.sessionId;
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -153,6 +190,7 @@ function Hud() {
     void (async () => {
       const off = await tauri()?.event?.listen('recording:caption', (e) => {
         const caption = e.payload as LiveCaption;
+        if (caption.sessionId !== currentSession.current) return;
         setRunning((current) => addCaption(current, caption));
         if (caption.text.trim()) setVoice(1);
       });
@@ -219,7 +257,7 @@ function Hud() {
       if (!(await readyToCapture(mode))) return;
       if (mode === 'image') await invoke('capture_screenshot');
       else if (mode === 'video') await invoke('start_screen_capture', { mic: true });
-      else await invoke('start_capture', { source: 'mic' });
+      else await invoke('start_capture', { source: 'mic', dictation: true });
     }
     catch (error) {
       const message = errMsg(error, mode === 'image' ? 'Could not take the screenshot' : 'Could not start recording');
@@ -231,7 +269,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => setCopied(false), [state?.sessionId, state?.phase]);
+  useEffect(() => { setCopied(false); setEditing(false); }, [state?.sessionId, state?.phase]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -249,17 +287,14 @@ function Hud() {
   const size = state ? sizeFor(state) : 'pill';
 
   useEffect(() => {
-    if (!state || !['saved', 'done', 'failed'].includes(state.phase)) return;
+    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const sessionId = state.sessionId;
-    // Long enough to read the words or grab the screenshot; held open while
-    // the pointer is on the control, then a short grace once it leaves.
-    const key = `${state.phase}:${sessionId ?? ''}`;
-    if (hovered) { visited.current = key; return; }
     const timeout = window.setTimeout(() => {
-      void invoke('dismiss_hud', { sessionId }).catch(() => {});
-    }, visited.current === key ? 2500 : size === 'pill' ? 3500 : size === 'result' ? 9000 : 7000);
+      if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
+      else setState({ ...state, phase: 'idle', message: null, notice: null });
+    }, state.phase === 'done' ? 15_000 : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, size, hovered]);
+  }, [state?.phase, state?.sessionId, editing, saving, saveError, draft, saveRevision]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
@@ -271,19 +306,26 @@ function Hud() {
     document.body.style.minHeight = '100vh';
   }, [size]);
 
+  const snapshotWords = lines.map((line) => line.text).join(' ');
+  useEffect(() => {
+    const box = transcriptBox.current;
+    if (box && state?.phase !== 'done') box.scrollTop = box.scrollHeight;
+  }, [snapshotWords, running, state?.phase]);
+
   if (!state) return null;
 
   const opening = state.phase === 'recording' && !state.sessionId;
   const video = state.mode === 'video';
-  const heard = state.sessionId && running.sessionId === state.sessionId ? runningText(running) : '';
-  const words = state.phase === 'done' ? (state.message?.trim() || heard) : heard;
+  const heard = snapshotWords || (state.sessionId && running.sessionId === state.sessionId ? runningText(running) : '');
+  const words = state.phase === 'done' ? (draft?.sessionId === state.sessionId ? draft.text : state.message?.trim() || heard) : heard;
+  const editable = !!(state.message?.trim() || heard) || draft?.sessionId === state.sessionId;
   const notice = state.notice ?? null;
   const notPasted = !!notice?.includes('Accessibility');
   const busy = starting || state.phase === 'transcribing';
   const kbd = shortcut ? ` (${shortcut})` : '';
 
   const pressSurface = (e: MouseEvent) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, textarea')) return;
     const origin = { x: e.screenX, y: e.screenY };
     const cleanup = () => {
       window.removeEventListener('mousemove', move);
@@ -308,16 +350,13 @@ function Hud() {
     </button>
   );
   const close = (
-    <button type="button" onClick={() => act('close_hud')} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : undefined).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
   );
   const history = (
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn ctl-icon"><History className="h-3.5 w-3.5" /></button>
   );
   const copyWords = (
-    <button type="button" className="ctl-btn ctl-primary" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
-  );
-  const expand = (
-    <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-btn ctl-icon"><Maximize2 className="h-3.5 w-3.5" /></button>
+    <button type="button" className="ctl-btn" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
   );
 
   let top: ReactNode;
@@ -363,21 +402,29 @@ function Hud() {
       </button>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">On clipboard</Stamp> : <Stamp tone="leaf">Pasted</Stamp>;
+    const stamp = <span className={notPasted ? 'ctl-say ctl-warn' : 'ctl-say ctl-quiet'} role="status">{notPasted ? 'Not pasted' : notice ? 'Copied' : 'Pasted'}</span>;
     top = (
       <>
         {mark}
-        {stamp}
+        {saveError ? <button className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
         {notice && !notPasted && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {words && copyWords}
-        {expand}
         {close}
       </>
     );
-    below = words
-      ? <p className="ctl-words" title={words}>{words}</p>
+    below = editable
+      ? <textarea
+          aria-label="Edit transcript preview"
+          className="ctl-words ctl-editor"
+          value={words}
+          spellCheck
+          onFocus={() => setEditing(true)}
+          onBlur={() => { setEditing(false); void flushEdit(); }}
+          onChange={(event) => { setDraft({ sessionId: state.sessionId, text: event.target.value }); if (state.sessionId) { const edit = { sessionId: state.sessionId, text: event.target.value }; latestEdit.current = edit; pendingEdit.current = edit; } setCopied(false); }}
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.currentTarget.blur(); } }}
+        />
       : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
     top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{close}</>;
@@ -405,12 +452,11 @@ function Hud() {
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
       onMouseDown={pressSurface}
-      onMouseEnter={() => { loadShortcut(); setHovered(true); }}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={loadShortcut}
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>
-      {below && <div className="ctl-below">{below}</div>}
+      {below && <div ref={transcriptBox} className="ctl-below" onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
     </div>
   );
 }
@@ -429,11 +475,11 @@ function VoiceBars({ level }: { level: number }) {
   );
 }
 
-/** One line of what is being heard, the newest words always in view. */
+/** Wrapped live words; the parent scrolls to keep the latest sentences visible. */
 function Ticker({ text, hint, working }: { text: string; hint: string; working?: boolean }) {
   return (
-    <p className="ctl-line ctl-ticker" data-working={working || undefined} aria-live="polite">
-      {text ? <bdi>{text.replace(/\s+/g, ' ').trim().slice(-240)}</bdi> : <span className="ctl-hint">{hint}</span>}
+    <p className="ctl-ticker" aria-busy={working || undefined} aria-live="polite">
+      {text ? <bdi>{text}</bdi> : <span className="ctl-hint">{hint}</span>}
     </p>
   );
 }

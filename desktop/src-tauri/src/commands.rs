@@ -542,7 +542,30 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub fn get_hud_state() -> crate::hud::HudState { crate::hud::current() }
+pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
+    let mut state = crate::hud::current();
+    if state.phase == crate::hud::Phase::Done {
+        if let Some(recording) = store::load_all(&app).into_iter()
+            .find(|rec| Some(&rec.id) == state.session_id.as_ref()) {
+            if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+        }
+    }
+    state
+}
+
+#[tauri::command]
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
+    // Fast paste can finish just before the recording's folder is registered.
+    for _ in 0..50 {
+        let ready = store::load_all(&app).iter()
+            .any(|rec| rec.id == session_id && rec.folder_path.is_some());
+        if ready { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    store::save_preview_transcript(&app, &session_id, &text)?;
+    let _ = app.emit("recordings:updated", ());
+    Ok(())
+}
 
 #[tauri::command]
 pub fn show_settings(app: AppHandle) -> Result<(), String> {

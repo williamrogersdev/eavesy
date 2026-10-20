@@ -783,3 +783,37 @@ fi
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Refresh the running app and Finder from the icon in this installed bundle.
+/// macOS can retain the previous icon when an updater replaces a bundle at
+/// the same path. Called on the main thread during setup.
+#[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
+pub fn refresh_icon() {
+    use tauri_nspanel::cocoa::base::{id, nil};
+    use tauri_nspanel::cocoa::foundation::NSString;
+    use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(bundle) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) else { return };
+    if bundle.extension().and_then(|ext| ext.to_str()) != Some("app") { return; }
+    let icon = bundle.join("Contents/Resources/icon.icns");
+    if !icon.is_file() { return; }
+    unsafe {
+        let path = NSString::alloc(nil).init_str(&icon.to_string_lossy());
+        let image: id = msg_send![class!(NSImage), alloc];
+        let image: id = msg_send![image, initWithContentsOfFile: path];
+        if image != nil {
+            let application: id = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![application, setApplicationIconImage: image];
+            let _: () = msg_send![image, release];
+        }
+        let _: () = msg_send![path, release];
+        let path = NSString::alloc(nil).init_str(&bundle.to_string_lossy());
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let _: () = msg_send![workspace, noteFileSystemChanged: path];
+        let _: () = msg_send![path, release];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn refresh_icon() {}

@@ -49,9 +49,18 @@ describe('liveView', () => {
     ]);
   });
 
-  it('drops partials already stored and finals', () => {
+  it('keeps a final visible until its stored row arrives', () => {
     const view = liveView([line(5_000, 'Stored.')], [partial(4_000, 'old'), partial(7_000, 'final', true)]);
-    expect(view).toEqual([{ text: 'Stored.', provisional: false, label: 'You' }]);
+    expect(view).toEqual([{ text: 'Stored.', provisional: false, label: 'You' }, { text: 'final', provisional: true, label: 'You' }]);
+  });
+
+  it('does not hide mic captions when computer audio is further ahead', () => {
+    const system = { ...line(10_000, 'Other speaker.'), track: 'system' };
+    expect(liveView([system], [partial(5_000, 'My words')]).map((row) => row.text)).toEqual(['Other speaker.', 'My words']);
+  });
+
+  it('replaces the live final with its persisted row without duplicating it', () => {
+    expect(liveView([line(7_000, 'Final.')], [partial(7_000, 'Final.', true)])).toEqual([{ text: 'Final.', provisional: false, label: 'You' }]);
   });
 
   it('keeps only the most recent few', () => {
@@ -87,5 +96,19 @@ describe('running transcript', () => {
     const state = add([partial(0, 'old words', true), { ...partial(0, 'new', true), sessionId: 't' }]);
     expect(runningText(state)).toBe('new');
     expect(state.sessionId).toBe('t');
+  });
+});
+
+describe('phrases awaiting finals', () => {
+  it('keeps the beginning and middle when only the last phrase is still arriving', () => {
+    let state = addCaption(EMPTY_RUNNING, partial(0, 'Start.'));
+    state = addCaption(state, partial(2_000, 'Middle.'));
+    state = addCaption(state, partial(4_000, 'Trailing end.'));
+    expect(runningText(state)).toBe('Start. Middle. Trailing end.');
+    state = addCaption(state, partial(0, 'Start.', true));
+    state = addCaption(state, partial(2_000, 'Middle.', true));
+    expect(runningText(state)).toBe('Start. Middle. Trailing end.');
+    state = addCaption(state, partial(4_000, 'Trailing end.', true));
+    expect(runningText(state)).toBe('Start. Middle. Trailing end.');
   });
 });

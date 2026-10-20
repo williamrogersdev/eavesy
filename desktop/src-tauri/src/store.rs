@@ -189,6 +189,29 @@ fn spoken_word_count(text: &str) -> usize {
         .count()
 }
 
+/// Save a deliberate correction under the same lock used by cloud-result updates.
+/// The file remains a local edit, so later generated transcripts cannot replace it.
+pub fn save_preview_transcript<R: Runtime>(
+    app: &AppHandle<R>, id: &str, content: &str,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    if content.len() > 5 * 1024 * 1024 { return Err("Transcript is too large".into()); }
+    mutate(app, |list| {
+        let recording = list.iter_mut().find(|rec| rec.id == id)
+            .ok_or_else(|| "Recording is still being saved. Please retry.".to_string())?;
+        let folder = recording.folder_path.as_deref()
+            .ok_or_else(|| "Recording folder is still being saved. Please retry.".to_string())?;
+        let path = Path::new(folder).join("transcript.md");
+        let hash = hex::encode(Sha256::digest(content.as_bytes()));
+        crate::fs_writer::atomic_write(&path, content.as_bytes())?;
+        // Queue through the existing file-edit sync path, including empty edits.
+        crate::sqlite::enqueue_file_edit(app, id, "transcript", content, &hash)?;
+        crate::sqlite::record_file_observation(app, &path, id, "transcript", &hash)?;
+        recording.transcript = Some(content.to_string());
+        Ok(true)
+    })
+}
+
 pub fn apply_external_edit<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -441,6 +464,38 @@ mod tests {
         assert!(!changed);
         assert_eq!(recording.transcript.as_deref(), Some("transcript"));
         assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), written);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preview_corrections_persist_and_survive_later_transcription() {
+        let root = std::env::temp_dir().join(format!("eavesy-preview-save-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        crate::sqlite::initialize(app).unwrap();
+        let folder = root.join("recording");
+        let mut recording = sample("edited", 1);
+        recording.folder_path = Some(folder.to_string_lossy().into_owned());
+        recording.transcript = Some("Original transcript".into());
+        append(app, recording.clone()).unwrap();
+        crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, None, None).unwrap();
+        for correction in ["Corrected opening.\nCorrected ending.", "", "Final saved correction."] {
+            save_preview_transcript(app, "edited", correction).unwrap();
+            // Read the physical registry as well as its in-memory cache.
+            assert_eq!(read_registry_file(&registry_path(app).unwrap()).unwrap()[0].transcript.as_deref(), Some(correction));
+            assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
+            let queued = crate::sqlite::next_file_edit(app).unwrap().unwrap();
+            assert_eq!(queued.content_md, correction);
+            assert!(crate::fs_writer::has_local_edit(app, &folder.join("transcript.md")).unwrap());
+            set_transcript(app, "edited", Some("Late device transcript".into()), "processing").unwrap();
+            let (updated, _) = set_result(app, "edited", "Cloud title", "Late cloud transcript".into(), None, None, "complete", true).unwrap().unwrap();
+            crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &updated, None, None).unwrap();
+            assert_eq!(load_all(app)[0].transcript.as_deref(), Some(correction));
+            assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
+        }
+        assert!(save_preview_transcript(app, "missing", "must not disappear").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
