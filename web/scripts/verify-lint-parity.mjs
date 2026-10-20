@@ -38,22 +38,25 @@ for (const { filePath } of referenceFiles) {
   const relative = path.relative(root, filePath);
   const before = await original.calculateConfigForFile(filePath);
   const after = await residualLint.calculateConfigForFile(filePath);
-  const nativeRules = { ...config.rules };
-  for (const override of config.overrides) {
-    if (override.files.some((glob) => path.matchesGlob(relative, glob))) Object.assign(nativeRules, override.rules);
+  const nativeRules = Object.fromEntries(Object.entries(validated.rules ?? {}).map(([rule, value]) => [rule, normalizeNative(value)]));
+  for (const override of validated.overrides) {
+    if (override.files.some((glob) => path.matchesGlob(relative, glob))) {
+      for (const [rule, value] of Object.entries(override.rules ?? {})) nativeRules[rule] = normalizeNative(value);
+    }
   }
   for (const [rule, options] of Object.entries(before.rules)) {
     if (options[0] === 0) continue;
     if (!Object.hasOwn(ruleMap, rule)) throw new Error(`${relative}: unmapped reference rule ${rule}; update lint-rule-map.json and verify coverage`);
     const nativeName = ruleMap[rule];
     const residualOwns = JSON.stringify(after.rules[rule]) === JSON.stringify(options);
-    const nativeOwns = nativeName !== null && JSON.stringify(nativeRules[nativeName]) === JSON.stringify(options);
+    const nativeOwns = nativeName !== null && nativeRules[nativeName]?.[0] > 0 && JSON.stringify(nativeRules[nativeName]) === JSON.stringify(options);
     if (!residualOwns && !nativeOwns) throw new Error(`${relative}: dropped or changed ${rule}: ${JSON.stringify(options)}`);
     if (nativeOwns && after.rules[rule]?.[0] > 0) throw new Error(`${relative}: duplicate rule ownership for ${rule}`);
   }
 }
 console.log(`Preserved configured rules and options for ${referenceFiles.length} ESLint files.`);
 const cases = [
+  ['syntax.ts', 'export const broken = ;\n', ['fatal']],
   ['hooks.tsx', `import { useEffect, useState } from 'react';
 export function useProbe(flag: boolean, dependency: number) {
   if (flag) useState(0);
@@ -107,7 +110,7 @@ function run(binary, args) {
   return JSON.parse(result.stdout);
 }
 function eslintCodes(output) {
-  return output.flatMap((file) => file.messages.map((message) => message.ruleId ?? 'unused-disable'));
+  return output.flatMap((file) => file.messages.map((message) => message.fatal ? 'fatal' : message.ruleId ?? (message.message.startsWith('Unused eslint-disable directive') ? 'unused-disable' : 'unmapped-null-rule')));
 }
 function equal(actual, expected, label) {
   const normalize = (values) => JSON.stringify([...new Set(values)].sort());

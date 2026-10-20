@@ -34,6 +34,7 @@ const residual = new ESLint({ cwd: root, overrideConfigFile: 'eslint.oxlint.conf
   rules: { 'lint-migration/directives': 'error' },
 }] });
 const results = await residual.lintFiles(files.length ? files : '.');
+const parseFailures = new Set(results.filter((result) => result.messages.some((message) => message.fatal)).map((result) => result.filePath));
 
 // Oxlint cannot decide whether an ESLint-only rule used a suppression. Delegate
 // the whole file to the original configuration for bare/unsupported directives,
@@ -55,7 +56,7 @@ const combined = results.filter(({ filePath }) => !delegatedPaths.has(filePath))
 const byPath = new Map(combined.map((result) => [result.filePath, result]));
 for (const diagnostic of diagnostics) {
   const filePath = path.resolve(root, diagnostic.filename);
-  if (delegatedPaths.has(filePath)) continue;
+  if (delegatedPaths.has(filePath) || parseFailures.has(filePath)) continue;
   const span = diagnostic.labels?.[0]?.span;
   const match = /^(\w[\w-]*)\((.*)\)$/.exec(diagnostic.code ?? '');
   let ruleId = null;
