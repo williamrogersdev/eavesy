@@ -34,6 +34,8 @@ const residual = new ESLint({ cwd: root, overrideConfigFile: 'eslint.oxlint.conf
   rules: { 'lint-migration/directives': 'error' },
 }] });
 const results = await residual.lintFiles(files.length ? files : '.');
+// Match reference ESLint: invalid syntax fails the file before rule execution.
+// TypeScript recovery can emit speculative semantic errors for that broken AST.
 const parseFailures = new Set(results.filter((result) => result.messages.some((message) => message.fatal)).map((result) => result.filePath));
 
 // Oxlint cannot decide whether an ESLint-only rule used a suppression. Delegate

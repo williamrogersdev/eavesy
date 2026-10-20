@@ -17,12 +17,18 @@ if (compiled.error || compiled.status !== 0) throw new Error(`Oxlint configurati
 const validated = JSON.parse(compiled.stdout);
 if (!validated.options?.typeAware || !['typescript', 'react'].every((plugin) => validated.plugins.includes(plugin))) throw new Error('Required native plugins or type-aware mode are disabled');
 const severity = { deny: 2, warn: 1, allow: 0 };
-const normalizeNative = (value) => typeof value === 'string' ? [severity[value]] : [severity[value[0]], ...value[1]];
+function normalizeNative(value) {
+  if (typeof value === 'string' && Object.hasOwn(severity, value)) return [severity[value]];
+  if (Array.isArray(value) && Object.hasOwn(severity, value[0]) && (value[1] === undefined || Array.isArray(value[1]))) return [severity[value[0]], ...(value[1] ?? [])];
+  throw new Error(`Missing or unsupported compiled native rule options: ${JSON.stringify(value)}`);
+}
 if (validated.overrides.length !== config.overrides.length) throw new Error('Native override compilation changed scope');
 for (let i = 0; i < config.overrides.length; i++) {
   if (JSON.stringify(validated.overrides[i].files) !== JSON.stringify(config.overrides[i].files)) throw new Error('Native override globs changed scope');
   for (const [rule, value] of Object.entries(config.overrides[i].rules ?? {})) {
-    if (JSON.stringify(normalizeNative(validated.overrides[i].rules[rule])) !== JSON.stringify(value)) throw new Error(`Oxlint compiled different options for ${rule}`);
+    const compiledRule = validated.overrides[i].rules?.[rule];
+    if (compiledRule === undefined) throw new Error(`Oxlint did not compile configured rule ${rule}`);
+    if (JSON.stringify(normalizeNative(compiledRule)) !== JSON.stringify(value)) throw new Error(`Oxlint compiled different options for ${rule}`);
   }
 }
 
@@ -56,7 +62,7 @@ for (const { filePath } of referenceFiles) {
 }
 console.log(`Preserved configured rules and options for ${referenceFiles.length} ESLint files.`);
 const cases = [
-  ['syntax.ts', 'export const broken = ;\n', ['fatal']],
+  ['syntax.ts', 'export const explicit: any = 1;\nexport const broken = ;\n', ['fatal']],
   ['hooks.tsx', `import { useEffect, useState } from 'react';
 export function useProbe(flag: boolean, dependency: number) {
   if (flag) useState(0);

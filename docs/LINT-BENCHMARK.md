@@ -44,6 +44,11 @@ The only source adjustment removes a redundant outer return assertion from the
 router compatibility shim. Its required argument assertion and generic return
 type remain; this has no runtime effect.
 
+Fatal parser errors follow the original ESLint contract: the file fails before
+rule execution. Recovered semantic diagnostics on that invalid AST are omitted
+until syntax is fixed. A probe combining invalid syntax and an explicit-any
+violation verifies that this cannot be mistaken for an unused suppression.
+
 ```sh
 bun run lint             # root: combined command
 bun run lint:bench       # root: parity/probes then five timed comparisons
