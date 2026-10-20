@@ -77,3 +77,7 @@ base64 = "0.22"
 minisign-verify = "0.2.5"
 wiremock = "0.6"
 tauri = { version = "2.0", features = ["test"] }
+
+# Legacy objc macros test this feature internally; it is not an app feature.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

@@ -149,7 +149,7 @@ body {
   width: 100%;
   overflow: hidden;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgb(58 53 49 / 0.97), rgb(42 38 35 / 0.97));
+  background: rgb(34 32 30 / 0.97);
   box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.09);
   color: var(--ctl-ink);
   font: 550 12.5px/16px var(--ev-font-round);
@@ -178,13 +178,17 @@ body {
 .eavesy-control[data-size="result"] .ctl-top,
 .eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding: 2px 6px 0 6px; gap: 4px; }
 .ctl-below {
-  display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 16px 10px 44px;
+  margin: 4px 6px 10px;
+  padding: 0 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  user-select: text;
+  -webkit-user-select: text;
 }
-.eavesy-control[data-size="result"] .ctl-below { padding: 0 14px 12px 14px; }
-.eavesy-control[data-size="shot"] .ctl-below { padding: 2px 8px 8px; }
+.eavesy-control[data-size="shot"].ctl-below { padding: 2px; }
 .ctl-fill { flex: 1 1 auto; min-width: 4px; }
 
 /* The snoop, in cream on the charcoal. */
@@ -292,49 +296,25 @@ body {
   to { transform: scaleY(calc(0.42 + var(--lvl, 0) * 0.58)); }
 }
 
-/* One line of words: clipped from the start, so the newest stay in view. */
+/* Status copy wraps into the same readable area as transcript text. */
 .ctl-line {
   min-width: 0;
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font: 400 12.5px/18px var(--ev-font-text);
 }
-.ctl-ticker {
-  flex: 1 1 auto;
-  direction: rtl;
-  text-overflow: clip;
-  text-align: left;
-  color: var(--ctl-ink-2);
-}
-.ctl-ticker:has(bdi) {
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px);
-  mask-image: linear-gradient(90deg, transparent, #000 32px);
+.ctl-ticker, .ctl-words {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ctl-ink);
+  font: 400 13px/20px var(--ev-font-text);
 }
 .ctl-ticker > bdi { direction: ltr; }
-.ctl-hint { direction: ltr; unicode-bidi: isolate; color: var(--ctl-ink-3); }
-.ctl-ticker[data-working] {
-  background: linear-gradient(90deg, var(--ctl-ink-3) 0%, var(--ctl-ink) 50%, var(--ctl-ink-3) 100%) 0 0 / 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: ctl-shimmer 1.6s linear infinite;
-}
-@keyframes ctl-shimmer { to { background-position: -200% 0; } }
-.ctl-words {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  color: var(--ctl-ink);
-  font: 400 13px/17px var(--ev-font-text);
-  user-select: text;
-  -webkit-user-select: text;
-}
+.ctl-hint { color: var(--ctl-ink-2); }
 
 .ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
 .ctl-dots > i { width: 3px; height: 3px; border-radius: 999px; background: currentColor; animation: ctl-dot 1.2s ease-in-out infinite; }
@@ -383,3 +363,21 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ctl-rec, .ctl-bars > i, .ctl-dots > i, .ctl-breathe, .ctl-ticker[data-working], .ctl-stamp { animation: none; }
 }
+
+/* The result is editable in place, with the same type and spacing as live words. */
+.ctl-editor {
+  display: block;
+  width: 100%;
+  height: 80px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  overflow-y: auto;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ctl-editor:focus-visible { box-shadow: inset 2px 0 0 var(--ctl-ink-3); padding-left: 8px; }

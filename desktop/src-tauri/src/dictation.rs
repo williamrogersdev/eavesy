@@ -167,12 +167,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
         };
         match how {
+            // The box says when it has the words; without that they go on
+            // the clipboard and the HUD says so.
             Delivery::InEavesy => {
-                // The box says when it has the words; without that they go on
-                // the clipboard and the HUD says so.
-                if !hand_to_panel(&app, &session_id, &text) {
-                    how = Delivery::CopiedNoTextBox;
-                }
+                how = if hand_to_panel(&app, &session_id, &text) {
+                    Delivery::InEavesy
+                } else { Delivery::CopiedNoTextBox };
             }
             Delivery::Pasted => {
                 get_launcher_out_of_the_way(&app);
