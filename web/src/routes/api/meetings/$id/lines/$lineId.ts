@@ -73,6 +73,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         await transcriptsRepo.restoreSegment(getDb(), {
           id: params.lineId,
           meetingId: meeting.id,
+          rawText: null,
           confidence: null,
           language: null,
           isEdited: false,

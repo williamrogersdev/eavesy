@@ -1,3 +1,4 @@
+import { createAiRunner } from '@/lib/ai/credit-runner';
 import { and, eq } from 'drizzle-orm';
 import type { R2Bucket } from '@cloudflare/workers-types';
 import { dictations, embeddings, meetings, transcriptSegments } from '@/db/schema';
@@ -7,7 +8,7 @@ import { transcriptText } from './summarize';
 
 export async function handleEmbedMeeting(meetingId: string, db: Db, env: ProcessingEnv) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
-  if (!meeting) return;
+  if (!meeting || meeting.deletedAt) return;
   const segments = await db
     .select()
     .from(transcriptSegments)
@@ -41,7 +42,7 @@ async function replaceEmbeddings(
 ) {
   const chunks = chunkText(source.text, 2_000);
   if (chunks.length === 0) return;
-  const vectors = await embedTexts(env.AI, chunks);
+  const vectors = await embedTexts(createAiRunner(env, 'library-embedding'), chunks);
   const previous = await db
     .select({ id: embeddings.id })
     .from(embeddings)

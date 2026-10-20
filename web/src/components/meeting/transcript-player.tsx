@@ -178,6 +178,12 @@ export function TranscriptPlayer({
             onLoadedMetadata={(e) => {
               const seconds = e.currentTarget.duration;
               if (Number.isFinite(seconds)) setDurationMs(seconds * 1_000);
+              const requested = Number(new URLSearchParams(window.location.search).get('t'));
+              if (Number.isFinite(requested) && requested > 0 && Number.isFinite(seconds)) {
+                const start = Math.min(requested, seconds);
+                e.currentTarget.currentTime = start;
+                setNowMs(start * 1000);
+              }
             }}
           />
           <div className="flex items-center gap-3">

@@ -5,7 +5,7 @@ import type { ProcessingEnv, ProcessingMessage } from '@/server/processing-worke
 
 const MIGRATIONS = join(import.meta.dir, '../../../drizzle');
 
-function fakeD1(sqlite: Database) {
+export function fakeD1(sqlite: Database) {
   const statement = (query: string, params: unknown[] = []) => ({
     bind: (...next: unknown[]) => statement(query, next),
     async all() {
