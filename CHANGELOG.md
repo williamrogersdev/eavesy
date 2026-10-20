@@ -6,6 +6,16 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-20 - desktop
+
+### Added
+
+- Mac app: languages, custom words and projects in Mac Settings; word lists that scale ([#136](https://github.com/williamrogersdev/eavesy/pull/136))
+
+### Fixed
+
+- Mac app: ship on-device speech, keep dictation results on screen, cleaner HUD ([#134](https://github.com/williamrogersdev/eavesy/pull/134))
+
 ## [0.5.2] - 2026-10-20 - desktop
 
 ### Fixed
