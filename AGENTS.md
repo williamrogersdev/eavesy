@@ -7,7 +7,7 @@ Swift). Setup and the exact CI commands are in `CONTRIBUTING.md`.
 ## Definition of done: the PR is merged
 
 A task that changes code is **not finished when the PR is opened**. It is
-finished when the PR is merged into `main` . Don't end your turn on
+finished when the PR is merged into `main`. Don't end your turn on
 "PR created" or "draft ready for review". Keep going.
 
 The loop, every time:

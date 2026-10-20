@@ -61,7 +61,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson)],
+    vocabulary: [...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
     spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
@@ -371,7 +371,7 @@ async function userPrefs(db: Db, userId: string): Promise<{ vocabulary: string[]
     .where(eq(users.id, userId))
     .limit(1);
   return {
-    vocabulary: parseVocabulary(row[0]?.customVocabularyJson),
+    vocabulary: parseVocabulary(row[0]?.customVocabularyJson).reverse(),
     spoken: row[0] ? spokenLanguages(row[0]) : [],
   };
 }
