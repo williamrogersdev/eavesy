@@ -95,6 +95,17 @@ jobs:
           (cd web && bun run typecheck)
           (cd workers/processing && bun run typecheck)
           (cd workers/mcp && bun run typecheck)
+      # Keep upstream diagnostics visible while the pinned tsrs is experimental.
+      # tsrs remains the required gate; this reference check is advisory.
+      - name: TypeScript reference (advisory)
+        continue-on-error: true
+        run: |
+          status=0
+          (cd web && bun run typecheck:tsc) || status=1
+          (cd workers/processing && bun run typecheck:tsc) || status=1
+          (cd workers/mcp && bun run typecheck:tsc) || status=1
+          (cd web && bun run typecheck:tsc --project test/tsconfig.json) || status=1
+          exit "$status"
       - name: Lint
         working-directory: web
         run: bunx eslint . --max-warnings 0
