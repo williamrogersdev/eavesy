@@ -79,6 +79,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
+        let learning_target = crate::paste_learning::capture();
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.
@@ -95,6 +96,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
                 .show();
             return Err(message);
         }
+        crate::paste_learning::observe(app.clone(), learning_target, text.to_string());
     }
 
     // The key press is posted, not awaited: give the app time to read the

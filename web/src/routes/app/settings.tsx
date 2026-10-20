@@ -1,3 +1,4 @@
+import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
@@ -511,6 +512,9 @@ function SettingsPage() {
         ) : null}
       </AppSection>
 
+      <AppSection title="Personal dictionary">
+        <DictionarySettings />
+      </AppSection>
       <AppSection title="Your data">
         <AccountData email={me.email} />
       </AppSection>

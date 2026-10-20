@@ -1,3 +1,4 @@
+import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Clipboard, Loader2, Mic, MicOff, RotateCcw, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -15,7 +16,7 @@ export const Route = createFileRoute('/app/dictation')({
 function DictationPage() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
-  const [result, setResult] = useState<{ transcript: string; cleaned?: string } | null>(null);
+  const [result, setResult] = useState<{ id: string; transcript: string; cleaned?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const captureRef = useRef<BrowserAudioCapture | null>(null);
@@ -73,7 +74,9 @@ function DictationPage() {
       const transcript = isRecord(json) ? optionalString(json.transcript) : undefined;
       if (!transcript) throw new Error('Server returned an invalid transcript');
       const cleaned = isRecord(json) ? optionalString(json.cleaned) : undefined;
-      setResult({ transcript, cleaned });
+      const id = isRecord(json) ? optionalString(json.id) : undefined;
+      if (!id) throw new Error("Missing dictation ID");
+      setResult({ id, transcript, cleaned });
       setPhase('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -162,6 +165,7 @@ function DictationPage() {
           {result.cleaned && result.cleaned !== result.transcript && (
             <Section title="Cleaned up" text={result.cleaned} primary copied={copied === result.cleaned} onCopy={() => void copy(result.cleaned!)} />
           )}
+          <CorrectionEditor id={result.id} original={result.cleaned ?? result.transcript} onSaved={cleaned => setResult({ ...result, cleaned })} />
           <Section title="As spoken" text={result.transcript} copied={copied === result.transcript} onCopy={() => void copy(result.transcript)} />
           <button
             type="button"

@@ -95,6 +95,10 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/dictionary': Object.fromEntries(['GET', 'POST', 'PUT', 'DELETE'].map(method => [method, {
+    unauthenticated: SIGNED_IN,
+    scopedToCaller: 'Dictionary ownership comes from authenticated browser or paired device identity; feedback service tests verify stale text, cross-owner reads and writes, and forgetting',
+  }])),
   '/api/imports/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/imports/' }, excludes: [MEETING] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a recording only for the authenticated owner; service tests cover deduplication and isolation' },

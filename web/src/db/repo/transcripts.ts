@@ -1,7 +1,17 @@
+/**
+ * Transcript segment repository.
+ *
+ * Per SPEC §7.6 segments are appended during a recording as partials
+ * (`isFinal=false`) and replaced with the final version once a streaming engine
+ * finalizes them. To avoid O(n) re-renders we coalesce partials that
+ * share a `startMs`.
+ */
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { transcriptSegments } from '../schema';
+import { transcriptSegments, meetings } from '../schema';
+import { remember } from './dictionary';
+import { learnCorrections } from '@/lib/dictionary/learning';
 
 export type Segment = typeof transcriptSegments.$inferSelect;
 
@@ -17,6 +27,9 @@ export async function appendOrCoalesce(
     isFinal: boolean;
   },
 ): Promise<string> {
+  // If the last segment is still a partial and shares the same startMs,
+  // we update in place. This keeps the segment count proportional to the
+  // number of *final* phrases, not the number of WebSocket frames.
   const last = await db
     .select()
     .from(transcriptSegments)
@@ -63,9 +76,15 @@ export async function listForMeeting(db: AppDb, meetingId: string): Promise<Segm
 
 export async function editSegment(
   db: AppDb,
-  args: { meetingId: string; segmentId: string; text?: string; speakerId?: string },
+  args: { userId: string; meetingId: string; segmentId: string; text?: string; speakerId?: string },
 ) {
-  const patch: Partial<typeof transcriptSegments.$inferInsert> = { isEdited: true };
+  const original = (await db.select({ line: transcriptSegments }).from(transcriptSegments)
+    .innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId)).where(and(
+      eq(meetings.userId, args.userId), eq(transcriptSegments.meetingId, args.meetingId), eq(transcriptSegments.id, args.segmentId),
+    )).limit(1))[0]?.line;
+  if (!original) return;
+  const patch: Partial<typeof transcriptSegments.$inferInsert> = { isEdited: true, rawText: original.rawText ?? original.text };
+  if (args.text !== undefined) await remember(db, args.userId, learnCorrections(original.text, args.text));
   if (args.text !== undefined) patch.text = args.text;
   if (args.speakerId !== undefined) patch.speakerId = args.speakerId;
   await db
@@ -79,6 +98,10 @@ export async function editSegment(
     );
 }
 
+/**
+ * Rename a speaker retroactively across every segment of a meeting.
+ * Used by the speaker labeling UI (SPEC §7.5).
+ */
 export async function renameSpeakerInMeeting(
   db: AppDb,
   args: { meetingId: string; oldSpeakerId: string; newSpeakerId: string },
@@ -94,6 +117,7 @@ export async function renameSpeakerInMeeting(
     );
 }
 
+/** Delete one line, returning it so the caller can offer undo. */
 export async function deleteSegment(db: AppDb, args: { meetingId: string; segmentId: string }) {
   const deleted = await db
     .delete(transcriptSegments)
@@ -104,6 +128,7 @@ export async function deleteSegment(db: AppDb, args: { meetingId: string; segmen
   return deleted[0] ?? null;
 }
 
+/** Put a deleted line back exactly as it was (undo). */
 export async function restoreSegment(db: AppDb, segment: Segment) {
   await db.insert(transcriptSegments).values(segment).onConflictDoNothing();
 }

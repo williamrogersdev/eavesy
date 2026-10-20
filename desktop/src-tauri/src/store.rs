@@ -445,6 +445,26 @@ mod tests {
     }
 
     #[test]
+    fn deliberate_correction_saves_original_and_rejects_stale_text() {
+        let root = std::env::temp_dir().join(format!("eavesy-correction-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let mut rec = sample("correction", 1);
+        rec.transcript = Some("Open a pool request.".into());
+        rec.folder_path = Some(root.to_string_lossy().into_owned());
+        append(app.handle(), rec).unwrap();
+        correct_transcript(app.handle(), "correction", "stale", "wrong").unwrap_err();
+        correct_transcript(app.handle(), "correction", "Open a pool request.", "Open a pull request.").unwrap();
+        assert_eq!(load_all(app.handle())[0].transcript.as_deref(), Some("Open a pull request."));
+        assert_eq!(std::fs::read_to_string(root.join("transcript.raw.md")).unwrap(), "Open a pool request.");
+        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pull request.");
+        correct_transcript(app.handle(), "correction", "Open a pool request.", "stale again").unwrap_err();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn malformed_registry_is_never_overwritten_by_a_mutation() {
         let path = temp_registry();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -465,6 +485,22 @@ pub fn set_status<R: Runtime>(app: &AppHandle<R>, id: &str, status: &str) -> Res
     mutate(app, |list| {
         let Some(recording) = list.iter_mut().find(|recording| recording.id == id) else { return Ok(false); };
         recording.status = status.to_string();
+        Ok(true)
+    })
+}
+
+/// A deliberate human edit wins over later transcription and sync results.
+pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &str, corrected: &str) -> Result<(), String> {
+    mutate(app, |list| {
+        let rec = list.iter_mut().find(|r| r.id == id).ok_or("Recording not found")?;
+        if rec.transcript.as_deref() != Some(original) { return Err("Transcript changed; reopen it before correcting".into()); }
+        if let Some(folder) = &rec.folder_path {
+            let folder = Path::new(folder);
+            let raw = folder.join("transcript.raw.md");
+            if !raw.exists() { std::fs::write(raw, original).map_err(|e| e.to_string())?; }
+            std::fs::write(folder.join("transcript.md"), corrected).map_err(|e| e.to_string())?;
+        }
+        rec.transcript = Some(corrected.to_string());
         Ok(true)
     })
 }

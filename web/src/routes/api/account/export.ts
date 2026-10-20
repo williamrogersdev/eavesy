@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import JSZip from 'jszip';
 import { getDb } from '@/db/client';
+import * as dictionaryRepo from '@/db/repo/dictionary';
 import * as capturesRepo from '@/db/repo/captures';
 import * as dictationsRepo from '@/db/repo/dictations';
 import * as meetingsRepo from '@/db/repo/meetings';
@@ -17,6 +18,7 @@ meetings/        One folder per recording: summary, transcript, your notes, and
 dictations.json  Your dictations and their text.
 captures.json    Screenshots and videos you captured, with their transcripts.
 templates.json   Your brief templates.
+dictionary.json  Your learned speech corrections.
 account.json     Your profile.
 
 Audio and video files are not in this zip. Download them from each recording
@@ -44,6 +46,7 @@ export const Route = createFileRoute('/api/account/export')({
 
         const zip = new JSZip();
         zip.file('README.txt', README);
+        zip.file('dictionary.json', json(await dictionaryRepo.list(db, actor.userId)));
 
         const meetings = await meetingsRepo.listForUser(db, { userId: actor.userId, limit: 10_000 });
         for (const meeting of meetings) {

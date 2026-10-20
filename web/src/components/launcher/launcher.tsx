@@ -3,6 +3,7 @@
 import { useRouter } from '@/lib/next-compat/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  onDictionaryLearning,
   getSettings,
   getCaptureStatus,
   getSetupStatus,
@@ -118,6 +119,15 @@ export function Launcher() {
   const historyRef = useRef<HTMLDivElement>(null);
 
   const { toast, flash, runTask } = useToastTasks();
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    let cancelled = false;
+    void onDictionaryLearning(event => {
+      if (event.status === 'saved' && event.learned) flash(`Learned ${event.learned} correction${event.learned === 1 ? '' : 's'}`);
+      else if (event.status === 'failed' && event.message) flash(event.message, 5000, 'warn');
+    }).then(stop => { if (cancelled) stop(); else dispose = stop; });
+    return () => { cancelled = true; dispose?.(); };
+  }, [flash]);
   const project = useProject(desktop && !!account);
   // Read when a recording starts, so starting doesn't depend on the project list.
   const projectIdRef = useRef<string | undefined>(undefined);

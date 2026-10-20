@@ -1,3 +1,7 @@
+import * as dictionary from '@/db/repo/dictionary';
+import { repairTranscript, repairAi } from '@/lib/ai/repair-transcript';
+import type { CreditEnv } from '@/lib/ai/credit-runner';
+import { getCloudflareContext } from '@/server/cloudflare-context';
 import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import { transcriptionPrefs } from '@/db/repo/users';
@@ -84,6 +88,7 @@ export const Route = createFileRoute('/api/transcribe')({
 
         const url = new URL(request.url);
         const prefs = await transcriptionPrefs(getDb(), actor.userId);
+        const entries = await dictionary.list(getDb(), actor.userId);
         const requested = url.searchParams.get('language')?.trim().toLowerCase();
         const language = requested && isTranscriptionLanguage(requested) ? requested : prefs.language;
         // `voice=1` marks the user's own mic alone, such as a dictation.
@@ -93,12 +98,15 @@ export const Route = createFileRoute('/api/transcribe')({
           const result = await transcribeAudioFile({
             audio,
             language,
-            vocabulary: prefs.vocabulary,
+            vocabulary: [...prefs.vocabulary, ...entries.map(e => e.to)],
             spoken: prefs.spoken,
             voiceNote,
           });
+          const repaired = await repairTranscript(result.text, { dictionary: entries, clean: voiceNote, ai: repairAi(getCloudflareContext<CreditEnv>().env) });
           return Response.json({
-            text: result.text,
+            text: repaired.text,
+            rawText: result.text,
+            repairStatus: repaired.status,
             language: result.language ?? language,
             durationSec: result.durationSec ?? null,
           });

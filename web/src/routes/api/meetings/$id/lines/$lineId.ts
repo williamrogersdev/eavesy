@@ -45,6 +45,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         const parsed = patchSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         await transcriptsRepo.editSegment(getDb(), {
+          userId: meeting.userId,
           meetingId: meeting.id,
           segmentId: params.lineId,
           ...parsed.data,
