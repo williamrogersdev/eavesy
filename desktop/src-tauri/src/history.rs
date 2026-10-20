@@ -199,6 +199,28 @@ impl History {
             )
             .optional()
             .map_err(error)?;
+        let id = match id {
+            Some(id) => Some(id),
+            None => {
+                // A case-only rename can change canonical spelling while the
+                // saved path remains valid on a case-insensitive volume. Keep
+                // the indexed normal path, and refresh only a missed alias.
+                let found = self
+                    .folders()?
+                    .into_iter()
+                    .find(|(_, known)| canonical_key(Path::new(known)) == key)
+                    .map(|(id, _)| id);
+                if let Some(id) = &found {
+                    self.conn
+                        .execute(
+                            "UPDATE history_recordings SET folder_key=?2 WHERE id=?1",
+                            params![id, key],
+                        )
+                        .map_err(error)?;
+                }
+                found
+            }
+        };
         id.map(|id| self.get(&id)).transpose().map(Option::flatten)
     }
 
@@ -555,6 +577,28 @@ mod tests {
                 Some(text.as_str())
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn case_only_folder_rename_refreshes_a_stale_canonical_index() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        let original = fixture.root.join("Meeting");
+        let renamed = fixture.root.join("MEETING");
+        std::fs::create_dir_all(&original).unwrap();
+        let mut recording = row("a");
+        recording.folder_path = Some(original.to_string_lossy().into_owned());
+        history.put(&recording).unwrap();
+        std::fs::rename(&original, &renamed).unwrap();
+        if !original.is_dir() {
+            return;
+        } // Case-sensitive volumes use normal manifest relocation.
+        assert_eq!(
+            history.by_folder(&renamed).unwrap(),
+            Some(recording.clone())
+        );
+        assert_eq!(history.by_folder(&renamed).unwrap(), Some(recording));
     }
 
     #[test]

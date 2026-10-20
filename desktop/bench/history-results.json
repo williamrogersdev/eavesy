@@ -29,7 +29,7 @@
     "This is a live list with stable timestamp/ID ordering and offset pagination. Mutations between page requests can shift offsets; recording updates trigger a reload of the loaded range, duplicate IDs are removed and obsolete request generations are discarded. It is not a multi-page database snapshot."
   ],
   "measured_sources_sha256": {
-    "desktop/src-tauri/src/history.rs": "bda030fd76d72c83cfc4fc60d80f395932f0d87ffe102c02b71ecd5e9e0ab81b",
+    "desktop/src-tauri/src/history.rs": "8ae95ff2a62c6f010b83b61abf46bce5ae5d8245e7e9645eef11442674cd6a0e",
     "desktop/src-tauri/src/store.rs": "fb775b945726f99bb481b2b2356be60014664488f8fb74aa1a5132182b74c096",
     "desktop/src-tauri/src/fs_watcher.rs": "37d707f50876bcf6c953be26e4549a4128e9bcb527225fc272b7fd243151a7a9",
     "desktop/bench/history.rs": "38c429a706f2eb0113a3c35ce40648383185d087212a4f83ca22a5bf251dff7d",
@@ -38,63 +38,63 @@
   },
   "timings": [
     {
-      "elapsed_ms": 8.342749999999999,
+      "elapsed_ms": 8.62425,
       "legacy_bytes": 1080532,
       "n": 10,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 0.7022499999999999,
-      "median_ms": 0.5565,
-      "min_ms": 0.5087499999999999,
+      "max_ms": 0.5346660000000001,
+      "median_ms": 0.49,
+      "min_ms": 0.481333,
       "n": 10,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 0.12875,
-      "median_ms": 0.12245800000000001,
-      "min_ms": 0.118458,
+      "max_ms": 0.128583,
+      "median_ms": 0.12029200000000001,
+      "min_ms": 0.11791700000000001,
       "n": 10,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 9.944458999999998,
-      "median_ms": 7.998875000000001,
-      "min_ms": 6.948125,
+      "max_ms": 8.043958,
+      "median_ms": 7.992333,
+      "min_ms": 6.9005,
       "n": 10,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.26908299999999996,
-      "median_ms": 0.216042,
-      "min_ms": 0.15454199999999998,
+      "max_ms": 0.315792,
+      "median_ms": 0.23808400000000002,
+      "min_ms": 0.213833,
       "n": 10,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.5251669999999999,
-      "median_ms": 0.336792,
-      "min_ms": 0.307292,
+      "max_ms": 0.467625,
+      "median_ms": 0.464417,
+      "min_ms": 0.437583,
       "n": 10,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 0.039,
-      "median_ms": 0.027,
-      "min_ms": 0.023541,
+      "max_ms": 0.041,
+      "median_ms": 0.030625,
+      "min_ms": 0.027958,
       "n": 10,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 0.678792,
-      "median_ms": 0.37962500000000005,
-      "min_ms": 0.258417,
+      "max_ms": 0.53475,
+      "median_ms": 0.381416,
+      "min_ms": 0.36987499999999995,
       "n": 10,
       "operation": "after_search_full_history",
       "reps": 7
@@ -105,63 +105,63 @@
       "n": 10
     },
     {
-      "elapsed_ms": 67.037708,
+      "elapsed_ms": 68.231292,
       "legacy_bytes": 10805672,
       "n": 100,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 59.157125,
-      "median_ms": 58.358624999999996,
-      "min_ms": 56.05075,
+      "max_ms": 53.3825,
+      "median_ms": 52.931667000000004,
+      "min_ms": 52.422708,
       "n": 100,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 2.4145,
-      "median_ms": 2.339167,
-      "min_ms": 2.178583,
+      "max_ms": 2.177375,
+      "median_ms": 1.9937079999999998,
+      "min_ms": 1.9275,
       "n": 100,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 19.161542,
-      "median_ms": 17.999167,
-      "min_ms": 17.233874999999998,
+      "max_ms": 16.852916999999998,
+      "median_ms": 15.039916999999999,
+      "min_ms": 13.744167,
       "n": 100,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.25875,
-      "median_ms": 0.16325,
-      "min_ms": 0.138667,
+      "max_ms": 0.1875,
+      "median_ms": 0.155209,
+      "min_ms": 0.13487500000000002,
       "n": 100,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 9.974958,
-      "median_ms": 3.896208,
-      "min_ms": 3.502208,
+      "max_ms": 3.9686670000000004,
+      "median_ms": 3.6987500000000004,
+      "min_ms": 3.364916,
       "n": 100,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 0.11825000000000001,
-      "median_ms": 0.1005,
-      "min_ms": 0.072875,
+      "max_ms": 0.130042,
+      "median_ms": 0.072542,
+      "min_ms": 0.068,
       "n": 100,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 2.742416,
-      "median_ms": 1.7905,
-      "min_ms": 1.5135,
+      "max_ms": 1.4680419999999998,
+      "median_ms": 1.294625,
+      "min_ms": 1.230333,
       "n": 100,
       "operation": "after_search_full_history",
       "reps": 7
@@ -172,63 +172,63 @@
       "n": 100
     },
     {
-      "elapsed_ms": 505.062166,
+      "elapsed_ms": 341.261458,
       "legacy_bytes": 54029672,
       "n": 500,
       "operation": "one_time_migration"
     },
     {
-      "max_ms": 2116.754125,
-      "median_ms": 1901.748917,
-      "min_ms": 1763.674333,
+      "max_ms": 1873.157625,
+      "median_ms": 1712.771708,
+      "min_ms": 1708.5185000000001,
       "n": 500,
       "operation": "before_startup_history_work",
       "reps": 3
     },
     {
-      "max_ms": 13.00325,
-      "median_ms": 12.630583000000001,
-      "min_ms": 12.335834,
+      "max_ms": 12.026125,
+      "median_ms": 11.801166,
+      "min_ms": 11.6235,
       "n": 500,
       "operation": "after_startup_history_work",
       "reps": 7
     },
     {
-      "max_ms": 61.846875000000004,
-      "median_ms": 59.022,
-      "min_ms": 54.087542,
+      "max_ms": 61.037,
+      "median_ms": 53.827542,
+      "min_ms": 50.062166999999995,
       "n": 500,
       "operation": "before_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 0.228917,
-      "median_ms": 0.17791700000000002,
-      "min_ms": 0.118,
+      "max_ms": 0.161791,
+      "median_ms": 0.13549999999999998,
+      "min_ms": 0.12825,
       "n": 500,
       "operation": "after_one_title_update",
       "reps": 7
     },
     {
-      "max_ms": 18.355916,
-      "median_ms": 17.889,
-      "min_ms": 17.505625000000002,
+      "max_ms": 17.341542,
+      "median_ms": 17.224333,
+      "min_ms": 17.051000000000002,
       "n": 500,
       "operation": "before_full_history_json",
       "reps": 9
     },
     {
-      "max_ms": 0.422792,
-      "median_ms": 0.317084,
-      "min_ms": 0.282791,
+      "max_ms": 0.505416,
+      "median_ms": 0.342958,
+      "min_ms": 0.275292,
       "n": 500,
       "operation": "after_first_history_page_json",
       "reps": 9
     },
     {
-      "max_ms": 2.010708,
-      "median_ms": 1.737625,
-      "min_ms": 1.548291,
+      "max_ms": 1.744583,
+      "median_ms": 1.50625,
+      "min_ms": 1.4393330000000002,
       "n": 500,
       "operation": "after_search_full_history",
       "reps": 7
@@ -241,7 +241,7 @@
   ],
   "allocations": [
     {
-      "elapsed_ms": 5.477459,
+      "elapsed_ms": 5.420375,
       "legacy_bytes": 1080532,
       "n": 10,
       "operation": "one_time_migration"
@@ -294,7 +294,7 @@
       "n": 10
     },
     {
-      "elapsed_ms": 61.634542,
+      "elapsed_ms": 63.899708,
       "legacy_bytes": 10805672,
       "n": 100,
       "operation": "one_time_migration"
@@ -347,7 +347,7 @@
       "n": 100
     },
     {
-      "elapsed_ms": 307.410459,
+      "elapsed_ms": 318.65250000000003,
       "legacy_bytes": 54029672,
       "n": 500,
       "operation": "one_time_migration"
@@ -400,6 +400,13 @@
       "n": 500
     }
   ],
-  "benchmark_binary_sha256": "5220da9e2fdd9926a3dbc268642efca842ec0053da55db571f66670efe847ddc",
-  "measured_at_utc": "2026-10-20T22:01:01.378440Z"
+  "benchmark_binary_sha256": "9220f5237b4cd639de5a4f03da6760ade35eda31a7981dec153b5ebb38be96e3",
+  "measured_at_utc": "2026-10-20T22:05:05.236085Z",
+  "measurement_build": {
+    "method": "Standalone Cargo wrapper around the same desktop/bench/history.rs example and production history.rs, to avoid rebuilding the unrelated Tauri library.",
+    "manifest": "[package]\nname=\"eavesy-history-standalone-bench\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[profile.release]\nlto=\"thin\"\ncodegen-units=1\nstrip=\"debuginfo\"\n[[bin]]\nname=\"history-benchmark\"\npath=\"/private/tmp/eavesy-rust-profiling/desktop/bench/history.rs\"\n[dependencies]\nserde={version=\"=1.0.228\",features=[\"derive\"]}\nserde_json=\"=1.0.150\"\nuuid={version=\"=1.24.0\",features=[\"v4\"]}\nrusqlite={version=\"=0.31.0\",features=[\"bundled\"]}\nregex=\"1\"\n",
+    "dependency_versions": "All measured dependencies are an exact subset of desktop/src-tauri/Cargo.lock.",
+    "profile": "opt-level=3, thin LTO, codegen-units=1, strip=debuginfo; same as the production release profile.",
+    "standard_reproduction": "cargo run --locked --release --example history-benchmark from desktop/src-tauri compiles the same benchmark source with the desktop package dependencies."
+  }
 }
