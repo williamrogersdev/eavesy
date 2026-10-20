@@ -1,6 +1,7 @@
 mod telemetry;
 mod app_menu;
 mod audio;
+mod audio_upload;
 mod base_url;
 mod captions;
 mod live_transcript;

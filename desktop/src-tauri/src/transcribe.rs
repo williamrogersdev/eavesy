@@ -190,8 +190,8 @@ fn run(
         .build()
         .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
-    let texts = in_order_at_once(&pieces, PIECES_AT_ONCE, |(bytes, filename, mime)| {
-        with_retry(delays, || transcribe_piece(&client, bytes, filename, mime, voice, credential))
+    let texts = in_order_at_once(&pieces.pieces, PIECES_AT_ONCE, |piece| {
+        with_retry(delays, || transcribe_piece(&client, piece, voice, credential))
     })?;
     let texts: Vec<&str> = texts.iter().map(|text| text.trim()).filter(|text| !text.is_empty()).collect();
     if texts.is_empty() {
@@ -244,15 +244,13 @@ fn with_retry(delays: &[u64], mut attempt: impl FnMut() -> Result<String, PieceE
 
 fn transcribe_piece(
     client: &reqwest::blocking::Client,
-    bytes: &[u8],
-    filename: &str,
-    mime: &str,
+    piece: &crate::audio_upload::AudioPiece,
     voice: bool,
     credential: &settings::Credential,
 ) -> Result<String, PieceError> {
-    let part = reqwest::blocking::multipart::Part::bytes(bytes.to_vec())
-        .file_name(filename.to_string())
-        .mime_str(mime)
+    let part = reqwest::blocking::multipart::Part::reader_with_length(piece.reader(), piece.body_len())
+        .file_name(piece.filename.clone())
+        .mime_str(piece.mime)
         .map_err(|e| PieceError::Fatal(e.to_string()))?;
     let form = reqwest::blocking::multipart::Form::new().part("audio", part);
     let url = format!(
@@ -287,32 +285,19 @@ fn transcribe_piece(
     Ok(body.text.unwrap_or_default())
 }
 
-type Piece = (Vec<u8>, String, String);
-
-fn prepare(media_path: &Path, is_video: bool) -> Result<Vec<Piece>, String> {
+fn prepare(media_path: &Path, is_video: bool) -> Result<crate::audio_upload::PreparedAudio, String> {
     if !is_video {
         #[cfg(target_os = "macos")]
         if let Some(wav) = transcode_to_wav(media_path) {
-            let bytes = std::fs::read(&wav);
-            let _ = std::fs::remove_file(&wav);
-            if let Some(pieces) = bytes.ok().and_then(|bytes| split_wav(&bytes, CHUNK_SECS)) {
-                return Ok(pieces
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, piece)| (piece, format!("audio-{i}.wav"), "audio/wav".to_string()))
-                    .collect());
+            if let Ok(pieces) = crate::audio_upload::PreparedAudio::converted_wav(wav, CHUNK_SECS) {
+                return Ok(pieces);
             }
         }
     }
-    let bytes = std::fs::read(media_path).map_err(|e| format!("read media: {e}"))?;
-    let (name, mime) = if is_video {
-        ("clip.mp4", "video/mp4")
-    } else {
-        ("audio.m4a", "audio/mp4")
-    };
-    Ok(vec![(bytes, name.to_string(), mime.to_string())])
+    crate::audio_upload::PreparedAudio::original(media_path, is_video)
 }
 
+#[cfg(test)]
 fn split_wav(bytes: &[u8], secs: usize) -> Option<Vec<Vec<u8>>> {
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return None;
@@ -381,6 +366,50 @@ fn transcode_to_wav(input: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_wav_bodies_match_the_buffered_reference() {
+        use std::io::Read;
+        let source = wav(16_000 * 5 + 7, true);
+        let path = std::env::temp_dir().join(format!("eavesy-stream-reference-{}.wav", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &source).unwrap();
+        let expected = split_wav(&source, 2).unwrap();
+        let prepared = crate::audio_upload::PreparedAudio::converted_wav(path.clone(), 2).unwrap();
+        let actual: Vec<Vec<u8>> = prepared.pieces.iter().map(|piece| {
+            let mut bytes = Vec::new(); piece.reader().read_to_end(&mut bytes).unwrap(); bytes
+        }).collect();
+        assert_eq!(actual, expected);
+        drop(prepared);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn streamed_multipart_body_is_replayed_on_retry() {
+        use std::io::Read;
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        use wiremock::{Mock, ResponseTemplate, matchers::{method, path as request_path}};
+        let source = wav(16_000, true);
+        let path = std::env::temp_dir().join(format!("eavesy-stream-retry-{}.wav", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &source).unwrap();
+        let prepared = crate::audio_upload::PreparedAudio::converted_wav(path, 240).unwrap();
+        let piece = &prepared.pieces[0];
+        let mut expected = Vec::new(); piece.reader().read_to_end(&mut expected).unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = attempts.clone();
+        let (runtime, server) = polish_server();
+        runtime.block_on(Mock::given(method("POST"))
+            .and(request_path("/api/transcribe"))
+            .and(move |request: &wiremock::Request| request.body.windows(expected.len()).any(|bytes| bytes == expected))
+            .respond_with(move |_: &wiremock::Request| {
+                if observed.fetch_add(1, Ordering::SeqCst) == 0 { ResponseTemplate::new(503) }
+                else { ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": "replayed" })) }
+            }).expect(2).mount(&server));
+        let client = reqwest::blocking::Client::new();
+        let credential = credential(&server);
+        let result = with_retry(&[0], || transcribe_piece(&client, piece, false, &credential));
+        assert_eq!(result.unwrap(), "replayed");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
 
     fn wav(samples: usize, extra_chunk: bool) -> Vec<u8> {
         let mut fmt = Vec::new();
