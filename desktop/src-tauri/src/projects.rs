@@ -63,7 +63,11 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     }
     let response = request.send().await.map_err(|_| "Could not reach eavesy.com".to_string())?;
     let status = response.status();
-    let value: Value = response.json().await.unwrap_or(Value::Null);
+    let value: Option<Value> = response.json().await.ok();
+    if status.is_success() && value.is_none() && method != "DELETE" {
+        return Err("eavesy.com sent an answer Eavesy couldn't read".into());
+    }
+    let value = value.unwrap_or(Value::Null);
     if !status.is_success() {
         let reason = value.get("error").and_then(Value::as_str).unwrap_or("request failed");
         return Err(format!("eavesy.com said {reason} ({})", status.as_u16()));

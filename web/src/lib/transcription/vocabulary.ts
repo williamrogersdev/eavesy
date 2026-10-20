@@ -1,4 +1,4 @@
-/** Kept per account. Each recognizer takes what fits: Whisper a prompt's worth, the Mac the first 100. */
+/** Kept per account. Each recognizer takes the newest that fit: Whisper a prompt's worth, the Mac 100. */
 export const MAX_VOCABULARY_TERMS = 500;
 export const MAX_TERM_LENGTH = 60;
 /**

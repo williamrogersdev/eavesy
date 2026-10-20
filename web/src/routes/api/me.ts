@@ -17,6 +17,9 @@ import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabu
 import { openUserKeys } from '@/server/secret-box';
 import { resolveIngestActor } from '@/server/device-auth';
 
+/** What the Mac app may change with its device token; the rest needs a web sign-in. */
+const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary']);
+
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
   companyName: z.string().max(120).nullable().optional(),
@@ -86,7 +89,9 @@ export const Route = createFileRoute('/api/me')({
         const body = parsedBody.data;
         const db = getDb();
         const fromMac = 'deviceId' in actor;
-        if (fromMac && 'byoAnthropicKey' in body) return Response.json({ error: 'sign_in_on_web' }, { status: 403 });
+        if (fromMac && Object.keys(body).some((key) => !MAC_WRITABLE.has(key))) {
+          return Response.json({ error: 'sign_in_on_web' }, { status: 403 });
+        }
         if ('byoAnthropicKey' in body) {
           await usersRepo.updateByoKeys(db, actor.userId, {
             anthropicKey: body.byoAnthropicKey,

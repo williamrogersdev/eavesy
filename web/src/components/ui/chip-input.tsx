@@ -105,7 +105,7 @@ export function ChipInput({
                 void navigator.clipboard?.writeText(value.join('\n')).then(() => {
                   setCopied(true);
                   window.setTimeout(() => setCopied(false), 1500);
-                });
+                }, () => undefined);
               }}
             >
               {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}

@@ -57,9 +57,16 @@ export function TranscriptionCard() {
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your settings.')));
   }, []);
 
-  const patch = useCallback(async (body: Record<string, unknown>) => {
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const patch = useCallback((body: Record<string, unknown>) => {
     setError(null);
-    await accountCall('PATCH', '/api/me', body).catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that.')));
+    const next = queue.current.then(() => accountCall('PATCH', '/api/me', body)).then(() => undefined, (e: unknown) => {
+      if (mounted.current) setError(errMsg(e, 'Couldn’t save that.'));
+    });
+    queue.current = next;
+    return next;
   }, []);
   const saveWords = useLaterSave<string[]>((next) => patch({ customVocabulary: next }));
 
@@ -188,19 +195,20 @@ export function ProjectsCard({ onChanged }: { onChanged?: () => void }) {
   }, []);
 
   const pendingFields = useRef(new Map<string, ProjectFields>());
-  const saveLater = useLaterSave<string>(async (id) => {
-    const fields = pendingFields.current.get(id);
-    pendingFields.current.delete(id);
-    if (!fields) return;
-    await accountCall('PATCH', `/api/projects/${id}`, fields)
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const saveLater = useLaterSave<null>(async () => {
+    const batch = [...pendingFields.current];
+    pendingFields.current.clear();
+    await Promise.all(batch.map(([id, fields]) => accountCall('PATCH', `/api/projects/${id}`, fields)
       .then(() => onChanged?.())
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that project.')));
+      .catch((e: unknown) => { if (mounted.current) setError(errMsg(e, 'Couldn’t save that project.')); })));
   });
   const change = (id: string, fields: ProjectFields) => {
     setError(null);
     setProjects((list) => list?.map((p) => (p.id === id ? { ...p, ...fields } : p)) ?? list);
     pendingFields.current.set(id, { ...pendingFields.current.get(id), ...fields });
-    saveLater(id);
+    saveLater(null);
   };
 
   const create = () => {
@@ -220,6 +228,7 @@ export function ProjectsCard({ onChanged }: { onChanged?: () => void }) {
   };
 
   const remove = (id: string) => {
+    pendingFields.current.delete(id);
     setProjects((list) => list?.filter((p) => p.id !== id) ?? list);
     void accountCall('DELETE', `/api/projects/${id}`)
       .then(() => onChanged?.())
@@ -241,7 +250,7 @@ export function ProjectsCard({ onChanged }: { onChanged?: () => void }) {
             <span className="ev-set-hint shrink-0">{project.vocabulary.length ? `${project.vocabulary.length} words` : 'No words yet'}</span>
             {open === project.id ? <ChevronDown className="h-4 w-4 shrink-0" aria-hidden /> : <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />}
           </button>
-          {open === project.id && <ProjectEditor project={project} onChange={(fields) => change(project.id, fields)} onDelete={() => remove(project.id)} />}
+          {open === project.id && <ProjectEditor key={`${project.name}\n${project.about ?? ''}`} project={project} onChange={(fields) => change(project.id, fields)} onDelete={() => remove(project.id)} />}
         </div>
       ))}
       <div className="ev-set-row">
