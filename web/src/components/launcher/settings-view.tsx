@@ -1,10 +1,10 @@
 'use client';
 
-import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
-import { PermissionChecklist } from '@/components/launcher/permission-checklist';
+import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
   chooseRecordingsFolder,
   errMsg,
@@ -28,6 +28,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
+import { ProjectsCard, TranscriptionCard } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -198,7 +199,7 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
-export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onBack }: {
+export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
   onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
@@ -213,9 +214,13 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   onDisconnect: () => void;
   onOpenWeb: () => void;
   onShortcutsChanged: () => void;
+  onProjectsChanged?: () => void;
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
+  const [showPermissions, setShowPermissions] = useState(false);
+  const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
+  useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -293,22 +298,18 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
         </Section>
 
-        {isDesktop() && (
-          <Card title="Permissions">
-            <PermissionChecklist
-              permissions={permissions}
-              checking={checkingPermission}
-              fnInUse={fnInUse}
-              onRequest={onRequestPermission}
-              onOpenSettings={onOpenPrivacy}
-              onRelaunch={onRelaunch}
-            />
-            <div className="ev-set-row">
-              <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
-              <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
-            </div>
-          </Card>
+        {isDesktop() && account && (
+          <>
+            <TranscriptionCard />
+            <ProjectsCard onChanged={onProjectsChanged} />
+          </>
         )}
+
+        <Card title="Shortcuts">
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
+          {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
+        </Card>
 
         {isDesktop() && (
           <Section title="Sounds">
@@ -349,12 +350,6 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           />
           {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
         </Section>
-
-        <Card title="Shortcuts">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
-          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
-          {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
-        </Card>
 
         <Section title="Recordings folder">
           <div className="flex items-center gap-2">
@@ -397,6 +392,31 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
             />
             {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
           </Section>
+        )}
+
+        {isDesktop() && (
+          <Card title="Permissions">
+            {allGranted && !showPermissions ? (
+              <div className="ev-set-row">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--ev-leaf)]" aria-hidden />
+                <p className="ev-set-label min-w-0 flex-1">Everything Eavesy needs is turned on</p>
+                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setShowPermissions(true)}>Review</Button>
+              </div>
+            ) : (
+              <PermissionChecklist
+                permissions={permissions}
+                checking={checkingPermission}
+                fnInUse={fnInUse}
+                onRequest={onRequestPermission}
+                onOpenSettings={onOpenPrivacy}
+                onRelaunch={onRelaunch}
+              />
+            )}
+            <div className="ev-set-row">
+              <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
+              <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
+            </div>
+          </Card>
         )}
 
         {isDesktop() && (

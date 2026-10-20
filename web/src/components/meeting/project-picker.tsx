@@ -56,7 +56,7 @@ export function ProjectPicker({
           const next = event.target.value;
           if (next === MANAGE) {
             event.target.value = projectId ?? '';
-            void router.push('/app/settings#projects');
+            void router.push('/app/projects');
             return;
           }
           setSaving(true);

@@ -138,19 +138,19 @@ body {
    appearances (DESIGN.md → HUD). It draws its own shape, so the window and
    the pill always agree. Coral only while the mic is live. */
 .eavesy-control {
-  --ctl-ink: #f2ebdf;
-  --ctl-ink-2: rgb(242 235 223 / 0.58);
-  --ctl-ink-3: rgb(242 235 223 / 0.36);
-  --ctl-hover: rgb(255 248 238 / 0.09);
-  --ctl-line: rgb(255 240 220 / 0.09);
+  --ctl-ink: #f7f1e8;
+  --ctl-ink-2: rgb(247 241 232 / 0.74);
+  --ctl-ink-3: rgb(247 241 232 / 0.5);
+  --ctl-hover: rgb(255 248 238 / 0.11);
+  --ctl-line: rgb(255 244 228 / 0.16);
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  border-radius: 20px;
-  background: var(--ev-hud);
-  box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgb(58 53 49 / 0.97), rgb(42 38 35 / 0.97));
+  box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.09);
   color: var(--ctl-ink);
   font: 550 12.5px/16px var(--ev-font-round);
   cursor: default;
@@ -158,7 +158,8 @@ body {
   -webkit-user-select: none;
   transition: box-shadow var(--ev-d-state) ease;
 }
-.eavesy-control[data-size="wide"] { border-radius: 22px; }
+.eavesy-control[data-size="wide"],
+.eavesy-control[data-size="result"] { border-radius: 18px; }
 .eavesy-control[data-size="shot"] { border-radius: 20px; }
 .eavesy-control[data-phase="recording"] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 42%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
@@ -168,19 +169,21 @@ body {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  height: 40px;
-  padding: 0 7px 0 6px;
+  gap: 3px;
+  height: 36px;
+  padding: 0 5px 0 4px;
   white-space: nowrap;
 }
 .eavesy-control[data-size="wide"] .ctl-top,
-.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding-top: 2px; }
+.eavesy-control[data-size="result"] .ctl-top,
+.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding: 2px 6px 0 6px; gap: 4px; }
 .ctl-below {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 16px 9px 44px;
+  padding: 0 16px 10px 44px;
 }
+.eavesy-control[data-size="result"] .ctl-below { padding: 0 14px 12px 14px; }
 .eavesy-control[data-size="shot"] .ctl-below { padding: 2px 8px 8px; }
 .ctl-fill { flex: 1 1 auto; min-width: 4px; }
 
@@ -192,8 +195,8 @@ body {
   display: grid;
   flex: none;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   transition: background var(--ev-d-press) ease;
 }
@@ -205,8 +208,8 @@ body {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  height: 26px;
-  padding: 0 9px;
+  height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
   color: var(--ctl-ink-2);
   font: inherit;
@@ -214,7 +217,9 @@ body {
 }
 .ctl-btn:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
 .ctl-btn:disabled { opacity: 0.35; }
-.ctl-icon { width: 26px; padding: 0; }
+.ctl-icon { width: 24px; padding: 0; }
+.ctl-primary { background: var(--ctl-ink); color: #221e1b; font-weight: 650; padding: 0 10px 0 9px; }
+.ctl-primary:hover:not(:disabled) { background: #fff; color: #221e1b; }
 .ctl-talk { color: var(--ctl-ink); padding: 0 6px 0 8px; }
 .ctl-kbd {
   margin-left: 1px;
@@ -224,7 +229,7 @@ body {
   color: var(--ctl-ink-3);
   font: 600 10.5px/16px var(--ev-font-round);
 }
-.ctl-sep { flex: none; width: 1px; height: 14px; margin: 0 3px; background: var(--ctl-line); }
+
 
 .ctl-stop {
   height: 26px;
@@ -317,7 +322,19 @@ body {
   animation: ctl-shimmer 1.6s linear infinite;
 }
 @keyframes ctl-shimmer { to { background-position: -200% 0; } }
-.ctl-words { flex: 1 1 auto; color: var(--ctl-ink); }
+.ctl-words {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--ctl-ink);
+  font: 400 13px/17px var(--ev-font-text);
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 .ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
 .ctl-dots > i { width: 3px; height: 3px; border-radius: 999px; background: currentColor; animation: ctl-dot 1.2s ease-in-out infinite; }
@@ -329,25 +346,24 @@ body {
 
 /* A rubber stamp on the case file: what just happened to the capture. */
 .ctl-stamp {
-  --stamp: #6fcf97;
+  --stamp: #7fd8a4;
+  display: inline-flex;
   flex: none;
-  margin-left: 4px;
-  padding: 1px 6px 0;
-  border: 1.5px solid var(--stamp);
-  border-radius: 4px;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stamp) 16%, transparent);
   color: var(--stamp);
-  font: 800 10px/15px var(--ev-font-round);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  transform: rotate(-4deg);
-  transform-origin: 0 50%;
-  animation: ctl-stamp 320ms var(--ev-ease-spring) both;
+  font: 650 12px/22px var(--ev-font-round);
+  animation: ctl-stamp 240ms var(--ev-ease-spring) both;
 }
 .ctl-stamp[data-tone="manila"] { --stamp: #f0c879; }
 .ctl-stamp[data-tone="warn"] { --stamp: #ffc870; }
 @keyframes ctl-stamp {
-  from { opacity: 0; transform: rotate(-10deg) scale(1.3); }
-  to { opacity: 1; transform: rotate(-4deg) scale(1); }
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .ctl-shot {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanList, combinedContext, matchProject, projectTerms } from './projects';
+import { cleanList, combinedContext, matchProject, PROJECT_LIMITS, projectTerms, projectWords, wordsToFields } from './projects';
 
 const eavesy = { name: 'eavesy', match: [] as string[] };
 const desktop = { name: 'Desktop app', match: ['eavesy-desktop'] };
@@ -50,4 +50,20 @@ test('combinedContext joins the project and the note', () => {
     'Project: eavesy\nAbout: Mac recorder.\nTerms (spell exactly like this): D1\n\nFocus on sync.',
   );
   expect(combinedContext(null, null)).toBeNull();
+});
+
+test('projectWords merges the people line into the words without duplicates', () => {
+  expect(projectWords({ vocabulary: ['Tauri', 'Maya'], people: 'maya (design), Alex' })).toEqual(['Tauri', 'Maya', 'Alex']);
+  expect(projectWords({ vocabulary: [], people: null })).toEqual([]);
+});
+
+test('wordsToFields stores words as vocabulary and clears the people line', () => {
+  expect(wordsToFields(['Tauri', 'tauri', 'Alex'])).toEqual({ vocabulary: ['Tauri', 'Alex'], people: null });
+});
+
+test('wordsToFields keeps every word exactly as typed, up to the limit', () => {
+  const odd = ['Acme (EU)', 'a;b', 'x'.repeat(PROJECT_LIMITS.term)];
+  expect(projectWords(wordsToFields(odd))).toEqual(odd);
+  const words = Array.from({ length: PROJECT_LIMITS.vocabulary + 2 }, (_, index) => `w${index}`);
+  expect(wordsToFields(words)).toEqual({ vocabulary: words.slice(0, PROJECT_LIMITS.vocabulary), people: null });
 });
