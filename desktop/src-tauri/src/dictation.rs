@@ -167,6 +167,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
         };
         match how {
+            // The box acknowledges delivery; otherwise the clipboard remains available.
             Delivery::InEavesy if !hand_to_panel(&app, &session_id, &text) => {
                 how = Delivery::CopiedNoTextBox;
             }

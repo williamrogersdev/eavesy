@@ -40,12 +40,17 @@ impl HudState {
         self.phase == Phase::Recording && self.session_id.is_some()
     }
 }
+static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static CURRENT: std::sync::Mutex<Option<HudState>> = std::sync::Mutex::new(None);
 pub fn current() -> HudState {
     CURRENT.lock().unwrap_or_else(|error| error.into_inner()).clone().unwrap_or_else(HudState::idle)
 }
 
 pub fn set_state(app: &AppHandle, state: HudState) {
+    // Stop, completion and dismissal can arrive on different threads. Keep
+    // their renderer events in the same order as CURRENT, which sizes the
+    // native window. Otherwise a result can render inside an idle-sized pill.
+    let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
     // The sound and the red tray glyph mean the mic is live, not that a key
     // was pressed: a recording still starting has no session yet.
@@ -100,10 +105,10 @@ const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60)
 
 /// The resting pill: the snoop, Talk, Screenshot, Video and close.
 const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
-/// Recording and writing it down: the bar and one line of what is heard.
-const WIDE: (f64, f64) = (360.0, 64.0);
-/// The words that landed: the bar and up to three lines, Copy at hand.
-const RESULT: (f64, f64) = (360.0, 100.0);
+/// Recording and writing it down: controls above a scrollable transcript.
+const WIDE: (f64, f64) = (400.0, 142.0);
+/// Keep the same frame after pasting so the transcript remains readable.
+const RESULT: (f64, f64) = (400.0, 142.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -344,9 +349,11 @@ mod imp {
 
     /// Gives the window `size` in one step, animated when it is on screen,
     /// keeping its centre and its top edge (or bottom edge when `keep_bottom`).
-    /// Works only in the live Cocoa frame, so a change that lands while the
-    /// last one is still settling starts from where the window really is.
-    pub fn resize(window: &WebviewWindow, _from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, animate: bool) {
+    /// Snap to the live Cocoa frame without animation, so repeated state
+    /// changes cannot leave the renderer inside a partially resized window.
+    /// The cross-platform signature retains `_from` and `_animate`; macOS
+    /// ignores both and reads the current Cocoa frame directly.
+    pub fn resize(window: &WebviewWindow, _from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, _animate: bool) {
         use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
         use tauri_nspanel::objc::{msg_send, sel, sel_impl};
         let Ok(ns_window) = window.ns_window() else { return };
@@ -363,7 +370,7 @@ mod imp {
             target.origin.y = y;
             target.size.width = width;
             target.size.height = height;
-            let _: () = msg_send![ns_window, setFrame: target display: true animate: animate];
+            let _: () = msg_send![ns_window, setFrame: target display: true animate: false];
             let _: () = msg_send![ns_window, invalidateShadow];
         }
     }
@@ -448,25 +455,25 @@ mod tests {
 
     #[test]
     fn refitting_keeps_the_centre_and_the_top_edge() {
-        assert_eq!(refit((500.0, 40.0, 216.0, 36.0), WIDE, false), (428.0, 40.0, 360.0, 64.0));
+        assert_eq!(refit((500.0, 40.0, 216.0, 36.0), WIDE, false), (408.0, 40.0, 400.0, 142.0));
     }
 
     #[test]
     fn low_on_the_screen_refitting_keeps_the_bottom_edge() {
-        assert_eq!(refit((500.0, 800.0, 216.0, 36.0), WIDE, true), (428.0, 772.0, 360.0, 64.0));
-        assert_eq!(refit((428.0, 772.0, 360.0, 64.0), DEFAULT_SIZE, true), (500.0, 800.0, 216.0, 36.0));
+        assert_eq!(refit((500.0, 800.0, 216.0, 36.0), WIDE, true), (408.0, 694.0, 400.0, 142.0));
+        assert_eq!(refit((408.0, 694.0, 400.0, 142.0), DEFAULT_SIZE, true), (500.0, 800.0, 216.0, 36.0));
     }
 
     #[test]
     fn in_cocoa_coordinates_the_top_edge_is_the_one_kept() {
-        assert_eq!(refit_cocoa((500.0, 800.0, 216.0, 36.0), WIDE, false), (428.0, 772.0, 360.0, 64.0));
-        assert_eq!(refit_cocoa((500.0, 100.0, 216.0, 36.0), WIDE, true), (428.0, 100.0, 360.0, 64.0));
+        assert_eq!(refit_cocoa((500.0, 800.0, 216.0, 36.0), WIDE, false), (408.0, 694.0, 400.0, 142.0));
+        assert_eq!(refit_cocoa((500.0, 100.0, 216.0, 36.0), WIDE, true), (408.0, 100.0, 400.0, 142.0));
     }
 
     #[test]
     fn only_the_resting_pill_is_ever_saved() {
-        assert_eq!(resting((428.0, 24.0, 360.0, 64.0), false), HudFrame { x: 500.0, y: 24.0, width: 216.0, height: 36.0 });
-        assert_eq!(resting((428.0, 772.0, 360.0, 64.0), true), HudFrame { x: 500.0, y: 800.0, width: 216.0, height: 36.0 });
+        assert_eq!(resting((408.0, 24.0, 400.0, 142.0), false), HudFrame { x: 500.0, y: 24.0, width: 216.0, height: 36.0 });
+        assert_eq!(resting((408.0, 694.0, 400.0, 142.0), true), HudFrame { x: 500.0, y: 800.0, width: 216.0, height: 36.0 });
         assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 500.0, y: 24.0, width: 216.0, height: 36.0 });
     }
 }

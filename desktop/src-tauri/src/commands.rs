@@ -544,7 +544,48 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub fn get_hud_state() -> crate::hud::HudState { crate::hud::current() }
+pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
+    let mut state = crate::hud::current();
+    if state.phase == crate::hud::Phase::Done {
+        if let Some(recording) = store::load_all(&app).into_iter()
+            .find(|rec| Some(&rec.id) == state.session_id.as_ref()) {
+            if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+        }
+    }
+    state
+}
+
+#[tauri::command]
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
+    // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fast paste can finish just before the recording's folder is registered.
+        for _ in 0..50 {
+            let ready = store::load_all(&app).iter()
+                .any(|rec| rec.id == session_id && rec.folder_path.is_some());
+            if ready {
+                let original = store::load_all(&app).into_iter().find(|rec| rec.id == session_id).and_then(|rec| rec.transcript);
+                store::save_preview_transcript(&app, &session_id, &text)?;
+                if let Some(original) = original.filter(|original| original != &text) {
+                    let learning_app = app.clone();
+                    let corrected = text.clone();
+                    // Durable local edits work offline; dictionary feedback follows separately.
+                    std::thread::spawn(move || {
+                        if crate::settings::device_credential(&learning_app).is_none() { return; }
+                        match crate::learning::feedback(&learning_app, &original, &corrected) {
+                            Ok(value) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "saved", "learned": value["learned"] })),
+                            Err(_) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "failed", "message": "Transcript saved. Dictionary could not connect; use Edit transcript to retry learning." })),
+                        }
+                    });
+                }
+                let _ = app.emit("recordings:updated", ());
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Err("Recording is still being saved. Please retry.".into())
+    }).await.map_err(|error| format!("Could not save transcript: {error}"))?
+}
 
 #[tauri::command]
 pub fn show_settings(app: AppHandle) -> Result<(), String> {
