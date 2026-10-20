@@ -43,6 +43,7 @@ export function ChipInput({
 
   const commit = (text: string) => {
     const parts = splitChips(text);
+    if (parts.length > 0 && full) return;
     setDraft('');
     if (parts.length === 0) return;
     const next = addChips(value, parts, { max, maxLength });

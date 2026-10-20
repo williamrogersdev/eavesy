@@ -1,7 +1,7 @@
 'use client';
 
 import { FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppAlert, AppEmptyState, AppPageHeader, appButton } from '@/components/ui/app-page';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
 import { createProject, deleteProject, listProjects, updateProject, type ProjectSummary } from '@/lib/api/projects';
@@ -23,9 +23,13 @@ export function ProjectManager() {
   const [retry, setRetry] = useState<ProjectSummary | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const toast = useSaveToast();
+  const changes = useRef(0);
+  const saves = useRef(new Map<string, { attempt: number; confirmed: ProjectSummary }>());
 
   const setItems = (update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    changes.current += 1;
     setItemsState((current) => {
       const next = update(current ?? []);
       cache = next;
@@ -35,13 +39,16 @@ export function ProjectManager() {
 
   useEffect(() => {
     const controller = new AbortController();
+    const before = changes.current;
     void listProjects(controller.signal)
       .then((fresh) => {
+        if (changes.current !== before) return;
         cache = fresh;
         setItemsState(fresh);
       })
       .catch((cause: unknown) => {
         if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setLoadFailed(true);
         setItemsState((current) => current ?? []);
         setError('Could not load your projects. Reload the page to try again.');
       });
@@ -78,14 +85,24 @@ export function ProjectManager() {
   };
 
   const save = (project: ProjectSummary, fields: ProjectSave) => {
-    setItems((current) => current.map((item) => (item.id === project.id ? { ...item, ...fields } : item)));
+    const updated = { ...project, ...fields };
+    const previous = saves.current.get(project.id);
+    const attempt = (previous?.attempt ?? 0) + 1;
+    const confirmed = previous?.confirmed ?? project;
+    saves.current.set(project.id, { attempt, confirmed });
+    setItems((current) => current.map((item) => (item.id === project.id ? updated : item)));
     close();
     setError(null);
     toast.show();
-    void updateProject(project.id, fields).catch((cause: unknown) => {
-      setItems((current) => current.map((item) => (item.id === project.id ? project : item)));
-      setError(cause instanceof Error ? `Could not save ${project.name}: ${cause.message}` : `Could not save ${project.name}.`);
-    });
+    void updateProject(project.id, fields)
+      .then(() => {
+        if (saves.current.get(project.id)?.attempt === attempt) saves.current.set(project.id, { attempt, confirmed: updated });
+      })
+      .catch((cause: unknown) => {
+        if (saves.current.get(project.id)?.attempt !== attempt) return;
+        setItems((current) => current.map((item) => (item.id === project.id ? confirmed : item)));
+        setError(cause instanceof Error ? `Could not save ${project.name}: ${cause.message}` : `Could not save ${project.name}.`);
+      });
   };
 
   const remove = (project: ProjectSummary) => {
@@ -94,14 +111,18 @@ export function ProjectManager() {
       return;
     }
     setConfirming(null);
-    const index = items?.findIndex((item) => item.id === project.id) ?? -1;
-    setItems((current) => current.filter((item) => item.id !== project.id));
+    let index = -1;
+    setItems((current) => {
+      index = current.findIndex((item) => item.id === project.id);
+      return current.filter((item) => item.id !== project.id);
+    });
     if (editing === project.id) close();
     toast.show('Project deleted');
     void deleteProject(project.id).catch((cause: unknown) => {
       setItems((current) => {
         const next = [...current];
-        next.splice(index < 0 ? next.length : index, 0, project);
+        if (next.some((item) => item.id === project.id)) return next;
+        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, project);
         return next;
       });
       setError(cause instanceof Error ? `Could not delete ${project.name}: ${cause.message}` : `Could not delete ${project.name}.`);
@@ -132,7 +153,7 @@ export function ProjectManager() {
             <li key={row} className="h-[68px] animate-pulse rounded-[var(--ev-r-panel)] bg-ev-well" />
           ))}
         </ul>
-      ) : items.length === 0 && editing !== 'new' ? (
+      ) : items.length === 0 && loadFailed ? null : items.length === 0 && editing !== 'new' ? (
         <AppEmptyState
           icon={<FolderOpen />}
           title="No projects yet"

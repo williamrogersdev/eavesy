@@ -4,7 +4,7 @@ import { useEffect, useId, useState } from 'react';
 import { ChipInput } from '@/components/ui/chip-input';
 import { appButton } from '@/components/ui/app-page';
 import { projectSuggestions, type ProjectFields, type ProjectSummary } from '@/lib/api/projects';
-import { PROJECT_LIMITS, projectWords, wordsToFields } from '@/lib/projects';
+import { cleanList, PROJECT_LIMITS, projectWords, wordsToFields } from '@/lib/projects';
 
 export type ProjectSave = Required<Pick<ProjectFields, 'about' | 'vocabulary' | 'people' | 'match'>> & { name: string };
 
@@ -37,7 +37,7 @@ export function ProjectEditor({
   const trimmed = name.trim();
   const submit = () => {
     if (!trimmed) return;
-    onSave({ name: trimmed, about: about.trim() || null, ...wordsToFields(words), match });
+    onSave({ name: trimmed, about: about.trim() || null, ...wordsToFields(words), match: cleanList(match, PROJECT_LIMITS.match) });
   };
 
   const field = 'h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm text-ev-ink outline-none transition-colors placeholder:text-ev-ink-3 focus:border-ev-coat';

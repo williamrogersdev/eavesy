@@ -61,6 +61,7 @@ function SettingsPage() {
   const [anthropic, setAnthropic] = useState('');
   const [displayName, setDisplayName] = useState('');
   const vocabularySave = useRef(0);
+  const savedVocabulary = useRef<{ attempt: number; words: string[] }>({ attempt: 0, words: [] });
   const navigate = useNavigate();
   const toast = useSaveToast();
   const [pairing, setPairing] = useState(false);
@@ -106,6 +107,7 @@ function SettingsPage() {
         if (!account) throw new Error('Server returned invalid account settings');
         setMe(account);
         setDisplayName(account.displayName ?? '');
+        savedVocabulary.current = { attempt: 0, words: account.customVocabulary };
       })
       .catch(() => setError('Could not load account settings.'));
     void fetch('/api/mcp-tokens')
@@ -170,7 +172,6 @@ function SettingsPage() {
   };
 
   const saveVocabulary = async (customVocabulary: string[]) => {
-    const previous = me?.customVocabulary ?? [];
     const attempt = ++vocabularySave.current;
     setError(null);
     setMe((current) => (current ? { ...current, customVocabulary } : current));
@@ -181,10 +182,11 @@ function SettingsPage() {
         body: JSON.stringify({ customVocabulary }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (attempt > savedVocabulary.current.attempt) savedVocabulary.current = { attempt, words: customVocabulary };
       if (attempt === vocabularySave.current) toast.show();
     } catch (cause) {
       if (attempt !== vocabularySave.current) return;
-      setMe((current) => (current ? { ...current, customVocabulary: previous } : current));
+      setMe((current) => (current ? { ...current, customVocabulary: savedVocabulary.current.words } : current));
       setError(cause instanceof Error ? `Could not save your words: ${cause.message}` : 'Could not save your words.');
     }
   };

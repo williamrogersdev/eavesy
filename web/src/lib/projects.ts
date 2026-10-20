@@ -107,8 +107,13 @@ export function projectWords(project: Pick<Project, 'vocabulary' | 'people'>): s
  */
 export function wordsToFields(words: string[]): Pick<Project, 'vocabulary' | 'people'> {
   const all = cleanList(words, Number.MAX_SAFE_INTEGER);
-  const overflow = all.slice(PROJECT_LIMITS.vocabulary).join(', ').slice(0, PROJECT_LIMITS.people);
-  return { vocabulary: all.slice(0, PROJECT_LIMITS.vocabulary), people: overflow || null };
+  let people = '';
+  for (const word of all.slice(PROJECT_LIMITS.vocabulary)) {
+    const next = people ? `${people}, ${word}` : word;
+    if (next.length > PROJECT_LIMITS.people) break;
+    people = next;
+  }
+  return { vocabulary: all.slice(0, PROJECT_LIMITS.vocabulary), people: people || null };
 }
 
 function namesIn(people: string | null | undefined): string[] {

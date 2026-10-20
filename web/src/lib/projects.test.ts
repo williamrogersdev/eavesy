@@ -68,3 +68,13 @@ test('wordsToFields keeps words past the vocabulary limit in the people line', (
   expect(fields.people).toBe(`w${PROJECT_LIMITS.vocabulary}, w${PROJECT_LIMITS.vocabulary + 1}`);
   expect(projectWords(fields)).toEqual(words);
 });
+
+test('wordsToFields never cuts an overflow word in half', () => {
+  const vocabulary = Array.from({ length: PROJECT_LIMITS.vocabulary }, (_, index) => `v${index}`);
+  const long = Array.from({ length: 40 }, (_, index) => `overflow-name-${index}`);
+  const people = wordsToFields([...vocabulary, ...long]).people ?? '';
+  expect(people.length).toBeLessThanOrEqual(PROJECT_LIMITS.people);
+  const kept = people.split(', ');
+  expect(kept).toEqual(long.slice(0, kept.length));
+  expect(projectWords({ vocabulary, people })).toEqual([...vocabulary, ...kept]);
+});
