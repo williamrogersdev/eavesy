@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { and, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, like, ne, or } from 'drizzle-orm';
 import type { VectorizeIndex } from '@cloudflare/workers-types';
 import { getDb } from '@/db/client';
 import { embeddings, meetings, dictations } from '@/db/schema';
@@ -48,6 +48,7 @@ export const Route = createFileRoute('/api/search')({
             and(
               eq(meetings.userId, actor.userId),
               isNull(meetings.deletedAt),
+              or(ne(meetings.source, 'import'), eq(meetings.status, 'complete')),
               or(
                 like(meetings.title, pattern),
                 like(meetings.description, pattern),
@@ -108,6 +109,7 @@ export const Route = createFileRoute('/api/search')({
                   and(
                     eq(meetings.userId, actor.userId),
                     isNull(meetings.deletedAt),
+              or(ne(meetings.source, 'import'), eq(meetings.status, 'complete')),
                     inArray(meetings.id, [...meetingIds]),
                   ),
                 )

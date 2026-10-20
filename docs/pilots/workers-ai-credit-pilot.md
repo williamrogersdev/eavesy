@@ -33,7 +33,9 @@ credits account is outside this application's cap.
   WAV segments, resume, cancel and retry. Up to 60 minutes and 100 MiB per file.
   Processing begins only after every segment and the original are durable.
 - Imports use Workers AI transcription and structured summaries. Existing
-  desktop/browser provider choices remain in place. Summaries currently reject
+  desktop/browser provider choices remain in place. The downstream agent
+  transcript uses model-free cleanup for pilot imports, avoiding an unmetered
+  call to another provider. Summaries currently reject
   transcripts exceeding 60,000 characters; they never silently truncate them.
 - `/app/memory`: hybrid transcript retrieval, exact-quote citations and source
   links that seek to the cited timestamp. Edited or deleted evidence is checked

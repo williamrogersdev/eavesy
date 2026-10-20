@@ -8,7 +8,7 @@ import { transcriptText } from './summarize';
 
 export async function handleEmbedMeeting(meetingId: string, db: Db, env: ProcessingEnv) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
-  if (!meeting || meeting.deletedAt) return;
+  if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
   const segments = await db
     .select()
     .from(transcriptSegments)
