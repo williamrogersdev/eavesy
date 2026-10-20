@@ -1,7 +1,7 @@
 import { createAiRunner, creditsConfigured, type CreditEnv } from '../../../web/src/lib/ai/credit-runner';
 import { librarySources, askLibrary } from '../../../web/src/server/library-memory';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, like, ne, or, sql } from 'drizzle-orm';
 import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
@@ -452,6 +452,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           and(
             eq(schema.meetings.userId, userId),
             isNull(schema.meetings.deletedAt),
+              or(ne(schema.meetings.source, 'import'), eq(schema.meetings.status, 'complete')),
             or(
               like(schema.meetings.title, q),
               like(schema.meetings.description, q),
@@ -487,6 +488,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
                 and(
                   eq(schema.meetings.userId, userId),
                   isNull(schema.meetings.deletedAt),
+              or(ne(schema.meetings.source, 'import'), eq(schema.meetings.status, 'complete')),
                   inArray(schema.meetings.id, semanticIds),
                 ),
               )
