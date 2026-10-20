@@ -8,17 +8,19 @@ export function CorrectionEditor({ id, original, loadOriginal, onSaved }: { id: 
   const [baseline, setBaseline] = useState(original);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [retryLearning, setRetryLearning] = useState(false);
   const save = async () => {
     setBusy(true); setNotice('');
     try {
-      const { learned } = await correctTranscript(id, baseline, text);
+      const { learned, warning } = await correctTranscript(id, baseline, text);
       onSaved(text); setEditing(false);
-      setNotice(learned ? `Saved. Learned ${learned} correction${learned === 1 ? '' : 's'} for future recordings.` : 'Transcript saved. No vocabulary changes to learn.');
+      setRetryLearning(!!warning);
+      setNotice(warning ?? (learned ? `Saved. Learned ${learned} correction${learned === 1 ? '' : 's'} for future recordings.` : 'Transcript saved. No vocabulary changes to learn.'));
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not save correction'); }
     finally { setBusy(false); }
   };
   const start = async () => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(''); setRetryLearning(false);
     try {
       const full = loadOriginal ? await loadOriginal() : original;
       setBaseline(full); setText(full); setEditing(true);
@@ -33,6 +35,7 @@ export function CorrectionEditor({ id, original, loadOriginal, onSaved }: { id: 
         <Button size="sm" type="button" disabled={busy} onClick={() => setEditing(false)}>Cancel</Button>
       </div>
     </> : <Button size="sm" type="button" disabled={busy} onClick={() => void start()} className="ev-link">Edit transcript</Button>}
+    {retryLearning && <Button size="sm" type="button" disabled={busy} onClick={() => void save()}>Retry dictionary learning</Button>}
     {notice && <p role="status" className="mt-2 text-xs text-[var(--ev-ink-2)]">{notice}</p>}
   </div>;
 }

@@ -54,8 +54,9 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
       eq(dictations.id, dictationId), eq(dictations.userId, actor.userId), isNull(dictations.deletedAt),
     )).limit(1))[0];
     if (!item) return json({ error: 'not_found' }, 404);
-    if ((item.cleanedText ?? item.transcript) !== original) return json({ error: 'transcript_changed' }, 409);
-    await db.update(dictations).set({ cleanedText: corrected }).where(and(eq(dictations.id, dictationId), eq(dictations.userId, actor.userId)));
+    const current = item.cleanedText ?? item.transcript;
+    if (current !== original && current !== corrected) return json({ error: 'transcript_changed' }, 409);
+    if (current !== corrected) await db.update(dictations).set({ cleanedText: corrected }).where(and(eq(dictations.id, dictationId), eq(dictations.userId, actor.userId)));
   } else if (!actor.deviceId) {
     // Unreferenced passages are accepted only from a paired Mac's capture observer.
     return json({ error: 'dictation_required' }, 400);

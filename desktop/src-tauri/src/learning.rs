@@ -69,17 +69,23 @@ pub async fn correct_recording(
     tauri::async_runtime::spawn_blocking(move || {
         let recording = crate::store::get(&app, &id)?
             .ok_or("Recording not found")?;
-        if recording.transcript.as_deref() != Some(original.as_str()) {
+        let current = recording.transcript.as_deref();
+        if current != Some(original.as_str()) && current != Some(corrected.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());
         }
         if corrected.trim().is_empty() || corrected.encode_utf16().count() > 12_000 || original.encode_utf16().count() > 12_000 {
             return Err("Corrections must contain text and be at most 12,000 characters. Edit a shorter passage.".into());
         }
-        // Save feedback first; a failed connection leaves the editor intact for retry.
-        let learned = feedback(&app, &original, &corrected)?;
-        crate::store::correct_transcript(&app, &id, &original, &corrected)?;
-        let _ = app.emit("recordings:updated", ());
-        Ok(learned)
+        // Only durable human edits teach the dictionary. A retry is allowed when
+        // the exact corrected text is still current, without rewriting the files.
+        if current == Some(original.as_str()) {
+            crate::store::correct_transcript(&app, &id, &original, &corrected)?;
+            let _ = app.emit("recordings:updated", ());
+        }
+        Ok(feedback(&app, &original, &corrected).unwrap_or_else(|_| json!({
+            "learned": 0,
+            "warning": "Transcript saved. Dictionary could not connect. Retry learning when you are online."
+        })))
     })
     .await
     .map_err(|e| e.to_string())?

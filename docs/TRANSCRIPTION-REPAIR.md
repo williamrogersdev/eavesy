@@ -29,8 +29,9 @@ feedback endpoint. It stops on focus changes, edits outside the passage, or a
 new paste. Secure fields, fields without an AX text value, and ambiguous matches
 are excluded. Copying and manually pasting with Cmd-V does not start observation.
 Unsupported apps can use **Edit transcript** inside Eavesy instead. This is not
-a keyboard logger. Offline feedback currently reports failure and requires retry
-through the editor; it does not claim the correction was saved.
+a keyboard logger. Offline observer feedback reports failure and requires an explicit editor retry.
+Edits saved inside Eavesy remain saved locally if dictionary feedback cannot
+connect; the correction editor offers **Retry dictionary learning**.
 
 ## Sentence-aware repair
 
