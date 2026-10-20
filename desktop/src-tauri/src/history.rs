@@ -73,6 +73,10 @@ impl History {
         let mut conn = Connection::open(path).map_err(error)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(error)?;
+        // Match std::fs::File::sync_all on Apple platforms, which uses
+        // F_FULLFSYNC. SQLite's synchronous=FULL alone does not enable it.
+        // https://www.sqlite.org/pragma.html#pragma_fullfsync
+        conn.pragma_update(None, "fullfsync", true).map_err(error)?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS history_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -421,6 +425,35 @@ mod tests {
             has_audio: true,
             has_video: false,
             folder_path: None,
+        }
+    }
+
+    #[test]
+    fn every_connection_keeps_full_durability_for_wal_and_checkpoints() {
+        let fixture = Fixture::new();
+        for _ in 0..2 {
+            let history = fixture.open().unwrap();
+            assert_eq!(
+                history
+                    .conn
+                    .pragma_query_value(None, "synchronous", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                history
+                    .conn
+                    .pragma_query_value(None, "fullfsync", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                history
+                    .conn
+                    .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "wal"
+            );
         }
     }
 
