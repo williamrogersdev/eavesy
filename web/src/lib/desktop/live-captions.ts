@@ -74,9 +74,11 @@ export const EMPTY_RUNNING: RunningTranscript = { sessionId: null, finals: [], p
 export function addCaption(state: RunningTranscript, caption: LiveCaption): RunningTranscript {
   const base = state.sessionId === caption.sessionId ? state : { ...EMPTY_RUNNING, sessionId: caption.sessionId };
   if (!caption.text.trim()) return base;
-  const samePhrase = (previous: LiveCaption) => previous.track === caption.track && (
-    previous.startMs === caption.startMs || (previous.startMs < caption.endMs && caption.startMs < previous.endMs)
-  );
+  const samePhrase = (previous: LiveCaption) => {
+    const overlap = Math.min(previous.endMs, caption.endMs) - Math.max(previous.startMs, caption.startMs);
+    const longest = Math.max(previous.endMs - previous.startMs, caption.endMs - caption.startMs);
+    return previous.track === caption.track && (previous.startMs === caption.startMs || (overlap > 0 && overlap > longest / 2));
+  };
   const partials = Object.fromEntries(Object.entries(base.partials).filter(([, previous]) => !samePhrase(previous)));
   if (!caption.isFinal) {
     if (!base.finals.some(samePhrase)) partials[`${caption.track}:${caption.startMs}`] = caption;

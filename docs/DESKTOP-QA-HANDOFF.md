@@ -41,20 +41,22 @@ permission to test also authorizes sending messages to other people.
 - HUD Talk starts microphone dictation (including automatic paste), instead of
   a generic capture. Native state transitions are serialized; frame changes
   avoid overlapping animations that could clip the rendered result.
-- Optional text-polish timeout reduced from 1800ms to 450ms. Check the speed vs.
-  polish tradeoff with real speech; this does not establish recognition quality.
+- Kept the existing 1800ms text-polish timeout after review. A shorter 450ms
+  experiment was installed locally but was not backed by real service latency
+  measurements. Measure polish success rate before reducing this timeout.
 - Startup refreshes the runtime and Finder icon from the bundled asset.
 
 ## Evidence already obtained
 
-- Rust: 266 passing, two intentionally ignored tests; the speech fixture is an
+- Rust: 266 passing before final review (additional overlap/lead-in regressions
+  added during review; use final CI totals), two intentionally ignored tests; the speech fixture is an
   opt-in integration test. The persistence regression reads the physical registry
   and transcript file, checks the queued edit, and applies later device/cloud
   results. It includes empty corrections.
 - Swift: 59 tests passed earlier in this change set; both Apple speech engines
   built. Web build/type checks and transcript unit tests passed during development.
   Consult this PR's final checks for the complete merge validation.
-- `desktop/bench/check-hud-preview.mjs`: eight headless UI scenarios passed.
+- `desktop/bench/check-hud-preview.mjs`: nine headless UI scenarios passed.
   Covers collapse timing, editing/deleting all text, late results, corrected Copy,
   reload persistence, failed save/retry, a new recording, and slow saves. Its
   Tauri bridge is mocked: this is not proof of installed WebKit-to-native IPC.
@@ -67,7 +69,8 @@ permission to test also authorizes sending messages to other people.
 - A signed local 0.5.3 build was installed and relaunched on the original Mac.
   It is a local update, not a new published release. Signing verification and
   source/installed binary hash comparison passed. No public version bump was
-  performed for these changes.
+  performed for these changes. That installed build predates final PR review
+  hardening; build current main on the dedicated Mac.
 
 ## Next: installed-app tests on the dedicated Mac
 
@@ -87,7 +90,10 @@ permission to test also authorizes sending messages to other people.
    Check Copy and close-during-save, permission/write failures, and retry.
 5. Inspect native rendering at different display scales/positions: full lines,
    scrolling, no random disappearance during state transitions, stable launcher
-   layout, and collapse after 15 seconds of inactivity. Evaluate visual quality
+   layout, and collapse after 15 seconds of inactivity. Specifically test a
+   caption arriving before the HUD state identifies its session: the HUD filters
+   caption events by current session, so verify snapshot reconciliation recovers
+   those early words (review F10 in this PR). Evaluate visual quality
    against `desktop/DESIGN.md` with actual screenshots.
 6. Check Finder, Dock, and menu-bar icon refresh after upgrade/relaunch. Confirm
    the upgrade preserves shortcuts, permissions, settings and existing recordings.

@@ -1,5 +1,7 @@
 import { chromium } from '../../web/node_modules/playwright/index.mjs';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const browser = await chromium.launch({headless:true});
 try {
   const page = await browser.newPage({viewport:{width:400,height:142}});
@@ -51,7 +53,7 @@ try {
   await page.getByRole('button',{name:'Copy',exact:true}).click();
   assert.deepEqual(await page.evaluate(()=>window.__qaCopies),['Corrected first sentence.\nCorrected final sentence.']);
   console.log('PASS: late transcript updates preserve edits; Copy uses corrected text');
-  await page.screenshot({path:'/private/tmp/eavesy-editable-preview-verified.png'});
+  await page.screenshot({path:join(tmpdir(),'eavesy-editable-preview-verified.png')});
   await page.clock.fastForward(14_900);
   assert.equal(await editor.count(),1);
   await page.clock.fastForward(101);
@@ -103,4 +105,8 @@ try {
   await page.locator('[data-phase="idle"]').waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem('qa-transcript')),'Save must finish before collapse');
   console.log('PASS: in-flight saves finish before automatic collapse');
+  await page.evaluate(() => window.__qaEmit({phase:'done',sessionId:null,mode:'audio',message:'Result without a recording identity',notice:null,startedAtMs:null}));
+  await editor.waitFor();
+  assert.equal(await editor.getAttribute('readonly'),'');
+  console.log('PASS: a preview without a recording ID cannot accept unsavable edits');
 } finally { await browser.close(); }

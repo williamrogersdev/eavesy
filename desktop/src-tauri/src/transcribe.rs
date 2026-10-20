@@ -109,7 +109,7 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
 }
 
 /// How long a paste waits for the tidied words before it types them as heard.
-const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(450);
+const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1800);
 
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The

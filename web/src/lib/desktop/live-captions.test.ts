@@ -112,3 +112,12 @@ describe('phrases awaiting finals', () => {
     expect(runningText(state)).toBe('Start. Middle. Trailing end.');
   });
 });
+
+
+it('slightly overlapping recognition windows preserve both settled phrases', () => {
+  let state = addCaption(EMPTY_RUNNING, { sessionId: 'overlap', track: 'mic', text: 'First sentence.', isFinal: true, startMs: 0, endMs: 1000 });
+  state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Next sentence.', isFinal: true, startMs: 900, endMs: 2000 });
+  expect(runningText(state)).toBe('First sentence. Next sentence.');
+  state = addCaption(state, { sessionId: 'overlap', track: 'mic', text: 'Corrected first sentence.', isFinal: true, startMs: 10, endMs: 1000 });
+  expect(runningText(state)).toBe('Corrected first sentence. Next sentence.');
+});

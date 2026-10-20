@@ -559,12 +559,14 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
     for _ in 0..50 {
         let ready = store::load_all(&app).iter()
             .any(|rec| rec.id == session_id && rec.folder_path.is_some());
-        if ready { break; }
+        if ready {
+            store::save_preview_transcript(&app, &session_id, &text)?;
+            let _ = app.emit("recordings:updated", ());
+            return Ok(());
+        }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    store::save_preview_transcript(&app, &session_id, &text)?;
-    let _ = app.emit("recordings:updated", ());
-    Ok(())
+    Err("Recording is still being saved. Please retry.".into())
 }
 
 #[tauri::command]

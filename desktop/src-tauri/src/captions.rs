@@ -62,7 +62,9 @@ pub struct CaptionLog {
 }
 
 fn same_phrase(a: &Caption, b: &Caption) -> bool {
-    a.track == b.track && (a.start_ms == b.start_ms || (a.start_ms < b.end_ms && b.start_ms < a.end_ms))
+    let overlap = a.end_ms.min(b.end_ms) - a.start_ms.max(b.start_ms);
+    let longest = (a.end_ms - a.start_ms).max(b.end_ms - b.start_ms);
+    a.track == b.track && (a.start_ms == b.start_ms || (overlap > 0 && overlap > longest / 2))
 }
 
 impl CaptionLog {
@@ -175,6 +177,7 @@ impl CaptionLog {
         }
     }
 
+    #[cfg(test)]
     fn sorted_finals(&self) -> Vec<&Caption> {
         let mut finals: Vec<&Caption> = self.finals.iter().collect();
         finals.sort_by_key(|c| (c.start_ms, c.end_ms));
@@ -305,6 +308,35 @@ mod tests {
         assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
         log.record(&caption("Trailing end.", true, 4_000));
         assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
+    }
+
+    #[test]
+    fn slight_window_boundary_overlap_keeps_both_phrases() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("First sentence.", true, 0);
+        first.end_ms = 1_000;
+        let mut next = caption("Next sentence.", true, 900);
+        next.end_ms = 2_000;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "First sentence. Next sentence.");
+        let mut revision = first.clone();
+        revision.start_ms = 10;
+        revision.text = "Corrected first sentence.".into();
+        log.record(&revision);
+        assert_eq!(log.spoken_text(), "Corrected first sentence. Next sentence.");
+    }
+
+    #[test]
+    fn quiet_lead_in_threshold_is_deliberately_conservative() {
+        for start in [QUICK_PASTE_SLACK_MS, QUICK_PASTE_SLACK_MS + 1] {
+            let mut log = CaptionLog::default();
+            log.record(&caption("Complete words after silence.", true, start));
+            log.finish(CLEAN);
+            // Without independent audio coverage evidence, silence and a lost
+            // first window are indistinguishable. Prefer full-clip recovery.
+            assert_eq!(matches!(log.quick_paste(start + 500), Paste::OnDevice(_)), start == QUICK_PASTE_SLACK_MS);
+        }
     }
 
     #[test]

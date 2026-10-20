@@ -154,6 +154,7 @@ function Hud() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   // The Mac's own recognizer could not run for this recording: no live words.
   const [captionsOff, setCaptionsOff] = useState<string | null>(null);
+  const retrySaveButton = useRef<HTMLButtonElement>(null);
   const transcriptBox = useRef<HTMLDivElement>(null);
   const lines = useLiveLines(state?.sessionId ?? null, 12);
   const currentSession = useRef(state?.sessionId);
@@ -350,7 +351,7 @@ function Hud() {
     </button>
   );
   const close = (
-    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : undefined).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : window.requestAnimationFrame(() => retrySaveButton.current?.focus())).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
   );
   const history = (
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn ctl-icon"><History className="h-3.5 w-3.5" /></button>
@@ -406,7 +407,7 @@ function Hud() {
     top = (
       <>
         {mark}
-        {saveError ? <button className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
+        {saveError ? <span role="alert"><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
         {notice && !notPasted && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
@@ -420,6 +421,7 @@ function Hud() {
           className="ctl-words ctl-editor"
           value={words}
           spellCheck
+          readOnly={!state.sessionId}
           onFocus={() => setEditing(true)}
           onBlur={() => { setEditing(false); void flushEdit(); }}
           onChange={(event) => { setDraft({ sessionId: state.sessionId, text: event.target.value }); if (state.sessionId) { const edit = { sessionId: state.sessionId, text: event.target.value }; latestEdit.current = edit; pendingEdit.current = edit; } setCopied(false); }}

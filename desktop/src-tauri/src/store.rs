@@ -196,20 +196,47 @@ pub fn save_preview_transcript<R: Runtime>(
 ) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     if content.len() > 5 * 1024 * 1024 { return Err("Transcript is too large".into()); }
-    mutate(app, |list| {
-        let recording = list.iter_mut().find(|rec| rec.id == id)
-            .ok_or_else(|| "Recording is still being saved. Please retry.".to_string())?;
-        let folder = recording.folder_path.as_deref()
-            .ok_or_else(|| "Recording folder is still being saved. Please retry.".to_string())?;
-        let path = Path::new(folder).join("transcript.md");
-        let hash = hex::encode(Sha256::digest(content.as_bytes()));
+    let _guard = registry_guard();
+    let registry = registry_path(app)?;
+    let previous = read_registry(&registry)?;
+    let mut list = previous.clone();
+    let recording = list.iter_mut().find(|rec| rec.id == id)
+        .ok_or_else(|| "Recording is still being saved. Please retry.".to_string())?;
+    let folder = recording.folder_path.as_deref()
+        .ok_or_else(|| "Recording folder is still being saved. Please retry.".to_string())?;
+    let path = Path::new(folder).join("transcript.md");
+    let old_file = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Could not read saved transcript: {error}")),
+    };
+    let hash = hex::encode(Sha256::digest(content.as_bytes()));
+    recording.transcript = Some(content.to_string());
+    let saved = crate::sqlite::with_open_mut(app, |conn| -> Result<(), String> {
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        crate::sqlite::enqueue_file_edit_in(&tx, id, "transcript", content, &hash)?;
+        crate::sqlite::record_file_observation_in(&tx, &path, id, "transcript", &hash)?;
+        // An explicit correction stays authoritative even if it matches the
+        // old generated text (for example, the user undoes their first edit).
+        tx.execute("UPDATE filesystem_state SET last_written_hash=NULL WHERE file_path=?1",
+            rusqlite::params![path.to_string_lossy()]).map_err(|error| error.to_string())?;
         crate::fs_writer::atomic_write(&path, content.as_bytes())?;
-        // Queue through the existing file-edit sync path, including empty edits.
-        crate::sqlite::enqueue_file_edit(app, id, "transcript", content, &hash)?;
-        crate::sqlite::record_file_observation(app, &path, id, "transcript", &hash)?;
-        recording.transcript = Some(content.to_string());
-        Ok(true)
-    })
+        write_registry(&registry, &list)?;
+        tx.commit().map_err(|error| error.to_string())
+    }).and_then(|result| result);
+    if let Err(error) = saved {
+        // No outbox/observation becomes visible before both durable files land.
+        // Restore the file and registry if writing either or committing fails.
+        let restore = if let Some(bytes) = old_file {
+            crate::fs_writer::atomic_write(&path, &bytes)
+        } else if path.exists() {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())
+        } else { Ok(()) };
+        let restore_registry = write_registry(&registry, &previous);
+        restore.and(restore_registry).map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -481,7 +508,7 @@ mod tests {
         recording.transcript = Some("Original transcript".into());
         append(app, recording.clone()).unwrap();
         crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, None, None).unwrap();
-        for correction in ["Corrected opening.\nCorrected ending.", "", "Final saved correction."] {
+        for correction in ["Original transcript", "Corrected opening.\nCorrected ending.", "", "Final saved correction."] {
             save_preview_transcript(app, "edited", correction).unwrap();
             // Read the physical registry as well as its in-memory cache.
             assert_eq!(read_registry_file(&registry_path(app).unwrap()).unwrap()[0].transcript.as_deref(), Some(correction));
@@ -495,6 +522,15 @@ mod tests {
             assert_eq!(load_all(app)[0].transcript.as_deref(), Some(correction));
             assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
         }
+        // A failure after enqueueing must roll back the outbox and preserve both files.
+        crate::sqlite::with_open(app, |conn| conn.execute_batch(
+            "CREATE TRIGGER fail_preview_observation BEFORE UPDATE ON filesystem_state BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END;"
+        )).unwrap().unwrap();
+        assert!(save_preview_transcript(app, "edited", "Must not partially land").is_err());
+        assert_eq!(read_registry_file(&registry_path(app).unwrap()).unwrap()[0].transcript.as_deref(), Some("Final saved correction."));
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), "Final saved correction.");
+        assert_eq!(crate::sqlite::next_file_edit(app).unwrap().unwrap().content_md, "Final saved correction.");
+        crate::sqlite::with_open(app, |conn| conn.execute_batch("DROP TRIGGER fail_preview_observation")).unwrap().unwrap();
         assert!(save_preview_transcript(app, "missing", "must not disappear").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -24,6 +24,12 @@ pub fn enqueue_file_edit<R: Runtime>(
     content_md: &str,
     content_hash: &str,
 ) -> Result<(), String> {
+    enqueue_file_edit_in(&*open(app)?, local_session_id, role, content_md, content_hash)
+}
+
+pub(crate) fn enqueue_file_edit_in(
+    conn: &Connection, local_session_id: &str, role: &str, content_md: &str, content_hash: &str,
+) -> Result<(), String> {
     let operation_id = format!("file-edit:{local_session_id}:{role}");
     let payload = serde_json::to_string(&PendingFileEdit {
         operation_id: operation_id.clone(),
@@ -34,8 +40,7 @@ pub fn enqueue_file_edit<R: Runtime>(
     })
     .map_err(|error| format!("serialize external file edit: {error}"))?;
     let now = chrono::Utc::now().timestamp_millis();
-    open(app)?
-        .execute(
+    conn.execute(
             "INSERT INTO pending_operations
              (id, operation_type, payload_json, attempts, last_attempt_at,
               last_error, created_at, status)
@@ -222,7 +227,12 @@ pub fn record_file_observation<R: Runtime>(
     role: &str,
     hash: &str,
 ) -> Result<(), String> {
-    let conn = open(app)?;
+    record_file_observation_in(&*open(app)?, path, meeting_id, role, hash)
+}
+
+pub(crate) fn record_file_observation_in(
+    conn: &Connection, path: &Path, meeting_id: &str, role: &str, hash: &str,
+) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
         "INSERT INTO filesystem_state
