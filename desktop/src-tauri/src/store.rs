@@ -491,16 +491,34 @@ pub fn set_status<R: Runtime>(app: &AppHandle<R>, id: &str, status: &str) -> Res
 
 /// A deliberate human edit wins over later transcription and sync results.
 pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &str, corrected: &str) -> Result<(), String> {
-    mutate(app, |list| {
-        let rec = list.iter_mut().find(|r| r.id == id).ok_or("Recording not found")?;
-        if rec.transcript.as_deref() != Some(original) { return Err("Transcript changed; reopen it before correcting".into()); }
-        if let Some(folder) = &rec.folder_path {
-            let folder = Path::new(folder);
-            let raw = folder.join("transcript.raw.md");
-            if !raw.exists() { std::fs::write(raw, original).map_err(|e| e.to_string())?; }
-            std::fs::write(folder.join("transcript.md"), corrected).map_err(|e| e.to_string())?;
+    let _guard = registry_guard();
+    let registry = registry_path(app)?;
+    let mut list = read_registry(&registry)?;
+    let rec = list.iter_mut().find(|r| r.id == id).ok_or("Recording not found")?;
+    if rec.transcript.as_deref() != Some(original) { return Err("Transcript changed; reopen it before correcting".into()); }
+    let file = rec.folder_path.as_deref().map(|folder| Path::new(folder).join("transcript.md"));
+    let before = if let Some(path) = &file {
+        match std::fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
         }
-        rec.transcript = Some(corrected.to_string());
-        Ok(true)
-    })
+    } else { None };
+    if let Some(path) = &file {
+        let raw = path.with_file_name("transcript.raw.md");
+        if !raw.exists() { atomic_write(&raw, original.as_bytes())?; }
+        atomic_write(path, corrected.as_bytes())?;
+    }
+    rec.transcript = Some(corrected.to_string());
+    if let Err(error) = write_registry(&registry, &list) {
+        if let Some(path) = &file {
+            let restored = match before {
+                Some(bytes) => atomic_write(path, &bytes),
+                None => std::fs::remove_file(path).map_err(|e| e.to_string()),
+            };
+            restored.map_err(|rollback| format!("{error}; restoring transcript failed: {rollback}"))?;
+        }
+        return Err(error);
+    }
+    Ok(())
 }

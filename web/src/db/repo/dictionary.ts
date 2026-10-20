@@ -12,7 +12,8 @@ export async function list(db: AppDb, userId: string) {
 export async function remember(db: AppDb, userId: string, corrections: LearnedCorrection[]) {
   const existing = await list(db, userId);
   const keys = new Set(existing.map(e => e.sourceKey));
-  const accepted = corrections.filter(c => validCorrection(c.from, c.to)).filter(c => {
+  const unchanged = new Set(existing.map(e => JSON.stringify([e.from, e.to])));
+  const accepted = corrections.filter(c => validCorrection(c.from, c.to) && !unchanged.has(JSON.stringify([c.from, c.to]))).filter(c => {
     const key = normalizeTerm(c.from);
     if (keys.has(key)) return true;
     if (keys.size >= 500) return false;

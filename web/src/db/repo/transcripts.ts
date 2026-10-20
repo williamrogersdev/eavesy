@@ -82,7 +82,7 @@ export async function editSegment(
     .innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId)).where(and(
       eq(meetings.userId, args.userId), eq(transcriptSegments.meetingId, args.meetingId), eq(transcriptSegments.id, args.segmentId),
     )).limit(1))[0]?.line;
-  if (!original) return;
+  if (!original) return false;
   const patch: Partial<typeof transcriptSegments.$inferInsert> = { isEdited: true, rawText: original.rawText ?? original.text };
   if (args.text !== undefined) await remember(db, args.userId, learnCorrections(original.text, args.text));
   if (args.text !== undefined) patch.text = args.text;
@@ -96,6 +96,7 @@ export async function editSegment(
         eq(transcriptSegments.meetingId, args.meetingId),
       ),
     );
+  return true;
 }
 
 /**

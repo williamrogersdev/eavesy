@@ -37,6 +37,7 @@ export function learnCorrections(original: string, corrected: string): LearnedCo
     const to = corrected.slice(b[bj].start, b[j - 1].end);
     if (validCorrection(from, to)) result.push({ from, to });
   }
+  // The last edit wins for a repeated source, matching later human corrections.
   return [...new Map(result.map(r => [normalizeTerm(r.from), r])).values()].slice(0, 20);
 }
 

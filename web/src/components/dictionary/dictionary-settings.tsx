@@ -13,8 +13,7 @@ export function DictionarySettings() {
   useEffect(() => { load().catch(() => setError('Connect your Eavesy account to load your dictionary.')); }, []);
   const mutate = async (method: 'PUT' | 'DELETE', body: Record<string, unknown>) => {
     setBusy(true); setError('');
-    try { const result = await dictionaryRequest<{ learned?: number }>(method, body);
-      if (method === 'PUT' && result.learned === 0) throw new Error('Dictionary is full. Forget an entry before adding another.');
+    try { await dictionaryRequest<{ learned?: number }>(method, body);
       await load(); setFrom(''); setTo(''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not update dictionary'); }
     finally { setBusy(false); }

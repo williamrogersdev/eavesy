@@ -3,7 +3,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { AppDb } from '@/db/client';
 import { dictations } from '@/db/schema';
 import * as dictionary from '@/db/repo/dictionary';
-import { learnCorrections, validCorrection } from '@/lib/dictionary/learning';
+import { learnCorrections, validCorrection, normalizeTerm } from '@/lib/dictionary/learning';
 import type { ResolvedIngestActor } from './device-auth';
 
 const feedback = z.object({
@@ -42,6 +42,8 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
   if (request.method === 'PUT') {
     const parsed = z.object({ from: z.string(), to: z.string() }).safeParse(body);
     if (!parsed.success || !validCorrection(parsed.data.from, parsed.data.to)) return json({ error: 'invalid_correction' }, 400);
+    const existing = await dictionary.list(db, actor.userId);
+    if (existing.length >= 500 && !existing.some(e => e.sourceKey === normalizeTerm(parsed.data.from))) return json({ error: 'Dictionary is full. Forget an entry before adding another.' }, 400);
     return json({ learned: await dictionary.remember(db, actor.userId, [parsed.data]) });
   }
   const parsed = feedback.safeParse(body);

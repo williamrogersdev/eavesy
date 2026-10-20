@@ -147,11 +147,14 @@ export async function repairTranscriptSegments<T extends { text: string }>(
     const end = start + segment.text.length;
     const local = result.status === 'complete' ? proposed.filter(edit => {
       const at = raw.indexOf(edit.from);
-      return at >= start && at + edit.from.length <= end;
+      return at >= start && at + edit.from.length <= end && raw.indexOf(edit.from, at + 1) < 0;
     }) : [];
     start = end + 1;
-    return { ...segment, rawText: segment.text, text: local.length
-      ? applyTranscriptEdits(segment.text, JSON.stringify({ edits: local }), opts.dictionary) : segment.text };
+    let text = segment.text;
+    try {
+      if (local.length) text = applyTranscriptEdits(segment.text, JSON.stringify({ edits: local }), opts.dictionary);
+    } catch { /* A segment that cannot be repaired keeps its own original words. */ }
+    return { ...segment, rawText: segment.text, text };
   });
 }
 

@@ -65,8 +65,8 @@ pub async fn correct_recording(
         if recording.transcript.as_deref() != Some(original.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());
         }
-        if corrected.trim().is_empty() || corrected.len() > 48_000 {
-            return Err("Correction is empty or too long".into());
+        if corrected.trim().is_empty() || corrected.encode_utf16().count() > 12_000 || original.encode_utf16().count() > 12_000 {
+            return Err("Corrections must contain text and be at most 12,000 characters. Edit a shorter passage.".into());
         }
         // Save feedback first; a failed connection leaves the editor intact for retry.
         let learned = feedback(&app, &original, &corrected)?;

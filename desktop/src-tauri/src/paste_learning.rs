@@ -18,7 +18,7 @@ mod mac {
         #[cfg(test)]
         fn AXIsProcessTrusted() -> bool;
         fn AXUIElementCreateSystemWide() -> Ref;
-        fn AXUIElementCreateApplication(pid: i32) -> Ref;
+        fn AXUIElementSetMessagingTimeout(element: Ref, timeout: f32) -> i32;
         fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
     }
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -31,6 +31,7 @@ mod mac {
         fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> bool;
     }
     unsafe fn attribute(element: Ref, name: &str) -> Option<Ref> {
+        AXUIElementSetMessagingTimeout(element, 0.1);
         let key = std::ffi::CString::new(name).ok()?;
         let key = CFStringCreateWithCString(ptr::null(), key.as_ptr(), UTF8);
         let mut value = ptr::null();
@@ -75,19 +76,7 @@ mod mac {
         };
         let focused = focused.or_else(|| attribute(root, "AXFocusedUIElement"));
         CFRelease(root);
-        focused.or_else(|| {
-            use tauri_nspanel::objc::{class, msg_send, runtime::Object, sel, sel_impl};
-            let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let front: *mut Object = msg_send![workspace, frontmostApplication];
-            if front.is_null() {
-                return None;
-            }
-            let pid: i32 = msg_send![front, processIdentifier];
-            let app = AXUIElementCreateApplication(pid);
-            let field = attribute(app, "AXFocusedUIElement");
-            CFRelease(app);
-            field
-        })
+        focused
     }
     pub fn capture() -> Option<Target> {
         unsafe {
