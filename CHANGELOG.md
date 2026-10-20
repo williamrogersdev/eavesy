@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-20 - desktop
+
+### Fixed
+
+- Mac app: updater signature check builds without the bundled frontend ([#128](https://github.com/williamrogersdev/eavesy/pull/128))
+
 ## [0.5.1] - 2026-10-20 - desktop
 
 ### Added
