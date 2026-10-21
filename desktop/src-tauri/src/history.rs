@@ -166,7 +166,19 @@ impl History {
         }
     }
 
+    pub fn rollback_uncommitted(&self) -> Result<(), String> {
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+        if !self.conn.is_autocommit() {
+            self.conn.execute_batch("ROLLBACK").map_err(error)?;
+        }
+        Ok(())
+    }
+
     pub fn import_complete(&self) -> Result<bool, String> {
+        let exists:bool=self.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='history_metadata')",[],|r|r.get(0)).map_err(error)?;
+        if !exists {
+            return Ok(false);
+        }
         Ok(self
             .conn
             .query_row(
@@ -977,5 +989,20 @@ mod tests {
             .unwrap()
             .items
             .is_empty());
+    }
+
+    #[test]
+    fn panic_recovery_rolls_back_uncommitted_changes_before_reopening() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        history.put(&row("safe")).unwrap();
+        history
+            .conn
+            .execute_batch("BEGIN; UPDATE history_recordings SET title='uncommitted'")
+            .unwrap();
+        history.rollback_uncommitted().unwrap();
+        drop(history);
+        let reopened = fixture.open().unwrap();
+        assert_eq!(reopened.get("safe").unwrap().unwrap().title, "safe");
     }
 }

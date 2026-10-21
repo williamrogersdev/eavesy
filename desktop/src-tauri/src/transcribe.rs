@@ -14,6 +14,7 @@ pub fn spawn(
     is_video: bool,
 ) {
     std::thread::spawn(move || {
+        crate::fs_watcher::wait_for_recovery_on_worker(&app);
         let result = settings::device_credential(&app)
             .ok_or_else(|| {
                 "Pair this Mac with your Eavesy account before transcribing recordings.".to_string()
