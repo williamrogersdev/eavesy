@@ -290,6 +290,12 @@ final class ScreenRecorder: NSObject, Recorder {
                 return
             }
             self.finished = true
+            if self.writer?.status == .failed {
+                // This writer cannot be salvaged. Avoid the generic fail() salvage loop.
+                EventEmitter.error("Recording could not be saved because the video writer failed: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+                fflush(stdout)
+                exit(1)
+            }
             guard let writer = self.writer, self.sessionStarted, writer.status == .writing else {
                 completion(0)
                 return

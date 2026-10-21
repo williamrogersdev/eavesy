@@ -59,14 +59,17 @@ pub struct Bundle {
     pub capture: Option<serde_json::Value>,
     pub warnings: Vec<String>,
 }
-pub fn correction_guard(
-    id: &str,
-) -> Result<std::sync::MutexGuard<'static, HashSet<String>>, String> {
-    let guard = active().lock().unwrap_or_else(|e| e.into_inner());
-    if guard.contains(id) {
+pub struct CorrectionGuard(String);
+impl Drop for CorrectionGuard {
+    fn drop(&mut self) {
+        active().lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+    }
+}
+pub fn correction_guard(id: &str) -> Result<CorrectionGuard, String> {
+    if !active().lock().unwrap_or_else(|e| e.into_inner()).insert(id.into()) {
         return Err("Wait for walkthrough processing before editing its transcript".into());
     }
-    Ok(guard)
+    Ok(CorrectionGuard(id.into()))
 }
 
 fn active() -> &'static Mutex<HashSet<String>> {
@@ -489,11 +492,14 @@ pub fn recover(app: &AppHandle) {
 pub fn update_correction(app: &AppHandle, id: &str, corrected: &str) -> Result<(), String> {
     let rec = recording(app, id)?;
     let dir = folder(&rec)?;
+    update_correction_in_folder(&dir, corrected)
+}
+fn update_correction_in_folder(dir: &Path, corrected: &str) -> Result<(), String> {
     let bytes = std::fs::read(dir.join("walkthrough.json"))
         .map_err(|e| format!("Prepare or retry walkthrough context before editing: {e}"))?;
     let mut bundle: Bundle = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     bundle.corrected_transcript = corrected.into();
-    save(&dir, &bundle)?;
+    save(dir, &bundle)?;
     Ok(())
 }
 
@@ -527,6 +533,21 @@ mod tests {
             capture: None,
             warnings: vec!["Microphone was quiet".into()],
         }
+    }
+    #[test]
+    fn correction_reports_missing_manifest() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        assert!(update_correction_in_folder(&dir, "Edited text").unwrap_err().contains("Prepare or retry"));
+    }
+    #[test]
+    fn correction_guard_reserves_only_its_recording() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let first = correction_guard(&id).unwrap();
+        assert!(correction_guard(&id).is_err());
+        let other = correction_guard("unrelated-recording-test").unwrap();
+        drop(other);
+        drop(first);
+        assert!(correction_guard(&id).is_ok());
     }
     #[test]
     fn invalid_timestamps_are_reported_and_refetched_on_retry() {

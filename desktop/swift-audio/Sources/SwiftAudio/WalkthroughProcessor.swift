@@ -82,6 +82,7 @@ enum WalkthroughProcessor {
         // record the sampling interval so agents know this is a sampled timeline.
         let interval = max(2.0, seconds / 240.0)
         var frames: [Frame] = []
+        var savedTimes: Set<Int64> = []
         var previous: [UInt8]?
         var previousText: String?
         var lastSaved = -Double.infinity
@@ -95,7 +96,7 @@ enum WalkthroughProcessor {
                         at: CMTime(seconds: time, preferredTimescale: 600), actualTime: &actual)
                     let thumb = thumbnail(image)
                     let ms = max(0, Int64((CMTimeGetSeconds(actual) * 1000).rounded()))
-                    if frames.last?.timestampMs == ms { return }
+                    if savedTimes.contains(ms) { return }
                     let relative = String(format: "frames/%09lld.jpg", ms)
                     var regions: [TextRegion] = []
                     do {
@@ -116,6 +117,7 @@ enum WalkthroughProcessor {
                     if let previous, difference(previous, thumb) < 3,
                        text == previousText, time - lastSaved < 15 { return }
                     try writeImage(image, to: folder.appendingPathComponent(relative))
+                    savedTimes.insert(ms)
                     frames.append(Frame(timestampMs: ms, path: relative, width: image.width, height: image.height,
                                         text: regions.map(\.text).joined(separator: "\n"), regions: regions))
                     previous = thumb

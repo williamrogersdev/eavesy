@@ -62,6 +62,16 @@ fn tools() -> Value {
 fn text(value: Value) -> Value {
     json!({"content":[{"type":"text","text":value.to_string()}]})
 }
+fn excerpt(text: &str, query: &str) -> String {
+    let matched = text.to_lowercase().find(query).unwrap_or(0);
+    let mut lower_bytes = 0;
+    let position = text.chars().take_while(|c| {
+        let before = lower_bytes;
+        lower_bytes += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+        before < matched
+    }).count();
+    text.chars().skip(position.saturating_sub(100)).take(500).collect()
+}
 fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     if !args.is_object() {
         return Err("Tool arguments must be an object".into());
@@ -85,9 +95,11 @@ fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
             .map(|(folder, b)| {
                 let matches: Vec<_> = if query.is_empty() { vec![] } else {
                     b.segments.iter().filter(|s| s.text.to_lowercase().contains(&query))
-                        .map(|s| json!({"kind":"speech","timestampMs":s.start_ms,"text":s.text.chars().take(500).collect::<String>()}))
+                        .map(|s| json!({"kind":"speech","timestampMs":s.start_ms,"text":excerpt(&s.text, &query)}))
                         .chain(b.frames.iter().filter(|f| f.text.to_lowercase().contains(&query))
-                            .map(|f| json!({"kind":"screen","timestampMs":f.timestamp_ms,"text":f.text.chars().take(500).collect::<String>()})))
+                            .map(|f| json!({"kind":"screen","timestampMs":f.timestamp_ms,"text":excerpt(&f.text, &query)})))
+                        .take(4)
+                        .chain((!b.corrected_transcript.is_empty() && b.corrected_transcript.to_lowercase().contains(&query)).then(|| json!({"kind":"corrected","timestampMs":null,"text":excerpt(&b.corrected_transcript, &query)})))
                         .take(5).collect()
                 };
                 json!({"id":b.id,"title":b.title,"status":b.status,"durationMs":b.duration_ms,
