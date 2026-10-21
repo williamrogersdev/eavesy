@@ -28,6 +28,7 @@ enum WatchMessage {
 struct WatcherHandle {
     stopped: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
     _watcher: Mutex<RecommendedWatcher>,
     _worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -44,15 +45,19 @@ pub struct WatcherManager {
 }
 
 impl WatcherManager {
-    fn is_ready(&self) -> bool {
-        self.handle
+    fn is_ready(&self) -> Result<bool, String> {
+        let handle = self
+            .handle
             .lock()
-            .map(|handle| {
-                handle
-                    .as_ref()
-                    .is_none_or(|h| h.ready.load(Ordering::Acquire))
-            })
-            .unwrap_or(false)
+            .map_err(|_| "File recovery state is unavailable".to_string())?;
+        match handle.as_ref() {
+            Some(h) if h.failed.load(Ordering::Acquire) => Err(
+                "Local file recovery failed; choose the recordings folder again or restart Eavesy"
+                    .into(),
+            ),
+            Some(h) => Ok(h.ready.load(Ordering::Acquire)),
+            None => Ok(true),
+        }
     }
 
     pub fn replace<R: Runtime>(&self, app: AppHandle<R>, root: PathBuf) -> Result<()> {
@@ -105,6 +110,7 @@ fn start<R: Runtime>(app: AppHandle<R>, root: PathBuf) -> Result<WatcherHandle> 
 
     let stopped = Arc::new(AtomicBool::new(false));
     let ready = Arc::new(AtomicBool::new(false));
+    let failed = Arc::new(AtomicBool::new(false));
     let worker = spawn_reconciler(
         app,
         root,
@@ -112,10 +118,12 @@ fn start<R: Runtime>(app: AppHandle<R>, root: PathBuf) -> Result<WatcherHandle> 
         stopped.clone(),
         ready.clone(),
         startup_sender,
+        failed.clone(),
     );
     Ok(WatcherHandle {
         stopped,
         ready,
+        failed,
         _watcher: Mutex::new(watcher),
         _worker: Mutex::new(Some(worker)),
     })
@@ -128,6 +136,7 @@ fn spawn_reconciler<R: Runtime>(
     stopped: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
     startup_sender: mpsc::Sender<WatchMessage>,
+    failed: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     // The watcher is registered before this worker starts: edits during offline
     // recovery queue up and are replayed afterwards. Setup need not wait for IO.
@@ -135,16 +144,19 @@ fn spawn_reconciler<R: Runtime>(
         if stopped.load(Ordering::Acquire) {
             return;
         }
-        if let Err(error) = reconcile_folder_locations(&app, &root) {
-            crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
+        if !finish_startup(&ready, &failed, || {
+            if let Err(error) = reconcile_folder_locations(&app, &root) {
+                crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
+            }
+            seed_existing_files_until(&app, &stopped);
+            // A folder may move after the initial scan while other records recover.
+            // Replay those queued events before cloud writes can recreate old paths.
+            let _ = startup_sender.send(WatchMessage::StartupBarrier);
+            drop(startup_sender);
+            reconcile_queued_startup(&app, &root, &receiver, &stopped);
+        }) {
+            return;
         }
-        seed_existing_files_until(&app, &stopped);
-        // A folder may move after the initial scan while other records recover.
-        // Replay those queued events before cloud writes can recreate old paths.
-        let _ = startup_sender.send(WatchMessage::StartupBarrier);
-        drop(startup_sender);
-        reconcile_queued_startup(&app, &root, &receiver, &stopped);
-        ready.store(true, Ordering::Release);
         if stopped.load(Ordering::Acquire) {
             return;
         }
@@ -166,6 +178,25 @@ fn spawn_reconciler<R: Runtime>(
         reconcile_loop(app, root, receiver, &stopped);
         let _ = index_worker.join();
     })
+}
+
+fn finish_startup(ready: &AtomicBool, failed: &AtomicBool, recover: impl FnOnce()) -> bool {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(recover)) {
+        Ok(()) => {
+            failed.store(false, Ordering::Release);
+            ready.store(true, Ordering::Release);
+            true
+        }
+        Err(_) => {
+            ready.store(false, Ordering::Release);
+            failed.store(true, Ordering::Release);
+            crate::telemetry::capture(
+                "filesystem.recovery.failed",
+                "Local file recovery panicked; background writes remain paused",
+            );
+            false
+        }
+    }
 }
 
 fn reconcile_queued_startup<R: Runtime>(
@@ -216,16 +247,30 @@ async fn wait_until_ready_for<R: Runtime>(
     budget: Duration,
 ) -> Result<(), String> {
     let began = std::time::Instant::now();
-    while app
-        .try_state::<WatcherManager>()
-        .is_some_and(|manager| !manager.is_ready())
-    {
+    loop {
+        let ready = match app.try_state::<WatcherManager>() {
+            Some(manager) => manager.is_ready()?,
+            None => true,
+        };
+        if ready {
+            return Ok(());
+        }
         if began.elapsed() >= budget {
             return Err("Local offline-edit recovery is still pending; cloud writes remain paused and will retry".into());
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    Ok(())
+}
+
+/// Only call from blocking processing workers, never the UI or an async worker.
+pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) {
+    loop {
+        match tauri::async_runtime::block_on(wait_until_ready(app)) {
+            Ok(()) => return,
+            Err(error) => crate::sync::report_recovery_wait(app, &error),
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
 }
 
 fn is_content_event(kind: &EventKind) -> bool {
@@ -868,6 +913,7 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
             tx.clone(),
+            Arc::new(AtomicBool::new(false)),
         );
         drop(tx);
         worker.join().unwrap();
@@ -916,6 +962,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_recovery_panic_is_an_explicit_failure_not_permanent_pending_readiness() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-recovery-panic-{}", uuid::Uuid::new_v4()));
+        let app = isolated_mock_app(&root);
+        let ready = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
+        app.manage(WatcherManager {
+            handle: Mutex::new(Some(WatcherHandle {
+                stopped: Arc::new(AtomicBool::new(false)),
+                ready: ready.clone(),
+                failed: failed.clone(),
+                _watcher: Mutex::new(notify::recommended_watcher(|_| {}).unwrap()),
+                _worker: Mutex::new(None),
+            })),
+        });
+        assert!(!finish_startup(&ready, &failed, || panic!(
+            "test recovery panic"
+        )));
+        let error = tokio::time::timeout(Duration::from_secs(2), wait_until_ready(app.handle()))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("recovery failed"));
+        assert!(!ready.load(Ordering::Acquire));
+        assert!(finish_startup(&ready, &failed, || {}));
+        assert!(wait_until_ready(app.handle()).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn failed_watcher_registration_does_not_leave_a_readiness_wait() {
         let root =
             std::env::temp_dir().join(format!("eavesy-watcher-failure-{}", uuid::Uuid::new_v4()));
@@ -945,6 +1020,7 @@ mod tests {
             handle: Mutex::new(Some(WatcherHandle {
                 stopped: Arc::new(AtomicBool::new(false)),
                 ready: ready.clone(),
+                failed: Arc::new(AtomicBool::new(false)),
                 _watcher: Mutex::new(notify::recommended_watcher(|_| {}).unwrap()),
                 _worker: Mutex::new(None),
             })),

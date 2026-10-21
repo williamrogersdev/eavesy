@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, Runtime};
 // Readers use independent WAL connections. Mutations share one connection;
 // activity also interrupts a background index build before a mutation waits.
 struct SharedHistory {
+    directory: PathBuf,
     history: Mutex<History>,
     activity: std::sync::atomic::AtomicU64,
     pending: std::sync::atomic::AtomicUsize,
@@ -19,6 +20,7 @@ fn shared_history<R: Runtime>(app: &AppHandle<R>) -> Result<&'static SharedHisto
         return Ok(*shared);
     }
     let shared = Box::leak(Box::new(SharedHistory {
+        directory: dir.clone(),
         history: Mutex::new(History::open(
             &dir.join("history.sqlite3"),
             &dir.join("recordings.json"),
@@ -37,13 +39,33 @@ fn history<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, History
     shared
         .activity
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    let guard = shared
-        .history
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let locked = shared.history.lock();
     shared
         .pending
         .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    let guard = match locked {
+        Ok(guard) => guard,
+        Err(error) => recover_shared_history(shared, error.into_inner())?,
+    };
+    Ok(guard)
+}
+
+fn recover_shared_history(
+    shared: &'static SharedHistory,
+    mut guard: MutexGuard<'static, History>,
+) -> Result<MutexGuard<'static, History>, String> {
+    // A panic must not leave an open writer transaction or a half-built index.
+    // Reopen with normal migration/durability checks before clearing poison.
+    guard.rollback_uncommitted()?;
+    *guard = History::open(
+        &shared.directory.join("history.sqlite3"),
+        &shared.directory.join("recordings.json"),
+    )?;
+    shared.history.clear_poison();
+    crate::telemetry::capture(
+        "history.lock.recovered",
+        "Reopened local history after a worker panic",
+    );
     Ok(guard)
 }
 
@@ -76,8 +98,8 @@ pub fn prepare_search<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
     let shared = shared_history(app)?;
     let mut history = match shared.history.try_lock() {
         Ok(history) => history,
-        Err(std::sync::TryLockError::Poisoned(_)) => {
-            return Err("History indexing skipped after a poisoned history lock".into())
+        Err(std::sync::TryLockError::Poisoned(error)) => {
+            recover_shared_history(shared, error.into_inner())?
         }
         Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
     };
@@ -105,7 +127,7 @@ pub fn page<R: Runtime>(
         return Err("History search superseded".into());
     }
     let reader = match History::read_only(&path) {
-        Ok(reader) if reader.import_complete().unwrap_or(false) => reader,
+        Ok(reader) if reader.import_complete()? => reader,
         _ => {
             // An interrupted/failed import can leave an existing SQLite file.
             // Only the initialized writer may complete (or report) that import.
@@ -509,6 +531,31 @@ mod persistence_tests {
         }
     }
 
+    #[test]
+    fn poisoned_history_reopens_for_both_indexing_and_normal_mutations() {
+        let root = std::env::temp_dir().join(format!("eavesy-poisoned-{}", uuid::Uuid::new_v4()));
+        let fixture = app(&root);
+        append(fixture.handle(), recording("safe".into())).unwrap();
+        let shared = shared_history(fixture.handle()).unwrap();
+        let poison = || {
+            let _guard = shared.history.lock().unwrap();
+            panic!("test worker panic");
+        };
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(poison)).is_err());
+        assert!(prepare_search(fixture.handle()).unwrap());
+        assert!(!shared.history.is_poisoned());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(poison)).is_err());
+        set_status(fixture.handle(), "safe", "complete").unwrap();
+        assert!(!shared.history.is_poisoned());
+        assert_eq!(
+            page(fixture.handle(), 0, 50, "initial", "all", None)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn an_existing_database_never_hides_a_failed_legacy_import() {
         let root =
