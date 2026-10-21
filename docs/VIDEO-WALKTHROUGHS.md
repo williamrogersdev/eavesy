@@ -7,7 +7,7 @@ whether the microphone signal is active or quiet. A quiet signal can mean that y
 are simply not speaking; it is not proof that the microphone is broken.
 
 After Stop, Eavesy processes the recording in the background. The recording preview
-shows context readiness, screenshot count, and capture/processing warnings. The
+shows context readiness. The copied context and manifest include the screenshot timeline and capture/processing warnings. The
 ordinary **Copy** button and **⌘C** copy the full walkthrough context. **Paste into
 active app** and **⌘↵** use the same payload. There is no separate AI copy mode.
 Audio recordings continue to copy their transcript.

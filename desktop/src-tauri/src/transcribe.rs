@@ -5,6 +5,7 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::{fs_writer, settings, store};
 
+#[allow(dead_code)] // Legacy audio retry path retained for recovery.
 pub fn spawn(
     app: AppHandle,
     id: String,
@@ -15,8 +16,7 @@ pub fn spawn(
     std::thread::spawn(move || {
         let result = settings::device_credential(&app)
             .ok_or_else(|| {
-                "Pair this Mac with your Eavesy account before transcribing recordings."
-                    .to_string()
+                "Pair this Mac with your Eavesy account before transcribing recordings.".to_string()
             })
             .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS));
         match result {
@@ -24,8 +24,7 @@ pub fn spawn(
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
                 crate::dictation::deliver(&app, &id, &text);
                 if let Some(dir) = &folder {
-                    if let Some(recording) = store::get(&app, &id).ok().flatten()
-                    {
+                    if let Some(recording) = store::get(&app, &id).ok().flatten() {
                         let _ = fs_writer::persist_recording_artifacts(
                             Some(&app),
                             dir,
@@ -38,7 +37,11 @@ pub fn spawn(
                 let current = crate::hud::current();
                 if current.session_id.as_deref() == Some(id.as_str())
                     && current.phase != crate::hud::Phase::Recording
-                    && !store::get(&app, &id).ok().flatten().is_some_and(|rec| rec.has_video) {
+                    && !store::get(&app, &id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|rec| rec.has_video)
+                {
                     crate::hud::set_state(
                         &app,
                         crate::hud::HudState {
@@ -57,7 +60,11 @@ pub fn spawn(
                 let current = crate::hud::current();
                 if current.session_id.as_deref() == Some(id.as_str())
                     && current.phase != crate::hud::Phase::Recording
-                    && !store::get(&app, &id).ok().flatten().is_some_and(|rec| rec.has_video) {
+                    && !store::get(&app, &id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|rec| rec.has_video)
+                {
                     crate::hud::set_state(
                         &app,
                         crate::hud::HudState {
@@ -125,13 +132,20 @@ pub fn polish_dictation(app: &AppHandle, text: &str) -> String {
     }
 }
 
-fn polish_with(credential: &settings::Credential, text: &str, timeout: std::time::Duration) -> Result<String, String> {
+fn polish_with(
+    credential: &settings::Credential,
+    text: &str,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
-        .post(format!("{}/api/dictations/polish", credential.base.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/dictations/polish",
+            credential.base.trim_end_matches('/')
+        ))
         .bearer_auth(&credential.token)
         .json(&serde_json::json!({ "text": text }))
         .send()
@@ -143,7 +157,10 @@ fn polish_with(credential: &settings::Credential, text: &str, timeout: std::time
     struct Body {
         text: String,
     }
-    let polished = resp.json::<Body>().map_err(|e| format!("bad response: {e}"))?.text;
+    let polished = resp
+        .json::<Body>()
+        .map_err(|e| format!("bad response: {e}"))?
+        .text;
     if polished.trim().is_empty() {
         return Err("empty polish".to_string());
     }
@@ -154,19 +171,24 @@ fn polish_with(credential: &settings::Credential, text: &str, timeout: std::time
 /// "Writing it down…" doesn't hang.
 fn no_paste(app: &AppHandle, id: &str, notice: &str) {
     let current = crate::hud::current();
-    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(id) {
-        crate::hud::set_state(app, crate::hud::HudState {
-            phase: crate::hud::Phase::Saved,
-            session_id: Some(id.to_string()),
-            mode: Some("audio".to_string()),
-            started_at_ms: None,
-            message: None,
-            notice: Some(notice.to_string()),
-        });
+    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(id)
+    {
+        crate::hud::set_state(
+            app,
+            crate::hud::HudState {
+                phase: crate::hud::Phase::Saved,
+                session_id: Some(id.to_string()),
+                mode: Some("audio".to_string()),
+                started_at_ms: None,
+                message: None,
+                notice: Some(notice.to_string()),
+            },
+        );
     }
 }
 
 const CHUNK_SECS: usize = 4 * 60;
+#[allow(dead_code)] // Used by the legacy recovery retry path.
 const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 /// A paste is only worth waiting a moment for: after that the user has moved
 /// on, and the stored recording is transcribed with full retries anyway.
@@ -189,9 +211,15 @@ fn run(
         .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
     let texts = in_order_at_once(&pieces.pieces, PIECES_AT_ONCE, |piece| {
-        with_retry(delays, || transcribe_piece(&client, piece, voice, credential))
+        with_retry(delays, || {
+            transcribe_piece(&client, piece, voice, credential)
+        })
     })?;
-    let texts: Vec<&str> = texts.iter().map(|text| text.trim()).filter(|text| !text.is_empty()).collect();
+    let texts: Vec<&str> = texts
+        .iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect();
     if texts.is_empty() {
         return Err("empty transcript".to_string());
     }
@@ -208,10 +236,17 @@ fn in_order_at_once<T: Sync, R: Send>(
     let mut results = Vec::with_capacity(items.len());
     for batch in items.chunks(width.max(1)) {
         let batch_results: Vec<Result<R, String>> = std::thread::scope(|scope| {
-            let workers: Vec<_> = batch.iter().map(|item| scope.spawn(|| work(item))).collect();
+            let workers: Vec<_> = batch
+                .iter()
+                .map(|item| scope.spawn(|| work(item)))
+                .collect();
             workers
                 .into_iter()
-                .map(|worker| worker.join().unwrap_or_else(|_| Err("transcription worker panicked".to_string())))
+                .map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|_| Err("transcription worker panicked".to_string()))
+                })
                 .collect()
         });
         for result in batch_results {
@@ -226,7 +261,10 @@ enum PieceError {
     Fatal(String),
 }
 
-fn with_retry(delays: &[u64], mut attempt: impl FnMut() -> Result<String, PieceError>) -> Result<String, String> {
+fn with_retry(
+    delays: &[u64],
+    mut attempt: impl FnMut() -> Result<String, PieceError>,
+) -> Result<String, String> {
     for delay in delays.iter().map(Some).chain(std::iter::once(None)) {
         match attempt() {
             Ok(text) => return Ok(text),
@@ -246,10 +284,11 @@ fn transcribe_piece(
     voice: bool,
     credential: &settings::Credential,
 ) -> Result<String, PieceError> {
-    let part = reqwest::blocking::multipart::Part::reader_with_length(piece.reader(), piece.body_len())
-        .file_name(piece.filename.clone())
-        .mime_str(piece.mime)
-        .map_err(|e| PieceError::Fatal(e.to_string()))?;
+    let part =
+        reqwest::blocking::multipart::Part::reader_with_length(piece.reader(), piece.body_len())
+            .file_name(piece.filename.clone())
+            .mime_str(piece.mime)
+            .map_err(|e| PieceError::Fatal(e.to_string()))?;
     let form = reqwest::blocking::multipart::Form::new().part("audio", part);
     let url = format!(
         "{}/api/transcribe{}",
@@ -266,11 +305,13 @@ fn transcribe_piece(
     let status = resp.status();
     if !status.is_success() {
         let message = format!("transcribe HTTP {status}");
-        return Err(if status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408 {
-            PieceError::Retry(message)
-        } else {
-            PieceError::Fatal(message)
-        });
+        return Err(
+            if status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408 {
+                PieceError::Retry(message)
+            } else {
+                PieceError::Fatal(message)
+            },
+        );
     }
 
     #[derive(serde::Deserialize)]
@@ -283,7 +324,10 @@ fn transcribe_piece(
     Ok(body.text.unwrap_or_default())
 }
 
-fn prepare(media_path: &Path, is_video: bool) -> Result<crate::audio_upload::PreparedAudio, String> {
+fn prepare(
+    media_path: &Path,
+    is_video: bool,
+) -> Result<crate::audio_upload::PreparedAudio, String> {
     if !is_video {
         #[cfg(target_os = "macos")]
         if let Some(wav) = transcode_to_wav(media_path) {
@@ -370,13 +414,22 @@ mod tests {
     fn streamed_wav_bodies_match_the_buffered_reference() {
         use std::io::Read;
         let source = wav(16_000 * 5 + 7, true);
-        let path = std::env::temp_dir().join(format!("eavesy-stream-reference-{}.wav", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "eavesy-stream-reference-{}.wav",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::write(&path, &source).unwrap();
         let expected = split_wav(&source, 2).unwrap();
         let prepared = crate::audio_upload::PreparedAudio::converted_wav(path.clone(), 2).unwrap();
-        let actual: Vec<Vec<u8>> = prepared.pieces.iter().map(|piece| {
-            let mut bytes = Vec::new(); piece.reader().read_to_end(&mut bytes).unwrap(); bytes
-        }).collect();
+        let actual: Vec<Vec<u8>> = prepared
+            .pieces
+            .iter()
+            .map(|piece| {
+                let mut bytes = Vec::new();
+                piece.reader().read_to_end(&mut bytes).unwrap();
+                bytes
+            })
+            .collect();
         assert_eq!(actual, expected);
         drop(prepared);
         assert!(!path.exists());
@@ -394,12 +447,19 @@ mod tests {
         let truncated = source[..source.len() - 5].to_vec();
         for source in [duplicate_data, duplicate_format, truncated] {
             let expected = split_wav(&source, 2).unwrap();
-            let path = std::env::temp_dir().join(format!("eavesy-stream-legacy-{}.wav", uuid::Uuid::new_v4()));
+            let path = std::env::temp_dir()
+                .join(format!("eavesy-stream-legacy-{}.wav", uuid::Uuid::new_v4()));
             std::fs::write(&path, source).unwrap();
             let prepared = crate::audio_upload::PreparedAudio::converted_wav(path, 2).unwrap();
-            let actual: Vec<Vec<u8>> = prepared.pieces.iter().map(|piece| {
-                let mut bytes = Vec::new(); piece.reader().read_to_end(&mut bytes).unwrap(); bytes
-            }).collect();
+            let actual: Vec<Vec<u8>> = prepared
+                .pieces
+                .iter()
+                .map(|piece| {
+                    let mut bytes = Vec::new();
+                    piece.reader().read_to_end(&mut bytes).unwrap();
+                    bytes
+                })
+                .collect();
             assert_eq!(actual, expected);
         }
     }
@@ -407,30 +467,56 @@ mod tests {
     #[test]
     fn streamed_multipart_body_is_replayed_on_retry() {
         use std::io::Read;
-        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-        use wiremock::{Mock, ResponseTemplate, matchers::{method, path as request_path}};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use wiremock::{
+            matchers::{method, path as request_path},
+            Mock, ResponseTemplate,
+        };
         let source = wav(16_000, true);
-        let path = std::env::temp_dir().join(format!("eavesy-stream-retry-{}.wav", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("eavesy-stream-retry-{}.wav", uuid::Uuid::new_v4()));
         std::fs::write(&path, &source).unwrap();
         let prepared = crate::audio_upload::PreparedAudio::converted_wav(path, 240).unwrap();
         let piece = &prepared.pieces[0];
-        let mut expected = Vec::new(); piece.reader().read_to_end(&mut expected).unwrap();
+        let mut expected = Vec::new();
+        piece.reader().read_to_end(&mut expected).unwrap();
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = attempts.clone();
         let (runtime, server) = mock_server();
-        runtime.block_on(Mock::given(method("POST"))
-            .and(request_path("/api/transcribe"))
-            .and(move |request: &wiremock::Request| {
-                request.headers.get("content-length").and_then(|value| value.to_str().ok()).and_then(|value| value.parse::<usize>().ok()) == Some(request.body.len())
-                    && request.body.windows(expected.len()).any(|bytes| bytes == expected)
-            })
-            .respond_with(move |_: &wiremock::Request| {
-                if observed.fetch_add(1, Ordering::SeqCst) == 0 { ResponseTemplate::new(503) }
-                else { ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": "replayed" })) }
-            }).expect(2).mount(&server));
+        runtime.block_on(
+            Mock::given(method("POST"))
+                .and(request_path("/api/transcribe"))
+                .and(move |request: &wiremock::Request| {
+                    request
+                        .headers
+                        .get("content-length")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.parse::<usize>().ok())
+                        == Some(request.body.len())
+                        && request
+                            .body
+                            .windows(expected.len())
+                            .any(|bytes| bytes == expected)
+                })
+                .respond_with(move |_: &wiremock::Request| {
+                    if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        ResponseTemplate::new(503)
+                    } else {
+                        ResponseTemplate::new(200)
+                            .set_body_json(serde_json::json!({ "text": "replayed" }))
+                    }
+                })
+                .expect(2)
+                .mount(&server),
+        );
         let client = reqwest::blocking::Client::new();
         let credential = credential(&server);
-        let result = with_retry(&[0], || transcribe_piece(&client, piece, false, &credential));
+        let result = with_retry(&[0], || {
+            transcribe_piece(&client, piece, false, &credential)
+        });
         assert_eq!(result.unwrap(), "replayed");
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
@@ -501,7 +587,13 @@ mod tests {
     #[test]
     fn a_failed_piece_fails_the_transcript() {
         let items = [1, 2, 3, 4];
-        let result = in_order_at_once(&items, 2, |item| if *item == 3 { Err("HTTP 400".to_string()) } else { Ok(*item) });
+        let result = in_order_at_once(&items, 2, |item| {
+            if *item == 3 {
+                Err("HTTP 400".to_string())
+            } else {
+                Ok(*item)
+            }
+        });
         assert_eq!(result, Err("HTTP 400".to_string()));
     }
 
@@ -523,7 +615,10 @@ mod tests {
     }
 
     fn credential(server: &wiremock::MockServer) -> settings::Credential {
-        settings::Credential { base: format!("{}/", server.uri()), token: "device-token".into() }
+        settings::Credential {
+            base: format!("{}/", server.uri()),
+            token: "device-token".into(),
+        }
     }
 
     #[test]
@@ -534,13 +629,19 @@ mod tests {
             wiremock::Mock::given(method("POST"))
                 .and(path("/api/dictations/polish"))
                 .and(header("authorization", "Bearer device-token"))
-                .and(body_json(serde_json::json!({ "text": "um so ship it ship it today" })))
+                .and(body_json(
+                    serde_json::json!({ "text": "um so ship it ship it today" }),
+                ))
                 .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
                     serde_json::json!({ "text": "So ship it today.", "polished": true }),
                 ))
                 .mount(&server),
         );
-        let polished = polish_with(&credential(&server), "um so ship it ship it today", POLISH_TIMEOUT);
+        let polished = polish_with(
+            &credential(&server),
+            "um so ship it ship it today",
+            POLISH_TIMEOUT,
+        );
         assert_eq!(polished, Ok("So ship it today.".to_string()));
     }
 
@@ -556,7 +657,10 @@ mod tests {
         );
         runtime.block_on(
             wiremock::Mock::given(method("POST"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": " " })))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "text": " " })),
+                )
                 .up_to_n_times(1)
                 .mount(&server),
         );
@@ -571,12 +675,16 @@ mod tests {
         );
         let credential = credential(&server);
         let short = std::time::Duration::from_millis(100);
-        assert!(polish_with(&credential, "words", short).unwrap_err().contains("429"));
-        assert_eq!(polish_with(&credential, "words", short), Err("empty polish".to_string()));
+        assert!(polish_with(&credential, "words", short)
+            .unwrap_err()
+            .contains("429"));
+        assert_eq!(
+            polish_with(&credential, "words", short),
+            Err("empty polish".to_string())
+        );
         assert!(polish_with(&credential, "words", short).is_err());
     }
 }
-
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct WalkthroughTranscription {
@@ -591,21 +699,43 @@ pub(crate) struct WalkthroughTranscription {
 
 /// Each walkthrough chunk is bounded to two minutes. Preserve the provider's
 /// timing instead of flattening it through the dictation/meeting text path.
-pub(crate) fn run_walkthrough(app: &AppHandle, media: &Path) -> Result<WalkthroughTranscription, String> {
-    let credential = settings::device_credential(app).ok_or("Sign in to transcribe this walkthrough")?;
+pub(crate) fn run_walkthrough(
+    app: &AppHandle,
+    media: &Path,
+) -> Result<WalkthroughTranscription, String> {
+    let credential =
+        settings::device_credential(app).ok_or("Sign in to transcribe this walkthrough")?;
     let wav = transcode_to_wav(media).ok_or("Could not decode walkthrough audio")?;
+    if std::fs::metadata(&wav).map_err(|e| e.to_string())?.len() > 8_000_000 {
+        let _ = std::fs::remove_file(&wav);
+        return Err("Walkthrough audio chunk is too large".into());
+    }
     let bytes = std::fs::read(&wav).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&wav);
     let bytes = bytes?;
-    if bytes.len() > 8_000_000 { return Err("Walkthrough audio chunk is too large".into()); }
-    let part = reqwest::blocking::multipart::Part::bytes(bytes).file_name("audio.wav")
-        .mime_str("audio/wav").map_err(|e| e.to_string())?;
-    let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(180))
-        .build().map_err(|e| e.to_string())?
-        .post(format!("{}/api/transcribe", credential.base.trim_end_matches('/')))
+    if bytes.len() > 8_000_000 {
+        return Err("Walkthrough audio chunk is too large".into());
+    }
+    let part = reqwest::blocking::multipart::Part::bytes(bytes)
+        .file_name("audio.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| e.to_string())?;
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!(
+            "{}/api/transcribe",
+            credential.base.trim_end_matches('/')
+        ))
         .bearer_auth(&credential.token)
         .multipart(reqwest::blocking::multipart::Form::new().part("audio", part))
-        .send().map_err(|e| format!("Transcription request failed: {e}"))?;
-    if !response.status().is_success() { return Err(format!("Transcription HTTP {}", response.status())); }
-    response.json().map_err(|e| format!("Invalid transcription response: {e}"))
+        .send()
+        .map_err(|e| format!("Transcription request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Transcription HTTP {}", response.status()));
+    }
+    response
+        .json()
+        .map_err(|e| format!("Invalid transcription response: {e}"))
 }

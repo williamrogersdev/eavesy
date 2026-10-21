@@ -153,7 +153,6 @@ export function useLauncherKeyDown({
         } else if (k === 'd') {
           e.preventDefault();
           downloadMarkdown(currentRec);
-
         }
       }
     },

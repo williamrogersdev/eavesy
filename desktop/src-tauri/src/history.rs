@@ -436,6 +436,25 @@ mod tests {
     }
 
     #[test]
+    fn recovery_only_selects_unfinished_screen_videos() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        for (id, source, status, video) in [
+            ("pending", "screen", "processing", true),
+            ("finished", "screen", "complete", true),
+            ("voice", "mic", "processing", true),
+            ("no-video", "screen", "processing", false),
+        ] {
+            let mut recording = row(id);
+            recording.source = source.into();
+            recording.status = status.into();
+            recording.has_video = video;
+            history.put(&recording).unwrap();
+        }
+        assert_eq!(history.pending_walkthroughs().unwrap(), vec!["pending"]);
+    }
+
+    #[test]
     fn every_connection_keeps_full_durability_for_wal_and_checkpoints() {
         let fixture = Fixture::new();
         for _ in 0..2 {

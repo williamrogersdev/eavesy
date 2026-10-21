@@ -58,7 +58,7 @@ enum WalkthroughProcessor {
                 let target = folder.appendingPathComponent(relative)
                 try? FileManager.default.removeItem(at: target)
                 guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A)
-                else { throw error("Could not create audio export") }
+                else { warnings.append("Could not create audio export at \(start) s"); continue }
                 export.outputURL = target
                 export.outputFileType = .m4a
                 export.timeRange = CMTimeRange(
@@ -66,7 +66,8 @@ enum WalkthroughProcessor {
                     duration: CMTime(seconds: length, preferredTimescale: 600))
                 await export.export()
                 guard export.status == .completed else {
-                    throw export.error ?? error("Audio extraction failed")
+                    warnings.append("Audio extraction failed at \(start) s: \(export.error?.localizedDescription ?? "unknown error")")
+                    continue
                 }
                 chunks.append(AudioChunk(path: relative, startMs: Int64(start * 1000), durationMs: Int64(length * 1000)))
             }
@@ -94,6 +95,7 @@ enum WalkthroughProcessor {
                         at: CMTime(seconds: time, preferredTimescale: 600), actualTime: &actual)
                     let thumb = thumbnail(image)
                     let ms = max(0, Int64((CMTimeGetSeconds(actual) * 1000).rounded()))
+                    if frames.last?.timestampMs == ms { return }
                     let relative = String(format: "frames/%09lld.jpg", ms)
                     var regions: [TextRegion] = []
                     do {

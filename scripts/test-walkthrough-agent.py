@@ -45,8 +45,9 @@ class AgentAccessTests(unittest.TestCase):
         for query in ['address required', 'click continue']:
             result = self.request('list_walkthroughs', {'query': query})
             self.assertEqual(json.loads(result['content'][0]['text'])[0]['id'], 'recording-one')
-        result = self.request('list_walkthroughs', {'query': 'missing'})
-        self.assertEqual(json.loads(result['content'][0]['text']), [])
+        for query in ['missing', 'segments', 'frames', 'schemaVersion']:
+            result = self.request('list_walkthroughs', {'query': query})
+            self.assertEqual(json.loads(result['content'][0]['text']), [])
 
     def test_frame_returns_actual_time_and_image(self):
         result = self.request('get_walkthrough_frame', {'id': 'recording-one', 'timestampMs': 19000})

@@ -25,15 +25,26 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
         let status = response.status();
         use std::io::Read;
         let mut bytes = Vec::new();
-        let body = response.take(4097).read_to_end(&mut bytes).ok()
+        let body = response
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .ok()
             .filter(|_| bytes.len() <= 4096)
             .and_then(|_| serde_json::from_slice::<Value>(&bytes).ok());
-        let message = body.as_ref().and_then(|b| b.get("error")).and_then(Value::as_str)
-            .filter(|s| s.len() < 256).unwrap_or("Could not save your dictionary");
+        let message = body
+            .as_ref()
+            .and_then(|b| b.get("error"))
+            .and_then(Value::as_str)
+            .filter(|s| s.len() < 256)
+            .unwrap_or("Could not save your dictionary");
         return Err(format!("{message} ({status})"));
     }
-    let value = response.json().map_err(|_| "Invalid dictionary response".to_string())?;
-    if changed { crate::vocabulary::refresh(app); }
+    let value = response
+        .json()
+        .map_err(|_| "Invalid dictionary response".to_string())?;
+    if changed {
+        crate::vocabulary::refresh(app);
+    }
     Ok(value)
 }
 
@@ -69,9 +80,7 @@ pub async fn correct_recording(
     tauri::async_runtime::spawn_blocking(move || {
         let recording = crate::store::get(&app, &id)?
             .ok_or("Recording not found")?;
-        if recording.has_video && crate::walkthrough::is_processing(&id) {
-            return Err("Wait for walkthrough processing before editing its transcript".into());
-        }
+        let walkthrough_guard = if recording.has_video { Some(crate::walkthrough::correction_guard(&id)?) } else { None };
         let current = recording.transcript.as_deref();
         if current != Some(original.as_str()) && current != Some(corrected.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());
@@ -83,9 +92,10 @@ pub async fn correct_recording(
         // the exact corrected text is still current, without rewriting the files.
         if current == Some(original.as_str()) {
             crate::store::correct_transcript(&app, &id, &original, &corrected)?;
-            if recording.has_video { crate::walkthrough::update_correction(&app, &id, &corrected)?; }
             let _ = app.emit("recordings:updated", ());
         }
+        if recording.has_video && recording.source == "screen" { crate::walkthrough::update_correction(&app, &id, &corrected)?; }
+        drop(walkthrough_guard);
         Ok(feedback(&app, &original, &corrected).unwrap_or_else(|_| json!({
             "learned": 0,
             "warning": "Transcript saved. Dictionary could not connect. Retry learning when you are online."

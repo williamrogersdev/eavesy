@@ -180,7 +180,11 @@ final class ScreenRecorder: NSObject, Recorder {
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard self.startSessionIfNeeded(at: pts) else { return }
             if input.isReadyForMoreMediaData {
-                guard input.append(sampleBuffer) else { fail("Could not write video: \(self.writer?.error?.localizedDescription ?? "unknown error")") }
+                guard input.append(sampleBuffer) else {
+                    EventEmitter.warning("Video writing stopped: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+                    DispatchQueue.main.async { gracefulStop() }
+                    return
+                }
                 self.lastPTS = pts
             }
             if !self.includeMic && !self.didEmitReady {
@@ -200,7 +204,11 @@ final class ScreenRecorder: NSObject, Recorder {
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard CMTimeCompare(pts, self.firstPTS) >= 0 else { return }
             if input.isReadyForMoreMediaData {
-                guard input.append(sampleBuffer) else { fail("Could not write audio: \(self.writer?.error?.localizedDescription ?? "unknown error")") }
+                guard input.append(sampleBuffer) else {
+                    EventEmitter.warning("Audio writing stopped: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+                    DispatchQueue.main.async { gracefulStop() }
+                    return
+                }
                 if isMic {
                     self.micSamplesWritten += CMSampleBufferGetNumSamples(sampleBuffer)
                     if !self.didEmitReady {
@@ -231,9 +239,9 @@ final class ScreenRecorder: NSObject, Recorder {
 
     // Mix optional computer sound into each microphone buffer. Never wait for
     // a system-audio callback to preserve speech (including on a silent desktop).
-    private func mixedMicrophoneBuffer(_ microphone: CMSampleBuffer) -> CMSampleBuffer {
+    private func mixedMicrophoneBuffer(_ microphone: CMSampleBuffer) -> CMSampleBuffer? {
         guard let pcm = AudioRecorder.toFloatBuffer(microphone), let ch = pcm.floatChannelData
-        else { fail("Could not decode microphone audio") }
+        else { EventEmitter.warning("Skipped an undecodable microphone buffer"); return nil }
         let count = Int(pcm.frameLength)
         mixLock.lock()
         let take = min(count, systemResidual.count)
@@ -257,7 +265,7 @@ final class ScreenRecorder: NSObject, Recorder {
     func appendMicrophone(_ sampleBuffer: CMSampleBuffer) {
         guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
         emitLevelIfDue(sampleBuffer)
-        appendAudio(mixedMicrophoneBuffer(sampleBuffer), isMic: true)
+        if let mixed = mixedMicrophoneBuffer(sampleBuffer) { appendAudio(mixed, isMic: true) }
     }
 
     // MARK: - Stop
@@ -299,12 +307,13 @@ final class ScreenRecorder: NSObject, Recorder {
                 let stats: [String: Any] = [
                     "microphoneEnabled": self.includeMic,
                     "microphoneSamplesWritten": self.micSamplesWritten,
+                    "microphoneSampleRate": 48000,
                     "microphonePeakRms": peak,
                 ]
                 do {
                     try JSONSerialization.data(withJSONObject: stats, options: [.sortedKeys])
                         .write(to: URL(fileURLWithPath: self.outPath + ".capture.json"), options: .atomic)
-                } catch { fail("Could not save microphone verification: \(error.localizedDescription)") }
+                } catch { EventEmitter.warning("Could not save microphone verification: \(error.localizedDescription)") }
                 self.exportCanonicalAudio(durationSec: max(duration, 0), completion: completion)
             }
         }
