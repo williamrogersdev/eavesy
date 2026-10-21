@@ -273,6 +273,8 @@ pub fn record_caption(conn: &Connection, caption: &Caption) -> Result<(), String
     if !caption.is_final || caption.text.trim().is_empty() {
         return Ok(());
     }
+    // `provisional` below means settled on-device words awaiting cloud
+    // refinement. Unsettled speech hypotheses never enter live_lines.
     let tx = conn.unchecked_transaction().map_err(|error| format!("begin caption revision: {error}"))?;
     let previous = {
         let mut query = tx.prepare("SELECT rowid,start_ms,end_ms,text FROM live_lines
@@ -522,6 +524,21 @@ mod tests {
         record_caption(&conn, &Caption { is_final: false, ..caption("partial", 2_000, 2_500) }).unwrap();
         record_caption(&conn, &caption("  ", 3_000, 3_500)).unwrap();
         assert_eq!(texts(&conn), vec![("hello there".into(), true)]);
+    }
+
+    #[test]
+    fn volatile_silent_lead_in_is_never_stored_as_a_settled_history_line() {
+        let conn = db();
+        let mut volatile = caption("The blue Notebook is on the kitchen table.", 0, 23_159);
+        volatile.is_final = false;
+        record_caption(&conn, &volatile).unwrap();
+        assert!(lines(&conn, "rec").unwrap().is_empty());
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 18_060, 21_240)).unwrap();
+        record_caption(&conn, &volatile).unwrap();
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 25_000, 28_000)).unwrap();
+        let rows = lines(&conn, "rec").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().map(|line| line.start_ms).collect::<Vec<_>>(), vec![18_060, 25_000]);
     }
 
     #[test]
