@@ -219,16 +219,19 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
       .catch(() => {})
       .finally(() => setSoundsBusy(false));
   };
-  const previewLines = settings?.hud_preview_lines ?? 4;
+  const savedLines = settings?.hud_preview_lines;
+  const previewLines: HudPreviewLines = savedLines === 0 || savedLines === 1 || savedLines === 2 ? savedLines : 4;
   const translucent = settings?.hud_translucent ?? true;
   const [lookError, setLookError] = useState<string | null>(null);
   const changeLook = (lines: HudPreviewLines, see: boolean) => {
-    const before = settings;
     setLookError(null);
     setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see } : current);
     void setHudLook(lines, see).catch((error: unknown) => {
-      setSettings(before);
       setLookError(errMsg(error, 'Could not change how the recording looks.'));
+      // Show what is actually saved, whichever change failed.
+      void getSettings().then((saved) => setSettings((current) => current && saved
+        ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent }
+        : current)).catch(() => {});
     });
   };
   const [shotFolder, setShotFolder] = useState<string | null>(null);

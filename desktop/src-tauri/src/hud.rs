@@ -230,7 +230,6 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool) {
         config.hud_preview_lines = Some(lines);
         config.hud_translucent = Some(translucent);
     });
-    let lines = prefs(app).lines;
     let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || fit_on_main(&app));

@@ -184,16 +184,23 @@ function Hud() {
       .then((settings) => {
         const accel = (settings as { dictation_hotkey?: string } | null)?.dictation_hotkey;
         setShortcut(accel ? prettyAccel(accel) : '');
-        if (settings) setLook(lookFrom(settings));
       })
       .catch(() => {});
   };
   useEffect(loadShortcut, []);
+  // The saved look once at start; after that only `hud:look` changes it, so a
+  // slow first read can't undo a change made in Settings meanwhile.
   useEffect(() => {
     let off: (() => void) | undefined;
     let disposed = false;
-    void tauri()?.event?.listen('hud:look', (event) => setLook(lookFrom(event.payload)))
+    let changed = false;
+    void tauri()?.event?.listen('hud:look', (event) => { changed = true; setLook(lookFrom(event.payload)); })
       .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    if (tauri()) {
+      void invoke('get_settings')
+        .then((settings) => { if (settings && !changed && !disposed) setLook(lookFrom(settings)); })
+        .catch(() => {});
+    }
     return () => { disposed = true; off?.(); };
   }, []);
 
@@ -339,6 +346,7 @@ function Hud() {
   useEffect(() => {
     if (tauri()) return;
     const live = state?.phase === 'recording' || state?.phase === 'transcribing';
+    // Same as `live_size` in hud.rs.
     const [width, height] = size === 'wide' && live ? [400, 62 + 20 * look.lines] : PREVIEW_SIZES[size];
     const root = document.getElementById('root');
     if (root) Object.assign(root.style, { width: `${width}px`, height: `${height}px`, margin: '28px auto 0' });

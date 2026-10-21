@@ -445,7 +445,7 @@ the pill can't jitter or flip while words arrive.
 
 **How it looks while recording** is the user's call (Settings → General → Recording
 control, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
-**See-through**, on by default, which drops the charcoal to 70% and softens
+**See-through**, on by default, which drops the charcoal to 78% and softens
 the coral ring so the control sits back over whatever is underneath. Still
 no native glass, for the corner reason above. A change applies at once, even
 mid-recording: Rust refits the window and the HUD hears `hud:look`.
