@@ -13,6 +13,7 @@ export interface FileTranscriptionResult {
   language?: string;
   languageProbability?: number;
   durationSec?: number;
+  timestampSource?: 'segments' | 'words' | 'unavailable';
 }
 
 export interface FileTranscriptionRunner {
@@ -100,12 +101,17 @@ export function mapWhisperResult(
   const text = result.text;
   const info = isRecord(result.transcription_info) ? result.transcription_info : {};
   const segments: TranscriptSegment[] = [];
+  let timestampSource: FileTranscriptionResult['timestampSource'] = 'unavailable';
+  let missingTiming = false;
 
   if (Array.isArray(result.segments) && result.segments.length > 0) {
     for (const s of result.segments) {
       if (!isRecord(s)) continue;
       const segText = typeof s.text === 'string' ? s.text.trim() : '';
       if (!segText) continue;
+      const timed = typeof s.start === 'number' && typeof s.end === 'number' && Number.isFinite(s.start) && Number.isFinite(s.end) && s.start >= 0 && s.end >= s.start;
+      if (timed) timestampSource = 'segments';
+      else missingTiming = true;
       const noSpeechProb = finiteNumber(s.no_speech_prob);
       const compressionRatio = finiteNumber(s.compression_ratio);
       segments.push({
@@ -119,6 +125,7 @@ export function mapWhisperResult(
     }
   } else if (Array.isArray(result.words) && result.words.length > 0 && text.trim()) {
     const words = result.words.filter(isRecord);
+    if (words.length && finiteNumber(words[0]?.start) !== undefined && finiteNumber(words.at(-1)?.end) !== undefined && Number(words[0]?.start) >= 0 && Number(words.at(-1)?.end) >= Number(words[0]?.start)) timestampSource = 'words';
     segments.push({
       startMs: secondsToMilliseconds(words[0]?.start),
       endMs: secondsToMilliseconds(words.at(-1)?.end),
@@ -132,6 +139,7 @@ export function mapWhisperResult(
   return {
     text,
     segments,
+    timestampSource: missingTiming ? 'unavailable' : timestampSource,
     language: typeof info.language === 'string' ? info.language : fallbackLanguage,
     languageProbability: finiteNumber(info.language_probability),
     durationSec: finiteNumber(info.duration),

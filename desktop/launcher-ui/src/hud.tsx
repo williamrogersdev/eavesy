@@ -115,6 +115,7 @@ function Hud() {
   const [running, setRunning] = useState<RunningTranscript>(browserPreviewWords);
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
+  const [micSignal, setMicSignal] = useState({rms: 0, at: 0});
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<{ sessionId: string | null; text: string } | null>(null);
@@ -202,6 +203,16 @@ function Hud() {
       if (disposed) { off?.(); offStatus?.(); } else unlisten = () => { off?.(); offStatus?.(); };
     })().catch(() => {});
     return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void tauri()?.event?.listen('recording:level', (event) => {
+      const value = event.payload as {sessionId: string; rms: number};
+      if (value.sessionId === currentSession.current) setMicSignal({rms:value.rms, at:Date.now()});
+    }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    return () => { disposed = true; off?.(); };
   }, []);
 
   const live = state?.phase === 'recording' && !!state.sessionId;
@@ -373,7 +384,7 @@ function Hud() {
           <>
             <span className="ctl-rec" aria-hidden />
             <span className="ctl-timer">{clock(Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000)))}</span>
-            {video ? <span className="ctl-say ctl-quiet">Screen</span> : <VoiceBars level={voice} />}
+            {video ? <span className="ctl-say ctl-quiet" title={now - micSignal.at > 5000 ? 'No microphone audio is arriving' : 'Microphone is recording'}>{now - micSignal.at < 2000 && micSignal.rms >= 0.002 ? 'Mic active' : 'Mic quiet'}</span> : <VoiceBars level={voice} />}
           </>
         )}
         <span className="ctl-fill" />
@@ -386,6 +397,11 @@ function Hud() {
   } else if (state.phase === 'transcribing') {
     top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
     if (!video) below = <Ticker text={heard} hint="Turning your words into text…" working />;
+  } else if (state.phase === 'done' && video) {
+    top = <>{mark}<span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>
+      <span className="ctl-fill" />
+      <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
+      <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{close}</>;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>

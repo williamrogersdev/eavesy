@@ -32,7 +32,7 @@ pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), String> {
+pub async fn paste_to_frontmost(app: AppHandle, text: String, learn: Option<bool>) -> Result<(), String> {
     hide_panel_on_main_thread(&app).await?;
 
     // Hiding the launcher hands focus back to the app it opened over; wait for that app to be in
@@ -45,7 +45,7 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String) -> Result<(), Stri
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    paste_text(&app, &text)
+    paste_text_with_learning(&app, &text, learn.unwrap_or(true))
 }
 
 /// A paste's pending restore of the user's own clipboard: its generation, and
@@ -64,6 +64,9 @@ fn restore() -> std::sync::MutexGuard<'static, Restore> {
 }
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
+    paste_text_with_learning(app, text, true)
+}
+fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<(), String> {
     let on_clipboard = app.clipboard().read_text().ok();
     let (generation, previous) = {
         let mut restore = restore();
@@ -79,7 +82,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        let learning_target = crate::paste_learning::capture();
+        let learning_target = if learn { crate::paste_learning::capture() } else { None };
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.

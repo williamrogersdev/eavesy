@@ -146,9 +146,9 @@ export async function copyText(text: string): Promise<void> {
   throw new Error('Clipboard access is unavailable in this browser.');
 }
 
-export async function pasteToFrontmost(text: string): Promise<void> {
+export async function pasteToFrontmost(text: string, learn = true): Promise<void> {
   if (isDesktop()) {
-    await invoke('paste_to_frontmost', { text });
+    await invoke('paste_to_frontmost', { text, learn });
     return;
   }
   await copyText(text);
@@ -666,4 +666,13 @@ export async function onDictionaryLearning(cb: (event: { status: string; message
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<{ status: string; message?: string; learned?: number }>('dictionary:learning', e => cb(e.payload));
+}
+
+
+/** The ordinary Copy/Paste payload for a recording, including video evidence. */
+export async function recordingContext(id: string, fallback: string): Promise<string> {
+  return isDesktop() ? invoke<string>('recording_context', { id }) : fallback;
+}
+export async function retryWalkthrough(id: string): Promise<void> {
+  await invoke('retry_walkthrough', { id });
 }

@@ -66,6 +66,13 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 
 impl History {
+    /// Resume only unfinished screen jobs; do not materialize the library's bodies at launch.
+    pub fn pending_walkthroughs(&self) -> Result<Vec<String>, String> {
+        let mut query = self.conn.prepare("SELECT id FROM history_recordings WHERE has_video = 1 AND source = 'screen' AND status = 'processing'").map_err(error)?;
+        let rows = query.query_map([], |row| row.get(0)).map_err(error)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(error)
+    }
+
     pub fn open(path: &Path, legacy: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(error)?;
@@ -426,6 +433,25 @@ mod tests {
             has_video: false,
             folder_path: None,
         }
+    }
+
+    #[test]
+    fn recovery_only_selects_unfinished_screen_videos() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        for (id, source, status, video) in [
+            ("pending", "screen", "processing", true),
+            ("finished", "screen", "complete", true),
+            ("voice", "mic", "processing", true),
+            ("no-video", "screen", "processing", false),
+        ] {
+            let mut recording = row(id);
+            recording.source = source.into();
+            recording.status = status.into();
+            recording.has_video = video;
+            history.put(&recording).unwrap();
+        }
+        assert_eq!(history.pending_walkthroughs().unwrap(), vec!["pending"]);
     }
 
     #[test]
