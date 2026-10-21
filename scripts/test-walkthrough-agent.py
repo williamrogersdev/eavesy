@@ -58,6 +58,16 @@ class AgentAccessTests(unittest.TestCase):
         self.assertIsNone(matches[0]['timestampMs'])
         self.assertIn('Unique corrected phrase', matches[0]['text'])
 
+    def test_corrected_match_keeps_a_slot_and_unicode_excerpt(self):
+        self.bundle['correctedTranscript'] = 'İ ΟΣ Straße ' * 100 + 'Unique corrected phrase'
+        self.bundle['segments'] = [{'startMs': i * 1000, 'endMs': i * 1000 + 900, 'text': 'Unique corrected phrase'} for i in range(6)]
+        self.save()
+        result = self.request('list_walkthroughs', {'query': 'unique corrected'})
+        matches = json.loads(result['content'][0]['text'])[0]['matches']
+        self.assertEqual(len(matches), 5)
+        self.assertEqual(matches[-1]['kind'], 'corrected')
+        self.assertIn('Unique corrected phrase', matches[-1]['text'])
+
     def test_frame_returns_actual_time_and_image(self):
         result = self.request('get_walkthrough_frame', {'id': 'recording-one', 'timestampMs': 19000})
         frame = json.loads(result['content'][0]['text'])
