@@ -19,6 +19,7 @@ const probes = [
   { collection: "guides", slug: `published-${id}`, extra: "date: 2026-01-01" },
 ];
 const paths: string[] = [];
+let clean = false;
 try {
   for (const probe of probes) {
     const path = fileURLToPath(
@@ -72,12 +73,17 @@ try {
 } finally {
   for (const path of paths) await unlink(path).catch(() => {});
   // Wait for Vite to invalidate eager content globs before another audit/build.
-  let clean = false;
   for (let attempt = 0; attempt < 20; attempt++) {
     const xml = await (await fetch(`${origin}/sitemap.xml`)).text();
-    if (!xml.includes(id)) { clean = true; break; }
+    if (!xml.includes(id)) {
+      clean = true;
+      break;
+    }
     await delay(250);
   }
-  if (!clean) throw new Error('Preview still contains a removed publication fixture; restart it before auditing or building.');
-
 }
+
+if (!clean)
+  throw new Error(
+    "Preview still contains a removed publication fixture; restart it before auditing or building.",
+  );
