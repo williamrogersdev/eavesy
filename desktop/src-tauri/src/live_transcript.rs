@@ -531,6 +531,7 @@ mod tests {
         record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 1040, 4020)).unwrap();
         record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 5000, 8000)).unwrap();
         assert_eq!(texts(&conn), vec![("The blue notebook is on the kitchen table.".into(), true), ("The blue notebook is on the kitchen table.".into(), true)]);
+        assert_eq!(lines(&conn, "rec").unwrap().iter().map(|line| line.start_ms).collect::<Vec<_>>(), vec![1040, 5000]);
     }
 
     #[test]

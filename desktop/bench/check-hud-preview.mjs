@@ -128,6 +128,7 @@ try {
   const viewport = await page.locator('.ctl-below').evaluate(el=>({height:el.clientHeight,top:el.scrollTop,total:el.scrollHeight}));
   assert.equal(viewport.height,80);
   assert.ok(viewport.total>viewport.height);
+  assert.ok(viewport.top > 0);
   assert.equal(viewport.top % 20,0);
   await page.screenshot({path:join(tmpdir(),'eavesy-live-lines-verified.png')});
   console.log('PASS: live captions scroll on whole line boundaries');
