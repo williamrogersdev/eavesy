@@ -181,6 +181,7 @@ function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<str
   const many = ['Anthropic', 'Cloudflare', 'Durable Objects', 'Vectorize', 'SpeechAnalyzer', 'ScreenCaptureKit', 'TanStack', 'Drizzle', 'Clerk', 'PostHog', 'Homebrew', 'notarytool', 'Sparkle', 'Rolldown', 'Vite', 'Zod', 'Tailwind', 'lucide', 'Bun', 'wrangler', 'Priya Raman', 'Dana Okafor', 'Mateo Silva', 'Kenji Ito', 'Aisha Khan', 'Lukas Weber'];
   const me = {
     spokenLanguages: ['en'],
+    dictationStyle: 'prompt',
     customVocabulary: manyWords
       ? Array.from({ length: 140 }, (_, i) => (i < many.length ? many[i] : `${many[i % many.length]} ${Math.floor(i / many.length) + 1}`))
       : ['Eavesy', 'Priya Raman', 'Kubernetes'],

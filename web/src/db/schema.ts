@@ -35,6 +35,8 @@ export const users = sqliteTable(
     spokenLanguagesJson: text('spoken_languages_json'),
     /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
     notesLanguage: text('notes_language'),
+    /** How dictations are rewritten before they are typed (see `DICTATION_STYLES`); null keeps the speaker's own words. */
+    dictationStyle: text('dictation_style'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),

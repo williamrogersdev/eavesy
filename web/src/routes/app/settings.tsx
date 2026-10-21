@@ -7,6 +7,7 @@ import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
+import { DICTATION_STYLES, dictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
 import { ChipInput } from '@/components/ui/chip-input';
@@ -26,6 +27,7 @@ interface Me {
   notesLanguage: string | null;
   spokenLanguages: string[];
   customVocabulary: string[];
+  dictationStyle: DictationStyle;
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
@@ -153,7 +155,7 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages'>>) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages' | 'dictationStyle'>>) => {
     const previous = me;
     setError(null);
     if (previous) setMe({ ...previous, ...change });
@@ -364,6 +366,24 @@ function SettingsPage() {
             ))}
           </select>
         </Row>
+        <Row
+          label="Dictation style"
+          hint={DICTATION_STYLES.find((style) => style.id === me.dictationStyle)?.hint ?? ''}
+          htmlFor="settings-dictation-style"
+        >
+          <select
+            id="settings-dictation-style"
+            value={me.dictationStyle}
+            onChange={(e) => void saveLanguage({ dictationStyle: dictationStyle(e.target.value) })}
+            className={`${input} sm:w-56`}
+          >
+            {DICTATION_STYLES.map((style) => (
+              <option key={style.id} value={style.id}>
+                {style.label}
+              </option>
+            ))}
+          </select>
+        </Row>
         <div className="flex flex-col gap-1.5">
           <div>
             <label htmlFor="settings-vocabulary" className="text-sm">Custom words</label>
@@ -553,6 +573,7 @@ function parseMe(value: unknown): Me | null {
     customVocabulary: Array.isArray(value.customVocabulary)
       ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
       : [],
+    dictationStyle: dictationStyle(value.dictationStyle),
     hasAnthropicKey: value.hasAnthropicKey,
     anthropicKeyHint: nullableString(value.anthropicKeyHint),
     hasOpenRouterKey: value.hasOpenRouterKey,
