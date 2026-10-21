@@ -50,7 +50,7 @@ test('final audit uses an independent approved model and constrains citation IDs
 
 test('a malformed draft still requires a validated independent audit', async () => {
   let calls=0;
-  const answer=await answerLibrary({async run(){calls++;return {response:calls===1?'invalid JSON':{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:['s1']}],unanswered:[]}};}},'Where?',sources);
+  const answer=await answerLibrary({async run(_model,input){calls++;if(calls===2){expect(JSON.stringify(input)).toContain('No valid draft exists');expect(JSON.stringify(input)).not.toContain('draftUnavailable');}return {response:calls===1?'invalid JSON':{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:['s1']}],unanswered:[]}};}},'Where?',sources);
   expect(calls).toBe(2);
   expect(answer.claims[0].citations[0].id).toBe('s1');
 });
