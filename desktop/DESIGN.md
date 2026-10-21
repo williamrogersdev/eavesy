@@ -407,19 +407,26 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings:** a `Segmented` at the top picks one of three tabs, each a
-scroll column of groups titled in `--ev-t-group`:
-- **Account**: Profile, Dictation (tone segmented + "Format for AI agents"
-  switch, the default for every project), Transcription (languages, custom
-  words), Personal dictionary.
+**Settings** (modelled on the Mac's own preference windows): four icon tabs
+pinned at the top (icon over name, the selected one on a soft fill), and
+under them a scroll column of groups titled in `--ev-t-group`. Every setting
+is one `Row`: name (13 ui) with one line of help (12 ink-2) on the left, a
+compact control on the right: a `Switch`, a `Select` for any choice of three
+or more, or a small button. Only tags and text inputs drop under their name,
+full width.
+- **General**: Shortcuts; Recording control (position, live words Off/1/2/4
+  lines, see-through, start and stop sounds); Capture (captions,
+  screenshots, recordings folder); This Mac (permissions, setup, updates).
+- **Dictation**: Writing (tone, Format for AI agents, the default for every
+  project), Transcription (languages, custom words), Learned spellings.
 - **Projects**: a list of rows (name, then words and dictation summary,
-  chevron). A row opens that project's own page with a back arrow: Details,
-  Dictation (tone and AI format, each with a Default that uses the
-  account's), Words, Auto-pick, and a two-step Delete.
-- **App**: Shortcuts, Capture (sounds, live captions, screenshots), Position,
-  Recordings folder, Permissions, Updates.
-Group bodies sit on `--ev-raised`, r12, hairline-separated rows. These are the
-only card-like containers in the app.
+  chevron). A row opens that project's page with a back arrow: Details,
+  Dictation (tone and AI format, each defaulting to the account's), Words,
+  Auto-pick, and a two-step Delete.
+- **Account**: profile, open on the web, sign out.
+Group bodies sit on `--ev-raised` (in the dark, a clear 7% ink step above the
+panel, never near-black on black), r12, hairline-separated rows. These are
+the only card-like containers in the app.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
@@ -436,8 +443,8 @@ the pill can't jitter or flip while words arrive.
 | result | 400 × 142 | pasted/copied, with the words that went out |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
-**How it looks while recording** is the user's call (Settings → App → While
-recording, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
+**How it looks while recording** is the user's call (Settings → General → Recording
+control, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
 **See-through**, on by default, which drops the charcoal to 70% and softens
 the coral ring so the control sits back over whatever is underneath. Still
 no native glass, for the corner reason above. A change applies at once, even
@@ -536,7 +543,8 @@ now" as a ghost button on the left.
 | `Switch` | `checked`, `onCheckedChange`, `label`, `hint?`. 30×18 track; off is line-strong, on is coat; thumb is raised. Thumb travel 160ms with a spring ease. |
 | `Composer` | `onSaveNote(text)`, `onFiles(files)`, `placeholder?`, `maxLines?: number` (4), `dragActive: boolean` (set by a panel-level drag listener). Fixed 40px resting height, grows upward and overlays. |
 | `ToolbarSegment` | `icon`, `label`, `hint?: string` (tooltip), `kbd?: string`, `active?: boolean` (renders Stop + elapsed), `dimmed?: boolean` |
-| `Segmented<T>` (Settings only, e.g. HUD position) | `value: T`, `onChange`, `options: {value: T, label: string, icon?}[]`, `size: 'sm' \| 'md'`. Well track, raised thumb that slides (240ms). |
+| `Select<T>` (settings rows) | `value: T`, `onChange`, `options: {value: T, label: string}[]`, `label`. A 26px native pop-up with an up-down chevron. |
+| `Segmented<T>` | `value: T`, `onChange`, `options: {value: T, label: string, icon?}[]`, `size: 'sm' \| 'md'`. Well track, raised thumb that slides (240ms). |
 | `Menu` | `trigger: ReactNode`, `items: ({label, icon?, kbd?, onSelect, tone?: 'default' \| 'warn'} \| 'separator')[]`, `align: 'start' \| 'end'`. Raised, r12, e-2, 4px padding, 28px items, full keyboard nav. |
 | `Card` | `title?`, `children`, `inset?: boolean`. Settings groups only. |
 | `Kbd` | `keys: string \| string[]` (e.g. `['⌘','⇧','Space']`), `size: 'sm' \| 'md'`, `tone?: 'well' \| 'hud'` |

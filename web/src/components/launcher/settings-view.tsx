@@ -1,8 +1,8 @@
 'use client';
 
-import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, AudioLines, Check, CircleUser, FolderOpen, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Card, IconButton, Segmented, Switch } from '@/components/launcher/ui';
+import { Button, Card, IconButton, Row, Select, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
@@ -28,14 +28,13 @@ import {
   type Settings,
   type UpdateStatus,
 } from '@/lib/desktop/bridge';
-import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { DictationCard, ProjectsSettings, TranscriptionCard, useAccountPrefs } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
 
-const PREVIEW_OPTIONS = [
+const PREVIEW_OPTIONS: { value: string; label: string }[] = [
   { value: '0', label: 'Off' },
   { value: '1', label: '1 line' },
   { value: '2', label: '2 lines' },
@@ -50,7 +49,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return <Card title={title}><div className="ev-set-body">{children}</div></Card>;
 }
 
-function UpdatesCard() {
+function UpdatesRow() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState<'check' | 'install' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,18 +76,17 @@ function UpdatesCard() {
         ? `Couldn't check for updates: ${status.message}`
         : `Eavesy ${status.currentVersion}`;
   return (
-    <div className="flex items-center gap-2">
-      <p role="status" className="ev-set-label min-w-0 flex-1">{error ?? line}</p>
+    <Row label="Updates" hint={<span role="status">{error ?? line}</span>}>
       {status?.state === 'available' ? (
         <Button variant="primary" size="sm" disabled={busy !== null} loading={busy === 'install'} onClick={() => run('install')}>
           Install &amp; Relaunch
         </Button>
       ) : (
         <Button variant="outline" size="sm" disabled={busy !== null} loading={busy === 'check'} onClick={() => run('check')}>
-          Check for Updates
+          Check Now
         </Button>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -152,74 +150,31 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
   );
 }
 
-const SPOTS: { value: LauncherPosition; label: string; className: string }[] = [
-  { value: 'top_left', label: 'Top left', className: 'top-4 left-2' },
-  { value: 'top_center', label: 'Top center', className: 'top-4 left-1/2 -translate-x-1/2' },
-  { value: 'top_right', label: 'Top right', className: 'top-4 right-2' },
-  { value: 'bottom_center', label: 'Bottom center', className: 'bottom-1 left-1/2 -translate-x-1/2' },
+const SPOTS: { value: LauncherPosition; label: string }[] = [
+  { value: 'top_left', label: 'Top left' },
+  { value: 'top_center', label: 'Top center' },
+  { value: 'top_right', label: 'Top right' },
+  { value: 'bottom_center', label: 'Bottom center' },
 ];
 
-function PositionPicker({ value, custom, disabled, onPick }: {
-  value: LauncherPosition;
-  custom: boolean;
-  disabled: boolean;
-  onPick: (position: LauncherPosition) => void;
-}) {
-  const current = SPOTS.find((spot) => spot.value === value);
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div
-        role="radiogroup"
-        aria-label="Control position"
-        className="relative aspect-[16/10] w-full max-w-[240px] overflow-hidden rounded-[var(--ev-r-ctl)] bg-[var(--ev-well)] shadow-[0_0_0_1px_var(--ev-line)]"
-      >
-        <div className="h-2.5 w-full bg-[var(--ev-line)]" />
-        {SPOTS.map((spot) => {
-          const selected = !custom && spot.value === value;
-          return (
-            <button
-              key={spot.value}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-label={spot.label}
-              title={spot.label}
-              disabled={disabled}
-              onClick={() => onPick(spot.value)}
-              className={cn(
-                'group absolute flex h-6 w-[30%] items-center justify-center rounded-md transition-colors disabled:cursor-default',
-                spot.className,
-                selected ? 'bg-[var(--ev-coat-soft)]' : 'hover:bg-[var(--ev-hover)]',
-              )}
-            >
-              <span
-                className={cn(
-                  'h-2.5 w-12 rounded-full transition-colors',
-                  selected ? 'bg-[var(--ev-coat)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
-                )}
-              />
-            </button>
-          );
-        })}
-      </div>
-      <p className="ev-set-hint">
-        {custom ? 'You moved the control. Click a spot to snap it back.' : `${current?.label ?? 'Top center'}. Drag the control anywhere to fine-tune.`}
-      </p>
-    </div>
-  );
-}
-
-type SettingsTab = 'account' | 'projects' | 'app';
+type SettingsTab = 'general' | 'dictation' | 'projects' | 'account';
 const TAB_KEY = 'ev-settings-tab';
+const TABS: { value: SettingsTab; label: string; icon: typeof SlidersHorizontal }[] = [
+  { value: 'general', label: 'General', icon: SlidersHorizontal },
+  { value: 'dictation', label: 'Dictation', icon: AudioLines },
+  { value: 'projects', label: 'Projects', icon: FolderOpen },
+  { value: 'account', label: 'Account', icon: CircleUser },
+];
 
 function readTab(): SettingsTab {
   try {
     const saved = sessionStorage.getItem(TAB_KEY);
-    return saved === 'projects' || saved === 'app' ? saved : 'account';
+    return TABS.some((tab) => tab.value === saved) ? saved as SettingsTab : 'general';
   } catch {
-    return 'account';
+    return 'general';
   }
 }
+
 
 export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   permissions: Permissions | null;
@@ -331,41 +286,17 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
         </div>
       )}
 
-      <div className="ev-settings">
-        <Segmented
-          label="Settings section"
-          className="mb-4"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: 'account', label: 'Account' },
-            { value: 'projects', label: 'Projects' },
-            { value: 'app', label: 'App' },
-          ]}
-        />
+      <div role="tablist" aria-label="Settings section" className="ev-set-tabs">
+        {TABS.map(({ value, label, icon: Icon }) => (
+          <button key={value} type="button" role="tab" aria-selected={tab === value} className="ev-set-tab" onClick={() => setTab(value)}>
+            <Icon aria-hidden strokeWidth={1.8} />
+            {label}
+          </button>
+        ))}
+      </div>
 
-        {tab === 'account' && (
-          <>
-            <Section title="Profile">
-              <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
-            </Section>
-            {signedIn && (
-              <>
-                <DictationCard account={accountPrefs} />
-                <TranscriptionCard account={accountPrefs} />
-                <DictionarySettings />
-              </>
-            )}
-          </>
-        )}
-
-        {tab === 'projects' && (
-          signedIn
-            ? <ProjectsSettings account={accountPrefs.prefs} onChanged={onProjectsChanged} />
-            : <Section title="Projects"><p className="ev-set-hint">Sign in under Account to make projects: one per codebase or client, each with its own words and dictation tone.</p></Section>
-        )}
-
-        {tab === 'app' && (
+      <div className="ev-settings" role="tabpanel">
+        {tab === 'general' && (
           <>
             <Card title="Shortcuts">
               <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
@@ -374,54 +305,62 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
             </Card>
 
             {isDesktop() && (
-              <Card title="While recording">
-                <div className="ev-set-body flex flex-col gap-3">
-                  <div className="ev-field">
-                    <label>Live words</label>
-                    <Segmented
-                      label="Lines of live words while recording"
-                      size="sm"
-                      value={String(previewLines)}
-                      options={PREVIEW_OPTIONS}
-                      onChange={(next) => { if (settings) changeLook(Number(next) as HudPreviewLines, translucent); }}
-                    />
-                    <p className="ev-set-hint">{previewLines === 0 ? 'Just the timer and Stop. Your words still go to the transcript.' : `The last ${previewLines === 1 ? 'line' : `${previewLines} lines`} of what you say, under the timer.`}</p>
-                  </div>
-                </div>
-                <div className="ev-set-row flex-col items-stretch">
+              <Card title="Recording control">
+                <Row
+                  label="Position"
+                  hint={settings?.hud_frame ? 'You dragged it. Pick a spot to snap it back.' : 'Or drag the control anywhere.'}
+                >
+                  <Select
+                    label="Control position"
+                    value={settings?.hud_frame ? 'custom' : settings?.launcher_position ?? 'top_center'}
+                    options={settings?.hud_frame ? [{ value: 'custom', label: 'Where you left it' }, ...SPOTS] : SPOTS}
+                    disabled={!settings || positionBusy}
+                    onChange={(next) => { if (next !== 'custom') pickPosition(next); }}
+                  />
+                </Row>
+                <Row label="Live words" hint={captionsOn ? 'What you say, under the timer, as you say it.' : 'Needs captions, under Capture.'}>
+                  <Select
+                    label="Lines of live words while recording"
+                    value={String(previewLines)}
+                    options={PREVIEW_OPTIONS}
+                    disabled={!settings || !captionsOn}
+                    onChange={(next) => changeLook(Number(next) as HudPreviewLines, translucent)}
+                  />
+                </Row>
+                <div className="ev-set-row">
                   <Switch
                     className="w-full"
                     checked={translucent}
                     onCheckedChange={(next) => changeLook(previewLines, next)}
                     disabled={!settings}
                     label="See-through"
-                    hint="Lets what's behind the control show through, so it sits back while you talk."
+                    hint="Lets the screen show through, so it sits back while you talk."
                   />
-                  {lookError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{lookError}</p> : null}
                 </div>
-              </Card>
-            )}
-
-            {isDesktop() && (
-              <Card title="Capture">
                 <div className="ev-set-row">
                   <Switch
                     className="w-full"
                     checked={soundsOn}
                     onCheckedChange={toggleSounds}
                     disabled={!settings || soundsBusy}
-                    label="Play a sound when recording starts and stops"
-                    hint="A quiet tick as the mic goes live, and a pop when it stops."
+                    label="Start and stop sounds"
+                    hint="A tick as the mic goes live, a pop when it stops."
                   />
                 </div>
+                {positionError || lookError ? <p role="alert" className="ev-set-hint px-3 py-2 text-[var(--ev-warn-ink)]">{positionError ?? lookError}</p> : null}
+              </Card>
+            )}
+
+            {isDesktop() && (
+              <Card title="Capture">
                 <div className="ev-set-row flex-col items-stretch">
                   <Switch
                     className="w-full"
                     checked={captionsOn}
                     onCheckedChange={toggleCaptions}
                     disabled={!settings || captionsBusy}
-                    label="Show captions while recording"
-                    hint="Transcribed on this Mac as you speak. The cloud transcript replaces them."
+                    label="Captions while recording"
+                    hint="Written on this Mac as you speak. The cloud transcript replaces them."
                   />
                   {captionsOn && (speech ?? permissions?.speech) === false && (
                     <p className="ev-set-hint mt-2">
@@ -436,62 +375,44 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
                     checked={shotsOn}
                     onCheckedChange={toggleScreenshots}
                     disabled={!settings || shotsBusy}
-                    label="Add macOS screenshots automatically"
-                    hint={shotFolder
-                      ? `New screenshots saved to ${shotFolder} are copied into Eavesy. The originals stay where they are.`
-                      : 'New macOS screenshots are copied into Eavesy. The originals stay where they are.'}
+                    label="Add macOS screenshots"
+                    hint={shotFolder ? `Copies new ones from ${shotFolder}. The originals stay put.` : 'Copies new ones in. The originals stay put.'}
                   />
                   {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
                 </div>
+                <Row label="Recordings folder" hint={<span className="ev-set-path block" title={folder}>{folderStatus ?? folder}</span>}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={FolderOpen}
+                    loading={folderBusy}
+                    disabled={folderBusy}
+                    onClick={() => {
+                      setFolderBusy(true);
+                      setFolderStatus(null);
+                      void chooseRecordingsFolder(settings?.recordings_root)
+                        .then((root) => {
+                          if (!root) return;
+                          setSettings((current) => current ? { ...current, recordings_root: root } : current);
+                          setFolderStatus('New recordings go here. Existing ones stay put.');
+                        })
+                        .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
+                        .finally(() => setFolderBusy(false));
+                    }}
+                  >
+                    Change
+                  </Button>
+                </Row>
               </Card>
             )}
 
-            <Section title="Position">
-              <PositionPicker
-                value={settings?.launcher_position ?? 'top_center'}
-                custom={!!settings?.hud_frame}
-                disabled={!settings || positionBusy || !isDesktop()}
-                onPick={pickPosition}
-              />
-              {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
-            </Section>
-
-            <Section title="Recordings folder">
-              <div className="flex items-center gap-2">
-                <p className="ev-set-path flex-1" title={folder}>{folder}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  icon={FolderOpen}
-                  loading={folderBusy}
-                  disabled={folderBusy}
-                  onClick={() => {
-                    setFolderBusy(true);
-                    setFolderStatus(null);
-                    void chooseRecordingsFolder(settings?.recordings_root)
-                      .then((root) => {
-                        if (!root) return;
-                        setSettings((current) => current ? { ...current, recordings_root: root } : current);
-                        setFolderStatus('New recordings will be saved here. Existing ones stay put.');
-                      })
-                      .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
-                      .finally(() => setFolderBusy(false));
-                  }}
-                >
-                  Change
-                </Button>
-              </div>
-              {folderStatus ? <p role="status" className="ev-set-hint mt-2">{folderStatus}</p> : null}
-            </Section>
-
             {isDesktop() && (
-              <Card title="Permissions">
+              <Card title="This Mac">
                 {allGranted && !showPermissions ? (
-                  <div className="ev-set-row">
-                    <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--ev-leaf)]" aria-hidden />
-                    <p className="ev-set-label min-w-0 flex-1">Everything Eavesy needs is turned on</p>
-                    <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setShowPermissions(true)}>Review</Button>
-                  </div>
+                  <Row label="Permissions" hint="Everything Eavesy needs is on.">
+                    <ShieldCheck className="h-4 w-4 text-[var(--ev-leaf)]" aria-hidden />
+                    <Button variant="ghost" size="sm" onClick={() => setShowPermissions(true)}>Review</Button>
+                  </Row>
                 ) : (
                   <PermissionChecklist
                     permissions={permissions}
@@ -502,21 +423,41 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
                     onRelaunch={onRelaunch}
                   />
                 )}
-                <div className="ev-set-row">
-                  <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
-                  <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
-                </div>
+                <Row label="Setup" hint="Sign-in, permissions and shortcuts, step by step.">
+                  <Button variant="outline" size="sm" icon={RotateCcw} onClick={onRunSetup}>Run again</Button>
+                </Row>
+                <UpdatesRow />
               </Card>
             )}
-
-            {isDesktop() && (
-              <Section title="Updates">
-                <UpdatesCard />
-              </Section>
-            )}
           </>
+        )}
+
+        {tab === 'dictation' && (
+          signedIn ? (
+            <>
+              <DictationCard account={accountPrefs} />
+              <TranscriptionCard account={accountPrefs} />
+              <DictionarySettings />
+            </>
+          ) : <SignInFirst what="choose how dictations are written: their tone, AI formatting, languages and your words" />
+        )}
+
+        {tab === 'projects' && (
+          signedIn
+            ? <ProjectsSettings account={accountPrefs.prefs} onChanged={onProjectsChanged} />
+            : <SignInFirst what="make projects: one per codebase or client, each with its own words and dictation tone" />
+        )}
+
+        {tab === 'account' && (
+          <Section title="Profile">
+            <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
+          </Section>
         )}
       </div>
     </div>
   );
+}
+
+function SignInFirst({ what }: { what: string }) {
+  return <Section title="Signed out"><p className="ev-set-hint">Sign in under Account to {what}.</p></Section>;
 }
