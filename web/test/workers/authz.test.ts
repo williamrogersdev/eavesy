@@ -581,3 +581,16 @@ describe.each(discovered.filter(({ routeId, method }) => POLICIES[routeId]?.[met
     });
   },
 );
+
+it('translates unknown-language meeting lines and finishes with a reusable cache', async () => {
+  actor.userId = OWNER;
+  const route = routeModules['../../src/routes/api/meetings/$id/translate.ts'].Route;
+  const post = handlersOf(route).POST!;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await post({ request: new Request(`https://test/api/meetings/${MEETING}/translate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'es' }),
+    }), params: { id: MEETING } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ remaining: 0, lines: { [LINE]: 'Translated: Owner line' } });
+  }
+});

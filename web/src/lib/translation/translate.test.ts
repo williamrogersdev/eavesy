@@ -24,7 +24,7 @@ describe('quick translation', () => {
   test('rejects truncated and malformed model responses', async () => {
     for (const response of [{ response: '{"translation":"cut' }, { response: '{}' }, { response: '{"translation":"Hello"}', choices: [{ finish_reason: 'length' }] }]) {
       const ai = { run: async () => response } as WorkersAiRunner;
-      expect(translateText(ai, { text: 'Hola', source: 'auto', target: 'en' })).rejects.toThrow();
+      await expect(translateText(ai, { text: 'Hola', source: 'auto', target: 'en' })).rejects.toThrow();
     }
   });
   test('auto-detected speech stays in its language before translation', async () => {

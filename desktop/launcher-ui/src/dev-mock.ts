@@ -81,8 +81,8 @@ export function installDevMock(): void {
     ],
     front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
     account_call: (args: Record<string, unknown>) => {
-      if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures-- > 0) throw new Error('Could not reach eavesy.com');
-      if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures-- > 0) throw new Error('Could not reach eavesy.com');
+      if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures > 0) { preferencesLoadFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
       return account(args);
     },
     dictionary_request: ({ method, body }: Record<string, unknown>) => {

@@ -572,7 +572,7 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
   useEffect(() => {
     const controller = new AbortController();
     const key = `${meetingId}:${target}`;
-    const known = cache.current.get(key) ?? {};
+    let known = { ...(cache.current.get(key) ?? {}) };
     setDone(known); setError(null); setLoading(false);
     if (!target) return;
     const missing = lines.filter(line => line.language !== target && known[line.id]?.source !== line.text);
@@ -599,7 +599,7 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
             const source = sources.get(id);
             if (source !== undefined) fresh[id] = { source, text };
           }
-          Object.assign(known, fresh);
+          known = fresh;
           cache.current.set(key, fresh); setDone(fresh);
           if (data.remaining === 0) return;
           if (entries.length === previousCount) throw new Error('Translation stopped early. Choose the language again to retry.');

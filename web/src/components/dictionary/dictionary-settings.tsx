@@ -22,7 +22,7 @@ export function DictionarySettings() {
   const mutate = async (method: 'PUT' | 'DELETE', body: Record<string, unknown>) => {
     setBusy(true); setError('');
     try { const result = await dictionaryRequest<{ learned?: number }>(method, body);
-      if (method === 'PUT' && result.learned === 0 && !entries.some((entry) => entry.from === from && entry.to === to)) throw new Error('The dictionary is full. Forget an entry before adding another.');
+      if (method === 'PUT' && result.learned === 0 && !entries.some((entry) => entry.from === from && entry.to === to)) throw new Error('No new correction was saved. Refresh the dictionary to check existing spellings, then try again.');
       await load(); setFrom(''); setTo(''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not update dictionary'); }
     finally { setBusy(false); }
