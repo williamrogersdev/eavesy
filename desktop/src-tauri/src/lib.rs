@@ -1,3 +1,4 @@
+mod translation;
 mod telemetry;
 mod app_menu;
 mod audio;
@@ -34,6 +35,7 @@ mod projects;
 mod recovery;
 mod screenshot_watcher;
 mod settings;
+mod settings_window;
 mod sounds;
 mod history;
 mod store;
@@ -120,6 +122,7 @@ pub fn run() {
             fs_writer::set_root_folder,
             fs_writer::reveal_in_finder,
             commands::copy_text,
+            translation::translation_request,
             commands::paste_to_frontmost,
             learning::dictionary_request,
             learning::correct_recording,
@@ -143,6 +146,7 @@ pub fn run() {
             commands::save_preview_transcript,
             commands::sync_status,
             commands::show_settings,
+            settings_window::close_settings_window,
             commands::pair_device,
             commands::show_launcher,
             commands::dismiss_hud,

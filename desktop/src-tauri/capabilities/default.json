@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for the Eavesy launcher window. Custom app commands (copy_text, paste_to_frontmost, hide_panel, list_recordings, get_settings, set_hotkey, audio::*, fs_writer::*) are auto-allowed; this grants the plugin + core permissions the renderer needs.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-show",
