@@ -6,7 +6,7 @@ import { parseProject, type ProjectFields, type ProjectSummary } from '@/lib/api
 import { accountCall, errMsg } from '@/lib/desktop/bridge';
 import { isRecord } from '@/lib/json';
 import { PROJECT_LIMITS } from '@/lib/projects';
-import { DICTATION_STYLES, dictationStyle, FOR_AGENTS_HINT, isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, FOR_AGENTS_HINT, isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { languageName, NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
 import { Button, Card, IconButton, Row, Select, Switch, TagInput } from './ui';
@@ -114,122 +114,139 @@ export function useAccountPrefs() {
 
 type AccountPrefsState = ReturnType<typeof useAccountPrefs>;
 
-/** How dictations are written, for every project that doesn't choose its own. */
-export function DictationCard({ account }: { account: AccountPrefsState }) {
-  const { prefs, update } = account;
-  const style = prefs?.style ?? 'natural';
+/** One spoken sentence and what the chosen style types for it. */
+export function StyleExample({ style, forAgents }: { style: DictationStyle; forAgents: boolean }) {
   return (
-    <Card title="Writing">
-      <Row label="Tone" hint={DICTATION_STYLES.find((s) => s.id === style)?.hint}>
-        <Select
-          label="Dictation tone"
-          value={style}
-          options={TONE_OPTIONS}
-          disabled={!prefs}
-          onChange={(next) => update({ style: next }, { dictationStyle: next })}
-        />
-      </Row>
-      <div className="ev-set-row">
-        <Switch
-          className="w-full"
-          checked={prefs?.forAgents ?? false}
-          disabled={!prefs}
-          onCheckedChange={(next) => update({ forAgents: next }, { dictationForAgents: next })}
-          label="Format for AI agents"
-          hint={FOR_AGENTS_HINT}
-        />
+    <figure className="ev-style-example" aria-label="Example">
+      <p className="ev-style-said"><span>You say</span>“{DICTATION_EXAMPLE.said}”</p>
+      <p className="ev-style-typed"><span>Eavesy types</span>{(forAgents ? DICTATION_EXAMPLE.forAgents : DICTATION_EXAMPLE.typed)[style]}</p>
+    </figure>
+  );
+}
+
+function ownStyle(project: ProjectSummary): string | null {
+  const parts = [
+    project.dictationStyle ? styleLabel(project.dictationStyle) : null,
+    project.dictationForAgents === true ? 'AI prompt' : project.dictationForAgents === false ? 'not as a prompt' : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
+/** Your default dictation style, and the projects that write their own way. */
+export function DictationCard({ account, projects, onOpenProject }: {
+  account: AccountPrefsState;
+  projects: ProjectSummary[] | null;
+  onOpenProject: (id: string) => void;
+}) {
+  const { prefs, update, error } = account;
+  const style = prefs?.style ?? 'natural';
+  const forAgents = prefs?.forAgents ?? false;
+  const custom = (projects ?? []).filter((project) => ownStyle(project));
+  return (
+    <>
+      <Card title="Your default style">
+        <Row label="Tone" hint={DICTATION_STYLES.find((s) => s.id === style)?.hint}>
+          <Select
+            label="Dictation tone"
+            value={style}
+            options={TONE_OPTIONS}
+            disabled={!prefs}
+            onChange={(next) => update({ style: next }, { dictationStyle: next })}
+          />
+        </Row>
+        <div className="ev-set-row">
+          <Switch
+            className="w-full"
+            checked={forAgents}
+            disabled={!prefs}
+            onCheckedChange={(next) => update({ forAgents: next }, { dictationForAgents: next })}
+            label="Write it as a prompt for AI agents"
+            hint={FOR_AGENTS_HINT}
+          />
+        </div>
+        <div className="ev-set-body"><StyleExample style={style} forAgents={forAgents} /></div>
+        <Status error={error} />
+      </Card>
+
+      <Card title="Projects">
+        <p className="ev-set-hint">
+          Every dictation uses your default, unless the window you’re in belongs to a project that sets its own style.
+        </p>
+        {projects === null ? null : custom.length ? (
+          <ul className="ev-plain-list">
+            {custom.map((project) => (
+              <li key={project.id}>
+                <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpenProject(project.id)}>
+                  <FolderOpen className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
+                  <span className="ev-set-label min-w-0 flex-1 truncate">{project.name}</span>
+                  <span className="ev-set-hint shrink-0">{ownStyle(project)}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="ev-set-hint">{projects.length ? 'None of your projects set their own style, so they all use this one.' : 'You have no projects yet, so this is used everywhere.'}</p>
+        )}
+      </Card>
+    </>
+  );
+}
+
+/** The languages you speak, saved as you change them. */
+export function LanguagesCard({ account }: { account: AccountPrefsState }) {
+  const { prefs, update, error, retry } = account;
+  const languages = prefs?.languages ?? [];
+  const set = (next: string[]) => update({ languages: next }, { spokenLanguages: next });
+  return (
+    <Card title="Languages you speak">
+      <div className="ev-set-body flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {languages.map((code) => (
+            <span key={code} className="ev-tag">
+              {languageName(code)}
+              <button type="button" aria-label={`Remove ${languageName(code)}`} onClick={() => set(languages.filter((c) => c !== code))}>
+                <X size={11} strokeWidth={2.25} aria-hidden />
+              </button>
+            </span>
+          ))}
+          <select
+            aria-label="Add a language"
+            className="ev-field-input ev-field-select"
+            disabled={!prefs}
+            value=""
+            onChange={(e) => { if (e.target.value) set([...languages, e.target.value]); }}
+          >
+            <option value="">{languages.length ? 'Add another…' : 'Add a language…'}</option>
+            {NOTES_LANGUAGES.filter((l) => !languages.includes(l.code)).map((l) => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
+          </select>
+        </div>
+        <p className="ev-set-hint">{languages.length ? 'Transcripts listen for these.' : 'None chosen, so Eavesy detects the language each time.'}</p>
+        {!prefs && error && <div role="alert" className="ev-settings-feedback"><p>{error}</p><Button variant="outline" size="sm" onClick={retry}>Retry</Button></div>}
+        {prefs && <Status error={error} />}
       </div>
-      <p className="ev-set-hint px-3 py-2.5">The default for every dictation. A project can choose its own, under Projects.</p>
     </Card>
   );
 }
 
-/** The languages you speak and your custom words: the same settings as eavesy.com. */
-export function TranscriptionCard() {
-  const [languages, setLanguages] = useState<string[] | null>(null);
-  const [words, setWords] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [baseline, setBaseline] = useState('');
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const me = await accountCall('GET', '/api/me');
-      if (!isRecord(me)) throw new Error('Unexpected account response');
-      const nextLanguages = strings(me.spokenLanguages);
-      const nextWords = strings(me.customVocabulary);
-      setLanguages(nextLanguages);
-      setWords(nextWords);
-      setBaseline(JSON.stringify([nextLanguages, nextWords]));
-    } catch {
-      setError('Transcription preferences could not be loaded from eavesy.com. Check your connection and try again. Settings on this Mac still work.');
-    } finally { setLoading(false); }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-  const dirty = languages !== null && JSON.stringify([languages, words]) !== baseline;
-  const save = async () => {
-    if (languages === null || saving) return;
-    setSaving(true); setError(null); setSaved(null);
-    try {
-      await accountCall('PATCH', '/api/me', { spokenLanguages: languages, customVocabulary: words });
-      setBaseline(JSON.stringify([languages, words]));
-      setSaved('Changes saved');
-    } catch {
-      setError('These changes could not be saved to eavesy.com. Your draft is still here. Check your connection, then save again.');
-    } finally { setSaving(false); }
-  };
-
+/** Words to spell your way everywhere: names, products, jargon. */
+export function WordsCard({ account }: { account: AccountPrefsState }) {
+  const { prefs, setWords } = account;
   return (
-    <Card title="Transcription">
-      <div className="ev-set-body flex flex-col gap-4">
-        <div className="ev-field">
-          <label htmlFor="settings-spoken-language">Languages you speak</label>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(languages ?? []).map((code) => (
-              <span key={code} className="ev-tag">
-                {languageName(code)}
-                <button type="button" disabled={saving} aria-label={`Remove ${languageName(code)}`} onClick={() => { setLanguages((languages ?? []).filter((c) => c !== code)); setSaved(null); }}>
-                  <X size={11} strokeWidth={2.25} aria-hidden />
-                </button>
-              </span>
-            ))}
-            <select
-              aria-label="Add a language"
-              id="settings-spoken-language"
-              className="ev-field-input ev-field-select"
-              disabled={languages === null || saving}
-              value=""
-              onChange={(e) => { if (e.target.value) { setLanguages([...(languages ?? []), e.target.value]); setSaved(null); } }}
-            >
-              <option value="">{languages?.length ? 'Add another…' : 'Add a language…'}</option>
-              {NOTES_LANGUAGES.filter((l) => !languages?.includes(l.code)).map((l) => (
-                <option key={l.code} value={l.code}>{l.label}</option>
-              ))}
-            </select>
-          </div>
-          <p className="ev-set-hint">Leave it empty to detect any language.</p>
-        </div>
-        <div className="ev-field">
-          <span className="ev-set-label">Custom words</span>
-          <TagInput
-            label="Custom words"
-            value={words}
-            max={MAX_VOCABULARY_TERMS}
-            disabled={languages === null || saving}
-            placeholder="Add a name, product, or phrase…"
-            onChange={(next) => { setWords(next); setSaved(null); }}
-          />
-          <p className="ev-set-hint">Press Enter after each word, or paste a list. Used in transcripts and dictation.</p>
-        </div>
-        {loading && <p role="status" className="ev-set-hint">Loading your preferences…</p>}
-        {error && <div role="alert" className="ev-settings-feedback"><p>{error}</p>{languages === null && <Button variant="outline" size="sm" loading={loading} onClick={() => void load()}>Retry</Button>}</div>}
-        {languages !== null && <div className="ev-settings-save">
-          <p role="status" className="ev-set-hint">{dirty ? 'Unsaved changes' : saved ?? 'Up to date'}</p>
-          <Button variant="primary" loading={saving} disabled={!dirty || saving} onClick={() => void save()}>Save changes</Button>
-        </div>}
+    <Card title="Words">
+      <div className="ev-set-body flex flex-col gap-2">
+        <p className="ev-set-hint">Names, products and jargon Eavesy should listen for and spell exactly like this, in every recording.</p>
+        <TagInput
+          label="Words"
+          value={prefs?.words ?? []}
+          max={MAX_VOCABULARY_TERMS}
+          disabled={!prefs}
+          placeholder="Type a word and press Enter, or paste a list"
+          onChange={setWords}
+        />
+        <p className="ev-set-hint">Click × to remove one. Words for one client or codebase can go on its project instead.</p>
       </div>
     </Card>
   );
@@ -241,20 +258,77 @@ function agentsChoice(value: boolean | null | undefined): AgentsChoice {
   return value === true ? 'on' : value === false ? 'off' : 'default';
 }
 
-function overrideSummary(project: ProjectSummary): string | null {
-  const parts = [
-    project.dictationStyle ? styleLabel(project.dictationStyle) : null,
-    project.dictationForAgents === true ? 'AI format' : project.dictationForAgents === false ? 'No AI format' : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : null;
+/** The projects list, loaded once and saved a moment after each change. */
+export function useProjects(enabled: boolean, onChanged?: () => void) {
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void accountCall<{ items?: unknown[] }>('GET', '/api/projects')
+      .then((body) => setProjects((body?.items ?? []).map(parseProject).filter((p): p is ProjectSummary => !!p)))
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your projects.')));
+  }, [enabled]);
+
+  const pendingFields = useRef(new Map<string, ProjectFields>());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const saveLater = useLaterSave<null>(async () => {
+    const batch = [...pendingFields.current];
+    pendingFields.current.clear();
+    await Promise.all(batch.map(([id, fields]) => accountCall('PATCH', `/api/projects/${id}`, fields)
+      .then(() => onChanged?.())
+      .catch((e: unknown) => {
+        pendingFields.current.set(id, { ...fields, ...pendingFields.current.get(id) });
+        if (mounted.current) setError(errMsg(e, 'Couldn’t save that project. It will try again with your next change.'));
+      })));
+  });
+  const change = (id: string, fields: ProjectFields) => {
+    setError(null);
+    setProjects((list) => list?.map((p) => (p.id === id ? { ...p, ...fields } : p)) ?? list);
+    pendingFields.current.set(id, { ...pendingFields.current.get(id), ...fields });
+    saveLater(null);
+  };
+
+  const create = (name: string) => {
+    setError(null);
+    return accountCall<{ project?: unknown }>('POST', '/api/projects', { name })
+      .then((body) => {
+        const project = parseProject(body?.project);
+        if (!project) return null;
+        setProjects((list) => [...(list ?? []), project]);
+        onChanged?.();
+        return project;
+      })
+      .catch((e: unknown) => { setError(errMsg(e, 'Couldn’t create the project.')); return null; });
+  };
+
+  const remove = (id: string) => {
+    pendingFields.current.delete(id);
+    setProjects((list) => list?.filter((p) => p.id !== id) ?? list);
+    void accountCall('DELETE', `/api/projects/${id}`)
+      .then(() => onChanged?.())
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t delete the project.')));
+  };
+
+  return { projects, error, change, create, remove };
 }
 
-function ProjectPage({ project, account, onChange, onDelete, onBack }: {
+export type ProjectsState = ReturnType<typeof useProjects>;
+
+function autoPickHint(project: ProjectSummary): string {
+  return project.match.length
+    ? 'Eavesy uses this project when the app or window title you’re in contains any of these.'
+    : `None added, so Eavesy looks for “${project.name}” in the app or window title you’re in.`;
+}
+
+function ProjectPage({ project, account, onChange, onDelete, onBack, onOpenDictation }: {
   project: ProjectSummary;
   account: AccountPrefs | null;
   onChange: (fields: ProjectFields) => void;
   onDelete: () => void;
   onBack: () => void;
+  onOpenDictation: () => void;
 }) {
   const [name, setName] = useState(project.name);
   const [about, setAbout] = useState(project.about ?? '');
@@ -263,15 +337,18 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
   useEffect(() => setAbout(project.about ?? ''), [project.about]);
   const accountTone = account ? styleLabel(account.style) : '…';
   const accountAgents = account ? (account.forAgents ? 'on' : 'off') : '…';
+  const effective = effectiveDictation(
+    account ? { dictationStyle: account.style, dictationForAgents: account.forAgents } : null,
+    project,
+  );
   return (
     <div className="flex flex-col">
-      <div className="mb-3 flex items-center gap-2">
-        <IconButton label="All projects" title="All projects" icon={ArrowLeft} onClick={onBack} />
-        <h3 className="ev-set-label min-w-0 flex-1 truncate font-semibold">{project.name}</h3>
-        <span className="ev-set-hint shrink-0">{project.recordingCount === 1 ? '1 recording' : `${project.recordingCount} recordings`}</span>
+      <div className="ev-proj-crumbs">
+        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={onBack}>All projects</Button>
+        <span className="ev-set-hint ml-auto shrink-0">{project.recordingCount === 1 ? '1 recording' : `${project.recordingCount} recordings`}</span>
       </div>
 
-      <Card title="Details">
+      <Card title="About">
         <div className="ev-set-body flex flex-col gap-3">
           <div className="ev-field">
             <label htmlFor={`pn-${project.id}`}>Name</label>
@@ -295,40 +372,27 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
               onChange={(e) => setAbout(e.target.value)}
               onBlur={() => { if (about !== (project.about ?? '')) onChange({ about: about.trim() || null }); }}
             />
-            <p className="ev-set-hint">Gives transcripts and dictations context, so terms come out right.</p>
+            <p className="ev-set-hint">Gives transcripts and dictations context, so its terms come out right.</p>
           </div>
         </div>
       </Card>
 
-      <Card title="Dictation" className="mt-[18px]">
-        <Row
-          label="Tone"
-          hint={project.dictationStyle ? DICTATION_STYLES.find((s) => s.id === project.dictationStyle)?.hint : 'Same as your account.'}
-        >
-          <Select
-            label="Project dictation tone"
-            value={project.dictationStyle ?? 'default'}
-            options={[{ value: 'default', label: `Account (${accountTone})` }, ...TONE_OPTIONS]}
-            onChange={(next) => onChange({ dictationStyle: isDictationStyle(next) ? next : null })}
+      <Card title="Picked automatically when you’re in…">
+        <div className="ev-set-body flex flex-col gap-2">
+          <TagInput
+            label={`Apps or window titles for ${project.name}`}
+            value={project.match}
+            max={PROJECT_LIMITS.match}
+            placeholder={`“${project.name}”, or add words like a repo or client name`}
+            onChange={(match) => onChange({ match })}
           />
-        </Row>
-        <Row label="Format for AI agents" hint="The ask first, then context and constraints.">
-          <Select
-            label="Format for AI agents"
-            value={agentsChoice(project.dictationForAgents)}
-            options={[
-              { value: 'default', label: `Account (${accountAgents})` },
-              { value: 'on', label: 'On' },
-              { value: 'off', label: 'Off' },
-            ]}
-            onChange={(next) => onChange({ dictationForAgents: next === 'default' ? null : next === 'on' })}
-          />
-        </Row>
-        <p className="ev-set-hint px-3 py-2.5">Applies when you dictate into a window that picks this project.</p>
+          <p className="ev-set-hint">{autoPickHint(project)} For example, “acme” matches a window called “Acme homepage – Figma”.</p>
+          <p className="ev-set-hint">To choose a project yourself, use the project button in the Eavesy panel.</p>
+        </div>
       </Card>
 
-      <Card title="Words" className="mt-[18px]">
-        <div className="ev-set-body flex flex-col gap-1.5">
+      <Card title="Words">
+        <div className="ev-set-body flex flex-col gap-2">
           <TagInput
             label={`Words for ${project.name}`}
             value={project.vocabulary}
@@ -336,20 +400,37 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
             placeholder="Names, libraries, people. Press Enter after each."
             onChange={(vocabulary) => onChange({ vocabulary })}
           />
-          <p className="ev-set-hint">Spelled this way in this project’s recordings and dictations.</p>
+          <p className="ev-set-hint">Spelled this way in this project’s recordings and dictations, on top of your own words.</p>
         </div>
       </Card>
 
-      <Card title="Auto-pick" className="mt-[18px]">
-        <div className="ev-set-body flex flex-col gap-1.5">
-          <TagInput
-            label={`Window titles for ${project.name}`}
-            value={project.match}
-            max={PROJECT_LIMITS.match}
-            placeholder={`${project.name} (the default)`}
-            onChange={(match) => onChange({ match })}
+      <Card title="Dictation style">
+        <Row label="Tone">
+          <Select
+            label="Project dictation tone"
+            value={project.dictationStyle ?? 'default'}
+            options={[{ value: 'default', label: `Your default (${accountTone})` }, ...TONE_OPTIONS]}
+            onChange={(next) => onChange({ dictationStyle: isDictationStyle(next) ? next : null })}
           />
-          <p className="ev-set-hint">Eavesy picks this project when the window you’re in has one of these in its title or app name.</p>
+        </Row>
+        <Row label="Write it as a prompt for AI agents">
+          <Select
+            label="Write it as a prompt for AI agents"
+            value={agentsChoice(project.dictationForAgents)}
+            options={[
+              { value: 'default', label: `Your default (${accountAgents})` },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(next) => onChange({ dictationForAgents: next === 'default' ? null : next === 'on' })}
+          />
+        </Row>
+        <div className="ev-set-body flex flex-col gap-2">
+          <StyleExample style={effective.style} forAgents={effective.forAgents} />
+          <p className="ev-set-hint">
+            Used instead of your default while this project is picked.{' '}
+            <button type="button" className="ev-link" onClick={onOpenDictation}>Change your default</button>
+          </p>
         </div>
       </Card>
 
@@ -368,120 +449,92 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
   );
 }
 
-/** Projects, made and edited right here: a list, and a page for each. */
-export function ProjectsSettings({ account, onChanged }: { account: AccountPrefs | null; onChanged?: () => void }) {
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+/** Projects, made and edited right here: a list, and a page for each. `open` is the project whose page shows. */
+export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation }: {
+  account: AccountPrefs | null;
+  state: ProjectsState;
+  open: string | null;
+  onOpen: (id: string | null) => void;
+  onOpenDictation: () => void;
+}) {
+  const { projects, error, change, create, remove } = state;
   const [draft, setDraft] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void accountCall<{ items?: unknown[] }>('GET', '/api/projects')
-      .then((body) => setProjects((body?.items ?? []).map(parseProject).filter((p): p is ProjectSummary => !!p)))
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your projects.')));
-  }, []);
-
-  const pendingFields = useRef(new Map<string, ProjectFields>());
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const saveLater = useLaterSave<null>(async () => {
-    const batch = [...pendingFields.current];
-    pendingFields.current.clear();
-    await Promise.all(batch.map(([id, fields]) => accountCall('PATCH', `/api/projects/${id}`, fields)
-      .then(() => onChanged?.())
-      .catch((e: unknown) => {
-        pendingFields.current.set(id, { ...fields, ...pendingFields.current.get(id) });
-        if (mounted.current) setError(errMsg(e, 'Couldn’t save that project. It will try again with your next change.'));
-      })));
-  });
-  const change = (id: string, fields: ProjectFields) => {
-    setError(null);
-    setProjects((list) => list?.map((p) => (p.id === id ? { ...p, ...fields } : p)) ?? list);
-    pendingFields.current.set(id, { ...pendingFields.current.get(id), ...fields });
-    saveLater(null);
-  };
-
-  const create = () => {
+  const submit = () => {
     const name = draft?.trim();
     if (!name) return;
     setDraft(null);
-    setError(null);
-    void accountCall<{ project?: unknown }>('POST', '/api/projects', { name })
-      .then((body) => {
-        const project = parseProject(body?.project);
-        if (!project) return;
-        setProjects((list) => [...(list ?? []), project]);
-        setOpen(project.id);
-        onChanged?.();
-      })
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t create the project.')));
-  };
-
-  const remove = (id: string) => {
-    pendingFields.current.delete(id);
-    setOpen(null);
-    setProjects((list) => list?.filter((p) => p.id !== id) ?? list);
-    void accountCall('DELETE', `/api/projects/${id}`)
-      .then(() => onChanged?.())
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t delete the project.')));
+    void create(name).then((project) => { if (project) onOpen(project.id); });
   };
 
   const current = projects?.find((p) => p.id === open);
   if (current) {
     return (
       <>
-        <ProjectPage project={current} account={account} onChange={(fields) => change(current.id, fields)} onDelete={() => remove(current.id)} onBack={() => setOpen(null)} />
+        <ProjectPage
+          project={current}
+          account={account}
+          onChange={(fields) => change(current.id, fields)}
+          onDelete={() => { onOpen(null); remove(current.id); }}
+          onBack={() => onOpen(null)}
+          onOpenDictation={onOpenDictation}
+        />
         <Status error={error} />
       </>
     );
   }
 
   return (
-    <Card title="Projects">
-      <p className="ev-set-hint px-3 pt-2.5">
-        One per codebase or client. Eavesy files recordings under the project of the window you’re in, spells its words right, and can give its dictations their own tone.
-      </p>
-      {projects?.map((project) => {
-        const summary = overrideSummary(project);
-        return (
+    <>
+      <Card title="How projects work">
+        <ol className="ev-howto">
+          <li><span><b>One per codebase, client or topic.</b> Give it a name and the words it uses.</span></li>
+          <li><span><b>Picked from the window you’re in.</b> When you record or dictate, Eavesy looks at the app and window title and picks the matching project.</span></li>
+          <li><span><b>Used for that recording.</b> It’s filed under the project, its words are spelled right, and dictation can use the project’s own style.</span></li>
+        </ol>
+      </Card>
+      <Card title="Your projects">
+        {projects?.length === 0 && <p className="ev-set-hint">No projects yet.</p>}
+        {projects?.map((project) => (
           <div key={project.id} className="ev-projrow">
-            <button type="button" className="ev-set-row ev-projrow-head" onClick={() => setOpen(project.id)}>
+            <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpen(project.id)}>
               <FolderOpen className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="ev-set-label block truncate">{project.name}</span>
                 <span className="ev-set-hint block truncate">
                   {[
-                    project.vocabulary.length ? `${project.vocabulary.length} words` : 'No words yet',
-                    summary ?? 'Account dictation',
-                  ].join(' · ')}
+                    `Picked for “${(project.match.length ? project.match : [project.name]).join('”, “')}”`,
+                    project.vocabulary.length === 1 ? '1 word' : project.vocabulary.length ? `${project.vocabulary.length} words` : null,
+                    ownStyle(project) ?? 'default dictation style',
+                  ].filter(Boolean).join(' · ')}
                 </span>
               </span>
               <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
             </button>
           </div>
-        );
-      })}
-      <div className="ev-set-row">
-        {draft === null ? (
-          <Button variant="outline" size="sm" icon={Plus} disabled={projects === null} onClick={() => setDraft('')}>New project</Button>
-        ) : (
-          <>
-            <input
-              autoFocus
-              aria-label="Project name"
-              className="ev-field-input flex-1"
-              placeholder="Project name, like the repo"
-              value={draft}
-              maxLength={PROJECT_LIMITS.name}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') { e.stopPropagation(); setDraft(null); } }}
-            />
-            <Button variant="primary" size="sm" disabled={!draft.trim()} onClick={create}>Create</Button>
-            <IconButton label="Cancel" icon={X} onClick={() => setDraft(null)} />
-          </>
-        )}
-      </div>
-      {error && <div className="px-3 pb-2"><Status error={error} /></div>}
-    </Card>
+        ))}
+        <div className="ev-set-row">
+          {draft === null ? (
+            <Button variant="outline" size="sm" icon={Plus} disabled={projects === null} onClick={() => setDraft('')}>New project</Button>
+          ) : (
+            <>
+              <input
+                autoFocus
+                aria-label="Project name"
+                className="ev-field-input flex-1"
+                placeholder="Project name, like the repo"
+                value={draft}
+                maxLength={PROJECT_LIMITS.name}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); setDraft(null); } }}
+              />
+              <Button variant="primary" size="sm" disabled={!draft.trim()} onClick={submit}>Create</Button>
+              <IconButton label="Cancel" icon={X} onClick={() => setDraft(null)} />
+            </>
+          )}
+        </div>
+        <Status error={error} />
+      </Card>
+    </>
   );
 }

@@ -51,7 +51,7 @@ export function installDevMock(): void {
   let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
-    account_info: { name: 'Robin Avery', email: 'robin@example.com' },
+    account_info: params.has('signedout') ? null : { name: 'Robin Avery', email: 'robin@example.com' },
     get_settings: settings,
     list_recordings: ({ offset = 0, limit = 50, query = '', filter = 'all' }: Record<string, unknown>) => {
       const category = (row: (typeof recordings)[number]) => row.source === 'both' ? 'meetings' : row.source === 'screenshot' ? 'screens' : row.source === 'note' ? 'notes' : 'voice';
@@ -68,7 +68,7 @@ export function installDevMock(): void {
     },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
-    check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },
+    check_permissions: { mic: true, micAsked: true, screen: !params.has('perms-missing'), accessibility: true, speech: true, inputMonitoring: true, notifications: !params.has('perms-missing') },
     get_hud_state: live
       ? { phase: 'recording', sessionId: 's-live', mode: 'audio', startedAtMs: now - 23_000 }
       : { phase: 'idle', sessionId: null },
@@ -86,10 +86,18 @@ export function installDevMock(): void {
       return account(args);
     },
     dictionary_request: ({ method, body }: Record<string, unknown>) => {
-      const fields = (body ?? {}) as Record<string, string>;
-      if (method === 'PUT') dictionary = [...dictionary, { id: `word-${Date.now()}`, from: fields.from, to: fields.to }];
+      const fields = (body ?? {}) as { from?: string; to?: string; id?: string; entries?: { from: string; to: string }[] };
+      const upsert = ({ from, to }: { from: string; to: string }) => {
+        const kept = dictionary.filter((entry) => entry.from.toLowerCase() !== from.toLowerCase());
+        dictionary = [{ id: `word-${Date.now()}-${kept.length}`, from, to }, ...kept];
+      };
+      if (method === 'PUT' && fields.entries) {
+        fields.entries.forEach(upsert);
+        return { learned: fields.entries.length, skipped: 0, status: 'saved' };
+      }
+      if (method === 'PUT' && fields.from && fields.to) upsert({ from: fields.from, to: fields.to });
       if (method === 'DELETE') dictionary = dictionary.filter((entry) => entry.id !== fields.id);
-      return method === 'GET' ? { entries: dictionary } : { learned: 1 };
+      return method === 'GET' ? { entries: dictionary } : { learned: 1, status: 'saved' };
     },
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],

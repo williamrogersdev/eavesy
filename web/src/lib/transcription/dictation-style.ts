@@ -6,8 +6,26 @@ export const DICTATION_STYLES = [
   { id: 'concise', label: 'Concise', hint: 'Just the point, in as few words as it takes. No swearing.' },
 ] as const;
 
+/** Matches AGENT_BRIEF in lib/ai/agent-transcript.ts: keep the two in step. */
 export const FOR_AGENTS_HINT =
-  'Structured as a prompt: the ask first, then context, requirements and constraints. Works with any tone. No swearing.';
+  'Rewrites what you say as a prompt for Claude, ChatGPT or a coding agent: what you want first, then context, requirements and constraints. Headings only when it’s long, and nothing you didn’t say. Works with any tone. No swearing.';
+
+/** One sentence, said out loud, and what each choice types for it. Shown beside the style pickers. */
+export const DICTATION_EXAMPLE = {
+  said: 'um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. oh and don’t touch the API',
+  typed: {
+    natural: 'Can you rename the `summarize` file to `summary` and fix the imports? The build keeps failing. Don’t touch the API.',
+    professional: 'Could you rename the `summarize` file to `summary` and update the imports? The build is currently failing. Please leave the API unchanged.',
+    friendly: 'Could you rename the `summarize` file to `summary` and fix up the imports? The build keeps failing, so that would really help. Just leave the API as it is, thanks.',
+    concise: 'Rename `summarize` to `summary` and fix the imports; the build is failing. Don’t touch the API.',
+  },
+  forAgents: {
+    natural: 'Rename the `summarize` file to `summary` and fix the imports.\n\nThe build keeps failing.\n\nDon’t touch the API.',
+    professional: 'Rename the `summarize` file to `summary` and update the imports.\n\nContext: the build is currently failing.\n\nConstraint: leave the API unchanged.',
+    friendly: 'Please rename the `summarize` file to `summary` and fix up the imports.\n\nThe build keeps failing, so this would really help.\n\nLeave the API as it is.',
+    concise: 'Rename `summarize` to `summary` and fix the imports.\n\nContext: build failing.\nConstraint: don’t touch the API.',
+  },
+} as const satisfies { said: string; typed: Record<DictationStyle, string>; forAgents: Record<DictationStyle, string> };
 
 export type DictationStyle = (typeof DICTATION_STYLES)[number]['id'];
 

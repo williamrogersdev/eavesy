@@ -1,54 +1,144 @@
-/* Settings have their own native window; capture surfaces keep their existing geometry. */
-.ev-preferences-window { height: 100%; background: var(--ev-paper); color: var(--ev-ink); position: relative; }
-.ev-preferences { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; }
-.ev-settings-layout { display: grid; grid-template-columns: 184px minmax(0, 1fr); flex: 1; min-height: 0; }
-.ev-settings-nav { padding: 26px 12px; background: var(--ev-well); border-right: 1px solid var(--ev-line); overflow-y: auto; }
-.ev-settings-nav-title { padding: 0 12px 22px; color: var(--ev-ink); font: var(--ev-t-head); }
-.ev-settings-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin: 3px 0; border: 0; border-radius: var(--ev-r-ctl); color: var(--ev-ink-2); background: transparent; font: var(--ev-t-ui); text-align: left; transition: background var(--ev-d-state), color var(--ev-d-state); }
-.ev-settings-nav button:hover { background: var(--ev-hover); }
-.ev-settings-nav button[aria-current] { background: var(--ev-coat-soft); color: var(--ev-ink); }
+/* Settings have their own native window; capture surfaces keep their existing geometry.
+   It reads as the case file: a manila folder down the side, cream index cards, and
+   leather-brown actions instead of charcoal. Everything is mixed from --ev-* tokens. */
+.ev-preferences-window {
+  height: 100%;
+  position: relative;
+  color: var(--ev-ink);
+  /* The window's own token values, for the warmer mixes below. */
+  --evs-paper: var(--ev-paper);
+  --evs-well: var(--ev-well);
+  --evs-raised: var(--ev-raised);
+  --evs-line: var(--ev-line);
+  --evs-line-strong: var(--ev-line-strong);
+  --evs-ink: var(--ev-ink);
+  --evs-ink-2: var(--ev-ink-2);
+  --evs-ink-3: var(--ev-ink-3);
+}
+.ev-preferences {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  --ev-coat: var(--ev-manila-ink);
+  --ev-coat-hover: color-mix(in srgb, var(--ev-manila-ink) 82%, var(--evs-ink));
+  --ev-coat-soft: var(--ev-manila-soft);
+  --ev-on-coat: var(--evs-paper);
+  --ev-hover: color-mix(in srgb, var(--ev-manila-shade) 12%, transparent);
+  --ev-focus: 0 0 0 2px var(--evs-paper), 0 0 0 4px color-mix(in srgb, var(--ev-manila-shade) 75%, transparent);
+  --evs-folder: color-mix(in srgb, var(--ev-manila-soft) 62%, var(--evs-well));
+  --evs-card-shadow: 0 1px 2px color-mix(in srgb, var(--ev-manila-ink) 8%, transparent);
+  background: var(--ev-paper);
+}
+/* After hours: walnut and lamplight rather than black and white. */
+@media (prefers-color-scheme: dark) {
+  .ev-preferences {
+    --ev-paper: color-mix(in srgb, var(--evs-paper) 91%, var(--ev-manila));
+    --ev-well: color-mix(in srgb, var(--evs-well) 93%, var(--ev-manila));
+    --ev-raised: color-mix(in srgb, var(--evs-raised) 89%, var(--ev-manila));
+    --ev-line: color-mix(in srgb, var(--evs-line) 82%, var(--ev-manila));
+    --ev-line-strong: color-mix(in srgb, var(--evs-line-strong) 80%, var(--ev-manila));
+    --ev-ink: color-mix(in srgb, var(--evs-ink) 90%, var(--ev-manila));
+    --ev-ink-2: color-mix(in srgb, var(--evs-ink-2) 84%, var(--ev-manila));
+    --ev-ink-3: color-mix(in srgb, var(--evs-ink-3) 84%, var(--ev-manila));
+    --ev-coat: var(--ev-manila);
+    --ev-coat-hover: var(--ev-manila-ink);
+    --ev-on-coat: var(--evs-paper);
+    --ev-hover: color-mix(in srgb, var(--ev-manila) 9%, transparent);
+    --evs-folder: color-mix(in srgb, var(--evs-well) 88%, var(--ev-manila));
+    --evs-card-shadow: 0 1px 0 color-mix(in srgb, var(--ev-manila) 6%, transparent) inset;
+  }
+}
+
+.ev-settings-layout { display: grid; grid-template-columns: 196px minmax(0, 1fr); flex: 1; min-height: 0; }
+
+/* The folder: manila down the side, the open section a paper tab pulled forward. */
+.ev-settings-nav { display: flex; flex-direction: column; padding: 22px 12px 16px; background: var(--evs-folder); border-right: 1px solid var(--ev-line); overflow-y: auto; }
+.ev-settings-nav-title { display: flex; align-items: center; gap: 8px; padding: 0 10px 20px; color: var(--ev-ink); font: var(--ev-t-head); }
+.ev-settings-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin: 2px 0; border: 0; border-radius: var(--ev-r-ctl); color: var(--ev-ink-2); background: transparent; font: var(--ev-t-ui); text-align: left; position: relative; transition: background var(--ev-d-state), color var(--ev-d-state); }
+.ev-settings-nav button svg { color: var(--ev-ink-3); transition: color var(--ev-d-state); }
+.ev-settings-nav button:hover { background: var(--ev-hover); color: var(--ev-ink); }
+.ev-settings-nav button[aria-current] { background: var(--ev-raised); color: var(--ev-ink); box-shadow: 0 0 0 1px var(--ev-line), var(--evs-card-shadow); }
+.ev-settings-nav button[aria-current] svg { color: var(--ev-manila-shade); }
+.ev-settings-nav button[aria-current]::before { content: ''; position: absolute; left: -12px; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--ev-manila-shade); }
 .ev-settings-nav button:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-settings-nav-foot { margin: auto 0 0; padding: 16px 10px 0; color: var(--ev-ink-3); font: var(--ev-t-small); }
+
 .ev-settings-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ev-paper); }
-.ev-settings-heading { flex: none; padding: 28px 28px 20px; border-bottom: 1px solid var(--ev-line); }
-.ev-settings-heading h1 { margin: 0; font: var(--ev-t-title); }
-.ev-settings-heading p { margin: 6px 0 0; font: var(--ev-t-body); color: var(--ev-ink-2); }
-.ev-settings-pane .ev-settings { padding: 8px 28px 32px; }
-.ev-settings-pane .ev-card-wrap { margin: 0; padding: 18px 0; }
-.ev-settings-pane .ev-card-wrap + .ev-card-wrap { margin-top: 0; border-top: 1px solid var(--ev-line); }
-.ev-settings-pane .ev-card-title { margin: 0 0 12px; color: var(--ev-ink); font: var(--ev-t-ui); }
-.ev-settings-pane #settings-transcription > .ev-card-wrap > .ev-card-title,
-.ev-settings-pane #settings-dictionary > .ev-card-wrap > .ev-card-title,
-.ev-settings-pane #settings-projects > .ev-card-wrap > .ev-card-title,
-.ev-settings-pane #settings-shortcuts > .ev-card-wrap > .ev-card-title { display: none; }
+.ev-settings-heading { flex: none; display: flex; align-items: flex-start; gap: 16px; padding: 24px 28px 18px; border-bottom: 1px solid var(--ev-line); }
+.ev-settings-heading h1 { margin: 0; font: var(--ev-t-title); color: var(--ev-ink); }
+.ev-settings-heading p { margin: 4px 0 0; font: var(--ev-t-body); color: var(--ev-ink-2); }
+.ev-settings-pane .ev-settings { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 28px 32px; }
 .ev-settings-pane .ev-settings > div { max-width: 680px; }
-.ev-settings-pane .ev-card { background: transparent; box-shadow: none; border-radius: 0; }
-.ev-settings-pane .ev-set-body { padding: 0; }
+
+/* Index cards: one level, cream on paper, never nested. */
+.ev-settings-pane .ev-card-wrap { margin: 0; }
+.ev-settings-pane .ev-card-wrap + .ev-card-wrap,
+.ev-settings-pane .ev-perm-summary + .ev-card-wrap { margin-top: 18px; }
+.ev-settings-pane .ev-card-title { margin: 0 0 7px 2px; color: var(--ev-ink-2); font: var(--ev-t-group); }
+.ev-settings-pane #settings-shortcuts > .ev-card-wrap > .ev-card-title { display: none; }
+.ev-settings-pane .ev-card { padding: 2px 16px; border-radius: var(--ev-r-pop); background: var(--ev-raised); box-shadow: 0 0 0 1px var(--ev-line), var(--evs-card-shadow); }
+.ev-settings-pane .ev-card > * + * { border-top: 1px solid var(--ev-line); }
+.ev-settings-pane .ev-card > p:only-child { padding: 12px 0; }
+.ev-settings-pane .ev-card > .ev-set-hint:first-child { padding: 12px 0 10px; }
+.ev-settings-pane .ev-set-body { padding: 12px 0; }
 .ev-settings-pane .ev-set-row { padding: 12px 0; }
-.ev-settings-pane .ev-field-input { min-height: 36px; }
-.ev-settings-pane .ev-field-select { min-width: 200px; }
-.ev-settings-pane .ev-tags { min-height: 78px; align-content: flex-start; align-items: flex-start; padding: 10px; }
+.ev-settings-pane .ev-perm { padding: 12px 0; }
+.ev-settings-pane .ev-field-input { min-height: 34px; background: var(--ev-paper); }
+.ev-settings-pane textarea.ev-field-input { min-height: 120px; }
+.ev-settings-pane .ev-field-select { width: auto; min-width: 200px; }
+.ev-settings-pane .ev-select > select { background: var(--ev-paper); }
+.ev-settings-pane .ev-tags { min-height: 78px; align-content: flex-start; align-items: flex-start; padding: 10px; background: var(--ev-paper); }
 .ev-settings-pane .ev-tags input { min-height: 26px; }
+.ev-settings-pane .ev-tag { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
 .ev-settings-pane .ev-set-hint { line-height: 1.5; }
+.ev-settings-pane .ev-projrow-head { margin: 0 -8px; width: calc(100% + 16px); padding: 11px 8px; border-radius: var(--ev-r-ctl); }
+.ev-settings-pane .ev-projrow-head:hover { background: var(--ev-hover); }
+.ev-settings-pane .ev-projrow-head:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-settings-pane .ev-card > .ev-projrow + .ev-projrow { border-top: 1px solid var(--ev-line); }
+
 .ev-settings-feedback { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); color: var(--ev-warn-ink); font: var(--ev-t-body); }
 .ev-settings-feedback p { flex: 1; min-width: 0; margin: 0; }
 .ev-settings-feedback .ev-btn { flex: none; }
 .ev-settings-save { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 8px; }
-.ev-dictionary-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-.ev-dictionary-form label { display: flex; flex-direction: column; gap: 6px; color: var(--ev-ink-2); font: var(--ev-t-small); }
-.ev-dictionary-form > button { justify-self: start; grid-column: 1 / -1; }
-.ev-dictionary-list { margin-top: 20px; }
-.ev-dictionary-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--ev-line); font: var(--ev-t-body); }
-.ev-dictionary-list li span { min-width: 0; overflow-wrap: anywhere; }
-.ev-preferences-notice { position: absolute; bottom: 16px; left: 208px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
+.ev-signin-note { display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: var(--ev-r-pop); background: var(--ev-raised); box-shadow: 0 0 0 1px var(--ev-line); }
+.ev-signin-note > p { flex: 1; min-width: 0; margin: 0; }
+
+/* Permissions: one line that says where things stand, above every row. */
+.ev-perm-summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--ev-r-pop); font: var(--ev-t-ui); }
+.ev-perm-summary > p { margin: 0; min-width: 0; }
+.ev-perm-summary[data-state='ok'] { background: var(--ev-leaf-soft); color: var(--ev-leaf); }
+.ev-perm-summary[data-state='partial'] { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
+.ev-perm-summary[data-state='warn'] { background: var(--ev-warn-soft); color: var(--ev-warn-ink); }
+.ev-perm-summary[data-state='checking'] { background: var(--ev-well); color: var(--ev-ink-2); }
+.ev-settings-pane .ev-perm[data-need='not-needed'] { opacity: 0.7; }
+
+/* What a dictation style does, shown with one spoken sentence. */
+.ev-style-example { margin: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--ev-r-ctl); background: var(--ev-paper); box-shadow: inset 0 0 0 1px var(--ev-line); }
+.ev-style-example p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.ev-style-example span { display: block; margin-bottom: 2px; color: var(--ev-ink-3); font: var(--ev-t-small); }
+.ev-style-said { color: var(--ev-ink-2); font: italic 400 12.5px/18px var(--ev-font-text); }
+.ev-style-typed { color: var(--ev-ink); font: var(--ev-t-body); }
+.ev-style-typed span { font-style: normal; }
+
+.ev-plain-list { margin: 0 0 4px; padding: 0; list-style: none; }
+.ev-howto { margin: 0; padding: 12px 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 10px; }
+.ev-howto li { counter-increment: step; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; color: var(--ev-ink-2); font: 400 12.5px/18px var(--ev-font-text); }
+.ev-howto li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ev-manila-soft); color: var(--ev-manila-ink); font: 700 11.5px/1 var(--ev-font-round); }
+.ev-howto b { color: var(--ev-ink); font-weight: 600; }
+.ev-proj-crumbs { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px -10px; }
+
+.ev-preferences-notice { position: absolute; bottom: 16px; left: 220px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
 @media (max-width: 600px) {
   .ev-settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .ev-settings-nav { display: flex; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--ev-line); overflow-x: auto; }
-  .ev-settings-nav-title { display: none; }
+  .ev-settings-nav { flex-direction: row; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--ev-line); overflow-x: auto; }
+  .ev-settings-nav-title, .ev-settings-nav-foot { display: none; }
   .ev-settings-nav button { flex: none; width: auto; padding: 8px 10px; }
   .ev-settings-nav button svg { display: none; }
+  .ev-settings-nav button[aria-current]::before { display: none; }
   .ev-settings-heading { padding: 18px 16px; }
-  .ev-settings-pane .ev-settings { padding: 4px 16px 24px; }
-  .ev-dictionary-form { grid-template-columns: minmax(0, 1fr); }
+  .ev-settings-pane .ev-settings { padding: 16px 16px 24px; }
   .ev-preferences-notice { left: 16px; right: 16px; }
 }
-@media (prefers-reduced-motion: reduce) { .ev-settings-nav button { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ev-settings-nav button, .ev-settings-nav button svg { transition: none; } }

@@ -414,16 +414,37 @@ row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
 **Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
-480), independent of the capture panel and HUD. A quiet sidebar switches
-between Capture, Dictation, Transcription, Dictionary, Shortcuts, Projects, Permissions
-and Account. Each section has one scroll area, plain groups and subtle row
-separators; avoid nested raised cards. Preserve drafts when switching sections.
-Dictation retains account tone and AI formatting defaults; projects retain their
-own pages with tone and formatting overrides. Transcription preferences have an explicit Save changes action; failed saves
-keep the draft and failed loads have Retry. Native capture preferences save
-immediately. Show errors beside the affected controls. Use the existing
-light/dark tokens and reduced-motion behavior. The capture panel and pill
-retain their geometry when Settings opens or closes.
+480), independent of the capture panel and HUD. It is the case file: a manila
+folder sidebar (the open section is a raised paper tab with a manila notch),
+cream index cards on paper (one level, never nested), and leather-brown
+actions and switches (`--ev-manila-ink`) instead of charcoal. After hours it
+mixes the dark tokens with manila into walnut and lamplight, with manila
+actions, so it never reads as black and white. All of it lives in
+`preferences.css` as mixes of `--ev-*` tokens; coral stays for recording only.
+
+The sidebar switches between Capture, Dictation, Transcription, Dictionary,
+Shortcuts, Projects, Permissions and Account. Every change saves as it is made
+(the sidebar says so), so the header has a primary **Done** (`esc`) that
+closes the window; there is no Save button.
+- **Dictation:** your default tone and "Write it as a prompt for AI agents",
+  with a worked example (one sentence said aloud, and what is typed). Below,
+  the projects that set their own style, each linking to its page.
+- **Transcription:** the languages you speak.
+- **Dictionary:** Words (vocabulary chips: type, paste a list, × to remove) and
+  Replacements ("heard as → type instead": add one, **Add many** to paste a
+  list, click a row to edit, × to remove with Undo). Fixes made to a
+  transcript are added to Replacements.
+- **Projects:** a three-step "how projects work", then the list. A project page
+  has About, "Picked automatically when you're in…" (the app or window title
+  words, defaulting to its name), Words, and Dictation style, whose options read
+  "Your default (…)" and show the same example.
+- **Permissions:** a one-line summary, then every macOS permission with its
+  state and Allow/Open Settings, then Connected (the Eavesy account), then Run
+  setup again. Nothing is hidden behind "everything is on".
+
+Preserve drafts when switching sections. Show errors beside the affected
+controls. Use reduced-motion behavior. The capture panel and pill retain their
+geometry when Settings opens or closes.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
