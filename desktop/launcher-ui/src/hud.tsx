@@ -61,6 +61,17 @@ type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
 
 const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 
+/** How long Stop waits for a live correction to reach the app before stopping anyway. */
+const LIVE_EDIT_WAIT_MS = 1500;
+
+/** Settles when `task` does, or after `ms`, whichever comes first. */
+function within(task: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, ms);
+    void task.catch(() => {}).finally(() => { window.clearTimeout(timer); resolve(); });
+  });
+}
+
 function lookFrom(value: unknown): Look {
   const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
   const lines = raw?.hud_preview_lines ?? raw?.lines;
@@ -279,9 +290,19 @@ function Hud() {
     return () => window.clearInterval(id);
   }, [state?.phase]);
 
-  const act = (cmd: string, args?: Record<string, unknown>) => {
+  const act = (cmd: string, args?: Record<string, unknown>): Promise<void> => {
     setActionError(null);
-    void invoke(cmd, args).catch((error: unknown) => setActionError(errMsg(error, 'Could not complete action')));
+    return invoke(cmd, args).then(() => {}, (error: unknown) => setActionError(errMsg(error, 'Could not complete action')));
+  };
+
+  // One stop per recording, even if Stop is clicked again while it waits.
+  const [stopping, setStopping] = useState<string | null>(null);
+  const stopRecording = (sessionId: string | null | undefined) => {
+    if (!sessionId || stopping === sessionId) return;
+    setStopping(sessionId);
+    void within(liveUpdate.current, LIVE_EDIT_WAIT_MS)
+      .then(() => act('stop_capture', { sessionId }))
+      .finally(() => setStopping((current) => (current === sessionId ? null : current)));
   };
 
   const copy = (cmd: string, args: Record<string, unknown>) => {
@@ -568,7 +589,7 @@ function Hud() {
           </>
         )}
         <span className="ctl-fill" />
-        <button type="button" disabled={opening} onClick={() => { void liveUpdate.current.catch(() => {}).then(() => act('stop_capture', { sessionId: state.sessionId })); }} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
+        <button type="button" disabled={opening || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
