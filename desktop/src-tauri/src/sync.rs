@@ -267,7 +267,11 @@ pub async fn run(app: AppHandle) -> Result<()> {
     let mut next_pull: Option<(String, Instant)> = None;
 
     loop {
-        crate::fs_watcher::wait_until_ready(&app).await;
+        if let Err(error)=crate::fs_watcher::wait_until_ready(&app).await {
+            crate::telemetry::capture("filesystem.recovery.wait",&error);
+            idle(Duration::from_secs(5)).await;
+            continue;
+        }
         if recovery_retried.elapsed() >= RECOVERY_RETRY {
             recovery_retried = Instant::now();
             let app = app.clone();

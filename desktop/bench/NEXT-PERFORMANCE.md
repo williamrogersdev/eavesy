@@ -4,29 +4,29 @@ Compared with desktop 0.5.4 (`3a08f273`) on Apple M5 Pro / 48 GiB / macOS 26.6.2
 
 ## Results
 
-Medians of seven repetitions after warm-up, with warm files and OS caches. History fixtures have a 102,600-byte transcript plus summary/notes. These are component measurements, not whole-app launch or end-to-end transcription latency.
+Medians of seven repetitions after warm-up, with warm files and OS caches. History fixtures have a roughly 105 KB transcript plus summary/notes. These are component measurements, not whole-app launch or end-to-end transcription latency.
 
 | Operation | Recordings | 0.5.4 | Optimized |
 | --- | ---: | ---: | ---: |
-| Reconciliation work | 500 | 276.74 ms | 167.28 ms |
-| Missing search term | 500 | 41.01 ms | 5.09 ms |
-| Oldest-record search | 500 | 48.95 ms | 6.24 ms |
-| Common-term search | 500 | 1.75 ms | 2.04 ms |
-| Reconciliation work | 2,000 | 1074.90 ms | 676.75 ms |
-| Missing search term | 2,000 | 139.51 ms | 5.22 ms |
-| Oldest-record search | 2,000 | 185.21 ms | 6.60 ms |
-| Common-term search | 2,000 | 2.89 ms | 3.00 ms |
+| Reconciliation work | 500 | 274.49 ms | 171.73 ms |
+| Missing search term | 500 | 57.85 ms | 6.89 ms |
+| Oldest-record search | 500 | 53.19 ms | 6.54 ms |
+| Common-term search | 500 | 2.89 ms | 3.23 ms |
+| Reconciliation work | 2,000 | 1112.78 ms | 727.07 ms |
+| Missing search term | 2,000 | 157.72 ms | 6.22 ms |
+| Oldest-record search | 2,000 | 173.36 ms | 7.03 ms |
+| Common-term search | 2,000 | 2.91 ms | 3.28 ms |
 
-Recovery now runs on a worker. Dispatch measured 0.014 ms at 2,000 recordings, excluding native watcher registration and other setup. Background recovery still takes 677 ms. Sync waits for offline edits to reach the outbox, while setup proceeds. The watcher registers before scanning and replays queued events afterwards; each collection window is bounded so a steady event stream cannot postpone processing indefinitely.
+Recovery now runs on a worker. Dispatch measured 0.012 ms at 2,000 recordings, excluding native watcher registration and other setup. Background recovery still takes 727 ms. Sync waits for offline edits and already-queued folder moves to reach the outbox, while setup proceeds. Readiness waits are bounded; a timeout reports and retries without allowing cloud writes to bypass recovery. The watcher registers before scanning and replays queued events afterwards; each collection window is bounded so a steady event stream cannot postpone processing indefinitely.
 
-At the same three-request cap, 18 synthetic transcription pieces with repeating 120/20/20 ms durations took 761.8 → 393.7 ms. Uniform 40 ms pieces took 285.4 → 283.4 ms. This measures scheduling headroom, not live-provider speed. Ordered assembly, retry policy, error handling and the concurrency cap are preserved.
+At the same three-request cap, 18 synthetic transcription pieces with repeating 120/20/20 ms durations took 744.7 → 390.4 ms. Uniform 40 ms pieces took 270.4 → 265.5 ms. This measures scheduling headroom, not live-provider speed. Ordered assembly, retry policy, error handling and the concurrency cap are preserved.
 
 ## Search and tradeoffs
 
 - Trigram document-ID indexes narrow candidates; original lowercased `instr` checks remain authoritative for substring, all-token, Unicode and punctuation behavior. Short queries retain the exact scan fallback. SQLite's tokenizer stops at embedded NULs, so indexed exception sets keep those rows eligible for full checking.
 - A bounded recent-row probe avoids enumerating every index hit for common searches. Independent read-only WAL connections keep searches off the history mutation mutex. UI generations propagate through every refreshed page; obsolete SQL work is cancelled even when IPC requests arrive out of order.
-- Initial indexing is atomic background work, with the scan fallback available until ready. Pending history mutations interrupt and roll back construction; the worker retries later. Filesystem replay runs independently of index construction. The one-time 2,000-record build took 1979 ms, excluded from steady-state query timings.
-- At 2,000 records, durable title changes were 4.01 → 3.98 ms; transcript changes were 4.04 → 6.00 ms. Index maintenance adds about 2 ms per transcript edit in this fixture. Empty-page reads were 1.53 → 1.65 ms, including opening the optimized read connection and installing cancellation.
+- Initial indexing is atomic background work, with the scan fallback available until ready. Pending history mutations interrupt and roll back construction; the worker retries later. Filesystem replay runs independently of index construction. The one-time 2,000-record build took 2010 ms, excluded from steady-state query timings.
+- At 2,000 records, durable title changes were 3.99 → 3.03 ms; transcript changes were 3.97 → 5.05 ms. Index maintenance adds about 2 ms per transcript edit in this fixture. Empty-page reads were 1.53 → 1.80 ms, including opening the optimized read connection and installing cancellation.
 - Database size grew from 438,689,792 to 439,005,184 bytes. Repetitive synthetic transcripts compress well: index size, build time and write overhead on diverse real text may differ substantially. No whole-app RAM reduction is claimed.
 
 ## Reproduction

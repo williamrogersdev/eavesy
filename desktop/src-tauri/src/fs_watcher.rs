@@ -22,6 +22,7 @@ const SETTLE_TIME: Duration = Duration::from_millis(180);
 enum WatchMessage {
     Path(PathBuf),
     RescanFolders,
+    StartupBarrier,
 }
 
 struct WatcherHandle {
@@ -54,7 +55,7 @@ impl WatcherManager {
             .unwrap_or(false)
     }
 
-    pub fn replace(&self, app: AppHandle, root: PathBuf) -> Result<()> {
+    pub fn replace<R: Runtime>(&self, app: AppHandle<R>, root: PathBuf) -> Result<()> {
         // Folder names under the root are meeting titles; reports must not carry them.
         crate::telemetry::set_recordings_root(&root);
         let replacement = start(app, root)?;
@@ -67,10 +68,11 @@ impl WatcherManager {
     }
 }
 
-fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
+fn start<R: Runtime>(app: AppHandle<R>, root: PathBuf) -> Result<WatcherHandle> {
     std::fs::create_dir_all(&root).context("create recordings root")?;
 
     let (sender, receiver) = mpsc::channel::<WatchMessage>();
+    let startup_sender = sender.clone();
     let callback_app = app.clone();
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
@@ -103,7 +105,14 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
 
     let stopped = Arc::new(AtomicBool::new(false));
     let ready = Arc::new(AtomicBool::new(false));
-    let worker = spawn_reconciler(app, root, receiver, stopped.clone(), ready.clone());
+    let worker = spawn_reconciler(
+        app,
+        root,
+        receiver,
+        stopped.clone(),
+        ready.clone(),
+        startup_sender,
+    );
     Ok(WatcherHandle {
         stopped,
         ready,
@@ -118,6 +127,7 @@ fn spawn_reconciler<R: Runtime>(
     receiver: mpsc::Receiver<WatchMessage>,
     stopped: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
+    startup_sender: mpsc::Sender<WatchMessage>,
 ) -> JoinHandle<()> {
     // The watcher is registered before this worker starts: edits during offline
     // recovery queue up and are replayed afterwards. Setup need not wait for IO.
@@ -129,6 +139,11 @@ fn spawn_reconciler<R: Runtime>(
             crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
         }
         seed_existing_files_until(&app, &stopped);
+        // A folder may move after the initial scan while other records recover.
+        // Replay those queued events before cloud writes can recreate old paths.
+        let _ = startup_sender.send(WatchMessage::StartupBarrier);
+        drop(startup_sender);
+        reconcile_queued_startup(&app, &root, &receiver, &stopped);
         ready.store(true, Ordering::Release);
         if stopped.load(Ordering::Acquire) {
             return;
@@ -153,15 +168,64 @@ fn spawn_reconciler<R: Runtime>(
     })
 }
 
+fn reconcile_queued_startup<R: Runtime>(
+    app: &AppHandle<R>,
+    root: &Path,
+    receiver: &mpsc::Receiver<WatchMessage>,
+    stopped: &AtomicBool,
+) {
+    let mut paths = HashSet::new();
+    let mut rescan = false;
+    // A marker after the scan defines a finite queue prefix even if new events
+    // keep arriving. Every already-queued move is recovered before sync resumes.
+    while let Ok(message) = receiver.recv() {
+        if matches!(message, WatchMessage::StartupBarrier) {
+            break;
+        }
+        collect_message(message, &mut paths, &mut rescan);
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    if stopped.load(Ordering::Acquire) {
+        return;
+    }
+    if rescan {
+        if let Err(error) = reconcile_folder_locations(app, root) {
+            crate::telemetry::capture("filesystem.startup-folder-replay", &error.to_string());
+        }
+    }
+    for path in paths {
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
+        if let Err(error) = reconcile_path(app, &path) {
+            crate::telemetry::capture("filesystem.startup-file-replay", &error.to_string());
+        }
+    }
+}
+
 /// Cloud writes must wait for offline edits to enter the outbox. This waits on
 /// the sync task, never the main thread, and is checked again after root changes.
-pub async fn wait_until_ready<R: Runtime>(app: &AppHandle<R>) {
+pub async fn wait_until_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    wait_until_ready_for(app, Duration::from_secs(30)).await
+}
+
+async fn wait_until_ready_for<R: Runtime>(
+    app: &AppHandle<R>,
+    budget: Duration,
+) -> Result<(), String> {
+    let began = std::time::Instant::now();
     while app
         .try_state::<WatcherManager>()
         .is_some_and(|manager| !manager.is_ready())
     {
+        if began.elapsed() >= budget {
+            return Err("Local offline-edit recovery is still pending; cloud writes remain paused and will retry".into());
+        }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    Ok(())
 }
 
 fn is_content_event(kind: &EventKind) -> bool {
@@ -225,6 +289,7 @@ fn collect_message(message: WatchMessage, paths: &mut HashSet<PathBuf>, rescan_f
             paths.insert(path);
         }
         WatchMessage::RescanFolders => *rescan_folders = true,
+        WatchMessage::StartupBarrier => {}
     }
 }
 
@@ -802,6 +867,7 @@ mod tests {
             rx,
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            tx.clone(),
         );
         drop(tx);
         worker.join().unwrap();
@@ -820,6 +886,54 @@ mod tests {
             assert_eq!(count, 1);
         });
         drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_replays_a_queued_folder_move_before_releasing_sync() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-startup-move-{}", uuid::Uuid::new_v4()));
+        let old = root.join("old");
+        let new = root.join("renamed");
+        let app = isolated_mock_app(&root);
+        sqlite::initialize(app.handle()).unwrap();
+        let r = sample_recording(&old);
+        fs_writer::persist_recording_artifacts(Some(app.handle()), &old, &r, None, None).unwrap();
+        store::append(app.handle(), r).unwrap();
+        seed_existing_files(app.handle());
+        std::fs::rename(&old, &new).unwrap();
+        std::fs::write(new.join("summary.md"), "Edited during startup").unwrap();
+        let (tx, rx) = mpsc::channel();
+        tx.send(WatchMessage::RescanFolders).unwrap();
+        tx.send(WatchMessage::Path(new.join("summary.md"))).unwrap();
+        tx.send(WatchMessage::StartupBarrier).unwrap();
+        reconcile_queued_startup(app.handle(), &root, &rx, &AtomicBool::new(false));
+        let r = store::get(app.handle(), "meeting-1").unwrap().unwrap();
+        assert_eq!(r.folder_path.as_deref(), new.to_str());
+        assert_eq!(r.summary.as_deref(), Some("Edited during startup"));
+        assert!(!old.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_watcher_registration_does_not_leave_a_readiness_wait() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-watcher-failure-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let invalid = root.join("not-a-folder");
+        std::fs::write(&invalid, b"file").unwrap();
+        let app = isolated_mock_app(&root);
+        app.manage(WatcherManager::default());
+        assert!(app
+            .state::<WatcherManager>()
+            .replace(app.handle().clone(), invalid)
+            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), wait_until_ready(app.handle()))
+                .await
+                .unwrap()
+                .is_ok()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
@@ -841,10 +955,14 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert!(wait_until_ready_for(app.handle(), Duration::ZERO)
+            .await
+            .is_err());
         ready.store(true, Ordering::Release);
         assert!(
             tokio::time::timeout(Duration::from_secs(2), wait_until_ready(app.handle()))
                 .await
+                .unwrap()
                 .is_ok()
         );
     }

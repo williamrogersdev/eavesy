@@ -21,31 +21,52 @@ pub(crate) fn run<T: Sync, R: Send>(
             .map(|_| {
                 let state = &state;
                 let work = &work;
-                scope.spawn(move || loop {
-                    let index = {
-                        let mut state = state.lock().unwrap();
-                        if state.failed || state.next == items.len() {
-                            break;
-                        }
-                        let index = state.next;
-                        state.next += 1;
-                        index
-                    };
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        work(&items[index])
-                    }))
-                    .unwrap_or_else(|_| Err("transcription worker panicked".into()));
-                    let mut state = state.lock().unwrap();
-                    state.failed |= result.is_err();
-                    state.results[index] = Some(result);
+                scope.spawn(move || -> Result<(), String> {
+                    loop {
+                        let index = {
+                            let mut state = state.lock().map_err(|_| {
+                                "transcription worker state was poisoned".to_string()
+                            })?;
+                            if state.failed || state.next == items.len() {
+                                break;
+                            }
+                            let index = state.next;
+                            state.next += 1;
+                            index
+                        };
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            work(&items[index])
+                        }))
+                        .unwrap_or_else(|_| Err("transcription worker panicked".into()));
+                        let mut state = state
+                            .lock()
+                            .map_err(|_| "transcription worker state was poisoned".to_string())?;
+                        state.failed |= result.is_err();
+                        state.results[index] = Some(result);
+                    }
+                    Ok(())
                 })
             })
             .collect();
+        let mut error = None;
         for worker in workers {
-            worker.join().expect("worker state must remain usable");
+            if let Err(message) = worker
+                .join()
+                .unwrap_or_else(|_| Err("transcription worker panicked".into()))
+            {
+                if error.is_none() {
+                    error = Some(message);
+                }
+            }
         }
-    });
-    let state = state.into_inner().unwrap();
+        match error {
+            Some(message) => Err(message),
+            None => Ok(()),
+        }
+    })?;
+    let state = state
+        .into_inner()
+        .map_err(|_| "transcription worker state was poisoned".to_string())?;
     let mut result = Vec::with_capacity(items.len());
     for entry in state.results.into_iter().flatten() {
         result.push(entry?);

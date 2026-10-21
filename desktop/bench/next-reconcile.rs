@@ -81,7 +81,7 @@ fn next_reconciliation_benchmark() {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = root.to_string_lossy().into_owned();
         let app = tauri::test::mock_builder().build(context).unwrap();
-        sqlite::initialize(app.handle()).unwrap();
+        let mut rows = Vec::new();
         for i in 0..n {
             let folder = root.join(format!("meeting-{i}"));
             std::fs::create_dir_all(&folder).unwrap();
@@ -101,15 +101,48 @@ fn next_reconciliation_benchmark() {
                 has_video: false,
                 folder_path: Some(folder.to_string_lossy().into_owned()),
             };
-            fs_writer::persist_recording_artifacts(
-                Some(app.handle()),
-                &folder,
-                &r,
-                None,
-                r.notes.as_deref(),
+            // Fixture setup is excluded from timings; avoid thousands of
+            // durable production file writes just to construct synthetic input.
+            for (file, role) in [
+                ("summary.md", "summary"),
+                ("transcript.md", "transcript"),
+                ("notes.md", "notes"),
+            ] {
+                std::fs::write(
+                    folder.join(file),
+                    fs_writer::expected_editable_content(&r, role).unwrap(),
+                )
+                .unwrap();
+            }
+            std::fs::write(
+                folder.join("meeting.json"),
+                serde_json::to_vec(&serde_json::json!({"id":r.id})).unwrap(),
             )
             .unwrap();
-            store::append(app.handle(), r).unwrap();
+            rows.push(r);
+        }
+        std::fs::write(
+            root.join("recordings.json"),
+            serde_json::to_vec(&rows).unwrap(),
+        )
+        .unwrap();
+        sqlite::initialize(app.handle()).unwrap();
+        for r in rows {
+            for (file, role) in [
+                ("summary.md", "summary"),
+                ("transcript.md", "transcript"),
+                ("notes.md", "notes"),
+            ] {
+                let path = Path::new(r.folder_path.as_ref().unwrap()).join(file);
+                sqlite::record_file_write(
+                    app.handle(),
+                    &path,
+                    &r.id,
+                    role,
+                    &sha256_hex(&std::fs::read(&path).unwrap()),
+                )
+                .unwrap();
+            }
         }
         assert!(store::prepare_search(app.handle()).unwrap());
         measure("before_reconciliation", n, || {
@@ -130,6 +163,7 @@ fn next_reconciliation_benchmark() {
                 rx,
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicBool::new(false)),
+                tx.clone(),
             );
             times.push(at.elapsed().as_secs_f64() * 1000.0);
             drop(tx);

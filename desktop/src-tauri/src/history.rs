@@ -159,6 +159,19 @@ impl History {
         }
     }
 
+    pub fn import_complete(&self) -> Result<bool, String> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value='1' FROM history_metadata WHERE key='legacy_imported'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(error)?
+            .unwrap_or(false))
+    }
+
     pub fn read_only(path: &Path) -> Result<Self, String> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(error)?;
@@ -631,6 +644,19 @@ mod tests {
         assert_eq!(found.items.len(), 1);
         assert_eq!(found.items[0].id, "104");
         assert_eq!(history.page(0, 50, "ship", "all").unwrap().items.len(), 50);
+        let searched_second = history.page(50, 50, "ship", "meetings").unwrap();
+        assert_eq!(searched_second.items.len(), 50);
+        assert_eq!(searched_second.items[0].id, "050");
+        assert_eq!(searched_second.next_offset, Some(100));
+        assert_eq!(
+            history
+                .page(100, 50, "ship", "meetings")
+                .unwrap()
+                .items
+                .len(),
+            5
+        );
+
         assert_eq!(history.page(0, 50, "", "notes").unwrap().items.len(), 0);
         assert!(history
             .get("104")
@@ -899,5 +925,31 @@ mod tests {
             history.page(0, 50, "preserved", "all").unwrap().items.len(),
             50
         );
+    }
+
+    #[test]
+    fn long_unicode_substrings_and_null_queries_remain_exact_after_indexing() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        let token: String = (0..80)
+            .map(|i| char::from_u32(0x4e00 + i).unwrap())
+            .collect();
+        let nul = format!("begin{}end", char::from(0));
+        let mut r = row("long");
+        r.transcript = Some(token.clone());
+        history.put(&r).unwrap();
+        let mut with_null = row("null");
+        with_null.transcript = Some(nul.clone());
+        history.put(&with_null).unwrap();
+        history.prepare_search().unwrap();
+        assert_eq!(history.page(0, 50, &token, "all").unwrap().items.len(), 1);
+        assert_eq!(history.page(0, 50, &nul, "all").unwrap().items.len(), 1);
+        let mut wrong: Vec<_> = token.chars().collect();
+        wrong[39] = '🦀';
+        assert!(history
+            .page(0, 50, &wrong.into_iter().collect::<String>(), "all")
+            .unwrap()
+            .items
+            .is_empty());
     }
 }

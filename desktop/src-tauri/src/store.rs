@@ -73,7 +73,9 @@ pub fn prepare_search<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
     let shared = shared_history(app)?;
     let mut history = match shared.history.try_lock() {
         Ok(history) => history,
-        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            return Err("History indexing skipped after a poisoned history lock".into())
+        }
         Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
     };
     if shared.pending.load(std::sync::atomic::Ordering::Acquire) > 0 {
@@ -96,13 +98,22 @@ pub fn page<R: Runtime>(
 ) -> Result<HistoryPage, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let path = dir.join("history.sqlite3");
-    if !path.exists() {
-        initialize(app)?;
-    }
     if request.is_some_and(|token| token.cancelled()) {
         return Err("History search superseded".into());
     }
-    let reader = History::read_only(&path)?;
+    let reader = match History::read_only(&path) {
+        Ok(reader) if reader.import_complete().unwrap_or(false) => reader,
+        _ => {
+            // An interrupted/failed import can leave an existing SQLite file.
+            // Only the initialized writer may complete (or report) that import.
+            initialize(app)?;
+            let reader = History::read_only(&path)?;
+            if !reader.import_complete()? {
+                return Err("Recording history migration is incomplete; restart to retry".into());
+            }
+            reader
+        }
+    };
     match request {
         Some(token) => reader.page_while(offset, limit, query, category, token.callback()),
         None => reader.page(offset, limit, query, category),
@@ -493,6 +504,29 @@ mod persistence_tests {
             has_video: false,
             folder_path: None,
         }
+    }
+
+    #[test]
+    fn an_existing_database_never_hides_a_failed_legacy_import() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-import-read-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = app(&root);
+        std::fs::write(root.join("history.sqlite3"), []).unwrap();
+        std::fs::write(root.join("recordings.json"), b"invalid JSON").unwrap();
+        assert!(page(fixture.handle(), 0, 50, "", "all", None)
+            .unwrap_err()
+            .contains("malformed"));
+        let r = recording("legacy".into());
+        std::fs::write(
+            root.join("recordings.json"),
+            serde_json::to_vec(&[r]).unwrap(),
+        )
+        .unwrap();
+        let result = page(fixture.handle(), 0, 50, "", "all", None).unwrap();
+        assert_eq!(result.items[0].id, "legacy");
+        assert_eq!(result.counts.all, 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn a_waiting_mutation_interrupts_index_construction_and_preserves_the_write() {
