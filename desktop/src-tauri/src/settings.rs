@@ -94,10 +94,7 @@ impl Settings {
 
     /// One of the line counts the control is drawn for; anything else reads as 4.
     pub fn hud_preview_lines(&self) -> u8 {
-        match self.hud_preview_lines {
-            Some(lines @ (0 | 1 | 2 | 4)) => lines,
-            _ => 4,
-        }
+        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(4)
     }
 
     pub fn add_screenshots(&self) -> bool {
