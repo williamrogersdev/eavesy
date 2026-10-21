@@ -420,7 +420,6 @@
 .ev-settings .ev-set-row { min-height: 44px; }
 /* A row whose control sits under its name (tags, inputs) runs full width. */
 .ev-set-row.flex-col { align-items: stretch; }
-.ev-set-note { padding: 0 4px; margin-top: 8px; color: var(--ev-ink-3); font: 400 12px/16px var(--ev-font-text); }
 /* In the dark, groups sit a clear step above the panel instead of near-black on black. */
 @media (prefers-color-scheme: dark) {
   .ev-settings .ev-card {

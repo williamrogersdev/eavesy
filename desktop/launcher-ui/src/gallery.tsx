@@ -14,6 +14,7 @@ import {
   Mascot,
   Menu,
   Segmented,
+  Select,
   StatusDisc,
   Switch,
   ToolbarSegment,
@@ -86,6 +87,7 @@ function Gallery() {
           <div style={{ padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ font: 'var(--ev-t-ui)' }}>HUD position</span>
             <Segmented label="HUD position" value={pos} onChange={setPos} options={[{ value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' }]} />
+            <Select label="HUD position" value={pos} onChange={setPos} options={[{ value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' }]} />
           </div>
           <div style={{ padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'center' }}>
             <StatusDisc status="granted" /><StatusDisc status="pending" /><StatusDisc status="denied" /><StatusDisc status="checking" />

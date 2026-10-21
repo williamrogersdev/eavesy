@@ -513,7 +513,6 @@
 .ev-select > select:focus-visible { box-shadow: var(--ev-focus); }
 .ev-select > select:disabled { opacity: 0.45; }
 .ev-select-icon { position: absolute; right: 7px; width: 13px; height: 13px; color: var(--ev-ink-3); pointer-events: none; }
-.ev-field-select { width: auto; max-width: 180px; height: 26px; padding: 0 8px; line-height: 26px; }
 .ev-projrow-head { width: 100%; justify-content: flex-start; text-align: left; }
 .ev-tag { max-width: 100%; min-width: 0; }
 .ev-tags-long {
