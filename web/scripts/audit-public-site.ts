@@ -38,19 +38,24 @@ for (let i = 0; i < paths.length; i += 6) {
       });
       const html = await response.text();
       const ids = new Set(
-        [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]),
+        [...html.matchAll(/\sid=(["'])(.*?)\1/g)].map((match) => match[2]),
       );
       sectionIds.set(path, ids);
       for (const link of html.matchAll(
         /<a\b[^>]*href="(\/(?!\/)[^"]*#[^"]+)"/g,
       )) {
         const target = new URL(link[1].replaceAll("&amp;", "&"), origin);
-        if (!isPrivateAuditPath(target.pathname))
-          crossPageFragments.push({
-            from: path,
-            path: target.pathname,
-            id: decodeURIComponent(target.hash.slice(1)),
-          });
+        if (!isPrivateAuditPath(target.pathname)) {
+          try {
+            crossPageFragments.push({
+              from: path,
+              path: target.pathname,
+              id: decodeURIComponent(target.hash.slice(1)),
+            });
+          } catch {
+            failures.push(`${path}: malformed section fragment in ${link[1]}`);
+          }
+        }
       }
       const title = html.match(/<title>(.*?)<\/title>/s)?.[1] ?? "";
       const canonicals = [
@@ -114,6 +119,10 @@ for (let i = 0; i < paths.length; i += 6) {
 }
 for (const target of crossPageFragments) {
   const ids = sectionIds.get(target.path);
+  check(
+    ids,
+    `${target.from}: section target is outside the audited sitemap: ${target.path}`,
+  );
   if (ids)
     check(
       ids.has(target.id),

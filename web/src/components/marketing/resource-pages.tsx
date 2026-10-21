@@ -214,7 +214,9 @@ function DownloadResource({ path, label }: { path: string; label: string }) {
           Download Markdown
         </a>
       </div>
-      <p className="mt-2 text-sm text-ev-ink-2">{status}</p>
+      <p role="status" className="mt-2 text-sm text-ev-ink-2">
+        {status}
+      </p>
     </aside>
   );
 }

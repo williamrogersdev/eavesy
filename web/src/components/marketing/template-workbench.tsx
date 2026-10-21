@@ -10,7 +10,7 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
   > | null>(null);
   const [status, setStatus] = useState("");
   if (!template) return null;
-  const hasDraft = Object.values(values).some((value) => value.trim());
+  const hasDraft = Object.values(values).some((value) => value.length > 0);
   const markdown = buildTemplate(template, values);
   async function copy() {
     try {
@@ -82,7 +82,7 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
             if (hasDraft) setPreviousDraft(values);
             setValues({});
             setStatus(
-              "Draft cleared. You can restore the previous draft below.",
+              "Draft cleared. Restore the last cleared draft while the fields are empty.",
             );
           }}
         >
@@ -91,7 +91,9 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
         {previousDraft && (
           <button
             type="button"
-            className="min-h-11 px-3 text-sm text-ev-coat underline underline-offset-4"
+            disabled={hasDraft}
+            aria-describedby="example-help"
+            className="min-h-11 px-3 text-sm text-ev-coat underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => {
               setValues(previousDraft);
               setPreviousDraft(null);
@@ -103,8 +105,8 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
         )}
       </div>
       <p id="example-help" className="mt-2 text-sm text-ev-ink-2">
-        Clear existing fields before loading an example. You can restore a
-        cleared draft while this page stays open.
+        Clear existing fields before loading an example. Restore keeps only the
+        most recently cleared draft and is available when fields are empty.
       </p>
       <div className="mt-6 grid gap-5">
         {template.fields.map((field) => (
