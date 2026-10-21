@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { loadRecordingPage, reloadRecordingPages, type RecordingPage } from '@/lib/launcher/data';
+import { cancelHistorySearch, loadRecordingPage, reloadRecordingPages, type RecordingPage } from '@/lib/launcher/data';
 import { errMsg } from '@/lib/desktop/errors';
 import type { HistoryFilter } from './history-model';
 
 /** Server-side search covers the entire history, including unloaded pages. */
 export function useHistoryPage(refresh: number, query: string, filter: HistoryFilter) {
+  const [searchClient] = useState(() => crypto.randomUUID());
   const [page, setPage] = useState<RecordingPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,7 +28,7 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
     setBusy(true);
     inFlight.current = true;
     const timer = window.setTimeout(() => {
-      void reloadRecordingPages(pages, query, filter).then((next) => {
+      void reloadRecordingPages(pages, query, filter, { client: searchClient, generation: request }).then((next) => {
         if (!disposed && generation.current === request) { hasPage.current = true; setPage(next); setError(null); }
       }).catch((reason: unknown) => {
         if (!disposed && generation.current === request) setError(errMsg(reason, 'Could not load captures'));
@@ -35,8 +36,12 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
         if (!disposed && generation.current === request) { setLoading(false); setBusy(false); inFlight.current = false; }
       });
     }, query.trim() ? 150 : 0);
-    return () => { disposed = true; window.clearTimeout(timer); };
-  }, [refresh, query, filter]);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      void cancelHistorySearch({ client: searchClient, generation: request }).catch(() => undefined);
+    };
+  }, [refresh, query, filter, searchClient]);
 
   const loadMore = useCallback(async () => {
     if (!page || page.nextOffset === null || busy || inFlight.current) return;
@@ -45,7 +50,7 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
     setBusy(true);
     inFlight.current = true;
     try {
-      const next = await loadRecordingPage(page.nextOffset, query, filter);
+      const next = await loadRecordingPage(page.nextOffset, query, filter, { client: searchClient, generation: request });
       if (request !== generation.current) return;
       loadedPages.current += 1;
       setPage((previous) => {
@@ -59,6 +64,6 @@ export function useHistoryPage(refresh: number, query: string, filter: HistoryFi
     } finally {
       if (request === generation.current) { setLoading(false); setBusy(false); inFlight.current = false; }
     }
-  }, [page, query, filter, busy]);
+  }, [page, query, filter, busy, searchClient]);
   return { page, error, loading, busy, loadMore };
 }

@@ -34,7 +34,7 @@ tauri-plugin-updater = "2.0"
 
 window-vibrancy = "0.6"
 
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "hooks"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -85,3 +85,7 @@ path = "../bench/history.rs"
 # Legacy objc macros test this feature internally; it is not an app feature.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[[example]]
+name = "next-performance"
+path = "../bench/next-performance.rs"

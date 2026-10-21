@@ -205,20 +205,7 @@ fn in_order_at_once<T: Sync, R: Send>(
     width: usize,
     work: impl Fn(&T) -> Result<R, String> + Sync,
 ) -> Result<Vec<R>, String> {
-    let mut results = Vec::with_capacity(items.len());
-    for batch in items.chunks(width.max(1)) {
-        let batch_results: Vec<Result<R, String>> = std::thread::scope(|scope| {
-            let workers: Vec<_> = batch.iter().map(|item| scope.spawn(|| work(item))).collect();
-            workers
-                .into_iter()
-                .map(|worker| worker.join().unwrap_or_else(|_| Err("transcription worker panicked".to_string())))
-                .collect()
-        });
-        for result in batch_results {
-            results.push(result?);
-        }
-    }
-    Ok(results)
+    crate::work_queue::run(items, width, work)
 }
 
 enum PieceError {
