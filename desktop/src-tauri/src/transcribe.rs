@@ -576,3 +576,36 @@ mod tests {
         assert!(polish_with(&credential, "words", short).is_err());
     }
 }
+
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct WalkthroughTranscription {
+    pub text: String,
+    #[serde(rename = "rawText")]
+    pub raw_text: Option<String>,
+    #[serde(default)]
+    pub segments: Vec<crate::walkthrough::Segment>,
+    #[serde(default, rename = "timestampSource")]
+    pub timestamp_source: Option<String>,
+}
+
+/// Each walkthrough chunk is bounded to two minutes. Preserve the provider's
+/// timing instead of flattening it through the dictation/meeting text path.
+pub(crate) fn run_walkthrough(app: &AppHandle, media: &Path) -> Result<WalkthroughTranscription, String> {
+    let credential = settings::device_credential(app).ok_or("Sign in to transcribe this walkthrough")?;
+    let wav = transcode_to_wav(media).ok_or("Could not decode walkthrough audio")?;
+    let bytes = std::fs::read(&wav).map_err(|e| e.to_string());
+    let _ = std::fs::remove_file(&wav);
+    let bytes = bytes?;
+    if bytes.len() > 8_000_000 { return Err("Walkthrough audio chunk is too large".into()); }
+    let part = reqwest::blocking::multipart::Part::bytes(bytes).file_name("audio.wav")
+        .mime_str("audio/wav").map_err(|e| e.to_string())?;
+    let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(180))
+        .build().map_err(|e| e.to_string())?
+        .post(format!("{}/api/transcribe", credential.base.trim_end_matches('/')))
+        .bearer_auth(&credential.token)
+        .multipart(reqwest::blocking::multipart::Form::new().part("audio", part))
+        .send().map_err(|e| format!("Transcription request failed: {e}"))?;
+    if !response.status().is_success() { return Err(format!("Transcription HTTP {}", response.status())); }
+    response.json().map_err(|e| format!("Invalid transcription response: {e}"))
+}

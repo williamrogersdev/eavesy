@@ -239,12 +239,12 @@ function CaptureRow({
   const spoken = rec.source !== 'note' && !image && rec.source !== 'upload';
 
   const copy = () => runTask(async () => {
-    if (image || (video && !text)) await copyCaptureMedia(rec.id);
+    if (image || video) await copyCaptureMedia(rec.id);
     else await copyText(plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
     flash('Copied');
   }, 'Couldn’t copy that');
 
-  const copyLabel = image ? 'Copy image' : video && !text ? 'Copy video' : 'Copy text';
+  const copyLabel = image ? 'Copy image' : video ? 'Copy' : 'Copy text';
 
   let body: ReactNode;
   if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;

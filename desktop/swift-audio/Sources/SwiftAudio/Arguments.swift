@@ -69,7 +69,7 @@ struct Arguments {
             source = .system
         }
 
-        let includeMic = (dict["mic"]?.lowercased() == "true")
+        let includeMic = (dict["mic"]?.lowercased() != "false")
         let segmentDir = dict["segment-dir"].flatMap { $0.isEmpty ? nil : $0 }
         let segmentSec = dict["segment-sec"].flatMap(Double.init).map { max($0, minSegmentSec) }
             ?? defaultSegmentSec

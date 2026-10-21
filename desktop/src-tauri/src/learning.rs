@@ -69,6 +69,9 @@ pub async fn correct_recording(
     tauri::async_runtime::spawn_blocking(move || {
         let recording = crate::store::get(&app, &id)?
             .ok_or("Recording not found")?;
+        if recording.has_video && crate::walkthrough::is_processing(&id) {
+            return Err("Wait for walkthrough processing before editing its transcript".into());
+        }
         let current = recording.transcript.as_deref();
         if current != Some(original.as_str()) && current != Some(corrected.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());
@@ -80,6 +83,7 @@ pub async fn correct_recording(
         // the exact corrected text is still current, without rewriting the files.
         if current == Some(original.as_str()) {
             crate::store::correct_transcript(&app, &id, &original, &corrected)?;
+            if recording.has_video { crate::walkthrough::update_correction(&app, &id, &corrected)?; }
             let _ = app.emit("recordings:updated", ());
         }
         Ok(feedback(&app, &original, &corrected).unwrap_or_else(|_| json!({

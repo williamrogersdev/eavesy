@@ -109,6 +109,8 @@ struct CaptureEvent {
     track: Option<String>,
     #[serde(default, rename = "peakRms")]
     peak_rms: Option<f64>,
+    #[serde(default)]
+    rms: Option<f64>,
     #[serde(default, rename = "activeMs")]
     active_ms: Option<i64>,
     #[serde(default)]
@@ -772,6 +774,10 @@ fn stream_events(
                 let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) else {
                     continue;
                 };
+                if ev.event == "level" {
+                    let _ = app.emit("recording:level", serde_json::json!({"sessionId":session_id,"rms":ev.rms.unwrap_or(0.0)}));
+                    continue;
+                }
                 if ev.event == "segment" {
                     if let (Some(path), Some(index), Some(start_ms), Some(duration_ms), Some(bytes)) = (
                         ev.path.clone(),
@@ -1117,6 +1123,15 @@ fn finish_stopped_capture(
         folder_path: folder.to_str().map(|s| s.to_string()),
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
+    if is_screen {
+        let stats = PathBuf::from(format!("{}.capture.json", final_src.display()));
+        if stats.exists() {
+            std::fs::rename(&stats, folder.join("microphone.json"))
+                .or_else(|_| std::fs::copy(&stats, folder.join("microphone.json")).map(|_| ()))
+                .map_err(|e| format!("Could not save microphone verification: {e}"))?;
+        }
+    }
+
     store::append(&app, rec.clone())?;
     crate::telemetry::track(
         "recording_saved",
@@ -1158,13 +1173,7 @@ fn finish_stopped_capture(
     }
 
     if is_screen {
-        crate::transcribe::spawn(
-            app.clone(),
-            rec.id.clone(),
-            audio_dest,
-            Some(folder.clone()),
-            false,
-        );
+        crate::walkthrough::spawn(app.clone(), rec.id.clone());
     } else {
         let archive_bytes = std::fs::metadata(&audio_dest)
             .map(|m| m.len() as i64)

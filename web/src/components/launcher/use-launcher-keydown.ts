@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
-import { copyText, hidePanel, pasteToFrontmost } from '@/lib/desktop/bridge';
+import { copyText, recordingContext, hidePanel, pasteToFrontmost } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type LauncherView, type RunTask } from './types';
 import { downloadMarkdown } from './format';
@@ -118,7 +118,7 @@ export function useLauncherKeyDown({
         e.preventDefault();
         if (meta && currentRec) {
           runTask(
-            () => pasteToFrontmost(currentRec.transcript ?? ''),
+            async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
             'Could not paste transcript',
           );
           if (!desktop) flash('Transcript copied — paste anywhere');
@@ -141,7 +141,7 @@ export function useLauncherKeyDown({
         if (k === 'c' && !e.shiftKey) {
           e.preventDefault();
           runTask(async () => {
-            await copyText(currentRec.transcript ?? '');
+            await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
             flash('Transcript copied');
           }, 'Could not copy transcript');
         } else if (k === 'c' && e.shiftKey) {
@@ -153,14 +153,7 @@ export function useLauncherKeyDown({
         } else if (k === 'd') {
           e.preventDefault();
           downloadMarkdown(currentRec);
-        } else if (k === 'j') {
-          e.preventDefault();
-          runTask(async () => {
-            await copyText(
-              `Here is a meeting transcript. Summarize the key decisions and action items.\n\n---\n${currentRec.transcript ?? ''}`,
-            );
-            flash('Prompt copied');
-          }, 'Could not copy prompt');
+
         }
       }
     },
