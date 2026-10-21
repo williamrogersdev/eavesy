@@ -61,6 +61,28 @@ for (let i = 0; i < paths.length; i += 6) {
         !/<meta\b(?=[^>]*name="robots")[^>]*content="[^"]*noindex/.test(html),
         `${path}: indexable page is noindex`,
       );
+      if (/^\/(guides|templates|examples)\/.+/.test(path)) {
+        check(
+          html.includes('aria-label="On this page"'),
+          `${path}: missing article navigation (check raw MDX imports)`,
+        );
+        for (const anchor of html.matchAll(/<a\b[^>]*href="#([^"]+)"/g)) {
+          check(
+            html.includes(`id="${anchor[1]}"`),
+            `${path}: missing section target ${anchor[1]}`,
+          );
+        }
+      }
+      if (/^\/templates\/.+/.test(path)) {
+        check(
+          html.includes('id="build-your-template"'),
+          `${path}: missing editable template`,
+        );
+        check(
+          html.includes("Your Markdown draft"),
+          `${path}: missing server-rendered template preview`,
+        );
+      }
       for (const match of html.matchAll(/<a\b[^>]*href="(\/(?!\/)[^"#?]*)/g)) {
         if (!isPrivateAuditPath(match[1])) linkPaths.add(match[1]);
       }

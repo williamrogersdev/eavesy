@@ -2,7 +2,7 @@
 title: "Find a past decision in your recording library"
 description: "Search synced recordings, ask a focused question, and check the source passage before reusing the answer."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "A cited answer example", "path": "/examples/library-answer-with-sources"}, {"title": "Hosted MCP setup", "path": "/docs/connect-mcp"}, {"title": "Search and chat", "path": "/docs/search-and-chat"}]
 ---
@@ -32,3 +32,27 @@ Answers may report missing evidence, unanswered parts, or context limits. Preser
 If the source establishes a date but no owner, record the date and leave the owner unassigned. If two recordings disagree, inspect their dates and context before deciding which supersedes the other. The [decision log template](/templates/decision-log) separates the decision, source, and open questions.
 
 For an agent workflow, the hosted MCP server exposes library retrieval as well as recording lookup. Its access remains scoped to your account and the connection you approve.
+
+## Work through a question in three passes
+
+First locate a likely source: search for a project name, a distinctive phrase, or the recording title. Then ask the narrow question you need answered. Finally, open the cited passage and check whether a later statement changes the result. Retrieval helps you reach evidence; it does not replace reviewing it.
+
+Useful questions include:
+
+- “In the launch planning recording, was Friday proposed or agreed?”
+- “Who explicitly accepted the help page review?”
+- “Which passage explains the decision, and which details remain unanswered?”
+
+Avoid combining unrelated projects into one question when you can investigate them separately. If two recordings conflict, retain both source references and the sequence of decisions rather than choosing whichever answer sounds more decisive.
+
+## When nothing useful comes back
+
+| Result | What to do |
+| --- | --- |
+| The source recording is still processing | Wait for completion before interpreting search results |
+| The recording exists but needs indexing | Use the available index refresh and check its resulting state |
+| The answer has unanswered parts | Keep those parts unresolved; inspect the source or ask a narrower question |
+| The only source is a local note or screenshot | Use local file access or an attachment rather than hosted transcript retrieval |
+| Sources disagree | Review the dates and surrounding statements, then record what superseded what |
+
+Once verified, save the choice with the [decision log template](/templates/decision-log). Include the supporting excerpt, a source the future reader can open, and the exact details still awaiting confirmation.

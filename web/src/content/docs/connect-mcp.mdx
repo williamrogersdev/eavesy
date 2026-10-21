@@ -3,7 +3,7 @@ title: Connect an agent over MCP
 description: Add Eavesy to Claude, ChatGPT or Claude Code by URL so your agent can search your recordings and dictations.
 category: Agents
 order: 41
-modified: 2026-10-20
+modified: 2026-10-21
 ---
 
 Eavesy runs a hosted [MCP](https://modelcontextprotocol.io) server at
@@ -145,3 +145,16 @@ After connecting, ask for a known recording title and inspect the result before 
 
 - [Give your agent context](/docs/context-for-agents)
 - [Your files](/docs/session-folder-format)
+
+## Verify a connection with one known source
+
+Ask the client for a recording with a title you recognize, then inspect its returned transcript or summary. Confirm that the source belongs to the intended account. Next ask one narrow question and open the supporting passage rather than treating a list of available tools as proof of useful retrieval.
+
+For a local walkthrough, use the [separate local connection](/guides/local-recording-context). Hosted account retrieval and local screen-frame access are different data paths. If the agent cannot see a screenshot on your Mac, adding the hosted URL again will not grant filesystem access.
+
+| Symptom | Check |
+| --- | --- |
+| Authorization repeats | Correct Eavesy account and completed client approval |
+| Connected but intended recording absent | Account, recording completion, and retrieval scope |
+| Local screenshot missing | Local file/image access or local walkthrough MCP |
+| Answer has unsupported details | Source excerpt and surrounding passage |

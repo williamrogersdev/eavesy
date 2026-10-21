@@ -2,7 +2,7 @@
 title: "A meeting decision kept as reusable Markdown"
 description: "Use a short fictional transcript to practice creating a portable note without inventing missing owners or dates."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Obsidian workflow", "path": "/integrations/obsidian"}, {"title": "Decision log template", "path": "/templates/decision-log"}, {"title": "Action items template", "path": "/templates/meeting-action-items"}]
 download: "/resources/examples/launch-transcript.md"
@@ -36,3 +36,30 @@ Copy the sample brief into an Obsidian vault or your usual project folder. Give 
 An action list for this source can say “Help page review — owner unassigned.” It cannot assign that work to the speaker who mentioned it. A decision log can record “Friday” while stating that the exact date needs confirmation.
 
 Try changing the example to include an explicit owner, then update only the fields the new source establishes. The goal is a reusable record that remains faithful to what was captured.
+
+## The resulting project note
+
+```markdown
+# Launch planning — reviewed note
+
+## Decision
+Launch on Friday.
+Source: launch-transcript.md, 00:01.
+
+## Follow-up requiring assignment
+The help page still needs review (00:05).
+No owner has been assigned (00:09).
+
+## Open questions
+- Which calendar date does Friday mean?
+- Who owns the help page review, and when is it due?
+- Is review a launch prerequisite? The source does not say.
+```
+
+This note is deliberately smaller than a meeting recap. Each claim has a source, and each missing detail remains a question. Save it as a `.md` file in your project folder; an Obsidian vault can open the same ordinary Markdown.
+
+## Turn the note into a follow-up request
+
+You could ask participants to confirm the calendar date and assign the review. That request is a proposed next action, not evidence that either detail was already agreed. Keep the historical source unchanged and add confirmed updates as a new note or decision entry.
+
+For practice, fill the [decision log](/templates/decision-log) and [action items template](/templates/meeting-action-items) from the three lines above. The first can contain the launch choice. The second should keep the review unassigned until a source establishes ownership.

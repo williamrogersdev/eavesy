@@ -8,6 +8,7 @@ import {
   HowItWorks,
   Marquee,
 } from '@/components/marketing';
+import { ResourceGateway } from '@/components/marketing/resource-gateway';
 import { FAQS } from '@/components/marketing/content';
 import {
   JsonLd,
@@ -41,6 +42,7 @@ function LandingPage() {
       <FeatureShowcases />
       <Bento />
       <HowItWorks />
+      <ResourceGateway />
       <Faq />
       <DownloadCTA />
     </main>

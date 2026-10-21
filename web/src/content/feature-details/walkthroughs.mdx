@@ -2,28 +2,37 @@
 title: "walkthroughs"
 description: "Workflow details"
 date: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Create Markdown context", "path": "/guides/screen-recording-to-markdown"}, {"title": "Practice with the UI fixture", "path": "/examples/narrated-ui-bug"}, {"title": "Share local media", "path": "/guides/share-local-recordings-with-ai"}]
 ---
 
-## A focused recording, then an explicit handoff
+## Record one complete reproduction
 
 Open the launcher with **⌘⇧Space** and choose **Video**. Show the starting state, repeat the action, and explain the expected and actual result. Stop after one reproduction. Verify the saved video has your voice before recording a longer session.
 
-When signed-in processing completes, review `transcript.md` and `summary.md` in the capture folder. Those are text outputs from recording audio. They do not mean an assistant has inspected the screen. Supply a screenshot of the important state or attach a video when the receiving assistant supports it.
+## What the walkthrough produces
 
-## Check your installed version
+Mac [0.5.5](https://github.com/williamrogersdev/eavesy/releases/tag/desktop-v0.5.5) added walkthrough context for AI agents. Supported captures save `context.md`, `walkthrough.json`, sampled screenshots, and the original video. The preview shows context readiness; Copy supplies narration, extracted screen text, warnings, and file references.
 
-Mac version 0.5.4 does not automatically extract a visual timeline, produce `context.md`, or expose a local walkthrough MCP server. An agent reading only a transcript knows the words, not the visual evidence. The hosted MCP server retrieves supported account text; it does not open video files on your Mac.
+| Output | Use it for | Keep in mind |
+| --- | --- | --- |
+| `context.md` | A readable handoff | Review readiness and warnings |
+| `walkthrough.json` | Structured context and media references | Keep the recording folder together |
+| Sampled frames | Inspecting a visible state | A brief transition can fall between samples |
+| `screen.mp4` | Original screen and audio evidence | The recipient needs a supported way to view it |
+| Transcript | Checking spoken narration | Corrected full text may not be time-aligned |
 
-For a bug report, add a concrete request such as “Inspect the disabled Export button after I switch workspaces.” Ask the agent to identify which sources it opened. This keeps its interpretation grounded in the evidence it actually received.
+OCR is extracted screen text, not a complete interpretation of the scene. An agent should inspect the relevant images when layout or visual state matters. Ask it to identify the source files and actual frame timestamps it used.
+
+## Hand context to an agent
+
+For a local coding agent, provide the permitted capture folder or configure the read-only local walkthrough MCP server. For a browser chat, paste the context and attach the relevant screenshots or video through its supported input. Pasting a local path does not upload the referenced media.
+
+A useful request is: “Inspect the disabled Export button after I switch workspaces. State the observation first, then investigate the condition controlling it.” The [worked example](/examples/narrated-ui-bug) provides a fictional fixture you can practice with.
 
 ## Local files and cloud audio
 
-Capture saves local media. With the required recognition permission and available models, on-device captions can show preliminary text. Signed-in audio processing produces a cloud transcript and brief. Review sensitive content before separately sharing it with another AI service.
+Screen extraction and OCR run locally. Signed-in audio processing uses the authenticated transcription service. The walkthrough feature does not upload the screen video or screenshots into the hosted meeting MCP library. Sharing those files with another service is a separate action.
 
-## Builds with walkthrough context
-
-Newer builds with walkthrough processing save `context.md`, `walkthrough.json`, and sampled screenshots alongside the recording. If these files are present, review context readiness and any warnings, then use Copy to hand the structured text to a local agent. Sampled frames can miss brief transitions, and OCR is extracted text rather than a complete interpretation of the scene.
-
-The download may lag behind source updates. The 0.5.4 instructions above remain the applicable workflow when your installed app does not produce those files. See the [local context guide](/guides/local-recording-context) for the optional local MCP setup on supported builds.
+If you are still using 0.5.4, use the saved video, available transcript, and a manually selected screenshot. That version does not produce the newer walkthrough context. Check your installed version and the files your capture actually contains before following the local MCP setup.

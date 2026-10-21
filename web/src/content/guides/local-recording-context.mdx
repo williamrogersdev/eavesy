@@ -2,7 +2,7 @@
 title: "Give an agent access to your local recording files"
 description: "Use Eavesy’s Markdown files with a local agent, and understand which recordings the hosted MCP connection can retrieve."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Hosted MCP setup", "path": "/docs/connect-mcp"}, {"title": "Claude Code integration", "path": "/integrations/claude-code"}, {"title": "File format", "path": "/docs/session-folder-format"}]
 ---
@@ -32,7 +32,7 @@ If the capture includes screenshots, explicitly request inspection of the releva
 
 The current public MCP connection is the hosted server at `https://mcp.eavesy.com`. It reads recordings and dictations in your account after you authenticate and authorize the client. Local notes, screenshots, and clipboard captures are not uploaded through that connection.
 
-Mac version 0.5.4 does not expose the newer local walkthrough MCP tools. The local walkthrough MCP section below applies only to builds that produce `context.md` and `walkthrough.json`. Use local file access for local captures and the [hosted connection instructions](/docs/connect-mcp) for synced recordings.
+Mac 0.5.5 added local walkthrough context and MCP tools. Mac version 0.5.4 does not expose them. The local walkthrough MCP section below applies only to builds that produce `context.md` and `walkthrough.json`. Use local file access for local captures and the [hosted connection instructions](/docs/connect-mcp) for synced recordings.
 
 ## Keep source and interpretation separate
 
@@ -54,3 +54,20 @@ If your installed build produces `context.md` and `walkthrough.json`, it can exp
 ```
 
 This setup does not work with Mac version 0.5.4. On supported builds, `list_walkthroughs` searches narration and screen text, `get_walkthrough` reads structured context and warnings, and `get_walkthrough_frame` returns a nearby saved screenshot. Inspect its actual timestamp and sampling distance. This local connection is independent of the hosted account server and does not upload local media.
+
+## Choose local files or hosted retrieval
+
+| Your source | Access method | Verification |
+| --- | --- | --- |
+| Markdown on this Mac | Give a local agent the exact permitted folder | Ask which files it opened |
+| Walkthrough context and frames | Supported local stdio MCP or file access | Check readiness, warnings, and actual frame time |
+| Synced account recording | Hosted MCP after authorization | Confirm title, source recording, and quoted passage |
+| Browser chat without Mac access | Paste text and attach supported media | Confirm the image or attachment was received |
+
+These access methods can be used together, but one does not silently enable the others. Connecting hosted MCP does not grant access to your Mac’s filesystem. Giving a coding agent one capture folder does not make it a cloud-library search client.
+
+## Verify the first local request
+
+Start with a read-only task: identify the recording, list the files that exist, and summarize one source-backed observation. If the agent reports a missing path, copy the folder location again from your Mac and check the agent is running there. If it can read text but cannot inspect images, attach the relevant frame or use a client that supports image input.
+
+When you move the folder, preserve the video and frame subfolders along with the Markdown. Relative references in saved context depend on that directory structure; copying only the context file can leave the recipient with missing evidence.

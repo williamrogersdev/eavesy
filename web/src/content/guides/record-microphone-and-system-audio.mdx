@@ -2,7 +2,7 @@
 title: "Record your microphone and computer audio on a Mac"
 description: "Choose the right Eavesy capture mode, verify both sides of a conversation, and keep a recoverable recording."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Microphone troubleshooting", "path": "/guides/recording-microphone-troubleshooting"}, {"title": "Zoom capture", "path": "/integrations/zoom"}, {"title": "Recording files", "path": "/docs/session-folder-format"}]
 ---
@@ -32,3 +32,24 @@ If one side is missing, test it separately. A silent microphone calls for input 
 ## Files and processing
 
 Local capture works without an account, subject to the required permissions. Sign in for cloud transcription, summaries, and synced access. Keep the original audio until you have checked the text; recognition can mishear names, numbers, and quiet speakers.
+
+## Choose a mode by what must be captured
+
+| Mode | Your microphone | Computer sound | Screen |
+| --- | --- | --- | --- |
+| Talk | Yes | No | No |
+| Meeting | Yes | Yes | No |
+| Video | Yes | Yes | Yes |
+
+A short preflight is easier to diagnose than a full missed meeting. Say “microphone test,” play a separate sound, and listen for each independently. When using headphones, the remote side should come from captured computer audio; hearing your own microphone does not prove the other side was captured.
+
+## Diagnose one missing source
+
+| Playback result | Next check |
+| --- | --- |
+| Your voice is absent | Input selection, mute, and Microphone permission |
+| Computer sound is absent | Meeting/Video mode, system-audio permission, and output routing |
+| Both are audible but text is missing | Sign-in, processing state, and recognition rather than capture |
+| Sound is distorted or quiet | Repeat the test with the same device and check levels and placement |
+
+Keep the short failed test until you understand the cause. Change one setting at a time, make another ten-second capture, and compare playback. A transcript or caption is a second check; the original audio establishes what was actually recorded.

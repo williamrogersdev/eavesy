@@ -2,7 +2,7 @@
 title: "A narrated UI bug handoff"
 description: "Follow a small fictional workspace bug from reproduction to a reviewable report with source evidence."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Bug report template", "path": "/templates/ai-bug-report"}, {"title": "Record a walkthrough", "path": "/guides/screen-recording-to-markdown"}, {"title": "Claude Code setup", "path": "/integrations/claude-code"}]
 download: "/resources/examples/ui-bug-report.md"
@@ -38,3 +38,23 @@ A useful request is: “Inspect the screenshot and reproduction, then find the c
 ## Check the result yourself
 
 After a proposed change, repeat Alpha → Beta and verify that Export remains available with the rows present. Also test a genuinely empty state before deciding what the correct condition should be. Reading a persuasive explanation is not the same as verifying the UI.
+
+## The completed report, before investigation
+
+| Field | Example |
+| --- | --- |
+| Goal | Export the visible ready rows after changing workspace |
+| Starting state | Alpha selected, two ready rows, Export enabled |
+| Trigger | Switch from Alpha to Beta |
+| Actual result | Two rows remain visible; Export is disabled |
+| Expected result | Export remains available while exportable rows exist |
+| Evidence | The linked demo and screenshot above |
+| Unknown | Why the disabled state changes; whether a real product has this defect |
+
+The report describes a symptom rather than claiming a root cause. The fixture is available for source inspection, but a screenshot alone cannot establish which event handler or condition is responsible.
+
+## What a good investigation should return
+
+Ask for the condition that controls the disabled state and the test that connects it to the reproduction. A reviewable result should explain the relevant code, the proposed change, and what happened when the original steps were repeated. If the agent cannot inspect the screenshot or run the demo, it should say which part remains unverified.
+
+Try the [editable bug report](/templates/ai-bug-report#build-your-template) with the fictional example, then replace its fields with a capture from your own app. Use the same structure without carrying over the demo’s symptoms as if they were your own.

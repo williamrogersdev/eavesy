@@ -2,7 +2,7 @@
 title: "A library answer checked against its source"
 description: "See how to review a decision answer, its quoted passage, and the details the recording does not establish."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Find a past decision", "path": "/guides/find-decisions-in-recordings"}, {"title": "Hosted MCP tools", "path": "/docs/connect-mcp"}, {"title": "Decision log template", "path": "/templates/decision-log"}]
 download: "/resources/examples/launch-transcript.md"
@@ -37,3 +37,26 @@ A real library answer can abstain, report unanswered parts, or warn that additio
 Sign in, open Ask your library, and ask a narrow question about a recording you recognize. Confirm the returned source is the intended one. Inspect the timestamp, then compare the answer with what the source establishes. If the recording is still processing or not indexed, finish that work before treating a missing result as meaningful.
 
 Hosted MCP clients can use `search_library` to retrieve evidence and `ask_library` when cloud answers are enabled. Local screenshots and notes are outside that account transcript library.
+
+## Check each claim independently
+
+| Proposed claim | Supported? | Reason |
+| --- | --- | --- |
+| Launch is Friday | Yes, as a day of the week | The 00:01 passage states an agreement |
+| Launch is October 23 | No | The fictional source has no calendar date |
+| The help page needs review | Yes | The 00:05 passage says it still needs review |
+| The remote speaker owns the review | No | The 00:09 passage explicitly leaves the owner unassigned |
+| Review must finish before launch | Not established | No passage states that dependency |
+
+A citation can be accurate while an answer still overreaches. Here, quoting “launch on Friday” would not support an invented owner or a specific date. Review each part of a compound sentence rather than accepting the whole sentence because one part has a quote.
+
+## A useful follow-up prompt
+
+```text
+For each claim, show the exact supporting passage and recording reference.
+Separate established facts from unanswered details.
+If the selected sources do not establish an owner or calendar date,
+leave those fields unresolved instead of inferring them.
+```
+
+In your own library, open the linked recording to inspect the surrounding context. In this teaching exercise, use the downloadable transcript above. Once you have checked the evidence, carry only the supported details into the [decision log](/templates/decision-log).
