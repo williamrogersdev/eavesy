@@ -812,7 +812,7 @@ fn read_ready<R: BufRead>(reader: &mut R) -> Result<(CaptureEvent, Option<Captur
                 if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
                     match ev.event.as_str() {
                         "ready" => return Ok((ev, first_video)),
-                        "video_start" => first_video = Some(ev),
+                        "video_start" => { first_video.get_or_insert(ev); }
                         "error" => return Err(ev.message.unwrap_or_else(|| "capture failed".into())),
                         _ => {}
                     }
@@ -1619,6 +1619,7 @@ mod tests {
         let bytes = concat!(
             "{\"event\":\"level\",\"rms\":0.1}\n",
             "{\"event\":\"video_start\",\"epochMs\":1234,\"displayX\":-1440,\"displayY\":0,\"displayWidth\":1440,\"displayHeight\":900}\n",
+            "{\"event\":\"video_start\",\"epochMs\":9999}\n",
             "{\"event\":\"ready\"}\n",
             "{\"event\":\"done\"}\n"
         );

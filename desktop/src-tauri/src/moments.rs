@@ -478,10 +478,7 @@ fn follow_pointer(app: AppHandle) {
             if changed {
                 let _ = app.emit(
                     "marker:hover",
-                    target.map(|target| serde_json::json!({
-                        "rect": target.rect.map(|rect| rect.moved(-display.x, -display.y)),
-                        "label": target.element.as_ref().and_then(Element::summary).or_else(|| Some("Screen region · drag Area for a larger selection".into())),
-                    })),
+                    hover_payload(target.as_ref(), display),
                 );
             }
         }
@@ -490,6 +487,23 @@ fn follow_pointer(app: AppHandle) {
 
 /// A visible region remains taggable when an app exposes no accessible control.
 /// The saved element stays absent in that case; OCR reads the resulting crop.
+fn hover_payload(target: Option<&Target>, display: Rect) -> serde_json::Value {
+    target.map(|target| serde_json::json!({
+        "rect": target.rect.map(|rect| rect.moved(-display.x, -display.y)),
+        "label": target.element.as_ref().and_then(Element::summary)
+            .unwrap_or_else(|| "Screen region · drag Area for a larger selection".into()),
+    })).unwrap_or(serde_json::Value::Null)
+}
+
+fn element_point(point: Point, display: Rect) -> Result<Point, String> {
+    if !point.x.is_finite() || !point.y.is_finite() {
+        return Err("Choose a point inside the recorded display".into());
+    }
+    let global = Point { x: point.x + display.x, y: point.y + display.y };
+    display.contains(global.x, global.y).then_some(global)
+        .ok_or_else(|| "Point inside the recorded display to tag it".into())
+}
+
 fn pointer_target(x: f64, y: f64, display: Rect) -> Option<Target> {
     if !display.contains(x, y) { return None; }
     let mut target = imp::target_at(x, y, true).ok().flatten().unwrap_or_default();
@@ -538,7 +552,10 @@ pub fn mark_element(app: AppHandle, point: Option<Point>) -> Result<u32, String>
     let display = live().as_ref().filter(|live| live.tool == Some(Tool::Element)).ok_or(NOT_RECORDING)?.display();
     // The webview supplies the click point; never save a stale hover from before
     // a fast pointer movement or a slow accessibility lookup.
-    let (x, y) = point.map(|p| (p.x + display.x, p.y + display.y)).unwrap_or_else(imp::cursor);
+    let (x, y) = match point {
+        Some(point) => { let global = element_point(point, display)?; (global.x, global.y) }
+        None => imp::cursor(),
+    };
     let target = pointer_target(x, y, display).ok_or("Point inside the recorded display to tag it")?;
     add_mark(&app, Kind::Element, Some(Point { x, y }), target)
 }
@@ -580,10 +597,7 @@ pub fn marking_state(app: AppHandle) {
     if let Some(live) = guard.as_ref() {
         if let Some(target) = &live.hover {
             let display = live.display();
-            let _ = app.emit("marker:hover", serde_json::json!({
-                "rect": target.rect.map(|r| r.moved(-display.x, -display.y)),
-                "label": target.element.as_ref().and_then(Element::summary).unwrap_or_else(|| "Screen region · drag Area for a larger selection".into()),
-            }));
+            let _ = app.emit("marker:hover", hover_payload(Some(target), display));
         }
     }
 }
@@ -1128,6 +1142,16 @@ mod tests {
     fn without_a_first_frame_time_moments_count_from_the_recording_start() {
         let settled = settle(&live_with(vec![click(3_500, 10.0, 10.0)], None));
         assert_eq!(settled.moments[0].timestamp_ms, 2_500);
+    }
+
+    #[test]
+    fn element_click_coordinates_use_the_recorded_display_origin() {
+        let display = Rect { x: -1440.0, y: 100.0, width: 1440.0, height: 900.0 };
+        assert_eq!(element_point(Point { x: 50.0, y: 60.0 }, display).unwrap(), Point { x: -1390.0, y: 160.0 });
+        for point in [Point { x: f64::NAN, y: 0.0 }, Point { x: 0.0, y: f64::INFINITY }, Point { x: -1.0, y: 0.0 }, Point { x: 1440.0, y: 0.0 }] {
+            assert!(element_point(point, display).is_err());
+        }
+        assert!(hover_payload(None, display).is_null());
     }
 
     #[test]
