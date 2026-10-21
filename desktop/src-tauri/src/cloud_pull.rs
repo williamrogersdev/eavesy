@@ -5,7 +5,7 @@
 //! recordings folder like a local capture, without audio. Its id is the cloud
 //! meeting id, so edits to its files sync back to the same meeting.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -24,6 +24,10 @@ const PER_PULL: usize = 5;
 /// Meetings asked for per page of the cloud list, and how many pages one pull reads.
 const PAGE: usize = 50;
 const MAX_PAGES: usize = 20;
+/// Changed meetings asked for per check for edits made elsewhere.
+const CHANGES_PAGE: usize = 50;
+/// On the first check for edits, only meetings changed this recently are downloaded again.
+const FIRST_CHANGES_WINDOW_MS: i64 = 3 * 24 * 60 * 60 * 1000;
 /// How long a meeting that could not be downloaded or saved is left alone.
 const FAILED_RETRY: Duration = Duration::from_secs(60 * 60);
 
@@ -54,6 +58,13 @@ struct PullState {
     /// read a few pages per pull instead of the newest pages every time.
     #[serde(default)]
     scan_offset: usize,
+    /// The newest change to a meeting already brought into this Mac; `None`
+    /// until the first check for edits made on other devices.
+    #[serde(default)]
+    changes_since: Option<i64>,
+    /// The name of the device each pulled meeting was recorded on.
+    #[serde(default)]
+    origins: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +75,23 @@ struct CloudMeeting {
     #[serde(default)]
     duration_sec: Option<i64>,
     source: String,
+    #[serde(default)]
+    changed_at: Option<i64>,
+    #[serde(default)]
+    capture_source: Option<String>,
+    #[serde(default)]
+    device_name: Option<String>,
+}
+
+impl CloudMeeting {
+    /// The local source to file it under: a microphone-only capture is a voice
+    /// memo or dictation, not a meeting.
+    fn local_source(&self) -> String {
+        match self.capture_source.as_deref() {
+            Some(source @ ("mic" | "mixed")) => source.to_string(),
+            _ => self.source.clone(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -110,6 +138,11 @@ pub fn is_pulled<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
     load_state(app).is_ok_and(|state| state.pulled.contains(id))
 }
 
+/// The device each meeting brought in from the cloud was recorded on.
+pub fn origins<R: Runtime>(app: &AppHandle<R>) -> BTreeMap<String, String> {
+    load_state(app).map(|state| state.origins).unwrap_or_default()
+}
+
 /// Called before a capture is deleted: a pulled meeting stays deleted on this
 /// Mac. Returns whether it was a pulled meeting, for `undismiss`.
 pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String> {
@@ -118,6 +151,7 @@ pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String>
     }
     update_state(app, |state| {
         state.pulled.remove(id);
+        state.origins.remove(id);
         state.dismissed.insert(id.to_string());
     })?;
     Ok(true)
@@ -194,7 +228,8 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
         let saved = {
             let app = app.clone();
             let root = root.to_path_buf();
-            crate::sync::blocking(move || save(&app, &root, recording)).await
+            let origin = meeting.device_name.clone();
+            crate::sync::blocking(move || save(&app, &root, recording, origin)).await
         };
         match saved {
             Ok(true) => arrived += 1,
@@ -245,7 +280,7 @@ fn to_recording(meeting: &CloudMeeting, result: &ResultResponse) -> StoredRecord
         title: result.title.clone(),
         started_at_ms: meeting.started_at,
         duration_sec: meeting.duration_sec.unwrap_or(0).max(0),
-        source: meeting.source.clone(),
+        source: meeting.local_source(),
         status: "complete".to_string(),
         summary,
         transcript: Some(transcript),
@@ -260,7 +295,7 @@ fn to_recording(meeting: &CloudMeeting, result: &ResultResponse) -> StoredRecord
 /// Marking first means a crash in between only leads to it being pulled again;
 /// any failure removes the folder and the mark. Returns false when the user
 /// deleted it on this Mac while the pull was running.
-fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecording) -> Result<bool, String> {
+fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecording, origin: Option<String>) -> Result<bool, String> {
     if load_state(app)?.dismissed.contains(&recording.id) {
         return Ok(false);
     }
@@ -275,6 +310,9 @@ fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecord
             dismissed = state.dismissed.contains(&id);
             if !dismissed {
                 state.pulled.insert(id.clone());
+                if let Some(device) = &origin {
+                    state.origins.insert(id.clone(), device.clone());
+                }
             }
         }))
         .and_then(|()| {
@@ -295,9 +333,164 @@ fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecord
     saved.map(|()| !dismissed)
 }
 
+/// Brings changes made on other devices into meetings this Mac already has:
+/// edited notes, summaries and transcripts, renames, and the device and kind
+/// of meetings pulled before those were known. Files edited on this Mac and
+/// not yet taken by the cloud are kept. Returns how many meetings changed.
+pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<usize> {
+    let state = load_state(app).map_err(|error| anyhow!(error))?;
+    let first = state.changes_since.is_none();
+    let since = state.changes_since.unwrap_or(0);
+    let download_after = if first { chrono::Utc::now().timestamp_millis() - FIRST_CHANGES_WINDOW_MS } else { since };
+    let mut cursor = since;
+    let mut updated = 0;
+    let mut downloads = 0;
+    loop {
+        let response = api
+            .client
+            .get(api.url(&format!("/api/sessions?changedSince={cursor}&limit={CHANGES_PAGE}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("list changed cloud meetings")?;
+        if !response.status().is_success() {
+            return Err(crate::sync::http_error("list changed cloud meetings", response).await);
+        }
+        let listed: CloudMeetings = response.json().await.context("decode changed cloud meetings")?;
+        let last_page = listed.items.len() < CHANGES_PAGE;
+        let state = load_state(app).map_err(|error| anyhow!(error))?;
+        for meeting in &listed.items {
+            let Some(changed_at) = meeting.changed_at else { continue };
+            let pulled = state.pulled.contains(&meeting.id);
+            let local_id = if pulled {
+                Some(meeting.id.clone())
+            } else {
+                sqlite::completed_session_for_remote(app, &meeting.id).map_err(|error| anyhow!(error))?
+            };
+            let Some(local_id) = local_id.filter(|_| !state.dismissed.contains(&meeting.id)) else {
+                cursor = cursor.max(changed_at);
+                continue;
+            };
+            let mut changed = false;
+            if pulled {
+                changed |= remember_origin(app, &meeting.id, meeting.device_name.as_deref()).map_err(|error| anyhow!(error))?;
+                changed |= store::set_source(app, &local_id, &meeting.local_source()).map_err(|error| anyhow!(error))?;
+            }
+            if changed_at > download_after && !failed_recently(&meeting.id) {
+                if downloads >= PER_PULL {
+                    update_cursor(app, cursor)?;
+                    return Ok(updated);
+                }
+                downloads += 1;
+                match download(api, token, &meeting.id).await {
+                    Ok(result) => {
+                        let applied = {
+                            let app = app.clone();
+                            let local_id = local_id.clone();
+                            let remote_id = meeting.id.clone();
+                            crate::sync::blocking(move || apply(&app, &local_id, &remote_id, &result)).await
+                        };
+                        match applied {
+                            Ok(applied) => changed |= applied,
+                            Err(error) => {
+                                eprintln!("cloud pull: could not apply changes to {}: {error:#}", meeting.id);
+                                mark_failed(&meeting.id);
+                            }
+                        }
+                    }
+                    Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => {
+                        update_cursor(app, cursor)?;
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        eprintln!("cloud pull: could not refresh {}: {error:#}", meeting.id);
+                        mark_failed(&meeting.id);
+                    }
+                }
+            }
+            if changed {
+                updated += 1;
+            }
+            cursor = cursor.max(changed_at);
+        }
+        if last_page || listed.items.is_empty() {
+            break;
+        }
+    }
+    update_cursor(app, cursor)?;
+    if updated > 0 {
+        if let Err(error) = app.emit("recordings:updated", ()) {
+            eprintln!("cloud pull: could not announce changed meetings: {error}");
+        }
+    }
+    Ok(updated)
+}
+
+fn update_cursor<R: Runtime>(app: &AppHandle<R>, cursor: i64) -> Result<()> {
+    update_state(app, |state| {
+        state.changes_since = Some(state.changes_since.unwrap_or(0).max(cursor));
+    })
+    .map_err(|error| anyhow!(error))
+}
+
+fn remember_origin<R: Runtime>(app: &AppHandle<R>, id: &str, device: Option<&str>) -> Result<bool, String> {
+    let Some(device) = device.filter(|device| !device.trim().is_empty()) else {
+        return Ok(false);
+    };
+    if load_state(app)?.origins.get(id).map(String::as_str) == Some(device) {
+        return Ok(false);
+    }
+    update_state(app, |state| {
+        if state.pulled.contains(id) {
+            state.origins.insert(id.to_string(), device.to_string());
+        }
+    })?;
+    Ok(true)
+}
+
+/// Writes a meeting's latest cloud version over this Mac's copy, keeping any
+/// file edited here. Returns whether anything changed.
+fn apply<R: Runtime>(app: &AppHandle<R>, local_id: &str, remote_id: &str, result: &ResultResponse) -> Result<bool, String> {
+    let transcript = result
+        .transcript_override_md
+        .clone()
+        .unwrap_or_else(|| crate::sync::render_transcript(&result.title, &result.transcript));
+    let summary = result
+        .summary_override_md
+        .clone()
+        .or_else(|| result.summary.as_ref().map(crate::sync::render_summary));
+    // The cloud keeps notes without their header: notes that only differ by it are the same notes.
+    let notes = match store::get(app, local_id)?.and_then(|recording| recording.notes) {
+        Some(local) if notes_body(&local) == notes_body(&result.notes_md) => local,
+        _ => result.notes_md.clone(),
+    };
+    let Some((recording, changed)) =
+        store::set_result(app, local_id, &result.title, transcript, summary, Some(notes), "complete", true)?
+    else {
+        return Ok(false);
+    };
+    if changed {
+        if let Some(folder) = recording.folder_path.as_deref().map(Path::new) {
+            fs_writer::persist_recording_artifacts(Some(app), folder, &recording, Some(remote_id), recording.notes.as_deref())?;
+        }
+    }
+    Ok(changed)
+}
+
+fn notes_body(markdown: &str) -> &str {
+    let mut body = markdown.trim_start();
+    if let Some(rest) = body.strip_prefix("---\n").or_else(|| body.strip_prefix("---\r\n")) {
+        if let Some(end) = rest.find("\n---") {
+            body = rest[end + 4..].trim_start_matches(['\r', '\n']);
+        }
+    }
+    body.trim_start().strip_prefix("# Notes").unwrap_or(body).trim()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
     use tauri::test::MockRuntime;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -332,7 +525,7 @@ mod tests {
 
     #[test]
     fn a_cloud_meeting_becomes_a_complete_recording_without_audio() {
-        let meeting = CloudMeeting { id: "m1".into(), started_at: 1_700_000_000_000, duration_sec: Some(90), source: "desktop".into() };
+        let meeting = CloudMeeting { id: "m1".into(), started_at: 1_700_000_000_000, duration_sec: Some(90), source: "desktop".into(), changed_at: None, capture_source: None, device_name: None };
         let result: ResultResponse = serde_json::from_value(result_body("Standup")).unwrap();
         let recording = to_recording(&meeting, &result);
         assert_eq!(recording.id, "m1");
@@ -470,9 +663,16 @@ mod tests {
         let api = Api::new(server.uri()).unwrap();
         assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
 
-        sqlite::enqueue_file_edit(handle, "remote-1", "summary", "# Brief\n\nEdited", "hash").unwrap();
+        let summary = PathBuf::from(store::load_all(handle)[0].folder_path.clone().unwrap()).join("summary.md");
+        let edited = "# Brief\n\nEdited";
+        std::fs::write(&summary, edited).unwrap();
+        let hash = hex::encode(sha2::Sha256::digest(edited.as_bytes()));
+        sqlite::record_file_observation(handle, &summary, "remote-1", "summary", &hash).unwrap();
+        assert!(fs_writer::has_local_edit(handle, &summary).unwrap());
+        sqlite::enqueue_file_edit(handle, "remote-1", "summary", edited, &hash).unwrap();
         crate::sync::pass(handle, &api, "token").await;
         assert!(sqlite::next_file_edit(handle).unwrap().is_none());
+        assert!(!fs_writer::has_local_edit(handle, &summary).unwrap(), "what the cloud holds is no longer a local edit");
     }
 
     #[tokio::test]
@@ -570,5 +770,135 @@ mod tests {
         assert_eq!(load_state(handle).unwrap().scan_offset, PAGE, "the page with one meeting left is read again");
         assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
         assert_eq!(load_state(handle).unwrap().scan_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn a_voice_memo_from_another_mac_is_filed_as_voice_with_its_device() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let mut memo = listed("memo", "Voice memo");
+        memo["captureSource"] = "mic".into();
+        memo["deviceName"] = "Studio Mac".into();
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .respond_with(listing(serde_json::json!([memo])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/memo/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Voice memo")))
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+        assert_eq!(store::load_all(handle)[0].source, "mic");
+        assert_eq!(origins(handle).get("memo").map(String::as_str), Some("Studio Mac"));
+    }
+
+    fn changed(id: &str, title: &str, changed_at: i64) -> serde_json::Value {
+        let mut item = listed(id, title);
+        item["changedAt"] = changed_at.into();
+        item["captureSource"] = "mic".into();
+        item["deviceName"] = "Studio Mac".into();
+        item
+    }
+
+    #[tokio::test]
+    async fn edits_made_on_another_device_reach_a_pulled_meeting_but_local_edits_stay() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param_is_missing("changedSince"))
+            .respond_with(listing(serde_json::json!([listed("remote-1", "Standup")])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/remote-1/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Standup")))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+        assert_eq!(store::load_all(handle)[0].source, "desktop");
+
+        let first_seen = chrono::Utc::now().timestamp_millis() - 1_000;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", "0"))
+            .respond_with(listing(serde_json::json!([changed("remote-1", "Standup", first_seen)])))
+            .mount(&server)
+            .await;
+        let mut edited = result_body("Standup renamed");
+        edited["notesMd"] = "Pasted on the other Mac".into();
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/remote-1/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(edited))
+            .mount(&server)
+            .await;
+        assert_eq!(refresh(handle, &api, "token").await.unwrap(), 1);
+        let recording = store::load_all(handle).remove(0);
+        assert_eq!(recording.title, "Standup renamed");
+        assert_eq!(recording.source, "mic", "a microphone-only capture is filed as voice");
+        assert_eq!(origins(handle).get("remote-1").map(String::as_str), Some("Studio Mac"));
+        let folder = PathBuf::from(recording.folder_path.unwrap());
+        assert!(std::fs::read_to_string(folder.join("notes.md")).unwrap().contains("Pasted on the other Mac"));
+        assert_eq!(load_state(handle).unwrap().changes_since, Some(first_seen));
+
+        std::fs::write(folder.join("summary.md"), "# Mine\n\nWritten here").unwrap();
+        let later = first_seen + 500;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", first_seen.to_string()))
+            .respond_with(listing(serde_json::json!([changed("remote-1", "Standup renamed", later)])))
+            .mount(&server)
+            .await;
+        refresh(handle, &api, "token").await.unwrap();
+        assert_eq!(std::fs::read_to_string(folder.join("summary.md")).unwrap(), "# Mine\n\nWritten here");
+        assert_eq!(load_state(handle).unwrap().changes_since, Some(later));
+    }
+
+    #[tokio::test]
+    async fn the_first_check_for_edits_leaves_old_changes_alone() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param_is_missing("changedSince"))
+            .respond_with(listing(serde_json::json!([listed("old", "Old")])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/old/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Old")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", "0"))
+            .respond_with(listing(serde_json::json!([changed("old", "Old", 1_700_000_000_000)])))
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+        assert_eq!(pull(handle, &api, "token", &root).await.unwrap(), 1);
+
+        assert_eq!(refresh(handle, &api, "token").await.unwrap(), 1, "only its kind and device are filled in");
+        assert_eq!(store::load_all(handle)[0].source, "mic");
+        assert_eq!(load_state(handle).unwrap().changes_since, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn notes_differing_only_by_their_header_are_the_same_notes() {
+        assert_eq!(notes_body("---\nid: \"x\"\n---\n\n# Notes\n\nHello\n"), "Hello");
+        assert_eq!(notes_body("Hello"), "Hello");
     }
 }

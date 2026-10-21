@@ -19,6 +19,7 @@ function normalize(value: unknown): Recording | null {
     revision: numberValue(value.revision),
     hasAudio: booleanValue(value.has_audio) ?? booleanValue(value.hasAudio) ?? false,
     hasVideo: booleanValue(value.has_video) ?? booleanValue(value.hasVideo) ?? false,
+    device: optionalString(value.device),
   };
 }
 

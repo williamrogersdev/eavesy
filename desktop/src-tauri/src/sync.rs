@@ -96,7 +96,7 @@ fn idle_pause() -> Duration {
 }
 const ERROR_BACKOFF_MS: i64 = 15_000;
 /// How often meetings recorded on the user's other devices are looked for.
-const CLOUD_PULL_INTERVAL: Duration = Duration::from_secs(60);
+const CLOUD_PULL_INTERVAL: Duration = Duration::from_secs(30);
 /// The longest one pull may hold up uploads.
 const CLOUD_PULL_LIMIT: Duration = Duration::from_secs(90);
 /// Retry interval while the server does not support segments-only finalize yet.
@@ -330,7 +330,16 @@ pub async fn run(app: AppHandle) -> Result<()> {
                             Ok(root) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::cloud_pull::pull(&app, &api, &token, &root)).await {
                                 // More may be waiting: come back sooner.
                                 Ok(Ok(arrived)) if arrived > 0 => wait = Duration::from_secs(2),
-                                Ok(Ok(_)) => {}
+                                Ok(Ok(_)) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::cloud_pull::refresh(&app, &api, &token)).await {
+                                    Ok(Ok(changed)) if changed > 0 => wait = Duration::from_secs(2),
+                                    Ok(Ok(_)) => {}
+                                    Ok(Err(error)) if is_unauthorized(&error) => {
+                                        set_signed_out(&app, true);
+                                        rejected = Some((token.clone(), Instant::now()));
+                                    }
+                                    Ok(Err(error)) => eprintln!("cloud pull: {error:#}"),
+                                    Err(_) => eprintln!("cloud pull: gave up on changes after {}s", CLOUD_PULL_LIMIT.as_secs()),
+                                },
                                 Ok(Err(error)) if is_unauthorized(&error) => {
                                     set_signed_out(&app, true);
                                     rejected = Some((token.clone(), Instant::now()));
@@ -420,8 +429,12 @@ async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) 
         if let Some(remote_id) = remote_id {
             let result = upload_file_edit(api, token, &remote_id, &edit).await;
             match result {
-                Ok(()) => sqlite::mark_operation_done(app, &edit.operation_id)
-                    .map_err(|error| anyhow!(error))?,
+                Ok(()) => {
+                    sqlite::mark_operation_done(app, &edit.operation_id).map_err(|error| anyhow!(error))?;
+                    if let Err(error) = sqlite::adopt_uploaded_edit(app, &edit.local_session_id, &edit.role, &edit.content_hash) {
+                        eprintln!("desktop ingest: {error}");
+                    }
+                }
                 Err(error) => {
                     sqlite::mark_operation_failed(app, &edit.operation_id, &error.to_string())
                         .map_err(|db_error| anyhow!(db_error))?;

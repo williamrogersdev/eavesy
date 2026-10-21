@@ -521,7 +521,12 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
 #[tauri::command(async)]
 pub fn list_recordings(app: AppHandle, offset: Option<usize>, limit: Option<usize>, query: Option<String>, filter: Option<String>, search: Option<crate::history_search::Request>) -> Result<store::HistoryPage, String> {
     let token=search.as_ref().map(crate::history_search::register).transpose()?;
-    store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"), token.as_ref())
+    let mut page = store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"), token.as_ref())?;
+    let origins = crate::cloud_pull::origins(&app);
+    for item in &mut page.items {
+        item.device = origins.get(&item.id).cloned();
+    }
+    Ok(page)
 }
 
 #[tauri::command(async)]

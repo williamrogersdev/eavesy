@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
-import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { meetings } from '@/db/schema';
+import { devices, meetings, summaries, userNotes } from '@/db/schema';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as projectsRepo from '@/db/repo/projects';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
@@ -11,6 +11,16 @@ import { guardBurst } from '@/server/rate-limit';
 
 /** Past this offset the list reads as ended, so a client paging through wraps around. */
 const MAX_LIST_OFFSET = 100_000;
+
+/** The last time anything another device shows for a meeting changed: its title, summary, transcript or notes. */
+const changedAt = sql<number>`max(${meetings.updatedAt}, coalesce(${userNotes.updatedAt}, 0), coalesce(${summaries.generatedAt}, 0), coalesce(${summaries.userEditedAt}, 0))`;
+
+/** What the recording Mac captured: only the microphone (a voice memo or dictation) or the call audio too. */
+const captureSource = sql<'mic' | 'mixed' | null>`case
+  when exists (select 1 from meeting_segments s where s.meeting_id = ${meetings.id} and s.track = 'system') then 'mixed'
+  when exists (select 1 from meeting_segments s where s.meeting_id = ${meetings.id})
+    and not exists (select 1 from meeting_segments s where s.meeting_id = ${meetings.id} and s.track <> 'mic') then 'mic'
+end`;
 
 const createSessionSchema = z.object({
   clientSessionId: z.string().uuid(),
@@ -31,6 +41,8 @@ export const Route = createFileRoute('/api/sessions/')({
   server: {
     handlers: {
       // Finished meetings this device did not record, so a second Mac can show them.
+      // With changedSince: finished meetings from any device changed after that time,
+      // oldest change first, so a Mac can bring edits made elsewhere into its copies.
       GET: async ({ request }) => {
         let actor;
         try {
@@ -41,8 +53,9 @@ export const Route = createFileRoute('/api/sessions/')({
         const search = new URL(request.url).searchParams;
         const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
+        const since = search.has('changedSince') ? Math.max(Math.floor(Number(search.get('changedSince')) || 0), 0) : null;
         if (offset > MAX_LIST_OFFSET) return Response.json({ items: [] });
-        const items = await getDb()
+        const query = getDb()
           .select({
             id: meetings.id,
             title: meetings.title,
@@ -50,20 +63,36 @@ export const Route = createFileRoute('/api/sessions/')({
             durationSec: meetings.durationSec,
             source: meetings.source,
             updatedAt: meetings.updatedAt,
+            changedAt,
+            captureSource,
+            deviceId: meetings.deviceId,
+            deviceName: devices.name,
           })
           .from(meetings)
+          .leftJoin(devices, eq(devices.id, meetings.deviceId))
+          .leftJoin(userNotes, eq(userNotes.meetingId, meetings.id))
+          .leftJoin(summaries, eq(summaries.meetingId, meetings.id))
           .where(
             and(
               eq(meetings.userId, actor.userId),
               eq(meetings.status, 'complete'),
               isNull(meetings.deletedAt),
-              actor.deviceId ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId)) : undefined,
+              since !== null
+                ? gt(changedAt, since)
+                : actor.deviceId
+                  ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId))
+                  : undefined,
             ),
-          )
-          .orderBy(desc(meetings.startedAt), desc(meetings.id))
-          .limit(limit)
-          .offset(offset);
-        return Response.json({ items });
+          );
+        const items = await (since !== null
+          ? query.orderBy(asc(changedAt), asc(meetings.id)).limit(limit)
+          : query.orderBy(desc(meetings.startedAt), desc(meetings.id)).limit(limit).offset(offset));
+        return Response.json({
+          items: items.map(({ deviceId, ...item }) => ({
+            ...item,
+            thisDevice: !!actor.deviceId && deviceId === actor.deviceId,
+          })),
+        });
       },
       POST: async ({ request }) => {
         let actor;

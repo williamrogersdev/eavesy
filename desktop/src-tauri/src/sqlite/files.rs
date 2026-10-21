@@ -103,6 +103,32 @@ pub fn remote_meeting_ids<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>,
     ids
 }
 
+/// The finished local recording behind a cloud meeting this Mac recorded, if any.
+pub fn completed_session_for_remote<R: Runtime>(app: &AppHandle<R>, remote_meeting_id: &str) -> Result<Option<String>, String> {
+    open(app)?
+        .query_row(
+            "SELECT id FROM recording_sessions WHERE remote_meeting_id=?1 AND status='complete'",
+            params![remote_meeting_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("resolve local recording for cloud meeting: {error}"))
+}
+
+/// Once an edit reached the cloud, the file as edited is what the cloud holds:
+/// take it as the baseline so later changes made elsewhere can replace it.
+/// Leaves the file alone if it changed again after the edit was queued.
+pub fn adopt_uploaded_edit<R: Runtime>(app: &AppHandle<R>, meeting_id: &str, role: &str, hash: &str) -> Result<(), String> {
+    open(app)?
+        .execute(
+            "UPDATE filesystem_state SET last_written_hash=?3, last_written_at=?4
+             WHERE meeting_id=?1 AND file_role=?2 AND last_observed_hash=?3",
+            params![meeting_id, role, hash, chrono::Utc::now().timestamp_millis()],
+        )
+        .map_err(|error| format!("adopt uploaded edit: {error}"))?;
+    Ok(())
+}
+
 pub fn mark_operation_done<R: Runtime>(
     app: &AppHandle<R>,
     operation_id: &str,
