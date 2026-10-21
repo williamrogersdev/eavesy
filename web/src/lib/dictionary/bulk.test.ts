@@ -16,3 +16,8 @@ test('skips blank lines, reports lines without two sides, and keeps the last of 
   expect(entries).toEqual([{ from: 'easy', to: 'Eavesy app' }]);
   expect(unread).toEqual(['Eavesy', '→ nothing']);
 });
+
+test('splits at the first separator and leaves commas and colons alone', () => {
+  expect(parseReplacements('a = b → c\nKubernetes, k8s\nnote: Eavesy').entries).toEqual([{ from: 'a', to: 'b → c' }]);
+  expect(parseReplacements('x => y').entries).toEqual([{ from: 'x', to: 'y' }]);
+});

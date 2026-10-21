@@ -4,7 +4,7 @@ import { ArrowRight, Check, ListPlus, Pencil, Plus, Search, X } from 'lucide-rea
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, IconButton } from '@/components/launcher/ui';
 import { dictionaryRequest } from '@/lib/desktop/bridge';
-import { parseReplacements } from '@/lib/dictionary/bulk';
+import { MAX_BULK_REPLACEMENTS, parseReplacements } from '@/lib/dictionary/bulk';
 import { normalizeTerm } from '@/lib/dictionary/learning';
 
 type Entry = { id: string; from: string; to: string };
@@ -115,7 +115,10 @@ export function DictionarySettings() {
     if (next.from === entry.from && next.to === entry.to) return 'No changes.';
     await put(next);
     // A new "heard as" is a new entry, so the old one goes.
-    if (normalizeTerm(next.from) !== normalizeTerm(entry.from)) await dictionaryRequest('DELETE', { id: entry.id });
+    if (normalizeTerm(next.from) !== normalizeTerm(entry.from)) {
+      try { await dictionaryRequest('DELETE', { id: entry.id }); }
+      catch { throw new Error(`Saved “${next.from} → ${next.to}”, but couldn’t remove “${entry.from}”. Remove it from the list.`); }
+    }
     return 'Saved.';
   });
 
@@ -124,11 +127,21 @@ export function DictionarySettings() {
     return `Removed “${entry.from} → ${entry.to}”.`;
   }, entry);
 
+  /** Puts a removed entry back, unless something else now uses its "heard as". */
+  const undoRemove = async (back: Entry) => {
+    const current = (await dictionaryRequest<{ entries: Entry[] }>('GET')).entries;
+    const taken = current.find((entry) => normalizeTerm(entry.from) === normalizeTerm(back.from));
+    if (taken) throw new Error(`“${taken.from}” is already set to “${taken.to}”, so the old one wasn’t put back.`);
+    await put(back);
+  };
+
   const parsed = useMemo(() => parseReplacements(bulk ?? ''), [bulk]);
   const addMany = () => void run(async () => {
     const result = await dictionaryRequest<SaveResult>('PUT', { entries: parsed.entries });
     const learned = result.learned ?? 0;
     const skipped = (result.skipped ?? 0) + parsed.unread.length;
+    if (result.status === 'unchanged') { setBulk(null); return 'All of these are already in your dictionary.'; }
+    if (!learned) throw new Error('None of these could be added. Each side needs a word or short phrase, the two must differ, and your dictionary holds up to 500.');
     setBulk(null);
     const added = learned === 1 ? 'Added 1 replacement.' : `Added ${learned} replacements.`;
     return skipped ? `${added} ${skipped === 1 ? '1 line was' : `${skipped} lines were`} skipped: each side needs a word or short phrase, and they must differ.` : added;
@@ -176,11 +189,12 @@ export function DictionarySettings() {
                   ? [
                     `${parsed.entries.length} ready`,
                     parsed.unread.length ? `${parsed.unread.length} line${parsed.unread.length === 1 ? '' : 's'} without “→”` : null,
+                    parsed.entries.length > MAX_BULK_REPLACEMENTS ? `up to ${MAX_BULK_REPLACEMENTS} at a time` : null,
                   ].filter(Boolean).join(' · ')
-                  : 'Separate the two sides with →, ->, =, a tab or a comma.'}
+                  : 'Separate the two sides with →, ->, = or a tab.'}
               </p>
               <Button variant="ghost" size="sm" onClick={() => setBulk(null)}>Cancel</Button>
-              <Button variant="primary" size="sm" loading={busy} disabled={busy || !parsed.entries.length} onClick={addMany}>
+              <Button variant="primary" size="sm" loading={busy} disabled={busy || !parsed.entries.length || parsed.entries.length > MAX_BULK_REPLACEMENTS} onClick={addMany}>
                 {parsed.entries.length > 1 ? `Add ${parsed.entries.length}` : 'Add'}
               </Button>
             </div>
@@ -191,7 +205,7 @@ export function DictionarySettings() {
           <p role="status" className="ev-set-hint flex items-center gap-2">
             {notice.text}
             {notice.undo && (
-              <button type="button" className="ev-link" disabled={busy} onClick={() => { const back = notice.undo!; void run(async () => { await put(back); return 'Put back.'; }); }}>Undo</button>
+              <button type="button" className="ev-link" disabled={busy} onClick={() => { const back = notice.undo!; void run(async () => { await undoRemove(back); return 'Put back.'; }); }}>Undo</button>
             )}
           </p>
         )}
