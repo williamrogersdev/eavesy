@@ -19,7 +19,7 @@ Avoid saying only “this is broken.” Name the control, the action that trigge
 
 Find the capture in your recordings folder, normally `~/Eavesy/Recordings`. Video captures contain `screen.mp4` and recording metadata; transcript and summary files become available as processing completes. Check `transcript.md` and `summary.md` before passing them on. A placeholder summary is not a finished brief.
 
-The current released workflow does not automatically turn video frames into a timestamped visual Markdown document. Audio transcription describes spoken words; it does not establish what a button looked like. Take a screenshot of the relevant state or attach the video when the receiving agent supports it.
+In Mac version 0.5.4, video frames are not automatically turned into a timestamped visual Markdown document. Audio transcription describes spoken words; it does not establish what a button looked like. Take a screenshot of the relevant state or attach the video when the receiving agent supports it.
 
 ## Assemble the handoff
 
@@ -32,3 +32,7 @@ A local coding agent can read files it has permission to access. A browser chat 
 Ask the agent to identify the source files it actually opened and summarize the visible symptom before proposing a change. If it only read the transcript, attach a screenshot rather than assuming it saw the video. Review its proposed fix against the original reproduction.
 
 Signed-in audio processing uses the cloud. Local screen files and standalone screenshots are not made available by the hosted recording MCP connection. See the [sharing guide](/guides/share-local-recordings-with-ai) for the boundary.
+
+## If your build already prepares walkthrough context
+
+Look for `context.md` and `walkthrough.json` in the saved folder. On builds with this newer capability, Copy supplies structured narration, extracted screen text, warnings, and media references. Review readiness and warnings before sharing. A browser chat still cannot open local media paths automatically. Use the [local context guide](/guides/local-recording-context) for the version-specific setup.

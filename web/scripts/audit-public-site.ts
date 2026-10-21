@@ -1,4 +1,5 @@
-export {};
+import { PUBLIC_BLOG_REDIRECTS } from "../src/lib/retired-content";
+import { FIRST_SEARCH_PAGES } from "../src/lib/search-launch";
 /** Read-only SSR audit. Run against a local preview or an explicitly selected deployed origin. */
 const origin = process.argv[2] ?? "http://127.0.0.1:4173";
 const canonicalOrigin = "https://eavesy.com";
@@ -15,6 +16,11 @@ const paths = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(
 );
 check(paths.length > 60, "Expected the expanded public sitemap");
 check(new Set(paths).size === paths.length, "Duplicate sitemap paths");
+for (const entry of FIRST_SEARCH_PAGES)
+  check(
+    paths.includes(entry.path),
+    `First publishing cluster missing from sitemap: ${entry.path}`,
+  );
 const linkPaths = new Set<string>();
 for (let i = 0; i < paths.length; i += 6) {
   await Promise.all(
@@ -47,7 +53,7 @@ for (let i = 0; i < paths.length; i += 6) {
         !/<meta\b(?=[^>]*name="robots")[^>]*content="[^"]*noindex/.test(html),
         `${path}: indexable page is noindex`,
       );
-      for (const match of html.matchAll(/<a\b[^>]*href="(\/[^"#?]*)/g)) {
+      for (const match of html.matchAll(/<a\b[^>]*href="(\/(?!\/)[^"#?]*)/g)) {
         if (
           !/^\/(?:app|sign-in|sign-up|api|connect|onboarding)(?:\/|$)/.test(
             match[1],
@@ -78,18 +84,14 @@ for (const path of [
   "/features/not-a-real-feature",
   "/integrations/not-a-real-tool",
   "/blog/not-a-real-post",
+  "/blog/toString",
   "/blog/best-text-to-speech-ai-models",
 ]) {
   const response = await fetch(`${origin}${path}`, { redirect: "manual" });
   check(response.status === 404, `${path}: must return real 404`);
 }
-for (const [from, to] of [
-  [
-    "/blog/bot-free-vs-bot-based-meeting-recorders",
-    "/features/bot-free-capture",
-  ],
-  ["/blog/best-speech-to-text-ai-models", "/features/transcription"],
-]) {
+for (const [slug, to] of PUBLIC_BLOG_REDIRECTS.entries()) {
+  const from = `/blog/${slug}`;
   const response = await fetch(`${origin}${from}`, { redirect: "manual" });
   check(
     response.status === 301 && response.headers.get("location") === to,

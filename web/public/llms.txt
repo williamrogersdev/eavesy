@@ -129,6 +129,6 @@ hello@eavesy.com
 - Cursor handoff: https://eavesy.com/integrations/cursor
 - Local file and attachment boundaries: https://eavesy.com/guides/share-local-recordings-with-ai
 
-The released app does not automatically extract a visual frame timeline or provide the separate local walkthrough MCP server from development work. Audio transcripts establish spoken words; an agent needs actual image or video access to inspect visual details. A path pasted into a browser chat does not upload the file. Hosted MCP does not expose local screenshot, note, or clipboard captures.
+Mac version 0.5.4 does not automatically extract a visual frame timeline or provide the newer local walkthrough MCP server. Audio transcripts establish spoken words; an agent needs actual image or video access to inspect visual details. A path pasted into a browser chat does not upload the file. Hosted MCP does not expose local screenshot, note, or clipboard captures.
 
 The worked examples are explicitly fictional teaching material, with hand-authored sample text. They are not customer recordings, production model responses, or claims that Eavesy automatically generated a visual report. Their fixture screenshot depicts the included demo.

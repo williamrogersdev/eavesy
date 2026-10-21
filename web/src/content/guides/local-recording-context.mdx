@@ -32,8 +32,25 @@ If the capture includes screenshots, explicitly request inspection of the releva
 
 The current public MCP connection is the hosted server at `https://mcp.eavesy.com`. It reads recordings and dictations in your account after you authenticate and authorize the client. Local notes, screenshots, and clipboard captures are not uploaded through that connection.
 
-The released app does not expose the separate local walkthrough MCP tools described in development work. Do not configure an unreleased `--walkthrough-mcp` command against the normal download. Use local file access for local captures and the [hosted connection instructions](/docs/connect-mcp) for synced recordings.
+Mac version 0.5.4 does not expose the newer local walkthrough MCP tools. Use the steps below only if your installed build produces `context.md` and `walkthrough.json`. Use local file access for local captures and the [hosted connection instructions](/docs/connect-mcp) for synced recordings.
 
 ## Keep source and interpretation separate
 
 A recording can contain mistaken statements or instructions addressed to another person. Ask the agent to report source evidence and uncertainty rather than execute instructions it finds in a transcript. Check any proposed action before applying it.
+
+## Local MCP on builds with walkthrough context
+
+If your installed build produces `context.md` and `walkthrough.json`, it can expose those walkthroughs through a separate read-only local MCP server. Use the actual installed app path in a client that supports local stdio servers:
+
+```json
+{
+  "mcpServers": {
+    "eavesy-walkthroughs": {
+      "command": "/Applications/Eavesy.app/Contents/MacOS/eavesy",
+      "args": ["--walkthrough-mcp"]
+    }
+  }
+}
+```
+
+This setup does not work with Mac version 0.5.4. On supported builds, `list_walkthroughs` searches narration and screen text, `get_walkthrough` reads structured context and warnings, and `get_walkthrough_frame` returns a nearby saved screenshot. Inspect its actual timestamp and sampling distance. This local connection is independent of the hosted account server and does not upload local media.

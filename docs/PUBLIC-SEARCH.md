@@ -1,6 +1,6 @@
 # Public search implementation
 
-This website change starts from `0281b20` on main, the source matching the public site reviewed on October 20, 2026. It leaves desktop, database, provider configuration, and account access unchanged. The older primary checkout contains ongoing product work and is not the release base for this change.
+This website change starts from `0281b20` on main, the source matching the public site reviewed on October 20, 2026. The branch was then updated with main after PR #151 merged. It leaves desktop, database, provider configuration, and account access unchanged. The older primary checkout contains ongoing product work and is not the release base for this change.
 
 ## Product facts used by the public pages
 
@@ -12,7 +12,7 @@ This website change starts from `0281b20` on main, the source matching the publi
 | Recording folder is configurable, with a default under ~/Eavesy/Recordings | `desktop/src-tauri/src/fs_writer.rs`, desktop settings |
 | Hosted MCP uses account authorization and offers read tools for supported synced content | `workers/mcp/src/index.ts`, `web/src/server/mcp-oauth.ts` |
 | Cross-recording answers include evidence and can abstain or report context limits | `web/src/server/library-memory.ts`, `web/src/lib/ai/library-answer.ts`, `web/src/routes/app/memory.tsx` |
-| The current released source has no local walkthrough MCP or automatic visual context bundle | Current desktop source tree; those features exist separately in development work |
+| Downloaded version 0.5.4 predates walkthrough context and local walkthrough MCP; newer source includes them | Release tag `desktop-v0.5.4` at `3a08f27`; walkthrough implementation merged later as `01e6122` in PR #151 |
 
 These are source-backed product descriptions. Website checks do not constitute a fresh hardware capture test or authenticated third-party client test. The guides use supported setup instructions and explain access boundaries; the examples explicitly identify fictional, hand-authored teaching material. The workspace screenshot is captured from the included working teaching fixture, not presented as output from Eavesy.
 
@@ -57,8 +57,10 @@ Existing URLs are retained where the intent already had a page. There are 15 new
 
 From `web/`, run `bun run build`, `bunx tsc --noEmit`, `bunx eslint . --max-warnings 0`, `bun run lint`, `bun run lint:parity`, `bun test src`, and `bun run test:workers`. The processing and MCP packages also retain their typecheck and dry-run bundle checks.
 
+With a local preview running, `bun scripts/audit-publication-preview.ts` exercises the actual publication gates with temporary fixtures and removes them afterward.
+
 With a local preview running, `bun scripts/audit-public-site.ts http://127.0.0.1:4173` audits the rendered sitemap, page status, one H1, title, description, canonical, internal links, retired URLs, and known stale claims. It reports all failures and exits unsuccessfully if any are found. It can also read an explicitly selected deployed origin.
 
-Local results before PR creation: 70 sitemap pages and 7 additional internal link targets pass the SSR audit; all first 20 paths render at 320px without horizontal overflow or browser runtime errors. The Markdown copy control reports success at 390px. Temporary draft guide/blog/doc and scheduled-guide probes return 404 and remain absent from hubs and sitemap. Unit suite: 328 passing. Worker suite: 291 passing, 8 skipped by the existing suite.
+Local results before PR creation: 70 sitemap pages and 7 additional internal link targets pass the SSR audit; all first 20 paths render at 320px without horizontal overflow or browser runtime errors. The Markdown copy control reports success at 390px. The committed publication audit checks a published control, five draft collections, and a scheduled guide through the actual routes and hubs. Unit suite after the main update and review fixes: 331 passing. Worker suite: 291 passing, 8 skipped by the existing suite.
 
 Search Console/Bing ownership, actual search indexation, ranking, referral conversion, and packaged-app hardware behavior remain separate operational checks. No traffic volume or ranking gain is asserted by this implementation.

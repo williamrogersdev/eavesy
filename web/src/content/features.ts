@@ -40,7 +40,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       { title: 'Screen, microphone, and computer audio', body: 'Video mode captures the walkthrough after you grant the required macOS permissions.' },
       { title: 'Keep the source files', body: 'The recording stays in a normal folder with available transcript, brief, and metadata files.' },
       { title: 'Choose the evidence to share', body: 'Add screenshots or a supported video attachment when your task needs visual inspection. A transcript alone does not describe every visible detail.' },
-      { title: 'Clear processing boundaries', body: 'On-device captions can provide preliminary words. Sign in for the cloud transcript and brief. The released workflow does not automatically extract a visual frame timeline.' },
+      { title: 'Clear processing boundaries', body: 'On-device captions can provide preliminary words. Sign in for the cloud transcript and brief. Version 0.5.4 does not automatically extract a visual frame timeline.' },
     ],
     related: ['bot-free-capture', 'transcription', 'files-you-own'],
   },

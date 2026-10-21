@@ -12,12 +12,18 @@ Open the launcher with **⌘⇧Space** and choose **Video**. Show the starting s
 
 When signed-in processing completes, review `transcript.md` and `summary.md` in the capture folder. Those are text outputs from recording audio. They do not mean an assistant has inspected the screen. Supply a screenshot of the important state or attach a video when the receiving assistant supports it.
 
-## What the current app does not infer
+## Check your installed version
 
-The released workflow does not automatically extract a frame-by-frame visual timeline, produce `context.md`, or expose a local walkthrough MCP server. An agent reading only a transcript knows the words, not the visual evidence. The hosted MCP server retrieves supported account text; it does not open video files on your Mac.
+Mac version 0.5.4 does not automatically extract a visual timeline, produce `context.md`, or expose a local walkthrough MCP server. An agent reading only a transcript knows the words, not the visual evidence. The hosted MCP server retrieves supported account text; it does not open video files on your Mac.
 
 For a bug report, add a concrete request such as “Inspect the disabled Export button after I switch workspaces.” Ask the agent to identify which sources it opened. This keeps its interpretation grounded in the evidence it actually received.
 
 ## Local files and cloud audio
 
 Capture saves local media. With the required recognition permission and available models, on-device captions can show preliminary text. Signed-in audio processing produces a cloud transcript and brief. Review sensitive content before separately sharing it with another AI service.
+
+## Builds with walkthrough context
+
+Newer builds with walkthrough processing save `context.md`, `walkthrough.json`, and sampled screenshots alongside the recording. If these files are present, review context readiness and any warnings, then use Copy to hand the structured text to a local agent. Sampled frames can miss brief transitions, and OCR is extracted text rather than a complete interpretation of the scene.
+
+The download may lag behind source updates. The 0.5.4 instructions above remain the applicable workflow when your installed app does not produce those files. See the [local context guide](/guides/local-recording-context) for the optional local MCP setup on supported builds.
