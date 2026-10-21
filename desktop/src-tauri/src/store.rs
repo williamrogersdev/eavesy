@@ -549,11 +549,10 @@ mod persistence_tests {
         .is_err());
         std::fs::rename(&root, &saved).unwrap();
         std::fs::write(&root, b"temporarily unavailable directory").unwrap();
-        for _ in 0..2 {
-            assert!(get(fixture.handle(), "safe")
-                .unwrap_err()
-                .contains("Could not reopen local history"));
-        }
+        let first = get(fixture.handle(), "safe").unwrap_err();
+        let second = get(fixture.handle(), "safe").unwrap_err();
+        assert!(first.contains("Could not reopen local history"));
+        assert!(second.contains("Could not reopen local history"));
         assert!(shared.history.is_poisoned());
         std::fs::remove_file(&root).unwrap();
         std::fs::rename(&saved, &root).unwrap();

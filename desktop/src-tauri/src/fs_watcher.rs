@@ -282,11 +282,17 @@ async fn wait_until_ready_for<R: Runtime>(
 /// Only call from blocking processing workers, never the UI or an async worker.
 pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let result = wait_worker_policy(
-        || tauri::async_runtime::block_on(wait_until_ready(app)),
-        || {
-            crate::sync::report_recovery_wait(app, &RecoveryWaitError::PendingTimeout.to_string());
-            std::thread::sleep(Duration::from_secs(5));
+        |remaining| {
+            tauri::async_runtime::block_on(wait_until_ready_for(
+                app,
+                remaining.min(Duration::from_secs(30)),
+            ))
         },
+        |remaining| {
+            crate::sync::report_recovery_wait(app, &RecoveryWaitError::PendingTimeout.to_string());
+            std::thread::sleep(remaining.min(Duration::from_secs(5)));
+        },
+        Duration::from_secs(15 * 60),
     );
     if let Err(error) = &result {
         crate::sync::report_recovery_wait(app, error);
@@ -295,13 +301,19 @@ pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) -> Result<(),
 }
 
 fn wait_worker_policy(
-    mut wait: impl FnMut() -> Result<(), RecoveryWaitError>,
-    mut defer: impl FnMut(),
+    mut wait: impl FnMut(Duration) -> Result<(), RecoveryWaitError>,
+    mut defer: impl FnMut(Duration),
+    budget: Duration,
 ) -> Result<(), String> {
+    let began = std::time::Instant::now();
+    let remaining = || {
+        budget.checked_sub(began.elapsed()).filter(|left|!left.is_zero())
+        .ok_or_else(||"Local file recovery is taking too long. Retry processing after your local files are ready.".to_string())
+    };
     loop {
-        match wait() {
+        match wait(remaining()?) {
             Ok(()) => return Ok(()),
-            Err(RecoveryWaitError::PendingTimeout) => defer(),
+            Err(RecoveryWaitError::PendingTimeout) => defer(remaining()?),
             Err(RecoveryWaitError::Failed(error)) => return Err(error),
         }
     }
@@ -1000,7 +1012,7 @@ mod tests {
         let attempts = std::cell::Cell::new(0);
         let deferrals = std::cell::Cell::new(0);
         let result = wait_worker_policy(
-            || {
+            |_| {
                 let attempt = attempts.get();
                 attempts.set(attempt + 1);
                 if attempt < 2 {
@@ -1009,18 +1021,30 @@ mod tests {
                     Ok(())
                 }
             },
-            || deferrals.set(deferrals.get() + 1),
+            |_| deferrals.set(deferrals.get() + 1),
+            Duration::from_secs(1),
         );
         assert!(result.is_ok());
         assert_eq!(deferrals.get(), 2);
         assert_eq!(attempts.get(), 3);
         assert_eq!(
             wait_worker_policy(
-                || Err(RecoveryWaitError::Failed("failed".into())),
-                || panic!("a failed job must not remain queued")
+                |_| Err(RecoveryWaitError::Failed("failed".into())),
+                |_| panic!("a failed job must not remain queued"),
+                Duration::from_secs(1),
             ),
             Err("failed".into())
         );
+    }
+
+    #[test]
+    fn a_permanently_pending_recovery_has_an_overall_worker_deadline() {
+        let result = wait_worker_policy(
+            |_| Err(RecoveryWaitError::PendingTimeout),
+            |_| panic!("the elapsed deadline must finish job cleanup"),
+            Duration::ZERO,
+        );
+        assert!(result.unwrap_err().contains("taking too long"));
     }
     #[tokio::test]
     async fn a_recovery_panic_is_an_explicit_failure_not_permanent_pending_readiness() {
@@ -1052,11 +1076,15 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let _ = done.send(wait_for_recovery_on_worker(&handle));
         });
-        assert!(result
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .is_err());
+        let outcome = result.recv_timeout(Duration::from_secs(2));
+        if outcome.is_err() {
+            // Never join a regressed, blocked worker: detach before failing the
+            // test, and let process exit clean it up instead of hanging CI.
+            drop(worker);
+            panic!("failed-recovery worker did not finish cleanup");
+        }
         worker.join().unwrap();
+        assert!(outcome.unwrap().is_err());
 
         assert!(finish_startup(&ready, &failed, || {}));
         assert!(wait_until_ready(app.handle()).await.is_ok());
