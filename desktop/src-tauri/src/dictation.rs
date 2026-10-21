@@ -187,7 +187,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        let text = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
+        // Deliberate live corrections already express the user's wording. Keep
+        // the untouched remainder as heard too: polishing the whole sentence
+        // could rewrite a correction or make its source offsets ambiguous.
+        let corrected = crate::live_edit::corrected(&session_id, &text);
+        let source_text = corrected.as_ref().map(|_| text.clone());
+        let text = corrected.unwrap_or_else(|| crate::transcribe::polish_dictation(&app, &text, project.as_deref()));
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {
@@ -227,7 +232,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 session_id: Some(session_id),
                 mode: Some("audio".to_string()),
                 started_at_ms: None,
-                message: Some(text),
+                message: Some(source_text.unwrap_or(text)),
                 notice: how.notice().map(str::to_string),
             });
         }
@@ -300,7 +305,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
         return;
     }
     let app = app.clone();
-    let text = text.trim().to_string();
+    let text = crate::live_edit::corrected(session_id, text).unwrap_or_else(|| text.trim().to_string());
     std::thread::spawn(move || {
         get_launcher_out_of_the_way(&app);
         if focused_text_target() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {

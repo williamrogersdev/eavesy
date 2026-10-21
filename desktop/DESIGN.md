@@ -334,12 +334,12 @@ never by audio routing:
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
 
 Every segment is visually equal: no raised lead button and no colour fill.
-Hover uses ink 5% and the focus ring. While a capture runs, its own segment
-turns into **Stop** (filled square in `--ev-rec`, label "Stop", plus the
-elapsed time as the hint), and the other three dim to 40%. That's the panel's
-only red control. The "computer audio" choice is gone from the UI. Meeting
-means mic + computer audio, and Talk means mic only. Settings drops "default
-source".
+Hover uses ink 5% and the focus ring. While a capture runs, the whole shelf
+becomes a single 42px live bar in place: mascot, status, elapsed time, a quiet
+one-line ticker of the newest words, and Stop. Starting and writing use the
+same row without Stop. There is no second listening card or expandable text
+box above search. Search and history stay at the same position throughout.
+Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
 - Search: well field, r9, 32px, leading search icon, trailing `Kbd /`.
@@ -365,6 +365,12 @@ source".
   points down to the composer**: "It's quiet up here. Hold `fn` and talk, or
   drop something in below." Search and chips are hidden while history is
   empty.
+
+**Transcript corrections:** "Edit transcript" lives in a capture's More menu,
+not below every transcript. It opens a focused dialog with the full transcript,
+a scrollable text area, Cancel, and Save changes (⌘Enter). Escape closes an
+unchanged draft; unsaved changes require an explicit Discard. Failed saves keep
+the draft open. Saved text updates in history immediately. Audio is unchanged.
 
 **Composer (pinned bottom, replaces the footer).** This is the one obvious
 place to put things in.
@@ -407,26 +413,17 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings** (modelled on the Mac's own preference windows): four icon tabs
-pinned at the top (icon over name, the selected one on a soft fill), and
-under them a scroll column of groups titled in `--ev-t-group`. Every setting
-is one `Row`: name (13 ui) with one line of help (12 ink-2) on the left, a
-compact control on the right: a `Switch`, a `Select` for any choice of three
-or more, or a small button. Only tags and text inputs drop under their name,
-full width.
-- **General**: Shortcuts; Recording control (position, live words Off/1/2/4
-  lines, see-through, start and stop sounds); Capture (captions,
-  screenshots, recordings folder); This Mac (permissions, setup, updates).
-- **Dictation**: Writing (tone, Format for AI agents, the default for every
-  project), Transcription (languages, custom words), Learned spellings.
-- **Projects**: a list of rows (name, then words and dictation summary,
-  chevron). A row opens that project's page with a back arrow: Details,
-  Dictation (tone and AI format, each defaulting to the account's), Words,
-  Auto-pick, and a two-step Delete.
-- **Account**: profile, open on the web, sign out.
-Group bodies sit on `--ev-raised` (in the dark, a clear 7% ink step above the
-panel, never near-black on black), r12, hairline-separated rows. These are
-the only card-like containers in the app.
+**Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
+480), independent of the capture panel and HUD. A quiet sidebar switches
+between Capture, Dictation, Transcription, Dictionary, Shortcuts, Projects, Permissions
+and Account. Each section has one scroll area, plain groups and subtle row
+separators; avoid nested raised cards. Preserve drafts when switching sections.
+Dictation retains account tone and AI formatting defaults; projects retain their
+own pages with tone and formatting overrides. Transcription preferences have an explicit Save changes action; failed saves
+keep the draft and failed loads have Retry. Native capture preferences save
+immediately. Show errors beside the affected controls. Use the existing
+light/dark tokens and reduced-motion behavior. The capture panel and pill
+retain their geometry when Settings opens or closes.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
@@ -488,10 +485,10 @@ the default flow.
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.
-2. **Live bar:** a 16px listening mascot with the red peak dot in a
-   rec-tinted ring, "Listening · 0:07" (or "Meeting · 12:40"), the newest
-   words clipped from the start, and the panel's only red control, Stop.
-   Clicking the bar opens it downward to show the last few lines heard.
+2. **Live bar:** an 18px listening mascot with the recording indicator,
+   "Listening · 0:07" (or "Meeting · 12:40"), the newest words clipped from
+   the start, and the panel's only red control, Stop. It replaces the shelf
+   at the same height and never expands.
 3. **Stop:** the stop sound plays and the HUD reads "Writing it down…" the
    moment the key is pressed, before the paste target is looked up. The live
    bar shows the same, without Stop.

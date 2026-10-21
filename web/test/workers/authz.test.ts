@@ -35,6 +35,9 @@ vi.mock('../../src/server/auth', () => ({
 }));
 
 // Owners' calls get through to the model; answer locally instead of calling out.
+vi.mock('../../src/lib/ai/translate', () => ({
+  translateLines: async ({ lines }: { lines: { id: string; text: string }[] }) => new Map(lines.map(line => [line.id, `Translated: ${line.text}`])),
+}));
 vi.mock('../../src/lib/ai/chat-meeting', () => ({ chatWithMeeting: async () => 'Stub reply' }));
 vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -95,6 +98,7 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/translation': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Translates only the caller-submitted text or bounded audio, using the authenticated browser or paired-device quota; reads and stores no recording data' } },
   '/api/dictionary': Object.fromEntries(['GET', 'POST', 'PUT', 'DELETE'].map(method => [method, {
     unauthenticated: SIGNED_IN,
     scopedToCaller: 'Dictionary ownership comes from authenticated browser or paired device identity; feedback service tests verify stale text, cross-owner reads and writes, and forgetting',
@@ -577,3 +581,16 @@ describe.each(discovered.filter(({ routeId, method }) => POLICIES[routeId]?.[met
     });
   },
 );
+
+it('translates unknown-language meeting lines and finishes with a reusable cache', async () => {
+  actor.userId = OWNER;
+  const route = routeModules['../../src/routes/api/meetings/$id/translate.ts'].Route;
+  const post = handlersOf(route).POST!;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await post({ request: new Request(`https://test/api/meetings/${MEETING}/translate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'es' }),
+    }), params: { id: MEETING } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ remaining: 0, lines: { [LINE]: 'Translated: Owner line' } });
+  }
+});

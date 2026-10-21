@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum EventEmitter {
@@ -28,6 +29,16 @@ enum EventEmitter {
         if let firstBufferMs { event["firstBufferMs"] = firstBufferMs }
         if let audioFromMs { event["audioFromMs"] = audioFromMs }
         emit(event)
+    }
+
+    /// The screen video's first frame: when it was, and the display it shows,
+    /// in global points with the origin at the top left of the main display.
+    static func videoStart(epochMs: Int64, display: CGRect) {
+        emit([
+            "event": "video_start", "epochMs": epochMs,
+            "displayX": display.minX, "displayY": display.minY,
+            "displayWidth": display.width, "displayHeight": display.height,
+        ])
     }
 
     static func warning(_ message: String) {

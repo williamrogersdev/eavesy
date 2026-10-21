@@ -6,6 +6,13 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-21 - desktop
+
+### Added
+
+- Mac app: cleaner settings, recording preview lines and a see-through control ([#165](https://github.com/williamrogersdev/eavesy/pull/165))
+- Mac app: per-project dictation tone and a tabbed settings screen ([#164](https://github.com/williamrogersdev/eavesy/pull/164))
+
 ## [0.5.6] - 2026-10-21 - desktop
 
 ### Added

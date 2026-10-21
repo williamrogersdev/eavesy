@@ -119,6 +119,16 @@ struct CaptureEvent {
     is_final: Option<bool>,
     #[serde(default, rename = "endMs")]
     end_ms: Option<i64>,
+    #[serde(default, rename = "epochMs")]
+    epoch_ms: Option<i64>,
+    #[serde(default, rename = "displayX")]
+    display_x: Option<f64>,
+    #[serde(default, rename = "displayY")]
+    display_y: Option<f64>,
+    #[serde(default, rename = "displayWidth")]
+    display_width: Option<f64>,
+    #[serde(default, rename = "displayHeight")]
+    display_height: Option<f64>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -634,6 +644,10 @@ fn spawn_capture(
         eprintln!("{error}");
     }
     let captions = Arc::new(Mutex::new(CaptionLog::default()));
+    // Before the event reader starts, so the first frame's timing has a session to land in.
+    if mode == "screen" {
+        crate::moments::begin(app, &id, started_at_ms);
+    }
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
     state.0.lock().unwrap().insert(
         id.clone(),
@@ -847,6 +861,18 @@ fn stream_events(
                             "recording:level",
                             serde_json::json!({"sessionId":session_id,"rms":ev.rms.unwrap_or(0.0)}),
                         );
+                        continue;
+                    }
+                    if ev.event == "video_start" {
+                        if let (Some(epoch_ms), Some(x), Some(y), Some(width), Some(height)) =
+                            (ev.epoch_ms, ev.display_x, ev.display_y, ev.display_width, ev.display_height)
+                        {
+                            crate::moments::video_started(
+                                &session_id,
+                                epoch_ms,
+                                crate::moments::Rect { x, y, width, height },
+                            );
+                        }
                         continue;
                     }
                     if ev.event == "segment" {
@@ -1124,6 +1150,7 @@ fn stop_capture_inner(
 
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
+    let moments = crate::moments::end(&app, &session_id);
     crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
@@ -1144,6 +1171,7 @@ fn stop_capture_inner(
             &captions,
             dictation,
             pasted_early,
+            moments,
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -1200,6 +1228,7 @@ fn finish_stopped_capture(
     captions: &Mutex<CaptionLog>,
     dictation: bool,
     pasted_early: bool,
+    moments: Option<crate::moments::Moments>,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -1260,9 +1289,15 @@ fn finish_stopped_capture(
                 eprintln!("Could not save microphone verification: {error}");
             }
         }
+        if let Some(moments) = &moments {
+            crate::moments::save(moments, &folder);
+        }
     }
 
     store::append(&app, rec.clone())?;
+    if let Some(text) = crate::live_edit::corrected(&rec.id, rec.transcript.as_deref().unwrap_or("")) {
+        store::save_live_preview_transcript(&app, &rec.id, &text)?;
+    }
     crate::telemetry::track(
         "recording_saved",
         serde_json::json!({

@@ -576,3 +576,23 @@
 }
 .ev-tags-foot button:hover { color: var(--ev-ink); }
 .ev-tags-foot .ev-tags-danger { color: var(--ev-warn-ink); }
+
+/* Focused transcript correction, shared by desktop and web dictation. */
+.ev-correction-overlay { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--ev-paper) 80%, transparent); }
+.ev-correction {
+  position: fixed; z-index: 61; inset: 12px;
+  width: min(640px, calc(100% - 24px)); height: min(620px, calc(100% - 24px));
+  margin: auto; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: var(--ev-r-pop); background: var(--ev-paper); color: var(--ev-ink);
+  box-shadow: 0 0 0 1px var(--ev-line-strong), var(--ev-e-3);
+  font: var(--ev-t-body); outline: none;
+}
+.ev-correction-head { flex: none; padding: 16px; border-bottom: 1px solid var(--ev-line); }
+.ev-correction-head h2 { margin: 0; font: var(--ev-t-head); }
+.ev-correction-head p { margin: 6px 0 0; color: var(--ev-ink-2); font: var(--ev-t-small); }
+.ev-correction-text { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; border-radius: 0; padding: 16px; background: var(--ev-raised); color: var(--ev-ink); font: var(--ev-t-body); line-height: 1.65; outline: none; }
+.ev-correction-text:focus-visible { box-shadow: inset 0 0 0 2px var(--ev-coat); }
+.ev-correction-loading { flex: 1; padding: 16px; color: var(--ev-ink-2); }
+.ev-correction-notice { margin: 0; padding: 10px 16px; color: var(--ev-warn-ink); background: var(--ev-warn-soft); font: var(--ev-t-small); }
+.ev-correction-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px; border-top: 1px solid var(--ev-line); }
+.ev-correction-foot > span { margin-right: auto; font: var(--ev-t-small); }

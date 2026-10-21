@@ -36,6 +36,7 @@ final class ScreenRecorder: NSObject, Recorder {
 
     private var displayWidth = 1920
     private var displayHeight = 1080
+    private var displayBounds = CGRect.zero
 
     init(outPath: String, includeMic: Bool) {
         self.outPath = outPath
@@ -127,6 +128,7 @@ final class ScreenRecorder: NSObject, Recorder {
 
             self.displayWidth = display.width
             self.displayHeight = display.height
+            self.displayBounds = CGDisplayBounds(display.displayID)
             self.setupWriter(width: display.width, height: display.height)
 
             let excluded = content.applications.filter { $0.bundleIdentifier == "com.eavesy.desktop" }
@@ -169,6 +171,12 @@ final class ScreenRecorder: NSObject, Recorder {
             writer.startSession(atSourceTime: pts)
             firstPTS = pts
             sessionStarted = true
+            // Sample times are on the host clock: say when the video's first frame
+            // was, in wall time, so clicks made meanwhile land on the right frame.
+            let age = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts))
+            EventEmitter.videoStart(
+                epochMs: Int64(((Date().timeIntervalSince1970 - max(0, age)) * 1000).rounded()),
+                display: displayBounds)
         }
         return writer.status == .writing
     }

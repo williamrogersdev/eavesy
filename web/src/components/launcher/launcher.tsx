@@ -34,6 +34,7 @@ import {
   getAccountInfo,
   disconnectAccount,
   openWebApp,
+  openSettingsWindow,
   type CaptureSession,
   type CaptureStatus,
   type Permissions,
@@ -520,13 +521,11 @@ export function Launcher() {
 
   const goSettings = useCallback(() => {
     if (desktop) {
-      // From setup, Back returns to the same step instead of the empty list.
-      settingsFromSetup.current = view === 'setup';
-      setView('settings');
+      runTask(openSettingsWindow, 'Could not open settings');
       return;
     }
     runTask(() => router.push('/app/settings'), 'Couldn’t open settings');
-  }, [desktop, router, runTask, view]);
+  }, [desktop, router, runTask]);
 
   // Document-level keys for the history view, so they work wherever focus is
   // (the panel div only gets keys while it has focus): ⌘V pastes, / searches,
@@ -539,7 +538,7 @@ export function Launcher() {
       const typing = !!target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
       // A menu handles its own keys, even when focus has left it for the body.
       const inMenu = !!target?.closest('[role="menu"]') || !!document.querySelector('[role="menu"][data-state="open"]');
-      if (inMenu) return;
+      if (inMenu || document.querySelector('[role="dialog"][data-state="open"]')) return;
       if (typing) {
         if (e.key === 'Escape' && target === searchRef.current && !searchRef.current.value) {
           e.preventDefault();

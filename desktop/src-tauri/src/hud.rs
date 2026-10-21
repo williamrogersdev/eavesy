@@ -67,6 +67,9 @@ pub fn set_state(app: &AppHandle, state: HudState) {
 
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
+        if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
+            release_editor_on_main(&app);
+        }
         show_on_main(&app);
         fit_on_main(&app);
     });
@@ -116,6 +119,8 @@ fn live_size(lines: u8) -> (f64, f64) {
 }
 /// Keep the same frame after pasting so the transcript remains readable.
 const RESULT: (f64, f64) = (400.0, 142.0);
+/// A screen recording: room for the click count, Mark and the marking tools.
+const VIDEO_LIVE: (f64, f64) = (420.0, 36.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -126,7 +131,8 @@ pub fn size_for(state: &HudState, lines: u8) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     match state.phase {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
-        Phase::Recording | Phase::Transcribing if video => DEFAULT_SIZE,
+        Phase::Recording if video => VIDEO_LIVE,
+        Phase::Transcribing if video => DEFAULT_SIZE,
         Phase::Recording | Phase::Transcribing => live_size(lines),
         Phase::Failed => WIDE,
         Phase::Done => match state.mode.as_deref() {
@@ -359,10 +365,32 @@ fn save_frame(app: &AppHandle) {
 
 pub fn hide_on_main(app: &AppHandle) { imp::hide(app); }
 
+static EDITOR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Editing opts into app activation so AppKit routes the Edit menu shortcuts
+/// to WKWebView. Merely showing a completed dictation remains passive.
+pub fn focus_editor_on_main(app: &AppHandle) {
+    EDITOR_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::app_menu::activate();
+    imp::focus_editor(app);
+}
+
+fn release_editor_on_main(app: &AppHandle) {
+    if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
+        crate::app_menu::return_focus();
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use tauri::{AppHandle, WebviewWindow};
     use tauri_nspanel::{cocoa::appkit::NSWindowCollectionBehavior, ManagerExt, WebviewWindowExt};
+
+    pub fn focus_editor(app: &AppHandle) {
+        if let Ok(panel) = app.get_webview_panel("hud") {
+            panel.make_key_window();
+        }
+    }
 
     pub fn hide(app: &AppHandle) {
         if let Ok(panel) = app.get_webview_panel("hud") { panel.order_out(None); }
@@ -426,6 +454,9 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use tauri::{AppHandle, Manager, WebviewWindow};
+    pub fn focus_editor(app: &AppHandle) {
+        if let Some(window) = app.get_webview_window("hud") { let _ = window.set_focus(); }
+    }
     pub fn hide(app: &AppHandle) { if let Some(window) = app.get_webview_window("hud") { let _ = window.hide(); } }
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
@@ -439,7 +470,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, WIDE};
+    use super::{is_active, live_size, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -475,8 +506,14 @@ mod tests {
     fn resting_saved_and_video_stay_a_small_pill() {
         assert_eq!(size_for(&HudState::idle(), 4), DEFAULT_SIZE);
         assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4), DEFAULT_SIZE);
         assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn a_screen_recording_makes_room_for_clicks_and_marking() {
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4), VIDEO_LIVE);
+        assert_eq!(VIDEO_LIVE.1, DEFAULT_SIZE.1);
     }
 
     #[test]
