@@ -6,6 +6,18 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-21 - desktop
+
+### Added
+
+- Mac app: tag elements and areas while recording the screen ([#169](https://github.com/williamrogersdev/eavesy/pull/169))
+- Mac app: inline translation and dedicated preferences ([#167](https://github.com/williamrogersdev/eavesy/pull/167))
+
+### Fixed
+
+- Mac app: never let a stuck live edit block Stop ([#170](https://github.com/williamrogersdev/eavesy/pull/170))
+- Mac app: make transcript editing stable during and after dictation ([#168](https://github.com/williamrogersdev/eavesy/pull/168))
+
 ## [0.5.7] - 2026-10-21 - desktop
 
 ### Added
