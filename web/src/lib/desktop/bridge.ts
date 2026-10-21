@@ -48,6 +48,18 @@ export function isDesktop(): boolean {
   return tauri() !== null;
 }
 
+export async function openSettingsWindow(): Promise<void> {
+  if (isDesktop()) await invoke('show_settings');
+}
+
+export async function closeSettingsWindow(): Promise<void> {
+  if (isDesktop()) await invoke('close_settings_window');
+}
+
+export async function openSetup(): Promise<void> {
+  if (isDesktop()) await invoke('show_setup');
+}
+
 async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,

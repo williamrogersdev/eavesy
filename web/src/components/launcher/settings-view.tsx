@@ -1,7 +1,9 @@
 'use client';
 
-import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import './preferences.css';
+
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
@@ -124,7 +126,7 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
   return (
     <div className="flex items-center gap-3">
       <span className="ev-acct" data-size="lg" aria-hidden>
-        {accountInitial(account)}
+        {account.name || account.email ? accountInitial(account) : <UserRound size={20} strokeWidth={1.75} />}
       </span>
       <div className="min-w-0 flex-1">
         <p className="ev-set-label truncate">
@@ -132,7 +134,7 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
         </p>
         <p className="ev-set-hint flex items-center gap-1 truncate">
           <Check className="h-3 w-3 shrink-0 text-[var(--ev-leaf)]" />
-          {account.name && account.email ? `${account.email} · syncing` : 'Connected · syncing this Mac'}
+          {account.name && account.email ? account.email : 'Signed in on this Mac'}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
@@ -200,7 +202,8 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
-export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
+export function SettingsView({ standalone = false, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
+  standalone?: boolean;
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
   onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
@@ -219,6 +222,19 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [loadingLocal, setLoadingLocal] = useState(true);
+  const [section, setSection] = useState('capture');
+  const sections = [
+    { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
+    { id: 'transcription', label: 'Transcription', icon: AudioLines, hint: 'Languages and words Eavesy should recognize.' },
+    { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Review the spellings learned from your corrections.' },
+    { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
+    { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Keep related captures and vocabulary together.' },
+    { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'You decide what Eavesy can access on this Mac.' },
+    { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
+  ];
+  const activeSection = sections.find((item) => item.id === section)!;
   const [showPermissions, setShowPermissions] = useState(false);
   const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
   useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
@@ -234,9 +250,10 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const [soundsBusy, setSoundsBusy] = useState(false);
   const toggleSounds = (next: boolean) => {
     setSoundsBusy(true);
+    setLocalError(null);
     void setCaptureSounds(next)
       .then(() => setSettings((current) => current ? { ...current, capture_sounds: next } : current))
-      .catch(() => {})
+      .catch(() => setLocalError('The recording sound preference could not be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
   };
   const [shotFolder, setShotFolder] = useState<string | null>(null);
@@ -257,21 +274,26 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
 
   const toggleCaptions = (next: boolean) => {
     setCaptionsBusy(true);
+    setLocalError(null);
     void setLiveCaptions(next)
       .then(async () => {
         setSettings((current) => current ? { ...current, live_captions: next } : current);
         // Turning captions on is when Speech Recognition is asked for.
         if (next) setSpeech((await checkPermissions({ needScreen: false, needSpeech: true }))?.speech);
       })
-      .catch(() => {})
+      .catch(() => setLocalError('The live captions preference could not be saved. Try the switch again.'))
       .finally(() => setCaptionsBusy(false));
   };
 
-  useEffect(() => {
-    void getSettings()
-      .then(setSettings)
-      .catch(() => setSettings(null));
+  const loadLocal = useCallback(async () => {
+    setLoadingLocal(true);
+    setLocalError(null);
+    const current = await getSettings();
+    if (current) setSettings(current);
+    else setLocalError('Preferences on this Mac could not be loaded. Try again.');
+    setLoadingLocal(false);
   }, []);
+  useEffect(() => { void loadLocal(); }, [loadLocal]);
 
   const pickPosition = (position: LauncherPosition) => {
     setPositionBusy(true);
@@ -285,34 +307,57 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   const folder = settings?.recordings_root ?? '~/Eavesy/Recordings';
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="ev-preferences" data-standalone={standalone}>
       {/* On the Mac the title bar carries Back and the title. */}
-      {!isDesktop() && (
+      {!isDesktop() && !standalone && (
         <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-3">
           <IconButton label="Back" title="Back (esc)" icon={ArrowLeft} onClick={onBack} />
           <h2 className="ev-set-label">Settings</h2>
         </div>
       )}
 
-      <div className="ev-settings">
+      <div className="ev-settings-layout">
+        <nav className="ev-settings-nav" aria-label="Settings sections">
+          <div className="ev-settings-nav-title">Settings</div>
+          {sections.map(({ id, label, icon: Icon }) => (
+            <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => setSection(id)}>
+              <Icon size={17} strokeWidth={1.75} aria-hidden />{label}
+            </button>
+          ))}
+        </nav>
+        <div className="ev-settings-pane">
+          <header className="ev-settings-heading">
+            <h1>{activeSection.label}</h1>
+            <p>{activeSection.hint}</p>
+          </header>
+          <div className="ev-settings">
+        {loadingLocal && <p role="status" className="ev-set-hint">Loading Mac preferences…</p>}
+        {localError && <div role="alert" className="ev-settings-feedback"><p>{localError}</p>{!settings && <Button variant="outline" size="sm" loading={loadingLocal} onClick={() => void loadLocal()}>Retry</Button>}</div>}
+        <div id="settings-account" hidden={section !== 'account'}>
         <Section title="Account">
           <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
         </Section>
 
-        {isDesktop() && account && (
-          <>
-            <TranscriptionCard />
-            <DictionarySettings />
-            <ProjectsCard onChanged={onProjectsChanged} />
-          </>
-        )}
+        </div>
+        <div id="settings-transcription" hidden={section !== 'transcription'}>
+          {account ? <TranscriptionCard /> : <p className="ev-set-hint">Sign in from Account to manage your languages and custom words.</p>}
+        </div>
+        <div id="settings-dictionary" hidden={section !== 'dictionary'}>
+          {account ? <DictionarySettings /> : <p className="ev-set-hint">Sign in from Account to manage learned spellings.</p>}
+        </div>
+        <div id="settings-projects" hidden={section !== 'projects'}>
+          {account ? <ProjectsCard onChanged={onProjectsChanged} /> : <p className="ev-set-hint">Sign in from Account to manage your projects.</p>}
+        </div>
 
+        <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
         <Card title="Shortcuts">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
         </Card>
 
+        </div>
+        <div id="settings-capture" hidden={section !== 'capture'}>
         {isDesktop() && (
           <Section title="Sounds">
             <Switch
@@ -396,6 +441,8 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           </Section>
         )}
 
+        </div>
+        <div id="settings-permissions" hidden={section !== 'permissions'}>
         {isDesktop() && (
           <Card title="Permissions">
             {allGranted && !showPermissions ? (
@@ -421,11 +468,16 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
           </Card>
         )}
 
+        </div>
+        <div hidden={section !== 'account'}>
         {isDesktop() && (
           <Section title="Updates">
             <UpdatesCard />
           </Section>
         )}
+          </div>
+          </div>
+        </div>
       </div>
     </div>
   );

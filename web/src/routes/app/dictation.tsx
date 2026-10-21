@@ -206,10 +206,10 @@ function Section({
           {primary ? <Sparkles className="h-3.5 w-3.5" /> : null}
           {title}
         </span>
-        <div className="flex items-center gap-1"><LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} /><button type="button" disabled={translation.busy} onClick={() => onCopy(translation.text)} className={appButton('ghost', 'sm')}>
+        <div className="flex items-center gap-1"><button type="button" disabled={translation.busy} onClick={() => onCopy(translation.text)} className={appButton('ghost', 'sm')}>
           {copied === translation.text ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
           {copied === translation.text ? 'Copied' : 'Copy'}
-        </button></div>
+        </button><LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} /></div>
       </div>
       <p dir="auto" lang={translation.language ?? undefined} className="whitespace-pre-wrap text-sm leading-relaxed">{translation.text}</p>
       {translation.error && <p role="alert" className="mt-1 text-xs text-ev-warn-ink">{translation.error}</p>}

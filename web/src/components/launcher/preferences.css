@@ -1,0 +1,54 @@
+/* Settings have their own native window; capture surfaces keep their existing geometry. */
+.ev-preferences-window { height: 100%; background: var(--ev-paper); color: var(--ev-ink); position: relative; }
+.ev-preferences { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; }
+.ev-settings-layout { display: grid; grid-template-columns: 184px minmax(0, 1fr); flex: 1; min-height: 0; }
+.ev-settings-nav { padding: 26px 12px; background: var(--ev-well); border-right: 1px solid var(--ev-line); overflow-y: auto; }
+.ev-settings-nav-title { padding: 0 12px 22px; color: var(--ev-ink); font: var(--ev-t-head); }
+.ev-settings-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin: 3px 0; border: 0; border-radius: var(--ev-r-ctl); color: var(--ev-ink-2); background: transparent; font: var(--ev-t-ui); text-align: left; transition: background var(--ev-d-state), color var(--ev-d-state); }
+.ev-settings-nav button:hover { background: var(--ev-hover); }
+.ev-settings-nav button[aria-current] { background: var(--ev-coat-soft); color: var(--ev-ink); }
+.ev-settings-nav button:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-settings-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ev-paper); }
+.ev-settings-heading { flex: none; padding: 28px 28px 20px; border-bottom: 1px solid var(--ev-line); }
+.ev-settings-heading h1 { margin: 0; font: var(--ev-t-title); }
+.ev-settings-heading p { margin: 6px 0 0; font: var(--ev-t-body); color: var(--ev-ink-2); }
+.ev-settings-pane .ev-settings { padding: 8px 28px 32px; }
+.ev-settings-pane .ev-card-wrap { margin: 0; padding: 18px 0; }
+.ev-settings-pane .ev-card-wrap + .ev-card-wrap { margin-top: 0; border-top: 1px solid var(--ev-line); }
+.ev-settings-pane .ev-card-title { margin: 0 0 12px; color: var(--ev-ink); font: var(--ev-t-ui); }
+.ev-settings-pane #settings-transcription > .ev-card-wrap > .ev-card-title,
+.ev-settings-pane #settings-dictionary > .ev-card-wrap > .ev-card-title,
+.ev-settings-pane #settings-projects > .ev-card-wrap > .ev-card-title,
+.ev-settings-pane #settings-shortcuts > .ev-card-wrap > .ev-card-title { display: none; }
+.ev-settings-pane .ev-settings > div { max-width: 680px; }
+.ev-settings-pane .ev-card { background: transparent; box-shadow: none; border-radius: 0; }
+.ev-settings-pane .ev-set-body { padding: 0; }
+.ev-settings-pane .ev-set-row { padding: 12px 0; }
+.ev-settings-pane .ev-field-input { min-height: 36px; }
+.ev-settings-pane .ev-field-select { min-width: 200px; }
+.ev-settings-pane .ev-tags { min-height: 78px; align-content: flex-start; align-items: flex-start; padding: 10px; }
+.ev-settings-pane .ev-tags input { min-height: 26px; }
+.ev-settings-pane .ev-set-hint { line-height: 1.5; }
+.ev-settings-feedback { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); color: var(--ev-warn-ink); font: var(--ev-t-body); }
+.ev-settings-feedback p { flex: 1; min-width: 0; margin: 0; }
+.ev-settings-feedback .ev-btn { flex: none; }
+.ev-settings-save { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 8px; }
+.ev-dictionary-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.ev-dictionary-form label { display: flex; flex-direction: column; gap: 6px; color: var(--ev-ink-2); font: var(--ev-t-small); }
+.ev-dictionary-form > button { justify-self: start; grid-column: 1 / -1; }
+.ev-dictionary-list { margin-top: 20px; }
+.ev-dictionary-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--ev-line); font: var(--ev-t-body); }
+.ev-dictionary-list li span { min-width: 0; overflow-wrap: anywhere; }
+.ev-preferences-notice { position: absolute; bottom: 16px; left: 208px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
+@media (max-width: 600px) {
+  .ev-settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ev-settings-nav { display: flex; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--ev-line); overflow-x: auto; }
+  .ev-settings-nav-title { display: none; }
+  .ev-settings-nav button { flex: none; width: auto; padding: 8px 10px; }
+  .ev-settings-nav button svg { display: none; }
+  .ev-settings-heading { padding: 18px 16px; }
+  .ev-settings-pane .ev-settings { padding: 4px 16px 24px; }
+  .ev-dictionary-form { grid-template-columns: minmax(0, 1fr); }
+  .ev-preferences-notice { left: 16px; right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .ev-settings-nav button { transition: none; } }

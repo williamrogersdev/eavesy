@@ -44,6 +44,10 @@ export function installDevMock(): void {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
   };
+  let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
+  let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
+  const account = mockAccount(params.has('noprojects'), params.has('manywords'));
+  let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
     account_info: { name: 'Robin Avery', email: 'robin@example.com' },
@@ -71,7 +75,17 @@ export function installDevMock(): void {
       { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: 'Maya, Alex', match: ['acme'], recordingCount: 3 },
     ],
     front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
-    account_call: mockAccount(params.has('noprojects'), params.has('manywords')),
+    account_call: (args: Record<string, unknown>) => {
+      if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures-- > 0) throw new Error('Could not reach eavesy.com');
+      if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures-- > 0) throw new Error('Could not reach eavesy.com');
+      return account(args);
+    },
+    dictionary_request: ({ method, body }: Record<string, unknown>) => {
+      const fields = (body ?? {}) as Record<string, string>;
+      if (method === 'PUT') dictionary = [...dictionary, { id: `word-${Date.now()}`, from: fields.from, to: fields.to }];
+      if (method === 'DELETE') dictionary = dictionary.filter((entry) => entry.id !== fields.id);
+      return method === 'GET' ? { entries: dictionary } : { learned: 1 };
+    },
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };

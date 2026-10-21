@@ -269,7 +269,6 @@ export function TranscriptPlayer({
                 {translation.spoken.map(languageName).join(' · ')}
               </span>
             ) : null}
-            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
             {!target && agentTranscript?.trim() ? (
               <>
                 <CopyText
@@ -282,6 +281,7 @@ export function TranscriptPlayer({
             ) : (
               <CopyText text={copyText} label={target ? "Copy translation" : "Copy transcript"} disabled={!!target && (translation.loading || !!translation.error)} />
             )}
+            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
           </div>
         </div>
         <div

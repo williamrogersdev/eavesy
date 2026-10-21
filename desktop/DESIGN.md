@@ -407,12 +407,16 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings:** one scroll column, groups titled in `--ev-t-group`: Account,
-Shortcuts (Talk, Meeting, Screenshot, Video, Open Eavesy), Capture (live
-captions switch, HUD position),
-Storage (folder path with Change button), Permissions (status rows with leaf
-check or warn "Turn on" button). Group bodies sit on `--ev-raised`, r12,
-hairline-separated rows. These are the only card-like containers in the app.
+**Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
+480), independent of the capture panel and HUD. A quiet sidebar switches
+between Capture, Transcription, Dictionary, Shortcuts, Projects, Permissions
+and Account. Each section has one scroll area, plain groups and subtle row
+separators; avoid nested raised cards. Preserve drafts when switching sections.
+Transcription preferences have an explicit Save changes action; failed saves
+keep the draft and failed loads have Retry. Native capture preferences save
+immediately. Show errors beside the affected controls. Use the existing
+light/dark tokens and reduced-motion behavior. The capture panel and pill
+retain their geometry when Settings opens or closes.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and

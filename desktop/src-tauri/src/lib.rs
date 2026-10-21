@@ -35,6 +35,7 @@ mod projects;
 mod recovery;
 mod screenshot_watcher;
 mod settings;
+mod settings_window;
 mod sounds;
 mod history;
 mod store;
@@ -144,6 +145,7 @@ pub fn run() {
             commands::save_preview_transcript,
             commands::sync_status,
             commands::show_settings,
+            settings_window::close_settings_window,
             commands::pair_device,
             commands::show_launcher,
             commands::dismiss_hud,

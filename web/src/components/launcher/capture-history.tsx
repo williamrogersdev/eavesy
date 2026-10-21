@@ -286,9 +286,9 @@ function CaptureRow({
       {body}
       {translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
-        {text && !image && !video && <LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} onOpenChange={setLanguageOpen} />}
         {translation.language && <IconButton label="Paste translation at cursor" icon={ClipboardPaste} disabled={translation.busy} onClick={() => runTask(() => pasteToFrontmost(translation.text, false), 'Couldn’t paste that')} />}
         <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || (!image && !video && !text)} onClick={copy} />
+        {text && !image && !video && <LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} onOpenChange={setLanguageOpen} />}
         <Menu
           align="end"
           open={menuOpen}

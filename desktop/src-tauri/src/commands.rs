@@ -598,8 +598,7 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
 
 #[tauri::command]
 pub fn show_settings(app: AppHandle) -> Result<(), String> {
-    hotkeys::show_launcher_and_emit(&app, Some("launcher:settings"));
-    Ok(())
+    crate::settings_window::show(&app)
 }
 
 #[tauri::command]
