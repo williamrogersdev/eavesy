@@ -6,6 +6,18 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-21 - desktop
+
+### Added
+
+- Mac app: warmer Settings window with clearer dictionary, dictation and permissions ([#176](https://github.com/williamrogersdev/eavesy/pull/176))
+- Mac app: confirm on the control which word the dictionary learned ([#175](https://github.com/williamrogersdev/eavesy/pull/175))
+
+### Fixed
+
+- Mac app: bring other devices' captures and edits into each Mac ([#174](https://github.com/williamrogersdev/eavesy/pull/174))
+- Mac app: prettier result card that closes properly ([#173](https://github.com/williamrogersdev/eavesy/pull/173))
+
 ## [0.6.0] - 2026-10-21 - desktop
 
 ### Added
