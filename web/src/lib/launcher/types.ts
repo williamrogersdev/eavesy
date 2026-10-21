@@ -13,4 +13,6 @@ export interface Recording {
   revision?: number;
   hasAudio: boolean;
   hasVideo?: boolean;
+  /** The other device it was recorded on, when it came from the cloud. */
+  device?: string;
 }
