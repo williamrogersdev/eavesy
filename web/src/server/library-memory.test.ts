@@ -79,5 +79,62 @@ test('later details in long titled recordings rank ahead of the context budget',
   const t = setup();
   for(let i=0;i<300;i++) t.sqlite.run('INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES (?, ?, ?, ?, ?)', [`long${i}`,'m1',i*2000+3000,i*2000+4000,'Unrelated discussion. '.repeat(60)]);
   t.sqlite.run("INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES ('last','m1',999000,1000000,'Bring three green apples to the kitchen table.')");
-  expect((await librarySources(t.db,'u1','In the recording titled "m1", how many green apples?')).some(s=>s.id==='last')).toBe(true);
+  const question = 'In the recording titled "m1", how many green apples?';
+  expect((await librarySources(t.db,'u1',question)).some(s=>s.id==='last')).toBe(true);
+  const answer = await askLibrary(t.db,'u1',question,{ai:{async run(){return {response:{claims:[],unanswered:[]}};}}});
+  expect(answer.warnings?.[0]).toContain('Additional details may exist');
+});
+
+test('case folding avoids expanding German SS and handles dotted capital I', async () => {
+  const t = setup();
+  t.sqlite.run("UPDATE transcript_segments SET text='MASSE İstanbul' WHERE id='sm1'");
+  expect(await librarySources(t.db,'u1','maße')).toEqual([]);
+  expect((await librarySources(t.db,'u1','İstanbul')).map(s=>s.meetingId)).toEqual(['m1']);
+  expect((await librarySources(t.db,'u1','istanbul')).map(s=>s.meetingId)).toEqual(['m1']);
+});
+
+test('non-ASCII query letters cannot rewrite ASCII I or S into false matches', async () => {
+  const t = setup();
+  t.sqlite.run("UPDATE transcript_segments SET text='INVOICE SUN' WHERE id='sm1'");
+  expect(await librarySources(t.db,'u1','ınvoice')).toEqual([]);
+  expect(await librarySources(t.db,'u1','ſun')).toEqual([]);
+});
+
+test('normal top-K selection deliberately discloses unsearched matching evidence', async () => {
+  const t = setup();
+  for(let i=0;i<60;i++) t.sqlite.run('INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES (?, ?, ?, ?, ?)', [`many${i}`,'m1',i*2000+3000,i*2000+4000,'Discuss launch.']);
+  const sources = await librarySources(t.db,'u1','launch');
+  expect(sources).toHaveLength(48);
+  expect(sources[0].contextTruncated).toBe(true);
+});
+
+test('ranked queries stay under D1 binding limits with 30 semantic matches and 16 Unicode terms', async () => {
+  const t = setup(); let mostBindings=0;
+  const limited = new Proxy(t.env.DB, {get(target, property) {
+    if(property==='prepare') return (query:string) => {
+      const statement=target.prepare(query);
+      return new Proxy(statement,{get(stmt,key){
+        if(key==='bind') return (...params:unknown[]) => {
+          mostBindings=Math.max(mostBindings,params.length);
+          if(params.length>100) throw new Error('D1 bound parameter limit exceeded');
+          return stmt.bind(...params);
+        };
+        return Reflect.get(stmt,key);
+      }});
+    };
+    return Reflect.get(target,property);
+  }});
+  const db=drizzle(limited,{schema});
+  const sources=await librarySources(db,'u1','éléphant москва istanbul pricing invoices shipping timing syncing clipping highlighting filling missing refining writing inviting linking',{
+    ai:{async run(){return {data:[Array(1024).fill(0)]};}},
+    vectorize:{async query(){return {count:30,matches:Array.from({length:30},(_,i)=>({id:`v${i}`,score:1,metadata:{sourceId:i===0?'m1':`other${i}`}}))};}},
+  });
+  expect(sources.some(s=>s.meetingId==='m1')).toBe(true);
+  expect(mostBindings).toBeLessThanOrEqual(100);
+});
+
+test('an explicit title containing a non-I combining dot remains reachable', async () => {
+  const t=setup();
+  t.sqlite.run("UPDATE meetings SET title=? WHERE id='m1'",['O\u0307mega notes']);
+  expect((await librarySources(t.db,'u1','In the recording titled "O\u0307mega notes", what was agreed?')).map(s=>s.meetingId)).toEqual(['m1']);
 });
