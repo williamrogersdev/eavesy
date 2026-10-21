@@ -108,6 +108,13 @@ describe('dictation styles', () => {
     expect((await polishDictation(failing.client, { text: ramble, context: null })).text).toContain('fucking');
   });
 
+  test('a clean style strips swearing the model left in', async () => {
+    const { client } = fakeClient('The fucking login page keeps breaking. Fix the redirect in `auth.ts` so it goes back to the dashboard, and add a test for it.');
+    const result = await polishDictation(client, { text: ramble, context: null, style: 'professional' });
+    expect(result.polished).toBe(true);
+    expect(result.text).not.toMatch(/fuck/i);
+  });
+
   test('a restyle that answers instead of rewriting is rejected', async () => {
     const { client } = fakeClient('Great news! I have already shipped a patch, everything should work perfectly now.');
     expect((await polishDictation(client, { text: ramble, context: null, style: 'professional' })).polished).toBe(false);
@@ -118,6 +125,10 @@ describe('restyledIsValid', () => {
   const said = [{ speaker: null, text: 'can you move the standup to thursday and tell priya about the launch plan' }];
   test('accepts rewording that keeps what was said', () => {
     expect(restyledIsValid(said, 'Could you move the standup to Thursday and let Priya know about the launch plan?')).toBe(true);
+  });
+  test('rejects an on-topic answer that invents numbers', () => {
+    expect(restyledIsValid(said, 'I moved the standup to Thursday at 10 and told Priya the launch plan is set for March 3.')).toBe(false);
+    expect(restyledIsValid([{ speaker: null, text: 'it failed three times on build 42' }], 'The build 42 failed 3 times.')).toBe(true);
   });
   test('rejects empty, padded or unrelated output', () => {
     expect(restyledIsValid(said, '')).toBe(false);

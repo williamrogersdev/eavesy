@@ -8,6 +8,14 @@ describe('withoutSwearing', () => {
   });
   test('leaves ordinary words alone', () => {
     expect(withoutSwearing('Pass the class assessment to Cassandra.')).toBe('Pass the class assessment to Cassandra.');
+    expect(withoutSwearing('Move the assets to the shell script, hello Michelle.')).toBe('Move the assets to the shell script, hello Michelle.');
+  });
+  test('keeps paragraphs and lists', () => {
+    expect(withoutSwearing('Fix the shit login.\n\n1. Add a damn test.\n2. Ship it.')).toBe('Fix the login.\n\n1. Add a test.\n2. Ship it.');
+  });
+  test('keeps the word before a swear word', () => {
+    expect(withoutSwearing('Fix the damn build.')).toBe('Fix the build.');
+    expect(withoutSwearing('What the hell happened, wtf.')).toBe('What happened.');
   });
 });
 

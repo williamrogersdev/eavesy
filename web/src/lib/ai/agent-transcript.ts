@@ -201,7 +201,9 @@ export async function polishDictation(
     const known = (args.corrections ?? []).filter(entry => said.toLowerCase().includes(entry.from.toLowerCase())).map(entry => entry.to).join(' ');
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
     const shapeKept = restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo');
-    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])) return { text: candidate, polished: true };
+    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])) {
+      return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
+    }
   } catch {
     // The model-free cleanup below still beats the raw words.
   }
@@ -217,17 +219,41 @@ export function restyledIsValid(input: Turn[], output: string): boolean {
   if (!restyled || /<\/?transcript/i.test(restyled)) return false;
   const inputChars = input.reduce((sum, turn) => sum + turn.text.length, 0);
   if (restyled.length < inputChars * 0.1 || restyled.length > inputChars * 1.8 + 600) return false;
-  const said = new Set(input.flatMap((turn) => contentWords(turn.text)));
+  const spoken = input.map((turn) => turn.text).join(' ');
+  if (!numbersWereSaid(spoken, restyled)) return false;
+  const said = new Set(contentWords(spoken));
   const used = contentWords(restyled).filter((word) => !SECTION_WORDS.has(word));
   if (used.length === 0) return false;
-  return used.filter((word) => said.has(word)).length / used.length >= MIN_RESTYLE_OVERLAP;
+  const overlap = used.length < SHORT_RESTYLE_WORDS ? MIN_SHORT_RESTYLE_OVERLAP : MIN_RESTYLE_OVERLAP;
+  return used.filter((word) => said.has(word)).length / used.length >= overlap;
+}
+
+/** A short restyle has little room to reword, so more of it must be what was said. */
+const SHORT_RESTYLE_WORDS = 12;
+const MIN_SHORT_RESTYLE_OVERLAP = 0.6;
+
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+
+/** Every number in a restyle, list markers aside, was said as digits or (up to twelve) as a word: a made-up figure is a reply, not a rewrite. */
+function numbersWereSaid(spoken: string, restyled: string): boolean {
+  const lower = spoken.toLowerCase();
+  const digits = new Set(lower.match(/\d+/g) ?? []);
+  const unlisted = restyled.replace(/^\s*\d+[.)]\s/gm, '');
+  return (unlisted.match(/\d+/g) ?? []).every((n) => {
+    if (digits.has(n)) return true;
+    const word = NUMBER_WORDS[Number(n)];
+    return word !== undefined && new RegExp(`\\b${word}\\b`).test(lower);
+  });
 }
 
 /** Headings the prompt style may add, which no one says aloud. */
 const SECTION_WORDS = new Set(['context', 'background', 'requirement', 'constraint', 'question', 'done']);
 
 function contentWords(text: string): string[] {
-  return (text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).map((word) => word.replace(/(?:ing|ed|es|s)$/, ''));
+  return (text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).map((word) => {
+    const stem = word.replace(/(?:ing|ed|es|s)$/, '');
+    return stem.length >= 4 ? stem : word;
+  });
 }
 
 function preservesSpellings(raw: string, candidate: string, spellings: string[]): boolean {

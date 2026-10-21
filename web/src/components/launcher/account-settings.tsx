@@ -67,13 +67,14 @@ export function TranscriptionCard() {
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const patch = useCallback((body: Record<string, unknown>) => {
     setError(null);
-    const next = queue.current.then(() => accountCall('PATCH', '/api/me', body)).then(() => undefined, (e: unknown) => {
+    const next = queue.current.then(() => accountCall('PATCH', '/api/me', body)).then(() => true, (e: unknown) => {
       if (mounted.current) setError(errMsg(e, 'Couldn’t save that.'));
+      return false;
     });
     queue.current = next;
     return next;
   }, []);
-  const saveWords = useLaterSave<string[]>((next) => patch({ customVocabulary: next }));
+  const saveWords = useLaterSave<string[]>(async (next) => { await patch({ customVocabulary: next }); });
 
   const setSpoken = (next: string[]) => {
     setLanguages(next);
@@ -118,8 +119,9 @@ export function TranscriptionCard() {
             value={style}
             onChange={(e) => {
               const next = dictationStyle(e.target.value);
+              const previous = style;
               setStyle(next);
-              void patch({ dictationStyle: next });
+              void patch({ dictationStyle: next }).then((saved) => { if (!saved && mounted.current) setStyle(previous); });
             }}
           >
             {DICTATION_STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -131,7 +133,7 @@ export function TranscriptionCard() {
           disabled={languages === null}
           onCheckedChange={(next) => {
             setForAgents(next);
-            void patch({ dictationForAgents: next });
+            void patch({ dictationForAgents: next }).then((saved) => { if (!saved && mounted.current) setForAgents(!next); });
           }}
           label="Format dictation for AI agents"
           hint={FOR_AGENTS_HINT}

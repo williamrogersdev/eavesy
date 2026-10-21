@@ -21,17 +21,21 @@ export function dictationStyle(value: unknown): DictationStyle {
   return isDictationStyle(value) ? value : DEFAULT_DICTATION_STYLE;
 }
 
+/** "What the hell" keeps its "what": the "the" goes only with the swear word after it. */
+const THE_SWEAR = /\bthe\s+(?:fuck|hell|heck)\b/gi;
 const SWEARING =
-  /\b(?:the\s+)?(?:fuck\w*|motherfuck\w*|shit\w*|bullshit\w*|goddamn\w*|damn(?:ed|it)?|ass(?:hole)?s?|bitch\w*|crap\w*|bloody|piss(?:ed)?)\b/gi;
+  /\b(?:fuck\w*|motherfuck\w*|wtf|shit\w*|bullshit\w*|goddamn\w*|god\s+damn\w*|damn(?:ed|it)?|dammit|ass(?:hole)?s?|dumbass\w*|jackass\w*|bitch\w*|crap\w*|bloody|piss(?:ed)?|hell)\b/gi;
 
-/** Swear words dropped from text the model couldn't restyle, so a clean style never types them. */
+/** Swear words dropped from typed text, so a clean style never types them. */
 export function withoutSwearing(text: string): string {
   const out = text
+    .replace(THE_SWEAR, '')
     .replace(SWEARING, '')
-    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
     .replace(/([,;:])(?=[,.;:!?])/g, '')
     .replace(/^[\s,.;:]+/, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+$/gm, '')
     .trim();
   return out ? out[0].toUpperCase() + out.slice(1) : out;
 }
