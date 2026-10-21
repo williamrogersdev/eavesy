@@ -36,6 +36,7 @@ export async function rememberCorrections(db: AppDb, userId: string, corrections
     set: { from: c.from, to: c.to, updatedAt: now } }).returning({ id: personalDictionary.id }));
   const rows = await db.batch(writes as [typeof writes[number], ...typeof writes[number][]]);
   // Admitted upserts; exact repeats observed before the batch are skipped.
+  // db.batch returns one result per statement, in order, so rows[i] is accepted[i].
   return accepted.filter((_, index) => rows[index].length > 0).map(({ from, to }) => ({ from, to }));
 }
 
