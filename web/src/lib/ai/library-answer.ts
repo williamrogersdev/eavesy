@@ -52,7 +52,7 @@ export function hydrateLibraryAnswer(reply: unknown, sources: LibrarySource[]): 
       return { ...source, quote: source.text, href: `/app/meetings/${encodeURIComponent(source.meetingId)}?t=${Math.floor(source.startMs / 1000)}` };
     }),
   }));
-  return { abstained: !claims.length, claims, unanswered: parsed.unanswered, ...(sources.some(s => s.contextTruncated) ? { warnings: ['Only selected excerpts fit in this answer. Additional details may exist elsewhere in the recording or library.'] } : {}) };
+  return { abstained: !claims.length, claims, unanswered: parsed.unanswered, ...(sources.some(s => s.contextTruncated) ? { warnings: ['Only selected excerpts were searched. Additional details may exist elsewhere in the recording or library.'] } : {}) };
 }
 export class LibraryVerificationError extends Error {
   constructor() { super('The answer did not pass evidence verification. Please retry.'); this.name = 'LibraryVerificationError'; }

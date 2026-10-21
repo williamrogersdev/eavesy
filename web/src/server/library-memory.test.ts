@@ -90,6 +90,7 @@ test('case folding avoids expanding German SS and handles dotted capital I', asy
   t.sqlite.run("UPDATE transcript_segments SET text='MASSE İstanbul' WHERE id='sm1'");
   expect(await librarySources(t.db,'u1','maße')).toEqual([]);
   expect((await librarySources(t.db,'u1','İstanbul')).map(s=>s.meetingId)).toEqual(['m1']);
+  expect((await librarySources(t.db,'u1','istanbul')).map(s=>s.meetingId)).toEqual(['m1']);
 });
 
 test('non-ASCII query letters cannot rewrite ASCII I or S into false matches', async () => {
@@ -97,4 +98,12 @@ test('non-ASCII query letters cannot rewrite ASCII I or S into false matches', a
   t.sqlite.run("UPDATE transcript_segments SET text='INVOICE SUN' WHERE id='sm1'");
   expect(await librarySources(t.db,'u1','ınvoice')).toEqual([]);
   expect(await librarySources(t.db,'u1','ſun')).toEqual([]);
+});
+
+test('normal top-K selection deliberately discloses unsearched matching evidence', async () => {
+  const t = setup();
+  for(let i=0;i<60;i++) t.sqlite.run('INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES (?, ?, ?, ?, ?)', [`many${i}`,'m1',i*2000+3000,i*2000+4000,'Discuss launch.']);
+  const sources = await librarySources(t.db,'u1','launch');
+  expect(sources).toHaveLength(48);
+  expect(sources[0].contextTruncated).toBe(true);
 });

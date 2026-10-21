@@ -11,19 +11,23 @@ export function requestedRecordingTitle(question: string): string | undefined {
 export function queryTerms(question: string): string[] {
   const title = requestedRecordingTitle(question);
   const detail = title ? question.replace(title, '') : question;
-  return [...new Set(detail.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])].filter(t => !STOP.has(t)).slice(0, 16);
+  return [...new Set(searchFold(detail).match(/[\p{L}\p{N}]{3,}/gu) ?? [])].filter(t => !STOP.has(t)).slice(0, 16);
 }
 // SQLite lower() only folds ASCII. Fold the non-ASCII case variants present
 // in this bounded query explicitly, then let SQLite handle ASCII. This keeps
 // case-insensitive accented/Cyrillic matching without scanning rows in JS.
+function searchFold(text: string): string { return text.toLowerCase().replace(/\u0307/gu, ''); }
 function folded(column: SQLWrapper, query: string): SQL {
-  let expression = sql`${column}`;
-  if (query.toLowerCase().includes('i\u0307')) expression = sql`replace(${expression}, ${'İ'}, ${'i\u0307'})`;
-  for (const char of new Set(query.toLowerCase())) {
+  let expression = sql`lower(${column})`;
+  const normalized = searchFold(query);
+  if (normalized.includes('i')) {
+    expression = sql`replace(replace(${expression}, ${'İ'}, ${'i'}), ${'i\u0307'}, ${'i'})`;
+  }
+  for (const char of new Set(normalized)) {
     const upper = char.toUpperCase();
     if (upper !== char && [...upper].length === 1 && upper.charCodeAt(0) > 127 && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
   }
-  return sql`lower(${expression})`;
+  return expression;
 }
 const fields = { id: transcriptSegments.id, meetingId: meetings.id, title: meetings.title, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs, text: transcriptSegments.text };
 export async function librarySources(db: AppDb, userId: string, question: string, opts: { ai?: WorkersAiRunner; vectorize?: VectorizeIndex } = {}): Promise<LibrarySource[]> {
@@ -36,7 +40,7 @@ export async function librarySources(db: AppDb, userId: string, question: string
     const hits = terms.map(term => sql`CASE WHEN instr(${folded(transcriptSegments.text, term)}, ${term}) > 0 THEN 1 ELSE 0 END`);
     const score = hits.length ? sql`(${sql.join(hits, sql` + `)})` : sql`0`;
     const rows = await db.select(fields).from(transcriptSegments).innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId))
-      .where(and(owner, sql`${folded(sql`trim(${meetings.title})`, title)} = ${title.toLowerCase()}`))
+      .where(and(owner, sql`${folded(sql`trim(${meetings.title})`, title)} = ${searchFold(title)}`))
       .orderBy(desc(score), desc(meetings.startedAt), transcriptSegments.startMs).limit(257);
     return boundedSources(rows, 256);
   }
@@ -65,6 +69,8 @@ export async function librarySources(db: AppDb, userId: string, question: string
 function boundedSources(rows: LibrarySource[], limit: number): LibrarySource[] {
   let remaining = 24_000;
   const result: LibrarySource[] = [];
+  // Deliberately report any omitted candidate, including normal top-K
+  // selection: an abstention does not prove that the whole library lacks it.
   let truncated = rows.length > limit;
   for (const row of rows) {
     const text = row.text.slice(0, 1200);
