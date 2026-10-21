@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{fs_writer, sqlite, store};
 
@@ -19,11 +22,20 @@ const SETTLE_TIME: Duration = Duration::from_millis(180);
 enum WatchMessage {
     Path(PathBuf),
     RescanFolders,
+    StartupBarrier,
 }
 
 struct WatcherHandle {
+    stopped: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
     _watcher: Mutex<RecommendedWatcher>,
     _worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for WatcherHandle {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+    }
 }
 
 #[derive(Default)]
@@ -32,7 +44,18 @@ pub struct WatcherManager {
 }
 
 impl WatcherManager {
-    pub fn replace(&self, app: AppHandle, root: PathBuf) -> Result<()> {
+    fn is_ready(&self) -> bool {
+        self.handle
+            .lock()
+            .map(|handle| {
+                handle
+                    .as_ref()
+                    .is_none_or(|h| h.ready.load(Ordering::Acquire))
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn replace<R: Runtime>(&self, app: AppHandle<R>, root: PathBuf) -> Result<()> {
         // Folder names under the root are meeting titles; reports must not carry them.
         crate::telemetry::set_recordings_root(&root);
         let replacement = start(app, root)?;
@@ -45,14 +68,14 @@ impl WatcherManager {
     }
 }
 
-fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
-    std::fs::create_dir_all(&root)
-        .context("create recordings root")?;
+fn start<R: Runtime>(app: AppHandle<R>, root: PathBuf) -> Result<WatcherHandle> {
+    std::fs::create_dir_all(&root).context("create recordings root")?;
 
     let (sender, receiver) = mpsc::channel::<WatchMessage>();
+    let startup_sender = sender.clone();
     let callback_app = app.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        match event {
+    let mut watcher =
+        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
             Ok(event) if is_content_event(&event.kind) => {
                 if is_folder_structure_event(&event.kind)
                     && event.paths.iter().any(|path| {
@@ -74,22 +97,135 @@ fn start(app: AppHandle, root: PathBuf) -> Result<WatcherHandle> {
                 crate::telemetry::capture("filesystem.watch", &error.to_string());
                 let _ = callback_app.emit("recordings:watch-error", ());
             }
-        }
-    })
-    .context("create recordings watcher")?;
+        })
+        .context("create recordings watcher")?;
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .context("watch recordings root")?;
 
-    if let Err(error) = reconcile_folder_locations(&app, &root) {
-        crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
-    }
-    seed_existing_files(&app);
-    let worker = std::thread::spawn(move || reconcile_loop(app, root, receiver));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let ready = Arc::new(AtomicBool::new(false));
+    let worker = spawn_reconciler(
+        app,
+        root,
+        receiver,
+        stopped.clone(),
+        ready.clone(),
+        startup_sender,
+    );
     Ok(WatcherHandle {
+        stopped,
+        ready,
         _watcher: Mutex::new(watcher),
         _worker: Mutex::new(Some(worker)),
     })
+}
+
+fn spawn_reconciler<R: Runtime>(
+    app: AppHandle<R>,
+    root: PathBuf,
+    receiver: mpsc::Receiver<WatchMessage>,
+    stopped: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
+    startup_sender: mpsc::Sender<WatchMessage>,
+) -> JoinHandle<()> {
+    // The watcher is registered before this worker starts: edits during offline
+    // recovery queue up and are replayed afterwards. Setup need not wait for IO.
+    std::thread::spawn(move || {
+        if stopped.load(Ordering::Acquire) {
+            return;
+        }
+        if let Err(error) = reconcile_folder_locations(&app, &root) {
+            crate::telemetry::capture("filesystem.startup-folder-scan", &error.to_string());
+        }
+        seed_existing_files_until(&app, &stopped);
+        // A folder may move after the initial scan while other records recover.
+        // Replay those queued events before cloud writes can recreate old paths.
+        let _ = startup_sender.send(WatchMessage::StartupBarrier);
+        drop(startup_sender);
+        reconcile_queued_startup(&app, &root, &receiver, &stopped);
+        ready.store(true, Ordering::Release);
+        if stopped.load(Ordering::Acquire) {
+            return;
+        }
+        let index_app = app.clone();
+        let index_stop = stopped.clone();
+        let index_worker = std::thread::spawn(move || loop {
+            if index_stop.load(Ordering::Acquire) {
+                break;
+            }
+            match store::prepare_search(&index_app) {
+                Ok(true) => break,
+                Ok(false) => std::thread::park_timeout(Duration::from_millis(250)),
+                Err(error) => {
+                    crate::telemetry::capture("history.search-index", &error);
+                    break;
+                }
+            }
+        });
+        reconcile_loop(app, root, receiver, &stopped);
+        let _ = index_worker.join();
+    })
+}
+
+fn reconcile_queued_startup<R: Runtime>(
+    app: &AppHandle<R>,
+    root: &Path,
+    receiver: &mpsc::Receiver<WatchMessage>,
+    stopped: &AtomicBool,
+) {
+    let mut paths = HashSet::new();
+    let mut rescan = false;
+    // A marker after the scan defines a finite queue prefix even if new events
+    // keep arriving. Every already-queued move is recovered before sync resumes.
+    while let Ok(message) = receiver.recv() {
+        if matches!(message, WatchMessage::StartupBarrier) {
+            break;
+        }
+        collect_message(message, &mut paths, &mut rescan);
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    if stopped.load(Ordering::Acquire) {
+        return;
+    }
+    if rescan {
+        if let Err(error) = reconcile_folder_locations(app, root) {
+            crate::telemetry::capture("filesystem.startup-folder-replay", &error.to_string());
+        }
+    }
+    for path in paths {
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
+        if let Err(error) = reconcile_path(app, &path) {
+            crate::telemetry::capture("filesystem.startup-file-replay", &error.to_string());
+        }
+    }
+}
+
+/// Cloud writes must wait for offline edits to enter the outbox. This waits on
+/// the sync task, never the main thread, and is checked again after root changes.
+pub async fn wait_until_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    wait_until_ready_for(app, Duration::from_secs(30)).await
+}
+
+async fn wait_until_ready_for<R: Runtime>(
+    app: &AppHandle<R>,
+    budget: Duration,
+) -> Result<(), String> {
+    let began = std::time::Instant::now();
+    while app
+        .try_state::<WatcherManager>()
+        .is_some_and(|manager| !manager.is_ready())
+    {
+        if began.elapsed() >= budget {
+            return Err("Local offline-edit recovery is still pending; cloud writes remain paused and will retry".into());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Ok(())
 }
 
 fn is_content_event(kind: &EventKind) -> bool {
@@ -111,17 +247,28 @@ fn is_folder_structure_event(kind: &EventKind) -> bool {
     )
 }
 
-fn reconcile_loop(
-    app: AppHandle,
+fn reconcile_loop<R: Runtime>(
+    app: AppHandle<R>,
     root: PathBuf,
     receiver: mpsc::Receiver<WatchMessage>,
+    stopped: &AtomicBool,
 ) {
     while let Ok(first) = receiver.recv() {
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
         let mut paths = HashSet::new();
         let mut rescan_folders = false;
         collect_message(first, &mut paths, &mut rescan_folders);
-        while let Ok(message) = receiver.recv_timeout(SETTLE_TIME) {
+        let deadline = std::time::Instant::now() + SETTLE_TIME;
+        while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+            let Ok(message) = receiver.recv_timeout(remaining) else {
+                break;
+            };
             collect_message(message, &mut paths, &mut rescan_folders);
+        }
+        if stopped.load(Ordering::Acquire) {
+            break;
         }
         if rescan_folders {
             if let Err(error) = reconcile_folder_locations(&app, &root) {
@@ -136,16 +283,13 @@ fn reconcile_loop(
     }
 }
 
-fn collect_message(
-    message: WatchMessage,
-    paths: &mut HashSet<PathBuf>,
-    rescan_folders: &mut bool,
-) {
+fn collect_message(message: WatchMessage, paths: &mut HashSet<PathBuf>, rescan_folders: &mut bool) {
     match message {
         WatchMessage::Path(path) => {
             paths.insert(path);
         }
         WatchMessage::RescanFolders => *rescan_folders = true,
+        WatchMessage::StartupBarrier => {}
     }
 }
 
@@ -167,8 +311,7 @@ fn reconcile_folder_locations<R: Runtime>(app: &AppHandle<R>, root: &Path) -> Re
         let Some(target) = unique_relocation_target(current, candidates) else {
             continue;
         };
-        sqlite::relocate_recording_folder(app, &id, target)
-            .map_err(anyhow::Error::msg)?;
+        sqlite::relocate_recording_folder(app, &id, target).map_err(anyhow::Error::msg)?;
         store::set_folder_path(app, &id, target).map_err(anyhow::Error::msg)?;
         moved.push(target.to_path_buf());
     }
@@ -214,7 +357,10 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
                 if let Ok(raw) = std::fs::read_to_string(&manifest) {
                     if let Ok(identity) = serde_json::from_str::<ManifestIdentity>(&raw) {
                         if !identity.id.trim().is_empty() {
-                            discovered.entry(identity.id).or_default().push(folder.clone());
+                            discovered
+                                .entry(identity.id)
+                                .or_default()
+                                .push(folder.clone());
                         }
                     }
                 }
@@ -227,10 +373,7 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
                 tracing::warn!("could not inspect a recording subfolder: {}", error.kind());
                 continue;
             }
-            Err(error) => {
-                return Err(error)
-                    .context("scan recordings root")
-            }
+            Err(error) => return Err(error).context("scan recordings root"),
         };
         for entry in entries.flatten() {
             let Ok(file_type) = entry.file_type() else {
@@ -248,20 +391,36 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
     Ok(discovered)
 }
 
+#[cfg(test)]
 fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
+    seed_existing_files_until(app, &AtomicBool::new(false));
+}
+
+fn seed_existing_files_until<R: Runtime>(app: &AppHandle<R>, stopped: &AtomicBool) {
     let folders = match store::folders(app) {
         Ok(folders) => folders,
-        Err(error) => { crate::telemetry::capture("filesystem.startup-reconcile", &error); return; }
+        Err(error) => {
+            crate::telemetry::capture("filesystem.startup-reconcile", &error);
+            return;
+        }
     };
     // One indexed body read per recording, reused for its three editable files.
     for (id, folder) in folders {
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
         let recording = match store::get(app, &id) {
             Ok(Some(recording)) => recording,
             Ok(None) => continue,
-            Err(error) => { crate::telemetry::capture("filesystem.startup-reconcile", &error); continue; }
+            Err(error) => {
+                crate::telemetry::capture("filesystem.startup-reconcile", &error);
+                continue;
+            }
         };
         for filename in ["summary.md", "transcript.md", "notes.md"] {
-            if let Err(error) = reconcile_recording(app, &Path::new(&folder).join(filename), &recording) {
+            if let Err(error) =
+                reconcile_recording(app, &Path::new(&folder).join(filename), &recording)
+            {
                 crate::telemetry::capture("filesystem.startup-reconcile", &error.to_string());
             }
         }
@@ -269,17 +428,28 @@ fn seed_existing_files<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn reconcile_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<()> {
-    if file_role(path).is_none() { return Ok(()); }
+    if file_role(path).is_none() {
+        return Ok(());
+    }
     let parent = path.parent().context("edited file has no parent folder")?;
-    let Some(recording) = store::by_folder(app, parent).map_err(anyhow::Error::msg)? else { return Ok(()); };
+    let Some(recording) = store::by_folder(app, parent).map_err(anyhow::Error::msg)? else {
+        return Ok(());
+    };
     reconcile_recording(app, path, &recording)
 }
 
-fn reconcile_recording<R: Runtime>(app: &AppHandle<R>, path: &Path, recording: &store::StoredRecording) -> Result<()> {
-    let Some(role) = file_role(path) else { return Ok(()); };
+fn reconcile_recording<R: Runtime>(
+    app: &AppHandle<R>,
+    path: &Path,
+    recording: &store::StoredRecording,
+) -> Result<()> {
+    let Some(role) = file_role(path) else {
+        return Ok(());
+    };
     let parent = path.parent().context("edited file has no parent folder")?;
     let file_name = path.file_name().context("edited file has no name")?;
-    let owned_path = Path::new(recording.folder_path.as_deref().unwrap_or_default()).join(file_name);
+    let owned_path =
+        Path::new(recording.folder_path.as_deref().unwrap_or_default()).join(file_name);
     let path = owned_path.as_path();
 
     if !path.is_file() {
@@ -293,6 +463,14 @@ fn reconcile_recording<R: Runtime>(app: &AppHandle<R>, path: &Path, recording: &
 
     let bytes = read_bounded(path)?;
     let hash = sha256_hex(&bytes);
+    // Persisted observations identify our unchanged files without reconstructing
+    // and hashing their expected content a second time.
+    if matches!(
+        sqlite::classify_file_observation(app, path, &hash, None).map_err(anyhow::Error::msg)?,
+        sqlite::FileObservation::Current
+    ) {
+        return Ok(());
+    }
     let expected_hash = fs_writer::expected_editable_content(recording, role)
         .map(|content| sha256_hex(content.as_bytes()));
     match sqlite::classify_file_observation(app, path, &hash, expected_hash.as_deref())
@@ -318,8 +496,8 @@ fn reconcile_recording<R: Runtime>(app: &AppHandle<R>, path: &Path, recording: &
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("inspect edited {}", file_label(path)))?;
+    let metadata =
+        std::fs::metadata(path).with_context(|| format!("inspect edited {}", file_label(path)))?;
     if metadata.len() > MAX_EDIT_BYTES {
         anyhow::bail!("edited file exceeds the 5 MiB safety limit");
     }
@@ -328,7 +506,9 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>> {
 
 /// The canonical file name only: the folder above it is the meeting title.
 fn file_label(path: &Path) -> &str {
-    path.file_name().and_then(|name| name.to_str()).unwrap_or("file")
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file")
 }
 
 fn file_role(path: &Path) -> Option<&'static str> {
@@ -384,14 +564,8 @@ mod tests {
         let app = isolated_mock_app(&root);
         sqlite::initialize(app.handle()).unwrap();
         let recording = sample_recording(&folder);
-        fs_writer::persist_recording_artifacts(
-            Some(app.handle()),
-            &folder,
-            &recording,
-            None,
-            None,
-        )
-        .unwrap();
+        fs_writer::persist_recording_artifacts(Some(app.handle()), &folder, &recording, None, None)
+            .unwrap();
         store::append(app.handle(), recording).unwrap();
         let generated_notes = std::fs::read(&notes_path).unwrap();
         drop(app);
@@ -418,7 +592,9 @@ mod tests {
 
         sqlite::mark_operation_done(restarted.handle(), &edit.operation_id).unwrap();
         seed_existing_files(restarted.handle());
-        assert!(sqlite::next_file_edit(restarted.handle()).unwrap().is_none());
+        assert!(sqlite::next_file_edit(restarted.handle())
+            .unwrap()
+            .is_none());
 
         store::set_result(
             restarted.handle(),
@@ -444,7 +620,10 @@ mod tests {
             refreshed.notes.as_deref(),
         )
         .unwrap();
-        assert_eq!(std::fs::read_to_string(&summary_path).unwrap(), offline_summary);
+        assert_eq!(
+            std::fs::read_to_string(&summary_path).unwrap(),
+            offline_summary
+        );
 
         drop(restarted);
         std::fs::remove_dir_all(root).unwrap();
@@ -460,8 +639,14 @@ mod tests {
         let app = isolated_mock_app(&root);
         sqlite::initialize(app.handle()).unwrap();
         let recording = sample_recording(&registered);
-        fs_writer::persist_recording_artifacts(Some(app.handle()), &registered, &recording, None, None)
-            .unwrap();
+        fs_writer::persist_recording_artifacts(
+            Some(app.handle()),
+            &registered,
+            &recording,
+            None,
+            None,
+        )
+        .unwrap();
         store::append(app.handle(), recording).unwrap();
 
         let edited = "# Brief\n\nEdited while Eavesy was running.\n";
@@ -473,7 +658,10 @@ mod tests {
             .expect("live edit should be queued");
         assert_eq!(edit.role, "summary");
         assert_eq!(edit.content_md, edited);
-        assert_eq!(store::load_all(app.handle())[0].summary.as_deref(), Some(edited));
+        assert_eq!(
+            store::load_all(app.handle())[0].summary.as_deref(),
+            Some(edited)
+        );
         sqlite::mark_operation_done(app.handle(), &edit.operation_id).unwrap();
         reconcile_path(app.handle(), &registered.join("summary.md")).unwrap();
         reconcile_path(app.handle(), &on_disk.join("summary.md")).unwrap();
@@ -485,8 +673,7 @@ mod tests {
 
     #[test]
     fn restart_follows_a_moved_folder_in_the_registry_and_archive_queue() {
-        let root =
-            std::env::temp_dir().join(format!("eavesy-relocation-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("eavesy-relocation-{}", uuid::Uuid::new_v4()));
         let original = root.join("recording");
         let moved = root.join("Projects").join("Renamed meeting");
         let segment_dir = root.join("segments");
@@ -540,12 +727,22 @@ mod tests {
             .unwrap()
             .expect("uploading recording should remain queued");
         assert_eq!(pending.archive_path, moved.join("audio.m4a"));
-        assert!(sqlite::next_file_edit(restarted.handle()).unwrap().is_none());
+        assert!(sqlite::next_file_edit(restarted.handle())
+            .unwrap()
+            .is_none());
 
         reconcile_folder_locations(restarted.handle(), &root).unwrap();
-        assert_eq!(store::load_all(restarted.handle())[0].folder_path.as_deref(), moved.to_str());
         assert_eq!(
-            sqlite::next_session(restarted.handle()).unwrap().unwrap().archive_path,
+            store::load_all(restarted.handle())[0]
+                .folder_path
+                .as_deref(),
+            moved.to_str()
+        );
+        assert_eq!(
+            sqlite::next_session(restarted.handle())
+                .unwrap()
+                .unwrap()
+                .archive_path,
             moved.join("audio.m4a")
         );
 
@@ -555,15 +752,26 @@ mod tests {
 
     #[test]
     fn startup_reattaches_a_manifest_folder_when_the_history_has_no_path() {
-        let root=std::env::temp_dir().join(format!("eavesy-unlinked-{}",uuid::Uuid::new_v4()));
-        let folder=root.join("meeting");std::fs::create_dir_all(&folder).unwrap();
-        let app=isolated_mock_app(&root);sqlite::initialize(app.handle()).unwrap();
-        let mut recording=sample_recording(&folder);recording.folder_path=None;
-        store::append(app.handle(),recording).unwrap();
-        std::fs::write(folder.join("meeting.json"),r#"{"id":"meeting-1"}"#).unwrap();
-        reconcile_folder_locations(app.handle(),&root).unwrap();
-        assert_eq!(store::get(app.handle(),"meeting-1").unwrap().unwrap().folder_path.as_deref(),folder.to_str());
-        drop(app);std::fs::remove_dir_all(root).unwrap();
+        let root = std::env::temp_dir().join(format!("eavesy-unlinked-{}", uuid::Uuid::new_v4()));
+        let folder = root.join("meeting");
+        std::fs::create_dir_all(&folder).unwrap();
+        let app = isolated_mock_app(&root);
+        sqlite::initialize(app.handle()).unwrap();
+        let mut recording = sample_recording(&folder);
+        recording.folder_path = None;
+        store::append(app.handle(), recording).unwrap();
+        std::fs::write(folder.join("meeting.json"), r#"{"id":"meeting-1"}"#).unwrap();
+        reconcile_folder_locations(app.handle(), &root).unwrap();
+        assert_eq!(
+            store::get(app.handle(), "meeting-1")
+                .unwrap()
+                .unwrap()
+                .folder_path
+                .as_deref(),
+            folder.to_str()
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -632,4 +840,134 @@ mod tests {
 
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn background_recovery_preserves_offline_edits_and_replays_queued_events() {
+        let root = std::env::temp_dir().join(format!("eavesy-worker-{}", uuid::Uuid::new_v4()));
+        let folder = root.join("recording");
+        std::fs::create_dir_all(&folder).unwrap();
+        let app = isolated_mock_app(&root);
+        sqlite::initialize(app.handle()).unwrap();
+        let r = sample_recording(&folder);
+        fs_writer::persist_recording_artifacts(Some(app.handle()), &folder, &r, None, None)
+            .unwrap();
+        store::append(app.handle(), r).unwrap();
+        // Legacy installs may have no observation rows yet; sync must not race
+        // this classification and overwrite a genuine offline edit.
+        sqlite::with_conn(app.handle(), |conn| {
+            conn.execute("DELETE FROM filesystem_state", []).unwrap()
+        });
+        std::fs::write(folder.join("summary.md"), "Offline summary").unwrap();
+        let (tx, rx) = mpsc::channel();
+        tx.send(WatchMessage::Path(folder.join("summary.md")))
+            .unwrap();
+        let worker = spawn_reconciler(
+            app.handle().clone(),
+            root.clone(),
+            rx,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            tx.clone(),
+        );
+        drop(tx);
+        worker.join().unwrap();
+        assert_eq!(
+            store::get(app.handle(), "meeting-1")
+                .unwrap()
+                .unwrap()
+                .summary
+                .as_deref(),
+            Some("Offline summary")
+        );
+        let reader = store::page(app.handle(), 0, 50, "offline", "all", None).unwrap();
+        assert_eq!(reader.items.len(), 1);
+        sqlite::with_conn(app.handle(), |conn| {
+            let count:i64=conn.query_row("SELECT count(*) FROM pending_operations WHERE id='file-edit:meeting-1:summary'",[],|r|r.get(0)).unwrap();
+            assert_eq!(count, 1);
+        });
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_replays_a_queued_folder_move_before_releasing_sync() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-startup-move-{}", uuid::Uuid::new_v4()));
+        let old = root.join("old");
+        let new = root.join("renamed");
+        let app = isolated_mock_app(&root);
+        sqlite::initialize(app.handle()).unwrap();
+        let r = sample_recording(&old);
+        fs_writer::persist_recording_artifacts(Some(app.handle()), &old, &r, None, None).unwrap();
+        store::append(app.handle(), r).unwrap();
+        seed_existing_files(app.handle());
+        std::fs::rename(&old, &new).unwrap();
+        std::fs::write(new.join("summary.md"), "Edited during startup").unwrap();
+        let (tx, rx) = mpsc::channel();
+        tx.send(WatchMessage::RescanFolders).unwrap();
+        tx.send(WatchMessage::Path(new.join("summary.md"))).unwrap();
+        tx.send(WatchMessage::StartupBarrier).unwrap();
+        reconcile_queued_startup(app.handle(), &root, &rx, &AtomicBool::new(false));
+        let r = store::get(app.handle(), "meeting-1").unwrap().unwrap();
+        assert_eq!(r.folder_path.as_deref(), new.to_str());
+        assert_eq!(r.summary.as_deref(), Some("Edited during startup"));
+        assert!(!old.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_watcher_registration_does_not_leave_a_readiness_wait() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-watcher-failure-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let invalid = root.join("not-a-folder");
+        std::fs::write(&invalid, b"file").unwrap();
+        let app = isolated_mock_app(&root);
+        app.manage(WatcherManager::default());
+        assert!(app
+            .state::<WatcherManager>()
+            .replace(app.handle().clone(), invalid)
+            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), wait_until_ready(app.handle()))
+                .await
+                .unwrap()
+                .is_ok()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn sync_waits_for_offline_recovery_without_blocking_setup() {
+        let root = std::env::temp_dir().join(format!("eavesy-ready-{}", uuid::Uuid::new_v4()));
+        let app = isolated_mock_app(&root);
+        let ready = Arc::new(AtomicBool::new(false));
+        let manager = WatcherManager {
+            handle: Mutex::new(Some(WatcherHandle {
+                stopped: Arc::new(AtomicBool::new(false)),
+                ready: ready.clone(),
+                _watcher: Mutex::new(notify::recommended_watcher(|_| {}).unwrap()),
+                _worker: Mutex::new(None),
+            })),
+        };
+        app.manage(manager);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), wait_until_ready(app.handle()))
+                .await
+                .is_err()
+        );
+        assert!(wait_until_ready_for(app.handle(), Duration::ZERO)
+            .await
+            .is_err());
+        ready.store(true, Ordering::Release);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), wait_until_ready(app.handle()))
+                .await
+                .unwrap()
+                .is_ok()
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "../../bench/next-reconcile.rs"]
+mod benchmarks;

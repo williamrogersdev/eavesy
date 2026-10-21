@@ -4,25 +4,47 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use tauri::{AppHandle, Manager, Runtime};
 
-// A separate history connection keeps record mutations serialized without
-// holding the upload database mutex while checking locally edited files.
-fn history<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, History>, String> {
-    static HISTORIES: Mutex<Vec<(PathBuf, &'static Mutex<History>)>> = Mutex::new(Vec::new());
+// Readers use independent WAL connections. Mutations share one connection;
+// activity also interrupts a background index build before a mutation waits.
+struct SharedHistory {
+    history: Mutex<History>,
+    activity: std::sync::atomic::AtomicU64,
+    pending: std::sync::atomic::AtomicUsize,
+}
+fn shared_history<R: Runtime>(app: &AppHandle<R>) -> Result<&'static SharedHistory, String> {
+    static HISTORIES: Mutex<Vec<(PathBuf, &'static SharedHistory)>> = Mutex::new(Vec::new());
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let mut histories = HISTORIES.lock().unwrap_or_else(PoisonError::into_inner);
-    let shared = match histories.iter().find(|(path, _)| path == &dir) {
-        Some((_, shared)) => *shared,
-        None => {
-            let shared: &'static Mutex<History> = Box::leak(Box::new(Mutex::new(History::open(
-                &dir.join("history.sqlite3"),
-                &dir.join("recordings.json"),
-            )?)));
-            histories.push((dir, shared));
-            shared
-        }
-    };
-    drop(histories);
-    Ok(shared.lock().unwrap_or_else(PoisonError::into_inner))
+    if let Some((_, shared)) = histories.iter().find(|(path, _)| path == &dir) {
+        return Ok(*shared);
+    }
+    let shared = Box::leak(Box::new(SharedHistory {
+        history: Mutex::new(History::open(
+            &dir.join("history.sqlite3"),
+            &dir.join("recordings.json"),
+        )?),
+        activity: std::sync::atomic::AtomicU64::new(0),
+        pending: std::sync::atomic::AtomicUsize::new(0),
+    }));
+    histories.push((dir, shared));
+    Ok(shared)
+}
+fn history<R: Runtime>(app: &AppHandle<R>) -> Result<MutexGuard<'static, History>, String> {
+    let shared = shared_history(app)?;
+    shared
+        .pending
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    shared
+        .activity
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let guard = shared
+        .history
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    shared
+        .pending
+        .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    Ok(guard)
 }
 
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -50,15 +72,57 @@ pub fn by_folder<R: Runtime>(
 ) -> Result<Option<StoredRecording>, String> {
     history(app)?.by_folder(folder)
 }
+pub fn prepare_search<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let shared = shared_history(app)?;
+    let mut history = match shared.history.try_lock() {
+        Ok(history) => history,
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            return Err("History indexing skipped after a poisoned history lock".into())
+        }
+        Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+    };
+    if shared.pending.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        return Ok(false);
+    }
+    let epoch = shared.activity.load(std::sync::atomic::Ordering::Acquire);
+    history.prepare_search_while(move || {
+        shared.pending.load(std::sync::atomic::Ordering::Acquire) > 0
+            || shared.activity.load(std::sync::atomic::Ordering::Acquire) != epoch
+    })
+}
+
 pub fn page<R: Runtime>(
     app: &AppHandle<R>,
     offset: usize,
     limit: usize,
     query: &str,
-    filter: &str,
+    category: &str,
+    request: Option<&crate::history_search::Token>,
 ) -> Result<HistoryPage, String> {
-    history(app)?.page(offset, limit, query, filter)
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("history.sqlite3");
+    if request.is_some_and(|token| token.cancelled()) {
+        return Err("History search superseded".into());
+    }
+    let reader = match History::read_only(&path) {
+        Ok(reader) if reader.import_complete().unwrap_or(false) => reader,
+        _ => {
+            // An interrupted/failed import can leave an existing SQLite file.
+            // Only the initialized writer may complete (or report) that import.
+            initialize(app)?;
+            let reader = History::read_only(&path)?;
+            if !reader.import_complete()? {
+                return Err("Recording history migration is incomplete; restart to retry".into());
+            }
+            reader
+        }
+    };
+    match request {
+        Some(token) => reader.page_while(offset, limit, query, category, token.callback()),
+        None => reader.page(offset, limit, query, category),
+    }
 }
+
 pub fn details<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
@@ -200,7 +264,12 @@ pub fn save_preview_transcript<R: Runtime>(
     save_transcript(app, id, content, None)
 }
 
-fn save_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, content: &str, expected: Option<&str>) -> Result<(), String> {
+fn save_transcript<R: Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    content: &str,
+    expected: Option<&str>,
+) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     if content.len() > 5 * 1024 * 1024 {
         return Err("Transcript is too large".into());
@@ -236,7 +305,16 @@ fn save_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, content: &str, expe
             rusqlite::params![path.to_string_lossy()],
         )
         .map_err(|error| error.to_string())?;
-        if raw_created { crate::fs_writer::atomic_write(&raw_path, previous.transcript.as_deref().unwrap_or_default().as_bytes())?; }
+        if raw_created {
+            crate::fs_writer::atomic_write(
+                &raw_path,
+                previous
+                    .transcript
+                    .as_deref()
+                    .unwrap_or_default()
+                    .as_bytes(),
+            )?;
+        }
         crate::fs_writer::atomic_write(&path, content.as_bytes())?;
         history.put(&recording)?;
         tx.commit().map_err(|error| error.to_string())
@@ -250,9 +328,14 @@ fn save_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, content: &str, expe
         } else {
             Ok(())
         };
-        let restore_raw = if raw_created && raw_path.exists() { std::fs::remove_file(&raw_path).map_err(|e| e.to_string()) } else { Ok(()) };
+        let restore_raw = if raw_created && raw_path.exists() {
+            std::fs::remove_file(&raw_path).map_err(|e| e.to_string())
+        } else {
+            Ok(())
+        };
         let restore_history = history.put(&previous);
-        restore.and(restore_raw)
+        restore
+            .and(restore_raw)
             .and(restore_history)
             .map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
         return Err(error);
@@ -425,6 +508,83 @@ mod persistence_tests {
             folder_path: None,
         }
     }
+
+    #[test]
+    fn an_existing_database_never_hides_a_failed_legacy_import() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-import-read-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = app(&root);
+        std::fs::write(root.join("history.sqlite3"), []).unwrap();
+        std::fs::write(root.join("recordings.json"), b"invalid JSON").unwrap();
+        assert!(page(fixture.handle(), 0, 50, "", "all", None)
+            .unwrap_err()
+            .contains("malformed"));
+        let r = recording("legacy".into());
+        std::fs::write(
+            root.join("recordings.json"),
+            serde_json::to_vec(&[r]).unwrap(),
+        )
+        .unwrap();
+        let result = page(fixture.handle(), 0, 50, "", "all", None).unwrap();
+        assert_eq!(result.items[0].id, "legacy");
+        assert_eq!(result.counts.all, 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn a_waiting_mutation_interrupts_index_construction_and_preserves_the_write() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-index-priority-{}", uuid::Uuid::new_v4()));
+        let fixture = app(&root);
+        for i in 0..100 {
+            append(fixture.handle(), recording(i.to_string())).unwrap();
+        }
+        let shared = shared_history(fixture.handle()).unwrap();
+        let (start, wait) = std::sync::mpsc::channel();
+        let handle = fixture.handle().clone();
+        std::thread::scope(|scope| {
+            let mut guard = shared.history.lock().unwrap();
+            let writer = scope.spawn(move || {
+                wait.recv().unwrap();
+                set_status(&handle, "0", "complete").unwrap();
+            });
+            let calls = std::sync::atomic::AtomicUsize::new(0);
+            let built = guard
+                .prepare_search_while(move || {
+                    let call = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if call == 0 {
+                        return false;
+                    } // initial check; enter actual SQL
+                    if call == 1 {
+                        start.send(()).unwrap();
+                    }
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while shared.pending.load(std::sync::atomic::Ordering::Acquire) == 0
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::yield_now();
+                    }
+                    true
+                })
+                .unwrap();
+            assert!(!built);
+            drop(guard);
+            writer.join().unwrap();
+        });
+        assert_eq!(
+            get(fixture.handle(), "0").unwrap().unwrap().status,
+            "complete"
+        );
+        assert!(prepare_search(fixture.handle()).unwrap());
+        assert_eq!(
+            page(fixture.handle(), 0, 50, "", "all", None)
+                .unwrap()
+                .counts
+                .all,
+            100
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn concurrent_updates_and_appends_never_lose_other_fields_or_recordings() {
         let root =
@@ -495,15 +655,49 @@ mod persistence_tests {
         crate::sqlite::with_open(app.handle(), |conn| conn.execute_batch(
             "CREATE TRIGGER fail_correction BEFORE INSERT ON pending_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END;"
         )).unwrap().unwrap();
-        assert!(correct_transcript(app.handle(), "correction", "Open a pool request.", "Must roll back.").is_err());
-        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pool request.");
+        assert!(correct_transcript(
+            app.handle(),
+            "correction",
+            "Open a pool request.",
+            "Must roll back."
+        )
+        .is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.join("transcript.md")).unwrap(),
+            "Open a pool request."
+        );
         assert!(!root.join("transcript.raw.md").exists());
-        crate::sqlite::with_open(app.handle(), |conn| conn.execute_batch("DROP TRIGGER fail_correction")).unwrap().unwrap();
-        correct_transcript(app.handle(), "correction", "Open a pool request.", "Open a pull request.").unwrap();
-        assert_eq!(load_all(app.handle())[0].transcript.as_deref(), Some("Open a pull request."));
-        assert_eq!(std::fs::read_to_string(root.join("transcript.raw.md")).unwrap(), "Open a pool request.");
-        assert_eq!(std::fs::read_to_string(root.join("transcript.md")).unwrap(), "Open a pull request.");
-        correct_transcript(app.handle(), "correction", "Open a pool request.", "stale again").unwrap_err();
+        crate::sqlite::with_open(app.handle(), |conn| {
+            conn.execute_batch("DROP TRIGGER fail_correction")
+        })
+        .unwrap()
+        .unwrap();
+        correct_transcript(
+            app.handle(),
+            "correction",
+            "Open a pool request.",
+            "Open a pull request.",
+        )
+        .unwrap();
+        assert_eq!(
+            load_all(app.handle())[0].transcript.as_deref(),
+            Some("Open a pull request.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("transcript.raw.md")).unwrap(),
+            "Open a pool request."
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("transcript.md")).unwrap(),
+            "Open a pull request."
+        );
+        correct_transcript(
+            app.handle(),
+            "correction",
+            "Open a pool request.",
+            "stale again",
+        )
+        .unwrap_err();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -631,6 +825,11 @@ mod persistence_tests {
 }
 
 /// A deliberate human edit wins over later transcription and sync results.
-pub fn correct_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, original: &str, corrected: &str) -> Result<(), String> {
+pub fn correct_transcript<R: Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    original: &str,
+    corrected: &str,
+) -> Result<(), String> {
     save_transcript(app, id, corrected, Some(original))
 }

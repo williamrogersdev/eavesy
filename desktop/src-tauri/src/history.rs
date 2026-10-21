@@ -1,5 +1,7 @@
 //! Durable, indexed recording history. Bodies are kept out of list queries.
 use std::path::Path;
+#[path = "history_search_index.rs"]
+mod search_index;
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -142,6 +144,66 @@ impl History {
         Ok(Self { conn })
     }
 
+    pub fn prepare_search(&mut self) -> Result<(), String> {
+        search_index::prepare(&mut self.conn).map_err(error)
+    }
+
+    pub fn prepare_search_while(
+        &mut self,
+        cancelled: impl Fn() -> bool + Send + Sync + std::panic::RefUnwindSafe + 'static,
+    ) -> Result<bool, String> {
+        if cancelled() {
+            return Ok(false);
+        }
+        let cancelled = std::sync::Arc::new(cancelled);
+        let check = cancelled.clone();
+        self.conn.progress_handler(100, Some(move || check()));
+        let result = self.prepare_search();
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+        match result {
+            Err(_) if cancelled() => Ok(false),
+            other => other.map(|()| true),
+        }
+    }
+
+    pub fn import_complete(&self) -> Result<bool, String> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value='1' FROM history_metadata WHERE key='legacy_imported'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(error)?
+            .unwrap_or(false))
+    }
+
+    pub fn read_only(path: &Path) -> Result<Self, String> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(error)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(error)?;
+        Ok(Self { conn })
+    }
+
+    pub fn page_while(
+        &self,
+        offset: usize,
+        limit: usize,
+        query: &str,
+        category: &str,
+        cancelled: impl Fn() -> bool + Send + std::panic::RefUnwindSafe + 'static,
+    ) -> Result<HistoryPage, String> {
+        if cancelled() {
+            return Err("History search superseded".into());
+        }
+        self.conn.progress_handler(100, Some(cancelled));
+        let result = self.page(offset, limit, query, category);
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+        result
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<StoredRecording>, String> {
         self.conn
             .query_row(
@@ -268,35 +330,32 @@ impl History {
             values.push(token.to_string().into());
             values.push(token.to_string().into());
         }
-        let join = if query.trim().is_empty() {
-            ""
+        let candidate = search_index::candidate(query);
+        let indexed = candidate.is_some() && search_index::ready(&self.conn).map_err(error)?;
+        // Common searches usually fill the first page immediately. Probe only a
+        // bounded recent prefix so those never pay to enumerate all FTS hits.
+        let mut probe = None;
+        if indexed && offset.saturating_add(limit) < 256 {
+            let prefix = offset + limit + 1;
+            let bounded = format!("{predicate} AND h.rowid IN (SELECT rowid FROM history_recordings ORDER BY started_at_ms DESC,id LIMIT {prefix})");
+            let rows = self.query_items(offset, limit, query, &bounded, values.clone())?;
+            if rows.len() > limit {
+                probe = Some(rows);
+            }
+        }
+        let mut items = if let Some(rows) = probe {
+            rows
         } else {
-            " JOIN history_content c USING(id)"
+            if indexed {
+                let candidate = candidate.unwrap();
+                predicate.push_str(" AND h.id IN (
+                    SELECT id FROM history_recordings WHERE rowid IN (SELECT rowid FROM history_title_fts WHERE history_title_fts MATCH ? UNION SELECT rowid FROM history_recordings WHERE (instr(title_search,char(0))>0)=1)
+                    UNION SELECT id FROM history_content WHERE rowid IN (SELECT rowid FROM history_body_fts WHERE history_body_fts MATCH ? UNION SELECT rowid FROM history_content WHERE (instr(search_text,char(0))>0)=1))");
+                values.push(candidate.clone().into());
+                values.push(candidate.into());
+            }
+            self.query_items(offset, limit, query, &predicate, values)?
         };
-        let sql = format!("SELECT h.id,h.title,h.started_at_ms,h.duration_sec,h.source,h.status,h.has_audio,h.has_video,h.preview,h.truncated,h.revision
-            FROM history_recordings h{join} WHERE {predicate} ORDER BY h.started_at_ms DESC,h.id LIMIT ? OFFSET ?");
-        values.push(((limit + 1) as i64).into());
-        values.push(i64::try_from(offset).map_err(error)?.into());
-        let mut stmt = self.conn.prepare(&sql).map_err(error)?;
-        let mut items = stmt
-            .query_map(params_from_iter(values), |r| {
-                Ok(RecordingPreview {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    started_at_ms: r.get(2)?,
-                    duration_sec: r.get(3)?,
-                    source: r.get(4)?,
-                    status: r.get(5)?,
-                    has_audio: r.get(6)?,
-                    has_video: r.get(7)?,
-                    transcript: r.get(8)?,
-                    transcript_truncated: r.get(9)?,
-                    revision: r.get(10)?,
-                })
-            })
-            .map_err(error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(error)?;
         let next_offset = (items.len() > limit).then_some(offset + limit);
         items.truncate(limit);
         let mut counts = Counts::default();
@@ -322,6 +381,45 @@ impl History {
             next_offset,
             counts,
         })
+    }
+    fn query_items(
+        &self,
+        offset: usize,
+        limit: usize,
+        query: &str,
+        predicate: &str,
+        mut values: Vec<rusqlite::types::Value>,
+    ) -> Result<Vec<RecordingPreview>, String> {
+        let join = if query.trim().is_empty() {
+            ""
+        } else {
+            " JOIN history_content c USING(id)"
+        };
+        let sql=format!("SELECT h.id,h.title,h.started_at_ms,h.duration_sec,h.source,h.status,h.has_audio,h.has_video,h.preview,h.truncated,h.revision
+            FROM history_recordings h INDEXED BY history_order{join} WHERE {predicate} ORDER BY h.started_at_ms DESC,h.id LIMIT ? OFFSET ?");
+        values.push(((limit + 1) as i64).into());
+        values.push(i64::try_from(offset).map_err(error)?.into());
+        let mut stmt = self.conn.prepare(&sql).map_err(error)?;
+        let rows = stmt
+            .query_map(params_from_iter(values), |r| {
+                Ok(RecordingPreview {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    started_at_ms: r.get(2)?,
+                    duration_sec: r.get(3)?,
+                    source: r.get(4)?,
+                    status: r.get(5)?,
+                    has_audio: r.get(6)?,
+                    has_video: r.get(7)?,
+                    transcript: r.get(8)?,
+                    transcript_truncated: r.get(9)?,
+                    revision: r.get(10)?,
+                })
+            })
+            .map_err(error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(error)?;
+        Ok(rows)
     }
 }
 
@@ -533,6 +631,7 @@ mod tests {
         let mut history = fixture.open().unwrap();
         let original = row("a");
         history.put(&original).unwrap();
+        history.prepare_search().unwrap();
         let revision = history.revision("a").unwrap();
         history.conn.execute_batch("CREATE TRIGGER fail_body BEFORE UPDATE ON history_content BEGIN SELECT RAISE(ABORT,'test disk failure'); END;").unwrap();
         let mut changed = original.clone();
@@ -549,6 +648,7 @@ mod tests {
         for i in 0..105 {
             history.put(&row(&format!("{i:03}"))).unwrap();
         }
+        history.prepare_search().unwrap();
         let page = history.page(0, 1000, "", "all").unwrap();
         assert_eq!(page.items.len(), 100);
         assert_eq!(page.next_offset, Some(100));
@@ -570,6 +670,19 @@ mod tests {
         assert_eq!(found.items.len(), 1);
         assert_eq!(found.items[0].id, "104");
         assert_eq!(history.page(0, 50, "ship", "all").unwrap().items.len(), 50);
+        let searched_second = history.page(50, 50, "ship", "meetings").unwrap();
+        assert_eq!(searched_second.items.len(), 50);
+        assert_eq!(searched_second.items[0].id, "050");
+        assert_eq!(searched_second.next_offset, Some(100));
+        assert_eq!(
+            history
+                .page(100, 50, "ship", "meetings")
+                .unwrap()
+                .items
+                .len(),
+            5
+        );
+
         assert_eq!(history.page(0, 50, "", "notes").unwrap().items.len(), 0);
         assert!(history
             .get("104")
@@ -679,5 +792,190 @@ mod tests {
         history.put(&recording).unwrap();
         assert!(history.by_folder(&folder).unwrap().is_none());
         assert_eq!(history.by_folder(&moved).unwrap(), Some(recording));
+    }
+
+    #[test]
+    fn trigram_candidates_preserve_exact_substrings_unicode_and_mutations() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        let mut original = row("indexed");
+        original.title = "Quoted \"Alpha\" 東京会議".into();
+        original.transcript = Some(
+            "**[00:00:00] Person:** Café Straße İSTANBUL 🐈🐕🐇 東京会議 foo-bar alpha\0omega"
+                .into(),
+        );
+        original.summary = Some("summary-only UNIQUE".into());
+        history.put(&original).unwrap();
+        history.put(&row("other")).unwrap();
+        assert_eq!(history.page(0, 50, "omega", "all").unwrap().items.len(), 1);
+        assert_eq!(history.page(0, 50, "unique", "all").unwrap().items.len(), 1);
+
+        let queries = [
+            "",
+            "a",
+            "東京",
+            "東京会議",
+            "café",
+            "straße",
+            "İSTANBUL",
+            "🐈🐕🐇",
+            "foo-bar",
+            "\"alpha\"",
+            "alpha\0omega",
+            "omega",
+            "unique",
+            "summary-only",
+            "unique quoted",
+            "nomatch",
+            "bar foo",
+            "a veryveryveryveryveryveryverylongquery",
+        ];
+        let before: Vec<_> = queries
+            .iter()
+            .map(|q| serde_json::to_value(history.page(0, 50, q, "all").unwrap()).unwrap())
+            .collect();
+        history.prepare_search().unwrap();
+        history.prepare_search().unwrap();
+        for (query, expected) in queries.iter().zip(before) {
+            assert_eq!(
+                serde_json::to_value(history.page(0, 50, query, "all").unwrap()).unwrap(),
+                expected,
+                "query {query:?}"
+            );
+        }
+        original.title = "new-title".into();
+        original.transcript = Some("brand-new transcript".into());
+        original.summary = None;
+        history.put(&original).unwrap();
+        assert!(history
+            .page(0, 50, "unique", "all")
+            .unwrap()
+            .items
+            .is_empty());
+        assert_eq!(
+            history.page(0, 50, "brand-new", "all").unwrap().items[0].id,
+            "indexed"
+        );
+        history.remove("indexed").unwrap();
+        assert!(history
+            .page(0, 50, "brand-new", "all")
+            .unwrap()
+            .items
+            .is_empty());
+        history
+            .conn
+            .execute(
+                "INSERT INTO history_body_fts(history_body_fts,rank) VALUES('integrity-check',1)",
+                [],
+            )
+            .unwrap();
+        history
+            .conn
+            .execute(
+                "INSERT INTO history_title_fts(history_title_fts,rank) VALUES('integrity-check',1)",
+                [],
+            )
+            .unwrap();
+        drop(history);
+        let reopened = fixture.open().unwrap();
+        assert!(search_index::ready(&reopened.conn).unwrap());
+    }
+
+    #[test]
+    fn searches_can_be_interrupted_without_holding_the_history_writer() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        for i in 0..20 {
+            history.put(&row(&i.to_string())).unwrap();
+        }
+        let reader = History::read_only(&fixture.root.join("history.sqlite3")).unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let check = calls.clone();
+        let result = reader.page_while(0, 50, "x", "all", move || {
+            check.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0
+        });
+        assert!(result.is_err());
+        assert!(calls.load(std::sync::atomic::Ordering::Relaxed) > 1);
+        history.put(&row("writer-still-works")).unwrap();
+        assert_eq!(reader.page(0, 50, "", "all").unwrap().counts.all, 21);
+    }
+
+    #[test]
+    fn failed_index_build_is_atomic_retryable_and_keeps_history_available() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        history.put(&row("safe")).unwrap();
+        history.conn.execute_batch("CREATE TRIGGER fail_index BEFORE INSERT ON history_metadata WHEN new.key='trigram_v1' BEGIN SELECT RAISE(ABORT,'test full disk'); END;").unwrap();
+        assert!(history.prepare_search().is_err());
+        assert!(!search_index::ready(&history.conn).unwrap());
+        let tables: i64 = history
+            .conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='history_body_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0);
+        assert_eq!(history.page(0, 50, "safe", "all").unwrap().items.len(), 1);
+        history
+            .conn
+            .execute_batch("DROP TRIGGER fail_index")
+            .unwrap();
+        history.prepare_search().unwrap();
+        assert_eq!(history.page(0, 50, "safe", "all").unwrap().items.len(), 1);
+    }
+
+    #[test]
+    fn interrupted_index_build_rolls_back_and_can_be_retried() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        for i in 0..100 {
+            history.put(&row(&format!("preserved-{i}"))).unwrap();
+        }
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let check = calls.clone();
+        assert!(!history
+            .prepare_search_while(
+                move || check.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0
+            )
+            .unwrap());
+        assert!(calls.load(std::sync::atomic::Ordering::Relaxed) > 1);
+        assert!(!search_index::ready(&history.conn).unwrap());
+        assert_eq!(
+            history.page(0, 50, "preserved", "all").unwrap().items.len(),
+            50
+        );
+        history.prepare_search().unwrap();
+        assert_eq!(
+            history.page(0, 50, "preserved", "all").unwrap().items.len(),
+            50
+        );
+    }
+
+    #[test]
+    fn long_unicode_substrings_and_null_queries_remain_exact_after_indexing() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        let token: String = (0..80)
+            .map(|i| char::from_u32(0x4e00 + i).unwrap())
+            .collect();
+        let nul = format!("begin{}end", char::from(0));
+        let mut r = row("long");
+        r.transcript = Some(token.clone());
+        history.put(&r).unwrap();
+        let mut with_null = row("null");
+        with_null.transcript = Some(nul.clone());
+        history.put(&with_null).unwrap();
+        history.prepare_search().unwrap();
+        assert_eq!(history.page(0, 50, &token, "all").unwrap().items.len(), 1);
+        assert_eq!(history.page(0, 50, &nul, "all").unwrap().items.len(), 1);
+        let mut wrong: Vec<_> = token.chars().collect();
+        wrong[39] = '🦀';
+        assert!(history
+            .page(0, 50, &wrong.into_iter().collect::<String>(), "all")
+            .unwrap()
+            .items
+            .is_empty());
     }
 }
