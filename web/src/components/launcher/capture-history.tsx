@@ -1,4 +1,6 @@
 'use client';
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { useInlineTranslation } from '@/lib/translation/use-inline-translation';
 import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 
 import {
@@ -6,10 +8,10 @@ import {
   Camera,
   Clapperboard,
   Copy,
+  ClipboardPaste,
   FolderOpen,
   Image as ImageIcon,
   MoreHorizontal,
-  Languages,
   Pause,
   Play,
   Search,
@@ -26,6 +28,7 @@ import {
   captureMediaUrl,
   copyCaptureMedia,
   copyText,
+  pasteToFrontmost,
   deleteCapture,
   fetchAgentTranscript,
   revealInFinder,
@@ -192,7 +195,7 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
   const long = text.length > 220 || text.split('\n').length > 3;
   return (
     <>
-      <div className={`ev-body${long && !open ? ' ev-clamp' : ''}`} data-muted={muted}>
+      <div className={`ev-body${long && !open ? ' ev-clamp' : ''}`} dir="auto" data-muted={muted}>
         <Highlighted text={text} query={query} />
       </div>
       {long && (
@@ -212,7 +215,6 @@ function CaptureRow({
   query,
   signedIn,
   onSignIn,
-  onTranslate,
   flash,
   runTask,
 }: {
@@ -220,16 +222,17 @@ function CaptureRow({
   query: string;
   signedIn: boolean;
   onSignIn: () => void;
-  onTranslate?: (text: string) => void;
   flash: Flash;
   runTask: RunTask;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
   const kind = kindOf(rec);
   const Icon = kind.icon;
   const [detail, setDetail] = useState<Recording | null>(null);
   const current = detail?.id === rec.id && detail.revision !== undefined && rec.revision !== undefined && detail.revision >= rec.revision ? detail : rec;
   const text = plainTranscript(current.transcript ?? '');
+  const translation = useInlineTranslation(text, async () => plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''), rec.revision);
   const expand = async () => {
     try { setDetail(await loadRecordingDetails(rec)); }
     catch (error) { flash(error instanceof Error ? error.message : 'Couldn’t load that capture', 5000, 'warn'); throw error; }
@@ -243,7 +246,7 @@ function CaptureRow({
 
   const copy = () => runTask(async () => {
     if (image || video) await copyCaptureMedia(rec.id);
-    else await copyText(plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
+    else await copyText(translation.language ? translation.text : plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
     flash('Copied');
   }, 'Couldn’t copy that');
 
@@ -253,11 +256,11 @@ function CaptureRow({
   if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;
   else if (video) body = <>
     <Thumb id={rec.id} video durationSec={rec.durationSec} label={kind.label} />
-    {text && <div style={{ marginTop: 6 }}><Body key={rec.revision} text={text} query={query} onExpand={current.transcriptTruncated ? expand : undefined} /></div>}
+    {text && <div style={{ marginTop: 6 }}><Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
-    <Body key={rec.revision} text={text} query={query} onExpand={current.transcriptTruncated ? expand : undefined} />
-    {signedIn && spoken && current.transcript && <CorrectionEditor id={rec.id} original={current.transcript} loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''} onSaved={() => flash("Corrections saved")} />}
+    <Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} />
+    {!translation.language && signedIn && spoken && current.transcript && <CorrectionEditor id={rec.id} original={current.transcript} loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''} onSaved={() => flash("Corrections saved")} />}
     {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (!signedIn && spoken && rec.status !== 'complete') body = (
@@ -273,7 +276,7 @@ function CaptureRow({
   else body = <div className="ev-body" data-muted="true">Saved on this Mac.</div>;
 
   return (
-    <article className="ev-row" data-menu={menuOpen} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
+    <article className="ev-row" data-menu={menuOpen || languageOpen || !!translation.language || translation.busy} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
       <span className="ev-disc-kind" aria-hidden><Icon size={13} strokeWidth={1.75} /></span>
       <header className="ev-rh">
         <span className="ev-rh-kind">{kind.label}</span>
@@ -281,18 +284,17 @@ function CaptureRow({
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
+      {translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
-        <IconButton label={copyLabel} icon={Copy} filled disabled={!image && !video && !text} onClick={copy} />
+        {text && !image && !video && <LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} onOpenChange={setLanguageOpen} />}
+        {translation.language && <IconButton label="Paste translation at cursor" icon={ClipboardPaste} disabled={translation.busy} onClick={() => runTask(() => pasteToFrontmost(translation.text, false), 'Couldn’t paste that')} />}
+        <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || (!image && !video && !text)} onClick={copy} />
         <Menu
           align="end"
           open={menuOpen}
           onOpenChange={setMenuOpen}
           trigger={<IconButton label="More" icon={MoreHorizontal} />}
           items={[
-            ...(text && onTranslate ? [{ label: 'Translate', icon: Languages, onSelect: () => runTask(async () => {
-              const full = plainTranscript((await loadRecordingDetails(rec)).transcript ?? '');
-              onTranslate(full);
-            }, 'Couldn’t load the transcript') }] : []),
             ...(playable
               ? [{
                   label: player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play audio',
@@ -346,7 +348,6 @@ export function CaptureHistory({
   dictationHotkey,
   signedIn,
   onSignIn,
-  onTranslate,
   flash,
   runTask,
   searchRef,
@@ -361,7 +362,6 @@ export function CaptureHistory({
   dictationHotkey: string;
   signedIn: boolean;
   onSignIn: () => void;
-  onTranslate?: (text: string) => void;
   flash: Flash;
   runTask: RunTask;
   searchRef: RefObject<HTMLInputElement | null>;
@@ -448,7 +448,7 @@ export function CaptureHistory({
               {/* The toolbar shows a capture while it runs; it joins the list once it is written down. */}
               {group.items.map((rec) => (
                 <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
-                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} onTranslate={onTranslate} flash={flash} runTask={runTask} />
+                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
                 </div>
               ))}
             </section>

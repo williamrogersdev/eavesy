@@ -121,7 +121,6 @@ pub fn run() {
             fs_writer::reveal_in_finder,
             commands::copy_text,
             translation::translation_request,
-            translation::read_clipboard_text,
             commands::paste_to_frontmost,
             learning::dictionary_request,
             learning::correct_recording,

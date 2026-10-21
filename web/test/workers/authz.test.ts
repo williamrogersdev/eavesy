@@ -35,6 +35,9 @@ vi.mock('../../src/server/auth', () => ({
 }));
 
 // Owners' calls get through to the model; answer locally instead of calling out.
+vi.mock('../../src/lib/ai/translate', () => ({
+  translateLines: async ({ lines }: { lines: { id: string; text: string }[] }) => new Map(lines.map(line => [line.id, `Translated: ${line.text}`])),
+}));
 vi.mock('../../src/lib/ai/chat-meeting', () => ({ chatWithMeeting: async () => 'Stub reply' }));
 vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
   ...(await importOriginal<object>()),

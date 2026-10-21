@@ -1,4 +1,5 @@
-import { Translator } from '@/components/translation/translator';
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { useInlineTranslation } from '@/lib/translation/use-inline-translation';
 import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Clipboard, Loader2, Mic, MicOff, RotateCcw, Sparkles } from 'lucide-react';
@@ -15,7 +16,6 @@ export const Route = createFileRoute('/app/dictation')({
 });
 
 function DictationPage() {
-  const [translating, setTranslating] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<{ id: string; transcript: string; cleaned?: string } | null>(null);
@@ -112,8 +112,6 @@ function DictationPage() {
     }
   };
 
-  if (translating) return <div className="ev relative mx-auto flex min-h-[520px] max-w-2xl flex-col p-4"><Translator onBack={() => setTranslating(false)} initialText={result?.cleaned ?? result?.transcript ?? ''} /></div>;
-
   const panel = 'flex w-full items-center gap-3 rounded-[var(--ev-r-pop)] border border-ev-line p-4';
   return (
     <AppPage width="compact">
@@ -121,8 +119,6 @@ function DictationPage() {
         title="Dictation"
         description="Speak a rough thought and get clean text to paste. ⌘/Ctrl ⇧ D starts and stops; Esc cancels."
       />
-
-      <button type="button" className={appButton('secondary')} disabled={phase === 'recording' || phase === 'processing'} onClick={() => setTranslating(true)}>Translate · speak or paste in another language</button>
 
       {error ? <AppAlert>{error}</AppAlert> : null}
 
@@ -169,10 +165,10 @@ function DictationPage() {
       {phase === 'done' && result && (
         <div className="flex flex-col gap-3">
           {result.cleaned && result.cleaned !== result.transcript && (
-            <Section title="Cleaned up" text={result.cleaned} primary copied={copied === result.cleaned} onCopy={() => void copy(result.cleaned!)} />
+            <Section title="Cleaned up" text={result.cleaned} primary copied={copied} onCopy={text => void copy(text)} />
           )}
           <CorrectionEditor id={result.id} original={result.cleaned ?? result.transcript} onSaved={cleaned => setResult({ ...result, cleaned })} />
-          <Section title="As spoken" text={result.transcript} copied={copied === result.transcript} onCopy={() => void copy(result.transcript)} />
+          <Section title="As spoken" text={result.transcript} copied={copied} onCopy={text => void copy(text)} />
           <button
             type="button"
             onClick={() => {
@@ -199,9 +195,10 @@ function Section({
   title: string;
   text: string;
   primary?: boolean;
-  copied: boolean;
-  onCopy: () => void;
+  copied: string | null;
+  onCopy: (text: string) => void;
 }) {
+  const translation = useInlineTranslation(text);
   return (
     <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-coat bg-ev-coat-soft' : 'border-ev-line')}>
       <div className="mb-1.5 flex items-center justify-between">
@@ -209,12 +206,13 @@ function Section({
           {primary ? <Sparkles className="h-3.5 w-3.5" /> : null}
           {title}
         </span>
-        <button type="button" onClick={onCopy} className={appButton('ghost', 'sm')}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-1"><LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} /><button type="button" disabled={translation.busy} onClick={() => onCopy(translation.text)} className={appButton('ghost', 'sm')}>
+          {copied === translation.text ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+          {copied === translation.text ? 'Copied' : 'Copy'}
+        </button></div>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+      <p dir="auto" lang={translation.language ?? undefined} className="whitespace-pre-wrap text-sm leading-relaxed">{translation.text}</p>
+      {translation.error && <p role="alert" className="mt-1 text-xs text-ev-warn-ink">{translation.error}</p>}
     </section>
   );
 }

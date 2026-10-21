@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDownCircle, ArrowLeft, FolderOpen, Globe, Languages, LogOut, Settings, X } from 'lucide-react';
+import { ArrowDownCircle, ArrowLeft, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
 import { hidePanel, installUpdate, openRecordingsFolder, openWebApp } from '@/lib/desktop/bridge';
 import { accountInitial, type AccountState } from '@/components/launcher/settings-view';
 import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
@@ -48,8 +48,6 @@ export function TitleBar({
   connecting,
   signedOut,
   goSettings,
-  onTranslate,
-  translateDisabled,
   goBack,
   connect,
   disconnect,
@@ -62,8 +60,6 @@ export function TitleBar({
   /** The sync loop's token was rejected: recordings wait on this Mac. */
   signedOut: boolean;
   goSettings: () => void;
-  onTranslate: () => void;
-  translateDisabled?: boolean;
   goBack: () => void;
   connect: () => void;
   disconnect: () => void;
@@ -101,7 +97,6 @@ export function TitleBar({
         </>
       )}
       <span data-tauri-drag-region className="ev-tb-spacer" />
-      {view === 'list' && <Button size="sm" variant="ghost" icon={Languages} disabled={translateDisabled} onClick={onTranslate}>Translate</Button>}
       {view !== 'setup' && <UpdateButton runTask={runTask} />}
       {view !== 'settings' && view !== 'setup' && account === null && (
         <Button size="sm" variant="ghost" loading={connecting} onClick={connect}>

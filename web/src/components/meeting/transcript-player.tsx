@@ -1,9 +1,11 @@
 'use client';
 
-import { ArrowLeftRight, Check, Clipboard, Languages, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Check, Clipboard, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { isLanguage, type Language } from '@/lib/translation/languages';
 import { useMe } from '@/lib/api/use-me';
-import { isNotesLanguage, languageName } from '@/lib/transcription/language';
+import { languageName } from '@/lib/transcription/language';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
 
@@ -61,8 +63,10 @@ export function TranscriptPlayer({
     [lines, pending],
   );
   const { data: me } = useMe();
-  const target = me?.notesLanguage ?? browserLanguage();
-  const translation = useTranslation(meetingId, shown, target, Boolean(me?.notesLanguage));
+  const [chosenLanguage, setChosenLanguage] = useState<Language | null | undefined>(undefined);
+  const [translationRevision, setTranslationRevision] = useState(0);
+  const target = chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
+  const translation = useTranslation(meetingId, shown, target, translationRevision);
   const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
 
   const labelled = hasBothSides(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
@@ -265,22 +269,8 @@ export function TranscriptPlayer({
                 {translation.spoken.map(languageName).join(' · ')}
               </span>
             ) : null}
-            {translation.available ? (
-              <button
-                type="button"
-                onClick={translation.toggle}
-                disabled={translation.loading}
-                className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 transition hover:bg-[var(--ev-hover)] hover:text-ev-ink disabled:opacity-60"
-              >
-                <Languages className="h-3.5 w-3.5" />
-                {translation.loading
-                  ? 'Translating…'
-                  : translation.showing
-                    ? 'Show original'
-                    : `Translate to ${languageName(target)}`}
-              </button>
-            ) : null}
-            {agentTranscript?.trim() ? (
+            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
+            {!target && agentTranscript?.trim() ? (
               <>
                 <CopyText
                   text={agentTranscript}
@@ -290,7 +280,7 @@ export function TranscriptPlayer({
                 <CopyText text={copyText} label="Copy raw" title="Every line shown, with timestamps" />
               </>
             ) : (
-              <CopyText text={copyText} label="Copy transcript" />
+              <CopyText text={copyText} label={target ? "Copy translation" : "Copy transcript"} disabled={!!target && (translation.loading || !!translation.error)} />
             )}
           </div>
         </div>
@@ -531,11 +521,13 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function CopyText({ text, label, title }: { text: string; label: string; title?: string }) {
+function CopyText({ text, label, title, disabled = false }: { text: string; label: string; title?: string; disabled?: boolean }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [text]);
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => { void (async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -557,12 +549,6 @@ function CopyText({ text, label, title }: { text: string; label: string; title?:
 /** Each request translates a few hundred lines; a long meeting takes a few. */
 const MAX_TRANSLATE_PAGES = 20;
 
-function browserLanguage(): string {
-  if (typeof navigator === 'undefined') return 'en';
-  const code = navigator.language.split('-')[0]?.toLowerCase() ?? '';
-  return isNotesLanguage(code) ? code : 'en';
-}
-
 /** The languages heard in these lines, most spoken first. */
 function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
   const weight = new Map<string, number>();
@@ -576,99 +562,59 @@ function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
  * Translations of the lines heard in another language than `target`. Each one
  * is kept with the text it was made from, so an edited line is translated again.
  */
-function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: string, auto: boolean) {
-  const [showing, setShowing] = useState(false);
+function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: Language | null, revision: number) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Record<string, { source: string; text: string }>>({});
-  const inFlight = useRef(false);
-  const autoStarted = useRef(false);
-  const attempted = useRef(new Set<string>());
-
-  useEffect(() => {
-    setDone({});
-    setShowing(false);
-    autoStarted.current = false;
-    attempted.current = new Set();
-  }, [meetingId, target]);
-
+  const cache = useRef(new Map<string, Record<string, { source: string; text: string }>>());
   const spoken = useMemo(() => spokenLanguages(lines), [lines]);
-  const foreign = useMemo(
-    () => lines.filter((line) => line.language && line.language !== target),
-    [lines, target],
-  );
-  const missing = foreign.filter((line) => done[line.id]?.source !== line.text);
-  const untried = missing.filter((line) => !attempted.current.has(`${line.id}\n${line.text}`)).length;
 
-  const load = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+  useEffect(() => {
+    const controller = new AbortController();
+    const key = `${meetingId}:${target}`;
+    const known = cache.current.get(key) ?? {};
+    setDone(known); setError(null); setLoading(false);
+    if (!target) return;
+    const missing = lines.filter(line => line.language !== target && known[line.id]?.source !== line.text);
+    if (!missing.length) return;
     setLoading(true);
-    setError(null);
-    const sources = new Map(lines.map((line) => [line.id, line.text]));
-    try {
-      let previousCount = -1;
-      for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
-        const res = await fetch(`/api/meetings/${meetingId}/translate`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ to: target }),
-        });
-        if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
-        const body: unknown = await res.json();
-        const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
-        const translatedLines =
-          typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
-        setDone((previous) => {
-          const next = { ...previous };
-          for (const [id, text] of translatedLines) {
+    const sources = new Map(lines.map(line => [line.id, line.text]));
+    void (async () => {
+      try {
+        let previousCount = -1;
+        for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
+          const res = await fetch(`/api/meetings/${meetingId}/translate`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ to: target }), signal: controller.signal,
+          });
+          if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
+          const value: unknown = await res.json();
+          if (!value || typeof value !== 'object') throw new Error('Could not read the translation.');
+          const data = value as { lines?: unknown; remaining?: unknown };
+          if (!data.lines || typeof data.lines !== 'object' || Array.isArray(data.lines)) throw new Error('Could not read the translation.');
+          const entries = Object.entries(data.lines).filter((pair): pair is [string, string] => typeof pair[1] === 'string');
+          if (controller.signal.aborted) return;
+          const fresh = { ...known };
+          for (const [id, text] of entries) {
             const source = sources.get(id);
-            if (source !== undefined && typeof text === 'string') next[id] = { source, text };
+            if (source !== undefined) fresh[id] = { source, text };
           }
-          return next;
-        });
-        const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
-        if (remaining === 0 || translatedLines.length === previousCount) break;
-        previousCount = translatedLines.length;
-      }
-      for (const [id, text] of sources) attempted.current.add(`${id}\n${text}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not translate.');
-      setShowing(false);
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
-    }
-  }, [lines, meetingId, target]);
-
-  useEffect(() => {
-    if (!auto || autoStarted.current || foreign.length === 0) return;
-    autoStarted.current = true;
-    setShowing(true);
-    void load();
-  }, [auto, foreign.length, load]);
-
-  useEffect(() => {
-    if (!showing || untried === 0 || inFlight.current || error) return;
-    const timer = window.setTimeout(() => void load(), 2_000);
-    return () => window.clearTimeout(timer);
-  }, [showing, untried, load, error]);
+          Object.assign(known, fresh);
+          cache.current.set(key, fresh); setDone(fresh);
+          if (data.remaining === 0) return;
+          if (entries.length === previousCount) throw new Error('Translation stopped early. Choose the language again to retry.');
+          previousCount = entries.length;
+        }
+        throw new Error('This meeting needs another pass. Choose the language again to continue.');
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not translate.');
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [meetingId, target, lines, revision]);
 
   return {
-    spoken,
-    available: foreign.length > 0,
-    showing,
-    loading,
-    error,
-    toggle: () => {
-      if (showing) {
-        setShowing(false);
-        return;
-      }
-      setShowing(true);
-      setError(null);
-      if (untried > 0) void load();
-    },
+    spoken, showing: !!target, loading, error,
     textFor: (line: TranscriptLine) => {
       const entry = done[line.id];
       return entry && entry.source === line.text && entry.text !== line.text ? entry.text : undefined;

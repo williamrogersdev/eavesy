@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, Languages, Mic, Pencil, Radio, Settings, Video } from 'lucide-react';
+import { Globe, Mic, Pencil, Radio, Settings, Video } from 'lucide-react';
 import { useRouter } from '@/lib/next-compat/navigation';
 import { useMemo } from 'react';
 import { hidePanel } from '@/lib/desktop/bridge';
@@ -29,7 +29,6 @@ export function useLauncherCommands({
       runTask(() => router.push(href), 'Could not open that page');
     };
     return [
-      { kind: 'command', id: 'cmd-translate', title: 'Translate', subtitle: 'Speak or paste, then copy in another language', icon: <Languages className="h-4 w-4" />, keywords: 'translate language english spanish', run: go('/app/translate') },
       {
         kind: 'command',
         id: 'cmd-connect',

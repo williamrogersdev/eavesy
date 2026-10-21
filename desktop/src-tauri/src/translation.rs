@@ -1,10 +1,4 @@
 use tauri::AppHandle;
-use tauri_plugin_clipboard_manager::ClipboardExt;
-
-#[tauri::command]
-pub async fn read_clipboard_text(app: AppHandle) -> Result<String, String> {
-    app.clipboard().read_text().map_err(|_| "Clipboard has no text".to_string())
-}
 
 /// Translation uses this Mac's paired account; credentials never enter the webview.
 #[tauri::command]

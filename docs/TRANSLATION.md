@@ -1,27 +1,23 @@
-# Quick translation
+# Inline translation
 
-On Mac, open **Translate** in the capture panel's title bar. A capture's
-**More → Translate** loads its full transcript. On the web, use
-`/app/translate` or **Translate** on the Dictation page.
+Translation belongs to the text being used. In the capture panel, hover a
+note, voice note, or meeting and open **Translate** beside **Copy**. Choose a
+language from the menu: the text changes in that same entry. Select **Original**
+to switch back. The original is never overwritten, and each entry caches the
+languages already requested so switching back is immediate.
 
-Choose **From** (or Detect language) and **To**, then type, paste, or click
-**Speak**. Stop to translate. Language choices are remembered on this device;
-**To English** resets the output language with one click. **Swap languages**
-uses the translated output as the next input when a result is available.
+Copy copies the version currently displayed. A translated entry also offers
+**Paste translation at cursor**, which bypasses spelling correction learning.
+Long notes are loaded in full and translated in bounded passages; partial
+results never replace the entry or reach Copy. A failure leaves the previous
+version available. Source edits invalidate cached translations.
 
-**Copy** copies only the translation. **Paste at cursor** on Mac uses the
-existing Accessibility-based paste and explicitly disables correction learning.
-**Show** opens large text for another person to read; Escape or Done closes it.
-The original remains visible and is never rewritten by a translation.
+The web meeting transcript and web dictation result have the same language
+picker beside Copy. Meetings keep speaker labels and timestamps and cache
+translations separately for each language. There is no separate translation
+page or translation detour in the title bar.
 
-Text is limited to 4,000 characters; microphone input to 60 seconds. Speech
-is transcribed in its original language before translation. Recognized speech
-is returned even if translation fails, so retry uses the text. Requests require
-browser sign-in or a paired device, use the translation quota and existing
-bounded AI runner, and store neither audio nor translations in recording history.
-Only language preferences are saved locally.
-
-The launcher browser development preview opens the current native panel with
-sample captures by default. `?web` opens the separate web command palette.
-The preview does not make real translation calls; use a signed-in web session
-or rebuilt Mac app to translate actual input.
+Requests require browser sign-in or a paired device and use the existing
+translation quota and bounded AI routing. Translation does not modify the saved
+note or transcript. The browser development preview uses sample captures;
+real translation requires the signed-in web app or a rebuilt Mac application.
