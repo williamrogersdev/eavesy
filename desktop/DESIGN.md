@@ -413,26 +413,17 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings** (modelled on the Mac's own preference windows): four icon tabs
-pinned at the top (icon over name, the selected one on a soft fill), and
-under them a scroll column of groups titled in `--ev-t-group`. Every setting
-is one `Row`: name (13 ui) with one line of help (12 ink-2) on the left, a
-compact control on the right: a `Switch`, a `Select` for any choice of three
-or more, or a small button. Only tags and text inputs drop under their name,
-full width.
-- **General**: Shortcuts; Recording control (position, live words Off/1/2/4
-  lines, see-through, start and stop sounds); Capture (captions,
-  screenshots, recordings folder); This Mac (permissions, setup, updates).
-- **Dictation**: Writing (tone, Format for AI agents, the default for every
-  project), Transcription (languages, custom words), Learned spellings.
-- **Projects**: a list of rows (name, then words and dictation summary,
-  chevron). A row opens that project's page with a back arrow: Details,
-  Dictation (tone and AI format, each defaulting to the account's), Words,
-  Auto-pick, and a two-step Delete.
-- **Account**: profile, open on the web, sign out.
-Group bodies sit on `--ev-raised` (in the dark, a clear 7% ink step above the
-panel, never near-black on black), r12, hairline-separated rows. These are
-the only card-like containers in the app.
+**Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
+480), independent of the capture panel and HUD. A quiet sidebar switches
+between Capture, Dictation, Transcription, Dictionary, Shortcuts, Projects, Permissions
+and Account. Each section has one scroll area, plain groups and subtle row
+separators; avoid nested raised cards. Preserve drafts when switching sections.
+Dictation retains account tone and AI formatting defaults; projects retain their
+own pages with tone and formatting overrides. Transcription preferences have an explicit Save changes action; failed saves
+keep the draft and failed loads have Retry. Native capture preferences save
+immediately. Show errors beside the affected controls. Use the existing
+light/dark tokens and reduced-motion behavior. The capture panel and pill
+retain their geometry when Settings opens or closes.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and

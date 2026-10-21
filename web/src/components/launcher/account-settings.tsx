@@ -58,6 +58,7 @@ export interface AccountPrefs {
 
 /** Loads the account's settings once and saves changes in order, putting a field back when its save fails. */
 export function useAccountPrefs() {
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [prefs, setPrefs] = useState<AccountPrefs | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,7 +74,7 @@ export function useAccountPrefs() {
         });
       })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your settings.')));
-  }, []);
+  }, [loadAttempt]);
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -108,7 +109,7 @@ export function useAccountPrefs() {
     saveWords(words);
   }, [saveWords]);
 
-  return { prefs, error, update, setWords };
+  return { prefs, error, update, setWords, retry: () => { setError(null); setLoadAttempt(value => value + 1); } };
 }
 
 type AccountPrefsState = ReturnType<typeof useAccountPrefs>;
@@ -144,53 +145,91 @@ export function DictationCard({ account }: { account: AccountPrefsState }) {
 }
 
 /** The languages you speak and your custom words: the same settings as eavesy.com. */
-export function TranscriptionCard({ account }: { account: AccountPrefsState }) {
-  const { prefs, error, update, setWords } = account;
-  const languages = prefs?.languages ?? null;
-  const setSpoken = (next: string[]) => update({ languages: next }, { spokenLanguages: next });
+export function TranscriptionCard() {
+  const [languages, setLanguages] = useState<string[] | null>(null);
+  const [words, setWords] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const me = await accountCall('GET', '/api/me');
+      if (!isRecord(me)) throw new Error('Unexpected account response');
+      const nextLanguages = strings(me.spokenLanguages);
+      const nextWords = strings(me.customVocabulary);
+      setLanguages(nextLanguages);
+      setWords(nextWords);
+      setBaseline(JSON.stringify([nextLanguages, nextWords]));
+    } catch {
+      setError('Transcription preferences could not be loaded from eavesy.com. Check your connection and try again. Settings on this Mac still work.');
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const dirty = languages !== null && JSON.stringify([languages, words]) !== baseline;
+  const save = async () => {
+    if (languages === null || saving) return;
+    setSaving(true); setError(null); setSaved(null);
+    try {
+      await accountCall('PATCH', '/api/me', { spokenLanguages: languages, customVocabulary: words });
+      setBaseline(JSON.stringify([languages, words]));
+      setSaved('Changes saved');
+    } catch {
+      setError('These changes could not be saved to eavesy.com. Your draft is still here. Check your connection, then save again.');
+    } finally { setSaving(false); }
+  };
 
   return (
     <Card title="Transcription">
-      <div className="ev-set-row flex-col items-stretch gap-2">
-        <div>
-          <div className="ev-set-label">Languages you speak</div>
-          <div className="ev-set-hint">Leave it empty to detect any language.</div>
-        </div>
+      <div className="ev-set-body flex flex-col gap-4">
+        <div className="ev-field">
+          <label htmlFor="settings-spoken-language">Languages you speak</label>
           <div className="flex flex-wrap items-center gap-1.5">
             {(languages ?? []).map((code) => (
               <span key={code} className="ev-tag">
                 {languageName(code)}
-                <button type="button" aria-label={`Remove ${languageName(code)}`} onClick={() => setSpoken((languages ?? []).filter((c) => c !== code))}>
+                <button type="button" disabled={saving} aria-label={`Remove ${languageName(code)}`} onClick={() => { setLanguages((languages ?? []).filter((c) => c !== code)); setSaved(null); }}>
                   <X size={11} strokeWidth={2.25} aria-hidden />
                 </button>
               </span>
             ))}
-            <Select
-              label="Add a language"
-              disabled={languages === null}
+            <select
+              aria-label="Add a language"
+              id="settings-spoken-language"
+              className="ev-field-input ev-field-select"
+              disabled={languages === null || saving}
               value=""
-              options={[
-                { value: '', label: languages?.length ? 'Add another…' : 'Add a language…' },
-                ...NOTES_LANGUAGES.filter((l) => !languages?.includes(l.code)).map((l) => ({ value: l.code, label: l.label })),
-              ]}
-              onChange={(next) => { if (next) setSpoken([...(languages ?? []), next]); }}
-            />
+              onChange={(e) => { if (e.target.value) { setLanguages([...(languages ?? []), e.target.value]); setSaved(null); } }}
+            >
+              <option value="">{languages?.length ? 'Add another…' : 'Add a language…'}</option>
+              {NOTES_LANGUAGES.filter((l) => !languages?.includes(l.code)).map((l) => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
+            </select>
           </div>
-      </div>
-      <div className="ev-set-row flex-col items-stretch gap-2">
-        <div>
-          <div className="ev-set-label">Custom words</div>
-          <div className="ev-set-hint">Spelled your way everywhere. Words for one codebase or client belong in its project.</div>
+          <p className="ev-set-hint">Leave it empty to detect any language.</p>
         </div>
+        <div className="ev-field">
+          <span className="ev-set-label">Custom words</span>
           <TagInput
             label="Custom words"
-            value={prefs?.words ?? []}
+            value={words}
             max={MAX_VOCABULARY_TERMS}
-            disabled={!prefs}
-            placeholder="Names, products, jargon. Press Enter after each."
-            onChange={setWords}
+            disabled={languages === null || saving}
+            placeholder="Add a name, product, or phrase…"
+            onChange={(next) => { setWords(next); setSaved(null); }}
           />
-        <Status error={error} />
+          <p className="ev-set-hint">Press Enter after each word, or paste a list. Used in transcripts and dictation.</p>
+        </div>
+        {loading && <p role="status" className="ev-set-hint">Loading your preferences…</p>}
+        {error && <div role="alert" className="ev-settings-feedback"><p>{error}</p>{languages === null && <Button variant="outline" size="sm" loading={loading} onClick={() => void load()}>Retry</Button>}</div>}
+        {languages !== null && <div className="ev-settings-save">
+          <p role="status" className="ev-set-hint">{dirty ? 'Unsaved changes' : saved ?? 'Up to date'}</p>
+          <Button variant="primary" loading={saving} disabled={!dirty || saving} onClick={() => void save()}>Save changes</Button>
+        </div>}
       </div>
     </Card>
   );
