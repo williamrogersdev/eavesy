@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
@@ -330,7 +330,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -373,7 +373,7 @@ function Hud() {
   const heard = snapshotWords || (state?.sessionId && running.sessionId === state.sessionId ? runningText(running) : '');
   const source = state?.phase === 'done' ? state.message?.trim() || heard : heard;
   const ownDraft = draft?.sessionId === state?.sessionId ? draft : null;
-  const words = ownDraft ? ownDraft.source === null ? ownDraft.text : mergeTranscript({ source: ownDraft.source, text: ownDraft.text }, source) : source;
+  const words = useMemo(() => ownDraft ? ownDraft.source === null ? ownDraft.text : mergeTranscript({ source: ownDraft.source, text: ownDraft.text }, source) : source, [ownDraft, source]);
 
   useLayoutEffect(() => {
     const editor = editorRef.current;
@@ -449,12 +449,14 @@ function Hud() {
   );
 
   const sendLiveEdit = () => {
-    if (!pendingLiveEdit.current) return;
+    if (!pendingLiveEdit.current || pendingLiveEdit.current.sessionId !== currentSession.current) return;
+    pendingLiveEdit.current.revision = ++liveRevision.current;
+    const sessionId = pendingLiveEdit.current.sessionId;
     const update = invoke('update_live_preview_edit', pendingLiveEdit.current);
     const task = Promise.all([liveUpdate.current.catch(() => {}), update]).then(() => {});
     liveUpdate.current = task;
-    void task.then(() => { if (liveUpdate.current === task) setSaveError(null); }, error => {
-      if (liveUpdate.current === task) setSaveError(errMsg(error, 'Could not keep live correction'));
+    void task.then(() => { if (currentSession.current === sessionId && liveUpdate.current === task) setSaveError(null); }, error => {
+      if (currentSession.current === sessionId && liveUpdate.current === task) setSaveError(errMsg(error, 'Could not keep live correction'));
     });
   };
   const changeText = (text: string, base = source, record = true, before = selection.current, inputType?: string) => {
@@ -505,7 +507,10 @@ function Hud() {
     onFocus={() => {
       if (!state.sessionId) return;
       setEditing(true); setInteracted(true);
-      act('focus_preview_editor', { sessionId: state.sessionId });
+      const sessionId = state.sessionId;
+      void invoke('focus_preview_editor', { sessionId }).then(revision => {
+        if (currentSession.current === sessionId && typeof revision === 'number') liveRevision.current = Math.max(liveRevision.current, revision);
+      }).catch(error => setActionError(errMsg(error, 'Could not focus transcript editor')));
     }}
     onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
     onSelect={event => rememberSelection(event.currentTarget)}

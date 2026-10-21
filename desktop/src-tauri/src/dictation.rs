@@ -187,7 +187,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        // Deliberate live corrections already express the user's wording.
+        // Deliberate live corrections already express the user's wording. Keep
+        // the untouched remainder as heard too: polishing the whole sentence
+        // could rewrite a correction or make its source offsets ambiguous.
         let corrected = crate::live_edit::corrected(&session_id, &text);
         let source_text = corrected.as_ref().map(|_| text.clone());
         let text = corrected.unwrap_or_else(|| crate::transcribe::polish_dictation(&app, &text, project.as_deref()));

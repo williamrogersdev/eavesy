@@ -187,7 +187,8 @@ pub fn set_transcript<R: Runtime>(
 ) -> Result<(), String> {
     if let Some(corrected) = transcript.as_deref().and_then(|text| crate::live_edit::corrected(id, text)) {
         save_preview_transcript(app, id, &corrected)?;
-        return set_status(app, id, status);
+        // Persist the deliberate correction first, then use the normal local-edit
+        // guard and status bookkeeping below, as for an unedited result.
     }
     mutate(app, id, |rec| {
         let local = rec

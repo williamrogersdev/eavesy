@@ -2,29 +2,84 @@
 //! merge is used by the HUD (live-edit.ts); neither side treats speech as typing.
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 #[derive(Clone)]
 struct Edit {
     source: String,
     text: String,
     revision: u64,
+    updated_at: Instant,
 }
 static EDITS: LazyLock<Mutex<HashMap<String, Edit>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+const MAX_SESSIONS: usize = 8;
+const MAX_EDIT_BYTES: usize = 20 * 1024 * 1024;
+
+pub fn revision(id: &str) -> u64 {
+    EDITS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .map_or(0, |edit| edit.revision)
+}
+
 pub fn update(id: &str, source: String, text: String, revision: u64) -> Result<(), String> {
+    put(
+        &mut EDITS.lock().unwrap_or_else(|e| e.into_inner()),
+        id,
+        source,
+        text,
+        revision,
+    )
+}
+
+fn put(
+    edits: &mut HashMap<String, Edit>,
+    id: &str,
+    source: String,
+    text: String,
+    revision: u64,
+) -> Result<(), String> {
     if source.len() > 5 * 1024 * 1024 || text.len() > 5 * 1024 * 1024 {
         return Err("Transcript is too large".into());
     }
-    let mut edits = EDITS.lock().unwrap_or_else(|e| e.into_inner());
-    if edits.get(id).is_none_or(|edit| revision > edit.revision) {
-        edits.insert(
-            id.to_string(),
-            Edit {
-                source,
-                text,
-                revision,
-            },
-        );
+    if let Some(previous) = edits.get(id) {
+        if revision <= previous.revision {
+            if previous.source == source && previous.text == text {
+                return Ok(());
+            }
+            return Err("Live correction is out of date; refocus the editor and retry".into());
+        }
+    }
+    edits.insert(
+        id.to_string(),
+        Edit {
+            source,
+            text,
+            revision,
+            updated_at: Instant::now(),
+        },
+    );
+    // Keep recently finished captures available for their final transcription,
+    // without retaining abandoned transcript copies for the process lifetime.
+    while edits.len() > MAX_SESSIONS
+        || edits
+            .values()
+            .map(|edit| edit.source.len() + edit.text.len())
+            .sum::<usize>()
+            > MAX_EDIT_BYTES
+    {
+        let oldest = edits
+            .iter()
+            .filter(|(key, _)| key.as_str() != id)
+            .min_by_key(|(_, edit)| edit.updated_at)
+            .map(|(key, _)| key.clone());
+        if let Some(oldest) = oldest {
+            edits.remove(&oldest);
+        } else {
+            break;
+        }
     }
     Ok(())
 }
@@ -232,10 +287,45 @@ mod tests {
         }
     }
     #[test]
+    fn abandoned_edits_have_bounded_count_and_bytes() {
+        let mut edits = std::collections::HashMap::new();
+        for n in 0..20 {
+            super::put(
+                &mut edits,
+                &n.to_string(),
+                "source".into(),
+                "text".into(),
+                1,
+            )
+            .unwrap();
+            assert!(edits.len() <= super::MAX_SESSIONS);
+        }
+        assert!(edits.contains_key("19"));
+        for n in 20..24 {
+            super::put(
+                &mut edits,
+                &n.to_string(),
+                "s".repeat(5 * 1024 * 1024),
+                "t".repeat(5 * 1024 * 1024),
+                1,
+            )
+            .unwrap();
+            assert!(
+                edits
+                    .values()
+                    .map(|edit| edit.source.len() + edit.text.len())
+                    .sum::<usize>()
+                    <= super::MAX_EDIT_BYTES
+            );
+        }
+        assert!(edits.contains_key("23"));
+    }
+
+    #[test]
     fn delayed_updates_cannot_replace_a_newer_correction() {
         let id = "revision-test";
         super::update(id, "Hello".into(), "Hi".into(), 2).unwrap();
-        super::update(id, "Hello".into(), "Wrong".into(), 1).unwrap();
+        assert!(super::update(id, "Hello".into(), "Wrong".into(), 1).is_err());
         assert_eq!(
             super::corrected(id, "Hello again").as_deref(),
             Some("Hi again")

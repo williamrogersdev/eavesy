@@ -315,20 +315,33 @@ pub fn show_launcher(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<(), String> {
+pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<u64, String> {
+    let revision = crate::live_edit::revision(&session_id);
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let state = crate::hud::current();
         if matches!(state.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing | crate::hud::Phase::Done) && state.session_id.as_deref() == Some(session_id.as_str()) {
             crate::hud::focus_editor_on_main(&handle);
         }
-    }).map_err(|error| format!("Could not focus transcript editor: {error}"))
+    }).map_err(|error| format!("Could not focus transcript editor: {error}"))?;
+    Ok(revision)
+}
+
+fn validate_live_preview_session(state: &crate::hud::HudState, session_id: &str) -> Result<(), String> {
+    // Done allows an edit already in flight when Stop completed. Other captures
+    // and idle/failed previews may only use the explicit saved-transcript editor.
+    if state.session_id.as_deref() == Some(session_id)
+        && matches!(state.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing | crate::hud::Phase::Done) {
+        Ok(())
+    } else { Err("This capture is no longer accepting live corrections".into()) }
 }
 
 #[tauri::command]
 pub async fn update_live_preview_edit(app: AppHandle, session_id: String, source: String, text: String, revision: u64) -> Result<(), String> {
+    validate_live_preview_session(&crate::hud::current(), &session_id)?;
     crate::live_edit::update(&session_id, source, text, revision)?;
     tauri::async_runtime::spawn_blocking(move || {
+        validate_live_preview_session(&crate::hud::current(), &session_id)?;
         if let Some(recording) = store::get(&app, &session_id)? {
             if recording.folder_path.is_some() {
                 if let Some(text) = crate::live_edit::corrected(&session_id, recording.transcript.as_deref().unwrap_or("")) {
@@ -683,6 +696,19 @@ pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyEr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_corrections_only_target_the_current_capture() {
+        use crate::hud::{HudState, Phase};
+        for phase in [Phase::Recording, Phase::Transcribing, Phase::Done] {
+            let state = HudState { phase, session_id: Some("current".into()), ..HudState::idle() };
+            assert!(super::validate_live_preview_session(&state, "current").is_ok());
+            assert!(super::validate_live_preview_session(&state, "another").is_err());
+        }
+        for phase in [Phase::Idle, Phase::Failed, Phase::Saved] {
+            let state = HudState { phase, session_id: Some("current".into()), ..HudState::idle() };
+            assert!(super::validate_live_preview_session(&state, "current").is_err());
+        }
+    }
     #[test]
     fn only_plain_app_pages_open_in_the_browser() {
         assert_eq!(super::web_app_path(Some("/settings#projects")), "/settings#projects");
