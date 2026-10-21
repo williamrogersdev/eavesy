@@ -6,6 +6,23 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-21 - desktop
+
+### Added
+
+- Mac app: make video walkthroughs usable by AI agents ([#151](https://github.com/williamrogersdev/eavesy/pull/151))
+
+### Changed
+
+- Mac app: streamline startup, search, and transcription ([#153](https://github.com/williamrogersdev/eavesy/pull/153))
+
+### Fixed
+
+- Mac app: finish processing jobs when recovery fails ([#159](https://github.com/williamrogersdev/eavesy/pull/159))
+- Mac app: recover worker failures and verify benchmark sources ([#157](https://github.com/williamrogersdev/eavesy/pull/157))
+- Mac app: finish walkthrough correction and writer error handling ([#154](https://github.com/williamrogersdev/eavesy/pull/154))
+- Mac app: keep complete live lines and settle first-sentence revisions ([#150](https://github.com/williamrogersdev/eavesy/pull/150))
+
 ## [0.5.4] - 2026-10-20 - desktop
 
 ### Added
