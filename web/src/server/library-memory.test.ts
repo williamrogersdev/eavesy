@@ -79,7 +79,10 @@ test('later details in long titled recordings rank ahead of the context budget',
   const t = setup();
   for(let i=0;i<300;i++) t.sqlite.run('INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES (?, ?, ?, ?, ?)', [`long${i}`,'m1',i*2000+3000,i*2000+4000,'Unrelated discussion. '.repeat(60)]);
   t.sqlite.run("INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES ('last','m1',999000,1000000,'Bring three green apples to the kitchen table.')");
-  expect((await librarySources(t.db,'u1','In the recording titled "m1", how many green apples?')).some(s=>s.id==='last')).toBe(true);
+  const question = 'In the recording titled "m1", how many green apples?';
+  expect((await librarySources(t.db,'u1',question)).some(s=>s.id==='last')).toBe(true);
+  const answer = await askLibrary(t.db,'u1',question,{ai:{async run(){return {response:{claims:[],unanswered:[]}};}}});
+  expect(answer.warnings?.[0]).toContain('Additional details may exist');
 });
 
 test('case folding avoids expanding German SS and handles dotted capital I', async () => {
@@ -87,4 +90,11 @@ test('case folding avoids expanding German SS and handles dotted capital I', asy
   t.sqlite.run("UPDATE transcript_segments SET text='MASSE İstanbul' WHERE id='sm1'");
   expect(await librarySources(t.db,'u1','maße')).toEqual([]);
   expect((await librarySources(t.db,'u1','İstanbul')).map(s=>s.meetingId)).toEqual(['m1']);
+});
+
+test('non-ASCII query letters cannot rewrite ASCII I or S into false matches', async () => {
+  const t = setup();
+  t.sqlite.run("UPDATE transcript_segments SET text='INVOICE SUN' WHERE id='sm1'");
+  expect(await librarySources(t.db,'u1','ınvoice')).toEqual([]);
+  expect(await librarySources(t.db,'u1','ſun')).toEqual([]);
 });

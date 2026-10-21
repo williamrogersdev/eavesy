@@ -21,7 +21,7 @@ function folded(column: SQLWrapper, query: string): SQL {
   if (query.toLowerCase().includes('i\u0307')) expression = sql`replace(${expression}, ${'İ'}, ${'i\u0307'})`;
   for (const char of new Set(query.toLowerCase())) {
     const upper = char.toUpperCase();
-    if (upper !== char && [...upper].length === 1 && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
+    if (upper !== char && [...upper].length === 1 && upper.charCodeAt(0) > 127 && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
   }
   return sql`lower(${expression})`;
 }
