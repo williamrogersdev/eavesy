@@ -50,6 +50,113 @@ fn old_queue<T: Sync, R: Send>(
     Ok(results)
 }
 fn main() {
+    use sha2::{Digest, Sha256};
+    let sources: std::collections::BTreeMap<_, _> = [
+        (
+            "desktop/src-tauri/src/history.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/src/history.rs"))
+            ),
+        ),
+        (
+            "desktop/src-tauri/src/history_search_index.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/src/history_search_index.rs"))
+            ),
+        ),
+        (
+            "desktop/src-tauri/src/work_queue.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/src/work_queue.rs"))
+            ),
+        ),
+        (
+            "desktop/bench/next-performance.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("next-performance.rs"))
+            ),
+        ),
+        (
+            "desktop/bench/next-history-baseline.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("next-history-baseline.rs"))
+            ),
+        ),
+        (
+            "desktop/bench/history-legacy.rs",
+            format!("{:x}", Sha256::digest(include_bytes!("history-legacy.rs"))),
+        ),
+        (
+            "desktop/src-tauri/Cargo.toml",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/Cargo.toml"))
+            ),
+        ),
+        (
+            "desktop/src-tauri/Cargo.lock",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/Cargo.lock"))
+            ),
+        ),
+        (
+            "desktop/bench/next-runner/Cargo.toml",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("next-runner/Cargo.toml"))
+            ),
+        ),
+        (
+            "desktop/bench/next-runner/Cargo.lock",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("next-runner/Cargo.lock"))
+            ),
+        ),
+        (
+            "desktop/src-tauri/src/transcribe.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/src/transcribe.rs"))
+            ),
+        ),
+        (
+            "desktop/src-tauri/src/history_search.rs",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../src-tauri/src/history_search.rs"))
+            ),
+        ),
+        (
+            "web/src/lib/launcher/data.ts",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../../web/src/lib/launcher/data.ts"))
+            ),
+        ),
+        (
+            "web/src/components/launcher/use-history-page.ts",
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!(
+                    "../../web/src/components/launcher/use-history-page.ts"
+                ))
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    println!(
+        "{}",
+        serde_json::json!({"operation":"source_snapshot","sources_sha256":sources})
+    );
+
     let root = std::env::temp_dir().join(format!("eavesy-next-bench-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     for n in [100, 500, 2000] {

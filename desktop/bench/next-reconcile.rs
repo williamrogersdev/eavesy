@@ -74,6 +74,55 @@ fn measure(name: &str, n: usize, mut f: impl FnMut()) {
 #[test]
 #[ignore = "release-mode synthetic performance benchmark"]
 fn next_reconciliation_benchmark() {
+    let sources: std::collections::BTreeMap<_, _> = [
+        (
+            "desktop/src-tauri/src/fs_watcher.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/fs_watcher.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/history.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/history.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/history_search_index.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/history_search_index.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/store.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/store.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/fs_writer.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/fs_writer.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/sqlite/connection.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/sqlite/connection.rs")),
+        ),
+        (
+            "desktop/src-tauri/src/sqlite/files.rs",
+            sha256_hex(include_bytes!("../src-tauri/src/sqlite/files.rs")),
+        ),
+        (
+            "desktop/bench/next-reconcile.rs",
+            sha256_hex(include_bytes!("next-reconcile.rs")),
+        ),
+        (
+            "desktop/src-tauri/Cargo.toml",
+            sha256_hex(include_bytes!("../src-tauri/Cargo.toml")),
+        ),
+        (
+            "desktop/src-tauri/Cargo.lock",
+            sha256_hex(include_bytes!("../src-tauri/Cargo.lock")),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    println!(
+        "NEXT_BENCH {}",
+        serde_json::json!({"operation":"source_snapshot","sources_sha256":sources})
+    );
+
     for n in [100, 500, 2000] {
         let root =
             std::env::temp_dir().join(format!("eavesy-next-startup-{}", uuid::Uuid::new_v4()));
@@ -164,6 +213,7 @@ fn next_reconciliation_benchmark() {
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicBool::new(false)),
                 tx.clone(),
+                Arc::new(AtomicBool::new(false)),
             );
             times.push(at.elapsed().as_secs_f64() * 1000.0);
             drop(tx);
