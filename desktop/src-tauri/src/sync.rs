@@ -429,11 +429,12 @@ async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) 
         if let Some(remote_id) = remote_id {
             let result = upload_file_edit(api, token, &remote_id, &edit).await;
             match result {
+                // Adopted before the edit is marked done: if that fails, the
+                // edit is sent again (the upload is idempotent) and retried.
                 Ok(()) => {
+                    sqlite::adopt_uploaded_edit(app, &edit.local_session_id, &edit.role, &edit.content_hash)
+                        .map_err(|error| anyhow!(error))?;
                     sqlite::mark_operation_done(app, &edit.operation_id).map_err(|error| anyhow!(error))?;
-                    if let Err(error) = sqlite::adopt_uploaded_edit(app, &edit.local_session_id, &edit.role, &edit.content_hash) {
-                        eprintln!("desktop ingest: {error}");
-                    }
                 }
                 Err(error) => {
                     sqlite::mark_operation_failed(app, &edit.operation_id, &error.to_string())

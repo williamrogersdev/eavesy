@@ -54,6 +54,9 @@ export const Route = createFileRoute('/api/sessions/')({
         const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
         const since = search.has('changedSince') ? Math.max(Math.floor(Number(search.get('changedSince')) || 0), 0) : null;
+        // With afterId, (changedSince, afterId) is the last meeting the client handled: meetings
+        // changed at that same moment with a later id still come, so ties across pages are not lost.
+        const afterId = search.get('afterId');
         if (offset > MAX_LIST_OFFSET) return Response.json({ items: [] });
         const query = getDb()
           .select({
@@ -78,7 +81,9 @@ export const Route = createFileRoute('/api/sessions/')({
               eq(meetings.status, 'complete'),
               isNull(meetings.deletedAt),
               since !== null
-                ? gt(changedAt, since)
+                ? afterId
+                  ? or(gt(changedAt, since), and(eq(changedAt, since), gt(meetings.id, afterId)))
+                  : gt(changedAt, since)
                 : actor.deviceId
                   ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId))
                   : undefined,

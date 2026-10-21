@@ -62,6 +62,9 @@ struct PullState {
     /// until the first check for edits made on other devices.
     #[serde(default)]
     changes_since: Option<i64>,
+    /// The id of the last meeting handled at `changes_since`, for meetings changed at the same moment.
+    #[serde(default)]
+    changes_after: Option<String>,
     /// The name of the device each pulled meeting was recorded on.
     #[serde(default)]
     origins: BTreeMap<String, String>,
@@ -342,13 +345,16 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
     let first = state.changes_since.is_none();
     let since = state.changes_since.unwrap_or(0);
     let download_after = if first { chrono::Utc::now().timestamp_millis() - FIRST_CHANGES_WINDOW_MS } else { since };
-    let mut cursor = since;
+    let mut cursor = (since, state.changes_after.clone());
     let mut updated = 0;
     let mut downloads = 0;
     loop {
         let response = api
             .client
-            .get(api.url(&format!("/api/sessions?changedSince={cursor}&limit={CHANGES_PAGE}")))
+            .get(api.url(&match &cursor.1 {
+                Some(after) => format!("/api/sessions?changedSince={}&afterId={after}&limit={CHANGES_PAGE}", cursor.0),
+                None => format!("/api/sessions?changedSince={}&limit={CHANGES_PAGE}", cursor.0),
+            }))
             .bearer_auth(token)
             .send()
             .await
@@ -368,7 +374,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                 sqlite::completed_session_for_remote(app, &meeting.id).map_err(|error| anyhow!(error))?
             };
             let Some(local_id) = local_id.filter(|_| !state.dismissed.contains(&meeting.id)) else {
-                cursor = cursor.max(changed_at);
+                cursor = (changed_at, Some(meeting.id.clone()));
                 continue;
             };
             let mut changed = false;
@@ -378,7 +384,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             }
             if changed_at > download_after && !failed_recently(&meeting.id) {
                 if downloads >= PER_PULL {
-                    update_cursor(app, cursor)?;
+                    update_cursor(app, &cursor)?;
                     return Ok(updated);
                 }
                 downloads += 1;
@@ -399,7 +405,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                         }
                     }
                     Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => {
-                        update_cursor(app, cursor)?;
+                        update_cursor(app, &cursor)?;
                         return Err(error);
                     }
                     Err(error) => {
@@ -411,13 +417,13 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             if changed {
                 updated += 1;
             }
-            cursor = cursor.max(changed_at);
+            cursor = (changed_at, Some(meeting.id.clone()));
         }
         if last_page || listed.items.is_empty() {
             break;
         }
     }
-    update_cursor(app, cursor)?;
+    update_cursor(app, &cursor)?;
     if updated > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {
             eprintln!("cloud pull: could not announce changed meetings: {error}");
@@ -426,9 +432,11 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
     Ok(updated)
 }
 
-fn update_cursor<R: Runtime>(app: &AppHandle<R>, cursor: i64) -> Result<()> {
+/// The list comes oldest change first, so the last meeting handled is the new cursor.
+fn update_cursor<R: Runtime>(app: &AppHandle<R>, (since, after): &(i64, Option<String>)) -> Result<()> {
     update_state(app, |state| {
-        state.changes_since = Some(state.changes_since.unwrap_or(0).max(cursor));
+        state.changes_since = Some(*since);
+        state.changes_after = after.clone();
     })
     .map_err(|error| anyhow!(error))
 }
@@ -856,7 +864,9 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/sessions"))
             .and(wiremock::matchers::query_param("changedSince", first_seen.to_string()))
+            .and(wiremock::matchers::query_param("afterId", "remote-1"))
             .respond_with(listing(serde_json::json!([changed("remote-1", "Standup renamed", later)])))
+            .expect(1)
             .mount(&server)
             .await;
         refresh(handle, &api, "token").await.unwrap();
