@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import type { VectorizeIndex } from '@cloudflare/workers-types';
 import type { AppDb } from '@/db/client';
 import { meetings, transcriptSegments } from '@/db/schema';
@@ -6,12 +6,23 @@ import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
 import { answerLibrary, type LibraryAnswer, type LibrarySource } from '@/lib/ai/library-answer';
 const STOP = new Set(['the', 'and', 'for', 'was', 'are', 'did', 'how', 'why', 'who', 'can', 'our', 'your', 'across', 'recording', 'recordings', 'titled', 'what', 'when', 'where', 'which', 'with', 'this', 'that', 'have', 'were', 'does', 'about', 'from', 'they', 'their', 'there', 'would', 'could', 'should', 'meeting', 'meetings']);
 export function requestedRecordingTitle(question: string): string | undefined {
-  return /\brecording\s+titled\s+["“]([^"”]+)["”]/iu.exec(question)?.[1];
+  return /\brecording\s+titled\s+["“]([^"”]+)["”]/iu.exec(question)?.[1].trim();
 }
 export function queryTerms(question: string): string[] {
   const title = requestedRecordingTitle(question);
   const detail = title ? question.replace(title, '') : question;
   return [...new Set(detail.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])].filter(t => !STOP.has(t)).slice(0, 16);
+}
+// SQLite lower() only folds ASCII. Fold the non-ASCII case variants present
+// in this bounded query explicitly, then let SQLite handle ASCII. This keeps
+// case-insensitive accented/Cyrillic matching without scanning rows in JS.
+function folded(column: SQLWrapper, query: string): SQL {
+  let expression = sql`${column}`;
+  for (const char of new Set(query.toLowerCase())) {
+    const upper = char.toUpperCase();
+    if (upper !== char && /[^\x00-\x7f]/u.test(char)) expression = sql`replace(${expression}, ${upper}, ${char})`;
+  }
+  return sql`lower(${expression})`;
 }
 const fields = { id: transcriptSegments.id, meetingId: meetings.id, title: meetings.title, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs, text: transcriptSegments.text };
 export async function librarySources(db: AppDb, userId: string, question: string, opts: { ai?: WorkersAiRunner; vectorize?: VectorizeIndex } = {}): Promise<LibrarySource[]> {
@@ -20,9 +31,12 @@ export async function librarySources(db: AppDb, userId: string, question: string
   if (title) {
     // Explicit source scope is authoritative: never answer from a different
     // recording simply because its embedding is similar. No AI call needed.
+    const terms = queryTerms(question);
+    const hits = terms.map(term => sql`CASE WHEN instr(${folded(transcriptSegments.text, term)}, ${term}) > 0 THEN 1 ELSE 0 END`);
+    const score = hits.length ? sql`(${sql.join(hits, sql` + `)})` : sql`0`;
     const rows = await db.select(fields).from(transcriptSegments).innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId))
-      .where(and(owner, sql`lower(${meetings.title}) = ${title.toLowerCase()}`))
-      .orderBy(desc(meetings.startedAt), transcriptSegments.startMs).limit(256);
+      .where(and(owner, sql`${folded(sql`trim(${meetings.title})`, title)} = ${title.toLowerCase()}`))
+      .orderBy(desc(score), desc(meetings.startedAt), transcriptSegments.startMs).limit(256);
     return boundedSources(rows, 256);
   }
   const terms = queryTerms(question);
@@ -33,7 +47,7 @@ export async function librarySources(db: AppDb, userId: string, question: string
     for (const match of matches.matches) if (typeof match.metadata?.sourceId === 'string') semantic.push(match.metadata.sourceId);
   }
   if (!terms.length && !semantic.length) return [];
-  const hits = terms.map(term => sql`instr(lower(${transcriptSegments.text}), ${term}) > 0`);
+  const hits = terms.map(term => sql`instr(${folded(transcriptSegments.text, term)}, ${term}) > 0`);
   const lexical = hits.length ? sql`(${sql.join(hits.map(hit => sql`CASE WHEN ${hit} THEN 1 ELSE 0 END`), sql` + `)})` : sql`0`;
   const semanticScore = semantic.length ? sql`CASE WHEN ${inArray(meetings.id, semantic)} THEN 1 ELSE 0 END` : sql`0`;
   // Rank in SQL BEFORE limiting, so older relevant evidence cannot be crowded

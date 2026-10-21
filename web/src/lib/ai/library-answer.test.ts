@@ -25,3 +25,12 @@ describe('library answer support and completeness', () => {
     expect(calls).toBe(2);
   });
 });
+
+test('omitted unanswered metadata does not reject otherwise valid evidence', () => {
+  expect(hydrateLibraryAnswer({claims:[{text:'Three apples.',kind:'fact',sourceIds:['s1']}]},sources).unanswered).toEqual([]);
+});
+test('a malformed audit cannot silently restore an unsupported draft', async () => {
+  let calls=0;
+  await expect(answerLibrary({async run(){calls++;return {response:{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:[calls===1?'s1':'invented']}],unanswered:[]}};}},'Where?',sources)).rejects.toThrow('Unsupported library citation');
+  expect(calls).toBe(2);
+});

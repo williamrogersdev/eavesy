@@ -67,3 +67,17 @@ describe('retrieval regression cases', () => {
     expect(sources.some(s=>s.id==='sm1')).toBe(true);
   });
 });
+
+test('Unicode title and lexical matching use consistent case folding', async () => {
+  const t = setup();
+  t.sqlite.run("UPDATE meetings SET title='ÉTÉ МОСКВА' WHERE id='m1'");
+  t.sqlite.run("UPDATE transcript_segments SET text='ÉLÉPHANT МОСКВА' WHERE id='sm1'");
+  expect((await librarySources(t.db,'u1','éléphant москва')).map(s=>s.meetingId)).toEqual(['m1']);
+  expect((await librarySources(t.db,'u1','In the recording titled " été москва ", what was discussed?')).map(s=>s.meetingId)).toEqual(['m1']);
+});
+test('later details in long titled recordings rank ahead of the context budget', async () => {
+  const t = setup();
+  for(let i=0;i<300;i++) t.sqlite.run('INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES (?, ?, ?, ?, ?)', [`long${i}`,'m1',i*2000+3000,i*2000+4000,'Unrelated discussion. '.repeat(60)]);
+  t.sqlite.run("INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES ('last','m1',999000,1000000,'Bring three green apples to the kitchen table.')");
+  expect((await librarySources(t.db,'u1','In the recording titled "m1", how many green apples?')).some(s=>s.id==='last')).toBe(true);
+});

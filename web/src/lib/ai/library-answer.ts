@@ -38,7 +38,7 @@ const generatedReplySchema = z.object({
     kind: z.enum(['fact', 'decision', 'commitment', 'open_question']),
     sourceIds: z.array(z.string()).min(1).max(4),
   })).max(12),
-  unanswered: z.array(z.string().min(1).max(500)).max(12),
+  unanswered: z.array(z.string().min(1).max(500)).max(12).default([]),
 });
 export function hydrateLibraryAnswer(reply: unknown, sources: LibrarySource[]): LibraryAnswer {
   const parsed = generatedReplySchema.parse(reply);
@@ -76,5 +76,7 @@ export async function answerLibrary(ai: WorkersAiRunner, question: string, sourc
   const draft = await generate();
   // Exactly one completeness/support audit, using the same metered runner and
   // global atomic budget. No unbounded retries or unmetered provider fallback.
+  // Deliberately fail closed if the audit is invalid: reverting to the draft
+  // could reintroduce unsupported claims the audit attempted to remove.
   return hydrateLibraryAnswer(await generate(draft), sources);
 }
