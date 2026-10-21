@@ -485,8 +485,7 @@ fn follow_pointer(app: AppHandle) {
     });
 }
 
-/// A visible region remains taggable when an app exposes no accessible control.
-/// The saved element stays absent in that case; OCR reads the resulting crop.
+/// Current outline in overlay coordinates, including the fallback label.
 fn hover_payload(target: Option<&Target>, display: Rect) -> serde_json::Value {
     target.map(|target| serde_json::json!({
         "rect": target.rect.map(|rect| rect.moved(-display.x, -display.y)),
@@ -504,6 +503,8 @@ fn element_point(point: Point, display: Rect) -> Result<Point, String> {
         .ok_or_else(|| "Point inside the recorded display to tag it".into())
 }
 
+/// A visible region remains taggable when an app exposes no accessible control.
+/// The saved element stays absent in that case; OCR reads the resulting crop.
 fn pointer_target(x: f64, y: f64, display: Rect) -> Option<Target> {
     if !display.contains(x, y) { return None; }
     let mut target = imp::target_at(x, y, true).ok().flatten().unwrap_or_default();

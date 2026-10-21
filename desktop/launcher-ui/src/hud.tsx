@@ -690,7 +690,7 @@ function Hud() {
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
     const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
-    if (video) below = <div className="ctl-video-help" data-error={!!actionError || undefined}>
+    if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
         {actionError ?? (opening ? 'Allow screen and microphone access to begin.' : marking.tool === 'element' ? 'Point, then click to tag. Area lets you drag a box.' : marking.tool === 'area' ? 'Drag a box to tag a region. Narration stays on.' : 'Screen + mic are recording. Highlight → drag a box.')}

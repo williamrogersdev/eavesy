@@ -675,5 +675,3 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 .ctl-video-help > .ctl-video-count { display: inline-flex; flex: none; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .mk-root { touch-action: none; }
-
-.ctl-video-help[data-error] > span { display: block; white-space: nowrap; text-overflow: ellipsis; }

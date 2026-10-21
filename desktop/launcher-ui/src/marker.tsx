@@ -66,6 +66,19 @@ function Marker() {
     void invoke(cmd, args).catch((reason: unknown) => setError(errMsg(reason, 'Couldn’t tag that')));
   };
 
+  // Native Escape is registered globally; this also handles key events when
+  // the webview owns focus or the global shortcut could not be registered.
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && marking.tool) {
+        event.preventDefault();
+        void invoke('stop_marking').catch((reason: unknown) => setError(errMsg(reason, 'Couldn’t close the highlighter')));
+      }
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [marking.tool]);
+
   const at = (event: PointerEvent) => ({
     x: Math.max(0, Math.min(window.innerWidth, event.clientX)),
     y: Math.max(0, Math.min(window.innerHeight, event.clientY)),
