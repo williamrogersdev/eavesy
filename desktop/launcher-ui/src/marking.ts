@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export type Tool = 'element' | 'area';
@@ -29,10 +29,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
 
 /** Listens for `event` while mounted. */
 export function useEvent(event: string, handler: (payload: unknown) => void) {
+  const callback = useRef(handler);
+  callback.current = handler;
   useEffect(() => {
     let disposed = false;
     let off: (() => void) | undefined;
-    void tauri()?.event?.listen(event, (e) => handler(e.payload)).then((unlisten) => {
+    void tauri()?.event?.listen(event, (e) => callback.current(e.payload)).then((unlisten) => {
       if (disposed) unlisten(); else off = unlisten;
     });
     return () => { disposed = true; off?.(); };
@@ -41,8 +43,18 @@ export function useEvent(event: string, handler: (payload: unknown) => void) {
 
 export function useMarking(preview: MarkingState = NO_MARKING): MarkingState {
   const [state, setState] = useState<MarkingState>(preview);
-  useEvent('moments:state', (payload) => setState({ ...NO_MARKING, ...(payload as Partial<MarkingState>) }));
-  useEffect(() => { void invoke('marking_state').catch(() => {}); }, []);
+  useEffect(() => {
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void (async () => {
+      off = await tauri()?.event?.listen('moments:state', (event) => {
+        if (!disposed) setState({ ...NO_MARKING, ...(event.payload as Partial<MarkingState>) });
+      });
+      if (disposed) { off?.(); return; }
+      await invoke('marking_state');
+    })().catch(() => {});
+    return () => { disposed = true; off?.(); };
+  }, []);
   return state;
 }
 

@@ -61,11 +61,12 @@ enum MomentCrops {
                 let bounds = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
                 let target = inFrame(focus, display: input.display.rect, frameWidth: CGFloat(frame.width)).intersection(bounds)
                 guard !target.isNull, target.width >= 1, target.height >= 1 else { return }
-                let area = cropRect(around: target, minimum: CGSize(width: minimum.width * scale, height: minimum.height * scale),
-                                    padding: padding * scale, in: bounds)
+                let area = clipRect(kind: moment.kind, target: target, scale: scale, in: bounds)
                 guard let cropped = frame.cropping(to: area) else { return }
                 let text = (frame.cropping(to: target.integral)).map(recognizedText) ?? ""
-                let marked = outline(cropped, focus: target.offsetBy(dx: -area.minX, dy: -area.minY),
+                // Area is an exact clip of the user's box. Preserve those pixels;
+                // element/click close-ups keep their contextual outline.
+                let marked = moment.kind == "area" ? cropped : outline(cropped, focus: target.offsetBy(dx: -area.minX, dy: -area.minY),
                                      ring: moment.rect == nil, scale: scale) ?? cropped
                 let relative = String(format: "moments/%02d.jpg", moment.number)
                 try WalkthroughProcessor.writeImage(marked, to: folder.appendingPathComponent(relative))
@@ -94,6 +95,15 @@ enum MomentCrops {
 
     static func scaled(_ rect: CGRect, by scale: CGFloat) -> CGRect {
         CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
+    }
+
+    /// Boxes clip exactly what was selected; automatic clicks and element tags
+    /// retain surrounding context so a small control can still be understood.
+    static func clipRect(kind: String, target: CGRect, scale: CGFloat, in bounds: CGRect) -> CGRect {
+        if kind == "area" { return target.integral.intersection(bounds) }
+        return cropRect(around: target,
+                        minimum: CGSize(width: minimum.width * scale, height: minimum.height * scale),
+                        padding: padding * scale, in: bounds)
     }
 
     /// The focus with room around it, at least `minimum` when the frame allows,

@@ -663,3 +663,15 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
   .mk-spot { transition: none; }
   .mk-stamp { animation-duration: 1ms; animation-delay: 0s; opacity: 1; transform: translate(-50%, -50%) rotate(-4deg); }
 }
+
+/* Video retains its controls when instructions or an action error appear. */
+.eavesy-control[data-size="video"] { border-radius: 18px; }
+.eavesy-control[data-size="video"] .ctl-top { min-width: 0; }
+.eavesy-control[data-size="video"] .ctl-below { margin: 0; padding: 0 10px 6px; overflow: hidden; }
+.ctl-video-help { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 11px; line-height: 14px; color: var(--ctl-ink-2); }
+.ctl-video-help > span { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mk-chip { max-width: min(324px, calc(100vw - 16px)); overflow: hidden; }
+
+.ctl-video-help > .ctl-video-count { display: inline-flex; flex: none; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.mk-root { touch-action: none; }

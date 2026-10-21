@@ -111,7 +111,7 @@ function sizeFor(state: HudState, lines: Look['lines']): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 36] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -669,7 +669,7 @@ function Hud() {
   let top: ReactNode;
   let below: ReactNode = null;
 
-  if (actionError) {
+  if (actionError && !(video && state.phase === 'recording')) {
     top = <>{mark}<span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span><span className="ctl-fill" />{close}</>;
     if (!video && state.sessionId) below = transcriptEditor();
   } else if (state.phase === 'recording') {
@@ -685,13 +685,18 @@ function Hud() {
         )}
         {video && !opening && <Marking state={marking} act={act} />}
         <span className="ctl-fill" />
-        {video && marking.tool
-          ? <button type="button" onClick={() => act('stop_marking')} title="Put the marker away (esc)" className="ctl-btn ctl-primary">Done</button>
-          : <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
+        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
     const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    if (video) below = <div className="ctl-video-help">
+      {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
+      <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
+        {actionError ?? (opening ? 'Allow screen and microphone access to begin.' : marking.tool === 'element' ? 'Point, then click to tag. Area lets you drag a box.' : marking.tool === 'area' ? 'Drag a box to tag a region. Narration stays on.' : 'Screen + mic are recording. Highlight → drag a box.')}
+      </span>
+      {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
+    </div>;
     if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
@@ -766,7 +771,7 @@ function Hud() {
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
       data-marking={video && live && marking.tool ? 'true' : undefined}
-      data-translucent={look.translucent || undefined}
+      data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
       onMouseEnter={() => { loadShortcut(); setPointer('over'); }}
@@ -805,10 +810,8 @@ function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?
   return (
     <>
       <span className="ctl-sep" aria-hidden />
-      <span className="ctl-count" title="Each click is saved with what was under the pointer"><MousePointerClick className="h-3.5 w-3.5" />{clicksLabel(state.clicks)}</span>
-      {tagCount}
-      <button type="button" onClick={() => act('toggle_marking')} title={`Tag something on screen for your AI${state.shortcut ? ` (${state.shortcut})` : ''}`} className="ctl-btn ctl-marker">
-        <Search className="h-3.5 w-3.5" />Mark{state.shortcut && <kbd className="ctl-kbd">{state.shortcut}</kbd>}
+      <button type="button" onClick={() => act('toggle_marking')} title={`Draw a box to highlight and clip part of the screen${state.shortcut ? ` (${state.shortcut})` : ''}`} className="ctl-btn ctl-marker">
+        <Search className="h-3.5 w-3.5" />Highlight{state.shortcut && <kbd className="ctl-kbd">{state.shortcut}</kbd>}
       </button>
     </>
   );
