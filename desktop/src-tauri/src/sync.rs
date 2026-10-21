@@ -260,6 +260,20 @@ pub(crate) enum Pass {
 /// How often captures whose recovery was deferred are tried again.
 const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
 
+static RECOVERY_PAUSED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn report_recovery_wait<R:Runtime>(app:&AppHandle<R>,error:&str) {
+    if RECOVERY_PAUSED.swap(true,Ordering::AcqRel) {return;}
+    // One report per pause episode, shared by sync and local processing workers.
+    crate::telemetry::capture("filesystem.recovery.wait",error);
+    if let Some(app)=crate::ui::wry(app) {
+        use tauri_plugin_notification::NotificationExt;
+        let _=app.notification().builder().title("Sync is waiting for local files")
+            .body("Recordings are safe on this Mac. Choose your recordings folder again in Settings, or restart Eavesy if syncing stays paused.")
+            .show();
+    }
+}
+
 pub async fn run(app: AppHandle) -> Result<()> {
     let mut api = Api::new(api_base())?;
     let mut rejected: Option<(String, Instant)> = None;
@@ -268,10 +282,11 @@ pub async fn run(app: AppHandle) -> Result<()> {
 
     loop {
         if let Err(error)=crate::fs_watcher::wait_until_ready(&app).await {
-            crate::telemetry::capture("filesystem.recovery.wait",&error);
+            report_recovery_wait(&app,&error);
             idle(Duration::from_secs(5)).await;
             continue;
         }
+        RECOVERY_PAUSED.store(false,Ordering::Release);
         if recovery_retried.elapsed() >= RECOVERY_RETRY {
             recovery_retried = Instant::now();
             let app = app.clone();

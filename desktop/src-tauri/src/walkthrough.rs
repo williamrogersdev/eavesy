@@ -93,6 +93,7 @@ pub fn spawn(app: AppHandle, id: String) {
         return;
     }
     std::thread::spawn(move || {
+        crate::fs_watcher::wait_for_recovery_on_worker(&app);
         let result = process(&app, &id);
         if let Err(error) = &result {
             eprintln!("walkthrough processing failed for {id}: {error}");
