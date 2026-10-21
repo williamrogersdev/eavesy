@@ -69,7 +69,7 @@ export async function answerLibrary(ai: WorkersAiRunner, question: string, sourc
       max_tokens: 3072, temperature: 0, response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: RULES + (draft === undefined ? '' : '\nAudit and REWRITE the draft from scratch. Check every requested part against all excerpts. Restore missing supported details, remove unsupported interpretations, correct source IDs and enum values. Return the complete final JSON, not a critique. A draft claim is not evidence.') },
-        { role: 'user', content: JSON.stringify({ question, sources, ...(draft === undefined ? {} : { draft }) }) },
+        { role: 'user', content: JSON.stringify({ question, sources: sources.map(({ id, title, startMs, endMs, text }) => ({ id, title, startMs, endMs, text })), ...(draft === undefined ? {} : { draft }) }) },
       ],
     });
     const response = (result as { response?: unknown })?.response;

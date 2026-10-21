@@ -132,3 +132,9 @@ test('ranked queries stay under D1 binding limits with 30 semantic matches and 1
   expect(sources.some(s=>s.meetingId==='m1')).toBe(true);
   expect(mostBindings).toBeLessThanOrEqual(100);
 });
+
+test('an explicit title containing a non-I combining dot remains reachable', async () => {
+  const t=setup();
+  t.sqlite.run("UPDATE meetings SET title=? WHERE id='m1'",['O\u0307mega notes']);
+  expect((await librarySources(t.db,'u1','In the recording titled "O\u0307mega notes", what was agreed?')).map(s=>s.meetingId)).toEqual(['m1']);
+});

@@ -16,7 +16,7 @@ export function queryTerms(question: string): string[] {
 // SQLite lower() only folds ASCII. Fold the non-ASCII case variants present
 // in this bounded query explicitly, then let SQLite handle ASCII. This keeps
 // case-insensitive accented/Cyrillic matching without scanning rows in JS.
-function searchFold(text: string): string { return text.toLowerCase().replace(/\u0307/gu, ''); }
+function searchFold(text: string): string { return text.toLowerCase().replace(/i\u0307/gu, 'i'); }
 function folded(column: SQLWrapper, query: string): SQL {
   let expression = sql`lower(${column})`;
   const normalized = searchFold(query);
