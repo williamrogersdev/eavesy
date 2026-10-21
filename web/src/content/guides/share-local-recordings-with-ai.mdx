@@ -1,0 +1,34 @@
+---
+title: "Share local recordings with an AI assistant"
+description: "Choose text, attachments, or authorized file access so the assistant receives the evidence you intend to share."
+date: "2026-10-20"
+modified: "2026-10-20"
+author: "Eavesy"
+related: [{"title": "Screen recording to Markdown", "path": "/guides/screen-recording-to-markdown"}, {"title": "Context for agents", "path": "/docs/context-for-agents"}, {"title": "Privacy and data", "path": "/docs/privacy-and-data"}]
+---
+
+A filename is a reference, not an upload. Pasting `/Users/you/Eavesy/Recordings/session/screen.mp4` into a browser chat does not give the service access to that file. Decide which evidence the assistant needs, then provide it through a supported input.
+
+## Start with readable text
+
+Open a completed capture and copy the relevant brief or transcript. Include a focused question, such as “Which decision changed between these two passages?” Keep enough surrounding text for the assistant to understand who said what and when. Review names and numbers before relying on them.
+
+If your recording has no final brief yet, say that processing is incomplete. Do not present a placeholder or preliminary caption as the finished transcript.
+
+## Add the visual evidence
+
+For a UI problem, attach the screenshot that shows the state. If timing matters and the assistant accepts video, attach the recording. Supported file types and size limits belong to the receiving service and can change. If an upload fails, use a smaller relevant excerpt or screenshot rather than assuming the assistant can retrieve the local path.
+
+Eavesy records the screen and can transcribe audio. A text transcript alone does not establish the visual meaning of each frame. A transcript saying “the button is disabled” is a speaker's observation until the image is inspected.
+
+## When a local agent can read files
+
+A coding agent running on your Mac may read the capture folder with your permission. Supply the actual absolute path. Ask it to name the files it opened and distinguish text inspection from image inspection. Remote agents and cloud coding environments cannot necessarily access your Mac's filesystem.
+
+## When MCP is appropriate
+
+Use the hosted Eavesy MCP server for account recordings and dictations. It can retrieve supported text and source evidence after authorization. It does not make all local screenshot, clipboard, or video files available. See [local recording context](/guides/local-recording-context).
+
+## Review before sharing
+
+Remove unrelated private messages and credentials from any text or visual material you share. Sending an attachment to another assistant is a separate data transfer from keeping it locally in Eavesy. Once the assistant has the evidence, ask it to restate the observed problem and identify any missing input before acting.

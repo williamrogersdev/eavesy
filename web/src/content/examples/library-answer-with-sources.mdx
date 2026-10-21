@@ -1,0 +1,39 @@
+---
+title: "A library answer checked against its source"
+description: "See how to review a decision answer, its quoted passage, and the details the recording does not establish."
+date: "2026-10-20"
+modified: "2026-10-20"
+author: "Eavesy"
+related: [{"title": "Find a past decision", "path": "/guides/find-decisions-in-recordings"}, {"title": "Hosted MCP tools", "path": "/docs/connect-mcp"}, {"title": "Decision log template", "path": "/templates/decision-log"}]
+download: "/resources/examples/launch-transcript.md"
+downloadLabel: "Copy or download the Markdown"
+---
+
+This is an illustrative source-checking exercise using a fictional transcript. The answer below is hand-authored to explain verification; it is not presented as a live production model response or a complete MCP response payload.
+
+## Ask a focused question
+
+Question: “What launch timing did we agree, and who owns the help page review?” The [sample transcript](/resources/examples/launch-transcript.md) states that the launch is Friday and explicitly says no review owner has been assigned.
+
+A source-faithful answer would separate the two parts:
+
+- Decision: launch on Friday. Supporting excerpt at 00:01: “We agreed to launch on Friday.”
+- Unresolved: no help page review owner was assigned. Supporting excerpt at 00:09: “We have not assigned an owner for that review yet.”
+
+The day of the week alone is not a full calendar date. The example also supplies no release time or time zone.
+
+## Follow the evidence
+
+In Eavesy's Ask your library view, supported answers include source excerpts and links back to recordings. Open those links and inspect the surrounding passage. For this downloadable exercise, the corresponding evidence is in the timestamped Markdown file instead of a private account recording.
+
+Check whether an excerpt actually supports the whole claim. A source that supports a launch date does not necessarily support its rationale, owner, or final approval. If a later passage changes the decision, include that change rather than citing only the first mention.
+
+## Handle incomplete results
+
+A real library answer can abstain, report unanswered parts, or warn that additional details may exist beyond the retrieved context. Keep those limits visible. A valid quote is useful evidence, but it does not prove that retrieval found every relevant passage in every recording.
+
+## Try it with your own completed recording
+
+Sign in, open Ask your library, and ask a narrow question about a recording you recognize. Confirm the returned source is the intended one. Inspect the timestamp, then compare the answer with what the source establishes. If the recording is still processing or not indexed, finish that work before treating a missing result as meaningful.
+
+Hosted MCP clients can use `search_library` to retrieve evidence and `ask_library` when cloud answers are enabled. Local screenshots and notes are outside that account transcript library.

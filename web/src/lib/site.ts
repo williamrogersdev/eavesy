@@ -28,6 +28,9 @@ export interface RouteEntry {
 }
 
 export const MARKETING_ROUTES: RouteEntry[] = [
+  { path: '/guides', changeFrequency: 'weekly', priority: 0.7 },
+  { path: '/templates', changeFrequency: 'monthly', priority: 0.7 },
+  { path: '/examples', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/features', changeFrequency: 'monthly', priority: 0.9 },
   { path: '/how-it-works', changeFrequency: 'monthly', priority: 0.8 },

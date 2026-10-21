@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(marketing)/blog/')({
     seoHead({
       title: 'Blog',
       description:
-        'Buyer’s guides and deep dives on speech-to-text, text-to-speech, and AI image models — plus notes on context capture for AI agents, from the team building Eavesy.',
+        'Updates from Eavesy and practical notes on capturing, reviewing, and sharing context with AI agents.',
       path: '/blog',
     }),
   component: BlogIndexPage,
@@ -104,8 +104,8 @@ function BlogIndexPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="Blog"
-        title="Guides on AI voice, vision & context"
-        description="Hands-on buyer’s guides to the best speech-to-text, text-to-speech, and image models — plus how we think about capturing context for AI agents. Written by the team building Eavesy."
+        title="Guides and updates from Eavesy"
+        description="Updates from Eavesy and practical notes on capturing, reviewing, and sharing context with AI agents."
       >
         <Breadcrumbs
           items={[

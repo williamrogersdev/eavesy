@@ -18,7 +18,7 @@ export const Route = createFileRoute('/(marketing)/integrations/')({
     seoHead({
       title: 'Integrations',
       description:
-        'Eavesy works with Zoom, Google Meet, Microsoft Teams, Webex, and Slack — plus Obsidian, Notion, and Apple Notes. No bots, no extensions, no admin approval.',
+        'Use Eavesy with AI assistants, call apps, and Markdown notes. Learn which workflows use local files, copy and paste, or authorized hosted MCP.',
       path: '/integrations',
     }),
   component: IntegrationsPage,
@@ -29,8 +29,8 @@ function IntegrationsPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="Integrations"
-        title="Works with the tools you already meet in"
-        description="Because Eavesy records your Mac’s audio directly, it works with any call — no bot to invite, no extension to install, no admin to approve. Then it drops the notes wherever you keep them."
+        title="Take context from your Mac to the tools you use"
+        description="Capture audio from call apps, keep Markdown in your notes, or hand context to an AI assistant. Each guide explains the connection: local capture, manual copy, files, or hosted MCP."
       >
         <Breadcrumbs
           items={[

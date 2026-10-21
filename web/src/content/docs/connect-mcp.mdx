@@ -3,6 +3,7 @@ title: Connect an agent over MCP
 description: Add Eavesy to Claude, ChatGPT or Claude Code by URL so your agent can search your recordings and dictations.
 category: Agents
 order: 41
+modified: 2026-10-20
 ---
 
 Eavesy runs a hosted [MCP](https://modelcontextprotocol.io) server at
@@ -111,11 +112,16 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 
 | Tool | What it does |
 |---|---|
+| `search_library` | Retrieve source passages from completed account recordings, with segment IDs and timestamps. |
+| `ask_library` | Answer from supported recording evidence when cloud answers are enabled; can abstain or report context limits. |
+| `list_projects` | List the projects available to the connection. |
 | `search_meetings` | Search recordings by title or transcript. Returns matches with an excerpt. |
 | `get_meeting` | Get one recording by ID, with its summary and full transcript. |
 | `recent_meetings` | List the most recent recordings. |
 | `search_dictations` | Search your dictations. |
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
+
+Library retrieval does not guarantee exhaustive coverage. Inspect quoted passages and retain any warnings about unanswered parts or context limits. Cloud answer availability depends on the deployment and account configuration.
 
 These tools only read. The tool names say "meetings" because that is the name
 of a recording in the data model. Recordings need to be in your account, so
@@ -128,6 +134,12 @@ can still [read them from disk](/docs/session-folder-format).
 Requests are rate limited per connection. A read-only connection can't create,
 edit, or delete anything.
 </Callout>
+
+## Local media and client checks
+
+The hosted server does not read arbitrary files from your Mac. Use an agent with local file access or attach media explicitly. Mac version 0.5.4 does not expose the newer local walkthrough MCP server.
+
+After connecting, ask for a known recording title and inspect the result before relying on broader questions. If authorization fails, check that the client supports the configured transport and OAuth, then use the supported token setup only when necessary. Never paste a token into a public issue or a shared project file.
 
 ## Next
 

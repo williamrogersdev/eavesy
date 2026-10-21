@@ -1,4 +1,6 @@
 import { defineConfig } from 'vite';
+import { assertNoPublicationFixtures } from './scripts/publication-fixtures';
+
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import viteReact from '@vitejs/plugin-react';
@@ -10,6 +12,9 @@ import remarkGfm from 'remark-gfm';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { fileURLToPath } from 'node:url';
+
+// Prevent interrupted local QA fixtures from entering any public build.
+assertNoPublicationFixtures();
 
 const useLocalTestBindings = process.env.EAVESY_LOCAL_TEST === '1';
 

@@ -10,6 +10,7 @@ import {
 } from '@/components/marketing/page-chrome';
 import { JsonLd, faqSchema } from '@/components/seo/json-ld';
 import { seoHead } from '@/lib/seo-head';
+import { ContentSupplement } from '@/components/marketing/content-supplement';
 
 export const Route = createFileRoute('/(marketing)/integrations/$slug')({
   loader: ({ params }) => {
@@ -116,6 +117,7 @@ function IntegrationDetailPage() {
         </section>
       )}
 
+      <ContentSupplement collection="integration-details" slug={integration.slug} />
       <CTASection />
     </main>
   );

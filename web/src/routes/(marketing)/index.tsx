@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import {
   Bento,
-  Comparison,
   DownloadCTA,
   Faq,
   FeatureShowcases,
@@ -42,7 +41,6 @@ function LandingPage() {
       <FeatureShowcases />
       <Bento />
       <HowItWorks />
-      <Comparison />
       <Faq />
       <DownloadCTA />
     </main>

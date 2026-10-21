@@ -26,7 +26,8 @@ export interface NavItem {
 
 export const PRIMARY_NAV: NavItem[] = [
   { label: 'Features', href: '/features' },
-  { label: 'How it works', href: '/how-it-works' },
+  { label: 'Guides', href: '/guides' },
+  { label: 'Templates', href: '/templates' },
   { label: 'Docs', href: '/docs' },
 ];
 
@@ -60,7 +61,7 @@ export const SHOWCASES: Showcase[] = [
     icon: Brain,
     eyebrow: 'Fast to paste',
     title: 'Clean Markdown, one copy away from your agent',
-    body: 'Recordings and dictation become a transcript and a structured Markdown summary. Copy it into Claude, Cursor, ChatGPT, or any agent instead of re-typing the context from memory, or let an MCP-capable agent fetch it itself.',
+    body: 'Signed-in recordings receive a cloud transcript and Markdown summary. Dictation produces text to paste; its signed-in cloud copy can be cleaned up. Copy it into Claude, Cursor, ChatGPT, or any agent instead of re-typing the context from memory, or let an MCP-capable agent fetch it itself.',
     points: ['Copy into any AI agent', 'Summary, decisions, action items', 'Read-only MCP server for agents'],
     flip: true,
     visual: 'summary',
@@ -87,10 +88,10 @@ export interface BentoItem {
 export const BENTO: BentoItem[] = [
   { icon: Zap, title: 'Paste what you are looking at', body: 'Open the launcher with your global hotkey and press ⌘V to save the text or image on your clipboard as a capture you can find and copy again later.', span: true, highlight: true },
   { icon: Search, title: 'Screenshots', body: 'Grab the screen and keep it next to the rest of your context for a bug report or a coding agent.' },
-  { icon: ListChecks, title: 'Dictation', body: 'Speak a rough thought and, once you are signed in, get clean text ready to paste where you are working.' },
+  { icon: ListChecks, title: 'Dictation', body: 'Speak into the app you are using. On-device dictation works without an account when recognition is available; pasting needs Accessibility permission.' },
   { icon: Languages, title: 'Recordings', body: 'Record your screen, system audio, and mic. Sign in to get a transcript and a Markdown summary when you stop.' },
   { icon: Lock, title: 'Sensitive material', body: 'Capture starts only when you start it, files stay on your disk, and you decide what gets shared.' },
-  { icon: Cloud, title: 'A library your agents can read', body: 'Find a past capture, copy it, or connect a read-only MCP server so your agent can search it.', span: true },
+  { icon: Cloud, title: 'A library your agents can read', body: 'Read local captures as files, or connect the hosted MCP server to search synced recordings and dictations. Local screenshots and notes are not uploaded to MCP.', span: true },
 ];
 
 export interface Step {
@@ -103,21 +104,7 @@ export interface Step {
 export const STEPS: Step[] = [
   { n: '01', icon: Mic, title: 'Drop it in', body: 'Open the launcher with a hotkey, then paste your clipboard, take a screenshot, dictate, or start a recording.' },
   { n: '02', icon: Radio, title: 'Eavesy cleans it up', body: 'Audio becomes a transcript and a structured Markdown summary. Text and images are saved as they are.' },
-  { n: '03', icon: FileText, title: 'Hand it to your agent', body: 'Copy the Markdown into any AI agent, point it at the folder, or let it read your library over MCP.' },
-];
-
-export interface CompareRow {
-  label: string;
-  them: string;
-  us: string;
-}
-
-export const COMPARISON: CompareRow[] = [
-  { label: 'Built for', them: 'Human meeting notes', us: 'Feeding context to your AI agent' },
-  { label: 'What you can drop in', them: 'Call audio only', us: 'Clipboard text and images, screenshots, dictation, recordings' },
-  { label: 'What you get', them: 'A summary in their app', us: 'Markdown you paste into any agent' },
-  { label: 'Your data', them: 'Locked in their app', us: 'Markdown + JSON files on your disk' },
-  { label: 'Joins your call', them: 'A bot everyone sees', us: 'Never. It captures on your Mac' },
+  { n: '03', icon: FileText, title: 'Hand it to your agent', body: 'Copy the Markdown into any AI agent, point it at the folder, or let it read synced recordings over hosted MCP.' },
 ];
 
 export interface Faq {
@@ -126,11 +113,11 @@ export interface Faq {
 }
 
 export const FAQS: Faq[] = [
-  { q: 'What is Eavesy?', a: 'A local, AI-first assistant for your Mac. You drop things into it (clipboard text and images, screenshots, dictation, and recordings) and it saves them as clean Markdown context that is quick to paste into Claude, Cursor, ChatGPT, or any agent, or to reach over MCP.' },
-  { q: 'How do I get the context into my AI agent?', a: 'Copy the Markdown for a capture and paste it into any agent. Recordings and dictation include a transcript and a structured summary. You can also point an agent at the capture folder on your disk, or connect the read-only MCP server so a compatible agent can search your library itself.' },
+  { q: 'What is Eavesy?', a: 'A local, AI-first assistant for your Mac. You drop things into it (clipboard text and images, screenshots, dictation, and recordings) and it saves them as local files and readable text that is quick to paste into Claude, Cursor, ChatGPT, or any agent, with hosted MCP for synced recordings and dictations.' },
+  { q: 'How do I get the context into my AI agent?', a: 'Copy the Markdown for a capture and paste it into any agent. Signed-in recordings can include a transcript and summary; dictation supplies text to paste. You can also point an agent at the capture folder on your disk, or connect the read-only MCP server so a compatible agent can search your library itself.' },
   { q: 'Can I drop in text, messages, or orders?', a: 'You can paste any text or image from your clipboard into the Mac app and it is saved as a note or image capture. A dedicated flow for forwarding messages and orders from other apps is not available yet.' },
-  { q: 'Does it still record meetings?', a: 'Yes. The Mac app records your screen, system audio, and microphone with no bot joining the call, and the web app has a browser recorder. Recording is one of the inputs, not the whole product. Live captions are not available yet; transcripts arrive shortly after audio is processed. You remain responsible for following consent rules.' },
-  { q: 'Do I have to create an account?', a: 'Pasting clipboard text or images and taking screenshots on your Mac works without one. Dictation and recordings need you to sign in (one click from the app) so they can be transcribed and summarized; signing in also adds search and the MCP server.' },
+  { q: 'Does it still record meetings?', a: 'Yes. The Mac app records your screen, system audio, and microphone with no bot joining the call, and the web app has a browser recorder. Recording is one of the inputs, not the whole product. On-device live captions are available with Speech Recognition permission. Signed-in recordings also receive cloud transcripts and summaries after processing. You remain responsible for following consent rules.' },
+  { q: 'Do I have to create an account?', a: 'Pasting clipboard text or images and taking screenshots on your Mac works without one. On-device dictation, captions, and local recording work without an account when the required permissions and speech recognition are available. Sign in for cloud transcription, summaries, and hosted search and MCP access to synced recordings.' },
   { q: 'Where does my data live?', a: 'With the Mac app, each capture is a folder on your disk containing Markdown, JSON, and media files. Dictation and recordings are also uploaded to a private cloud copy for transcription, search, and recovery; clipboard notes, images, and screenshots are not uploaded. You can connect your own OpenRouter account to run the AI on your own credits.' },
   { q: 'Which platforms are supported?', a: 'The Mac app supports Apple Silicon Macs on macOS 13 or later (screenshots need macOS 14). The web app and browser recorder work in a modern browser. Other platforms are not available yet.' },
 ];
@@ -142,7 +129,7 @@ export interface FooterColumn {
 
 export const FOOTER_COLUMNS: FooterColumn[] = [
   { title: 'Product', links: [{ label: 'Features', href: '/features' }, { label: 'How it works', href: '/how-it-works' }, { label: 'Integrations', href: '/integrations' }, { label: 'Mac app', href: '/download/mac' }] },
-  { title: 'Resources', links: [{ label: 'Docs', href: '/docs' }, { label: 'Blog', href: '/blog' }, { label: 'Changelog', href: '/changelog' }, { label: 'GitHub', href: 'https://github.com/williamrogersdev/eavesy' }] },
+  { title: 'Resources', links: [{ label: 'Guides', href: '/guides' }, { label: 'Templates', href: '/templates' }, { label: 'Examples', href: '/examples' },{ label: 'Docs', href: '/docs' }, { label: 'Blog', href: '/blog' }, { label: 'Changelog', href: '/changelog' }, { label: 'GitHub', href: 'https://github.com/williamrogersdev/eavesy' }] },
   { title: 'Company', links: [{ label: 'About', href: '/about' }, { label: 'Contact', href: '/contact' }, { label: 'Security', href: '/security' }] },
   { title: 'Legal', links: [{ label: 'Privacy', href: '/privacy' }, { label: 'Terms', href: '/terms' }] },
 ];

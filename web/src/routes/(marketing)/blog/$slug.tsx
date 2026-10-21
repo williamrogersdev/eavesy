@@ -1,19 +1,22 @@
-import { createFileRoute, notFound } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
-import { Link } from '@/components/ui/app-link';
-import { getPost } from '@/lib/content';
+import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
+import { Link } from "@/components/ui/app-link";
+import { getPost } from "@/lib/content";
+import { PUBLIC_BLOG_REDIRECTS } from "@/lib/retired-content";
 import {
   Breadcrumbs,
   CTASection,
   Container,
-} from '@/components/marketing/page-chrome';
-import { MdxContent } from '@/components/mdx/mdx-content';
-import { JsonLd, articleSchema } from '@/components/seo/json-ld';
-import { seoHead } from '@/lib/seo-head';
-import { formatDate, readingTimeMinutes } from '@/lib/format';
+} from "@/components/marketing/page-chrome";
+import { MdxContent } from "@/components/mdx/mdx-content";
+import { JsonLd, articleSchema } from "@/components/seo/json-ld";
+import { seoHead } from "@/lib/seo-head";
+import { formatDate, readingTimeMinutes } from "@/lib/format";
 
-export const Route = createFileRoute('/(marketing)/blog/$slug')({
+export const Route = createFileRoute("/(marketing)/blog/$slug")({
   loader: ({ params }) => {
+    const destination = PUBLIC_BLOG_REDIRECTS.get(params.slug);
+    if (destination) throw redirect({ href: destination, statusCode: 301 });
     const post = getPost(params.slug);
     if (!post) throw notFound();
     return { slug: post.slug, frontmatter: post.frontmatter };
@@ -24,8 +27,9 @@ export const Route = createFileRoute('/(marketing)/blog/$slug')({
           title: loaderData.frontmatter.title,
           description: loaderData.frontmatter.description,
           path: `/blog/${loaderData.slug}`,
-          type: 'article',
+          type: "article",
           publishedTime: loaderData.frontmatter.date,
+          modifiedTime: loaderData.frontmatter.modified,
           authors: loaderData.frontmatter.author
             ? [loaderData.frontmatter.author]
             : undefined,
@@ -47,6 +51,7 @@ function BlogPostPage() {
           description: post.frontmatter.description,
           path: `/blog/${slug}`,
           date: post.frontmatter.date,
+          modified: post.frontmatter.modified,
           author: post.frontmatter.author,
         })}
       />
@@ -55,8 +60,8 @@ function BlogPostPage() {
         <Container className="max-w-3xl">
           <Breadcrumbs
             items={[
-              { name: 'Home', path: '/' },
-              { name: 'Blog', path: '/blog' },
+              { name: "Home", path: "/" },
+              { name: "Blog", path: "/blog" },
               { name: post.frontmatter.title, path: `/blog/${slug}` },
             ]}
           />
@@ -70,7 +75,9 @@ function BlogPostPage() {
             <h1 className="mt-4 text-balance text-4xl font-extrabold tracking-tight text-ev-ink">
               {post.frontmatter.title}
             </h1>
-            <p className="mt-4 text-lg text-ev-ink-2">{post.frontmatter.description}</p>
+            <p className="mt-4 text-lg text-ev-ink-2">
+              {post.frontmatter.description}
+            </p>
             <div className="mt-5 flex flex-wrap items-center gap-2 text-sm text-ev-ink-2">
               <time dateTime={post.frontmatter.date}>
                 {formatDate(post.frontmatter.date)}
