@@ -576,12 +576,12 @@ fn spawn_capture(
         }
     };
 
-    let (mut child, stdin, reader) = loop {
+    let (mut child, stdin, reader, first_video) = loop {
         let (mut child, stdin, stdout) = started;
         let not_ready = match await_ready(BufReader::new(stdout), START_TIMEOUT) {
-            Ok((reader, ready)) => {
+            Ok((reader, ready, first_video)) => {
                 log_start_latency(&id, warm, asked_at.elapsed(), &ready);
-                break (child, stdin, reader);
+                break (child, stdin, reader, first_video);
             }
             Err(not_ready) => not_ready,
         };
@@ -647,6 +647,9 @@ fn spawn_capture(
     // Before the event reader starts, so the first frame's timing has a session to land in.
     if mode == "screen" {
         crate::moments::begin(app, &id, started_at_ms);
+        if let Some(video) = first_video {
+            register_video_start(&id, &video);
+        }
     }
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
     state.0.lock().unwrap().insert(
@@ -797,38 +800,46 @@ impl NotReady {
 }
 
 /// Waits for the engine's `ready`, which it sends with its first audio buffer.
+/// Preserve the first-frame event, which precedes `ready` for narrated video.
+/// Dropping it leaves marking permanently stuck in the starting state.
+fn read_ready<R: BufRead>(reader: &mut R) -> Result<(CaptureEvent, Option<CaptureEvent>), String> {
+    let mut first_video = None;
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => return Err("capture engine exited before it was ready (check permissions)".into()),
+            Ok(_) => {
+                if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
+                    match ev.event.as_str() {
+                        "ready" => return Ok((ev, first_video)),
+                        "video_start" => first_video = Some(ev),
+                        "error" => return Err(ev.message.unwrap_or_else(|| "capture failed".into())),
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => return Err(format!("capture engine read failed: {e}")),
+        }
+    }
+}
+
+fn register_video_start(session_id: &str, ev: &CaptureEvent) {
+    if let (Some(epoch_ms), Some(x), Some(y), Some(width), Some(height)) =
+        (ev.epoch_ms, ev.display_x, ev.display_y, ev.display_width, ev.display_height)
+    {
+        crate::moments::video_started(session_id, epoch_ms, crate::moments::Rect { x, y, width, height });
+    }
+}
+
 fn await_ready(
     reader: BufReader<ChildStdout>,
     timeout: Duration,
-) -> Result<(BufReader<ChildStdout>, CaptureEvent), NotReady> {
+) -> Result<(BufReader<ChildStdout>, CaptureEvent, Option<CaptureEvent>), NotReady> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = reader;
-        let result = loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    break Err(
-                        "capture engine exited before it was ready (check permissions)".to_string(),
-                    )
-                }
-                Ok(_) => {
-                    if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
-                        match ev.event.as_str() {
-                            "ready" => break Ok(ev),
-                            "error" => {
-                                break Err(ev
-                                    .message
-                                    .unwrap_or_else(|| "capture failed".to_string()))
-                            }
-                            _ => continue,
-                        }
-                    }
-                }
-                Err(e) => break Err(format!("capture engine read failed: {e}")),
-            }
-        };
-        let _ = tx.send(result.map(|ev| (reader, ev)));
+        let result = read_ready(&mut reader);
+        let _ = tx.send(result.map(|(ready, video)| (reader, ready, video)));
     });
     match rx.recv_timeout(timeout) {
         Ok(Ok(ready)) => Ok(ready),
@@ -864,15 +875,7 @@ fn stream_events(
                         continue;
                     }
                     if ev.event == "video_start" {
-                        if let (Some(epoch_ms), Some(x), Some(y), Some(width), Some(height)) =
-                            (ev.epoch_ms, ev.display_x, ev.display_y, ev.display_width, ev.display_height)
-                        {
-                            crate::moments::video_started(
-                                &session_id,
-                                epoch_ms,
-                                crate::moments::Rect { x, y, width, height },
-                            );
-                        }
+                        register_video_start(&session_id, &ev);
                         continue;
                     }
                     if ev.event == "segment" {
@@ -1611,6 +1614,31 @@ fn reap_child(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_preserves_video_timing_before_microphone_ready() {
+        let bytes = concat!(
+            "{\"event\":\"level\",\"rms\":0.1}\n",
+            "{\"event\":\"video_start\",\"epochMs\":1234,\"displayX\":-1440,\"displayY\":0,\"displayWidth\":1440,\"displayHeight\":900}\n",
+            "{\"event\":\"ready\"}\n",
+            "{\"event\":\"done\"}\n"
+        );
+        let mut reader = std::io::Cursor::new(bytes);
+        let (ready, video) = super::read_ready(&mut reader).unwrap();
+        assert_eq!(ready.event, "ready");
+        let video = video.unwrap();
+        assert_eq!(video.epoch_ms, Some(1234));
+        assert_eq!(video.display_x, Some(-1440.0));
+        let mut rest = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut rest).unwrap();
+        assert!(rest.contains("done"));
+    }
+
+    #[test]
+    fn startup_handles_audio_and_fails_before_ready() {
+        assert!(super::read_ready(&mut std::io::Cursor::new("{\"event\":\"ready\"}\n")).unwrap().1.is_none());
+        let error = super::read_ready(&mut std::io::Cursor::new("{\"event\":\"error\",\"message\":\"denied\"}\n")).err().unwrap();
+        assert_eq!(error, "denied");
+    }
     use super::*;
 
     #[test]

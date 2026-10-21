@@ -30,6 +30,13 @@ impl Rect {
     pub fn contains(&self, x: f64, y: f64) -> bool {
         x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
     }
+    fn clipped(self, display: Rect) -> Option<Self> {
+        let x = self.x.max(display.x);
+        let y = self.y.max(display.y);
+        let width = (self.x + self.width).min(display.x + display.width) - x;
+        let height = (self.y + self.height).min(display.y + display.height) - y;
+        (width > 0.0 && height > 0.0).then_some(Self { x, y, width, height })
+    }
     fn moved(self, dx: f64, dy: f64) -> Self {
         Self { x: self.x + dx, y: self.y + dy, ..self }
     }
@@ -261,7 +268,7 @@ pub fn begin(app: &AppHandle, session_id: &str, started_at_ms: i64) {
             let Ok(target) = imp::target_at(x, y, false) else { continue };
             let mut guard = live();
             let Some(live) = guard.as_mut().filter(|live| live.session_id == session) else { break };
-            if live.tool.is_some() || live.clicks() >= MAX_CLICKS {
+            if live.tool.is_some() || live.clicks() >= MAX_CLICKS || !live.display().contains(x, y) {
                 continue;
             }
             live.pending.push(Pending { kind: Kind::Click, mark: None, at_ms, point: Some(Point { x, y }), target: target.unwrap_or_default() });
@@ -379,7 +386,7 @@ fn emit_state(app: &AppHandle) {
 fn toggle(app: &AppHandle) -> Result<(), String> {
     let tool = live().as_ref().ok_or(NOT_RECORDING)?.tool;
     match tool {
-        None => use_tool(app, Tool::Element),
+        None => use_tool(app, Tool::Area),
         Some(_) => stop(app),
     }
 }
@@ -460,7 +467,7 @@ fn follow_pointer(app: AppHandle) {
             }
             last = Some(cursor);
             looked = Instant::now();
-            let target = imp::target_at(cursor.0, cursor.1, true).ok().flatten().filter(|target| target.rect.is_some());
+            let target = pointer_target(cursor.0, cursor.1, display);
             let changed = {
                 let mut guard = live();
                 let Some(live) = guard.as_mut().filter(|live| live.tool == Some(Tool::Element)) else { return };
@@ -473,12 +480,23 @@ fn follow_pointer(app: AppHandle) {
                     "marker:hover",
                     target.map(|target| serde_json::json!({
                         "rect": target.rect.map(|rect| rect.moved(-display.x, -display.y)),
-                        "label": target.element.as_ref().and_then(Element::summary),
+                        "label": target.element.as_ref().and_then(Element::summary).or_else(|| Some("Screen region · drag Area for a larger selection".into())),
                     })),
                 );
             }
         }
     });
+}
+
+/// A visible region remains taggable when an app exposes no accessible control.
+/// The saved element stays absent in that case; OCR reads the resulting crop.
+fn pointer_target(x: f64, y: f64, display: Rect) -> Option<Target> {
+    if !display.contains(x, y) { return None; }
+    let mut target = imp::target_at(x, y, true).ok().flatten().unwrap_or_default();
+    target.rect = target.rect.and_then(|rect| rect.clipped(display)).or_else(|| {
+        Rect { x: x - 48.0, y: y - 36.0, width: 96.0, height: 72.0 }.clipped(display)
+    });
+    Some(target)
 }
 
 fn add_mark(app: &AppHandle, kind: Kind, point: Option<Point>, target: Target) -> Result<u32, String> {
@@ -516,13 +534,12 @@ pub fn stop_marking(app: AppHandle) -> Result<(), String> {
 
 /// Tags whatever the element tool has outlined.
 #[tauri::command(async)]
-pub fn mark_element(app: AppHandle) -> Result<u32, String> {
-    let hover = live().as_ref().ok_or(NOT_RECORDING)?.hover.clone();
-    let (x, y) = imp::cursor();
-    let target = match hover {
-        Some(target) => target,
-        None => imp::target_at(x, y, true).ok().flatten().filter(|t| t.rect.is_some()).ok_or("Nothing to tag under the pointer")?,
-    };
+pub fn mark_element(app: AppHandle, point: Option<Point>) -> Result<u32, String> {
+    let display = live().as_ref().filter(|live| live.tool == Some(Tool::Element)).ok_or(NOT_RECORDING)?.display();
+    // The webview supplies the click point; never save a stale hover from before
+    // a fast pointer movement or a slow accessibility lookup.
+    let (x, y) = point.map(|p| (p.x + display.x, p.y + display.y)).unwrap_or_else(imp::cursor);
+    let target = pointer_target(x, y, display).ok_or("Point inside the recorded display to tag it")?;
     add_mark(&app, Kind::Element, Some(Point { x, y }), target)
 }
 
@@ -533,7 +550,10 @@ pub fn mark_area(app: AppHandle, rect: Rect) -> Result<u32, String> {
         return Err("Drag a bigger box".into());
     }
     let display = live().as_ref().ok_or(NOT_RECORDING)?.display();
-    let global = rect.moved(display.x, display.y);
+    if ![rect.x, rect.y, rect.width, rect.height].iter().all(|n| n.is_finite()) {
+        return Err("Choose an area inside the recorded display".into());
+    }
+    let global = rect.moved(display.x, display.y).clipped(display).ok_or("Choose an area inside the recorded display")?;
     let (cx, cy) = (global.x + global.width / 2.0, global.y + global.height / 2.0);
     // The app and page it sits on, not one control: what is inside is read from the close-up.
     let place = imp::target_at(cx, cy, true).ok().flatten().map(|t| t.place).unwrap_or_default();
@@ -556,6 +576,16 @@ pub fn undo_mark(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn marking_state(app: AppHandle) {
     emit_state(&app);
+    let guard = live();
+    if let Some(live) = guard.as_ref() {
+        if let Some(target) = &live.hover {
+            let display = live.display();
+            let _ = app.emit("marker:hover", serde_json::json!({
+                "rect": target.rect.map(|r| r.moved(-display.x, -display.y)),
+                "label": target.element.as_ref().and_then(Element::summary).unwrap_or_else(|| "Screen region · drag Area for a larger selection".into()),
+            }));
+        }
+    }
 }
 
 fn now_ms() -> i64 {
@@ -998,6 +1028,8 @@ mod imp {
             };
             let _ = window.set_size(tauri::LogicalSize::new(display.width, display.height));
             let _ = window.set_position(tauri::LogicalPosition::new(display.x, display.y));
+            let webview: &tauri::Webview = window.as_ref();
+            let _ = webview.set_size(tauri::LogicalSize::new(display.width, display.height));
             let shown = app.clone();
             let _ = app.run_on_main_thread(move || {
                 use tauri_nspanel::{cocoa::appkit::NSWindowCollectionBehavior, ManagerExt, WebviewWindowExt};
@@ -1096,6 +1128,15 @@ mod tests {
     fn without_a_first_frame_time_moments_count_from_the_recording_start() {
         let settled = settle(&live_with(vec![click(3_500, 10.0, 10.0)], None));
         assert_eq!(settled.moments[0].timestamp_ms, 2_500);
+    }
+
+    #[test]
+    fn pointer_fallback_and_crop_stay_on_the_recorded_display() {
+        let display = Rect { x: -1440.0, y: 100.0, width: 1440.0, height: 900.0 };
+        let crop = Rect { x: -1460.0, y: 80.0, width: 96.0, height: 72.0 }.clipped(display).unwrap();
+        assert_eq!(crop, Rect { x: -1440.0, y: 100.0, width: 76.0, height: 52.0 });
+        assert!(Rect { x: 5.0, y: 5.0, width: 10.0, height: 10.0 }.clipped(display).is_none());
+        assert!(pointer_target(10.0, 20.0, display).is_none());
     }
 
     #[test]

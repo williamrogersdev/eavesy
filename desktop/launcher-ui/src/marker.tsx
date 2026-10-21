@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { StrictMode, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Undo2 } from 'lucide-react';
 import { Mascot } from '@/components/launcher/ui/mascot';
@@ -16,7 +16,7 @@ const preview = !(window as unknown as { __TAURI__?: unknown }).__TAURI__;
 
 function previewMarking(): MarkingState {
   if (!preview) return NO_MARKING;
-  const tool = new URLSearchParams(window.location.search).get('tool') === 'area' ? 'area' : 'element';
+  const tool = new URLSearchParams(window.location.search).get('tool') === 'element' ? 'element' : 'area';
   return { sessionId: 'preview', clicks: 4, marks: [{ number: 1, rect: { x: 809, y: 394, width: 114, height: 36 } }], tool, shortcut: '⌥H' };
 }
 
@@ -35,6 +35,7 @@ function Marker() {
   const marking = useMarking(previewMarking());
   const [hover, setHover] = useState<Hover | null>(preview ? { rect: { x: 343, y: 347, width: 562, height: 36 }, label: 'toggle “Email notifications”' } : null);
   const [drag, setDrag] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
   const [stamps, setStamps] = useState<Tagged[]>([]);
   const [error, setError] = useState<string | null>(null);
   const stampKey = useRef(0);
@@ -54,6 +55,7 @@ function Marker() {
   });
 
   useEffect(() => {
+    dragStart.current = null;
     setDrag(null);
     setError(null);
     if (marking.tool !== 'element') setHover(null);
@@ -64,17 +66,30 @@ function Marker() {
     void invoke(cmd, args).catch((reason: unknown) => setError(errMsg(reason, 'Couldn’t tag that')));
   };
 
-  const at = (event: MouseEvent) => ({ x: event.clientX, y: event.clientY });
-  const down = (event: MouseEvent) => {
+  const at = (event: PointerEvent) => ({
+    x: Math.max(0, Math.min(window.innerWidth, event.clientX)),
+    y: Math.max(0, Math.min(window.innerHeight, event.clientY)),
+  });
+  const down = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('button, .mk-hint')) return;
-    if (marking.tool === 'element') act('mark_element');
-    else if (marking.tool === 'area') setDrag({ from: at(event), to: at(event) });
+    if (marking.tool === 'element') act('mark_element', { point: at(event) });
+    else if (marking.tool === 'area') {
+      dragStart.current = at(event);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setDrag({ from: dragStart.current, to: dragStart.current });
+    }
   };
-  const move = (event: MouseEvent) => { if (drag) setDrag({ ...drag, to: at(event) }); };
-  const up = () => {
-    if (!drag) return;
-    const rect = normalised(drag.from, drag.to);
-    setDrag(null);
+  const move = (event: PointerEvent) => {
+    if (dragStart.current) setDrag({ from: dragStart.current, to: at(event) });
+  };
+  const cancel = () => { dragStart.current = null; setDrag(null); };
+  const up = (event: PointerEvent<HTMLDivElement>) => {
+    const from = dragStart.current;
+    if (!from) return;
+    // Use the release point, even if the last move hasn't rendered yet.
+    const rect = normalised(from, at(event));
+    cancel();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (rect.width >= 8 && rect.height >= 8) act('mark_area', { rect });
   };
 
@@ -85,16 +100,16 @@ function Marker() {
   const hintAtTop = !!focus && focus.y + focus.height > window.innerHeight - 150;
 
   return (
-    <div className="launcher-scope ev mk-root" data-tool={marking.tool} onMouseDown={down} onMouseMove={move} onMouseUp={up}>
+    <div className="launcher-scope ev mk-root" data-tool={marking.tool} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onLostPointerCapture={cancel}>
       {focus ? <div className="mk-spot" data-tool={marking.tool} style={box(focus)} /> : <div className="mk-dim" />}
       {marking.tool === 'element' && hover && (
-        <div className="mk-chip" style={{ left: hover.rect.x, top: Math.max(8, hover.rect.y - 32) }}>
+        <div className="mk-chip" style={{ left: Math.max(8, Math.min(hover.rect.x, window.innerWidth - 340)), top: Math.max(8, hover.rect.y - 32) }}>
           {hover.label && <span>{hover.label}</span>}
           <span className="mk-chip-quiet">click to tag</span>
         </div>
       )}
       {dragged && dragged.width > 0 && (
-        <div className="mk-size" style={{ left: dragged.x + dragged.width - 70, top: dragged.y + dragged.height + 6 }}>
+        <div className="mk-size" style={{ left: Math.max(8, dragged.x + dragged.width - 70), top: Math.min(window.innerHeight - 28, dragged.y + dragged.height + 6) }}>
           {Math.round(dragged.width)} × {Math.round(dragged.height)}
         </div>
       )}
@@ -112,14 +127,14 @@ function Marker() {
         <span className="mk-mascot"><Mascot size={34} state="listening" recording /></span>
         <p className="mk-bubble">
           {marking.tool === 'element'
-            ? 'Point at the culprit and click. I’ll tag it and note what you say.'
-            : 'Drag a box around the suspect. I’ll tag it and note what you say.'}
+            ? 'Point at an element, then click to tag it. Use Area to drag a box.'
+            : 'Drag a box around what matters. Your narration continues recording.'}
         </p>
         {error && <p className="mk-error" role="alert">{error}</p>}
         {marking.marks.length > 0 && (
           <button type="button" className="mk-btn" onClick={() => act('undo_mark')}><Undo2 className="h-3.5 w-3.5" />Undo tag</button>
         )}
-        <kbd className="mk-kbd">esc</kbd>
+        <button type="button" className="mk-btn" onClick={() => act('stop_marking')}>Done marking <kbd className="mk-kbd">esc</kbd></button>
       </div>
     </div>
   );
