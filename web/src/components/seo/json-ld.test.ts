@@ -12,5 +12,6 @@ test("JSON-LD keeps a script-closing sequence inside its serialized data", () =>
   expect(html.match(/<\/script>/g)).toHaveLength(1);
   const payload = html.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
   expect(payload).not.toContain("<");
+  expect(payload).toContain("\\u003c");
   expect(JSON.parse(payload)).toEqual({ name: value });
 });

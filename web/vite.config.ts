@@ -1,4 +1,7 @@
 import { defineConfig } from 'vite';
+import { assertNoPublicationFixtures } from './scripts/publication-fixtures';
+
+assertNoPublicationFixtures();
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import viteReact from '@vitejs/plugin-react';

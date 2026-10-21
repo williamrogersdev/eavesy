@@ -1,6 +1,8 @@
 import { PUBLIC_BLOG_REDIRECTS } from "../src/lib/retired-content";
 import { FIRST_SEARCH_PAGES } from "../src/lib/search-launch";
 /** Read-only SSR audit. Run against a local preview or an explicitly selected deployed origin. */
+const request: typeof fetch = (input, init) =>
+  fetch(input, { ...init, signal: AbortSignal.timeout(15000) });
 const origin = process.argv[2] ?? "http://127.0.0.1:4173";
 const canonicalOrigin = "https://eavesy.com";
 const failures: string[] = [];
@@ -8,7 +10,7 @@ const results: { path: string; status: number; title: string }[] = [];
 function check(ok: unknown, message: string) {
   if (!ok) failures.push(message);
 }
-const xmlResponse = await fetch(`${origin}/sitemap.xml`);
+const xmlResponse = await request(`${origin}/sitemap.xml`);
 check(xmlResponse.ok, "Sitemap must return 200");
 const xml = await xmlResponse.text();
 const paths = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(
@@ -25,7 +27,9 @@ const linkPaths = new Set<string>();
 for (let i = 0; i < paths.length; i += 6) {
   await Promise.all(
     paths.slice(i, i + 6).map(async (path) => {
-      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      const response = await request(`${origin}${path}`, {
+        redirect: "manual",
+      });
       const html = await response.text();
       const title = html.match(/<title>(.*?)<\/title>/s)?.[1] ?? "";
       const canonicals = [
@@ -68,7 +72,9 @@ const unseen = [...linkPaths].filter((path) => !paths.includes(path));
 for (let i = 0; i < unseen.length; i += 6)
   await Promise.all(
     unseen.slice(i, i + 6).map(async (path) => {
-      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      const response = await request(`${origin}${path}`, {
+        redirect: "manual",
+      });
       check(
         response.status === 200 ||
           response.status === 301 ||
@@ -87,18 +93,18 @@ for (const path of [
   "/blog/toString",
   "/blog/best-text-to-speech-ai-models",
 ]) {
-  const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+  const response = await request(`${origin}${path}`, { redirect: "manual" });
   check(response.status === 404, `${path}: must return real 404`);
 }
 for (const [slug, to] of PUBLIC_BLOG_REDIRECTS.entries()) {
   const from = `/blog/${slug}`;
-  const response = await fetch(`${origin}${from}`, { redirect: "manual" });
+  const response = await request(`${origin}${from}`, { redirect: "manual" });
   check(
     response.status === 301 && response.headers.get("location") === to,
     `${from}: expected permanent redirect to ${to}`,
   );
 }
-const home = await (await fetch(origin)).text();
+const home = await (await request(origin)).text();
 check(
   !home.includes("Meeting bots"),
   "Homepage still contains comparison section",

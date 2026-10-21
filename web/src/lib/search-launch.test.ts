@@ -12,7 +12,9 @@ test("every first-cluster page has real authored content and correct supplement 
     );
     expect(content).toContain("title:");
     expect(content).toContain("description:");
-    expect(content.split("---")[2]?.trim()).toBeTruthy();
+    expect(
+      content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1].trim(),
+    ).toBeTruthy();
     if (page.path.startsWith("/features/")) {
       const catalog = readFileSync(
         new URL("../content/features.ts", import.meta.url),
