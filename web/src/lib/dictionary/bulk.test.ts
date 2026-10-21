@@ -18,6 +18,8 @@ test('skips blank lines, reports lines without two sides, and keeps the last of 
 });
 
 test('splits at the first separator and leaves commas and colons alone', () => {
-  expect(parseReplacements('a = b → c\nKubernetes, k8s\nnote: Eavesy').entries).toEqual([{ from: 'a', to: 'b → c' }]);
+  const { entries, unread } = parseReplacements('a = b → c\nKubernetes, k8s\nnote: Eavesy');
+  expect(entries).toEqual([{ from: 'a', to: 'b → c' }]);
+  expect(unread).toEqual(['Kubernetes, k8s', 'note: Eavesy']);
   expect(parseReplacements('x => y').entries).toEqual([{ from: 'x', to: 'y' }]);
 });

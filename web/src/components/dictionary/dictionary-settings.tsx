@@ -95,6 +95,8 @@ export function DictionarySettings() {
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Couldn’t update your dictionary.');
+      // Part of a change may have landed; show what the server has now.
+      await load().catch(() => {});
       return false;
     } finally { setBusy(false); }
   };
@@ -113,6 +115,8 @@ export function DictionarySettings() {
 
   const edit = (entry: Entry, next: { from: string; to: string }) => run(async () => {
     if (next.from === entry.from && next.to === entry.to) return 'No changes.';
+    const other = entries.find((e) => e.id !== entry.id && normalizeTerm(e.from) === normalizeTerm(next.from));
+    if (other) throw new Error(`“${other.from}” already has its own replacement (“${other.to}”). Edit that one instead.`);
     await put(next);
     // A new "heard as" is a new entry, so the old one goes.
     if (normalizeTerm(next.from) !== normalizeTerm(entry.from)) {
@@ -131,6 +135,7 @@ export function DictionarySettings() {
   const undoRemove = async (back: Entry) => {
     const current = (await dictionaryRequest<{ entries: Entry[] }>('GET')).entries;
     const taken = current.find((entry) => normalizeTerm(entry.from) === normalizeTerm(back.from));
+    if (taken?.to === back.to) return;
     if (taken) throw new Error(`“${taken.from}” is already set to “${taken.to}”, so the old one wasn’t put back.`);
     await put(back);
   };
@@ -140,8 +145,8 @@ export function DictionarySettings() {
     const result = await dictionaryRequest<SaveResult>('PUT', { entries: parsed.entries });
     const learned = result.learned ?? 0;
     const skipped = (result.skipped ?? 0) + parsed.unread.length;
-    if (result.status === 'unchanged') { setBulk(null); return 'All of these are already in your dictionary.'; }
-    if (!learned) throw new Error('None of these could be added. Each side needs a word or short phrase, the two must differ, and your dictionary holds up to 500.');
+    if (result.status === 'unchanged' && !skipped) { setBulk(null); return 'All of these are already in your dictionary.'; }
+    if (!learned) throw new Error('Nothing new was added. Lines already in your dictionary are skipped. Otherwise each side needs a word or short phrase, the two must differ, and your dictionary holds up to 500.');
     setBulk(null);
     const added = learned === 1 ? 'Added 1 replacement.' : `Added ${learned} replacements.`;
     return skipped ? `${added} ${skipped === 1 ? '1 line was' : `${skipped} lines were`} skipped: each side needs a word or short phrase, and they must differ.` : added;
