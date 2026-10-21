@@ -15,6 +15,7 @@ try {
   await page.addInitScript(() => {
     const listeners = new Map();
     let state = {phase:'done',sessionId:'qa-1',mode:'audio',message:localStorage.getItem('qa-transcript') ?? 'Original first sentence. Original last sentence.',notice:null,startedAtMs:null};
+    window.__qaCaption = (caption) => (listeners.get('recording:caption')??[]).forEach(fn=>fn({payload:caption}));
     window.__qaCopies=[];
     window.__qaSaves=[];
     window.__qaFailSave=false;
@@ -114,4 +115,20 @@ try {
   await editor.waitFor();
   assert.equal(await editor.getAttribute('readonly'),'');
   console.log('PASS: a preview without a recording ID cannot accept unsavable edits');
+  await page.evaluate(() => {
+    window.__qaEmit({phase:'recording',sessionId:'qa-live',mode:'audio',message:null,notice:null,startedAtMs:Date.now()});
+  });
+  await page.locator('[data-phase="recording"]').waitFor();
+  await page.evaluate(() => {
+    window.__qaCaption({sessionId:'qa-live',track:'mic',isFinal:false,startMs:0,endMs:10000,
+      text:'First complete sentence with several words. Second complete sentence with several words. Third complete sentence with several words. Fourth complete sentence with several words. Fifth complete sentence with several words. Sixth complete sentence with several words.'});
+  });
+  await page.locator('.ctl-ticker').waitFor();
+  await page.clock.runFor(100);
+  const viewport = await page.locator('.ctl-below').evaluate(el=>({height:el.clientHeight,top:el.scrollTop,total:el.scrollHeight}));
+  assert.equal(viewport.height,80);
+  assert.ok(viewport.total>viewport.height);
+  assert.equal(viewport.top % 20,0);
+  await page.screenshot({path:join(tmpdir(),'eavesy-live-lines-verified.png')});
+  console.log('PASS: live captions scroll on whole line boundaries');
 } finally { await browser.close(); }

@@ -61,15 +61,18 @@ pub struct CaptionLog {
     done: Option<CaptionsDone>,
 }
 
-fn same_phrase(a: &Caption, b: &Caption) -> bool {
+pub(crate) fn same_phrase(a: &Caption, b: &Caption) -> bool {
     let overlap = a.end_ms.min(b.end_ms) - a.start_ms.max(b.start_ms);
     let longest = (a.end_ms - a.start_ms).max(b.end_ms - b.start_ms);
+    let shortest = (a.end_ms - a.start_ms).min(b.end_ms - b.start_ms);
     if a.track != b.track { return false; }
     // Track/start identifies the recognizer hypothesis; its final text may
     // differ completely from the provisional text at that same audio offset.
     if a.start_ms == b.start_ms { return true; }
-    if a.is_final && b.is_final { return false; }
-    if overlap <= 0 || overlap <= longest / 2 { return false; }
+    // Volatile Apple ranges include silence before the first word; settled
+    // ranges narrow to speech. Compare coverage of the narrower hypothesis.
+    let coverage = if a.is_final && b.is_final { longest } else { shortest };
+    if overlap <= 0 || overlap <= coverage / 2 { return false; }
     let normalize = |text: &str| format!(" {} ", text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).collect::<Vec<_>>().join(" "));
     let left = normalize(&a.text);
@@ -77,7 +80,12 @@ fn same_phrase(a: &Caption, b: &Caption) -> bool {
     // Time ranges alone cannot identify a revision. Keep distinct text even
     // when recognizer windows overlap heavily; growing partials contain their
     // earlier text, while a corrected final at the same start replaces it.
-    !left.trim().is_empty() && !right.trim().is_empty() && (left.contains(&right) || right.contains(&left))
+    if left.trim().is_empty() || right.trim().is_empty() { return false; }
+    // Apple may re-emit the same settled sentence with slightly shifted
+    // timestamps/casing. Identical words over the same audio are one phrase;
+    // distinct settled words (including contained phrases) must both survive.
+    if a.is_final && b.is_final { return left == right; }
+    left.contains(&right) || right.contains(&left)
 }
 
 impl CaptionLog {
@@ -350,6 +358,36 @@ mod tests {
         log.record(&first);
         log.record(&next);
         assert_eq!(log.spoken_text(), "Please bring the red notebook. Then close the kitchen window.");
+    }
+
+    #[test]
+    fn settled_speech_replaces_a_provisional_range_that_includes_silence() {
+        let mut log = CaptionLog::default();
+        let mut partial = caption("The blue Notebook is on the kitchen table.", false, 0);
+        partial.end_ms = 23_159;
+        let mut settled = caption("The blue notebook is on the kitchen table.", true, 18_060);
+        settled.end_ms = 21_240;
+        log.record(&partial);
+        log.record(&settled);
+        // Late volatile updates for the same audio cannot resurrect it.
+        log.record(&partial);
+        assert_eq!(log.spoken_text(), settled.text);
+        assert!(matches!(log.quick_paste(23_159), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn timestamp_jitter_does_not_repeat_the_same_settled_sentence() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("The blue Notebook is on the kitchen table.", true, 1_000);
+        first.end_ms = 4_000;
+        let mut revision = caption("The blue notebook is on the kitchen table.", true, 1_040);
+        revision.end_ms = 4_020;
+        log.record(&first);
+        log.record(&revision);
+        assert_eq!(log.spoken_text(), "The blue notebook is on the kitchen table.");
+        // Repeating the same words later is real speech, not a duplicate.
+        log.record(&caption("The blue notebook is on the kitchen table.", true, 5_000));
+        assert_eq!(log.spoken_text(), "The blue notebook is on the kitchen table. The blue notebook is on the kitchen table.");
     }
 
     #[test]

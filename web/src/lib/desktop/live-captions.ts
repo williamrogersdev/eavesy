@@ -79,12 +79,15 @@ export function addCaption(state: RunningTranscript, caption: LiveCaption): Runn
     const longest = Math.max(previous.endMs - previous.startMs, caption.endMs - caption.startMs);
     if (previous.track !== caption.track) return false;
     if (previous.startMs === caption.startMs) return true;
-    if (previous.isFinal && caption.isFinal) return false;
-    if (overlap <= 0 || overlap <= longest / 2) return false;
+    const shortest = Math.min(previous.endMs - previous.startMs, caption.endMs - caption.startMs);
+    const coverage = previous.isFinal && caption.isFinal ? longest : shortest;
+    if (overlap <= 0 || overlap <= coverage / 2) return false;
     const normalize = (text: string) => ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
     const left = normalize(previous.text);
     const right = normalize(caption.text);
-    return !!left.trim() && !!right.trim() && (left.includes(right) || right.includes(left));
+    if (!left.trim() || !right.trim()) return false;
+    if (previous.isFinal && caption.isFinal) return left === right;
+    return left.includes(right) || right.includes(left);
   };
   const partials = Object.fromEntries(Object.entries(base.partials).filter(([, previous]) => !samePhrase(previous)));
   if (!caption.isFinal) {

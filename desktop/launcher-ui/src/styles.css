@@ -188,6 +188,9 @@ body {
   user-select: text;
   -webkit-user-select: text;
 }
+/* Four complete 20px lines: bottom scrolling must not expose half a line. */
+.eavesy-control[data-size="wide"] .ctl-below,
+.eavesy-control[data-size="result"] .ctl-below { flex: 0 0 80px; height: 80px; }
 .eavesy-control[data-size="shot"].ctl-below { padding: 2px; }
 .ctl-fill { flex: 1 1 auto; min-width: 4px; }
 
