@@ -423,6 +423,15 @@ pub fn set_folder_path<R: Runtime>(
     })?;
     Ok(())
 }
+/// Files a meeting from another device under the kind it was captured as. Returns whether it changed.
+pub fn set_source<R: Runtime>(app: &AppHandle<R>, id: &str, source: &str) -> Result<bool, String> {
+    mutate(app, id, |rec| {
+        let changed = rec.source != source;
+        rec.source = source.to_string();
+        Ok(changed)
+    })
+    .map(|changed| changed.unwrap_or(false))
+}
 pub fn set_status<R: Runtime>(app: &AppHandle<R>, id: &str, status: &str) -> Result<(), String> {
     mutate(app, id, |rec| {
         rec.status = status.to_string();

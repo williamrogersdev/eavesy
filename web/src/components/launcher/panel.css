@@ -163,6 +163,7 @@
   white-space: nowrap;
 }
 .ev-rh-kind { color: var(--ev-ink); font: 650 13px/1 var(--ev-font-round); overflow: hidden; text-overflow: ellipsis; }
+.ev-rh-device { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-time { margin-left: auto; }
 .ev-body { margin-top: 2px; color: var(--ev-ink); font: var(--ev-t-body); white-space: pre-wrap; overflow-wrap: anywhere; }
 .ev-body[data-muted='true'] { color: var(--ev-ink-2); }

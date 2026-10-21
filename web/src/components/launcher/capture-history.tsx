@@ -341,6 +341,7 @@ function CaptureRow({
       <header className="ev-rh">
         <span className="ev-rh-kind">{kind.label}</span>
         {timed && <span>· {clock(rec.durationSec)}</span>}
+        {rec.device && <span className="ev-rh-device" title={`Recorded on ${rec.device}`}>· {rec.device}</span>}
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
