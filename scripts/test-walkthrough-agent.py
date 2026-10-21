@@ -49,6 +49,15 @@ class AgentAccessTests(unittest.TestCase):
             result = self.request('list_walkthroughs', {'query': query})
             self.assertEqual(json.loads(result['content'][0]['text']), [])
 
+    def test_corrected_search_excerpt_contains_the_match(self):
+        self.bundle['correctedTranscript'] = 'prefix ' * 100 + 'Unique corrected phrase'
+        self.save()
+        result = self.request('list_walkthroughs', {'query': 'unique corrected'})
+        matches = json.loads(result['content'][0]['text'])[0]['matches']
+        self.assertEqual(matches[0]['kind'], 'corrected')
+        self.assertIsNone(matches[0]['timestampMs'])
+        self.assertIn('Unique corrected phrase', matches[0]['text'])
+
     def test_frame_returns_actual_time_and_image(self):
         result = self.request('get_walkthrough_frame', {'id': 'recording-one', 'timestampMs': 19000})
         frame = json.loads(result['content'][0]['text'])
