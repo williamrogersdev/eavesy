@@ -20,9 +20,9 @@ describe('dictionary feedback API and persistence', () => {
   test('saves actual user edits, preserves raw speech, reloads dictionary and forgets', async () => {
     const t = setup();
     const result = await t.request('POST', { dictationId: 'd1', original: 'Open a pool request today.', corrected: 'Open a pull request today.' });
-    expect(await result.json()).toEqual({ learned: 1 });
+    expect(await result.json()).toEqual({ learned: 1, words: [{ from: 'pool', to: 'pull' }] });
     const retry = await t.request('POST', { dictationId: 'd1', original: 'Open a pool request today.', corrected: 'Open a pull request today.' });
-    expect(await retry.json()).toEqual({ learned: 0 });
+    expect(await retry.json()).toEqual({ learned: 0, words: [] });
     expect(t.sqlite.query('SELECT transcript, cleaned_text FROM dictations').get()).toEqual({ transcript: 'Open a pool request today.', cleaned_text: 'Open a pull request today.' });
     const entries = await dictionary.list(t.db, 'u1');
     expect(entries).toMatchObject([{ from: 'pool', to: 'pull' }]);

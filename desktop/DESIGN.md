@@ -471,8 +471,14 @@ from the menu bar). Screenshots stamp **Snapped** above the thumbnail; saves sta
 **Saved**. Failures read "Didn't catch that" in warn, never coral. The HUD
 collapses to the pill 3.5s (pill) or 10s (result) after the result, 2.5s
 after the pointer leaves it, or on Esc. It stays while the pointer is over it,
-while you edit, and while a correction is saving. A HUD low on the screen keeps its bottom edge when it
-grows, so it never moves away from where it was.
+while you edit, and while a correction is saving. A HUD low on the screen
+keeps its bottom edge when it grows, so it never moves away from where it was.
+
+When a correction reaches the dictionary (typed in the result, or fixed in
+the app the words were pasted into), the control says which word for 4s with
+a leaf stamp, **✓ Added "Kubernetes"** (+N for more): in place of Pasted on
+the result, or as the whole pill when idle. A correction that could not be
+saved stamps **Not saved to dictionary** in warn.
 
 ## 6. Capture lifecycle: height-stable and without view switches
 

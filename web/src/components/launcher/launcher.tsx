@@ -40,6 +40,7 @@ import {
   type Permissions,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
+import { learnedLabel } from '@/lib/desktop/learning';
 import { CaptureHistory, plainTranscript, type LiveCapture } from '@/components/launcher/capture-history';
 import { SettingsView, type AccountState } from '@/components/launcher/settings-view';
 import { loadRecordings } from '@/lib/launcher/data';
@@ -125,7 +126,8 @@ export function Launcher() {
     let dispose: (() => void) | undefined;
     let cancelled = false;
     void onDictionaryLearning(event => {
-      if (event.status === 'saved' && event.learned) flash(`Learned ${event.learned} correction${event.learned === 1 ? '' : 's'}`);
+      const learned = learnedLabel(event);
+      if (learned) flash(`${learned} to your dictionary`);
       else if (event.status === 'failed' && event.message) flash(event.message, 5000, 'warn');
     }).then(stop => { if (cancelled) stop(); else dispose = stop; });
     return () => { cancelled = true; dispose?.(); };
