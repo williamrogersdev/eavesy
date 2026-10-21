@@ -33,6 +33,7 @@ export default defineConfig({
       input: {
         index: path.resolve(dir, 'index.html'),
         hud: path.resolve(dir, 'hud.html'),
+        marker: path.resolve(dir, 'marker.html'),
         settings: path.resolve(dir, 'settings.html'),
       },
     },

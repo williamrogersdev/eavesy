@@ -694,6 +694,25 @@ export async function onDictionaryLearning(cb: (event: { status: string; message
 export async function recordingContext(id: string, fallback: string): Promise<string> {
   return isDesktop() ? invoke<string>('recording_context', { id }) : fallback;
 }
+/** A click or tag in a screen recording, from moments.rs and walkthrough processing. */
+export interface RecordingMoment {
+  number: number;
+  kind: 'click' | 'element' | 'area';
+  mark: number | null;
+  timestampMs: number;
+  what: string | null;
+  where: string | null;
+  url: string | null;
+  narration: string;
+  /** A displayable URL for the close-up, once processing has cut it. */
+  crop: string | null;
+}
+export async function recordingMoments(id: string): Promise<RecordingMoment[]> {
+  if (!isDesktop()) return [];
+  const moments = await invoke<RecordingMoment[]>('recording_moments', { id });
+  const core = tauri()?.core;
+  return moments.map((moment) => ({ ...moment, crop: moment.crop && core?.convertFileSrc ? core.convertFileSrc(moment.crop) : null }));
+}
 export async function retryWalkthrough(id: string): Promise<void> {
   await invoke('retry_walkthrough', { id });
 }

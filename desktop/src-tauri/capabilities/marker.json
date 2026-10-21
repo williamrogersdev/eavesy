@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "marker",
+  "description": "The marking panel over a screen recording receives the recording's clicks and tags and invokes Eavesy's marking commands.",
+  "windows": ["marker"],
+  "permissions": ["core:event:default"]
+}

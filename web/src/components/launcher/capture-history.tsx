@@ -12,6 +12,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   MoreHorizontal,
+  MousePointerClick,
   Pause,
   Pencil,
   Play,
@@ -32,7 +33,9 @@ import {
   pasteToFrontmost,
   deleteCapture,
   fetchAgentTranscript,
+  recordingMoments,
   revealInFinder,
+  type RecordingMoment,
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
 import { useHistoryPage } from './use-history-page';
@@ -181,6 +184,60 @@ function Thumb({ id, video, durationSec, label }: { id: string; video: boolean; 
   );
 }
 
+/**
+ * The case file for a screen recording: what was tagged and clicked, each
+ * with its close-up and what was said at the time. Tags lead; clicks fold away.
+ */
+function Evidence({ id, revision }: { id: string; revision?: number }) {
+  const [moments, setMoments] = useState<RecordingMoment[]>([]);
+  const [all, setAll] = useState(false);
+  const [viewer, setViewer] = useState<{ url: string; label: string; host: Element } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void recordingMoments(id).then((value) => { if (!cancelled) setMoments(value); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, revision]);
+  if (moments.length === 0) return null;
+  const tags = moments.filter((moment) => moment.mark != null);
+  const clicks = moments.length - tags.length;
+  const shown = all ? moments : (tags.length > 0 ? tags : moments).slice(0, 3);
+  const counts = [tags.length > 0 && `${tags.length} tagged`, clicks > 0 && `${clicks} ${clicks === 1 ? 'click' : 'clicks'}`].filter(Boolean).join(' · ');
+  return (
+    <section className="ev-evidence" aria-label="Evidence">
+      <header className="ev-evidence-head"><span>Evidence</span><span>{counts}</span></header>
+      <ol>
+        {shown.map((moment) => {
+          const what = moment.kind === 'area' ? 'An area' : moment.what ?? (moment.kind === 'click' ? 'A click' : 'An element');
+          const label = `${moment.mark != null ? `Tag ${moment.mark}` : 'Click'} at ${clock(Math.floor(moment.timestampMs / 1000))}: ${what}`;
+          return (
+            <li key={moment.number} className="ev-moment">
+              {moment.crop
+                ? <button type="button" className="ev-moment-crop" aria-label={`View close-up. ${label}`} onClick={(e) => setViewer({ url: moment.crop!, label, host: e.currentTarget.closest('.ev-panel') ?? document.body })}><img src={moment.crop} alt="" /></button>
+                : <span className="ev-moment-crop" data-empty="true" aria-hidden />}
+              <div className="ev-moment-text">
+                <div className="ev-moment-head">
+                  <span className="ev-moment-time">{clock(Math.floor(moment.timestampMs / 1000))}</span>
+                  {moment.mark != null
+                    ? <span className="ev-moment-tag" aria-label={`Tag ${moment.mark}`}>{moment.mark}</span>
+                    : <MousePointerClick size={12} strokeWidth={2} aria-label="Click" />}
+                  <span className="ev-moment-what">{what}</span>
+                </div>
+                {moment.narration
+                  ? <p className="ev-moment-said">“{moment.narration}”</p>
+                  : moment.where && <p className="ev-moment-said" data-muted="true" title={moment.url ?? undefined}>{moment.where}</p>}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {shown.length < moments.length || all
+        ? <button type="button" className="ev-more" aria-expanded={all} onClick={() => setAll(!all)}>{all ? 'Fewer' : `All ${moments.length}`}</button>
+        : null}
+      {viewer && <ImageViewer url={viewer.url} label={viewer.label} host={viewer.host} onClose={() => setViewer(null)} />}
+    </section>
+  );
+}
+
 function Highlighted({ text, query }: { text: string; query: string }) {
   return (
     <>
@@ -259,6 +316,7 @@ function CaptureRow({
   if (image) body = <Thumb id={rec.id} video={false} durationSec={0} label={kind.label} />;
   else if (video) body = <>
     <Thumb id={rec.id} video durationSec={rec.durationSec} label={kind.label} />
+    <Evidence id={rec.id} revision={rec.revision} />
     {text && <div style={{ marginTop: 6 }}><Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
