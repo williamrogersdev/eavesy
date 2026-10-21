@@ -253,6 +253,7 @@ async fn wait_until_ready_for<R: Runtime>(
             None => true,
         };
         if ready {
+            crate::sync::clear_recovery_pause();
             return Ok(());
         }
         if began.elapsed() >= budget {
@@ -263,14 +264,14 @@ async fn wait_until_ready_for<R: Runtime>(
 }
 
 /// Only call from blocking processing workers, never the UI or an async worker.
-pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) {
-    loop {
-        match tauri::async_runtime::block_on(wait_until_ready(app)) {
-            Ok(()) => return,
-            Err(error) => crate::sync::report_recovery_wait(app, &error),
-        }
-        std::thread::sleep(Duration::from_secs(5));
+pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    // A processing job must finish its normal error/active-set cleanup on a
+    // failed or excessively slow recovery, not occupy a worker indefinitely.
+    let result = tauri::async_runtime::block_on(wait_until_ready(app));
+    if let Err(error) = &result {
+        crate::sync::report_recovery_wait(app, error);
     }
+    result
 }
 
 fn is_content_event(kind: &EventKind) -> bool {
@@ -986,6 +987,16 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("recovery failed"));
         assert!(!ready.load(Ordering::Acquire));
+        let handle = app.handle().clone();
+        let (done, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(wait_for_recovery_on_worker(&handle));
+        });
+        assert!(result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_err());
+
         assert!(finish_startup(&ready, &failed, || {}));
         assert!(wait_until_ready(app.handle()).await.is_ok());
     }

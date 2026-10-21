@@ -68,8 +68,11 @@ pub(crate) fn run<T: Sync, R: Send>(
         .into_inner()
         .map_err(|_| "transcription worker state was poisoned".to_string())?;
     let mut result = Vec::with_capacity(items.len());
-    for entry in state.results {
-        result.push(entry.ok_or_else(|| "missing transcription result".to_string())??);
+    for (index, entry) in state.results.into_iter().enumerate() {
+        result.push(
+            entry
+                .ok_or_else(|| format!("missing transcription result at piece {}", index + 1))??,
+        );
     }
     Ok(result)
 }

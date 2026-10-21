@@ -96,8 +96,8 @@ pub fn spawn(app: AppHandle, id: String) {
         return;
     }
     std::thread::spawn(move || {
-        crate::fs_watcher::wait_for_recovery_on_worker(&app);
-        let result = process(&app, &id);
+        let result=crate::fs_watcher::wait_for_recovery_on_worker(&app)
+            .and_then(|()|process(&app, &id));
         if let Err(error) = &result {
             eprintln!("walkthrough processing failed for {id}: {error}");
             let _ = crate::store::set_status(&app, &id, "transcript_failed");

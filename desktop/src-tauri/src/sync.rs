@@ -261,6 +261,7 @@ pub(crate) enum Pass {
 const RECOVERY_RETRY: Duration = Duration::from_secs(5 * 60);
 
 static RECOVERY_PAUSED: AtomicBool = AtomicBool::new(false);
+pub(crate) fn clear_recovery_pause() {RECOVERY_PAUSED.store(false,Ordering::Release);}
 
 pub(crate) fn report_recovery_wait<R:Runtime>(app:&AppHandle<R>,error:&str) {
     if RECOVERY_PAUSED.swap(true,Ordering::AcqRel) {return;}
@@ -286,7 +287,6 @@ pub async fn run(app: AppHandle) -> Result<()> {
             idle(Duration::from_secs(5)).await;
             continue;
         }
-        RECOVERY_PAUSED.store(false,Ordering::Release);
         if recovery_retried.elapsed() >= RECOVERY_RETRY {
             recovery_retried = Instant::now();
             let app = app.clone();

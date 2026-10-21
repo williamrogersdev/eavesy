@@ -5,7 +5,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(directory, '../..');
-const results = JSON.parse(readFileSync(resolve(directory, 'next-results.json'), 'utf8'));
+const results = JSON.parse(readFileSync(process.argv[2] ?? resolve(directory, 'next-results.json'), 'utf8'));
+for (const group of ['history_and_queue', 'reconciliation']) {
+  const sources = results.source_snapshots?.[group];
+  if (!sources || typeof sources !== 'object' || Array.isArray(sources) || !Object.keys(sources).length) {
+    console.error(`Missing compile-time source fingerprints for ${group}.`);
+    process.exit(1);
+  }
+}
 let checked = 0;
 for (const [run, sources] of Object.entries(results.source_snapshots)) {
   for (const [path, expected] of Object.entries(sources)) {
@@ -17,4 +24,5 @@ for (const [run, sources] of Object.entries(results.source_snapshots)) {
     checked++;
   }
 }
+if (!checked) { console.error('No source fingerprints were verified.'); process.exit(1); }
 if (!process.exitCode) console.log(`Verified ${checked} compile-time source fingerprints.`);
