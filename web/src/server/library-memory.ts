@@ -21,16 +21,22 @@ function folded(column: SQLWrapper, query: string): SQL {
   let expression = sql`lower(${column})`;
   const normalized = searchFold(query);
   if (normalized.includes('i')) {
-    expression = sql`replace(replace(${expression}, ${'İ'}, ${'i'}), ${'i\u0307'}, ${'i'})`;
+    expression = sql`replace(replace(${expression}, 'İ', 'i'), 'i\u0307', 'i')`;
   }
   for (const char of new Set(normalized)) {
     const upper = char.toUpperCase();
-    if (upper !== char && [...upper].length === 1 && upper.charCodeAt(0) > 127 && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
+    if (upper !== char && [...upper].length === 1 && upper.charCodeAt(0) > 127 && char.charCodeAt(0) > 127) {
+      // Numeric Unicode code points are SQL constants, never user SQL. This
+      // avoids multiplying bound parameters across every lexical term.
+      const from = sql.raw(String(upper.codePointAt(0) ?? 0));
+      const to = sql.raw(String(char.codePointAt(0) ?? 0));
+      expression = sql`replace(${expression}, char(${from}), char(${to}))`;
+    }
   }
   return expression;
 }
 const fields = { id: transcriptSegments.id, meetingId: meetings.id, title: meetings.title, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs, text: transcriptSegments.text };
-export async function librarySources(db: AppDb, userId: string, question: string, opts: { ai?: WorkersAiRunner; vectorize?: VectorizeIndex } = {}): Promise<LibrarySource[]> {
+export async function librarySources(db: AppDb, userId: string, question: string, opts: { ai?: WorkersAiRunner; vectorize?: Pick<VectorizeIndex, 'query'> } = {}): Promise<LibrarySource[]> {
   const owner = and(eq(meetings.userId, userId), isNull(meetings.deletedAt), eq(meetings.status, 'complete'));
   const title = requestedRecordingTitle(question);
   if (title) {
@@ -54,11 +60,12 @@ export async function librarySources(db: AppDb, userId: string, question: string
   if (!terms.length && !semantic.length) return [];
   const hits = terms.map(term => sql`instr(${folded(transcriptSegments.text, term)}, ${term}) > 0`);
   const lexical = hits.length ? sql`(${sql.join(hits.map(hit => sql`CASE WHEN ${hit} THEN 1 ELSE 0 END`), sql` + `)})` : sql`0`;
-  const semanticScore = semantic.length ? sql`CASE WHEN ${inArray(meetings.id, semantic)} THEN 1 ELSE 0 END` : sql`0`;
+  const semanticHit = sql`${meetings.id} IN (SELECT value FROM json_each(${JSON.stringify(semantic)}))`;
+  const semanticScore = semantic.length ? sql`CASE WHEN ${semanticHit} THEN 1 ELSE 0 END` : sql`0`;
   // Rank in SQL BEFORE limiting, so older relevant evidence cannot be crowded
   // out by recent segments matching common words. Hydrate only current rows.
   const rows = await db.select(fields).from(transcriptSegments).innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId))
-    .where(and(owner, or(...hits, ...(semantic.length ? [inArray(meetings.id, semantic)] : []))))
+    .where(and(owner, or(...hits, ...(semantic.length ? [semanticHit] : []))))
     .orderBy(desc(sql`${lexical} * 3 + ${semanticScore}`), desc(meetings.startedAt), transcriptSegments.startMs).limit(240);
   // Diverse recordings first, then fill unused space with additional context.
   const counts = new Map<string, number>();
@@ -84,7 +91,7 @@ function boundedSources(rows: LibrarySource[], limit: number): LibrarySource[] {
   return result;
 }
 
-export async function askLibrary(db: AppDb, userId: string, question: string, opts: { ai: WorkersAiRunner; vectorize?: VectorizeIndex }): Promise<LibraryAnswer> {
+export async function askLibrary(db: AppDb, userId: string, question: string, opts: { ai: WorkersAiRunner; vectorize?: Pick<VectorizeIndex, 'query'> }): Promise<LibraryAnswer> {
   const sources = await librarySources(db, userId, question, opts);
   const answer = await answerLibrary(opts.ai, question, sources);
   if (!answer.claims.length) return answer;

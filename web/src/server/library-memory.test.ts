@@ -107,3 +107,28 @@ test('normal top-K selection deliberately discloses unsearched matching evidence
   expect(sources).toHaveLength(48);
   expect(sources[0].contextTruncated).toBe(true);
 });
+
+test('ranked queries stay under D1 binding limits with 30 semantic matches and 16 Unicode terms', async () => {
+  const t = setup(); let mostBindings=0;
+  const limited = new Proxy(t.env.DB, {get(target, property) {
+    if(property==='prepare') return (query:string) => {
+      const statement=target.prepare(query);
+      return new Proxy(statement,{get(stmt,key){
+        if(key==='bind') return (...params:unknown[]) => {
+          mostBindings=Math.max(mostBindings,params.length);
+          if(params.length>100) throw new Error('D1 bound parameter limit exceeded');
+          return stmt.bind(...params);
+        };
+        return Reflect.get(stmt,key);
+      }});
+    };
+    return Reflect.get(target,property);
+  }});
+  const db=drizzle(limited,{schema});
+  const sources=await librarySources(db,'u1','éléphant москва istanbul pricing invoices shipping timing syncing clipping highlighting filling missing refining writing inviting linking',{
+    ai:{async run(){return {data:[Array(1024).fill(0)]};}},
+    vectorize:{async query(){return {count:30,matches:Array.from({length:30},(_,i)=>({id:`v${i}`,score:1,metadata:{sourceId:i===0?'m1':`other${i}`}}))};}},
+  });
+  expect(sources.some(s=>s.meetingId==='m1')).toBe(true);
+  expect(mostBindings).toBeLessThanOrEqual(100);
+});
