@@ -2,6 +2,7 @@
 title: "dictation"
 description: "Workflow details"
 date: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Use dictation in Cursor", "path": "/integrations/cursor"}, {"title": "Talk settings", "path": "/docs/talk-and-dictation"}, {"title": "Microphone troubleshooting", "path": "/guides/recording-microphone-troubleshooting"}]
 ---
@@ -23,3 +24,13 @@ Do not assume a summary is produced for every short dictation. Talk is useful fo
 Signed-in transcription settings include custom words for names and jargon. Add the terms you actually use, then test them in a sentence. These hints help recognition but do not guarantee exact spelling or code syntax. Verify case, punctuation, and filenames before passing a dictated instruction to a coding agent.
 
 If the microphone is audible but no words appear, check Speech Recognition availability separately from Accessibility. If no sound is recorded, start with the microphone troubleshooting guide.
+
+## Check your first technical prompt
+
+1. Put focus in the exact input where the words should land.
+2. Dictate one sentence with a project name or identifier you recognize.
+3. Stop and inspect the target field before submitting.
+4. Correct technical spelling and punctuation deliberately.
+5. If text is absent, distinguish an unavailable transcript from an unsuccessful paste.
+
+If text exists in Eavesy but not in the target app, copying manually helps isolate the paste path. If saved audio is audible but no text is available, check recognition and processing. Neither result calls for repeating a long prompt before the short test works.

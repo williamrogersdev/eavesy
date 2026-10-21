@@ -2,6 +2,7 @@
 title: "cursor"
 description: "Workflow details"
 date: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "A bug report to paste", "path": "/templates/ai-bug-report"}, {"title": "Local media sharing", "path": "/guides/share-local-recordings-with-ai"}, {"title": "Dictation behavior", "path": "/features/dictation"}]
 ---
@@ -33,3 +34,11 @@ Authenticate with Eavesy when prompted and approve the connection. Confirm the t
 ## Keep the handoff small
 
 For a bug, give the starting state, the triggering action, expected behavior, observed behavior, and one relevant screenshot. Eavesy does not need to control Cursor or send your whole library to make that context useful.
+
+## Review the prompt before running the agent
+
+A compact bug prompt should name the affected control, starting state, triggering action, and expected result, then point to an accessible screenshot. The [editable bug report](/templates/ai-bug-report) helps assemble those fields without generating facts for you.
+
+If you use local walkthrough context, ask Cursor to identify the files it opened and the screen state it inspected. The copied text can include OCR and file references; those references still depend on the agent’s actual environment and permissions.
+
+After the investigation, rerun the same UI steps and inspect the result yourself. Keep the capture as a record of the original symptom, and keep the agent’s explanation separate from the observations in that recording.

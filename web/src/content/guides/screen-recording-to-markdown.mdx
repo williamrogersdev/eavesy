@@ -2,12 +2,12 @@
 title: "Turn a screen recording into Markdown context"
 description: "Record a narrated walkthrough on your Mac, then combine its transcript, brief, and selected screenshots into context an AI can inspect."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Walkthrough capture", "path": "/features/walkthroughs"}, {"title": "A worked UI bug example", "path": "/examples/narrated-ui-bug"}, {"title": "Use Claude Code", "path": "/integrations/claude-code"}]
 ---
 
-A useful recording handoff includes what you said, what appeared on screen, and what you want the agent to investigate. Eavesy records the source video and, when you sign in, processes its audio into a transcript and brief. Add the visual evidence your task needs alongside that text.
+A useful recording handoff includes what you said, what appeared on screen, and what you want the agent to investigate. Eavesy records the source video and prepares local walkthrough context with narration, screen text, sampled frames, and media references on supported builds. Signed-in audio processing supplies transcription. Review the resulting context and the visual evidence before sharing.
 
 ## Record a focused walkthrough
 
@@ -33,6 +33,31 @@ Ask the agent to identify the source files it actually opened and summarize the 
 
 Signed-in audio processing uses the cloud. Local screen files and standalone screenshots are not made available by the hosted recording MCP connection. See the [sharing guide](/guides/share-local-recordings-with-ai) for the boundary.
 
-## If your build already prepares walkthrough context
+## Walkthrough context in Mac 0.5.5 and later
 
-Look for `context.md` and `walkthrough.json` in the saved folder. On builds with this newer capability, Copy supplies structured narration, extracted screen text, warnings, and media references. Review readiness and warnings before sharing. A browser chat still cannot open local media paths automatically. Use the [local context guide](/guides/local-recording-context) for the version-specific setup.
+Mac [0.5.5](https://github.com/williamrogersdev/eavesy/releases/tag/desktop-v0.5.5) added this workflow. Look for `context.md` and `walkthrough.json` in the saved folder. On supported captures, Copy supplies structured narration, extracted screen text, warnings, and media references. Review readiness and warnings before sharing. A browser chat still cannot open local media paths automatically. Use the [local context guide](/guides/local-recording-context) for the version-specific setup.
+
+## Choose the handoff for your task
+
+| What the agent needs | What to provide | What to check |
+| --- | --- | --- |
+| A decision you spoke aloud | Relevant transcript passage and your question | Names, numbers, and whether the passage is final |
+| A visible UI failure | Reproduction, screenshot, and narration | The screenshot shows the failing state |
+| A sequence or animation | Original video, if the client supports it | The recipient can actually open and inspect video |
+| A local walkthrough investigation | Capture folder or local walkthrough MCP | Readiness, warnings, and the frames actually inspected |
+
+For example, use a request like this with the actual files you selected:
+
+```text
+Investigate why Export is disabled after switching workspaces.
+Read the walkthrough context and inspect the screenshot of the disabled state.
+First identify the observed behavior and the source files you opened.
+Then inspect the relevant project code. Keep possible causes separate from
+what the capture establishes, and repeat the reproduction after a change.
+```
+
+## When the handoff is incomplete
+
+If you have only a video, keep it and add a short written reproduction; do not rename it to Markdown. If cloud text is still processing, say that explicitly and use the visible evidence you already have. If the agent says it cannot open an image, attach that image through its supported input rather than repeating the same local path.
+
+A useful final handoff contains one problem, its starting state, the expected and actual behavior, accessible evidence, and a specific request. The report is complete when the recipient can inspect those inputs, not merely when you have copied text.

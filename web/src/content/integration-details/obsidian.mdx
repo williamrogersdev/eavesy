@@ -2,6 +2,7 @@
 title: "obsidian"
 description: "Workflow details"
 date: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Meeting Markdown example", "path": "/examples/meeting-to-markdown"}, {"title": "Decision log template", "path": "/templates/decision-log"}, {"title": "Recording file format", "path": "/docs/session-folder-format"}]
 ---
@@ -25,3 +26,19 @@ Signed-in recording files can participate in Eavesy's synchronization workflow. 
 ## A portable decision note
 
 Use the decision log template to separate an agreed choice, its source, and missing details. The worked meeting example includes a fictional transcript and hand-authored brief you can open directly in your vault. It does not require an account or a plugin.
+
+## A small vault structure you can maintain
+
+```text
+Project/
+  Launch decision.md
+  Sources/
+    Launch planning/
+      summary.md
+      transcript.md
+      audio.m4a
+```
+
+This is a suggested organization, not an automatic Eavesy export layout. Keep your edited decision note separate from the source copy. Add a link to the source transcript and verify it opens from the note’s new location. If you also keep audio, preserve enough context to identify the recording and the relevant passage.
+
+Before moving a large library, copy one completed capture and open its note, transcript, and media from the vault. Confirm which files your chosen sync service includes. A working Markdown link on this Mac does not establish that an absolute path works on a second device.

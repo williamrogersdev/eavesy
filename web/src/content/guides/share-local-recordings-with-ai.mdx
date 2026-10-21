@@ -2,7 +2,7 @@
 title: "Share local recordings with an AI assistant"
 description: "Choose text, attachments, or authorized file access so the assistant receives the evidence you intend to share."
 date: "2026-10-20"
-modified: "2026-10-20"
+modified: "2026-10-21"
 author: "Eavesy"
 related: [{"title": "Screen recording to Markdown", "path": "/guides/screen-recording-to-markdown"}, {"title": "Context for agents", "path": "/docs/context-for-agents"}, {"title": "Privacy and data", "path": "/docs/privacy-and-data"}]
 ---
@@ -32,3 +32,27 @@ Use the hosted Eavesy MCP server for account recordings and dictations. It can r
 ## Review before sharing
 
 Remove unrelated private messages and credentials from any text or visual material you share. Sending an attachment to another assistant is a separate data transfer from keeping it locally in Eavesy. Once the assistant has the evidence, ask it to restate the observed problem and identify any missing input before acting.
+
+## A handoff you can paste
+
+```text
+Task: explain the observed failure before suggesting a fix.
+Source: the attached screenshot and the transcript excerpt below.
+Observation: [what happened, including the starting state and trigger].
+Expected result: [the behavior you expected].
+Transcript excerpt: [the relevant words and source timestamp, if available].
+Unknowns: [anything the recording did not establish].
+First tell me which evidence you can actually inspect and what is missing.
+```
+
+Replace the bracketed fields with your observations. For a local coding agent, add the actual folder path. For a browser assistant, use attachments rather than expecting it to resolve that path.
+
+## Check the handoff before acting on the answer
+
+1. Does the assistant identify the intended recording or screenshot?
+2. Does its description match the visible state and the spoken passage?
+3. Does it distinguish an observation from a proposed cause?
+4. Does it name the source it could not open?
+5. Does the next action address your original question?
+
+If it gives a confident diagnosis without inspecting the required visual evidence, provide the missing input and ask it to reassess. A plausible explanation is not a substitute for access to the source.
