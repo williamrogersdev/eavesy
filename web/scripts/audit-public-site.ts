@@ -79,12 +79,10 @@ for (let i = 0; i < unseen.length; i += 6) {
   const outcomes = await Promise.allSettled(
     unseen.slice(i, i + 6).map(async (path) => {
       const response = await request(`${origin}${path}`, {
-        redirect: "manual",
+        redirect: "follow",
       });
       check(
-        response.status === 200 ||
-          response.status === 301 ||
-          response.status === 302,
+        response.status === 200,
         `Broken internal link ${path}: ${response.status}`,
       );
     }),
