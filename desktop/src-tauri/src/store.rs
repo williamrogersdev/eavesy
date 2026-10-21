@@ -56,11 +56,14 @@ fn recover_shared_history(
 ) -> Result<MutexGuard<'static, History>, String> {
     // A panic must not leave an open writer transaction or a half-built index.
     // Reopen with normal migration/durability checks before clearing poison.
-    guard.rollback_uncommitted()?;
+    guard
+        .rollback_uncommitted()
+        .map_err(|error| format!("Could not roll back interrupted local history: {error}"))?;
     *guard = History::open(
         &shared.directory.join("history.sqlite3"),
         &shared.directory.join("recordings.json"),
-    )?;
+    )
+    .map_err(|error| format!("Could not reopen local history after a worker failure: {error}"))?;
     shared.history.clear_poison();
     crate::telemetry::capture(
         "history.lock.recovered",
@@ -531,6 +534,35 @@ mod persistence_tests {
         }
     }
 
+    #[test]
+    fn a_failed_reopen_reports_the_failure_and_can_recover_after_storage_returns() {
+        let root =
+            std::env::temp_dir().join(format!("eavesy-unavailable-{}", uuid::Uuid::new_v4()));
+        let saved = root.with_extension("saved");
+        let fixture = app(&root);
+        append(fixture.handle(), recording("safe".into())).unwrap();
+        let shared = shared_history(fixture.handle()).unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = shared.history.lock().unwrap();
+            panic!("test panic");
+        }))
+        .is_err());
+        std::fs::rename(&root, &saved).unwrap();
+        std::fs::write(&root, b"temporarily unavailable directory").unwrap();
+        let first = get(fixture.handle(), "safe").unwrap_err();
+        let second = get(fixture.handle(), "safe").unwrap_err();
+        assert!(first.contains("Could not reopen local history"));
+        assert!(second.contains("Could not reopen local history"));
+        assert!(shared.history.is_poisoned());
+        std::fs::remove_file(&root).unwrap();
+        std::fs::rename(&saved, &root).unwrap();
+        assert_eq!(
+            get(fixture.handle(), "safe").unwrap().unwrap().title,
+            "Initial"
+        );
+        assert!(!shared.history.is_poisoned());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn poisoned_history_reopens_for_both_indexing_and_normal_mutations() {
         let root = std::env::temp_dir().join(format!("eavesy-poisoned-{}", uuid::Uuid::new_v4()));

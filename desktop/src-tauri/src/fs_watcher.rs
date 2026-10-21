@@ -238,38 +238,84 @@ fn reconcile_queued_startup<R: Runtime>(
 
 /// Cloud writes must wait for offline edits to enter the outbox. This waits on
 /// the sync task, never the main thread, and is checked again after root changes.
-pub async fn wait_until_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+#[derive(Debug, PartialEq)]
+pub enum RecoveryWaitError {
+    PendingTimeout,
+    Failed(String),
+}
+impl std::fmt::Display for RecoveryWaitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PendingTimeout => f.write_str(
+                "Local offline-edit recovery is still pending; processing remains queued",
+            ),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+pub async fn wait_until_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), RecoveryWaitError> {
     wait_until_ready_for(app, Duration::from_secs(30)).await
 }
 
 async fn wait_until_ready_for<R: Runtime>(
     app: &AppHandle<R>,
     budget: Duration,
-) -> Result<(), String> {
+) -> Result<(), RecoveryWaitError> {
     let began = std::time::Instant::now();
     loop {
         let ready = match app.try_state::<WatcherManager>() {
-            Some(manager) => manager.is_ready()?,
+            Some(manager) => manager.is_ready().map_err(RecoveryWaitError::Failed)?,
             None => true,
         };
         if ready {
+            crate::sync::clear_recovery_pause();
             return Ok(());
         }
         if began.elapsed() >= budget {
-            return Err("Local offline-edit recovery is still pending; cloud writes remain paused and will retry".into());
+            return Err(RecoveryWaitError::PendingTimeout);
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
 
 /// Only call from blocking processing workers, never the UI or an async worker.
-pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) {
+pub fn wait_for_recovery_on_worker<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let result = wait_worker_policy(
+        |remaining| {
+            tauri::async_runtime::block_on(wait_until_ready_for(
+                app,
+                remaining.min(Duration::from_secs(30)),
+            ))
+        },
+        |remaining| {
+            crate::sync::report_recovery_wait(app, &RecoveryWaitError::PendingTimeout.to_string());
+            std::thread::sleep(remaining.min(Duration::from_secs(5)));
+        },
+        Duration::from_secs(15 * 60),
+    );
+    if let Err(error) = &result {
+        crate::sync::report_recovery_wait(app, error);
+    }
+    result
+}
+
+fn wait_worker_policy(
+    mut wait: impl FnMut(Duration) -> Result<(), RecoveryWaitError>,
+    mut defer: impl FnMut(Duration),
+    budget: Duration,
+) -> Result<(), String> {
+    let began = std::time::Instant::now();
+    let remaining = || {
+        budget.checked_sub(began.elapsed()).filter(|left|!left.is_zero())
+        .ok_or_else(||"Local file recovery is taking too long. Retry processing after your local files are ready.".to_string())
+    };
     loop {
-        match tauri::async_runtime::block_on(wait_until_ready(app)) {
-            Ok(()) => return,
-            Err(error) => crate::sync::report_recovery_wait(app, &error),
+        match wait(remaining()?) {
+            Ok(()) => return Ok(()),
+            Err(RecoveryWaitError::PendingTimeout) => defer(remaining()?),
+            Err(RecoveryWaitError::Failed(error)) => return Err(error),
         }
-        std::thread::sleep(Duration::from_secs(5));
     }
 }
 
@@ -961,6 +1007,45 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn a_slow_recovery_defers_processing_but_a_failed_recovery_finishes_the_job() {
+        let attempts = std::cell::Cell::new(0);
+        let deferrals = std::cell::Cell::new(0);
+        let result = wait_worker_policy(
+            |_| {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                if attempt < 2 {
+                    Err(RecoveryWaitError::PendingTimeout)
+                } else {
+                    Ok(())
+                }
+            },
+            |_| deferrals.set(deferrals.get() + 1),
+            Duration::from_secs(1),
+        );
+        assert!(result.is_ok());
+        assert_eq!(deferrals.get(), 2);
+        assert_eq!(attempts.get(), 3);
+        assert_eq!(
+            wait_worker_policy(
+                |_| Err(RecoveryWaitError::Failed("failed".into())),
+                |_| panic!("a failed job must not remain queued"),
+                Duration::from_secs(1),
+            ),
+            Err("failed".into())
+        );
+    }
+
+    #[test]
+    fn a_permanently_pending_recovery_has_an_overall_worker_deadline() {
+        let result = wait_worker_policy(
+            |_| Err(RecoveryWaitError::PendingTimeout),
+            |_| panic!("the elapsed deadline must finish job cleanup"),
+            Duration::ZERO,
+        );
+        assert!(result.unwrap_err().contains("taking too long"));
+    }
     #[tokio::test]
     async fn a_recovery_panic_is_an_explicit_failure_not_permanent_pending_readiness() {
         let root =
@@ -984,8 +1069,23 @@ mod tests {
             .await
             .unwrap()
             .unwrap_err();
-        assert!(error.contains("recovery failed"));
+        assert!(error.to_string().contains("recovery failed"));
         assert!(!ready.load(Ordering::Acquire));
+        let handle = app.handle().clone();
+        let (done, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = done.send(wait_for_recovery_on_worker(&handle));
+        });
+        let outcome = result.recv_timeout(Duration::from_secs(2));
+        if outcome.is_err() {
+            // Never join a regressed, blocked worker: detach before failing the
+            // test, and let process exit clean it up instead of hanging CI.
+            drop(worker);
+            panic!("failed-recovery worker did not finish cleanup");
+        }
+        worker.join().unwrap();
+        assert!(outcome.unwrap().is_err());
+
         assert!(finish_startup(&ready, &failed, || {}));
         assert!(wait_until_ready(app.handle()).await.is_ok());
     }

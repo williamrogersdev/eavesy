@@ -14,12 +14,11 @@ pub fn spawn(
     is_video: bool,
 ) {
     std::thread::spawn(move || {
-        crate::fs_watcher::wait_for_recovery_on_worker(&app);
-        let result = settings::device_credential(&app)
+        let result = crate::fs_watcher::wait_for_recovery_on_worker(&app).and_then(|()| settings::device_credential(&app)
             .ok_or_else(|| {
                 "Pair this Mac with your Eavesy account before transcribing recordings.".to_string()
             })
-            .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS));
+            .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS)));
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
