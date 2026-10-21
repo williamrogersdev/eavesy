@@ -67,6 +67,9 @@ pub fn set_state(app: &AppHandle, state: HudState) {
 
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
+        if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
+            release_editor_on_main(&app);
+        }
         show_on_main(&app);
         fit_on_main(&app);
     });
@@ -359,10 +362,32 @@ fn save_frame(app: &AppHandle) {
 
 pub fn hide_on_main(app: &AppHandle) { imp::hide(app); }
 
+static EDITOR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Editing opts into app activation so AppKit routes the Edit menu shortcuts
+/// to WKWebView. Merely showing a completed dictation remains passive.
+pub fn focus_editor_on_main(app: &AppHandle) {
+    EDITOR_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::app_menu::activate();
+    imp::focus_editor(app);
+}
+
+fn release_editor_on_main(app: &AppHandle) {
+    if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
+        crate::app_menu::return_focus();
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use tauri::{AppHandle, WebviewWindow};
     use tauri_nspanel::{cocoa::appkit::NSWindowCollectionBehavior, ManagerExt, WebviewWindowExt};
+
+    pub fn focus_editor(app: &AppHandle) {
+        if let Ok(panel) = app.get_webview_panel("hud") {
+            panel.make_key_window();
+        }
+    }
 
     pub fn hide(app: &AppHandle) {
         if let Ok(panel) = app.get_webview_panel("hud") { panel.order_out(None); }
@@ -426,6 +451,9 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use tauri::{AppHandle, Manager, WebviewWindow};
+    pub fn focus_editor(app: &AppHandle) {
+        if let Some(window) = app.get_webview_window("hud") { let _ = window.set_focus(); }
+    }
     pub fn hide(app: &AppHandle) { if let Some(window) = app.get_webview_window("hud") { let _ = window.hide(); } }
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();

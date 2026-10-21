@@ -315,6 +315,32 @@ pub fn show_launcher(app: AppHandle) {
 }
 
 #[tauri::command]
+pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = crate::hud::current();
+        if matches!(state.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing | crate::hud::Phase::Done) && state.session_id.as_deref() == Some(session_id.as_str()) {
+            crate::hud::focus_editor_on_main(&handle);
+        }
+    }).map_err(|error| format!("Could not focus transcript editor: {error}"))
+}
+
+#[tauri::command]
+pub async fn update_live_preview_edit(app: AppHandle, session_id: String, source: String, text: String, revision: u64) -> Result<(), String> {
+    crate::live_edit::update(&session_id, source, text, revision)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(recording) = store::get(&app, &session_id)? {
+            if recording.folder_path.is_some() {
+                if let Some(text) = crate::live_edit::corrected(&session_id, recording.transcript.as_deref().unwrap_or("")) {
+                    store::save_preview_transcript(&app, &session_id, &text)?;
+                }
+            }
+        }
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
     let state = crate::hud::current();
     if session_id.is_some() && state.session_id != session_id { return; }
@@ -585,6 +611,7 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
             if ready {
                 let original = store::get(&app, &session_id)?.and_then(|rec| rec.transcript);
                 store::save_preview_transcript(&app, &session_id, &text)?;
+                crate::live_edit::forget(&session_id);
                 if let Some(original) = original.filter(|original| original != &text) {
                     let learning_app = app.clone();
                     let corrected = text.clone();

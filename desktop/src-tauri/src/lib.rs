@@ -5,6 +5,7 @@ mod audio_upload;
 mod base_url;
 mod captions;
 mod live_transcript;
+mod live_edit;
 mod visual;
 mod commands;
 mod diagnostics;
@@ -141,6 +142,8 @@ pub fn run() {
             commands::set_panel_pinned,
             commands::get_hud_state,
             commands::save_preview_transcript,
+            commands::focus_preview_editor,
+            commands::update_live_preview_edit,
             commands::sync_status,
             commands::show_settings,
             commands::pair_device,

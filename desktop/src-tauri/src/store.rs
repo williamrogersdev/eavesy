@@ -185,6 +185,10 @@ pub fn set_transcript<R: Runtime>(
     transcript: Option<String>,
     status: &str,
 ) -> Result<(), String> {
+    if let Some(corrected) = transcript.as_deref().and_then(|text| crate::live_edit::corrected(id, text)) {
+        save_preview_transcript(app, id, &corrected)?;
+        return set_status(app, id, status);
+    }
     mutate(app, id, |rec| {
         let local = rec
             .folder_path
@@ -213,6 +217,11 @@ pub fn set_result<R: Runtime>(
     status: &str,
     transcript_final: bool,
 ) -> Result<Option<(StoredRecording, bool)>, String> {
+    let mut live_changed = false;
+    if let Some(corrected) = crate::live_edit::corrected(id, &transcript) {
+        live_changed = get(app, id)?.is_some_and(|recording| recording.transcript.as_deref() != Some(corrected.as_str()));
+        if live_changed { save_preview_transcript(app, id, &corrected)?; }
+    }
     mutate(app, id, |recording| {
         let folder = recording.folder_path.as_deref().map(Path::new);
         let is_local = |name: &str| {
@@ -245,7 +254,7 @@ pub fn set_result<R: Runtime>(
         recording.status = status.to_string();
         let changed = *recording != before;
         Ok((recording.clone(), changed))
-    })
+    }).map(|result| result.map(|(recording, changed)| (recording, changed || live_changed)))
 }
 
 fn takes_cloud_transcript(
@@ -777,6 +786,39 @@ mod persistence_tests {
             "stale again",
         )
         .unwrap_err();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn live_correction_merges_later_speech_into_durable_history_and_outbox() {
+        let root = std::env::temp_dir().join(format!("eavesy-live-edit-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        crate::sqlite::initialize(app).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let folder = root.join("recording");
+        let mut rec = recording(id.clone());
+        rec.folder_path = Some(folder.to_string_lossy().into_owned());
+        rec.transcript = Some("Check the tickets".into());
+        append(app, rec.clone()).unwrap();
+        crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &rec, None, None).unwrap();
+        crate::live_edit::update(&id, "Check the tickets".into(), "Review the tickets".into(), 1).unwrap();
+        set_transcript(app, &id, Some("Check the tickets that arrived overnight.".into()), "processing").unwrap();
+        assert_eq!(get(app, &id).unwrap().unwrap().transcript.as_deref(), Some("Review the tickets that arrived overnight."));
+        let expected = "Review the tickets that arrived overnight. Then make a plan.";
+        let (updated, _) = set_result(app, &id, "A recording", "Check the tickets that arrived overnight. Then make a plan.".into(), None, None, "complete", true).unwrap().unwrap();
+        assert_eq!(updated.transcript.as_deref(), Some(expected));
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), expected);
+        assert_eq!(crate::sqlite::next_file_edit(app).unwrap().unwrap().content_md, expected);
+        let data = app.path().app_data_dir().unwrap();
+        assert_eq!(History::open(&data.join("history.sqlite3"), &data.join("recordings.json")).unwrap().get(&id).unwrap().unwrap().transcript.as_deref(), Some(expected));
+        crate::live_edit::forget(&id);
+        // Further explicit edits remain protected from a late cloud result.
+        save_preview_transcript(app, &id, "My finished correction.").unwrap();
+        set_transcript(app, &id, Some("Late original".into()), "complete").unwrap();
+        assert_eq!(get(app, &id).unwrap().unwrap().transcript.as_deref(), Some("My finished correction."));
         std::fs::remove_dir_all(root).unwrap();
     }
 

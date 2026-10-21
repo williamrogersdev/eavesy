@@ -382,7 +382,7 @@ body {
 .ctl-editor {
   display: block;
   width: 100%;
-  height: 80px;
+  height: calc(var(--ctl-lines, 4) * 20px);
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -394,4 +394,4 @@ body {
   user-select: text;
   -webkit-user-select: text;
 }
-.ctl-editor:focus-visible { box-shadow: inset 2px 0 0 var(--ctl-ink-3); padding-left: 8px; }
+.ctl-editor:focus-visible { box-shadow: inset 0 -1px 0 var(--ctl-ink-3); }
