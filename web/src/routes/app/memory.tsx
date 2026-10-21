@@ -46,6 +46,7 @@ function Memory() {
     {error && <p role="alert" className="text-danger">{error}</p>}
     <div aria-live="polite">
       {answer?.abstained && <p>I couldn’t find enough evidence in your recordings to answer that.</p>}
+      {!!answer?.unanswered?.length && <div className="mb-4 rounded border p-4"><p className="font-medium">Not established by these recordings</p><ul className="list-inside list-disc">{answer.unanswered.map(part => <li key={part}>{part}</li>)}</ul></div>}
       <ul className="space-y-4">{answer?.claims.map((claim, i) => <li className="space-y-2 rounded-lg border p-4" key={i}>
         <p className="text-xs text-muted-foreground">{claim.kind.replace('_', ' ')}</p>
         <p>{claim.text}</p>
