@@ -79,6 +79,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
+        let learning_target = crate::paste_learning::capture();
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.
@@ -95,6 +96,7 @@ pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
                 .show();
             return Err(message);
         }
+        crate::paste_learning::observe(app.clone(), learning_target, text.to_string());
     }
 
     // The key press is posted, not awaited: give the app time to read the
@@ -542,14 +544,16 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
-    let mut state = crate::hud::current();
-    if state.phase == crate::hud::Phase::Done {
-        if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
-            if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut state = crate::hud::current();
+        if state.phase == crate::hud::Phase::Done {
+            if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
+                if let Some(transcript) = recording.transcript { state.message = Some(transcript); }
+            }
         }
-    }
-    state
+        state
+    }).await.unwrap_or_else(|_| crate::hud::current())
 }
 
 #[tauri::command]
@@ -560,7 +564,20 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
         for _ in 0..50 {
             let ready = store::get(&app, &session_id)?.is_some_and(|rec| rec.folder_path.is_some());
             if ready {
+                let original = store::get(&app, &session_id)?.and_then(|rec| rec.transcript);
                 store::save_preview_transcript(&app, &session_id, &text)?;
+                if let Some(original) = original.filter(|original| original != &text) {
+                    let learning_app = app.clone();
+                    let corrected = text.clone();
+                    // Durable local edits work offline; dictionary feedback follows separately.
+                    std::thread::spawn(move || {
+                        if crate::settings::device_credential(&learning_app).is_none() { return; }
+                        match crate::learning::feedback(&learning_app, &original, &corrected) {
+                            Ok(value) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "saved", "learned": value["learned"] })),
+                            Err(_) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "failed", "message": "Transcript saved. Dictionary could not connect; use Edit transcript to retry learning." })),
+                        }
+                    });
+                }
                 let _ = app.emit("recordings:updated", ());
                 return Ok(());
             }

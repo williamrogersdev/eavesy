@@ -28,6 +28,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
+import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { ProjectsCard, TranscriptionCard } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
@@ -301,6 +302,7 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
         {isDesktop() && account && (
           <>
             <TranscriptionCard />
+            <DictionarySettings />
             <ProjectsCard onChanged={onProjectsChanged} />
           </>
         )}
