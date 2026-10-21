@@ -119,13 +119,17 @@ pub fn completed_session_for_remote<R: Runtime>(app: &AppHandle<R>, remote_meeti
 /// take it as the baseline so later changes made elsewhere can replace it.
 /// Leaves the file alone if it changed again after the edit was queued.
 pub fn adopt_uploaded_edit<R: Runtime>(app: &AppHandle<R>, meeting_id: &str, role: &str, hash: &str) -> Result<(), String> {
-    open(app)?
+    let adopted = open(app)?
         .execute(
             "UPDATE filesystem_state SET last_written_hash=?3, last_written_at=?4
              WHERE meeting_id=?1 AND file_role=?2 AND last_observed_hash=?3",
             params![meeting_id, role, hash, chrono::Utc::now().timestamp_millis()],
         )
         .map_err(|error| format!("adopt uploaded edit: {error}"))?;
+    // None when the file changed again since: that newer edit is queued and adopted in turn.
+    if adopted == 0 {
+        eprintln!("desktop ingest: {role} of {meeting_id} changed again after its edit was sent; keeping it as a local edit");
+    }
     Ok(())
 }
 

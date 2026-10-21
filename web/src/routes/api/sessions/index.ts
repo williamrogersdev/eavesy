@@ -56,7 +56,7 @@ export const Route = createFileRoute('/api/sessions/')({
         const since = search.has('changedSince') ? Math.max(Math.floor(Number(search.get('changedSince')) || 0), 0) : null;
         // With afterId, (changedSince, afterId) is the last meeting the client handled: meetings
         // changed at that same moment with a later id still come, so ties across pages are not lost.
-        const afterId = search.get('afterId');
+        const afterId = search.get('afterId')?.slice(0, 100) || null;
         if (offset > MAX_LIST_OFFSET) return Response.json({ items: [] });
         const query = getDb()
           .select({

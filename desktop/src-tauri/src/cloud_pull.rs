@@ -65,6 +65,10 @@ struct PullState {
     /// The id of the last meeting handled at `changes_since`, for meetings changed at the same moment.
     #[serde(default)]
     changes_after: Option<String>,
+    /// Changed meetings whose download failed, by cloud id, with their local id:
+    /// the cursor has moved past them, so they are retried from here.
+    #[serde(default)]
+    retry: BTreeMap<String, String>,
     /// The name of the device each pulled meeting was recorded on.
     #[serde(default)]
     origins: BTreeMap<String, String>,
@@ -155,6 +159,7 @@ pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String>
     update_state(app, |state| {
         state.pulled.remove(id);
         state.origins.remove(id);
+        state.retry.remove(id);
         state.dismissed.insert(id.to_string());
     })?;
     Ok(true)
@@ -344,11 +349,38 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
     let state = load_state(app).map_err(|error| anyhow!(error))?;
     let first = state.changes_since.is_none();
     let since = state.changes_since.unwrap_or(0);
-    let download_after = if first { chrono::Utc::now().timestamp_millis() - FIRST_CHANGES_WINDOW_MS } else { since };
+    // Everything the feed lists is past the cursor; only the first check skips old changes.
+    let download_after = first.then(|| chrono::Utc::now().timestamp_millis() - FIRST_CHANGES_WINDOW_MS);
     let mut cursor = (since, state.changes_after.clone());
     let mut updated = 0;
     let mut downloads = 0;
-    loop {
+
+    for (remote_id, local_id) in state.retry {
+        if downloads >= PER_PULL {
+            break;
+        }
+        if failed_recently(&remote_id) {
+            continue;
+        }
+        downloads += 1;
+        match fetch_and_apply(app, api, token, &local_id, &remote_id).await {
+            Ok(changed) => {
+                update_state(app, |state| {
+                    state.retry.remove(&remote_id);
+                })
+                .map_err(|error| anyhow!(error))?;
+                updated += usize::from(changed);
+            }
+            Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
+            Err(error) => {
+                eprintln!("cloud pull: could not refresh {remote_id} again: {error:#}");
+                mark_failed(&remote_id);
+            }
+        }
+    }
+
+    let mut finished = false;
+    for _ in 0..MAX_PAGES {
         let response = api
             .client
             .get(api.url(&match &cursor.1 {
@@ -382,35 +414,30 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                 changed |= remember_origin(app, &meeting.id, meeting.device_name.as_deref()).map_err(|error| anyhow!(error))?;
                 changed |= store::set_source(app, &local_id, &meeting.local_source()).map_err(|error| anyhow!(error))?;
             }
-            if changed_at > download_after && !failed_recently(&meeting.id) {
+            if download_after.is_none_or(|after| changed_at > after) {
                 if downloads >= PER_PULL {
                     update_cursor(app, &cursor)?;
                     return Ok(updated);
                 }
-                downloads += 1;
-                match download(api, token, &meeting.id).await {
-                    Ok(result) => {
-                        let applied = {
-                            let app = app.clone();
-                            let local_id = local_id.clone();
-                            let remote_id = meeting.id.clone();
-                            crate::sync::blocking(move || apply(&app, &local_id, &remote_id, &result)).await
-                        };
-                        match applied {
-                            Ok(applied) => changed |= applied,
-                            Err(error) => {
-                                eprintln!("cloud pull: could not apply changes to {}: {error:#}", meeting.id);
-                                mark_failed(&meeting.id);
-                            }
-                        }
-                    }
+                let outcome = if failed_recently(&meeting.id) {
+                    Err(anyhow!("failed recently"))
+                } else {
+                    downloads += 1;
+                    fetch_and_apply(app, api, token, &local_id, &meeting.id).await
+                };
+                match outcome {
+                    Ok(applied) => changed |= applied,
                     Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => {
                         update_cursor(app, &cursor)?;
                         return Err(error);
                     }
                     Err(error) => {
-                        eprintln!("cloud pull: could not refresh {}: {error:#}", meeting.id);
+                        eprintln!("cloud pull: could not refresh {}, will retry: {error:#}", meeting.id);
                         mark_failed(&meeting.id);
+                        update_state(app, |state| {
+                            state.retry.insert(meeting.id.clone(), local_id.clone());
+                        })
+                        .map_err(|error| anyhow!(error))?;
                     }
                 }
             }
@@ -420,8 +447,12 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             cursor = (changed_at, Some(meeting.id.clone()));
         }
         if last_page || listed.items.is_empty() {
+            finished = true;
             break;
         }
+    }
+    if !finished {
+        eprintln!("cloud pull: read {MAX_PAGES} pages of changes; continuing next time");
     }
     update_cursor(app, &cursor)?;
     if updated > 0 {
@@ -430,6 +461,14 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
         }
     }
     Ok(updated)
+}
+
+async fn fetch_and_apply<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, local_id: &str, remote_id: &str) -> Result<bool> {
+    let result = download(api, token, remote_id).await?;
+    let app = app.clone();
+    let local_id = local_id.to_string();
+    let remote_id = remote_id.to_string();
+    crate::sync::blocking(move || apply(&app, &local_id, &remote_id, &result)).await
 }
 
 /// The list comes oldest change first, so the last meeting handled is the new cursor.
@@ -910,5 +949,108 @@ mod tests {
     fn notes_differing_only_by_their_header_are_the_same_notes() {
         assert_eq!(notes_body("---\nid: \"x\"\n---\n\n# Notes\n\nHello\n"), "Hello");
         assert_eq!(notes_body("Hello"), "Hello");
+    }
+
+    async fn pulled(handle: &AppHandle<MockRuntime>, server: &MockServer, root: &Path, ids: &[&str]) -> Api {
+        let items: Vec<serde_json::Value> = ids.iter().map(|id| listed(id, "Pulled")).collect();
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param_is_missing("changedSince"))
+            .respond_with(listing(serde_json::Value::Array(items)))
+            .mount(server)
+            .await;
+        for id in ids {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/sessions/{id}/result")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Pulled")))
+                .up_to_n_times(1)
+                .mount(server)
+                .await;
+        }
+        let api = Api::new(server.uri()).unwrap();
+        while pull(handle, &api, "token", root).await.unwrap() > 0 {}
+        api
+    }
+
+    #[tokio::test]
+    async fn meetings_changed_at_the_same_moment_are_all_refreshed_across_passes() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let ids: Vec<String> = (0..=PER_PULL).map(|index| format!("m{index}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let api = pulled(handle, &server, &root, &refs).await;
+        let at = chrono::Utc::now().timestamp_millis() - 1_000;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", "0"))
+            .respond_with(listing(serde_json::Value::Array(ids.iter().map(|id| changed(id, "Renamed", at)).collect())))
+            .mount(&server)
+            .await;
+        let last = ids[PER_PULL - 1].clone();
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", at.to_string()))
+            .and(wiremock::matchers::query_param("afterId", last.as_str()))
+            .respond_with(listing(serde_json::json!([changed(&ids[PER_PULL], "Renamed", at)])))
+            .expect(1..)
+            .mount(&server)
+            .await;
+        for id in &ids {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/sessions/{id}/result")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Renamed")))
+                .mount(&server)
+                .await;
+        }
+
+        assert_eq!(refresh(handle, &api, "token").await.unwrap(), PER_PULL);
+        assert_eq!(load_state(handle).unwrap().changes_after.as_deref(), Some(last.as_str()));
+        assert_eq!(refresh(handle, &api, "token").await.unwrap(), 1, "the one left at that moment still comes");
+        assert!(store::load_all(handle).iter().all(|recording| recording.title == "Renamed"));
+    }
+
+    #[tokio::test]
+    async fn a_refresh_that_fails_is_retried_after_the_cursor_moves_on() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let api = pulled(handle, &server, &root, &["flaky"]).await;
+        let at = chrono::Utc::now().timestamp_millis() - 1_000;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", "0"))
+            .respond_with(listing(serde_json::json!([changed("flaky", "Fixed", at)])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions"))
+            .and(wiremock::matchers::query_param("changedSince", at.to_string()))
+            .respond_with(listing(serde_json::json!([])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/flaky/result"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/flaky/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result_body("Fixed")))
+            .mount(&server)
+            .await;
+
+        refresh(handle, &api, "token").await.unwrap();
+        let state = load_state(handle).unwrap();
+        assert_eq!(state.changes_after.as_deref(), Some("flaky"));
+        assert!(state.retry.contains_key("flaky"));
+
+        FAILED.lock().unwrap().remove("flaky");
+        assert_eq!(refresh(handle, &api, "token").await.unwrap(), 1);
+        assert_eq!(store::load_all(handle)[0].title, "Fixed");
+        assert!(load_state(handle).unwrap().retry.is_empty());
     }
 }
