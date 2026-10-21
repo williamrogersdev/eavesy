@@ -18,9 +18,10 @@ export function queryTerms(question: string): string[] {
 // case-insensitive accented/Cyrillic matching without scanning rows in JS.
 function folded(column: SQLWrapper, query: string): SQL {
   let expression = sql`${column}`;
+  if (query.toLowerCase().includes('i\u0307')) expression = sql`replace(${expression}, ${'İ'}, ${'i\u0307'})`;
   for (const char of new Set(query.toLowerCase())) {
     const upper = char.toUpperCase();
-    if (upper !== char && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
+    if (upper !== char && [...upper].length === 1 && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
   }
   return sql`lower(${expression})`;
 }
@@ -36,7 +37,7 @@ export async function librarySources(db: AppDb, userId: string, question: string
     const score = hits.length ? sql`(${sql.join(hits, sql` + `)})` : sql`0`;
     const rows = await db.select(fields).from(transcriptSegments).innerJoin(meetings, eq(meetings.id, transcriptSegments.meetingId))
       .where(and(owner, sql`${folded(sql`trim(${meetings.title})`, title)} = ${title.toLowerCase()}`))
-      .orderBy(desc(score), desc(meetings.startedAt), transcriptSegments.startMs).limit(256);
+      .orderBy(desc(score), desc(meetings.startedAt), transcriptSegments.startMs).limit(257);
     return boundedSources(rows, 256);
   }
   const terms = queryTerms(question);
@@ -64,12 +65,16 @@ export async function librarySources(db: AppDb, userId: string, question: string
 function boundedSources(rows: LibrarySource[], limit: number): LibrarySource[] {
   let remaining = 24_000;
   const result: LibrarySource[] = [];
+  let truncated = rows.length > limit;
   for (const row of rows) {
     const text = row.text.slice(0, 1200);
-    if (!text.trim() || text.length > remaining) continue;
+    if (!text.trim()) continue;
+    if (text.length > remaining) { truncated = true; continue; }
+    if (row.text.length > 1200) truncated = true;
     result.push({ ...row, text }); remaining -= text.length;
     if (result.length === limit) break;
   }
+  if (truncated && result.length) result[0] = { ...result[0], contextTruncated: true };
   return result;
 }
 

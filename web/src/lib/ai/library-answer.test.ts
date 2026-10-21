@@ -31,6 +31,11 @@ test('omitted unanswered metadata does not reject otherwise valid evidence', () 
 });
 test('a malformed audit cannot silently restore an unsupported draft', async () => {
   let calls=0;
-  await expect(answerLibrary({async run(){calls++;return {response:{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:[calls===1?'s1':'invented']}],unanswered:[]}};}},'Where?',sources)).rejects.toThrow('Unsupported library citation');
+  await expect(answerLibrary({async run(){calls++;return {response:{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:[calls===1?'s1':'invented']}],unanswered:[]}};}},'Where?',sources)).rejects.toThrow('The answer did not pass evidence verification. Please retry.');
   expect(calls).toBe(2);
+});
+
+test('truncated evidence is visible independently of model output', () => {
+  const answer = hydrateLibraryAnswer({claims:[],unanswered:[]},[{...sources[0],contextTruncated:true}]);
+  expect(answer.warnings?.[0]).toContain('Additional details may exist');
 });

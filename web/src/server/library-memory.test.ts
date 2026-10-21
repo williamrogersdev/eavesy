@@ -81,3 +81,10 @@ test('later details in long titled recordings rank ahead of the context budget',
   t.sqlite.run("INSERT INTO transcript_segments(id,meeting_id,start_ms,end_ms,text) VALUES ('last','m1',999000,1000000,'Bring three green apples to the kitchen table.')");
   expect((await librarySources(t.db,'u1','In the recording titled "m1", how many green apples?')).some(s=>s.id==='last')).toBe(true);
 });
+
+test('case folding avoids expanding German SS and handles dotted capital I', async () => {
+  const t = setup();
+  t.sqlite.run("UPDATE transcript_segments SET text='MASSE İstanbul' WHERE id='sm1'");
+  expect(await librarySources(t.db,'u1','maße')).toEqual([]);
+  expect((await librarySources(t.db,'u1','İstanbul')).map(s=>s.meetingId)).toEqual(['m1']);
+});

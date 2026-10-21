@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { resolveActor } from '@/server/auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import { createAiRunner, creditsConfigured } from '@/lib/ai/credit-runner';
+import { LibraryVerificationError } from '@/lib/ai/library-answer';
 import { askLibrary } from '@/server/library-memory';
 import type { ProcessingEnv } from '@/server/processing-worker';
 const input = z.object({ question: z.string().trim().min(3).max(1000) });
@@ -20,6 +21,9 @@ export const Route = createFileRoute('/api/library/ask')({ server: { handlers: {
     const parsed = input.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'Enter a question between 3 and 1000 characters.' }, { status: 400 });
     try { return Response.json(await askLibrary(getDb(), actor.userId, parsed.data.question, { ai: createAiRunner(env, 'library-answer'), vectorize: env.VECTORIZE })); }
-    catch { return Response.json({ error: 'Could not produce a verified answer. Please retry.' }, { status: 503 }); }
+    catch (error) {
+      if (error instanceof LibraryVerificationError) return Response.json({ error: error.message, retryable: true }, { status: 503 });
+      return Response.json({ error: 'Could not produce a verified answer. Please retry.' }, { status: 503 });
+    }
   },
 } } });
