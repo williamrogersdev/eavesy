@@ -20,7 +20,7 @@ function folded(column: SQLWrapper, query: string): SQL {
   let expression = sql`${column}`;
   for (const char of new Set(query.toLowerCase())) {
     const upper = char.toUpperCase();
-    if (upper !== char && /[^\x00-\x7f]/u.test(char)) expression = sql`replace(${expression}, ${upper}, ${char})`;
+    if (upper !== char && char.charCodeAt(0) > 127) expression = sql`replace(${expression}, ${upper}, ${char})`;
   }
   return sql`lower(${expression})`;
 }
