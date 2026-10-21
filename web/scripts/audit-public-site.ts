@@ -28,6 +28,8 @@ for (const entry of FIRST_SEARCH_PAGES)
     `First publishing cluster missing from sitemap: ${entry.path}`,
   );
 const linkPaths = new Set<string>();
+const sectionIds = new Map<string, Set<string>>();
+const crossPageFragments: { from: string; path: string; id: string }[] = [];
 for (let i = 0; i < paths.length; i += 6) {
   const outcomes = await Promise.allSettled(
     paths.slice(i, i + 6).map(async (path) => {
@@ -35,6 +37,21 @@ for (let i = 0; i < paths.length; i += 6) {
         redirect: "manual",
       });
       const html = await response.text();
+      const ids = new Set(
+        [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]),
+      );
+      sectionIds.set(path, ids);
+      for (const link of html.matchAll(
+        /<a\b[^>]*href="(\/(?!\/)[^"]*#[^"]+)"/g,
+      )) {
+        const target = new URL(link[1].replaceAll("&amp;", "&"), origin);
+        if (!isPrivateAuditPath(target.pathname))
+          crossPageFragments.push({
+            from: path,
+            path: target.pathname,
+            id: decodeURIComponent(target.hash.slice(1)),
+          });
+      }
       const title = html.match(/<title>(.*?)<\/title>/s)?.[1] ?? "";
       const canonicals = [
         ...html.matchAll(
@@ -68,7 +85,7 @@ for (let i = 0; i < paths.length; i += 6) {
         );
         for (const anchor of html.matchAll(/<a\b[^>]*href="#([^"]+)"/g)) {
           check(
-            html.includes(`id="${anchor[1]}"`),
+            ids.has(anchor[1]),
             `${path}: missing section target ${anchor[1]}`,
           );
         }
@@ -94,6 +111,14 @@ for (let i = 0; i < paths.length; i += 6) {
         `${paths[i + index]}: request failed: ${String(outcome.reason)}`,
       );
   });
+}
+for (const target of crossPageFragments) {
+  const ids = sectionIds.get(target.path);
+  if (ids)
+    check(
+      ids.has(target.id),
+      `${target.from}: missing cross-page section ${target.path}#${target.id}`,
+    );
 }
 const unseen = [...linkPaths].filter((path) => !paths.includes(path));
 for (let i = 0; i < unseen.length; i += 6) {

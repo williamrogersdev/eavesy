@@ -4,8 +4,13 @@ import { buildTemplate, RESOURCE_TEMPLATES } from "@/lib/resource-templates";
 export function TemplateWorkbench({ slug }: { slug: string }) {
   const template = RESOURCE_TEMPLATES[slug];
   const [values, setValues] = useState<Record<string, string>>({});
+  const [previousDraft, setPreviousDraft] = useState<Record<
+    string,
+    string
+  > | null>(null);
   const [status, setStatus] = useState("");
   if (!template) return null;
+  const hasDraft = Object.values(values).some((value) => value.trim());
   const markdown = buildTemplate(template, values);
   async function copy() {
     try {
@@ -23,8 +28,10 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${slug}.md`;
+    link.download = `${slug}-draft.md`;
+    document.body.appendChild(link);
     link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     setStatus("Your Markdown draft is ready to save.");
   }
@@ -52,7 +59,9 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
       <div className="mt-5 flex flex-wrap gap-3">
         <button
           type="button"
-          className="min-h-11 rounded-full border border-ev-line-strong px-4 text-sm font-semibold text-ev-ink"
+          disabled={hasDraft}
+          aria-describedby="example-help"
+          className="min-h-11 rounded-full border border-ev-line-strong px-4 text-sm font-semibold text-ev-ink disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => {
             setValues(
               Object.fromEntries(
@@ -70,13 +79,33 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
           type="button"
           className="min-h-11 px-3 text-sm text-ev-ink-2 underline underline-offset-4"
           onClick={() => {
+            if (hasDraft) setPreviousDraft(values);
             setValues({});
-            setStatus("Draft cleared.");
+            setStatus(
+              "Draft cleared. You can restore the previous draft below.",
+            );
           }}
         >
           Clear fields
         </button>
+        {previousDraft && (
+          <button
+            type="button"
+            className="min-h-11 px-3 text-sm text-ev-coat underline underline-offset-4"
+            onClick={() => {
+              setValues(previousDraft);
+              setPreviousDraft(null);
+              setStatus("Previous draft restored.");
+            }}
+          >
+            Restore previous draft
+          </button>
+        )}
       </div>
+      <p id="example-help" className="mt-2 text-sm text-ev-ink-2">
+        Clear existing fields before loading an example. You can restore a
+        cleared draft while this page stays open.
+      </p>
       <div className="mt-6 grid gap-5">
         {template.fields.map((field) => (
           <label
@@ -98,7 +127,8 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
               rows={3}
               value={values[field.key] ?? ""}
               onChange={(event) => {
-                setValues({ ...values, [field.key]: event.target.value });
+                const value = event.target.value;
+                setValues((previous) => ({ ...previous, [field.key]: value }));
                 setStatus("");
               }}
               className="mt-2 w-full resize-y rounded-xl border border-ev-line-strong bg-ev-paper p-3 text-base text-ev-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ev-coat"

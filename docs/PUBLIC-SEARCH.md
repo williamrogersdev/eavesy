@@ -61,7 +61,7 @@ With a local preview running, `bun scripts/audit-publication-preview.ts` exercis
 
 With a local preview running, `bun scripts/audit-public-site.ts http://127.0.0.1:4173` audits the rendered sitemap, page status, one H1, title, description, canonical, internal links, retired URLs, and known stale claims. It reports all failures and exits unsuccessfully if any are found. It can also read an explicitly selected deployed origin.
 
-Local validation results: 70 sitemap pages and 7 additional internal link targets pass the SSR audit; all first 20 paths render at 320px without horizontal overflow or browser runtime errors. The Markdown copy control reports success at 390px. The committed publication audit checks a published control, five draft collections, and a scheduled guide through the actual routes and hubs. The unit and Worker suites pass; use the PR’s required CI run for the exact commit-specific counts. Vite refuses to start or build when stale audit fixtures remain.
+Initial publication pass (PRs #156 and #158) validation: 70 sitemap pages and 7 additional internal link targets pass the SSR audit; all first 20 paths render at 320px without horizontal overflow or browser runtime errors. The Markdown copy control reports success at 390px. The committed publication audit checks a published control, five draft collections, and a scheduled guide through the actual routes and hubs. The unit and Worker suites pass; use the PR’s required CI run for the exact commit-specific counts. Vite refuses to start or build when stale audit fixtures remain.
 
 Search Console/Bing ownership, actual search indexation, ranking, referral conversion, and packaged-app hardware behavior remain separate operational checks. No traffic volume or ranking gain is asserted by this implementation.
 
@@ -84,7 +84,7 @@ Walkthrough instructions now name that release while retaining the explicit 0.5.
 fallback and the distinction between local media and hosted account retrieval.
 This source/release check does not substitute for installed-app hardware acceptance.
 
-Browser QA covered the homepage, three collections, and all 20 launch routes at
+This follow-up (PR #171) browser QA covered the homepage, three collections, and all 20 launch routes at
 375px with one H1 and no horizontal overflow or console errors. The three sample
 loaders and template output were exercised; the bug report was edited, copied,
 and downloaded, and collection empty-result recovery was checked. A source-level

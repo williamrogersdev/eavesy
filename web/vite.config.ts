@@ -31,7 +31,11 @@ const contentMdx = mdx({
     [rehypePrettyCode, { theme: "github-dark-dimmed" }],
   ],
 });
+// The installed @mdx-js/rollup exposes a function hook. Fail explicitly if
+// a future version changes that contract rather than silently skipping MDX.
 const compileMdx = contentMdx.transform;
+if (typeof compileMdx !== "function")
+  throw new Error("MDX compilation requires a transform function");
 
 export default defineConfig(({ command }) => ({
   // Preserve Vite 6's browser floor; keep in sync with desktop/launcher-ui/vite.config.ts.
@@ -66,8 +70,7 @@ export default defineConfig(({ command }) => ({
       enforce: "pre",
       async transform(code, id) {
         if (new URLSearchParams(id.split("?")[1] ?? "").has("raw")) return;
-        if (typeof compileMdx === "function")
-          return compileMdx.call(this, code, id);
+        return compileMdx.call(this, code, id);
       },
     },
     tanstackStart(),

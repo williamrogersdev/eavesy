@@ -113,7 +113,7 @@ export function ResourceIndex({ family }: { family: ResourceFamily }) {
               >
                 Explore all {info.title.toLowerCase()}
               </h2>
-              <p role="status" className="mt-2 text-sm text-ev-ink-2">
+              <p className="mt-2 text-sm text-ev-ink-2">
                 {results.length} of {entries.length} resources
               </p>
             </div>
@@ -160,7 +160,7 @@ export function ResourceIndex({ family }: { family: ResourceFamily }) {
           </div>
           {results.length === 0 && (
             <div className="mt-6 rounded-2xl border border-ev-line p-6">
-              <p className="text-ev-ink-2">
+              <p role="status" className="text-ev-ink-2">
                 No resources match “{query}”. Try audio, recording, decision, or
                 Markdown.
               </p>
@@ -214,9 +214,7 @@ function DownloadResource({ path, label }: { path: string; label: string }) {
           Download Markdown
         </a>
       </div>
-      <p role="status" className="mt-2 text-sm text-ev-ink-2">
-        {status}
-      </p>
+      <p className="mt-2 text-sm text-ev-ink-2">{status}</p>
     </aside>
   );
 }
