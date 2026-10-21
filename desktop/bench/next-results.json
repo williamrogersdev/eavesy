@@ -583,13 +583,13 @@
     }
   ],
   "source_sha256": {
-    "desktop/src-tauri/src/history.rs": "77736e85ab389dc641081dd7868e208689e31004995fc4403eec31c433c51e67",
+    "desktop/src-tauri/src/history.rs": "3aa973cad16404cd99eac09b16126626abc481fbdbe2440d46096fb4271b9aea",
     "desktop/src-tauri/src/history_search_index.rs": "73aff7ff4b6894d2d23773ddb9b24e726d403e9a20680844353b7890357f837e",
     "desktop/src-tauri/src/history_search.rs": "4926ffd9c8c253ea88c94f189037b533b84353e21611cf8b644c6a265bc669fc",
-    "desktop/src-tauri/src/store.rs": "73e26f7980422185712e68040493c0450a16a7d255f4c2e7f1322fc1740bfbe5",
+    "desktop/src-tauri/src/store.rs": "d5e9e8e13c954f8ac59ab2475bd94a84a692b3e73beb5d004f5fe8d73357145d",
     "desktop/src-tauri/src/fs_watcher.rs": "164a745616d42cbf0d2a9cf5308d5f9eaeadbc214bc89c78515870db33787073",
     "desktop/src-tauri/src/work_queue.rs": "6e67fa2b181038dda9d973b6bcb27fb5e677b43ad7feaffb0ad26049c995312b",
-    "desktop/src-tauri/src/transcribe.rs": "72b7f58a8030c85d00da2e6ff001d2bd3c0f8fc5d94c6329900e9904cdc5bb61",
+    "desktop/src-tauri/src/transcribe.rs": "7c1943b93f17b066e10119bf7699629b672bd06ed354b8ee78c002f0976d377c",
     "desktop/src-tauri/src/sync.rs": "3b646c62fcf4120d6ccf1bc41d6bd77b06e754068be21dc8850f21d72b840181",
     "desktop/bench/next-performance.rs": "a5817730c8d7818e2d597acf322160eb182b522b91a725ede0023944b3463c2d",
     "desktop/bench/next-reconcile.rs": "5b3769af878911d96db8d0ec7f060f766d120c529d1b11c68087572d4b21741e",

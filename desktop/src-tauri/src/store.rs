@@ -54,6 +54,9 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 pub fn get<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<Option<StoredRecording>, String> {
     history(app)?.get(id)
 }
+pub fn pending_walkthroughs(app: &AppHandle) -> Result<Vec<String>, String> {
+    history(app)?.pending_walkthroughs()
+}
 pub fn locations<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<(String, Option<String>)>, String> {
     history(app)?.locations()
 }

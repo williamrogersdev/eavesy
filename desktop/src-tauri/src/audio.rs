@@ -109,6 +109,8 @@ struct CaptureEvent {
     track: Option<String>,
     #[serde(default, rename = "peakRms")]
     peak_rms: Option<f64>,
+    #[serde(default)]
+    rms: Option<f64>,
     #[serde(default, rename = "activeMs")]
     active_ms: Option<i64>,
     #[serde(default)]
@@ -155,7 +157,11 @@ impl CaptureEvent {
             session_id: session_id.to_string(),
             track: self.track.clone().unwrap_or_else(|| "mic".to_string()),
             live,
-            detail: if live { self.engine.clone() } else { self.reason.clone() },
+            detail: if live {
+                self.engine.clone()
+            } else {
+                self.reason.clone()
+            },
         })
     }
 
@@ -190,16 +196,19 @@ pub(crate) fn capture_bin(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
     }
-    if let Ok(resource) =
-        app.path().resolve("SwiftAudio", tauri::path::BaseDirectory::Resource)
+    if let Ok(resource) = app
+        .path()
+        .resolve("SwiftAudio", tauri::path::BaseDirectory::Resource)
     {
         if resource.exists() {
             return Ok(resource);
         }
     }
-    Err("capture engine not found — build swift-audio and set EAVESY_CAPTURE_BIN, \
+    Err(
+        "capture engine not found — build swift-audio and set EAVESY_CAPTURE_BIN, \
          or reinstall the app"
-        .to_string())
+            .to_string(),
+    )
 }
 
 fn captures_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -279,26 +288,41 @@ fn check_permissions_inner(
             statuses = again_statuses;
         }
     }
-    crate::permissions::complete(&mut permissions, statuses.0.as_deref(), statuses.1.as_deref());
+    crate::permissions::complete(
+        &mut permissions,
+        statuses.0.as_deref(),
+        statuses.1.as_deref(),
+    );
     Ok(permissions)
 }
 
 /// Asks for one permission alone, so only one macOS prompt is ever on screen.
-pub fn request_permission(app: AppHandle, request: crate::permissions::Request) -> Result<Permissions, String> {
+pub fn request_permission(
+    app: AppHandle,
+    request: crate::permissions::Request,
+) -> Result<Permissions, String> {
     let bin = capture_bin(&app)?;
     let result = {
         let _yielded = crate::panel::yield_for_system_prompt(&app);
         run_preflight(&bin, &["--preflight", "--request", request.sidecar_arg()])
     };
-    let (mut permissions, statuses) = result.inspect_err(|error| crate::telemetry::capture("capture.permissions", error))?;
-    crate::permissions::complete(&mut permissions, statuses.0.as_deref(), statuses.1.as_deref());
+    let (mut permissions, statuses) =
+        result.inspect_err(|error| crate::telemetry::capture("capture.permissions", error))?;
+    crate::permissions::complete(
+        &mut permissions,
+        statuses.0.as_deref(),
+        statuses.1.as_deref(),
+    );
     Ok(permissions)
 }
 
 /// The sidecar's microphone and speech statuses, when it sends them.
 type SidecarStatuses = (Option<String>, Option<String>);
 
-fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<(Permissions, SidecarStatuses), String> {
+fn run_preflight(
+    bin: &std::path::Path,
+    args: &[&str],
+) -> Result<(Permissions, SidecarStatuses), String> {
     let output = Command::new(bin)
         .args(args)
         .output()
@@ -360,7 +384,15 @@ pub fn start_capture(
     dictation: Option<bool>,
     project_id: Option<String>,
 ) -> Result<CaptureSession, String> {
-    start_audio_capture(&app, &state, source, context_blurb, dictation, project_id, Instant::now())
+    start_audio_capture(
+        &app,
+        &state,
+        source,
+        context_blurb,
+        dictation,
+        project_id,
+        Instant::now(),
+    )
 }
 
 /// `asked_at`: when the user asked (the hotkey press), which the time to the
@@ -376,8 +408,13 @@ pub fn start_audio_capture(
 ) -> Result<CaptureSession, String> {
     let source = source.unwrap_or_else(|| "mixed".to_string());
     let dictation = dictation.unwrap_or(false) && source == "mic";
-    let context = SessionContext { blurb: context_blurb.as_deref(), project_id: project_id.as_deref() };
-    let result = spawn_capture(app, state, "audio", &source, false, context, dictation, asked_at);
+    let context = SessionContext {
+        blurb: context_blurb.as_deref(),
+        project_id: project_id.as_deref(),
+    };
+    let result = spawn_capture(
+        app, state, "audio", &source, false, context, dictation, asked_at,
+    );
     match &result {
         Ok(_) => crate::telemetry::track(
             "recording_started",
@@ -394,9 +431,20 @@ pub fn start_screen_capture(
     state: State<'_, Captures>,
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
-    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), SessionContext::default(), false, Instant::now());
+    let result = spawn_capture(
+        &app,
+        &state,
+        "screen",
+        "system",
+        mic.unwrap_or(false),
+        SessionContext::default(),
+        false,
+        Instant::now(),
+    );
     match &result {
-        Ok(_) => crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" })),
+        Ok(_) => {
+            crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" }))
+        }
         Err(error) => crate::telemetry::capture("capture.start_screen", error),
     }
     result
@@ -443,7 +491,12 @@ fn spawn_capture(
         }
     };
 
-    let mut args: Vec<OsString> = vec!["--mode".into(), mode.into(), "--out".into(), out_path.clone().into()];
+    let mut args: Vec<OsString> = vec![
+        "--mode".into(),
+        mode.into(),
+        "--out".into(),
+        out_path.clone().into(),
+    ];
     if mode == "screen" {
         args.extend(["--mic".into(), if mic { "true" } else { "false" }.into()]);
     } else {
@@ -573,8 +626,10 @@ fn spawn_capture(
             }
         }
     }
-    if let Err(error) = crate::sqlite::with_open(app, |conn| crate::live_transcript::begin_metrics(conn, &id, now_ms()))
-        .and_then(|r| r)
+    if let Err(error) = crate::sqlite::with_open(app, |conn| {
+        crate::live_transcript::begin_metrics(conn, &id, now_ms())
+    })
+    .and_then(|r| r)
     {
         eprintln!("{error}");
     }
@@ -628,7 +683,11 @@ fn capture_log(app: &AppHandle) -> Stdio {
         .ok()
         .and_then(|dir| {
             rotate_log(&dir.join("capture.log"));
-            std::fs::OpenOptions::new().create(true).append(true).open(dir.join("capture.log")).ok()
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("capture.log"))
+                .ok()
         })
         .map_or_else(Stdio::null, Stdio::from)
 }
@@ -664,11 +723,20 @@ pub fn prepare_speech_model(app: &AppHandle) {
         match command.output() {
             Ok(output) => {
                 let line = String::from_utf8_lossy(&output.stdout);
-                let state = serde_json::from_str::<serde_json::Value>(line.trim().lines().last().unwrap_or(""))
-                    .ok()
-                    .and_then(|value| Some((value.get("locale")?.as_str()?.to_string(), value.get("state")?.as_str()?.to_string())));
+                let state = serde_json::from_str::<serde_json::Value>(
+                    line.trim().lines().last().unwrap_or(""),
+                )
+                .ok()
+                .and_then(|value| {
+                    Some((
+                        value.get("locale")?.as_str()?.to_string(),
+                        value.get("state")?.as_str()?.to_string(),
+                    ))
+                });
                 match state {
-                    Some((locale, state)) => tracing::info!(locale, state, "speech model for {locale}: {state}"),
+                    Some((locale, state)) => {
+                        tracing::info!(locale, state, "speech model for {locale}: {state}")
+                    }
                     None => tracing::warn!("speech model check gave no answer"),
                 }
             }
@@ -735,7 +803,9 @@ fn await_ready(
                         match ev.event.as_str() {
                             "ready" => break Ok(ev),
                             "error" => {
-                                break Err(ev.message.unwrap_or_else(|| "capture failed".to_string()))
+                                break Err(ev
+                                    .message
+                                    .unwrap_or_else(|| "capture failed".to_string()))
                             }
                             _ => continue,
                         }
@@ -761,106 +831,142 @@ fn stream_events(
 ) -> mpsc::Receiver<CaptureEvent> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-    let mut warning: Option<String> = None;
-    let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
-    let mut captioned = false;
-    loop {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) else {
-                    continue;
-                };
-                if ev.event == "segment" {
-                    if let (Some(path), Some(index), Some(start_ms), Some(duration_ms), Some(bytes)) = (
-                        ev.path.clone(),
-                        ev.index,
-                        ev.start_ms,
-                        ev.duration_ms,
-                        ev.bytes,
-                    ) {
-                        let segment = crate::sqlite::SegmentManifest {
-                            path,
-                            index,
-                            track: ev.track.clone().unwrap_or_else(|| "mixed".to_string()),
-                            start_ms,
-                            duration_ms,
-                            bytes,
-                            peak_rms: ev.peak_rms,
-                            active_ms: ev.active_ms,
-                        };
-                        if let Err(error) = crate::sqlite::record_segment(&app, &session_id, &segment) {
-                            eprintln!("could not queue segment {index}: {error}");
-                        } else {
-                            crate::sync::wake();
-                            let _ = app.emit("recording:segment", index);
+        let mut warning: Option<String> = None;
+        let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
+        let mut captioned = false;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) else {
+                        continue;
+                    };
+                    if ev.event == "level" {
+                        let _ = app.emit(
+                            "recording:level",
+                            serde_json::json!({"sessionId":session_id,"rms":ev.rms.unwrap_or(0.0)}),
+                        );
+                        continue;
+                    }
+                    if ev.event == "segment" {
+                        if let (
+                            Some(path),
+                            Some(index),
+                            Some(start_ms),
+                            Some(duration_ms),
+                            Some(bytes),
+                        ) = (
+                            ev.path.clone(),
+                            ev.index,
+                            ev.start_ms,
+                            ev.duration_ms,
+                            ev.bytes,
+                        ) {
+                            let segment = crate::sqlite::SegmentManifest {
+                                path,
+                                index,
+                                track: ev.track.clone().unwrap_or_else(|| "mixed".to_string()),
+                                start_ms,
+                                duration_ms,
+                                bytes,
+                                peak_rms: ev.peak_rms,
+                                active_ms: ev.active_ms,
+                            };
+                            if let Err(error) =
+                                crate::sqlite::record_segment(&app, &session_id, &segment)
+                            {
+                                eprintln!("could not queue segment {index}: {error}");
+                            } else {
+                                crate::sync::wake();
+                                let _ = app.emit("recording:segment", index);
+                            }
                         }
+                        continue;
                     }
-                    continue;
-                }
-                if let Some(caption) = ev.caption(&session_id) {
-                    if !captioned {
-                        captioned = true;
-                        // Off this thread: it must never wait on the database.
-                        let (app, session_id) = (app.clone(), session_id.clone());
-                        std::thread::spawn(move || {
-                            crate::live_transcript::report_first(&app, &session_id, crate::live_transcript::Milestone::Caption);
-                        });
+                    if let Some(caption) = ev.caption(&session_id) {
+                        if !captioned {
+                            captioned = true;
+                            // Off this thread: it must never wait on the database.
+                            let (app, session_id) = (app.clone(), session_id.clone());
+                            std::thread::spawn(move || {
+                                crate::live_transcript::report_first(
+                                    &app,
+                                    &session_id,
+                                    crate::live_transcript::Milestone::Caption,
+                                );
+                            });
+                        }
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .record(&caption);
+                        if caption.is_final
+                            && !writer.push(caption.clone())
+                            && writer.dropped() == 1
+                        {
+                            eprintln!("live captions: storing is behind; dropping finals until it catches up");
+                        }
+                        let _ = app.emit("recording:caption", &caption);
+                        continue;
                     }
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).record(&caption);
-                    if caption.is_final && !writer.push(caption.clone()) && writer.dropped() == 1 {
-                        eprintln!("live captions: storing is behind; dropping finals until it catches up");
+                    if let Some(status) = ev.caption_status(&session_id) {
+                        if !status.live {
+                            tracing::warn!(session_id = %session_id, reason = status.detail.as_deref().unwrap_or("unavailable"), "live captions off");
+                        }
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .note_status(&status);
+                        let _ = app.emit("recording:captions_status", &status);
+                        continue;
                     }
-                    let _ = app.emit("recording:caption", &caption);
-                    continue;
-                }
-                if let Some(status) = ev.caption_status(&session_id) {
-                    if !status.live {
-                        tracing::warn!(session_id = %session_id, reason = status.detail.as_deref().unwrap_or("unavailable"), "live captions off");
+                    if let Some(count) = ev.captions_dropped() {
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .note_dropped(count);
+                        continue;
                     }
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_status(&status);
-                    let _ = app.emit("recording:captions_status", &status);
-                    continue;
+                    if let Some(done) = ev.captions_done() {
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .finish(done);
+                        continue;
+                    }
+                    if ev.event == "segment_error" {
+                        let message = ev
+                            .message
+                            .unwrap_or_else(|| "segment finalization failed".to_string());
+                        eprintln!("segment could not be written: {message}");
+                        crate::telemetry::capture("capture.segment_failed", &message);
+                        continue;
+                    }
+                    if ev.event == "warning" {
+                        let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
+                        tracing::warn!(session_id = %session_id, "capture engine: {message}");
+                        crate::telemetry::capture("capture.stopped_early", &message);
+                        warning = Some(message);
+                        continue;
+                    }
+                    if matches!(ev.event.as_str(), "done" | "error") {
+                        let _ = tx.send(ev);
+                        break;
+                    }
                 }
-                if let Some(count) = ev.captions_dropped() {
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_dropped(count);
-                    continue;
-                }
-                if let Some(done) = ev.captions_done() {
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).finish(done);
-                    continue;
-                }
-                if ev.event == "segment_error" {
-                    let message = ev.message.unwrap_or_else(|| "segment finalization failed".to_string());
-                    eprintln!("segment could not be written: {message}");
-                    crate::telemetry::capture("capture.segment_failed", &message);
-                    continue;
-                }
-                if ev.event == "warning" {
-                    let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
-                    tracing::warn!(session_id = %session_id, "capture engine: {message}");
-                    crate::telemetry::capture("capture.stopped_early", &message);
-                    warning = Some(message);
-                    continue;
-                }
-                if matches!(ev.event.as_str(), "done" | "error") {
-                    let _ = tx.send(ev);
+                Err(error) => {
+                    let _ = tx.send(CaptureEvent {
+                        event: "error".to_string(),
+                        message: Some(format!("capture engine read failed: {error}")),
+                        ..Default::default()
+                    });
                     break;
                 }
             }
-            Err(error) => {
-                let _ = tx.send(CaptureEvent {
-                    event: "error".to_string(),
-                    message: Some(format!("capture engine read failed: {error}")),
-                    ..Default::default()
-                });
-                break;
-            }
         }
-    }
-    drop(tx);
-    stopped_on_its_own(&app, &session_id, warning);
+        drop(tx);
+        stopped_on_its_own(&app, &session_id, warning);
     });
     rx
 }
@@ -873,11 +979,15 @@ fn stream_events(
 /// only written once the session has left the map.
 pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
     use std::os::fd::AsRawFd;
-    let Some(language) = crate::vocabulary::clean_language(language) else { return false };
+    let Some(language) = crate::vocabulary::clean_language(language) else {
+        return false;
+    };
     let line = format!("{}\n", serde_json::json!({ "language": language }));
     let captures = app.state::<Captures>();
     let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(session) = sessions.get(session_id) else { return false };
+    let Some(session) = sessions.get(session_id) else {
+        return false;
+    };
     write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
 }
 
@@ -894,7 +1004,9 @@ fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
         }
         let written = loop {
             let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
-            if written >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            if written >= 0
+                || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
                 break written;
             }
         };
@@ -910,7 +1022,10 @@ fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>
     }
     let reason = warning.unwrap_or_else(|| "the capture engine stopped unexpectedly".to_string());
     let (title, body) = match stop_capture_inner(app.clone(), captures, session_id.to_string()) {
-        Ok(_) => ("Recording stopped early", format!("Everything up to that point was saved. Reason: {reason}")),
+        Ok(_) => (
+            "Recording stopped early",
+            format!("Everything up to that point was saved. Reason: {reason}"),
+        ),
         Err(error) if error == NO_ACTIVE_CAPTURE => return,
         Err(error) => {
             show_stop_failed(app, session_id, &error);
@@ -950,8 +1065,16 @@ pub fn stop_capture(
         } else {
             // Shown as stopping by the key press, but something else stopped it first.
             let hud = crate::hud::current();
-            if hud.phase == crate::hud::Phase::Transcribing && hud.session_id.as_deref() == Some(session_id.as_str()) {
-                crate::hud::set_state(&app, crate::hud::HudState { session_id: hud.session_id, ..crate::hud::HudState::idle() });
+            if hud.phase == crate::hud::Phase::Transcribing
+                && hud.session_id.as_deref() == Some(session_id.as_str())
+            {
+                crate::hud::set_state(
+                    &app,
+                    crate::hud::HudState {
+                        session_id: hud.session_id,
+                        ..crate::hud::HudState::idle()
+                    },
+                );
             }
         }
     }
@@ -1004,7 +1127,8 @@ fn stop_capture_inner(
     crate::hud::show_stopping(&app, &session_id);
 
     // Dictation pastes now, while the engine is still sealing its files.
-    let pasted_early = dictation && paste_dictation_now(&app, &session_id, &captions, started_at_ms);
+    let pasted_early =
+        dictation && paste_dictation_now(&app, &session_id, &captions, started_at_ms);
 
     let result = match await_done(events, STOP_TIMEOUT) {
         Ok(done) => finish_stopped_capture(
@@ -1110,13 +1234,34 @@ fn finish_stopped_capture(
         summary: None,
         // What the Mac heard on device, so the recording is readable and
         // pasteable the moment it stops. The cloud transcript replaces it.
-        transcript: captions.lock().unwrap_or_else(|e| e.into_inner()).transcript(),
+        transcript: captions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .transcript(),
         notes: None,
         has_audio: true,
         has_video: is_screen,
         folder_path: folder.to_str().map(|s| s.to_string()),
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
+    if is_screen {
+        let original_stats = PathBuf::from(format!("{}.capture.json", out_path.display()));
+        let stats = if original_stats.exists() {
+            original_stats
+        } else {
+            PathBuf::from(format!("{}.capture.json", final_src.display()))
+        };
+        if stats.exists() {
+            if let Err(error) = std::fs::rename(&stats, folder.join("microphone.json"))
+                .or_else(|_| std::fs::copy(&stats, folder.join("microphone.json")).map(|_| ()))
+            {
+                // Verification metadata must never orphan already-finalized media.
+                // A missing file is reported explicitly by walkthrough processing.
+                eprintln!("Could not save microphone verification: {error}");
+            }
+        }
+    }
+
     store::append(&app, rec.clone())?;
     crate::telemetry::track(
         "recording_saved",
@@ -1133,8 +1278,13 @@ fn finish_stopped_capture(
     let armed = crate::dictation::is_armed(&rec.id);
     // Plain text for the paste: speaker labels belong in the transcript, not
     // in whatever box the user is typing in.
-    let on_device_paste = Some(captions.lock().unwrap_or_else(|e| e.into_inner()).spoken_text())
-        .filter(|text| !text.is_empty());
+    let on_device_paste = Some(
+        captions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .spoken_text(),
+    )
+    .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
     // A dictation that pasted already shows its words in the HUD; one still
@@ -1158,13 +1308,7 @@ fn finish_stopped_capture(
     }
 
     if is_screen {
-        crate::transcribe::spawn(
-            app.clone(),
-            rec.id.clone(),
-            audio_dest,
-            Some(folder.clone()),
-            false,
-        );
+        crate::walkthrough::spawn(app.clone(), rec.id.clone());
     } else {
         let archive_bytes = std::fs::metadata(&audio_dest)
             .map(|m| m.len() as i64)
@@ -1218,15 +1362,25 @@ const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
 /// straight away, before the engine has sealed its files or anything is
 /// stored. Returns false when there is nothing trustworthy to paste yet; the
 /// clip then goes to Whisper once it is saved.
-fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<CaptionLog>, started_at_ms: i64) -> bool {
+fn paste_dictation_now(
+    app: &AppHandle,
+    session_id: &str,
+    captions: &Mutex<CaptionLog>,
+    started_at_ms: i64,
+) -> bool {
     // How long the clip is, measured as it stops: the wait below adds no audio.
     let clip_ms = now_ms() - started_at_ms;
     let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
-    while std::time::Instant::now() < deadline && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done() {
+    while std::time::Instant::now() < deadline
+        && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done()
+    {
         std::thread::sleep(Duration::from_millis(15));
     }
     crate::dictation::rearm_at_stop(session_id);
-    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).quick_paste(clip_ms);
+    let decision = captions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .quick_paste(clip_ms);
     match decision {
         Paste::OnDevice(text) => {
             crate::dictation::deliver_dictation(app, session_id, &text);
@@ -1243,7 +1397,12 @@ fn paste_dictation_now(app: &AppHandle, session_id: &str, captions: &Mutex<Capti
 /// trusted, otherwise a quick cloud Whisper pass on the clip. Either way the
 /// recording is already queued to upload, and the cloud transcript stays its
 /// record; if both of these fail, that transcript is pasted when it is ready.
-fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: &Mutex<CaptionLog>) {
+fn paste_dictation(
+    app: &AppHandle,
+    session_id: &str,
+    audio: PathBuf,
+    captions: &Mutex<CaptionLog>,
+) {
     let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
     match decision {
         Paste::OnDevice(text) => crate::dictation::deliver_dictation(app, session_id, &text),
@@ -1422,7 +1581,11 @@ mod tests {
     #[test]
     fn a_hint_to_an_engine_that_stopped_reading_fails_instead_of_waiting() {
         use std::os::fd::AsRawFd;
-        let mut child = Command::new("/bin/sleep").arg("5").stdin(Stdio::piped()).spawn().unwrap();
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         let stdin = child.stdin.take().unwrap();
         let fd = stdin.as_raw_fd();
         assert!(write_without_waiting(fd, b"{\"language\":\"es\"}\n"));
@@ -1438,7 +1601,11 @@ mod tests {
         assert!(!write_without_waiting(fd, b"{\"language\":\"fr\"}\n"));
         // SAFETY: reading the flags of an open descriptor.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        assert_eq!(flags & libc::O_NONBLOCK, 0, "the engine's stdin is left blocking");
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "the engine's stdin is left blocking"
+        );
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -1474,12 +1641,15 @@ mod tests {
             })
         );
         assert_eq!(ev.caption_status("rec"), None);
-        let partial: CaptureEvent =
-            serde_json::from_str(r#"{"event":"caption","startMs":0,"text":"hel","track":"system"}"#).unwrap();
+        let partial: CaptureEvent = serde_json::from_str(
+            r#"{"event":"caption","startMs":0,"text":"hel","track":"system"}"#,
+        )
+        .unwrap();
         let partial = partial.caption("rec").unwrap();
         assert!(!partial.is_final);
         assert_eq!(partial.track, "system");
-        let segment: CaptureEvent = serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
+        let segment: CaptureEvent =
+            serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
         assert_eq!(segment.caption("rec"), None);
     }
 
@@ -1489,7 +1659,14 @@ mod tests {
             r#"{"dropped":2,"event":"captions_done","failed":false,"timedOut":true,"track":"mic"}"#,
         )
         .unwrap();
-        assert_eq!(ev.captions_done(), Some(CaptionsDone { dropped: 2, timed_out: true, failed: false }));
+        assert_eq!(
+            ev.captions_done(),
+            Some(CaptionsDone {
+                dropped: 2,
+                timed_out: true,
+                failed: false
+            })
+        );
         assert_eq!(ev.caption("rec"), None);
     }
 
@@ -1510,8 +1687,15 @@ mod tests {
         assert!(!off.live);
         let mut log = CaptionLog::default();
         log.note_status(&off);
-        log.finish(CaptionsDone { dropped: 0, timed_out: false, failed: false });
-        assert_eq!(log.paste(), Paste::Whisper("captions unavailable: speech recognition not authorized".into()));
+        log.finish(CaptionsDone {
+            dropped: 0,
+            timed_out: false,
+            failed: false,
+        });
+        assert_eq!(
+            log.paste(),
+            Paste::Whisper("captions unavailable: speech recognition not authorized".into())
+        );
     }
 
     #[test]
@@ -1594,8 +1778,14 @@ mod tests {
 
         assert!(!source.exists());
         assert!(!audio_source.exists());
-        assert_eq!(std::fs::read(folder.join("screen.mp4")).unwrap(), b"non-empty video");
-        assert_eq!(std::fs::read(folder.join("audio.m4a")).unwrap(), b"non-empty audio");
+        assert_eq!(
+            std::fs::read(folder.join("screen.mp4")).unwrap(),
+            b"non-empty video"
+        );
+        assert_eq!(
+            std::fs::read(folder.join("audio.m4a")).unwrap(),
+            b"non-empty audio"
+        );
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(folder.join("meeting.json")).unwrap()).unwrap();
         assert_eq!(manifest["files"]["audio"], "audio.m4a");

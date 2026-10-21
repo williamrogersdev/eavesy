@@ -41,6 +41,8 @@ mod sync;
 mod sqlite;
 mod standby;
 mod transcribe;
+mod walkthrough;
+mod walkthrough_agent;
 mod learning;
 mod paste_learning;
 mod tray;
@@ -52,6 +54,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if walkthrough_agent::maybe_run() { return; }
     let _error_reporting = telemetry::init();
     #[cfg(target_os = "macos")]
     match install_location::open_existing_installation() {
@@ -102,6 +105,8 @@ pub fn run() {
             visual::capture_screenshot,
             visual::capture_media,
             visual::copy_capture_media,
+            walkthrough::recording_context,
+            walkthrough::retry_walkthrough,
             visual::paste_clip,
             imports::import_files,
             imports::save_note,
@@ -224,6 +229,7 @@ pub fn run() {
                 }
             }
             screenshot_watcher::start(&handle);
+            walkthrough::recover(&handle);
             // A spare capture engine, so the first dictation does not wait for one.
             audio::prepare_standby(&handle);
             audio::prepare_speech_model(&handle);
