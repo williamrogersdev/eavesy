@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-21 - desktop
+
+### Added
+
+- Mac app: dictation tones and formatting for AI agents ([#162](https://github.com/williamrogersdev/eavesy/pull/162))
+
 ## [0.5.5] - 2026-10-21 - desktop
 
 ### Added

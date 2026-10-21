@@ -409,10 +409,11 @@ row enters recording mode: the keys become a dashed coat outline reading
 
 **Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
 480), independent of the capture panel and HUD. A quiet sidebar switches
-between Capture, Transcription, Dictionary, Shortcuts, Projects, Permissions
+between Capture, Dictation, Transcription, Dictionary, Shortcuts, Projects, Permissions
 and Account. Each section has one scroll area, plain groups and subtle row
 separators; avoid nested raised cards. Preserve drafts when switching sections.
-Transcription preferences have an explicit Save changes action; failed saves
+Dictation retains account tone and AI formatting defaults; projects retain their
+own pages with tone and formatting overrides. Transcription preferences have an explicit Save changes action; failed saves
 keep the draft and failed loads have Retry. Native capture preferences save
 immediately. Show errors beside the affected controls. Use the existing
 light/dark tokens and reduced-motion behavior. The capture panel and pill

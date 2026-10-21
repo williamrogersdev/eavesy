@@ -4,7 +4,7 @@ import './preferences.css';
 
 import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
+import { Button, Card, IconButton, Row, Select, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
@@ -15,6 +15,7 @@ import {
   setLauncherPosition,
   setLiveCaptions,
   setCaptureSounds,
+  setHudLook,
   checkPermissions,
   checkForUpdates,
   getAppInfo,
@@ -22,6 +23,7 @@ import {
   installUpdate,
   setAutoImportScreenshots,
   type AccountInfo,
+  type HudPreviewLines,
   type LauncherPosition,
   type Permissions,
   type PrivacyPane,
@@ -31,9 +33,16 @@ import {
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
-import { ProjectsCard, TranscriptionCard } from './account-settings';
+import { DictationCard, ProjectsSettings, TranscriptionCard, useAccountPrefs } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
+
+const PREVIEW_OPTIONS: { value: string; label: string }[] = [
+  { value: '0', label: 'Off' },
+  { value: '1', label: '1 line' },
+  { value: '2', label: '2 lines' },
+  { value: '4', label: '4 lines' },
+];
 
 export function accountInitial(account: AccountInfo): string {
   return (account.name ?? account.email ?? '?').trim().charAt(0).toUpperCase() || '?';
@@ -225,8 +234,10 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   const [localError, setLocalError] = useState<string | null>(null);
   const [loadingLocal, setLoadingLocal] = useState(true);
   const [section, setSection] = useState('capture');
+  const accountPrefs = useAccountPrefs();
   const sections = [
     { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
+    { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'Choose the tone and formatting used when you talk.' },
     { id: 'transcription', label: 'Transcription', icon: AudioLines, hint: 'Languages and words Eavesy should recognize.' },
     { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Review the spellings learned from your corrections.' },
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
@@ -255,6 +266,21 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
       .then(() => setSettings((current) => current ? { ...current, capture_sounds: next } : current))
       .catch(() => setLocalError('The recording sound preference could not be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
+  };
+  const savedLines = settings?.hud_preview_lines;
+  const previewLines: HudPreviewLines = savedLines === 0 || savedLines === 1 || savedLines === 2 ? savedLines : 4;
+  const translucent = settings?.hud_translucent ?? true;
+  const [lookError, setLookError] = useState<string | null>(null);
+  const changeLook = (lines: HudPreviewLines, see: boolean) => {
+    setLookError(null);
+    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see } : current);
+    void setHudLook(lines, see).catch((error: unknown) => {
+      setLookError(errMsg(error, 'Could not change how the recording looks.'));
+      // Show what is actually saved, whichever change failed.
+      void getSettings().then((saved) => setSettings((current) => current && saved
+        ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent }
+        : current)).catch(() => {});
+    });
   };
   const [shotFolder, setShotFolder] = useState<string | null>(null);
   const [shotsBusy, setShotsBusy] = useState(false);
@@ -339,6 +365,9 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
         </Section>
 
         </div>
+        <div id="settings-dictation" hidden={section !== 'dictation'}>
+          {account ? <DictationCard account={accountPrefs} /> : <p className="ev-set-hint">Sign in from Account to choose your dictation tone.</p>}
+        </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
           {account ? <TranscriptionCard /> : <p className="ev-set-hint">Sign in from Account to manage your languages and custom words.</p>}
         </div>
@@ -346,7 +375,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
           {account ? <DictionarySettings /> : <p className="ev-set-hint">Sign in from Account to manage learned spellings.</p>}
         </div>
         <div id="settings-projects" hidden={section !== 'projects'}>
-          {account ? <ProjectsCard onChanged={onProjectsChanged} /> : <p className="ev-set-hint">Sign in from Account to manage your projects.</p>}
+          {account ? <ProjectsSettings account={accountPrefs.prefs} onChanged={onProjectsChanged} /> : <p className="ev-set-hint">Sign in from Account to manage your projects.</p>}
         </div>
 
         <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
@@ -387,6 +416,14 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
             )}
           </Section>
         )}
+
+        <Section title="Recording appearance">
+          <Row label="Live words" hint="What you say, under the timer, as you say it.">
+            <Select label="Lines of live words while recording" value={String(previewLines)} options={PREVIEW_OPTIONS} disabled={!settings || !captionsOn} onChange={next => changeLook(Number(next) as HudPreviewLines, translucent)} />
+          </Row>
+          <Switch checked={translucent} disabled={!settings} onCheckedChange={next => changeLook(previewLines, next)} label="See-through" hint="Lets the screen show through while you talk." />
+          {lookError && <p role="alert" className="ev-set-hint">{lookError}</p>}
+        </Section>
 
         <Section title="Position">
           <PositionPicker

@@ -597,7 +597,7 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
 }
 
 #[tauri::command]
-pub fn show_settings(app: AppHandle) -> Result<(), String> {
+pub async fn show_settings(app: AppHandle) -> Result<(), String> {
     crate::settings_window::show(&app)
 }
 

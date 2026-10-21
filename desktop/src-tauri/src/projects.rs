@@ -147,6 +147,17 @@ pub fn assign_in_background(app: &AppHandle, session_id: &str) {
     });
 }
 
+/// The project the app in front points at right now, by the launcher's choice:
+/// what a dictation is being typed into, so its project's tone applies.
+pub fn current_project() -> Option<String> {
+    let choice = CHOICE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()?;
+    if choice.projects.is_empty() || (!choice.follow && choice.pinned.is_none()) {
+        return None;
+    }
+    let front = crate::app_menu::frontmost().map(|(pid, name)| crate::front_window::read(pid, name));
+    resolve(&choice, front.as_ref())
+}
+
 fn resolve(choice: &ProjectChoice, front: Option<&FrontWindow>) -> Option<String> {
     if let Some(pinned) = &choice.pinned {
         if choice.projects.iter().any(|project| &project.id == pinned) {

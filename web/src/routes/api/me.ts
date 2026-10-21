@@ -13,12 +13,13 @@ import {
   normalizeSpokenLanguages,
   spokenLanguages,
 } from '@/lib/transcription/language';
+import { dictationStyle, isDictationStyle } from '@/lib/transcription/dictation-style';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveIngestActor } from '@/server/device-auth';
 
 /** What the Mac app may change with its device token; the rest needs a web sign-in. */
-const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary']);
+const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents']);
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -30,6 +31,8 @@ const updateSchema = z.object({
   notesLanguage: z.string().refine(isNotesLanguage, 'unsupported language').nullable().optional(),
   spokenLanguages: z.array(z.string().max(12)).max(MAX_SPOKEN_LANGUAGES * 2).optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
+  dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').optional(),
+  dictationForAgents: z.boolean().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
 
@@ -69,6 +72,8 @@ export const Route = createFileRoute('/api/me')({
           notesLanguage: u.notesLanguage ?? null,
           spokenLanguages: spokenLanguages(u),
           customVocabulary: parseVocabulary(u.customVocabularyJson),
+          dictationStyle: dictationStyle(u.dictationStyle),
+          dictationForAgents: u.dictationForAgents,
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
           hasOpenRouterKey: !!u.byoOpenRouterKey,
@@ -110,6 +115,8 @@ export const Route = createFileRoute('/api/me')({
           patch.spokenLanguagesJson = spoken.length > 0 ? JSON.stringify(spoken) : null;
           patch.defaultLanguage = AUTO_LANGUAGE;
         }
+        if (body.dictationStyle) patch.dictationStyle = body.dictationStyle === 'natural' ? null : body.dictationStyle;
+        if (body.dictationForAgents !== undefined) patch.dictationForAgents = body.dictationForAgents;
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;
