@@ -176,7 +176,7 @@ mod mac {
                 match feedback(&baseline, &candidate) {
                     Ok(result) => {
                         baseline = candidate.clone();
-                        notify(json!({"status":"saved", "learned":result["learned"]}));
+                        notify(json!({"status":"saved", "learned":result["learned"], "words":result["words"]}));
                     }
                     Err(_) => {
                         notify(

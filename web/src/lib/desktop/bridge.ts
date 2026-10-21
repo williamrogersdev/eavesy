@@ -1,4 +1,5 @@
 import type { LiveCaption, LiveLine } from './live-captions';
+import type { LearningEvent } from './learning';
 export { errMsg } from './errors';
 
 type UnlistenFn = () => void;
@@ -683,10 +684,10 @@ export async function correctTranscript(id: string, original: string, corrected:
   return dictionaryRequest('POST', { dictationId: id, original, corrected });
 }
 
-export async function onDictionaryLearning(cb: (event: { status: string; message?: string; learned?: number }) => void): Promise<UnlistenFn> {
+export async function onDictionaryLearning(cb: (event: LearningEvent) => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
-  return t.event.listen<{ status: string; message?: string; learned?: number }>('dictionary:learning', e => cb(e.payload));
+  return t.event.listen<LearningEvent>('dictionary:learning', e => cb(e.payload));
 }
 
 

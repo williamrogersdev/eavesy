@@ -77,6 +77,6 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     return json({ error: 'dictation_required' }, 400);
   }
   const corrections = learnCorrections(original, corrected);
-  const learned = await dictionary.remember(db, actor.userId, corrections);
-  return json({ learned });
+  const words = await dictionary.rememberCorrections(db, actor.userId, corrections);
+  return json({ learned: words.length, words });
 }
