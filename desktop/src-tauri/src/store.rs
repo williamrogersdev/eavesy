@@ -62,7 +62,8 @@ fn recover_shared_history(
     *guard = History::open(
         &shared.directory.join("history.sqlite3"),
         &shared.directory.join("recordings.json"),
-    ).map_err(|error|format!("Could not reopen local history after a worker failure; existing files were preserved: {error}"))?;
+    )
+    .map_err(|error| format!("Could not reopen local history after a worker failure: {error}"))?;
     shared.history.clear_poison();
     crate::telemetry::capture(
         "history.lock.recovered",

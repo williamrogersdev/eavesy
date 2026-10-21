@@ -8,16 +8,16 @@ Medians of seven repetitions after warm-up, with warm files and OS caches. Histo
 
 | Operation | Recordings | 0.5.4 | Optimized |
 | --- | ---: | ---: | ---: |
-| Reconciliation work | 500 | 242.43 ms | 150.48 ms |
+| Reconciliation work | 500 | 235.02 ms | 143.50 ms |
 | Missing search term | 500 | 39.36 ms | 4.88 ms |
 | Oldest-record search | 500 | 43.06 ms | 5.41 ms |
 | Common-term search | 500 | 1.60 ms | 1.88 ms |
-| Reconciliation work | 2,000 | 1056.41 ms | 666.88 ms |
+| Reconciliation work | 2,000 | 966.46 ms | 603.39 ms |
 | Missing search term | 2,000 | 156.42 ms | 5.79 ms |
 | Oldest-record search | 2,000 | 170.96 ms | 6.16 ms |
 | Common-term search | 2,000 | 2.70 ms | 2.96 ms |
 
-Recovery now runs on a worker. Dispatch measured 0.014 ms at 2,000 recordings, excluding native watcher registration and other setup. Background recovery still takes 667 ms. Sync waits for offline edits and already-queued folder moves to reach the outbox, while setup proceeds. Readiness waits are bounded; a timeout reports and retries without allowing cloud writes to bypass recovery. The watcher registers before scanning and replays queued events afterwards; each collection window is bounded so a steady event stream cannot postpone processing indefinitely.
+Recovery now runs on a worker. Dispatch measured 0.017 ms at 2,000 recordings, excluding native watcher registration and other setup. Background recovery still takes 603 ms. Sync waits for offline edits and already-queued folder moves to reach the outbox, while setup proceeds. Readiness waits are bounded; a timeout reports and retries without allowing cloud writes to bypass recovery. The watcher registers before scanning and replays queued events afterwards; each collection window is bounded so a steady event stream cannot postpone processing indefinitely.
 
 At the same three-request cap, 18 synthetic transcription pieces with repeating 120/20/20 ms durations took 762.9 → 408.6 ms. Uniform 40 ms pieces took 291.2 → 284.7 ms. This measures scheduling headroom, not live-provider speed. Ordered assembly, retry policy, error handling and the concurrency cap are preserved.
 
@@ -48,3 +48,5 @@ cargo test --locked --release --manifest-path desktop/src-tauri/Cargo.toml --lib
 `next-reconcile.rs` compares the frozen old per-file algorithm with production recovery, using isolated synthetic app databases. Fixtures are removed on success. Run performance suites serially to avoid competing disk IO. Verify the recorded snapshots against the checkout with `node desktop/bench/check-next-sources.mjs`; source drift requires remeasurement rather than rewriting the recorded fingerprints.
 
 Regression coverage includes exact Unicode/substring parity, paging/filters, index insert/update/delete and rollback, interrupted and retryable indexing, recording-write priority, reordered cancellation, queued/offline edits without observation rows, sync readiness, ordered work, bounded concurrency, panics and failure scheduling. Existing native capture and Worker suites remain in CI. This PR does not cut a desktop release.
+
+Recovery-panic failures are explicit and return through normal job cleanup. A healthy recovery that exceeds one readiness budget leaves processing queued and retries; only a terminal recovery failure ends the job. Walkthrough and legacy processing use the same offline-edit preflight. The verifier's optional filename is a negative-test aid; omit it when checking the committed benchmark record.

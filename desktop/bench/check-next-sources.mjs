@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(directory, '../..');
+// The optional filename is only for negative-test fixtures; omit it for committed provenance.
 const results = JSON.parse(readFileSync(process.argv[2] ?? resolve(directory, 'next-results.json'), 'utf8'));
 for (const group of ['history_and_queue', 'reconciliation']) {
   const sources = results.source_snapshots?.[group];
