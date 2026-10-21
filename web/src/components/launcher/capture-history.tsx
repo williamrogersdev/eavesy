@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   MoreHorizontal,
+  Languages,
   Pause,
   Play,
   Search,
@@ -211,6 +212,7 @@ function CaptureRow({
   query,
   signedIn,
   onSignIn,
+  onTranslate,
   flash,
   runTask,
 }: {
@@ -218,6 +220,7 @@ function CaptureRow({
   query: string;
   signedIn: boolean;
   onSignIn: () => void;
+  onTranslate?: (text: string) => void;
   flash: Flash;
   runTask: RunTask;
 }) {
@@ -286,6 +289,10 @@ function CaptureRow({
           onOpenChange={setMenuOpen}
           trigger={<IconButton label="More" icon={MoreHorizontal} />}
           items={[
+            ...(text && onTranslate ? [{ label: 'Translate', icon: Languages, onSelect: () => runTask(async () => {
+              const full = plainTranscript((await loadRecordingDetails(rec)).transcript ?? '');
+              onTranslate(full);
+            }, 'Couldn’t load the transcript') }] : []),
             ...(playable
               ? [{
                   label: player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play audio',
@@ -339,6 +346,7 @@ export function CaptureHistory({
   dictationHotkey,
   signedIn,
   onSignIn,
+  onTranslate,
   flash,
   runTask,
   searchRef,
@@ -353,6 +361,7 @@ export function CaptureHistory({
   dictationHotkey: string;
   signedIn: boolean;
   onSignIn: () => void;
+  onTranslate?: (text: string) => void;
   flash: Flash;
   runTask: RunTask;
   searchRef: RefObject<HTMLInputElement | null>;
@@ -439,7 +448,7 @@ export function CaptureHistory({
               {/* The toolbar shows a capture while it runs; it joins the list once it is written down. */}
               {group.items.map((rec) => (
                 <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
-                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
+                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} onTranslate={onTranslate} flash={flash} runTask={runTask} />
                 </div>
               ))}
             </section>

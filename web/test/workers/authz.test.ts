@@ -95,6 +95,7 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/translation': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Translates only the caller-submitted text or bounded audio, using the authenticated browser or paired-device quota; reads and stores no recording data' } },
   '/api/dictionary': Object.fromEntries(['GET', 'POST', 'PUT', 'DELETE'].map(method => [method, {
     unauthenticated: SIGNED_IN,
     scopedToCaller: 'Dictionary ownership comes from authenticated browser or paired device identity; feedback service tests verify stale text, cross-owner reads and writes, and forgetting',

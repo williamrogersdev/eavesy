@@ -1,3 +1,4 @@
+import { version } from '../../src-tauri/tauri.conf.json';
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
 // &live for a recording in progress, &setup for first-run onboarding with
@@ -25,7 +26,9 @@ const SHOT = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 
 export function installDevMock(): void {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('mock')) return;
+  // Browsers preview the native panel by default; ?web opens the web palette.
+  // A real Tauri webview always keeps its native bridge.
+  if (window.__TAURI__ || (params.has('web') && !params.has('mock'))) return;
   const now = Date.now();
   const recordings = params.has('empty') ? [] : sampleRecordings(now);
   if (params.has('history')) {
@@ -61,7 +64,7 @@ export function installDevMock(): void {
       ? { phase: 'recording', sessionId: 's-live', mode: 'audio', startedAtMs: now - 23_000 }
       : { phase: 'idle', sessionId: null },
     get_screenshot_folder: '~/Desktop',
-    get_app_info: { name: 'Eavesy', version: '0.2.0', update: { state: 'upToDate', currentVersion: '0.2.0' } },
+    get_app_info: { name: 'Eavesy', version, update: { state: 'upToDate', currentVersion: version } },
     capture_media: '/mock/shot.png',
     list_projects: params.has('noprojects') ? [] : [
       { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1'], people: null, match: [], recordingCount: 12 },
@@ -83,6 +86,7 @@ export function installDevMock(): void {
       convertFileSrc: () => SHOT,
       invoke: <T>(cmd: string, args?: Record<string, unknown>) => {
         console.debug('[mock invoke]', cmd, args);
+        if (cmd === 'translation_request' || cmd === 'read_clipboard_text') return Promise.reject(new Error('Open the Mac app to translate, or use the signed-in web app. This preview uses sample captures.'));
         if (cmd in hotkeys) return hotkeys[cmd](args ?? {}) as Promise<T>;
         const value = cmd in results ? results[cmd] : null;
         return Promise.resolve((typeof value === 'function' ? (value as (a: Record<string, unknown>) => unknown)(args ?? {}) : value) as T);

@@ -1,3 +1,4 @@
+import { Translator } from '@/components/translation/translator';
 import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Clipboard, Loader2, Mic, MicOff, RotateCcw, Sparkles } from 'lucide-react';
@@ -14,6 +15,7 @@ export const Route = createFileRoute('/app/dictation')({
 });
 
 function DictationPage() {
+  const [translating, setTranslating] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<{ id: string; transcript: string; cleaned?: string } | null>(null);
@@ -110,6 +112,8 @@ function DictationPage() {
     }
   };
 
+  if (translating) return <div className="ev relative mx-auto flex min-h-[520px] max-w-2xl flex-col p-4"><Translator onBack={() => setTranslating(false)} initialText={result?.cleaned ?? result?.transcript ?? ''} /></div>;
+
   const panel = 'flex w-full items-center gap-3 rounded-[var(--ev-r-pop)] border border-ev-line p-4';
   return (
     <AppPage width="compact">
@@ -117,6 +121,8 @@ function DictationPage() {
         title="Dictation"
         description="Speak a rough thought and get clean text to paste. ⌘/Ctrl ⇧ D starts and stops; Esc cancels."
       />
+
+      <button type="button" className={appButton('secondary')} disabled={phase === 'recording' || phase === 'processing'} onClick={() => setTranslating(true)}>Translate · speak or paste in another language</button>
 
       {error ? <AppAlert>{error}</AppAlert> : null}
 

@@ -60,7 +60,7 @@ function tooMany(error: string, retryAfterSec: number, code?: string): Response 
  */
 export async function guardSpend(
   request: Request,
-  scope: 'transcribe' | 'process',
+  scope: 'transcribe' | 'process' | 'translation',
   defaults: { perMin: number; perDay: number },
 ): Promise<Response | null> {
   const ip = clientIp(request);

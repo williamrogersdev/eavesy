@@ -1,5 +1,6 @@
 'use client';
 
+import { Translator } from '@/components/translation/translator';
 import { useRouter } from '@/lib/next-compat/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -71,6 +72,7 @@ export function Launcher() {
   const now = useRef(Date.now()).current;
 
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [translationText, setTranslationText] = useState('');
   const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
@@ -83,7 +85,7 @@ export function Launcher() {
   const [shooting, setShooting] = useState(false);
   // A capture started elsewhere (hotkey, HUD) whose mic is still opening.
   const [opening, setOpening] = useState(false);
-  const [view, setView] = useState<'setup' | 'list' | 'context' | 'settings'>(
+  const [view, setView] = useState<'setup' | 'list' | 'context' | 'settings' | 'translate'>(
     desktop ? 'setup' : 'list',
   );
   const [setupPaired, setSetupPaired] = useState(false);
@@ -708,6 +710,8 @@ export function Launcher() {
             account={account}
             connecting={connecting}
             signedOut={signedOut}
+            onTranslate={() => { setTranslationText(''); setView('translate'); }}
+            translateDisabled={starting || !!recording}
             goSettings={goSettings}
             goBack={() => setView(view === 'settings' && settingsFromSetup.current ? 'setup' : 'list')}
             connect={() => runTask(connectAccount, 'Couldn’t connect your account')}
@@ -767,6 +771,8 @@ export function Launcher() {
               flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
             }, 'Could not finish setup')}
           />
+        ) : view === 'translate' ? (
+          <Translator initialText={translationText} onBack={() => setView('list')} />
         ) : view === 'settings' ? (
           <SettingsView
             permissions={setupPermissions}
@@ -809,6 +815,7 @@ export function Launcher() {
           <div className="ev-history">
             <CaptureHistory
               recordings={recordings}
+              onTranslate={text => { setTranslationText(text); setView('translate'); }}
               refreshRevision={historyRevision}
               live={live}
               dictationHotkey={dictationHotkey}
