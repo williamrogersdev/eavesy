@@ -43,6 +43,7 @@ export function installDevMock(): void {
   const settings = {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
+    hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
   };
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
@@ -61,6 +62,10 @@ export function installDevMock(): void {
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
+    set_hud_look: ({ lines, translucent }: Record<string, unknown>) => {
+      Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
+      emit('hud:look', { lines, translucent });
+    },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },

@@ -11,6 +11,9 @@ pub struct Target {
 
 static PRESSED: Mutex<Option<(Instant, Target)>> = Mutex::new(None);
 static PENDING: Mutex<Option<(String, Instant, Target)>> = Mutex::new(None);
+/// The project a recording belongs to, read as it stops: the window the user
+/// was dictating into, not whichever is in front once the words are back.
+static PROJECT_AT_STOP: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
@@ -38,6 +41,29 @@ pub fn rearm_at_stop(session_id: &str) {
         .filter(|(id, _, _)| id == session_id)
         .map(|(_, _, target)| *target);
     *pending = now.or(started_in).map(|t| (session_id.to_string(), Instant::now(), t));
+    let armed = pending.is_some();
+    drop(pending);
+    if armed {
+        // Reading the front window can take a moment: keep it off the stop path.
+        let session_id = session_id.to_string();
+        std::thread::spawn(move || {
+            let project = crate::projects::current_project();
+            *PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id, project));
+        });
+    }
+}
+
+fn project_for(session_id: &str) -> Option<String> {
+    let mut stopped = PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner());
+    match stopped.take() {
+        Some((id, project)) if id == session_id => project,
+        // Not read at stop (or not finished yet): the window in front now is the best guess.
+        other => {
+            *stopped = other;
+            drop(stopped);
+            crate::projects::current_project()
+        }
+    }
 }
 
 fn pick_target(pressed: Option<(Instant, Target)>, now: impl FnOnce() -> Option<Target>) -> Option<Target> {
@@ -153,6 +179,7 @@ fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> D
 /// does not paste a second time.
 pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
+    let project = project_for(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
@@ -160,7 +187,6 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        let project = crate::projects::current_project();
         let text = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy

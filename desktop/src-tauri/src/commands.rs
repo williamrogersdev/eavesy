@@ -183,6 +183,16 @@ pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
     settings::save(&app, &config)
 }
 
+/// How many lines of live words the control shows while recording, and whether it is see-through.
+#[tauri::command]
+pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool) -> Result<(), String> {
+    if !matches!(lines, 0 | 1 | 2 | 4) {
+        return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
+    }
+    crate::hud::set_look(&app, lines, translucent);
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SetupStatus {
     pub paired: bool,
