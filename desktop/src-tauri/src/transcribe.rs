@@ -210,10 +210,8 @@ fn run(
         .build()
         .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
-    let texts = in_order_at_once(&pieces.pieces, PIECES_AT_ONCE, |piece| {
-        with_retry(delays, || {
-            transcribe_piece(&client, piece, voice, credential)
-        })
+    let texts = crate::work_queue::run(&pieces.pieces, PIECES_AT_ONCE, |piece| {
+        with_retry(delays, || transcribe_piece(&client, piece, voice, credential))
     })?;
     let texts: Vec<&str> = texts
         .iter()
@@ -226,35 +224,6 @@ fn run(
     Ok(texts.join("\n"))
 }
 
-/// Runs `work` on up to `width` items at a time and returns the results in
-/// the items' order, or the first error.
-fn in_order_at_once<T: Sync, R: Send>(
-    items: &[T],
-    width: usize,
-    work: impl Fn(&T) -> Result<R, String> + Sync,
-) -> Result<Vec<R>, String> {
-    let mut results = Vec::with_capacity(items.len());
-    for batch in items.chunks(width.max(1)) {
-        let batch_results: Vec<Result<R, String>> = std::thread::scope(|scope| {
-            let workers: Vec<_> = batch
-                .iter()
-                .map(|item| scope.spawn(|| work(item)))
-                .collect();
-            workers
-                .into_iter()
-                .map(|worker| {
-                    worker
-                        .join()
-                        .unwrap_or_else(|_| Err("transcription worker panicked".to_string()))
-                })
-                .collect()
-        });
-        for result in batch_results {
-            results.push(result?);
-        }
-    }
-    Ok(results)
-}
 
 enum PieceError {
     Retry(String),
@@ -573,7 +542,7 @@ mod tests {
         let items: Vec<u64> = (0..7).collect();
         let running = std::sync::atomic::AtomicUsize::new(0);
         let peak = std::sync::atomic::AtomicUsize::new(0);
-        let results = in_order_at_once(&items, 3, |item| {
+        let results = crate::work_queue::run(&items, 3, |item| {
             let now = running.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
             peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
             std::thread::sleep(std::time::Duration::from_millis(20 * (7 - item)));
@@ -587,13 +556,7 @@ mod tests {
     #[test]
     fn a_failed_piece_fails_the_transcript() {
         let items = [1, 2, 3, 4];
-        let result = in_order_at_once(&items, 2, |item| {
-            if *item == 3 {
-                Err("HTTP 400".to_string())
-            } else {
-                Ok(*item)
-            }
-        });
+        let result = crate::work_queue::run(&items, 2, |item| if *item == 3 { Err("HTTP 400".to_string()) } else { Ok(*item) });
         assert_eq!(result, Err("HTTP 400".to_string()));
     }
 

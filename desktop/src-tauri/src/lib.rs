@@ -10,6 +10,8 @@ mod commands;
 mod diagnostics;
 mod fs_writer;
 mod fs_watcher;
+mod work_queue;
+mod history_search;
 #[cfg(target_os = "macos")]
 mod fn_key;
 mod front_window;
@@ -122,6 +124,7 @@ pub fn run() {
             learning::correct_recording,
             commands::hide_panel,
             commands::list_recordings,
+            commands::cancel_history_search,
             commands::get_recording,
             commands::get_settings,
             commands::set_launcher_position,

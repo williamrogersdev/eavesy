@@ -467,8 +467,14 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
 
 // SQLite, filesystem migration, and serialization run off the UI thread.
 #[tauri::command(async)]
-pub fn list_recordings(app: AppHandle, offset: Option<usize>, limit: Option<usize>, query: Option<String>, filter: Option<String>) -> Result<store::HistoryPage, String> {
-    store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"))
+pub fn list_recordings(app: AppHandle, offset: Option<usize>, limit: Option<usize>, query: Option<String>, filter: Option<String>, search: Option<crate::history_search::Request>) -> Result<store::HistoryPage, String> {
+    let token=search.as_ref().map(crate::history_search::register).transpose()?;
+    store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"), token.as_ref())
+}
+
+#[tauri::command(async)]
+pub fn cancel_history_search(search: crate::history_search::Request) -> Result<(),String> {
+    crate::history_search::cancel(search)
 }
 
 #[derive(Serialize)]
