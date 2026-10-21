@@ -448,12 +448,8 @@ pub fn retry_walkthrough(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 pub fn recover(app: &AppHandle) {
-    for (id, _) in crate::store::locations(app).unwrap_or_default() {
-        if let Ok(Some(rec)) = crate::store::get(app, &id) {
-            if rec.has_video && rec.source == "screen" && rec.status == "processing" {
-                spawn(app.clone(), id);
-            }
-        }
+    for id in crate::store::pending_walkthroughs(app).unwrap_or_default() {
+        spawn(app.clone(), id);
     }
 }
 pub fn update_correction(app: &AppHandle, id: &str, corrected: &str) -> Result<(), String> {

@@ -66,6 +66,13 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 
 impl History {
+    /// Resume only unfinished screen jobs; do not materialize the library's bodies at launch.
+    pub fn pending_walkthroughs(&self) -> Result<Vec<String>, String> {
+        let mut query = self.conn.prepare("SELECT id FROM history_recordings WHERE has_video = 1 AND source = 'screen' AND status = 'processing'").map_err(error)?;
+        let rows = query.query_map([], |row| row.get(0)).map_err(error)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(error)
+    }
+
     pub fn open(path: &Path, legacy: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(error)?;
