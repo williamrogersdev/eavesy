@@ -41,15 +41,23 @@ pub fn rearm_at_stop(session_id: &str) {
         .filter(|(id, _, _)| id == session_id)
         .map(|(_, _, target)| *target);
     *pending = now.or(started_in).map(|t| (session_id.to_string(), Instant::now(), t));
+    let armed = pending.is_some();
     drop(pending);
-    *PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((session_id.to_string(), crate::projects::current_project()));
+    if armed {
+        // Reading the front window can take a moment: keep it off the stop path.
+        let session_id = session_id.to_string();
+        std::thread::spawn(move || {
+            let project = crate::projects::current_project();
+            *PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id, project));
+        });
+    }
 }
 
 fn project_for(session_id: &str) -> Option<String> {
     let mut stopped = PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner());
     match stopped.take() {
         Some((id, project)) if id == session_id => project,
+        // Not read at stop (or not finished yet): the window in front now is the best guess.
         other => {
             *stopped = other;
             drop(stopped);

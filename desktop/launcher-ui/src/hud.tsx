@@ -196,11 +196,12 @@ function Hud() {
     let changed = false;
     void tauri()?.event?.listen('hud:look', (event) => { changed = true; setLook(lookFrom(event.payload)); })
       .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
-    if (tauri()) {
+    const load = (attempt: number) => {
       void invoke('get_settings')
         .then((settings) => { if (settings && !changed && !disposed) setLook(lookFrom(settings)); })
-        .catch(() => {});
-    }
+        .catch(() => { if (attempt < 4 && !changed && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
+    };
+    if (tauri()) load(0);
     return () => { disposed = true; off?.(); };
   }, []);
 
