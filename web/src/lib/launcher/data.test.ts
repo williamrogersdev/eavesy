@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { loadRecordingDetails, loadRecordingPage, loadRecordings, reloadRecordingPages } from './data';
+import { cancelHistorySearch, loadRecordingDetails, loadRecordingPage, loadRecordings, reloadRecordingPages } from './data';
 import type { Recording } from './types';
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 afterEach(() => {
@@ -62,4 +62,18 @@ test('a failed later page rejects the refresh instead of replacing the existing 
     return { items: [native], next_offset: 50, counts: { all: 100, voice: 0, meetings: 100, screens: 0, notes: 0 } };
   });
   await expect(reloadRecordingPages(2, '', 'all')).rejects.toThrow('Database unavailable');
+});
+
+
+test('history generations cover every refreshed page and cancellation', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  install(async (cmd, args) => {
+    calls.push({ cmd, args });
+    return { items: [], next_offset: args?.offset === 0 ? 50 : null, counts: { all: 100, voice: 100, meetings: 0, screens: 0, notes: 0 } };
+  });
+  const search = { client: 'launcher', generation: 3 };
+  await reloadRecordingPages(2, 'query', 'all', search);
+  await cancelHistorySearch(search);
+  expect(calls.map((call) => call.args?.search)).toEqual([search, search, search]);
+  expect(calls[2].cmd).toBe('cancel_history_search');
 });

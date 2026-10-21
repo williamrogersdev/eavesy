@@ -12,6 +12,7 @@ target/
 **/*.rs.bk
 Cargo.lock
 !desktop/src-tauri/Cargo.lock
+!desktop/bench/next-runner/Cargo.lock
 desktop/src-tauri/gen/
 desktop/src-tauri/frontend-shell/
 

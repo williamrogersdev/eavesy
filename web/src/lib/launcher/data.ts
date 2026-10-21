@@ -87,10 +87,16 @@ function normalizeRows(rows: unknown[]): Recording[] {
   return rows.map(normalize).filter((row): row is Recording => row !== null);
 }
 
-export async function loadRecordingPage(offset = 0, query = '', filter = 'all'): Promise<RecordingPage> {
+export interface HistorySearch { client: string; generation: number }
+
+export async function cancelHistorySearch(search: HistorySearch): Promise<void> {
+  await window.__TAURI__?.core.invoke('cancel_history_search', { search });
+}
+
+export async function loadRecordingPage(offset = 0, query = '', filter = 'all', search?: HistorySearch): Promise<RecordingPage> {
   const t = window.__TAURI__;
   if (!t) throw new Error('Capture history is unavailable outside the desktop app');
-  const page = await t.core.invoke<NativePage>('list_recordings', { offset, limit: 50, query, filter });
+  const page = await t.core.invoke<NativePage>('list_recordings', { offset, limit: 50, query, filter, ...(search ? { search } : {}) });
   return { items: normalizeRows(page.items), nextOffset: page.next_offset, counts: page.counts };
 }
 
@@ -104,12 +110,12 @@ export async function loadRecordingDetails(rec: Recording): Promise<Recording> {
 }
 
 /** Refresh the loaded range in place, stopping early when deletions shorten it. */
-export async function reloadRecordingPages(pages: number, query: string, filter: string): Promise<RecordingPage> {
-  let next = await loadRecordingPage(0, query, filter);
+export async function reloadRecordingPages(pages: number, query: string, filter: string, search?: HistorySearch): Promise<RecordingPage> {
+  let next = await loadRecordingPage(0, query, filter, search);
   const items = [...next.items];
   const seen = new Set(items.map((row) => row.id));
   for (let i = 1; i < pages && next.nextOffset !== null; i++) {
-    next = await loadRecordingPage(next.nextOffset, query, filter);
+    next = await loadRecordingPage(next.nextOffset, query, filter, search);
     for (const row of next.items) if (!seen.has(row.id)) { seen.add(row.id); items.push(row); }
   }
   return { ...next, items };
