@@ -27,6 +27,7 @@ mod cloud_pull;
 mod dictate;
 mod dictation;
 mod make_room;
+mod moments;
 mod panel;
 mod permissions;
 mod placement;
@@ -107,6 +108,14 @@ pub fn run() {
             visual::copy_capture_media,
             walkthrough::recording_context,
             walkthrough::retry_walkthrough,
+            walkthrough::recording_moments,
+            moments::toggle_marking,
+            moments::set_marking_tool,
+            moments::stop_marking,
+            moments::mark_element,
+            moments::mark_area,
+            moments::undo_mark,
+            moments::marking_state,
             visual::paste_clip,
             imports::import_files,
             imports::save_note,

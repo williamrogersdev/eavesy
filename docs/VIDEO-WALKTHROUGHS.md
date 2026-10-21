@@ -27,6 +27,9 @@ Each recording lives in `~/Eavesy/Recordings/<recording>/`:
 | `visual.json` | Local screenshot, OCR, and extracted audio-chunk index |
 | `audio/*.m4a` | Audio extracted in chunks of at most two minutes |
 | `audio/*.transcript.json` | Successful per-chunk responses for resumable retries |
+| `moments.json` | Clicks and tagged elements or areas, with app, page and element details |
+| `moments/*.jpg` | Close-ups of each click and tag, outlined in manila |
+| `moments/crops.json` | Close-up paths and the text Vision read inside each one |
 
 Speech timestamps and screenshot timestamps share the original video's zero point.
 The original recognition retains its timing; dictionary-corrected full text is
@@ -45,6 +48,28 @@ Screen extraction and OCR run on the Mac through AVFoundation and Vision. Only
 extracted audio goes to the existing authenticated transcription service. Videos
 and screenshots are not uploaded by this feature. Context does not automatically
 appear in the cloud meeting library or cloud MCP server.
+
+## Clicks and tags
+
+While the screen records, Eavesy notes every click outside its own windows: the
+time in the video, the pointer, and what macOS Accessibility reports under it (role,
+label, value, help text, enabled state, the HTML id, classes and link target in web
+pages, and the groups it sits inside). Each click also records where it happened:
+the app, its window title or document, and, in browsers, the page URL and title.
+Values of secure text fields are never read.
+
+**Mark** in the recording pill (or **⌥H**) opens the marker over the screen.
+**Element** tags whatever is under the pointer when you click; **Area** tags a box
+you drag. Tags are numbered, shown on screen while you keep recording, and left out
+of the video like the rest of Eavesy's windows. **Undo tag** removes the last one;
+**esc** or **Done** closes the marker. Clicks made while the marker is open are not
+counted as clicks.
+
+After Stop, each click and tag gets a close-up from the video, the text Vision reads
+inside it, and the narration from 1.5 seconds before to 6 seconds after. `context.md`
+lists them under **What the user pointed at**, and the recording card shows them as
+**Evidence**. Clicks need no extra permission; the element details need the
+Accessibility access Eavesy already asks for to paste.
 
 ## Copy and paste
 
@@ -88,6 +113,8 @@ Tools:
 - `get_walkthrough({id, startMs?, endMs?})`: read the structured manifest and recording folder; optional time bounds keep long recordings manageable. Untimed corrected full text is omitted in range views.
 - `get_walkthrough_frame({id, timestampMs})`: return the nearest saved screenshot
   as an actual MCP image plus OCR, actual timestamp, and sampling distance.
+- `get_walkthrough_moment({id, number})`: return one click or tag with its element,
+  place, narration and on-screen text, plus its close-up as an MCP image.
 
 Media reads are confined to the selected recording folder, including symlink
 resolution. Files outside that folder are rejected. The service does not start

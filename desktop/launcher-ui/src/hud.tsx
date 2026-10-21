@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, ShieldCheck, Square, X } from 'lucide-react';
+import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -12,6 +12,7 @@ import {
   type RunningTranscript,
 } from '@/lib/desktop/live-captions';
 import { prettyAccel } from '@/lib/launcher/accel';
+import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -53,7 +54,7 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'wide' | 'result' | 'shot';
+type Size = 'pill' | 'wide' | 'result' | 'shot' | 'video';
 
 function sizeFor(state: HudState): Size {
   const video = state.mode === 'video';
@@ -62,6 +63,7 @@ function sizeFor(state: HudState): Size {
     case 'saved':
       return 'pill';
     case 'recording':
+      return video ? 'video' : 'wide';
     case 'transcribing':
       return video ? 'pill' : 'wide';
     case 'failed':
@@ -74,7 +76,7 @@ function sizeFor(state: HudState): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [400, 142], result: [400, 142], shot: [360, 172] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 36] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -90,6 +92,19 @@ function browserPreviewState(): HudState | null {
     message: phase === 'done' && mode === 'audio'
       ? 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
       : phase === 'failed' ? 'No speech was heard' : null,
+  };
+}
+
+function browserPreviewMarking(): MarkingState {
+  if (tauri()) return NO_MARKING;
+  const params = new URLSearchParams(window.location.search);
+  const marks = Number(params.get('marks') ?? 0);
+  return {
+    sessionId: 'preview',
+    clicks: Number(params.get('clicks') ?? 4),
+    marks: Array.from({ length: marks }, (_, i) => ({ number: i + 1, rect: null })),
+    tool: params.get('marking') === 'area' ? 'area' : params.has('marking') ? 'element' : null,
+    shortcut: '⌥H',
   };
 }
 
@@ -117,6 +132,7 @@ function Hud() {
   const [voice, setVoice] = useState(0);
   const [micSignal, setMicSignal] = useState({rms: 0, at: 0});
   const [copied, setCopied] = useState(false);
+  const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<{ sessionId: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
@@ -384,11 +400,14 @@ function Hud() {
           <>
             <span className="ctl-rec" aria-hidden />
             <span className="ctl-timer">{clock(Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000)))}</span>
-            {video ? <span className="ctl-say ctl-quiet" title={now - micSignal.at > 5000 ? 'No microphone audio is arriving' : 'Microphone is recording'}>{now - micSignal.at < 2000 && micSignal.rms >= 0.002 ? 'Mic active' : 'Mic quiet'}</span> : <VoiceBars level={voice} />}
+            {video && marking.tool ? null : video ? <MicState heard={now - micSignal.at < 2000 && micSignal.rms >= 0.002} silent={now - micSignal.at > 5000} /> : <VoiceBars level={voice} />}
           </>
         )}
+        {video && !opening && <Marking state={marking} act={act} />}
         <span className="ctl-fill" />
-        <button type="button" disabled={opening} onClick={() => act('stop_capture', { sessionId: state.sessionId })} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
+        {video && marking.tool
+          ? <button type="button" onClick={() => act('stop_marking')} title="Put the marker away (esc)" className="ctl-btn ctl-primary">Done</button>
+          : <button type="button" disabled={opening} onClick={() => act('stop_capture', { sessionId: state.sessionId })} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
@@ -469,6 +488,7 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
+      data-marking={video && live && marking.tool ? 'true' : undefined}
       onMouseDown={pressSurface}
       onMouseEnter={loadShortcut}
       className="launcher-scope ev eavesy-control"
@@ -476,6 +496,41 @@ function Hud() {
       <div className="ctl-top">{top}</div>
       {below && <div ref={transcriptBox} className="ctl-below" onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
     </div>
+  );
+}
+
+/**
+ * A screen recording's evidence: clicks are noted on their own, and Mark brings
+ * out the marker to tag an element or an area. Tags are manila, never coral.
+ */
+function MicState({ heard, silent }: { heard: boolean; silent: boolean }) {
+  const label = silent ? 'No microphone audio is arriving' : heard ? 'Mic active' : 'Mic quiet';
+  const Icon = silent ? MicOff : Mic;
+  return <span className="ctl-mic" data-heard={heard || undefined} role="img" aria-label={label} title={label}><Icon className="h-3.5 w-3.5" /></span>;
+}
+
+function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?: Record<string, unknown>) => void }) {
+  const tags = state.marks.length;
+  const tagCount = tags > 0 && <span className="ctl-tag" title={`${tags} tagged`} aria-label={`${tags} tagged`}>{tags}</span>;
+  if (state.tool) return (
+    <>
+      <span className="ctl-sep" aria-hidden />
+      <span className="ctl-seg" role="group" aria-label="What to tag">
+        <button type="button" aria-pressed={state.tool === 'element'} onClick={() => act('set_marking_tool', { tool: 'element' })} className="ctl-seg-btn"><MousePointer2 className="h-3 w-3" />Element</button>
+        <button type="button" aria-pressed={state.tool === 'area'} onClick={() => act('set_marking_tool', { tool: 'area' })} className="ctl-seg-btn"><SquareDashed className="h-3 w-3" />Area</button>
+      </span>
+      {tagCount}
+    </>
+  );
+  return (
+    <>
+      <span className="ctl-sep" aria-hidden />
+      <span className="ctl-count" title="Each click is saved with what was under the pointer"><MousePointerClick className="h-3.5 w-3.5" />{clicksLabel(state.clicks)}</span>
+      {tagCount}
+      <button type="button" onClick={() => act('toggle_marking')} title={`Tag something on screen for your AI${state.shortcut ? ` (${state.shortcut})` : ''}`} className="ctl-btn ctl-marker">
+        <Search className="h-3.5 w-3.5" />Mark{state.shortcut && <kbd className="ctl-kbd">{state.shortcut}</kbd>}
+      </button>
+    </>
   );
 }
 

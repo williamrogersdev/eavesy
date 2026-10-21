@@ -109,6 +109,8 @@ const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// Keep the same frame after pasting so the transcript remains readable.
 const RESULT: (f64, f64) = (400.0, 142.0);
+/// A screen recording: room for the click count, Mark and the marking tools.
+const VIDEO_LIVE: (f64, f64) = (420.0, 36.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -119,7 +121,8 @@ pub fn size_for(state: &HudState) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     match state.phase {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
-        Phase::Recording | Phase::Transcribing if video => DEFAULT_SIZE,
+        Phase::Recording if video => VIDEO_LIVE,
+        Phase::Transcribing if video => DEFAULT_SIZE,
         Phase::Recording | Phase::Transcribing | Phase::Failed => WIDE,
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
@@ -418,7 +421,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, RESULT, SHOT, WIDE};
+    use super::{is_active, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -444,8 +447,14 @@ mod tests {
     fn resting_saved_and_video_stay_a_small_pill() {
         assert_eq!(size_for(&HudState::idle()), DEFAULT_SIZE);
         assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None)), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None)), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None)), DEFAULT_SIZE);
         assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  "))), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn a_screen_recording_makes_room_for_clicks_and_marking() {
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None)), VIDEO_LIVE);
+        assert_eq!(VIDEO_LIVE.1, DEFAULT_SIZE.1);
     }
 
     #[test]

@@ -249,7 +249,46 @@ body {
 
 .ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
 .ctl-quiet { color: var(--ctl-ink-2); }
+.ctl-mic { display: inline-flex; flex: none; color: var(--ctl-ink-2); }
+.ctl-mic[data-heard] { color: var(--ctl-ink); }
 .ctl-warn { color: #ffc870; }
+
+/* Marking during a screen recording: evidence tags are manila. */
+.ctl-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--ctl-line); }
+.ctl-count { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 0 4px; color: var(--ctl-ink-2); font-variant-numeric: tabular-nums; }
+.ctl-tag {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 5px 5px 5px 1px;
+  background: var(--ev-manila);
+  color: #2b1d05;
+  font: 700 11px/18px var(--ev-font-round);
+  font-variant-numeric: tabular-nums;
+}
+.ctl-marker { color: var(--ctl-ink); background: rgb(255 248 238 / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
+.ctl-marker > svg { color: var(--ev-manila); }
+.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(255 248 238 / 0.08); }
+.ctl-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--ctl-ink-2);
+  font: inherit;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-seg-btn:hover { color: var(--ctl-ink); }
+.ctl-seg-btn[aria-pressed="true"] { background: var(--ev-manila); color: #2b1d05; font-weight: 650; }
+.eavesy-control[data-size="video"] .ctl-top { gap: 4px; }
+.eavesy-control[data-marking="true"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-manila) 60%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
 
 /* The one unmistakable sign the mic is live. */
 .ctl-rec {
@@ -384,3 +423,164 @@ body {
   -webkit-user-select: text;
 }
 .ctl-editor:focus-visible { box-shadow: inset 2px 0 0 var(--ctl-ink-3); padding-left: 8px; }
+
+/* The marker: a see-through panel over the recorded screen (marker.tsx).
+   Dimmed around what is being pointed at; tags are manila evidence markers. */
+html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
+.mk-root {
+  position: fixed;
+  inset: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: 550 12.5px/16px var(--ev-font-round);
+}
+.mk-root[data-tool="area"] { cursor: crosshair; }
+.mk-dim { position: absolute; inset: 0; background: rgb(22 19 18 / 0.26); }
+.mk-spot {
+  position: absolute;
+  border-radius: 6px;
+  outline: 2px solid var(--ev-manila);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgb(255 253 248 / 0.75), 0 0 0 100vmax rgb(22 19 18 / 0.26);
+  background: color-mix(in srgb, var(--ev-manila) 10%, transparent);
+  pointer-events: none;
+  transition: left 90ms ease, top 90ms ease, width 90ms ease, height 90ms ease;
+}
+.mk-spot[data-tool="area"] { outline-style: dashed; transition: none; }
+.mk-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 520px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px 7px 7px 2px;
+  background: var(--ev-manila);
+  color: #2b1d05;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.mk-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.mk-chip-quiet { flex: none; color: color-mix(in srgb, #2b1d05 72%, transparent); font-weight: 550; }
+.mk-size {
+  position: absolute;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--ev-hud);
+  color: var(--ev-hud-ink);
+  font: 600 11px/14px var(--ev-font-text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.mk-tagged {
+  position: absolute;
+  border-radius: 6px;
+  outline: 2px solid var(--ev-manila);
+  outline-offset: 2px;
+  pointer-events: none;
+}
+.mk-tag {
+  position: absolute;
+  top: -14px;
+  left: -14px;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 6px 6px 6px 1px;
+  background: var(--ev-manila);
+  box-shadow: 0 0 0 2px var(--ev-raised), 0 4px 10px -4px rgb(0 0 0 / 0.45);
+  color: #2b1d05;
+  font: 700 12px/22px var(--ev-font-round);
+}
+/* "Tagged #2" lands like a rubber stamp on the case file, then lifts off. */
+.mk-stamp {
+  position: absolute;
+  padding: 2px 10px;
+  border: 2px solid var(--ev-manila-ink);
+  border-radius: 6px;
+  background: rgb(255 253 248 / 0.92);
+  color: var(--ev-manila-ink);
+  font: 800 15px/20px var(--ev-font-round);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+  animation: mk-stamp 1600ms var(--ev-ease-spring) both;
+}
+@keyframes mk-stamp {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-4deg) scale(1.5); }
+  14% { opacity: 1; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+}
+.mk-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 8px;
+  border-radius: 16px;
+  background: var(--ev-hud);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line), 0 18px 44px -16px rgb(0 0 0 / 0.6);
+  color: var(--ev-hud-ink);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.mk-hint[data-top] { top: 72px; bottom: auto; }
+.mk-mascot {
+  --ev-mascot-body: #f2ebdf;
+  --ev-mascot-band: #9e9389;
+  --ev-mascot-eye: #161312;
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+.mk-bubble {
+  position: relative;
+  margin: 0;
+  padding: 6px 11px;
+  border-radius: 12px;
+  background: var(--ev-raised);
+  color: var(--ev-ink);
+  font: 550 13px/18px var(--ev-font-round);
+}
+.mk-bubble::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--ev-raised);
+  transform: translateY(-50%) rotate(45deg);
+}
+.mk-error { margin: 0; color: #ffc870; }
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgb(255 248 238 / 0.1);
+  color: var(--ev-hud-ink);
+  font: inherit;
+}
+.mk-btn:hover { background: rgb(255 248 238 / 0.18); }
+.mk-kbd {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgb(255 248 238 / 0.1);
+  color: var(--ev-hud-ink-2);
+  font: 600 11px/18px var(--ev-font-round);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-spot { transition: none; }
+  .mk-stamp { animation-duration: 1ms; animation-delay: 0s; opacity: 1; transform: translate(-50%, -50%) rotate(-4deg); }
+}

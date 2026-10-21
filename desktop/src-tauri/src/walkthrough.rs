@@ -58,6 +58,9 @@ pub struct Bundle {
     pub frames: Vec<Frame>,
     pub capture: Option<serde_json::Value>,
     pub warnings: Vec<String>,
+    /// Clicks and tagged elements and areas, with close-ups and the narration around them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moments: Vec<crate::moments::Moment>,
 }
 pub struct CorrectionGuard(String);
 impl Drop for CorrectionGuard {
@@ -141,6 +144,7 @@ fn process(app: &AppHandle, id: &str) -> Result<(), String> {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok()),
         warnings: vec![],
+        moments: crate::moments::load(&dir).map(|m| m.moments).unwrap_or_default(),
     };
     // Publish a usable, honest bundle even before OCR or the network completes.
     save(&dir, &bundle)?;
@@ -148,6 +152,7 @@ fn process(app: &AppHandle, id: &str) -> Result<(), String> {
     if let Err(error) = &result {
         bundle.warnings.push(error.clone());
     }
+    attach_narration(&mut bundle);
     if crate::fs_writer::has_local_edit(app, &dir.join("transcript.md"))? {
         if let Some(text) = crate::store::get(app, id)?.and_then(|r| r.transcript) {
             bundle.corrected_transcript = text;
@@ -259,6 +264,9 @@ fn enrich(app: &AppHandle, dir: &Path, bundle: &mut Bundle) -> Result<(), String
             .warnings
             .push("No screenshots could be extracted. Inspect the original video.".into());
     }
+    if let Err(error) = crop_moments(app, dir, bundle) {
+        bundle.warnings.push(format!("Close-ups of clicks and marks are unavailable: {error}"));
+    }
     save(dir, bundle)?;
     let _ = app.emit("recordings:updated", ());
     transcribe_chunks(
@@ -277,6 +285,60 @@ fn enrich(app: &AppHandle, dir: &Path, bundle: &mut Bundle) -> Result<(), String
     }
     Ok(())
 }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Crop {
+    number: u32,
+    path: String,
+    text: String,
+}
+/// A close-up of each click and mark, cut from the video on this Mac.
+fn crop_moments(app: &AppHandle, dir: &Path, bundle: &mut Bundle) -> Result<(), String> {
+    if bundle.moments.is_empty() {
+        return Ok(());
+    }
+    let list = dir.join("moments/crops.json");
+    if !list.exists() {
+        let output = std::process::Command::new(crate::audio::capture_bin(app)?)
+            .arg("--moment-crops")
+            .arg(dir.join("screen.mp4"))
+            .arg("--moments")
+            .arg(dir.join("moments.json"))
+            .arg("--output-dir")
+            .arg(dir)
+            .output()
+            .map_err(|e| format!("could not run: {e}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stdout).chars().take(500).collect::<String>().trim().to_string());
+        }
+    }
+    let crops: Vec<Crop> = serde_json::from_slice(&std::fs::read(&list).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("invalid close-up list: {e}"))?;
+    for crop in crops {
+        if let Some(moment) = bundle.moments.iter_mut().find(|m| m.number == crop.number) {
+            moment.crop = Some(crop.path);
+            moment.screen_text = crop.text;
+        }
+    }
+    Ok(())
+}
+/// What was said around each moment: from just before it to a few seconds on.
+fn attach_narration(bundle: &mut Bundle) {
+    for moment in &mut bundle.moments {
+        let from = moment.timestamp_ms.saturating_sub(NARRATION_BEFORE_MS);
+        let to = moment.timestamp_ms + NARRATION_AFTER_MS;
+        moment.narration = bundle
+            .segments
+            .iter()
+            .filter(|s| s.end_ms >= from && s.start_ms <= to)
+            .map(|s| s.text.trim())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+}
+const NARRATION_BEFORE_MS: u64 = 1_500;
+const NARRATION_AFTER_MS: u64 = 6_000;
 fn transcribe_chunks(
     dir: &Path,
     bundle: &mut Bundle,
@@ -425,6 +487,7 @@ fn render(bundle: &Bundle, absolute: Option<&Path>) -> String {
     if let Some(capture) = &bundle.capture {
         out.push_str(&format!("Microphone verification: {capture}\n\n"));
     }
+    out.push_str(&moments_markdown(bundle, &path));
     out.push_str(&transcript_markdown(bundle));
     out.push_str(&format!("\n\n## Screen timeline\n\nCandidate sampling interval: {} ms; similar screens are deduplicated.\n\n", bundle.sample_interval_ms));
     for frame in &bundle.frames {
@@ -456,6 +519,101 @@ fn render(bundle: &Bundle, absolute: Option<&Path>) -> String {
         out.push('\n');
     }
     out
+}
+
+/// One line of recorded text, quoted so it reads as data, not Markdown.
+fn inline(text: &str) -> String {
+    format!("“{}”", text.split_whitespace().collect::<Vec<_>>().join(" ").replace(['`', '*', '_', '[', ']', '<', '>', '#'], " "))
+}
+fn moment_title(moment: &crate::moments::Moment) -> String {
+    use crate::moments::Kind;
+    let what = moment.element.as_ref().and_then(|e| e.summary()).map(|s| inline(&s)).unwrap_or_default();
+    match (moment.kind, moment.mark) {
+        (Kind::Area, Some(mark)) => format!("Tag {mark}: an area the user boxed"),
+        (_, Some(mark)) => format!("Tag {mark}: {}", if what.is_empty() { "an element the user marked".into() } else { what }),
+        _ => format!("Click on {}", if what.is_empty() { "the screen".into() } else { what }),
+    }
+}
+fn moments_markdown(bundle: &Bundle, path: &dyn Fn(&str) -> String) -> String {
+    if bundle.moments.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## What the user pointed at\n\nEvery click during the recording, and the elements and areas the user tagged on purpose to flag them (tags matter most). Element details come from macOS accessibility; narration is the speech around that moment. Coordinates are points on the recorded display.\n\n");
+    for moment in &bundle.moments {
+        out.push_str(&format!("### {} · {}\n\n", timestamp(moment.timestamp_ms), moment_title(moment)));
+        let place = &moment.place;
+        let mut at = vec![];
+        if let Some(app) = &place.app { at.push(inline(app)); }
+        if let Some(title) = place.page_title.as_ref().or(place.window.as_ref()) { at.push(inline(title)); }
+        if let Some(url) = &place.url { at.push(format!("<{}>", url.replace(['<', '>', ' '], ""))); }
+        else if let Some(document) = &place.document { at.push(inline(document)); }
+        if !at.is_empty() { out.push_str(&format!("- Where: {}\n", at.join(" · "))); }
+        if let Some(element) = &moment.element {
+            let mut details = vec![];
+            if let Some(role) = &element.role { details.push(format!("role {}", inline(role))); }
+            if let Some(value) = &element.value { details.push(format!("value {}", inline(value))); }
+            if let Some(id) = &element.dom_id { details.push(format!("HTML id {}", inline(id))); }
+            if !element.dom_classes.is_empty() { details.push(format!("classes {}", inline(&element.dom_classes.join(" ")))); }
+            if let Some(link) = &element.link { details.push(format!("links to <{}>", link.replace(['<', '>', ' '], ""))); }
+            if element.enabled == Some(false) { details.push("disabled".into()); }
+            if let Some(help) = &element.help { details.push(format!("help {}", inline(help))); }
+            if !details.is_empty() { out.push_str(&format!("- Element: {}\n", details.join(", "))); }
+            if !element.path.is_empty() { out.push_str(&format!("- Inside: {}\n", element.path.iter().map(|p| inline(p)).collect::<Vec<_>>().join(" › "))); }
+        }
+        if let Some(rect) = moment.rect.or(moment.element.as_ref().and_then(|e| e.frame)) {
+            out.push_str(&format!("- Bounds: x {:.0}, y {:.0}, {:.0} × {:.0}\n", rect.x, rect.y, rect.width, rect.height));
+        } else if let Some(point) = moment.point {
+            out.push_str(&format!("- Pointer: x {:.0}, y {:.0}\n", point.x, point.y));
+        }
+        if let Some(crop) = &moment.crop { out.push_str(&format!("- Close-up: {}\n", path(crop))); }
+        out.push('\n');
+        if !moment.narration.is_empty() {
+            out.push_str("Said around then:\n\n");
+            out.push_str(&quote(&moment.narration));
+            out.push('\n');
+        }
+        if !moment.screen_text.is_empty() {
+            out.push_str("Text inside:\n\n");
+            out.push_str(&quote(&moment.screen_text));
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
+
+/// Clicks and tags for the recording's history card, with close-ups the panel may show.
+#[tauri::command(async)]
+pub fn recording_moments(app: AppHandle, id: String) -> Result<Vec<serde_json::Value>, String> {
+    let rec = recording(&app, &id)?;
+    let dir = folder(&rec)?;
+    let moments = std::fs::read(dir.join("walkthrough.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Bundle>(&bytes).ok())
+        .map(|bundle| bundle.moments)
+        .filter(|moments| !moments.is_empty())
+        .or_else(|| crate::moments::load(&dir).map(|m| m.moments))
+        .unwrap_or_default();
+    Ok(moments
+        .into_iter()
+        .map(|moment| {
+            let crop = moment.crop.as_ref().map(|crop| dir.join(crop)).filter(|path| path.starts_with(&dir) && path.exists());
+            if let Some(crop) = &crop {
+                let _ = tauri::Manager::asset_protocol_scope(&app).allow_file(crop);
+            }
+            serde_json::json!({
+                "number": moment.number,
+                "kind": moment.kind,
+                "mark": moment.mark,
+                "timestampMs": moment.timestamp_ms,
+                "what": moment.element.as_ref().and_then(|e| e.summary()),
+                "where": moment.place.page_title.clone().or(moment.place.window.clone()).or(moment.place.app.clone()),
+                "url": moment.place.url,
+                "narration": moment.narration,
+                "crop": crop.map(|path| path.to_string_lossy().into_owned()),
+            })
+        })
+        .collect())
 }
 
 /// Used by the ordinary Copy/Paste actions. Only a recording id is accepted;
@@ -533,7 +691,67 @@ mod tests {
             }],
             capture: None,
             warnings: vec!["Microphone was quiet".into()],
+            moments: vec![],
         }
+    }
+    fn tagged_button() -> crate::moments::Moment {
+        crate::moments::Moment {
+            number: 1,
+            kind: crate::moments::Kind::Element,
+            mark: Some(2),
+            timestamp_ms: 19_000,
+            point: Some(crate::moments::Point { x: 10.0, y: 20.0 }),
+            rect: Some(crate::moments::Rect { x: 800.0, y: 390.0, width: 114.0, height: 36.0 }),
+            element: Some(crate::moments::Element {
+                role: Some("AXButton".into()),
+                kind: Some("button".into()),
+                label: Some("Save ## changes".into()),
+                dom_id: Some("save".into()),
+                dom_classes: vec!["btn".into(), "primary".into()],
+                path: vec!["Settings".into(), "Profile".into()],
+                ..Default::default()
+            }),
+            place: crate::moments::Place {
+                app: Some("Safari".into()),
+                page_title: Some("Settings".into()),
+                url: Some("https://example.com/settings".into()),
+                ..Default::default()
+            },
+            crop: Some("moments/01.jpg".into()),
+            screen_text: "Save changes".into(),
+            narration: String::new(),
+        }
+    }
+    #[test]
+    fn narration_around_a_moment_is_attached_to_it() {
+        let mut bundle = fixture();
+        bundle.segments.push(Segment { start_ms: 40_000, end_ms: 41_000, text: "Much later".into() });
+        bundle.moments = vec![tagged_button()];
+        attach_narration(&mut bundle);
+        assert_eq!(bundle.moments[0].narration, "Click this");
+    }
+    #[test]
+    fn tagged_elements_read_as_evidence_with_their_page_and_close_up() {
+        let mut bundle = fixture();
+        bundle.moments = vec![tagged_button()];
+        attach_narration(&mut bundle);
+        let text = render(&bundle, Some(Path::new("/tmp/Rec")));
+        assert!(text.contains("## What the user pointed at"));
+        assert!(text.contains("### 00:00:19.000 · Tag 2: “button “Save    changes””"));
+        assert!(text.contains("<https://example.com/settings>"));
+        assert!(text.contains("HTML id “save”, classes “btn primary”"));
+        assert!(text.contains("Inside: “Settings” › “Profile”"));
+        assert!(text.contains("Close-up: /tmp/Rec/moments/01.jpg"));
+        assert!(text.contains("Said around then:\n\n> Click this"));
+        assert!(!text.contains("\n## changes"));
+    }
+    #[test]
+    fn bundles_without_moments_still_read() {
+        let mut value = serde_json::to_value(fixture()).unwrap();
+        value.as_object_mut().unwrap().remove("moments");
+        let bundle: Bundle = serde_json::from_value(value).unwrap();
+        assert!(bundle.moments.is_empty());
+        assert!(!render(&bundle, None).contains("What the user pointed at"));
     }
     #[test]
     fn correction_reports_missing_manifest() {
