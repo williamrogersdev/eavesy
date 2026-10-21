@@ -41,6 +41,9 @@ pub struct RecordingPreview {
     pub transcript: Option<String>,
     pub transcript_truncated: bool,
     pub revision: i64,
+    /// The other device it was recorded on, for meetings brought in from the cloud.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -426,6 +429,7 @@ impl History {
                     transcript: r.get(8)?,
                     transcript_truncated: r.get(9)?,
                     revision: r.get(10)?,
+                    device: None,
                 })
             })
             .map_err(error)?

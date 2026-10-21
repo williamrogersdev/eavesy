@@ -77,3 +77,10 @@ test('history generations cover every refreshed page and cancellation', async ()
   expect(calls.map((call) => call.args?.search)).toEqual([search, search, search]);
   expect(calls[2].cmd).toBe('cancel_history_search');
 });
+
+test('a capture from another device carries that device’s name', async () => {
+  install(async () => ({ items: [{ ...native, source: 'mic', device: 'Studio Mac' }, native], next_offset: null, counts: { all: 2, voice: 1, meetings: 1, screens: 0, notes: 0 } }));
+  const page = await loadRecordingPage(0, '', 'all');
+  expect(page.items[0]).toMatchObject({ source: 'mic', device: 'Studio Mac' });
+  expect(page.items[1].device).toBeUndefined();
+});
