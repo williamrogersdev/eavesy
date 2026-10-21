@@ -39,3 +39,28 @@ test('truncated evidence is visible independently of model output', () => {
   const answer = hydrateLibraryAnswer({claims:[],unanswered:[]},[{...sources[0],contextTruncated:true}]);
   expect(answer.warnings?.[0]).toContain('Additional details may exist');
 });
+
+test('final audit uses an independent approved model and constrains citation IDs in the provider schema', async () => {
+  const calls:{model:string;input:unknown}[]=[];
+  await answerLibrary({async run(model,input){calls.push({model,input});return {response:{claims:[],unanswered:[]}};}},'Where?',sources);
+  expect(calls[0].model).not.toBe(calls[1].model);
+  expect(calls[1].model).toBe('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  expect(calls[1].input).toMatchObject({response_format:{type:'json_schema',json_schema:{properties:{claims:{items:{properties:{sourceIds:{items:{enum:['s1']}}}}}}}}});
+});
+
+test('a malformed draft still requires a validated independent audit', async () => {
+  const inputs:unknown[]=[];
+  const answer=await answerLibrary({async run(_model,input){inputs.push(input);return {response:inputs.length===1?'invalid JSON':{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:['s1']}],unanswered:[]}};}},'Where?',sources);
+  expect(inputs).toHaveLength(2);
+  expect(JSON.stringify(inputs[1])).toContain('No valid draft exists');
+  expect(JSON.stringify(inputs[1])).not.toContain('draftUnavailable');
+  expect(answer.claims[0].citations[0].id).toBe('s1');
+});
+test('non-object draft JSON is omitted from the independent audit', async () => {
+  for(const response of ['null','1','[]']) {
+    const inputs:unknown[]=[];
+    await answerLibrary({async run(_model,input){inputs.push(input);return {response:inputs.length===1?response:{claims:[],unanswered:[]}};}},'Where?',sources);
+    expect(JSON.stringify(inputs[1])).toContain('No valid draft exists');
+    expect(JSON.stringify(inputs[1])).not.toContain('\\"draft\\":');
+  }
+});
