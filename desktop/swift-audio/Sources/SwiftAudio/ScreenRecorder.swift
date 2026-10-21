@@ -3,6 +3,9 @@ import CoreMedia
 import Foundation
 import ScreenCaptureKit
 
+// Records the main display's video (H.264) plus system audio (AAC) into an .mp4
+// via AVAssetWriter. Narrated capture uses the microphone as the audio clock,
+// so narration is written even when the computer produces no system sound.
 final class ScreenRecorder: NSObject, Recorder {
     private let outPath: String
     private let includeMic: Bool
@@ -25,9 +28,11 @@ final class ScreenRecorder: NSObject, Recorder {
     private var finished = false
     private var lastLevelEmit = Date.distantPast
 
+    // The microphone drives narrated audio; system audio is optional in the mix.
     private let mixLock = NSLock()
-    private var micResidual: [Float] = []
-    private static let maxMicResidual = 96_000
+    private var systemResidual: [Float] = []
+    private var micSamplesWritten = 0
+    private var micPeakRms = 0.0
 
     private var displayWidth = 1920
     private var displayHeight = 1080
@@ -41,9 +46,8 @@ final class ScreenRecorder: NSObject, Recorder {
     func start() {
         if includeMic {
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                if granted {
-                    self?.startMicCapture()
-                }
+                guard granted else { fail("Microphone permission denied. Enable Microphone access in System Settings.") }
+                self?.startMicCapture()
                 self?.startScreenCapture()
             }
         } else {
@@ -51,7 +55,7 @@ final class ScreenRecorder: NSObject, Recorder {
         }
     }
 
-    private func setupWriter(width: Int, height: Int) {
+    func setupWriter(width: Int, height: Int) {
         let url = URL(fileURLWithPath: outPath)
         try? FileManager.default.removeItem(at: url)
 
@@ -85,23 +89,28 @@ final class ScreenRecorder: NSObject, Recorder {
         self.audioInput = aInput
     }
 
+    // MARK: - Microphone
+
     private func startMicCapture() {
         guard let device = AVCaptureDevice.default(for: .audio),
             let input = try? AVCaptureDeviceInput(device: device)
-        else { return }
+        else { fail("Could not open the microphone. Check the selected input device.") }
 
         let session = AVCaptureSession()
         session.beginConfiguration()
-        guard session.canAddInput(input) else { return }
+        guard session.canAddInput(input) else { fail("Could not attach microphone input") }
         session.addInput(input)
         let output = AVCaptureAudioDataOutput()
         output.setSampleBufferDelegate(self, queue: micOutputQueue)
-        guard session.canAddOutput(output) else { return }
+        guard session.canAddOutput(output) else { fail("Could not attach microphone output") }
         session.addOutput(output)
         session.commitConfiguration()
         session.startRunning()
+        guard session.isRunning else { fail("Microphone did not start") }
         self.captureSession = session
     }
+
+    // MARK: - Screen + system audio
 
     private func startScreenCapture() {
         SCShareableContent.getWithCompletionHandler { [weak self] content, error in
@@ -151,6 +160,8 @@ final class ScreenRecorder: NSObject, Recorder {
         }
     }
 
+    // MARK: - Appending
+
     private func startSessionIfNeeded(at pts: CMTime) -> Bool {
         guard let writer = self.writer else { return false }
         if writer.status == .unknown {
@@ -162,32 +173,49 @@ final class ScreenRecorder: NSObject, Recorder {
         return writer.status == .writing
     }
 
-    private func appendVideo(_ sampleBuffer: CMSampleBuffer) {
+    func appendVideo(_ sampleBuffer: CMSampleBuffer) {
         writerQueue.async { [weak self] in
             guard let self, !self.finished else { return }
             guard let input = self.videoInput else { return }
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard self.startSessionIfNeeded(at: pts) else { return }
             if input.isReadyForMoreMediaData {
-                input.append(sampleBuffer)
+                guard input.append(sampleBuffer) else {
+                    EventEmitter.warning("Video writing stopped: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+                    DispatchQueue.main.async { gracefulStop() }
+                    return
+                }
                 self.lastPTS = pts
             }
-            if !self.didEmitReady {
+            if !self.includeMic && !self.didEmitReady {
                 self.didEmitReady = true
                 EventEmitter.ready()
             }
         }
     }
 
-    private func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+    private func appendAudio(_ sampleBuffer: CMSampleBuffer, isMic: Bool = false) {
         writerQueue.async { [weak self] in
             guard let self, !self.finished else { return }
             guard let input = self.audioInput else { return }
+            // Only append audio once the session has begun (video starts it).
+            // Drop audio that precedes the first video frame to keep A/V aligned.
             guard self.writer?.status == .writing, self.sessionStarted else { return }
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard CMTimeCompare(pts, self.firstPTS) >= 0 else { return }
             if input.isReadyForMoreMediaData {
-                input.append(sampleBuffer)
+                guard input.append(sampleBuffer) else {
+                    EventEmitter.warning("Audio writing stopped: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+                    DispatchQueue.main.async { gracefulStop() }
+                    return
+                }
+                if isMic {
+                    self.micSamplesWritten += CMSampleBufferGetNumSamples(sampleBuffer)
+                    if !self.didEmitReady {
+                        self.didEmitReady = true
+                        EventEmitter.ready()
+                    }
+                }
             }
         }
     }
@@ -209,28 +237,38 @@ final class ScreenRecorder: NSObject, Recorder {
         EventEmitter.level((sum / Double(n)).squareRoot())
     }
 
-    private func mixedSystemBuffer(_ systemBuffer: CMSampleBuffer) -> CMSampleBuffer {
-        guard let sysPCM = AudioRecorder.toFloatBuffer(systemBuffer),
-            let sysCh = sysPCM.floatChannelData
-        else { return systemBuffer }
-
-        let sysCount = Int(sysPCM.frameLength)
+    // Mix optional computer sound into each microphone buffer. Never wait for
+    // a system-audio callback to preserve speech (including on a silent desktop).
+    private func mixedMicrophoneBuffer(_ microphone: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let pcm = AudioRecorder.toFloatBuffer(microphone), let ch = pcm.floatChannelData
+        else { EventEmitter.warning("Skipped an undecodable microphone buffer"); return nil }
+        let count = Int(pcm.frameLength)
         mixLock.lock()
-        let take = min(sysCount, micResidual.count)
-        let micSamples = take > 0 ? Array(micResidual[0..<take]) : []
-        if take > 0 { micResidual.removeFirst(take) }
+        let take = min(count, systemResidual.count)
+        let system = Array(systemResidual.prefix(take))
+        systemResidual.removeFirst(take)
         mixLock.unlock()
-
-        let mixCount = min(sysCount, micSamples.count)
-        guard mixCount > 0 else { return systemBuffer }
-        for i in 0..<mixCount {
-            var v = sysCh[0][i] + micSamples[i]
-            if v > 1.0 { v = 1.0 } else if v < -1.0 { v = -1.0 }
-            sysCh[0][i] = v
+        var sum = 0.0
+        for i in 0..<count {
+            let mic = ch[0][i]
+            sum += Double(mic * mic)
+            if i < system.count { ch[0][i] = min(1, max(-1, mic + system[i])) }
         }
-        let pts = CMSampleBufferGetPresentationTimeStamp(systemBuffer)
-        return AudioRecorder.toCMSampleBuffer(sysPCM, pts: pts) ?? systemBuffer
+        mixLock.lock()
+        if count > 0 { micPeakRms = max(micPeakRms, sqrt(sum / Double(count))) }
+        mixLock.unlock()
+        return AudioRecorder.toCMSampleBuffer(pcm, pts: CMSampleBufferGetPresentationTimeStamp(microphone))
+            ?? microphone
     }
+
+    // Shared by the capture delegate and the synthetic no-system-audio test.
+    func appendMicrophone(_ sampleBuffer: CMSampleBuffer) {
+        guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
+        emitLevelIfDue(sampleBuffer)
+        if let mixed = mixedMicrophoneBuffer(sampleBuffer) { appendAudio(mixed, isMic: true) }
+    }
+
+    // MARK: - Stop
 
     func stop(completion: @escaping (_ durationSec: Double) -> Void) {
         if let stream {
@@ -261,9 +299,21 @@ final class ScreenRecorder: NSObject, Recorder {
             self.audioInput?.markAsFinished()
             writer.finishWriting {
                 guard writer.status == .completed else {
-                    let reason = writer.error?.localizedDescription ?? "unknown AVAssetWriter error"
-                    fail("could not finalize screen recording: \(reason)")
+                    fail("Could not finalize video: \(writer.error?.localizedDescription ?? "unknown error")")
                 }
+                self.mixLock.lock()
+                let peak = self.micPeakRms
+                self.mixLock.unlock()
+                let stats: [String: Any] = [
+                    "microphoneEnabled": self.includeMic,
+                    "microphoneSamplesWritten": self.micSamplesWritten,
+                    "microphoneSampleRate": 48000,
+                    "microphonePeakRms": peak,
+                ]
+                do {
+                    try JSONSerialization.data(withJSONObject: stats, options: [.sortedKeys])
+                        .write(to: URL(fileURLWithPath: self.outPath + ".capture.json"), options: .atomic)
+                } catch { EventEmitter.warning("Could not save microphone verification: \(error.localizedDescription)") }
                 self.exportCanonicalAudio(durationSec: max(duration, 0), completion: completion)
             }
         }
@@ -304,6 +354,8 @@ final class ScreenRecorder: NSObject, Recorder {
     }
 }
 
+// MARK: - SCStreamOutput / SCStreamDelegate
+
 extension ScreenRecorder: SCStreamOutput, SCStreamDelegate {
     func stream(
         _ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
@@ -311,43 +363,44 @@ extension ScreenRecorder: SCStreamOutput, SCStreamDelegate {
     ) {
         switch type {
         case .screen:
+            // Only append frames the system marks as complete/valid.
             guard sampleBuffer.isValidScreenFrame else { return }
             appendVideo(sampleBuffer)
         case .audio:
             guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
-            emitLevelIfDue(sampleBuffer)
-            let buffer = includeMic ? mixedSystemBuffer(sampleBuffer) : sampleBuffer
-            appendAudio(buffer)
+            if includeMic {
+                guard let pcm = AudioRecorder.toFloatBuffer(sampleBuffer), let ch = pcm.floatChannelData else { return }
+                mixLock.lock()
+                systemResidual.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: Int(pcm.frameLength)))
+                // Bound latency and memory if callback rates briefly diverge.
+                if systemResidual.count > 12_000 { systemResidual.removeFirst(systemResidual.count - 12_000) }
+                mixLock.unlock()
+            } else {
+                emitLevelIfDue(sampleBuffer)
+                appendAudio(sampleBuffer)
+            }
         default:
             break
         }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        FileHandle.standardError.write(
-            Data("SCStream stopped: \(error.localizedDescription)\n".utf8))
+        EventEmitter.error("Screen capture stopped: \(error.localizedDescription)")
     }
 }
+
+// MARK: - AVCaptureAudioDataOutputSampleBufferDelegate
 
 extension ScreenRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(
         _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
-        guard let pcm = AudioRecorder.toFloatBuffer(sampleBuffer),
-            let ch = pcm.floatChannelData
-        else { return }
-        let n = Int(pcm.frameLength)
-        mixLock.lock()
-        micResidual.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: n))
-        if micResidual.count > Self.maxMicResidual {
-            micResidual.removeFirst(micResidual.count - Self.maxMicResidual)
-        }
-        mixLock.unlock()
+        appendMicrophone(sampleBuffer)
     }
 }
 
+// Helper to validate ScreenCaptureKit video frames before appending.
 extension CMSampleBuffer {
     var isValidScreenFrame: Bool {
         guard CMSampleBufferGetImageBuffer(self) != nil else { return false }
