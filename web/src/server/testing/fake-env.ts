@@ -12,10 +12,21 @@ export function fakeD1(sqlite: Database) {
       return { results: sqlite.query(query).all(...(params as never[])), success: true, meta: {} };
     },
     runSync() {
+      if (/\bRETURNING\b/i.test(query)) {
+        const results = sqlite.query(query).all(...(params as never[]));
+        const meta = sqlite.query('SELECT changes() AS changes').get() as { changes: number };
+        return { results, success: true, meta };
+      }
       const result = sqlite.query(query).run(...(params as never[]));
       return { results: [], success: true, meta: { changes: result.changes } };
     },
     async run() {
+      // D1 batch returns rows for mutations with RETURNING, too.
+      if (/\bRETURNING\b/i.test(query)) {
+        const results = sqlite.query(query).all(...(params as never[]));
+        const meta = sqlite.query('SELECT changes() AS changes').get() as { changes: number };
+        return { results, success: true, meta };
+      }
       const result = sqlite.query(query).run(...(params as never[]));
       return { results: [], success: true, meta: { changes: result.changes } };
     },

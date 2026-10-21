@@ -1,12 +1,13 @@
+import * as dictionary from '@/db/repo/dictionary';
+import { repairTranscript, repairAi } from '@/lib/ai/repair-transcript';
+import type { CreditEnv } from '@/lib/ai/credit-runner';
+import { getCloudflareContext } from '@/server/cloudflare-context';
 import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as dictationsRepo from '@/db/repo/dictations';
 import { transcriptionPrefs } from '@/db/repo/users';
-import { polishDictation } from '@/lib/ai/agent-transcript';
-import { anthropic } from '@/lib/ai/client';
 import { applyTemplate } from '@/lib/ai/clean-dictation';
-import { combinedContext } from '@/lib/projects';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { meetingFolderSlug } from '@/lib/utils';
 import { guardUserQuota } from '@/server/rate-limit';
@@ -36,10 +37,11 @@ export const Route = createFileRoute('/api/dictations')({
         const db = getDb();
         const audio = new Uint8Array(await file.arrayBuffer());
         const prefs = await transcriptionPrefs(db, actor.userId);
+        const entries = await dictionary.list(db, actor.userId);
         const transcription = await transcribeAudioFile({
           audio,
           language: prefs.language,
-          vocabulary: prefs.vocabulary,
+          vocabulary: [...entries.map(e => e.to), ...prefs.vocabulary],
           spoken: prefs.spoken,
           voiceNote: true,
         });
@@ -48,8 +50,7 @@ export const Route = createFileRoute('/api/dictations')({
         try {
           if (templatePrompt) cleaned = await applyTemplate(transcription.text, templatePrompt);
           else {
-            const context = combinedContext(null, null, prefs.vocabulary);
-            cleaned = (await polishDictation(anthropic(), { text: transcription.text, context })).text;
+            cleaned = (await repairTranscript(transcription.text, { clean: true, dictionary: entries, ai: repairAi(getCloudflareContext<CreditEnv>().env) })).text;
           }
         } catch (err) {
           console.warn('[dictation] cleanup failed', err);

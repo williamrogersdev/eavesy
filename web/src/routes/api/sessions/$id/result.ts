@@ -25,6 +25,7 @@ export const Route = createFileRoute('/api/sessions/$id/result')({
             .select({
               startMs: transcriptSegments.startMs,
               text: transcriptSegments.text,
+              rawText: transcriptSegments.rawText,
               speakerId: transcriptSegments.speakerId,
             })
             .from(transcriptSegments)
@@ -43,6 +44,7 @@ export const Route = createFileRoute('/api/sessions/$id/result')({
         const transcript = segments.map((segment) => ({
           startMs: segment.startMs,
           text: segment.text,
+          rawText: segment.rawText,
           speaker: labelled && segment.speakerId ? speakerName(segment.speakerId, names) : null,
         }));
         return Response.json({
