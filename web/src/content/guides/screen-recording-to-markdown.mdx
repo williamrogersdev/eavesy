@@ -1,0 +1,34 @@
+---
+title: "Turn a screen recording into Markdown context"
+description: "Record a narrated walkthrough on your Mac, then combine its transcript, brief, and selected screenshots into context an AI can inspect."
+date: "2026-10-20"
+modified: "2026-10-20"
+author: "Eavesy"
+related: [{"title": "Walkthrough capture", "path": "/features/walkthroughs"}, {"title": "A worked UI bug example", "path": "/examples/narrated-ui-bug"}, {"title": "Use Claude Code", "path": "/integrations/claude-code"}]
+---
+
+A useful recording handoff includes what you said, what appeared on screen, and what you want the agent to investigate. Eavesy records the source video and, when you sign in, processes its audio into a transcript and brief. Add the visual evidence your task needs alongside that text.
+
+## Record a focused walkthrough
+
+Open the Mac launcher with **⌘⇧Space**, choose **Video**, and grant the requested Microphone and Screen Recording permissions. Show the initial state, perform the action, and describe what you expected and what appeared instead. Stop after one complete reproduction.
+
+Avoid saying only “this is broken.” Name the control, the action that triggers the issue, and anything that changed just before it. A 40-second walkthrough of one problem is often easier to investigate than a long tour.
+
+## Open the saved files
+
+Find the capture in your recordings folder, normally `~/Eavesy/Recordings`. Video captures contain `screen.mp4` and recording metadata; transcript and summary files become available as processing completes. Check `transcript.md` and `summary.md` before passing them on. A placeholder summary is not a finished brief.
+
+The current released workflow does not automatically turn video frames into a timestamped visual Markdown document. Audio transcription describes spoken words; it does not establish what a button looked like. Take a screenshot of the relevant state or attach the video when the receiving agent supports it.
+
+## Assemble the handoff
+
+Use the [bug report template](/templates/ai-bug-report). Fill in the observed behavior, expected behavior, reproduction steps, and the actual paths or uploaded attachments. Include the transcript excerpt that explains the failure. Keep guesses about the cause separate from observations.
+
+A local coding agent can read files it has permission to access. A browser chat needs the text pasted and the necessary media attached; a path alone does not upload it.
+
+## Check what the agent received
+
+Ask the agent to identify the source files it actually opened and summarize the visible symptom before proposing a change. If it only read the transcript, attach a screenshot rather than assuming it saw the video. Review its proposed fix against the original reproduction.
+
+Signed-in audio processing uses the cloud. Local screen files and standalone screenshots are not made available by the hosted recording MCP connection. See the [sharing guide](/guides/share-local-recordings-with-ai) for the boundary.

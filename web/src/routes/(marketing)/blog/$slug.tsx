@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from '@tanstack/react-router';
+import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Link } from '@/components/ui/app-link';
 import { getPost } from '@/lib/content';
@@ -14,6 +14,11 @@ import { formatDate, readingTimeMinutes } from '@/lib/format';
 
 export const Route = createFileRoute('/(marketing)/blog/$slug')({
   loader: ({ params }) => {
+    const replacement: Record<string, string> = {
+      'bot-free-vs-bot-based-meeting-recorders': '/features/bot-free-capture',
+      'best-speech-to-text-ai-models': '/features/transcription',
+    };
+    if (replacement[params.slug]) throw redirect({ href: replacement[params.slug], statusCode: 301 });
     const post = getPost(params.slug);
     if (!post) throw notFound();
     return { slug: post.slug, frontmatter: post.frontmatter };
@@ -26,6 +31,7 @@ export const Route = createFileRoute('/(marketing)/blog/$slug')({
           path: `/blog/${loaderData.slug}`,
           type: 'article',
           publishedTime: loaderData.frontmatter.date,
+          modifiedTime: loaderData.frontmatter.modified,
           authors: loaderData.frontmatter.author
             ? [loaderData.frontmatter.author]
             : undefined,
@@ -47,6 +53,7 @@ function BlogPostPage() {
           description: post.frontmatter.description,
           path: `/blog/${slug}`,
           date: post.frontmatter.date,
+          modified: post.frontmatter.modified,
           author: post.frontmatter.author,
         })}
       />

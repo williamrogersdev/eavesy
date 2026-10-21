@@ -104,7 +104,7 @@ function BlogIndexPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="Blog"
-        title="Guides on AI voice, vision & context"
+        title="Guides and updates from Eavesy"
         description="Hands-on buyer’s guides to the best speech-to-text, text-to-speech, and image models — plus how we think about capturing context for AI agents. Written by the team building Eavesy."
       >
         <Breadcrumbs

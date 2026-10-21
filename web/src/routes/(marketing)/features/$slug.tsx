@@ -10,6 +10,7 @@ import {
 } from '@/components/marketing/page-chrome';
 import { JsonLd, faqSchema } from '@/components/seo/json-ld';
 import { seoHead } from '@/lib/seo-head';
+import { ContentSupplement } from '@/components/marketing/content-supplement';
 
 export const Route = createFileRoute('/(marketing)/features/$slug')({
   loader: ({ params }) => {
@@ -130,6 +131,7 @@ function FeatureDetailPage() {
         </section>
       )}
 
+      <ContentSupplement collection="feature-details" slug={feature.slug} />
       <CTASection />
     </main>
   );

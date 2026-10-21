@@ -82,7 +82,7 @@ export function PageHero({
 
 export function CTASection({
   title = 'Capture it once. Use the context anywhere.',
-  subtitle = 'Free for Mac. Press a hotkey, talk through the work, and get a brief any AI can use.',
+  subtitle = 'Capture on your Mac and keep normal files. Sign in for cloud transcripts and briefs, then share the context your AI needs.',
 }: {
   title?: string;
   subtitle?: string;
