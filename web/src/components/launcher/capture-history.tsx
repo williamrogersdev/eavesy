@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Search,
   Sparkles,
@@ -226,6 +227,8 @@ function CaptureRow({
   runTask: RunTask;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
   const [languageOpen, setLanguageOpen] = useState(false);
   const kind = kindOf(rec);
   const Icon = kind.icon;
@@ -260,7 +263,6 @@ function CaptureRow({
   </>;
   else if (text) body = <>
     <Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} />
-    {!translation.language && signedIn && spoken && current.transcript && <CorrectionEditor id={rec.id} original={current.transcript} loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''} onSaved={() => flash("Corrections saved")} />}
     {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (!signedIn && spoken && rec.status !== 'complete') body = (
@@ -284,6 +286,18 @@ function CaptureRow({
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
+      {editing && <CorrectionEditor
+        id={rec.id}
+        original={current.transcript ?? ''}
+        loadOriginal={async () => (await loadRecordingDetails(rec)).transcript ?? ''}
+        open={editing}
+        onOpenChange={setEditing}
+        onCloseFocus={() => moreButton.current?.focus()}
+        onSaved={transcript => {
+          setDetail({ ...current, transcript, transcriptTruncated: false });
+          flash('Corrections saved');
+        }}
+      />}
       {translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
         {translation.language && <IconButton label="Paste translation at cursor" icon={ClipboardPaste} disabled={translation.busy} onClick={() => runTask(() => pasteToFrontmost(translation.text, false), 'Couldn’t paste that')} />}
@@ -293,8 +307,11 @@ function CaptureRow({
           align="end"
           open={menuOpen}
           onOpenChange={setMenuOpen}
-          trigger={<IconButton label="More" icon={MoreHorizontal} />}
+          trigger={<IconButton ref={moreButton} label="More" icon={MoreHorizontal} />}
           items={[
+            ...(text && !translation.language && signedIn && spoken && rec.status !== 'processing'
+              ? [{ label: 'Edit transcript', icon: Pencil, onSelect: () => setEditing(true) }]
+              : []),
             ...(playable
               ? [{
                   label: player.failed ? 'Audio unavailable' : player.playing ? 'Pause' : 'Play audio',

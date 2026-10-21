@@ -538,7 +538,7 @@ export function Launcher() {
       const typing = !!target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
       // A menu handles its own keys, even when focus has left it for the body.
       const inMenu = !!target?.closest('[role="menu"]') || !!document.querySelector('[role="menu"][data-state="open"]');
-      if (inMenu) return;
+      if (inMenu || document.querySelector('[role="dialog"][data-state="open"]')) return;
       if (typing) {
         if (e.key === 'Escape' && target === searchRef.current && !searchRef.current.value) {
           e.preventDefault();

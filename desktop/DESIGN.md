@@ -334,12 +334,12 @@ never by audio routing:
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
 
 Every segment is visually equal: no raised lead button and no colour fill.
-Hover uses ink 5% and the focus ring. While a capture runs, its own segment
-turns into **Stop** (filled square in `--ev-rec`, label "Stop", plus the
-elapsed time as the hint), and the other three dim to 40%. That's the panel's
-only red control. The "computer audio" choice is gone from the UI. Meeting
-means mic + computer audio, and Talk means mic only. Settings drops "default
-source".
+Hover uses ink 5% and the focus ring. While a capture runs, the whole shelf
+becomes a single 42px live bar in place: mascot, status, elapsed time, a quiet
+one-line ticker of the newest words, and Stop. Starting and writing use the
+same row without Stop. There is no second listening card or expandable text
+box above search. Search and history stay at the same position throughout.
+Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
 - Search: well field, r9, 32px, leading search icon, trailing `Kbd /`.
@@ -365,6 +365,12 @@ source".
   points down to the composer**: "It's quiet up here. Hold `fn` and talk, or
   drop something in below." Search and chips are hidden while history is
   empty.
+
+**Transcript corrections:** "Edit transcript" lives in a capture's More menu,
+not below every transcript. It opens a focused dialog with the full transcript,
+a scrollable text area, Cancel, and Save changes (⌘Enter). Escape closes an
+unchanged draft; unsaved changes require an explicit Discard. Failed saves keep
+the draft open. Saved text updates in history immediately. Audio is unchanged.
 
 **Composer (pinned bottom, replaces the footer).** This is the one obvious
 place to put things in.
@@ -479,10 +485,10 @@ the default flow.
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.
-2. **Live bar:** a 16px listening mascot with the red peak dot in a
-   rec-tinted ring, "Listening · 0:07" (or "Meeting · 12:40"), the newest
-   words clipped from the start, and the panel's only red control, Stop.
-   Clicking the bar opens it downward to show the last few lines heard.
+2. **Live bar:** an 18px listening mascot with the recording indicator,
+   "Listening · 0:07" (or "Meeting · 12:40"), the newest words clipped from
+   the start, and the panel's only red control, Stop. It replaces the shelf
+   at the same height and never expands.
 3. **Stop:** the stop sound plays and the HUD reads "Writing it down…" the
    moment the key is pressed, before the paste target is looked up. The live
    bar shows the same, without Stop.
