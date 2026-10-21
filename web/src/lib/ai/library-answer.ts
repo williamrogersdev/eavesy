@@ -80,7 +80,7 @@ export async function answerLibrary(ai: WorkersAiRunner, question: string, sourc
         }, required: ['claims', 'unanswered'],
       } },
       messages: [
-        { role: 'system', content: RULES + (stage === 'draft' ? '' : (draft === undefined ? '\nNo valid draft exists. Generate a complete answer from the supplied excerpts, applying the same evidence and completeness audit checks.' : '\nAudit and REWRITE the draft from scratch.') + '\n Check every requested part against all excerpts. Restore missing supported details, remove unsupported interpretations, correct source IDs and enum values. Return the complete final JSON, not a critique. A draft claim is not evidence. Answer only the requested issues; remove unrelated details. Check who pays whom, negatives, numbers and directions carefully. Preserve future intentions as proposals or requests, never completed changes. Distinguish a named identity from an unnamed addressee role: report the supported role without inventing a name or discarding the role evidence. Be concise: use one claim per requested detail when possible.') },
+        { role: 'system', content: RULES + (stage === 'draft' ? '' : (draft === undefined ? '\nNo valid draft exists. Generate a complete answer from the supplied excerpts, applying the same evidence and completeness audit checks.' : '\nAudit and REWRITE the draft from scratch.') + '\n Check every requested part against all excerpts. Restore missing supported details, remove unsupported interpretations, correct source IDs and enum values. Return the complete final JSON, not a critique. A draft claim is not evidence. Answer only the requested issues; remove unrelated details. Check direction of obligations, conditional exceptions, negation, quantities and tense carefully. Preserve future intentions as proposals or requests, never completed changes. Distinguish a named identity from an unnamed addressee role: report the supported role without inventing a name or discarding the role evidence. Be concise: use one claim per requested detail when possible.') },
         { role: 'user', content: JSON.stringify({ question, sources: sources.map(({ id, title, startMs, endMs, text }) => ({ id, title, startMs, endMs, text })), ...(draft === undefined ? {} : { draft }) }) },
       ],
     });
@@ -89,7 +89,11 @@ export async function answerLibrary(ai: WorkersAiRunner, question: string, sourc
       if (stage === 'draft') return undefined;
       throw new LibraryVerificationError();
     }
-    try { return typeof response === 'string' ? JSON.parse(response) : response; }
+    try {
+      const parsed: unknown = typeof response === 'string' ? JSON.parse(response) : response;
+      if (stage === 'draft' && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) return undefined;
+      return parsed;
+    }
     catch {
       if (stage === 'draft') return undefined;
       throw new LibraryVerificationError();

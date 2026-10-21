@@ -49,8 +49,18 @@ test('final audit uses an independent approved model and constrains citation IDs
 });
 
 test('a malformed draft still requires a validated independent audit', async () => {
-  let calls=0;
-  const answer=await answerLibrary({async run(_model,input){calls++;if(calls===2){expect(JSON.stringify(input)).toContain('No valid draft exists');expect(JSON.stringify(input)).not.toContain('draftUnavailable');}return {response:calls===1?'invalid JSON':{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:['s1']}],unanswered:[]}};}},'Where?',sources);
-  expect(calls).toBe(2);
+  const inputs:unknown[]=[];
+  const answer=await answerLibrary({async run(_model,input){inputs.push(input);return {response:inputs.length===1?'invalid JSON':{claims:[{text:'Kitchen table.',kind:'fact',sourceIds:['s1']}],unanswered:[]}};}},'Where?',sources);
+  expect(inputs).toHaveLength(2);
+  expect(JSON.stringify(inputs[1])).toContain('No valid draft exists');
+  expect(JSON.stringify(inputs[1])).not.toContain('draftUnavailable');
   expect(answer.claims[0].citations[0].id).toBe('s1');
+});
+test('non-object draft JSON is omitted from the independent audit', async () => {
+  for(const response of ['null','1','[]']) {
+    const inputs:unknown[]=[];
+    await answerLibrary({async run(_model,input){inputs.push(input);return {response:inputs.length===1?response:{claims:[],unanswered:[]}};}},'Where?',sources);
+    expect(JSON.stringify(inputs[1])).toContain('No valid draft exists');
+    expect(JSON.stringify(inputs[1])).not.toContain('\\"draft\\":');
+  }
 });
