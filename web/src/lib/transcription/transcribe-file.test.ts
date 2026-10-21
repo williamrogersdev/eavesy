@@ -18,6 +18,8 @@ describe('Workers AI file transcription', () => {
       }),
     ).toEqual({
       text: 'Hello world',
+      timestampSource: 'unavailable',
+      languageProbability: undefined,
       language: 'en',
       durationSec: 1.25,
       segments: [
@@ -167,5 +169,13 @@ describe('Workers AI file transcription', () => {
       ai: { run: () => Promise.resolve({ text: 'Thank you.', segments: [{ start: 0, end: 1, text: 'Thank you.', no_speech_prob: 0.2 }] }) },
     });
     expect(thanks.text).toBe('Thank you.');
+  });
+});
+
+
+test('walkthroughs never label untimed speech as aligned to the screen', () => {
+  expect(mapWhisperResult({ text: 'untimed speech' }).timestampSource).toBe('unavailable');
+  expect(mapWhisperResult({ text: 'timed speech', segments: [{text:'timed speech',start:18.125,end:20.25}] })).toMatchObject({
+    timestampSource:'segments', segments:[{startMs:18125,endMs:20250,text:'timed speech'}],
   });
 });

@@ -106,6 +106,8 @@ export const Route = createFileRoute('/api/transcribe')({
           return Response.json({
             text: repaired.text,
             rawText: result.text,
+            segments: result.segments,
+            timestampSource: result.timestampSource,
             repairStatus: repaired.status,
             language: result.language ?? language,
             durationSec: result.durationSec ?? null,
