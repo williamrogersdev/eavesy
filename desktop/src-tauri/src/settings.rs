@@ -73,6 +73,12 @@ pub struct Settings {
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
+    /// Lines of live words the control shows while recording: 0, 1, 2 or 4 (4 unless chosen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_preview_lines: Option<u8>,
+    /// A see-through, blurred control instead of a solid one (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_translucent: Option<bool>,
 }
 
 impl Settings {
@@ -84,6 +90,11 @@ impl Settings {
 
     pub fn live_captions(&self) -> bool {
         self.live_captions.unwrap_or(true)
+    }
+
+    /// One of the line counts the control is drawn for; anything else reads as 4.
+    pub fn hud_preview_lines(&self) -> u8 {
+        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(4)
     }
 
     pub fn add_screenshots(&self) -> bool {
@@ -116,6 +127,8 @@ impl Default for Settings {
             live_captions: None,
             add_screenshots: None,
             capture_sounds: None,
+            hud_preview_lines: None,
+            hud_translucent: None,
         }
     }
 }
@@ -483,6 +496,16 @@ mod tests {
         assert!(!json.contains("segment_sec"));
         let saved: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","segment_sec":120}"#).unwrap();
         assert_eq!(saved.segment_sec(), 120);
+    }
+
+    #[test]
+    fn the_preview_shows_four_lines_unless_another_count_is_chosen() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.hud_preview_lines(), 4);
+        settings.hud_preview_lines = Some(0);
+        assert_eq!(settings.hud_preview_lines(), 0);
+        settings.hud_preview_lines = Some(3);
+        assert_eq!(settings.hud_preview_lines(), 4);
     }
 
     #[test]

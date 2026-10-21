@@ -53,9 +53,24 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'wide' | 'result' | 'shot';
+type Size = 'pill' | 'bar' | 'wide' | 'result' | 'shot';
 
-function sizeFor(state: HudState): Size {
+/** How the control looks while recording, from Settings → App → Capture. */
+type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
+
+const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
+
+function lookFrom(value: unknown): Look {
+  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
+  const lines = raw?.hud_preview_lines ?? raw?.lines;
+  const translucent = raw?.hud_translucent ?? raw?.translucent;
+  return {
+    lines: lines === 0 || lines === 1 || lines === 2 || lines === 4 ? lines : DEFAULT_LOOK.lines,
+    translucent: typeof translucent === 'boolean' ? translucent : DEFAULT_LOOK.translucent,
+  };
+}
+
+function sizeFor(state: HudState, lines: Look['lines']): Size {
   const video = state.mode === 'video';
   switch (state.phase) {
     case 'idle':
@@ -63,7 +78,7 @@ function sizeFor(state: HudState): Size {
       return 'pill';
     case 'recording':
     case 'transcribing':
-      return video ? 'pill' : 'wide';
+      return video ? 'pill' : lines === 0 ? 'bar' : 'wide';
     case 'failed':
       return 'wide';
     case 'done':
@@ -74,7 +89,7 @@ function sizeFor(state: HudState): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [400, 142], result: [400, 142], shot: [360, 172] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -160,6 +175,10 @@ function Hud() {
   const lines = useLiveLines(state?.sessionId ?? null, 12);
   const currentSession = useRef(state?.sessionId);
   currentSession.current = state?.sessionId;
+  const [look, setLook] = useState<Look>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
+  });
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -169,6 +188,22 @@ function Hud() {
       .catch(() => {});
   };
   useEffect(loadShortcut, []);
+  // The saved look once at start; after that only `hud:look` changes it, so a
+  // slow first read can't undo a change made in Settings meanwhile.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let disposed = false;
+    let changed = false;
+    void tauri()?.event?.listen('hud:look', (event) => { changed = true; setLook(lookFrom(event.payload)); })
+      .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    const load = (attempt: number) => {
+      void invoke('get_settings')
+        .then((settings) => { if (settings && !changed && !disposed) setLook(lookFrom(settings)); })
+        .catch(() => { if (attempt < 4 && !changed && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
+    };
+    if (tauri()) load(0);
+    return () => { disposed = true; off?.(); };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -296,7 +331,7 @@ function Hud() {
     return () => { cancelled = true; };
   }, [screenshot, state?.sessionId]);
 
-  const size = state ? sizeFor(state) : 'pill';
+  const size = state ? sizeFor(state, look.lines) : 'pill';
 
   useEffect(() => {
     if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
@@ -311,12 +346,14 @@ function Hud() {
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
     if (tauri()) return;
-    const [width, height] = PREVIEW_SIZES[size];
+    const live = state?.phase === 'recording' || state?.phase === 'transcribing';
+    // Same as `live_size` in hud.rs.
+    const [width, height] = size === 'wide' && live ? [400, 62 + 20 * look.lines] : PREVIEW_SIZES[size];
     const root = document.getElementById('root');
     if (root) Object.assign(root.style, { width: `${width}px`, height: `${height}px`, margin: '28px auto 0' });
     document.body.style.background = 'linear-gradient(160deg, #e9e4dc, #cfd6dd)';
     document.body.style.minHeight = '100vh';
-  }, [size]);
+  }, [size, look.lines, state?.phase]);
 
   const snapshotWords = lines.map((line) => line.text).join(' ');
   useEffect(() => {
@@ -393,10 +430,10 @@ function Hud() {
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
     const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
-    if (!video) below = <Ticker text={heard} hint={opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`} />;
+    if (!video && look.lines) below = <Ticker text={heard} hint={opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`} />;
   } else if (state.phase === 'transcribing') {
     top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
-    if (!video) below = <Ticker text={heard} hint="Turning your words into text…" working />;
+    if (!video && look.lines) below = <Ticker text={heard} hint="Turning your words into text…" working />;
   } else if (state.phase === 'done' && video) {
     top = <>{mark}<span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>
       <span className="ctl-fill" />
@@ -469,6 +506,8 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
+      data-translucent={look.translucent || undefined}
+      style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
       onMouseEnter={loadShortcut}
       className="launcher-scope ev eavesy-control"
