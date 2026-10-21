@@ -1,3 +1,7 @@
+import {
+  isPrivateAuditPath,
+  isPublicAuditDestination,
+} from "../src/lib/public-audit";
 import { PUBLIC_BLOG_REDIRECTS } from "../src/lib/retired-content";
 import { FIRST_SEARCH_PAGES } from "../src/lib/search-launch";
 /** Read-only SSR audit. Run against a local preview or an explicitly selected deployed origin. */
@@ -58,12 +62,7 @@ for (let i = 0; i < paths.length; i += 6) {
         `${path}: indexable page is noindex`,
       );
       for (const match of html.matchAll(/<a\b[^>]*href="(\/(?!\/)[^"#?]*)/g)) {
-        if (
-          !/^\/(?:app|sign-in|sign-up|api|connect|onboarding)(?:\/|$)/.test(
-            match[1],
-          )
-        )
-          linkPaths.add(match[1]);
+        if (!isPrivateAuditPath(match[1])) linkPaths.add(match[1]);
       }
     }),
   );
@@ -85,6 +84,11 @@ for (let i = 0; i < unseen.length; i += 6) {
         response.status === 200,
         `Broken internal link ${path}: ${response.status}`,
       );
+      check(
+        isPublicAuditDestination(origin, response.url),
+        `Internal link ${path} redirected outside the public site`,
+      );
+      await response.body?.cancel();
     }),
   );
   outcomes.forEach((outcome, index) => {
@@ -106,6 +110,7 @@ for (const path of [
 ]) {
   const response = await request(`${origin}${path}`, { redirect: "manual" });
   check(response.status === 404, `${path}: must return real 404`);
+  await response.body?.cancel();
 }
 for (const [slug, to] of PUBLIC_BLOG_REDIRECTS.entries()) {
   const from = `/blog/${slug}`;
@@ -114,6 +119,7 @@ for (const [slug, to] of PUBLIC_BLOG_REDIRECTS.entries()) {
     response.status === 301 && response.headers.get("location") === to,
     `${from}: expected permanent redirect to ${to}`,
   );
+  await response.body?.cancel();
 }
 const home = await (await request(origin)).text();
 check(
