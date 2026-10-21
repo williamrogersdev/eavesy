@@ -66,8 +66,7 @@ Never:
 
 Output only the rewritten text.`;
 
-const STYLE_BRIEFS: Record<Exclude<DictationStyle, 'natural'>, string> = {
-  prompt: `You turn a dictation into a clear, well-structured message for an AI agent (for example a coding assistant). The speaker will send it as their own message, so it should read like a strong prompt they wrote themselves.
+const AGENT_BRIEF = `You turn a dictation into a clear, well-structured message for an AI agent (for example a coding assistant). The speaker will send it as their own message, so it should read like a strong prompt they wrote themselves.
 
 Structure it the way AI agents work best:
 1. Lead with the request: one or two direct sentences saying what the speaker wants done.
@@ -75,14 +74,21 @@ Structure it the way AI agents work best:
 3. Use short markdown headings ("## Context", "## Requirements", "## Constraints") only when the message has several distinct parts. Keep a short request as one or two plain sentences.
 4. State instructions directly and specifically ("Use Postgres", "Keep the existing API") rather than as hedges or musings. When the speaker rules something out and gives the alternative, say what to do instead.
 5. Turn open questions and uncertainties the speaker raised into explicit questions for the agent.
-6. Keep frustration only as useful fact ("this has failed three times"), never as venting.`,
-  professional: `You rewrite a dictation so it reads as a clear, professional message the speaker typed: polished, neutral and courteous, suitable for work chat or email. Use complete sentences and short paragraphs; when the speaker lists things, make a list. Keep their meaning and intent; adjust only wording and tone.`,
-  friendly: `You rewrite a dictation so it reads as a warm, friendly message the speaker typed: upbeat, kind and supportive, while staying natural and never gushing. Use short paragraphs; when the speaker lists things, make a list. Keep their meaning and intent; adjust only wording and tone.`,
-  concise: `You rewrite a dictation as briefly as possible while keeping everything that matters: the point first, no preamble, no repetition. Prefer short sentences or a tight bulleted list when the speaker covers several things. Keep their meaning and intent.`,
+6. Keep frustration only as useful fact ("this has failed three times"), never as venting.`;
+
+const MESSAGE_BRIEF = `You rewrite a dictation so it reads as a message the speaker typed. Use short paragraphs; when the speaker lists things, make a list. Keep their meaning and intent; adjust only wording, tone and layout.`;
+
+const TONE_BRIEFS: Record<DictationStyle, string> = {
+  natural: `Tone: keep the speaker's own voice and wording wherever it is already clear.`,
+  professional: `Tone: professional. Polished, neutral and courteous, in complete sentences, suitable for work chat or email.`,
+  friendly: `Tone: friendly. Warm, upbeat and supportive, while staying natural and never gushing.`,
+  concise: `Tone: concise. As brief as possible while keeping everything that matters: the point first, no preamble, no repetition. Prefer short sentences or a tight list.`,
 };
 
-function styledDictationPrompt(style: Exclude<DictationStyle, 'natural'>, context: string | null) {
-  return `${STYLE_BRIEFS[style]}
+function styledDictationPrompt(style: DictationStyle, forAgents: boolean, context: string | null) {
+  return `${forAgents ? AGENT_BRIEF : MESSAGE_BRIEF}
+
+${TONE_BRIEFS[style]}
 
 ${RESTYLE_RULES}${contextBlock(context)}`;
 }
@@ -175,25 +181,26 @@ const MIN_POLISH_WORDS = 4;
 
 /**
  * A dictation tidied the way it would have been typed: fillers, stutters and
- * false starts gone, punctuated, names spelled from `context`, and rewritten
- * in `style` when one other than the speaker's own is chosen. Falls back to
- * the model-free cleanup, so the result is never worse than what was heard.
+ * false starts gone, punctuated, names spelled from `context`, rewritten in
+ * `style` and, with `forAgents`, structured as a prompt for an AI agent.
+ * Falls back to the model-free cleanup, so the result is never worse than what was heard.
  */
 export async function polishDictation(
   client: Anthropic | null,
-  args: { text: string; context: string | null; style?: DictationStyle; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[] },
+  args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[] },
 ): Promise<{ text: string; polished: boolean }> {
   const style = args.style ?? DEFAULT_DICTATION_STYLE;
+  const restyle = style !== 'natural' || !!args.forAgents;
   const said = args.text.trim();
-  const plain = style === 'natural' ? stripFillers(said) : withoutSwearing(stripFillers(said));
+  const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
   if (!client || (!args.hasCorrections && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
-    const system = style === 'natural' ? dictationPrompt(args.context) : styledDictationPrompt(style, args.context);
+    const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);
     const candidate = await cleanChunk(client, turns, system);
     const known = (args.corrections ?? []).filter(entry => said.toLowerCase().includes(entry.from.toLowerCase())).map(entry => entry.to).join(' ');
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
-    const shapeKept = style === 'natural' ? cleanedChunkIsValid(validationInput, candidate, 'solo') : restyledIsValid(validationInput, candidate);
+    const shapeKept = restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo');
     if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])) return { text: candidate, polished: true };
   } catch {
     // The model-free cleanup below still beats the raw words.

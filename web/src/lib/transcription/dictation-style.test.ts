@@ -12,7 +12,8 @@ describe('withoutSwearing', () => {
 });
 
 test('unknown styles fall back to the natural one', () => {
-  expect(dictationStyle('prompt')).toBe('prompt');
+  expect(dictationStyle('concise')).toBe('concise');
+  expect(dictationStyle('prompt')).toBe('natural');
   expect(dictationStyle('pirate')).toBe('natural');
   expect(dictationStyle(null)).toBe('natural');
 });

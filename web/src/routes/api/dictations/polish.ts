@@ -48,6 +48,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
           style: dictationStyle(user?.dictationStyle),
+          forAgents: user?.dictationForAgents ?? false,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,

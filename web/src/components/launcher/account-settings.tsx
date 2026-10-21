@@ -6,10 +6,10 @@ import { parseProject, type ProjectFields, type ProjectSummary } from '@/lib/api
 import { accountCall, errMsg } from '@/lib/desktop/bridge';
 import { isRecord } from '@/lib/json';
 import { PROJECT_LIMITS } from '@/lib/projects';
-import { DICTATION_STYLES, dictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { DICTATION_STYLES, dictationStyle, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { languageName, NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
-import { Button, Card, IconButton, TagInput } from './ui';
+import { Button, Card, IconButton, Switch, TagInput } from './ui';
 
 const SAVE_DELAY_MS = 500;
 
@@ -42,11 +42,12 @@ function Status({ error }: { error: string | null }) {
   return error ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{error}</p> : null;
 }
 
-/** The languages you speak, your dictation style and custom words: the same settings as eavesy.com. */
+/** The languages you speak, how dictations are written and your custom words: the same settings as eavesy.com. */
 export function TranscriptionCard() {
   const [languages, setLanguages] = useState<string[] | null>(null);
   const [words, setWords] = useState<string[]>([]);
   const [style, setStyle] = useState<DictationStyle>('natural');
+  const [forAgents, setForAgents] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export function TranscriptionCard() {
         setLanguages(strings(me.spokenLanguages));
         setWords(strings(me.customVocabulary));
         setStyle(dictationStyle(me.dictationStyle));
+        setForAgents(me.dictationForAgents === true);
       })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your settings.')));
   }, []);
@@ -108,7 +110,7 @@ export function TranscriptionCard() {
           <p className="ev-set-hint">Leave it empty to detect any language.</p>
         </div>
         <div className="ev-field">
-          <label htmlFor="ev-dictation-style">Dictation style</label>
+          <label htmlFor="ev-dictation-style">Dictation tone</label>
           <select
             id="ev-dictation-style"
             className="ev-field-input ev-field-select"
@@ -124,6 +126,16 @@ export function TranscriptionCard() {
           </select>
           <p className="ev-set-hint">{DICTATION_STYLES.find((s) => s.id === style)?.hint}</p>
         </div>
+        <Switch
+          checked={forAgents}
+          disabled={languages === null}
+          onCheckedChange={(next) => {
+            setForAgents(next);
+            void patch({ dictationForAgents: next });
+          }}
+          label="Format dictation for AI agents"
+          hint={FOR_AGENTS_HINT}
+        />
         <div className="ev-field">
           <label>Custom words</label>
           <TagInput

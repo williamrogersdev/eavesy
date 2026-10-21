@@ -37,6 +37,8 @@ export const users = sqliteTable(
     notesLanguage: text('notes_language'),
     /** How dictations are rewritten before they are typed (see `DICTATION_STYLES`); null keeps the speaker's own words. */
     dictationStyle: text('dictation_style'),
+    /** Whether dictations are structured as a prompt for an AI agent, in addition to their tone. */
+    dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }).notNull().default(false),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),

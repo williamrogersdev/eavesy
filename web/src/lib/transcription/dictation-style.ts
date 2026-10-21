@@ -1,11 +1,13 @@
-/** How a dictation is rewritten before it is typed. `natural` keeps the speaker's own words. */
+/** The tone a dictation is rewritten in before it is typed. `natural` keeps the speaker's own words. */
 export const DICTATION_STYLES = [
   { id: 'natural', label: 'As spoken', hint: 'Tidied up, in your own words and tone.' },
-  { id: 'prompt', label: 'AI prompt', hint: 'Restructured into a clear request for an AI agent: the ask first, then context, requirements and constraints. No swearing.' },
-  { id: 'professional', label: 'Professional', hint: 'Clear, polished and neutral, for work messages and email. No swearing.' },
+  { id: 'professional', label: 'Professional', hint: 'Clear, polished and neutral. No swearing.' },
   { id: 'friendly', label: 'Friendly', hint: 'Warm, upbeat and supportive. No swearing.' },
   { id: 'concise', label: 'Concise', hint: 'Just the point, in as few words as it takes. No swearing.' },
 ] as const;
+
+export const FOR_AGENTS_HINT =
+  'Structured as a prompt: the ask first, then context, requirements and constraints. Works with any tone. No swearing.';
 
 export type DictationStyle = (typeof DICTATION_STYLES)[number]['id'];
 
