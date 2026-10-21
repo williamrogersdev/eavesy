@@ -581,7 +581,7 @@ function Hud() {
           <>
             <span className="ctl-rec" aria-hidden />
             <span className="ctl-timer">{clock(Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000)))}</span>
-            {video && marking.tool ? null : video ? <MicState heard={now - micSignal.at < 2000 && micSignal.rms >= 0.002} silent={now - micSignal.at > 5000} /> : <VoiceBars level={voice} />}
+            {video && marking.tool ? null : video ? <MicState heard={now - micSignal.at < 2000 && micSignal.rms >= 0.002} silent={micSignal.at > 0 && now - micSignal.at > 5000} /> : <VoiceBars level={voice} />}
           </>
         )}
         {video && !opening && <Marking state={marking} act={act} />}
@@ -674,16 +674,16 @@ function Hud() {
   );
 }
 
-/**
- * A screen recording's evidence: clicks are noted on their own, and Mark brings
- * out the marker to tag an element or an area. Tags are manila, never coral.
- */
 function MicState({ heard, silent }: { heard: boolean; silent: boolean }) {
   const label = silent ? 'No microphone audio is arriving' : heard ? 'Mic active' : 'Mic quiet';
   const Icon = silent ? MicOff : Mic;
   return <span className="ctl-mic" data-heard={heard || undefined} role="img" aria-label={label} title={label}><Icon className="h-3.5 w-3.5" /></span>;
 }
 
+/**
+ * A screen recording's evidence: clicks are noted on their own, and Mark brings
+ * out the marker to tag an element or an area. Tags are manila, never coral.
+ */
 function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?: Record<string, unknown>) => void }) {
   const tags = state.marks.length;
   const tagCount = tags > 0 && <span className="ctl-tag" title={`${tags} tagged`} aria-label={`${tags} tagged`}>{tags}</span>;

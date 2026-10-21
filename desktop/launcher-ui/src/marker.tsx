@@ -38,13 +38,19 @@ function Marker() {
   const [stamps, setStamps] = useState<Tagged[]>([]);
   const [error, setError] = useState<string | null>(null);
   const stampKey = useRef(0);
+  const stampTimers = useRef(new Set<number>());
+  useEffect(() => () => stampTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   useEvent('marker:hover', (payload) => setHover(payload as Hover | null));
   useEvent('moments:tagged', (payload) => {
     const tagged = payload as Omit<Tagged, 'key'>;
     const key = ++stampKey.current;
     setStamps((current) => [...current, { ...tagged, key }]);
-    window.setTimeout(() => setStamps((current) => current.filter((stamp) => stamp.key !== key)), 1600);
+    const timer = window.setTimeout(() => {
+      stampTimers.current.delete(timer);
+      setStamps((current) => current.filter((stamp) => stamp.key !== key));
+    }, 1600);
+    stampTimers.current.add(timer);
   });
 
   useEffect(() => {
@@ -60,7 +66,7 @@ function Marker() {
 
   const at = (event: MouseEvent) => ({ x: event.clientX, y: event.clientY });
   const down = (event: MouseEvent) => {
-    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button, .mk-hint')) return;
     if (marking.tool === 'element') act('mark_element');
     else if (marking.tool === 'area') setDrag({ from: at(event), to: at(event) });
   };

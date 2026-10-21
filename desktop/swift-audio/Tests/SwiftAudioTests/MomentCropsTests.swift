@@ -29,6 +29,12 @@ final class MomentCropsTests: XCTestCase {
         XCTAssertEqual(MomentCrops.focusRect(area), CGRect(x: 1, y: 2, width: 3, height: 4))
     }
 
+    func testASecondDisplaysOriginIsTakenOff() {
+        let display = CGRect(x: 1512, y: -200, width: 1920, height: 1080)
+        let focus = CGRect(x: 1612, y: -100, width: 50, height: 20)
+        XCTAssertEqual(MomentCrops.inFrame(focus, display: display, frameWidth: 3840), CGRect(x: 200, y: 200, width: 100, height: 40))
+    }
+
     func testTheMomentsFileFromTheAppDecodes() throws {
         let json = #"{"schemaVersion":1,"display":{"x":0,"y":0,"width":1512,"height":982},"moments":[{"number":1,"kind":"element","mark":1,"timestampMs":4200,"point":{"x":10,"y":20},"rect":{"x":5,"y":6,"width":70,"height":20},"element":{"role":"AXButton"},"place":{"app":"Safari"}}]}"#
         let input = try JSONDecoder().decode(MomentCrops.Input.self, from: Data(json.utf8))

@@ -644,6 +644,10 @@ fn spawn_capture(
         eprintln!("{error}");
     }
     let captions = Arc::new(Mutex::new(CaptionLog::default()));
+    // Before the event reader starts, so the first frame's timing has a session to land in.
+    if mode == "screen" {
+        crate::moments::begin(app, &id, started_at_ms);
+    }
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
     state.0.lock().unwrap().insert(
         id.clone(),
@@ -678,10 +682,6 @@ fn spawn_capture(
             notice: None,
         },
     );
-
-    if mode == "screen" {
-        crate::moments::begin(app, &id, started_at_ms);
-    }
 
     Ok(CaptureSession {
         session_id: id,

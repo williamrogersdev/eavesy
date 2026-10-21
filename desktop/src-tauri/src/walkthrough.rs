@@ -298,29 +298,64 @@ fn crop_moments(app: &AppHandle, dir: &Path, bundle: &mut Bundle) -> Result<(), 
         return Ok(());
     }
     let list = dir.join("moments/crops.json");
-    if !list.exists() {
-        let output = std::process::Command::new(crate::audio::capture_bin(app)?)
+    if !is_newer(&list, &dir.join("moments.json")) {
+        let _ = std::fs::remove_file(&list);
+        let mut child = std::process::Command::new(crate::audio::capture_bin(app)?)
             .arg("--moment-crops")
             .arg(dir.join("screen.mp4"))
             .arg("--moments")
             .arg(dir.join("moments.json"))
             .arg("--output-dir")
             .arg(dir)
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
             .map_err(|e| format!("could not run: {e}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stdout).chars().take(500).collect::<String>().trim().to_string());
+        let deadline = std::time::Instant::now() + CROP_DEADLINE;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("cutting them took too long".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        if !status.success() {
+            let mut out = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
+            }
+            return Err(out.chars().take(500).collect::<String>().trim().to_string());
         }
     }
     let crops: Vec<Crop> = serde_json::from_slice(&std::fs::read(&list).map_err(|e| e.to_string())?)
         .map_err(|e| format!("invalid close-up list: {e}"))?;
     for crop in crops {
+        if !inside_folder(&crop.path) {
+            continue;
+        }
         if let Some(moment) = bundle.moments.iter_mut().find(|m| m.number == crop.number) {
             moment.crop = Some(crop.path);
             moment.screen_text = crop.text;
         }
     }
     Ok(())
+}
+
+const CROP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn is_newer(file: &Path, than: &Path) -> bool {
+    let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    matches!((modified(file), modified(than)), (Some(file), Some(than)) if file >= than)
+}
+
+/// A relative path that stays inside the recording folder.
+fn inside_folder(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.as_os_str().is_empty() && path.components().all(|part| matches!(part, std::path::Component::Normal(_)))
 }
 /// What was said around each moment: from just before it to a few seconds on.
 fn attach_narration(bundle: &mut Bundle) {
@@ -597,7 +632,13 @@ pub fn recording_moments(app: AppHandle, id: String) -> Result<Vec<serde_json::V
     Ok(moments
         .into_iter()
         .map(|moment| {
-            let crop = moment.crop.as_ref().map(|crop| dir.join(crop)).filter(|path| path.starts_with(&dir) && path.exists());
+            let root = dir.canonicalize().ok();
+            let crop = moment
+                .crop
+                .as_deref()
+                .filter(|crop| inside_folder(crop))
+                .and_then(|crop| dir.join(crop).canonicalize().ok())
+                .filter(|path| root.as_ref().is_some_and(|root| path.starts_with(root)));
             if let Some(crop) = &crop {
                 let _ = tauri::Manager::asset_protocol_scope(&app).allow_file(crop);
             }
@@ -745,6 +786,31 @@ mod tests {
         assert!(text.contains("Said around then:\n\n> Click this"));
         assert!(!text.contains("\n## changes"));
     }
+    #[test]
+    fn close_ups_must_stay_inside_the_recording_folder() {
+        assert!(inside_folder("moments/01.jpg"));
+        assert!(!inside_folder("../secrets.jpg"));
+        assert!(!inside_folder("moments/../../x.jpg"));
+        assert!(!inside_folder("/etc/hosts"));
+        assert!(!inside_folder("./moments/01.jpg"));
+        assert!(!inside_folder(""));
+    }
+
+    #[test]
+    fn close_ups_are_cut_again_when_the_moments_change() {
+        let dir = std::env::temp_dir().join(format!("eavesy-crops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (crops, moments) = (dir.join("crops.json"), dir.join("moments.json"));
+        assert!(!is_newer(&crops, &moments));
+        std::fs::write(&moments, "{}").unwrap();
+        std::fs::write(&crops, "[]").unwrap();
+        assert!(is_newer(&crops, &moments));
+        let later = std::fs::File::options().write(true).open(&moments).unwrap();
+        later.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        assert!(!is_newer(&crops, &moments));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn bundles_without_moments_still_read() {
         let mut value = serde_json::to_value(fixture()).unwrap();

@@ -52,13 +52,14 @@ enum MomentCrops {
         generator.requestedTimeToleranceAfter = .zero
         var crops: [Crop] = []
         for moment in input.moments {
-            try autoreleasepool {
+            // One unreadable frame costs that close-up only.
+            do { try autoreleasepool {
                 let at = min(max(0, Double(moment.timestampMs) / 1000), max(0, seconds - 1.0 / 30))
                 let frame = try generator.copyCGImage(at: CMTime(seconds: at, preferredTimescale: 600), actualTime: nil)
                 guard let focus = focusRect(moment), input.display.width > 0 else { return }
                 let scale = CGFloat(frame.width) / input.display.width
                 let bounds = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
-                let target = scaled(focus, by: scale).intersection(bounds)
+                let target = inFrame(focus, display: input.display.rect, frameWidth: CGFloat(frame.width)).intersection(bounds)
                 guard !target.isNull, target.width >= 1, target.height >= 1 else { return }
                 let area = cropRect(around: target, minimum: CGSize(width: minimum.width * scale, height: minimum.height * scale),
                                     padding: padding * scale, in: bounds)
@@ -69,6 +70,8 @@ enum MomentCrops {
                 let relative = String(format: "moments/%02d.jpg", moment.number)
                 try WalkthroughProcessor.writeImage(marked, to: folder.appendingPathComponent(relative))
                 crops.append(Crop(number: moment.number, path: relative, width: marked.width, height: marked.height, text: text))
+            } } catch {
+                FileHandle.standardError.write(Data("moment \(moment.number): \(error.localizedDescription)\n".utf8))
             }
         }
         let encoder = JSONEncoder()
@@ -82,6 +85,11 @@ enum MomentCrops {
         if let rect = moment.rect?.rect, rect.width > 0, rect.height > 0 { return rect }
         guard let point = moment.point else { return nil }
         return CGRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24)
+    }
+
+    /// Display points become video pixels, wherever the display sits.
+    static func inFrame(_ focus: CGRect, display: CGRect, frameWidth: CGFloat) -> CGRect {
+        scaled(focus.offsetBy(dx: -display.minX, dy: -display.minY), by: frameWidth / display.width)
     }
 
     static func scaled(_ rect: CGRect, by scale: CGFloat) -> CGRect {
