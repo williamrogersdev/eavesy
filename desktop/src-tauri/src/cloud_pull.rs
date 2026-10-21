@@ -28,6 +28,8 @@ const MAX_PAGES: usize = 20;
 const CHANGES_PAGE: usize = 50;
 /// On the first check for edits, only meetings changed this recently are downloaded again.
 const FIRST_CHANGES_WINDOW_MS: i64 = 3 * 24 * 60 * 60 * 1000;
+/// How many times a changed meeting that keeps failing is tried before it is given up on.
+const MAX_RETRIES: u32 = 5;
 /// How long a meeting that could not be downloaded or saved is left alone.
 const FAILED_RETRY: Duration = Duration::from_secs(60 * 60);
 
@@ -65,13 +67,19 @@ struct PullState {
     /// The id of the last meeting handled at `changes_since`, for meetings changed at the same moment.
     #[serde(default)]
     changes_after: Option<String>,
-    /// Changed meetings whose download failed, by cloud id, with their local id:
-    /// the cursor has moved past them, so they are retried from here.
-    #[serde(default)]
-    retry: BTreeMap<String, String>,
     /// The name of the device each pulled meeting was recorded on.
     #[serde(default)]
     origins: BTreeMap<String, String>,
+    /// Changed meetings whose download failed, by cloud id: the cursor has
+    /// moved past them, so they are retried from here.
+    #[serde(default)]
+    retry: BTreeMap<String, Retry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Retry {
+    local_id: String,
+    attempts: u32,
 }
 
 #[derive(Deserialize)]
@@ -355,7 +363,8 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
     let mut updated = 0;
     let mut downloads = 0;
 
-    for (remote_id, local_id) in state.retry {
+    let mut retried = HashSet::new();
+    for (remote_id, retry) in state.retry {
         if downloads >= PER_PULL {
             break;
         }
@@ -363,7 +372,8 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             continue;
         }
         downloads += 1;
-        match fetch_and_apply(app, api, token, &local_id, &remote_id).await {
+        retried.insert(remote_id.clone());
+        match fetch_and_apply(app, api, token, &retry.local_id, &remote_id).await {
             Ok(changed) => {
                 update_state(app, |state| {
                     state.retry.remove(&remote_id);
@@ -375,6 +385,16 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             Err(error) => {
                 eprintln!("cloud pull: could not refresh {remote_id} again: {error:#}");
                 mark_failed(&remote_id);
+                update_state(app, |state| {
+                    let give_up = state.retry.get_mut(&remote_id).is_some_and(|retry| {
+                        retry.attempts += 1;
+                        retry.attempts >= MAX_RETRIES
+                    });
+                    if give_up {
+                        state.retry.remove(&remote_id);
+                    }
+                })
+                .map_err(|error| anyhow!(error))?;
             }
         }
     }
@@ -414,7 +434,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                 changed |= remember_origin(app, &meeting.id, meeting.device_name.as_deref()).map_err(|error| anyhow!(error))?;
                 changed |= store::set_source(app, &local_id, &meeting.local_source()).map_err(|error| anyhow!(error))?;
             }
-            if download_after.is_none_or(|after| changed_at > after) {
+            if download_after.is_none_or(|after| changed_at > after) && !retried.contains(&meeting.id) {
                 if downloads >= PER_PULL {
                     update_cursor(app, &cursor)?;
                     return Ok(updated);
@@ -435,7 +455,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                         eprintln!("cloud pull: could not refresh {}, will retry: {error:#}", meeting.id);
                         mark_failed(&meeting.id);
                         update_state(app, |state| {
-                            state.retry.insert(meeting.id.clone(), local_id.clone());
+                            state.retry.entry(meeting.id.clone()).or_insert(Retry { local_id: local_id.clone(), attempts: 0 });
                         })
                         .map_err(|error| anyhow!(error))?;
                     }
