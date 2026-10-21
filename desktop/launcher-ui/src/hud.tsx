@@ -64,6 +64,8 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
+/** How long a finished result stays open once nobody is editing it. */
+const DONE_HOLD_MS = 10_000;
 
 /** Settles when `task` does (true), or after `ms` (false), whichever comes first. */
 function within(task: Promise<unknown>, ms: number): Promise<boolean> {
@@ -162,7 +164,6 @@ function Hud() {
   const [copied, setCopied] = useState(false);
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
-  const [interacted, setInteracted] = useState(false);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -389,7 +390,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -407,14 +408,14 @@ function Hud() {
   const size = state ? sizeFor(state, look.lines) : 'pill';
 
   useEffect(() => {
-    if (!state || interacted || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
-    }, state.phase === 'done' ? 15_000 : 3500);
+    }, state.phase === 'done' ? DONE_HOLD_MS : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, interacted, editing, saving, saveError, draft, saveRevision]);
+  }, [state?.phase, state?.sessionId, editing, saving, saveError, draft, saveRevision]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
@@ -583,7 +584,7 @@ function Hud() {
     readOnly={!state.sessionId}
     onFocus={() => {
       if (!state.sessionId) return;
-      setEditing(true); setInteracted(true);
+      setEditing(true);
       void prepareNativeEditor(state.sessionId);
     }}
     onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
