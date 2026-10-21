@@ -217,6 +217,13 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
 }
 
+/** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
+export type HudPreviewLines = 0 | 1 | 2 | 4;
+
+export async function setHudLook(lines: HudPreviewLines, translucent: boolean): Promise<void> {
+  await invoke('set_hud_look', { lines, translucent });
+}
+
 // Each request asks for one permission alone, while the launcher steps out of the way so the
 // macOS prompt can be clicked. Call them one at a time.
 
@@ -405,6 +412,8 @@ export interface Settings {
   add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
+  hud_preview_lines?: HudPreviewLines;
+  hud_translucent?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

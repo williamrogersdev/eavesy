@@ -430,9 +430,18 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 248 × 40 | idle, saved, video recording, a plain "Saved" |
-| wide | 360 × 64 | recording and writing (one ticker line), pasted/copied, failed |
+| pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
+| bar | 264 × 40 | recording and writing with live words off |
+| wide | 400 × 62 + 20 per line | recording and writing (1, 2 or 4 ticker lines, 4 unless chosen), failed |
+| result | 400 × 142 | pasted/copied, with the words that went out |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
+
+**How it looks while recording** is the user's call (Settings → App → While
+recording, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
+**See-through**, on by default, which drops the charcoal to 70% and softens
+the coral ring so the control sits back over whatever is underneath. Still
+no native glass, for the corner reason above. A change applies at once, even
+mid-recording: Rust refits the window and the HUD hears `hud:look`.
 
 ```
  ╭──────────────────────────────────────────────────╮

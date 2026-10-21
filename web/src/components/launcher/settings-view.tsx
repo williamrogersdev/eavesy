@@ -13,6 +13,7 @@ import {
   setLauncherPosition,
   setLiveCaptions,
   setCaptureSounds,
+  setHudLook,
   checkPermissions,
   checkForUpdates,
   getAppInfo,
@@ -20,6 +21,7 @@ import {
   installUpdate,
   setAutoImportScreenshots,
   type AccountInfo,
+  type HudPreviewLines,
   type LauncherPosition,
   type Permissions,
   type PrivacyPane,
@@ -32,6 +34,13 @@ import { DictionarySettings } from '@/components/dictionary/dictionary-settings'
 import { DictationCard, ProjectsSettings, TranscriptionCard, useAccountPrefs } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
+
+const PREVIEW_OPTIONS = [
+  { value: '0', label: 'Off' },
+  { value: '1', label: '1 line' },
+  { value: '2', label: '2 lines' },
+  { value: '4', label: '4 lines' },
+];
 
 export function accountInitial(account: AccountInfo): string {
   return (account.name ?? account.email ?? '?').trim().charAt(0).toUpperCase() || '?';
@@ -255,6 +264,18 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
       .catch(() => {})
       .finally(() => setSoundsBusy(false));
   };
+  const previewLines = settings?.hud_preview_lines ?? 4;
+  const translucent = settings?.hud_translucent ?? true;
+  const [lookError, setLookError] = useState<string | null>(null);
+  const changeLook = (lines: HudPreviewLines, see: boolean) => {
+    const before = settings;
+    setLookError(null);
+    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see } : current);
+    void setHudLook(lines, see).catch((error: unknown) => {
+      setSettings(before);
+      setLookError(errMsg(error, 'Could not change how the recording looks.'));
+    });
+  };
   const [shotFolder, setShotFolder] = useState<string | null>(null);
   const [shotsBusy, setShotsBusy] = useState(false);
   const [shotsError, setShotsError] = useState<string | null>(null);
@@ -351,6 +372,35 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
               <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
               {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
             </Card>
+
+            {isDesktop() && (
+              <Card title="While recording">
+                <div className="ev-set-body flex flex-col gap-3">
+                  <div className="ev-field">
+                    <label>Live words</label>
+                    <Segmented
+                      label="Lines of live words while recording"
+                      size="sm"
+                      value={String(previewLines)}
+                      options={PREVIEW_OPTIONS}
+                      onChange={(next) => { if (settings) changeLook(Number(next) as HudPreviewLines, translucent); }}
+                    />
+                    <p className="ev-set-hint">{previewLines === 0 ? 'Just the timer and Stop. Your words still go to the transcript.' : `The last ${previewLines === 1 ? 'line' : `${previewLines} lines`} of what you say, under the timer.`}</p>
+                  </div>
+                </div>
+                <div className="ev-set-row flex-col items-stretch">
+                  <Switch
+                    className="w-full"
+                    checked={translucent}
+                    onCheckedChange={(next) => changeLook(previewLines, next)}
+                    disabled={!settings}
+                    label="See-through"
+                    hint="Lets what's behind the control show through, so it sits back while you talk."
+                  />
+                  {lookError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{lookError}</p> : null}
+                </div>
+              </Card>
+            )}
 
             {isDesktop() && (
               <Card title="Capture">

@@ -107,6 +107,13 @@ const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60)
 const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
+/// Recording with the live words turned off: just the controls.
+const BAR: (f64, f64) = (264.0, 40.0);
+
+/// Recording or writing it down, with `lines` of live words under the controls.
+fn live_size(lines: u8) -> (f64, f64) {
+    if lines == 0 { BAR } else { (WIDE.0, WIDE.1 - 80.0 + 20.0 * f64::from(lines)) }
+}
 /// Keep the same frame after pasting so the transcript remains readable.
 const RESULT: (f64, f64) = (400.0, 142.0);
 /// A screenshot just taken, with its thumbnail.
@@ -115,12 +122,13 @@ const SHOT: (f64, f64) = (360.0, 172.0);
 /// The control's size in each phase. The window takes it in one step when the
 /// phase changes and never measures its content, so stopping, writing and
 /// pasting all happen in the same frame and nothing jumps.
-pub fn size_for(state: &HudState) -> (f64, f64) {
+pub fn size_for(state: &HudState, lines: u8) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     match state.phase {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
         Phase::Recording | Phase::Transcribing if video => DEFAULT_SIZE,
-        Phase::Recording | Phase::Transcribing | Phase::Failed => WIDE,
+        Phase::Recording | Phase::Transcribing => live_size(lines),
+        Phase::Failed => WIDE,
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
             Some("video") => DEFAULT_SIZE,
@@ -170,7 +178,7 @@ fn frame_of(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
 pub fn fit_on_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
-    let size = size_for(&current());
+    let size = size_for(&current(), prefs(app).lines);
     if (from.2 - size.0).abs() < 1.0 && (from.3 - size.1).abs() < 1.0 {
         return;
     }
@@ -195,6 +203,7 @@ fn is_active(phase: &Phase) -> bool {
 struct Prefs {
     frame: Option<HudFrame>,
     hidden: bool,
+    lines: u8,
 }
 static PREFS: std::sync::Mutex<Option<Prefs>> = std::sync::Mutex::new(None);
 
@@ -202,7 +211,7 @@ fn prefs(app: &AppHandle) -> Prefs {
     let mut guard = PREFS.lock().unwrap_or_else(|error| error.into_inner());
     *guard.get_or_insert_with(|| {
         let config = settings::load(app);
-        Prefs { frame: config.hud_frame, hidden: config.hud_hidden }
+        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines() }
     })
 }
 
@@ -211,7 +220,20 @@ fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
     change(&mut config);
     let _ = settings::save(app, &config);
     *PREFS.lock().unwrap_or_else(|error| error.into_inner()) =
-        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden });
+        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines() });
+}
+
+/// How the control looks while recording: how many lines of live words, and
+/// whether it is see-through. Takes effect at once, mid-recording too.
+pub fn set_look(app: &AppHandle, lines: u8, translucent: bool) {
+    update_prefs(app, |config| {
+        config.hud_preview_lines = Some(lines);
+        config.hud_translucent = Some(translucent);
+    });
+    let lines = prefs(app).lines;
+    let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || fit_on_main(&app));
 }
 
 pub fn user_frame(app: &AppHandle) -> Option<HudFrame> {
@@ -418,7 +440,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, DEFAULT_SIZE, RESULT, SHOT, WIDE};
+    use super::{is_active, live_size, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -427,10 +449,20 @@ mod tests {
     #[test]
     fn talking_writing_and_the_pasted_words_share_one_width() {
         let talk = Some("audio");
-        assert_eq!(size_for(&state(Phase::Recording, talk, None)), WIDE);
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None)), WIDE);
-        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there"))), RESULT);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4), WIDE);
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4), WIDE);
+        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4), RESULT);
         assert_eq!(RESULT.0, WIDE.0);
+    }
+
+    #[test]
+    fn fewer_preview_lines_make_a_shorter_control() {
+        let talk = Some("audio");
+        assert_eq!(live_size(4), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1), (WIDE.0, 82.0));
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2), (WIDE.0, 102.0));
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0), BAR);
+        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0), WIDE);
     }
 
     #[test]
@@ -442,15 +474,15 @@ mod tests {
 
     #[test]
     fn resting_saved_and_video_stay_a_small_pill() {
-        assert_eq!(size_for(&HudState::idle()), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None)), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None)), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  "))), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4), DEFAULT_SIZE);
     }
 
     #[test]
     fn a_screenshot_makes_room_for_its_thumbnail() {
-        assert_eq!(size_for(&state(Phase::Done, Some("image"), None)), SHOT);
+        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4), SHOT);
     }
 
     #[test]
