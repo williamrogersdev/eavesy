@@ -4,7 +4,11 @@ import type { AppDb } from '@/db/client';
 import { dictations } from '@/db/schema';
 import * as dictionary from '@/db/repo/dictionary';
 import { learnCorrections, validCorrection, normalizeTerm } from '@/lib/dictionary/learning';
+import { isRecord } from '@/lib/json';
 import type { ResolvedIngestActor } from './device-auth';
+
+/** Replacements one bulk paste can add. */
+export const MAX_BULK = 200;
 
 const feedback = z.object({
   original: z.string().min(1).max(12_000), corrected: z.string().min(1).max(12_000),
@@ -38,6 +42,13 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     if (!parsed.success) return json({ error: 'invalid_request' }, 400);
     await dictionary.forget(db, actor.userId, parsed.data.id);
     return json({ ok: true });
+  }
+  if (request.method === 'PUT' && isRecord(body) && Array.isArray(body.entries)) {
+    const parsed = z.object({ entries: z.array(z.object({ from: z.string().max(128), to: z.string().max(128) })).min(1).max(MAX_BULK) }).safeParse(body);
+    if (!parsed.success) return json({ error: 'invalid_request' }, 400);
+    const valid = parsed.data.entries.filter(entry => validCorrection(entry.from, entry.to));
+    const learned = valid.length ? await dictionary.remember(db, actor.userId, valid) : 0;
+    return json({ learned, skipped: parsed.data.entries.length - valid.length, status: learned > 0 ? 'saved' : valid.length ? 'unchanged' : 'not_saved' });
   }
   if (request.method === 'PUT') {
     const parsed = z.object({ from: z.string(), to: z.string() }).safeParse(body);

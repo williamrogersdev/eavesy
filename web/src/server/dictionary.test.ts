@@ -52,6 +52,20 @@ describe('dictionary feedback API and persistence', () => {
   });
 });
 
+test('a bulk paste adds every valid replacement and counts the rest as skipped', async () => {
+  const t = setup();
+  const result = await t.request('PUT', { entries: [
+    { from: 'easy', to: 'Eavesy' },
+    { from: 'cube cuddle', to: 'kubectl' },
+    { from: 'same', to: 'same' },
+  ] });
+  expect(await result.json()).toEqual({ learned: 2, skipped: 1, status: 'saved' });
+  expect((await dictionary.list(t.db, 'u1')).map(e => e.to).sort()).toEqual(['Eavesy', 'kubectl']);
+  const again = await t.request('PUT', { entries: [{ from: 'easy', to: 'Eavesy' }] });
+  expect(await again.json()).toEqual({ learned: 0, skipped: 0, status: 'unchanged' });
+  expect((await t.request('PUT', { entries: [] })).status).toBe(400);
+});
+
 test('meeting transcript edits learn from human changes and preserve raw speech', async () => {
   const t = setup();
   const { editSegment } = await import('@/db/repo/transcripts');

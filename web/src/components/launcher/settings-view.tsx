@@ -2,9 +2,9 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Button, Card, IconButton, Row, Select, Switch } from '@/components/launcher/ui';
+import { Button, Card, IconButton, Mascot, Row, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
@@ -33,7 +33,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
-import { DictationCard, ProjectsSettings, TranscriptionCard, useAccountPrefs } from './account-settings';
+import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -211,6 +211,76 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
+/** Every permission with its state, then what Eavesy is connected to. Nothing hides behind a summary. */
+function PermissionsPage({ permissions, checkingPermission, fnInUse, account, connecting, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, onConnect, onOpenAccount }: {
+  permissions: Permissions | null;
+  checkingPermission: SetupPermissionKind | null;
+  fnInUse: boolean;
+  account: AccountState;
+  connecting: boolean;
+  onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
+  onOpenPrivacy: (pane: PrivacyPane) => void;
+  onRelaunch: () => void;
+  onRunSetup: () => void;
+  onConnect: () => void;
+  onOpenAccount: () => void;
+}) {
+  const used = permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed');
+  const off = used.filter((spec) => isGranted(permissions, spec.kind) === false);
+  const missingRequired = off.some((spec) => spec.need === 'required');
+  const summary = !permissions
+    ? 'Checking what’s turned on…'
+    : !off.length
+      ? `All ${used.length} permissions Eavesy uses are on.`
+      : `${used.length - off.length} of ${used.length} on. ${missingRequired ? 'Eavesy can’t record until the microphone is on.' : `Off: ${off.map((spec) => spec.label).join(', ')}. Eavesy still works without ${off.length === 1 ? 'it' : 'them'}.`}`;
+  return (
+    <>
+      <div className="ev-perm-summary" data-state={!permissions ? 'checking' : missingRequired ? 'warn' : off.length ? 'partial' : 'ok'} role="status">
+        <StatusDisc status={!permissions ? 'checking' : missingRequired ? 'denied' : off.length ? 'pending' : 'granted'} />
+        <p>{summary}</p>
+      </div>
+      <Card title="On this Mac">
+        <PermissionChecklist
+          permissions={permissions}
+          checking={checkingPermission}
+          fnInUse={fnInUse}
+          onRequest={onRequestPermission}
+          onOpenSettings={onOpenPrivacy}
+          onRelaunch={onRelaunch}
+        />
+      </Card>
+      <Card title="Connected">
+        <div className="ev-perm">
+          <StatusDisc status={account === undefined || connecting ? 'checking' : account ? 'granted' : 'pending'} />
+          <div className="min-w-0">
+            <div className="ev-perm-title">Eavesy account<span className="ev-perm-tag">optional</span></div>
+            <p className="ev-perm-hint">
+              {account
+                ? `Signed in${account.email ? ` as ${account.email}` : ''}. Transcripts, summaries and sync across your devices are on.`
+                : connecting
+                  ? 'Waiting for you in the browser…'
+                  : 'Not signed in. Recordings stay on this Mac, without cloud transcripts or sync.'}
+            </p>
+          </div>
+          <div className="ev-perm-action">
+            {account ? (
+              <Button variant="ghost" size="sm" onClick={onOpenAccount}>Manage</Button>
+            ) : account === null && !connecting ? (
+              <Button variant="outline" size="sm" onClick={onConnect}>Sign in</Button>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+      <Card>
+        <div className="ev-set-row">
+          <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
+          <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
+        </div>
+      </Card>
+    </>
+  );
+}
+
 export function SettingsView({ standalone = false, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   standalone?: boolean;
   permissions: Permissions | null;
@@ -228,27 +298,28 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   onOpenWeb: () => void;
   onShortcutsChanged: () => void;
   onProjectsChanged?: () => void;
+  /** Leaves settings: closes the window, or goes back in the panel. */
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [loadingLocal, setLoadingLocal] = useState(true);
   const [section, setSection] = useState('capture');
+  const [openProject, setOpenProject] = useState<string | null>(null);
   const accountPrefs = useAccountPrefs();
+  const projects = useProjects(!!account, onProjectsChanged);
   const sections = [
     { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
-    { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'Choose the tone and formatting used when you talk.' },
-    { id: 'transcription', label: 'Transcription', icon: AudioLines, hint: 'Languages and words Eavesy should recognize.' },
-    { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Review the spellings learned from your corrections.' },
+    { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
+    { id: 'transcription', label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
+    { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
-    { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Keep related captures and vocabulary together.' },
-    { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'You decide what Eavesy can access on this Mac.' },
+    { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
+    { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
     { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
   const activeSection = sections.find((item) => item.id === section)!;
-  const [showPermissions, setShowPermissions] = useState(false);
-  const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
-  useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
+  const go = (id: string) => { setSection(id); if (id !== 'projects') setOpenProject(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -331,6 +402,12 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   };
 
   const folder = settings?.recordings_root ?? '~/Eavesy/Recordings';
+  const signInFirst = (what: string) => (
+    <div className="ev-signin-note">
+      <p className="ev-set-hint">Sign in to {what}. These settings live in your Eavesy account and follow you to every device.</p>
+      <Button variant="outline" size="sm" onClick={() => go('account')}>Go to Account</Button>
+    </div>
+  );
 
   return (
     <div className="ev-preferences" data-standalone={standalone}>
@@ -344,17 +421,21 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
 
       <div className="ev-settings-layout">
         <nav className="ev-settings-nav" aria-label="Settings sections">
-          <div className="ev-settings-nav-title">Settings</div>
+          <div className="ev-settings-nav-title"><Mascot state="idle" size={22} />Settings</div>
           {sections.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => setSection(id)}>
+            <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => go(id)}>
               <Icon size={17} strokeWidth={1.75} aria-hidden />{label}
             </button>
           ))}
+          <p className="ev-settings-nav-foot">Changes save as you make them.</p>
         </nav>
         <div className="ev-settings-pane">
           <header className="ev-settings-heading">
-            <h1>{activeSection.label}</h1>
-            <p>{activeSection.hint}</p>
+            <div className="min-w-0 flex-1">
+              <h1>{activeSection.label}</h1>
+              <p>{activeSection.hint}</p>
+            </div>
+            {standalone && <Button variant="primary" className="shrink-0" kbd="esc" onClick={onBack}>Done</Button>}
           </header>
           <div className="ev-settings">
         {loadingLocal && <p role="status" className="ev-set-hint">Loading Mac preferences…</p>}
@@ -366,16 +447,20 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
 
         </div>
         <div id="settings-dictation" hidden={section !== 'dictation'}>
-          {account ? <DictationCard account={accountPrefs} /> : <p className="ev-set-hint">Sign in from Account to choose your dictation tone.</p>}
+          {account
+            ? <DictationCard account={accountPrefs} projects={projects.projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
+            : signInFirst('choose how dictation is written')}
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
-          {account ? <TranscriptionCard /> : <p className="ev-set-hint">Sign in from Account to manage your languages and custom words.</p>}
+          {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}
         </div>
         <div id="settings-dictionary" hidden={section !== 'dictionary'}>
-          {account ? <DictionarySettings /> : <p className="ev-set-hint">Sign in from Account to manage learned spellings.</p>}
+          {account ? <><WordsCard account={accountPrefs} /><DictionarySettings /></> : signInFirst('keep a dictionary')}
         </div>
         <div id="settings-projects" hidden={section !== 'projects'}>
-          {account ? <ProjectsSettings account={accountPrefs.prefs} onChanged={onProjectsChanged} /> : <p className="ev-set-hint">Sign in from Account to manage your projects.</p>}
+          {account
+            ? <ProjectsSettings account={accountPrefs.prefs} state={projects} open={openProject} onOpen={setOpenProject} onOpenDictation={() => go('dictation')} />
+            : signInFirst('make projects')}
         </div>
 
         <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
@@ -481,28 +566,19 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
         </div>
         <div id="settings-permissions" hidden={section !== 'permissions'}>
         {isDesktop() && (
-          <Card title="Permissions">
-            {allGranted && !showPermissions ? (
-              <div className="ev-set-row">
-                <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--ev-leaf)]" aria-hidden />
-                <p className="ev-set-label min-w-0 flex-1">Everything Eavesy needs is turned on</p>
-                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setShowPermissions(true)}>Review</Button>
-              </div>
-            ) : (
-              <PermissionChecklist
-                permissions={permissions}
-                checking={checkingPermission}
-                fnInUse={fnInUse}
-                onRequest={onRequestPermission}
-                onOpenSettings={onOpenPrivacy}
-                onRelaunch={onRelaunch}
-              />
-            )}
-            <div className="ev-set-row">
-              <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
-              <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
-            </div>
-          </Card>
+          <PermissionsPage
+            permissions={permissions}
+            checkingPermission={checkingPermission}
+            fnInUse={fnInUse}
+            account={account}
+            connecting={connecting}
+            onRequestPermission={onRequestPermission}
+            onOpenPrivacy={onOpenPrivacy}
+            onRelaunch={onRelaunch}
+            onRunSetup={onRunSetup}
+            onConnect={onConnect}
+            onOpenAccount={() => go('account')}
+          />
         )}
 
         </div>
