@@ -661,7 +661,7 @@ fn spawn_capture(
         crate::hud::HudState {
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
-            mode: Some(mode.to_string()),
+            mode: Some(if mode == "screen" { "video" } else { mode }.to_string()),
             // The timer counts from the mic going live, not from the key press.
             started_at_ms: Some(now_ms()),
             message: None,
