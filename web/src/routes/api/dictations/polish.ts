@@ -7,6 +7,7 @@ import { polishDictation } from '@/lib/ai/agent-transcript';
 import { anthropic, anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
+import { dictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -46,6 +47,8 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
+          style: dictationStyle(user?.dictationStyle),
+          forAgents: user?.dictationForAgents ?? false,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
