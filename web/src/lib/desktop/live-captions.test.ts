@@ -133,3 +133,20 @@ it('does not discard a contained final spoken at a different start', () => {
   state = addCaption(state, { sessionId: 'contained', track: 'mic', text: 'Okay. Then close the window.', isFinal: true, startMs: 500, endMs: 2500 });
   expect(runningText(state)).toBe('Okay. Okay. Then close the window.');
 });
+
+it('deduplicates settled sentence timestamp jitter but preserves later repetition', () => {
+  let state = addCaption(EMPTY_RUNNING, { sessionId: 'jitter', track: 'mic', text: 'The blue Notebook is on the kitchen table.', isFinal: true, startMs: 1000, endMs: 4000 });
+  state = addCaption(state, { sessionId: 'jitter', track: 'mic', text: 'The blue notebook is on the kitchen table.', isFinal: true, startMs: 1040, endMs: 4020 });
+  expect(runningText(state)).toBe('The blue notebook is on the kitchen table.');
+  state = addCaption(state, { sessionId: 'jitter', track: 'mic', text: 'The blue notebook is on the kitchen table.', isFinal: true, startMs: 5000, endMs: 8000 });
+  expect(runningText(state)).toBe('The blue notebook is on the kitchen table. The blue notebook is on the kitchen table.');
+});
+
+it('replaces a volatile sentence whose range includes the silent lead-in', () => {
+  const volatile = {...partial(0, 'The blue Notebook is on the kitchen table.'), endMs:23159};
+  const settled = {...partial(18060, 'The blue notebook is on the kitchen table.', true), endMs:21240};
+  let state = addCaption(EMPTY_RUNNING, volatile);
+  state = addCaption(state, settled);
+  state = addCaption(state, volatile);
+  expect(runningText(state)).toBe(settled.text);
+});

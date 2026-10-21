@@ -44,6 +44,7 @@
       {
         "title": "Eavesy Recording",
         "label": "hud",
+        "acceptFirstMouse": true,
         "url": "hud.html",
         "width": 248,
         "height": 40,

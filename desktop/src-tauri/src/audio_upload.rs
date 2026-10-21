@@ -215,14 +215,8 @@ fn wav_layout(file: &mut File, size: u64) -> io::Result<([u8; 16], u64, u64)> {
 mod tests {
     use super::*;
     fn fixture() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "eavesy-upload-{}-{}.wav",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        // SystemTime on macOS can return the same tick on parallel test threads.
+        std::env::temp_dir().join(format!("eavesy-upload-{}.wav", uuid::Uuid::new_v4()))
     }
     fn wav() -> Vec<u8> {
         let mut bytes = Vec::from(&b"RIFF"[..]);
