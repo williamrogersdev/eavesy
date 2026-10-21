@@ -3,6 +3,7 @@ import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, folders, meetings, summaries } from '../schema';
 import { cleanList, parseStringList, PROJECT_LIMITS, type Project } from '@/lib/projects';
+import { isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 
 type FolderRow = typeof folders.$inferSelect;
 
@@ -18,6 +19,8 @@ export function toProject(row: FolderRow): Project {
     vocabulary: parseStringList(row.vocabularyJson),
     people: row.people,
     match: parseStringList(row.matchJson),
+    dictationStyle: isDictationStyle(row.dictationStyle) ? row.dictationStyle : null,
+    dictationForAgents: row.dictationForAgents ?? null,
   };
 }
 
@@ -58,6 +61,8 @@ export interface ProjectInput {
   vocabulary?: string[];
   people?: string | null;
   match?: string[];
+  dictationStyle?: DictationStyle | null;
+  dictationForAgents?: boolean | null;
 }
 
 function columns(input: ProjectInput) {
@@ -69,6 +74,8 @@ function columns(input: ProjectInput) {
     ...(input.match !== undefined
       ? { matchJson: JSON.stringify(cleanList(input.match, PROJECT_LIMITS.match)) }
       : {}),
+    ...(input.dictationStyle !== undefined ? { dictationStyle: input.dictationStyle } : {}),
+    ...(input.dictationForAgents !== undefined ? { dictationForAgents: input.dictationForAgents } : {}),
   };
 }
 

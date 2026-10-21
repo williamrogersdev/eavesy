@@ -7,7 +7,8 @@ import { polishDictation } from '@/lib/ai/agent-transcript';
 import { anthropic, anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
-import { dictationStyle } from '@/lib/transcription/dictation-style';
+import * as projectsRepo from '@/db/repo/projects';
+import { effectiveDictation } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -16,7 +17,7 @@ import { guardUserQuota } from '@/server/rate-limit';
 /** About twenty minutes of speech; anything longer gets only the model-free cleanup. */
 export const MAX_POLISH_CHARS = 20_000;
 
-const schema = z.object({ text: z.string().max(200_000) });
+const schema = z.object({ text: z.string().max(200_000), projectId: z.string().max(64).optional() });
 
 /**
  * Tidies a dictation's words before the Mac app types them: the recognizer's
@@ -44,15 +45,17 @@ export const Route = createFileRoute('/api/dictations/polish')({
 
         const user = actor.isAnonymous ? null : await usersRepo.getById(getDb(), actor.userId);
         const entries = await dictionary.list(getDb(), actor.userId);
+        const project = user && parsed.data.projectId
+          ? await projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
+          : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          style: dictationStyle(user?.dictationStyle),
-          forAgents: user?.dictationForAgents ?? false,
+          ...effectiveDictation(user, project),
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
-          context: [combinedContext(null, null, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
+          context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
         return Response.json(result);
       },

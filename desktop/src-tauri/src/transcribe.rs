@@ -119,11 +119,12 @@ const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(180
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
 /// words as heard when the Mac isn't signed in or the server can't help in time.
-pub fn polish_dictation(app: &AppHandle, text: &str) -> String {
+/// `project` picks that project's tone and words over the account's.
+pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> String {
     let Some(credential) = settings::device_credential(app) else {
         return text.to_string();
     };
-    match polish_with(&credential, text, POLISH_TIMEOUT) {
+    match polish_with(&credential, text, project, POLISH_TIMEOUT) {
         Ok(polished) => polished,
         Err(error) => {
             eprintln!("dictation: typing the words as heard ({error})");
@@ -135,8 +136,13 @@ pub fn polish_dictation(app: &AppHandle, text: &str) -> String {
 fn polish_with(
     credential: &settings::Credential,
     text: &str,
+    project: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
+    let mut body = serde_json::json!({ "text": text });
+    if let Some(project) = project {
+        body["projectId"] = serde_json::Value::from(project);
+    }
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
@@ -147,7 +153,7 @@ fn polish_with(
             credential.base.trim_end_matches('/')
         ))
         .bearer_auth(&credential.token)
-        .json(&serde_json::json!({ "text": text }))
+        .json(&body)
         .send()
         .map_err(|e| format!("request failed: {e}"))?;
     if !resp.status().is_success() {
@@ -603,9 +609,27 @@ mod tests {
         let polished = polish_with(
             &credential(&server),
             "um so ship it ship it today",
+            None,
             POLISH_TIMEOUT,
         );
         assert_eq!(polished, Ok("So ship it today.".to_string()));
+    }
+
+    #[test]
+    fn polish_names_the_project_when_there_is_one() {
+        use wiremock::matchers::{body_json, method, path};
+        let (runtime, server) = mock_server();
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .and(body_json(serde_json::json!({ "text": "fix the build", "projectId": "proj_1" })))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "text": "Fix the build.", "polished": true }),
+                ))
+                .mount(&server),
+        );
+        let polished = polish_with(&credential(&server), "fix the build", Some("proj_1"), POLISH_TIMEOUT);
+        assert_eq!(polished, Ok("Fix the build.".to_string()));
     }
 
     #[test]
@@ -638,14 +662,14 @@ mod tests {
         );
         let credential = credential(&server);
         let short = std::time::Duration::from_millis(100);
-        assert!(polish_with(&credential, "words", short)
+        assert!(polish_with(&credential, "words", None, short)
             .unwrap_err()
             .contains("429"));
         assert_eq!(
-            polish_with(&credential, "words", short),
+            polish_with(&credential, "words", None, short),
             Err("empty polish".to_string())
         );
-        assert!(polish_with(&credential, "words", short).is_err());
+        assert!(polish_with(&credential, "words", None, short).is_err());
     }
 }
 

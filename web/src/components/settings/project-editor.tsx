@@ -5,8 +5,9 @@ import { ChipInput } from '@/components/ui/chip-input';
 import { appButton } from '@/components/ui/app-page';
 import { projectSuggestions, type ProjectFields, type ProjectSummary } from '@/lib/api/projects';
 import { cleanList, PROJECT_LIMITS, projectWords, wordsToFields } from '@/lib/projects';
+import { DICTATION_STYLES, isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 
-export type ProjectSave = Required<Pick<ProjectFields, 'about' | 'vocabulary' | 'people' | 'match'>> & { name: string };
+export type ProjectSave = Required<Pick<ProjectFields, 'about' | 'vocabulary' | 'people' | 'match' | 'dictationStyle' | 'dictationForAgents'>> & { name: string };
 
 export function ProjectEditor({
   project,
@@ -24,6 +25,8 @@ export function ProjectEditor({
   const [about, setAbout] = useState(project?.about ?? '');
   const [words, setWords] = useState<string[]>(() => (project ? projectWords(project) : []));
   const [match, setMatch] = useState<string[]>(project?.match ?? []);
+  const [tone, setTone] = useState<DictationStyle | null>(project?.dictationStyle ?? null);
+  const [forAgents, setForAgents] = useState<boolean | null>(project?.dictationForAgents ?? null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const projectId = project?.id;
 
@@ -37,7 +40,7 @@ export function ProjectEditor({
   const trimmed = name.trim();
   const submit = () => {
     if (!trimmed) return;
-    onSave({ name: trimmed, about: about.trim() || null, ...wordsToFields(words), match: cleanList(match, PROJECT_LIMITS.match) });
+    onSave({ name: trimmed, about: about.trim() || null, ...wordsToFields(words), match: cleanList(match, PROJECT_LIMITS.match), dictationStyle: tone, dictationForAgents: forAgents });
   };
 
   const field = 'h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm text-ev-ink outline-none transition-colors placeholder:text-ev-ink-3 focus:border-ev-coat';
@@ -122,6 +125,35 @@ export function ProjectEditor({
           }
           showCount={match.length > 0}
         />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${ids}-tone`} className={label}>Dictation tone</label>
+          <select
+            id={`${ids}-tone`}
+            value={tone ?? ''}
+            onChange={(event) => setTone(isDictationStyle(event.target.value) ? event.target.value : null)}
+            className={field}
+          >
+            <option value="">Account default</option>
+            {DICTATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${ids}-agents`} className={label}>Format dictation for AI agents</label>
+          <select
+            id={`${ids}-agents`}
+            value={forAgents === null ? '' : forAgents ? 'on' : 'off'}
+            onChange={(event) => setForAgents(event.target.value === '' ? null : event.target.value === 'on')}
+            className={field}
+          >
+            <option value="">Account default</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <p className="text-xs text-ev-ink-2 sm:col-span-2">Used for dictations in a window that picks this project, instead of your account’s setting.</p>
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-1">

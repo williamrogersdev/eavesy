@@ -21,6 +21,17 @@ export function dictationStyle(value: unknown): DictationStyle {
   return isDictationStyle(value) ? value : DEFAULT_DICTATION_STYLE;
 }
 
+/** How a dictation is written: the project's choice where it made one, the account's otherwise. */
+export function effectiveDictation(
+  account: { dictationStyle?: string | null; dictationForAgents?: boolean | null } | null | undefined,
+  project?: { dictationStyle?: DictationStyle | null; dictationForAgents?: boolean | null } | null,
+): { style: DictationStyle; forAgents: boolean } {
+  return {
+    style: project?.dictationStyle ?? dictationStyle(account?.dictationStyle),
+    forAgents: project?.dictationForAgents ?? account?.dictationForAgents ?? false,
+  };
+}
+
 /** "What the hell" keeps its "what": the "the" goes only with the swear word after it. */
 const THE_SWEAR = /\bthe\s+(?:fuck|hell|heck)\b/gi;
 const SWEARING =

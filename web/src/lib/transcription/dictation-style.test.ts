@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dictationStyle, withoutSwearing } from './dictation-style';
+import { dictationStyle, effectiveDictation, withoutSwearing } from './dictation-style';
 
 describe('withoutSwearing', () => {
   test('drops swear words and tidies the gaps', () => {
@@ -24,4 +24,19 @@ test('unknown styles fall back to the natural one', () => {
   expect(dictationStyle('prompt')).toBe('natural');
   expect(dictationStyle('pirate')).toBe('natural');
   expect(dictationStyle(null)).toBe('natural');
+});
+
+describe('effectiveDictation', () => {
+  const account = { dictationStyle: 'professional', dictationForAgents: false };
+  test('uses the account without a project or overrides', () => {
+    expect(effectiveDictation(account)).toEqual({ style: 'professional', forAgents: false });
+    expect(effectiveDictation(account, { dictationStyle: null, dictationForAgents: null })).toEqual({ style: 'professional', forAgents: false });
+  });
+  test('a project overrides each setting on its own', () => {
+    expect(effectiveDictation(account, { dictationForAgents: true })).toEqual({ style: 'professional', forAgents: true });
+    expect(effectiveDictation(account, { dictationStyle: 'concise', dictationForAgents: false })).toEqual({ style: 'concise', forAgents: false });
+  });
+  test('defaults with no account', () => {
+    expect(effectiveDictation(null)).toEqual({ style: 'natural', forAgents: false });
+  });
 });

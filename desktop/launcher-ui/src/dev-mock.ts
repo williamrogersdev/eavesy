@@ -188,7 +188,7 @@ function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<str
       : ['Eavesy', 'Priya Raman', 'Kubernetes'],
   };
   let projects = noProjects ? [] : [
-    { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1', 'wrangler'], people: null, match: [], recordingCount: 12 },
+    { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1', 'wrangler'], people: null, match: [], dictationStyle: 'concise', dictationForAgents: true, recordingCount: 12 },
     { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: null, match: ['acme'], recordingCount: 3 },
   ];
   return ({ method, path, body }) => {
