@@ -9,7 +9,7 @@ import { PROJECT_LIMITS } from '@/lib/projects';
 import { DICTATION_STYLES, dictationStyle, FOR_AGENTS_HINT, isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { languageName, NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
-import { Button, Card, IconButton, Segmented, Switch, TagInput } from './ui';
+import { Button, Card, IconButton, Row, Select, Switch, TagInput } from './ui';
 
 const SAVE_DELAY_MS = 500;
 
@@ -58,6 +58,7 @@ export interface AccountPrefs {
 
 /** Loads the account's settings once and saves changes in order, putting a field back when its save fails. */
 export function useAccountPrefs() {
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [prefs, setPrefs] = useState<AccountPrefs | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,7 +74,7 @@ export function useAccountPrefs() {
         });
       })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your settings.')));
-  }, []);
+  }, [loadAttempt]);
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -108,7 +109,7 @@ export function useAccountPrefs() {
     saveWords(words);
   }, [saveWords]);
 
-  return { prefs, error, update, setWords };
+  return { prefs, error, update, setWords, retry: () => { setError(null); setLoadAttempt(value => value + 1); } };
 }
 
 type AccountPrefsState = ReturnType<typeof useAccountPrefs>;
@@ -118,21 +119,16 @@ export function DictationCard({ account }: { account: AccountPrefsState }) {
   const { prefs, update } = account;
   const style = prefs?.style ?? 'natural';
   return (
-    <Card title="Dictation">
-      <div className="ev-set-body flex flex-col gap-3">
-        <p className="ev-set-hint">How every dictation is written, unless its project sets its own.</p>
-        <div className="ev-field">
-          <label>Tone</label>
-          <Segmented
-            label="Dictation tone"
-            size="sm"
-            value={style}
-            options={TONE_OPTIONS}
-            onChange={(next) => { if (prefs) update({ style: next }, { dictationStyle: next }); }}
-          />
-          <p className="ev-set-hint">{DICTATION_STYLES.find((s) => s.id === style)?.hint}</p>
-        </div>
-      </div>
+    <Card title="Writing">
+      <Row label="Tone" hint={DICTATION_STYLES.find((s) => s.id === style)?.hint}>
+        <Select
+          label="Dictation tone"
+          value={style}
+          options={TONE_OPTIONS}
+          disabled={!prefs}
+          onChange={(next) => update({ style: next }, { dictationStyle: next })}
+        />
+      </Row>
       <div className="ev-set-row">
         <Switch
           className="w-full"
@@ -143,36 +139,70 @@ export function DictationCard({ account }: { account: AccountPrefsState }) {
           hint={FOR_AGENTS_HINT}
         />
       </div>
+      <p className="ev-set-hint px-3 py-2.5">The default for every dictation. A project can choose its own, under Projects.</p>
     </Card>
   );
 }
 
 /** The languages you speak and your custom words: the same settings as eavesy.com. */
-export function TranscriptionCard({ account }: { account: AccountPrefsState }) {
-  const { prefs, error, update, setWords } = account;
-  const languages = prefs?.languages ?? null;
-  const setSpoken = (next: string[]) => update({ languages: next }, { spokenLanguages: next });
+export function TranscriptionCard() {
+  const [languages, setLanguages] = useState<string[] | null>(null);
+  const [words, setWords] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const me = await accountCall('GET', '/api/me');
+      if (!isRecord(me)) throw new Error('Unexpected account response');
+      const nextLanguages = strings(me.spokenLanguages);
+      const nextWords = strings(me.customVocabulary);
+      setLanguages(nextLanguages);
+      setWords(nextWords);
+      setBaseline(JSON.stringify([nextLanguages, nextWords]));
+    } catch {
+      setError('Transcription preferences could not be loaded from eavesy.com. Check your connection and try again. Settings on this Mac still work.');
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const dirty = languages !== null && JSON.stringify([languages, words]) !== baseline;
+  const save = async () => {
+    if (languages === null || saving) return;
+    setSaving(true); setError(null); setSaved(null);
+    try {
+      await accountCall('PATCH', '/api/me', { spokenLanguages: languages, customVocabulary: words });
+      setBaseline(JSON.stringify([languages, words]));
+      setSaved('Changes saved');
+    } catch {
+      setError('These changes could not be saved to eavesy.com. Your draft is still here. Check your connection, then save again.');
+    } finally { setSaving(false); }
+  };
 
   return (
     <Card title="Transcription">
       <div className="ev-set-body flex flex-col gap-4">
         <div className="ev-field">
-          <label>Languages you speak</label>
+          <label htmlFor="settings-spoken-language">Languages you speak</label>
           <div className="flex flex-wrap items-center gap-1.5">
             {(languages ?? []).map((code) => (
               <span key={code} className="ev-tag">
                 {languageName(code)}
-                <button type="button" aria-label={`Remove ${languageName(code)}`} onClick={() => setSpoken((languages ?? []).filter((c) => c !== code))}>
+                <button type="button" disabled={saving} aria-label={`Remove ${languageName(code)}`} onClick={() => { setLanguages((languages ?? []).filter((c) => c !== code)); setSaved(null); }}>
                   <X size={11} strokeWidth={2.25} aria-hidden />
                 </button>
               </span>
             ))}
             <select
               aria-label="Add a language"
+              id="settings-spoken-language"
               className="ev-field-input ev-field-select"
-              disabled={languages === null}
+              disabled={languages === null || saving}
               value=""
-              onChange={(e) => { if (e.target.value) setSpoken([...(languages ?? []), e.target.value]); }}
+              onChange={(e) => { if (e.target.value) { setLanguages([...(languages ?? []), e.target.value]); setSaved(null); } }}
             >
               <option value="">{languages?.length ? 'Add another…' : 'Add a language…'}</option>
               {NOTES_LANGUAGES.filter((l) => !languages?.includes(l.code)).map((l) => (
@@ -183,18 +213,23 @@ export function TranscriptionCard({ account }: { account: AccountPrefsState }) {
           <p className="ev-set-hint">Leave it empty to detect any language.</p>
         </div>
         <div className="ev-field">
-          <label>Custom words</label>
+          <span className="ev-set-label">Custom words</span>
           <TagInput
             label="Custom words"
-            value={prefs?.words ?? []}
+            value={words}
             max={MAX_VOCABULARY_TERMS}
-            disabled={!prefs}
-            placeholder="Names, products, jargon. Press Enter after each."
-            onChange={setWords}
+            disabled={languages === null || saving}
+            placeholder="Add a name, product, or phrase…"
+            onChange={(next) => { setWords(next); setSaved(null); }}
           />
-          <p className="ev-set-hint">Spelled your way in every transcript and dictation. Words for one codebase or client belong in its project.</p>
+          <p className="ev-set-hint">Press Enter after each word, or paste a list. Used in transcripts and dictation.</p>
         </div>
-        <Status error={error} />
+        {loading && <p role="status" className="ev-set-hint">Loading your preferences…</p>}
+        {error && <div role="alert" className="ev-settings-feedback"><p>{error}</p>{languages === null && <Button variant="outline" size="sm" loading={loading} onClick={() => void load()}>Retry</Button>}</div>}
+        {languages !== null && <div className="ev-settings-save">
+          <p role="status" className="ev-set-hint">{dirty ? 'Unsaved changes' : saved ?? 'Up to date'}</p>
+          <Button variant="primary" loading={saving} disabled={!dirty || saving} onClick={() => void save()}>Save changes</Button>
+        </div>}
       </div>
     </Card>
   );
@@ -226,8 +261,8 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   useEffect(() => setName(project.name), [project.name]);
   useEffect(() => setAbout(project.about ?? ''), [project.about]);
-  const accountTone = account ? styleLabel(account.style) : 'your account’s';
-  const accountAgents = account ? (account.forAgents ? 'on' : 'off') : 'your account’s setting';
+  const accountTone = account ? styleLabel(account.style) : '…';
+  const accountAgents = account ? (account.forAgents ? 'on' : 'off') : '…';
   return (
     <div className="flex flex-col">
       <div className="mb-3 flex items-center gap-2">
@@ -266,38 +301,30 @@ function ProjectPage({ project, account, onChange, onDelete, onBack }: {
       </Card>
 
       <Card title="Dictation" className="mt-[18px]">
-        <div className="ev-set-body flex flex-col gap-3">
-          <div className="ev-field">
-            <label>Tone</label>
-            <Segmented
-              label="Project dictation tone"
-              size="sm"
-              value={project.dictationStyle ?? 'default'}
-              options={[{ value: 'default', label: 'Default' }, ...TONE_OPTIONS]}
-              onChange={(next) => onChange({ dictationStyle: isDictationStyle(next) ? next : null })}
-            />
-            <p className="ev-set-hint">
-              {project.dictationStyle
-                ? DICTATION_STYLES.find((s) => s.id === project.dictationStyle)?.hint
-                : `Uses your account’s tone (${accountTone}).`}
-            </p>
-          </div>
-          <div className="ev-field">
-            <label>Format for AI agents</label>
-            <Segmented
-              label="Format for AI agents"
-              size="sm"
-              value={agentsChoice(project.dictationForAgents)}
-              options={[
-                { value: 'default', label: `Default (${accountAgents})` },
-                { value: 'on', label: 'On' },
-                { value: 'off', label: 'Off' },
-              ]}
-              onChange={(next) => onChange({ dictationForAgents: next === 'default' ? null : next === 'on' })}
-            />
-          </div>
-          <p className="ev-set-hint">Applies when you dictate into a window that picks this project.</p>
-        </div>
+        <Row
+          label="Tone"
+          hint={project.dictationStyle ? DICTATION_STYLES.find((s) => s.id === project.dictationStyle)?.hint : 'Same as your account.'}
+        >
+          <Select
+            label="Project dictation tone"
+            value={project.dictationStyle ?? 'default'}
+            options={[{ value: 'default', label: `Account (${accountTone})` }, ...TONE_OPTIONS]}
+            onChange={(next) => onChange({ dictationStyle: isDictationStyle(next) ? next : null })}
+          />
+        </Row>
+        <Row label="Format for AI agents" hint="The ask first, then context and constraints.">
+          <Select
+            label="Format for AI agents"
+            value={agentsChoice(project.dictationForAgents)}
+            options={[
+              { value: 'default', label: `Account (${accountAgents})` },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(next) => onChange({ dictationForAgents: next === 'default' ? null : next === 'on' })}
+          />
+        </Row>
+        <p className="ev-set-hint px-3 py-2.5">Applies when you dictate into a window that picks this project.</p>
       </Card>
 
       <Card title="Words" className="mt-[18px]">

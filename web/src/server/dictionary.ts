@@ -44,7 +44,12 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     if (!parsed.success || !validCorrection(parsed.data.from, parsed.data.to)) return json({ error: 'invalid_correction' }, 400);
     const existing = await dictionary.list(db, actor.userId);
     if (existing.length >= 500 && !existing.some(e => e.sourceKey === normalizeTerm(parsed.data.from))) return json({ error: 'Dictionary is full. Forget an entry before adding another.' }, 400);
-    return json({ learned: await dictionary.remember(db, actor.userId, [parsed.data]) });
+    const learned = await dictionary.remember(db, actor.userId, [parsed.data]);
+    if (learned > 0) return json({ learned, status: 'saved' });
+    const current = await dictionary.list(db, actor.userId);
+    const unchanged = current.some(entry => entry.from === parsed.data.from && entry.to === parsed.data.to);
+    return json({ learned: 0, status: unchanged ? 'unchanged' : 'not_saved',
+      message: unchanged ? 'This correction is already saved.' : 'The correction could not be saved. Refresh the dictionary and try again.' });
   }
   const parsed = feedback.safeParse(body);
   if (!parsed.success) return json({ error: 'invalid_request' }, 400);

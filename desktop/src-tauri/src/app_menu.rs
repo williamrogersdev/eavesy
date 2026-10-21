@@ -3,7 +3,8 @@
 //!
 //! Eavesy keeps the default Regular activation policy: it has a Dock icon (clicking it reopens
 //! the launcher through `RunEvent::Reopen`) and a real menu bar whenever it is active. The
-//! launcher and the HUD stay non-activating panels, so the HUD never takes focus. Showing the
+//! launcher and the HUD stay non-activating panels. The HUD opts into activation when its
+//! transcript editor is focused, enabling the standard Edit menu shortcuts. Showing the
 //! launcher calls [`activate`], which makes Eavesy the active app so the menu bar says Eavesy and
 //! ⌘C/⌘V/⌘A/⌘Z/⌘, work in its inputs; hiding it calls [`return_focus`], which hands focus back to
 //! the app that was in front before, so pasting into that app still works.

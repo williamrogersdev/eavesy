@@ -48,6 +48,18 @@ export function isDesktop(): boolean {
   return tauri() !== null;
 }
 
+export async function openSettingsWindow(): Promise<void> {
+  if (isDesktop()) await invoke('show_settings');
+}
+
+export async function closeSettingsWindow(): Promise<void> {
+  if (isDesktop()) await invoke('close_settings_window');
+}
+
+export async function openSetup(): Promise<void> {
+  if (isDesktop()) await invoke('show_setup');
+}
+
 async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -215,6 +227,13 @@ export async function setLiveCaptions(enabled: boolean): Promise<void> {
 
 export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
+}
+
+/** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
+export type HudPreviewLines = 0 | 1 | 2 | 4;
+
+export async function setHudLook(lines: HudPreviewLines, translucent: boolean): Promise<void> {
+  await invoke('set_hud_look', { lines, translucent });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -405,6 +424,8 @@ export interface Settings {
   add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
+  hud_preview_lines?: HudPreviewLines;
+  hud_translucent?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

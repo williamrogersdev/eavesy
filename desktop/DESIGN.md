@@ -334,12 +334,12 @@ never by audio routing:
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
 
 Every segment is visually equal: no raised lead button and no colour fill.
-Hover uses ink 5% and the focus ring. While a capture runs, its own segment
-turns into **Stop** (filled square in `--ev-rec`, label "Stop", plus the
-elapsed time as the hint), and the other three dim to 40%. That's the panel's
-only red control. The "computer audio" choice is gone from the UI. Meeting
-means mic + computer audio, and Talk means mic only. Settings drops "default
-source".
+Hover uses ink 5% and the focus ring. While a capture runs, the whole shelf
+becomes a single 42px live bar in place: mascot, status, elapsed time, a quiet
+one-line ticker of the newest words, and Stop. Starting and writing use the
+same row without Stop. There is no second listening card or expandable text
+box above search. Search and history stay at the same position throughout.
+Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
 - Search: well field, r9, 32px, leading search icon, trailing `Kbd /`.
@@ -365,6 +365,12 @@ source".
   points down to the composer**: "It's quiet up here. Hold `fn` and talk, or
   drop something in below." Search and chips are hidden while history is
   empty.
+
+**Transcript corrections:** "Edit transcript" lives in a capture's More menu,
+not below every transcript. It opens a focused dialog with the full transcript,
+a scrollable text area, Cancel, and Save changes (⌘Enter). Escape closes an
+unchanged draft; unsaved changes require an explicit Discard. Failed saves keep
+the draft open. Saved text updates in history immediately. Audio is unchanged.
 
 **Composer (pinned bottom, replaces the footer).** This is the one obvious
 place to put things in.
@@ -407,19 +413,17 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings:** a `Segmented` at the top picks one of three tabs, each a
-scroll column of groups titled in `--ev-t-group`:
-- **Account**: Profile, Dictation (tone segmented + "Format for AI agents"
-  switch, the default for every project), Transcription (languages, custom
-  words), Personal dictionary.
-- **Projects**: a list of rows (name, then words and dictation summary,
-  chevron). A row opens that project's own page with a back arrow: Details,
-  Dictation (tone and AI format, each with a Default that uses the
-  account's), Words, Auto-pick, and a two-step Delete.
-- **App**: Shortcuts, Capture (sounds, live captions, screenshots), Position,
-  Recordings folder, Permissions, Updates.
-Group bodies sit on `--ev-raised`, r12, hairline-separated rows. These are the
-only card-like containers in the app.
+**Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
+480), independent of the capture panel and HUD. A quiet sidebar switches
+between Capture, Dictation, Transcription, Dictionary, Shortcuts, Projects, Permissions
+and Account. Each section has one scroll area, plain groups and subtle row
+separators; avoid nested raised cards. Preserve drafts when switching sections.
+Dictation retains account tone and AI formatting defaults; projects retain their
+own pages with tone and formatting overrides. Transcription preferences have an explicit Save changes action; failed saves
+keep the draft and failed loads have Retry. Native capture preferences save
+immediately. Show errors beside the affected controls. Use the existing
+light/dark tokens and reduced-motion behavior. The capture panel and pill
+retain their geometry when Settings opens or closes.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
@@ -430,9 +434,18 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 248 × 40 | idle, saved, video recording, a plain "Saved" |
-| wide | 360 × 64 | recording and writing (one ticker line), pasted/copied, failed |
+| pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
+| bar | 264 × 40 | recording and writing with live words off |
+| wide | 400 × 62 + 20 per line | recording and writing (1, 2 or 4 ticker lines, 4 unless chosen), failed |
+| result | 400 × 142 | pasted/copied, with the words that went out |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
+
+**How it looks while recording** is the user's call (Settings → General → Recording
+control, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
+**See-through**, on by default, which drops the charcoal to 78% and softens
+the coral ring so the control sits back over whatever is underneath. Still
+no native glass, for the corner reason above. A change applies at once, even
+mid-recording: Rust refits the window and the HUD hears `hud:look`.
 
 ```
  ╭──────────────────────────────────────────────────╮
@@ -472,10 +485,10 @@ the default flow.
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.
-2. **Live bar:** a 16px listening mascot with the red peak dot in a
-   rec-tinted ring, "Listening · 0:07" (or "Meeting · 12:40"), the newest
-   words clipped from the start, and the panel's only red control, Stop.
-   Clicking the bar opens it downward to show the last few lines heard.
+2. **Live bar:** an 18px listening mascot with the recording indicator,
+   "Listening · 0:07" (or "Meeting · 12:40"), the newest words clipped from
+   the start, and the panel's only red control, Stop. It replaces the shelf
+   at the same height and never expands.
 3. **Stop:** the stop sound plays and the HUD reads "Writing it down…" the
    moment the key is pressed, before the paste target is looked up. The live
    bar shows the same, without Stop.
@@ -527,7 +540,8 @@ now" as a ghost button on the left.
 | `Switch` | `checked`, `onCheckedChange`, `label`, `hint?`. 30×18 track; off is line-strong, on is coat; thumb is raised. Thumb travel 160ms with a spring ease. |
 | `Composer` | `onSaveNote(text)`, `onFiles(files)`, `placeholder?`, `maxLines?: number` (4), `dragActive: boolean` (set by a panel-level drag listener). Fixed 40px resting height, grows upward and overlays. |
 | `ToolbarSegment` | `icon`, `label`, `hint?: string` (tooltip), `kbd?: string`, `active?: boolean` (renders Stop + elapsed), `dimmed?: boolean` |
-| `Segmented<T>` (Settings only, e.g. HUD position) | `value: T`, `onChange`, `options: {value: T, label: string, icon?}[]`, `size: 'sm' \| 'md'`. Well track, raised thumb that slides (240ms). |
+| `Select<T>` (settings rows) | `value: T`, `onChange`, `options: {value: T, label: string}[]`, `label`. A 26px native pop-up with an up-down chevron. |
+| `Segmented<T>` | `value: T`, `onChange`, `options: {value: T, label: string, icon?}[]`, `size: 'sm' \| 'md'`. Well track, raised thumb that slides (240ms). |
 | `Menu` | `trigger: ReactNode`, `items: ({label, icon?, kbd?, onSelect, tone?: 'default' \| 'warn'} \| 'separator')[]`, `align: 'start' \| 'end'`. Raised, r12, e-2, 4px padding, 28px items, full keyboard nav. |
 | `Card` | `title?`, `children`, `inset?: boolean`. Settings groups only. |
 | `Kbd` | `keys: string \| string[]` (e.g. `['⌘','⇧','Space']`), `size: 'sm' \| 'md'`, `tone?: 'well' \| 'hud'` |

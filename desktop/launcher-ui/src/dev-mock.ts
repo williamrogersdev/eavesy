@@ -1,3 +1,4 @@
+import { version } from '../../src-tauri/tauri.conf.json';
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
 // &live for a recording in progress, &setup for first-run onboarding with
@@ -25,7 +26,9 @@ const SHOT = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 
 export function installDevMock(): void {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('mock')) return;
+  // Browsers preview the native panel by default; ?web opens the web palette.
+  // A real Tauri webview always keeps its native bridge.
+  if (window.__TAURI__ || (params.has('web') && !params.has('mock'))) return;
   const now = Date.now();
   const recordings = params.has('empty') ? [] : sampleRecordings(now);
   if (params.has('history')) {
@@ -40,7 +43,12 @@ export function installDevMock(): void {
   const settings = {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
+    hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
   };
+  let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
+  let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
+  const account = mockAccount(params.has('noprojects'), params.has('manywords'));
+  let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
     account_info: { name: 'Robin Avery', email: 'robin@example.com' },
@@ -54,6 +62,10 @@ export function installDevMock(): void {
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
+    set_hud_look: ({ lines, translucent }: Record<string, unknown>) => {
+      Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
+      emit('hud:look', { lines, translucent });
+    },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },
@@ -61,14 +73,24 @@ export function installDevMock(): void {
       ? { phase: 'recording', sessionId: 's-live', mode: 'audio', startedAtMs: now - 23_000 }
       : { phase: 'idle', sessionId: null },
     get_screenshot_folder: '~/Desktop',
-    get_app_info: { name: 'Eavesy', version: '0.2.0', update: { state: 'upToDate', currentVersion: '0.2.0' } },
+    get_app_info: { name: 'Eavesy', version, update: { state: 'upToDate', currentVersion: version } },
     capture_media: '/mock/shot.png',
     list_projects: params.has('noprojects') ? [] : [
       { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1'], people: null, match: [], recordingCount: 12 },
       { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: 'Maya, Alex', match: ['acme'], recordingCount: 3 },
     ],
     front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
-    account_call: mockAccount(params.has('noprojects'), params.has('manywords')),
+    account_call: (args: Record<string, unknown>) => {
+      if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures > 0) { preferencesLoadFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
+      return account(args);
+    },
+    dictionary_request: ({ method, body }: Record<string, unknown>) => {
+      const fields = (body ?? {}) as Record<string, string>;
+      if (method === 'PUT') dictionary = [...dictionary, { id: `word-${Date.now()}`, from: fields.from, to: fields.to }];
+      if (method === 'DELETE') dictionary = dictionary.filter((entry) => entry.id !== fields.id);
+      return method === 'GET' ? { entries: dictionary } : { learned: 1 };
+    },
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };
@@ -83,6 +105,7 @@ export function installDevMock(): void {
       convertFileSrc: () => SHOT,
       invoke: <T>(cmd: string, args?: Record<string, unknown>) => {
         console.debug('[mock invoke]', cmd, args);
+        if (cmd === 'translation_request' || cmd === 'read_clipboard_text') return Promise.reject(new Error('Open the Mac app to translate, or use the signed-in web app. This preview uses sample captures.'));
         if (cmd in hotkeys) return hotkeys[cmd](args ?? {}) as Promise<T>;
         const value = cmd in results ? results[cmd] : null;
         return Promise.resolve((typeof value === 'function' ? (value as (a: Record<string, unknown>) => unknown)(args ?? {}) : value) as T);

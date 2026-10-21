@@ -40,7 +40,7 @@ export const Route = createFileRoute('/api/meetings/$id/translate')({
           language: to,
         });
         const untranslated = lines.filter(
-          (line) => line.language && line.language !== to && !translated.has(line.id),
+          (line) => line.language !== to && !translated.has(line.id),
         );
         const missing = untranslated.slice(0, LINES_PER_REQUEST);
 

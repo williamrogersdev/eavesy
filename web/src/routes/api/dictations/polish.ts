@@ -43,11 +43,14 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const overQuota = await guardUserQuota(actor.userId, 'dictation');
         if (overQuota) return overQuota;
 
-        const user = actor.isAnonymous ? null : await usersRepo.getById(getDb(), actor.userId);
-        const entries = await dictionary.list(getDb(), actor.userId);
-        const project = user && parsed.data.projectId
-          ? await projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
-          : null;
+        const [user, entries, projectRow] = await Promise.all([
+          actor.isAnonymous ? null : usersRepo.getById(getDb(), actor.userId),
+          dictionary.list(getDb(), actor.userId),
+          !actor.isAnonymous && parsed.data.projectId
+            ? projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
+            : null,
+        ]);
+        const project = user ? projectRow : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,

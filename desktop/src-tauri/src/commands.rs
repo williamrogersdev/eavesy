@@ -183,6 +183,16 @@ pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
     settings::save(&app, &config)
 }
 
+/// How many lines of live words the control shows while recording, and whether it is see-through.
+#[tauri::command]
+pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool) -> Result<(), String> {
+    if !matches!(lines, 0 | 1 | 2 | 4) {
+        return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
+    }
+    crate::hud::set_look(&app, lines, translucent);
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SetupStatus {
     pub paired: bool,
@@ -302,6 +312,48 @@ pub fn fn_status() -> FnStatus {
 pub fn show_launcher(app: AppHandle) {
     let _ = app.emit("launcher:recordings", ());
     hotkeys::show_launcher(&app);
+}
+
+#[tauri::command]
+pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<u64, String> {
+    validate_live_preview_session(&crate::hud::current(), &session_id)?;
+    let revision = crate::live_edit::revision(&session_id);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = crate::hud::current();
+        if matches!(state.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing | crate::hud::Phase::Done) && state.session_id.as_deref() == Some(session_id.as_str()) {
+            crate::hud::focus_editor_on_main(&handle);
+        }
+    }).map_err(|error| format!("Could not focus transcript editor: {error}"))?;
+    Ok(revision)
+}
+
+fn validate_live_preview_session(state: &crate::hud::HudState, session_id: &str) -> Result<(), String> {
+    // Done allows an edit already in flight when Stop completed. Other captures
+    // and idle/failed previews may only use the explicit saved-transcript editor.
+    if state.session_id.as_deref() == Some(session_id)
+        && matches!(state.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing | crate::hud::Phase::Done) {
+        Ok(())
+    } else { Err("This capture is no longer accepting live corrections".into()) }
+}
+
+#[tauri::command]
+pub async fn update_live_preview_edit(app: AppHandle, session_id: String, source: String, text: String, revision: u64) -> Result<(), String> {
+    validate_live_preview_session(&crate::hud::current(), &session_id)?;
+    crate::live_edit::update(&session_id, source, text, revision)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_live_preview_session(&crate::hud::current(), &session_id)?;
+        if let Some(recording) = store::get(&app, &session_id)? {
+            if recording.folder_path.is_some() {
+                if let Some(text) = crate::live_edit::corrected(&session_id, recording.transcript.as_deref().unwrap_or("")) {
+                    if !store::save_live_preview_transcript(&app, &session_id, &text)? {
+                        return Err("Transcript was edited in its folder; reopen it before correcting".into());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -566,7 +618,7 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
 }
 
 #[tauri::command]
-pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String, live: Option<bool>) -> Result<(), String> {
     // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
     tauri::async_runtime::spawn_blocking(move || {
         // Fast paste can finish just before the recording's folder is registered.
@@ -574,7 +626,12 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
             let ready = store::get(&app, &session_id)?.is_some_and(|rec| rec.folder_path.is_some());
             if ready {
                 let original = store::get(&app, &session_id)?.and_then(|rec| rec.transcript);
-                store::save_preview_transcript(&app, &session_id, &text)?;
+                if live.unwrap_or(false) {
+                    if !store::save_live_preview_transcript(&app, &session_id, &text)? {
+                        return Err("Transcript was edited in its folder; reopen it before correcting".into());
+                    }
+                } else { store::save_preview_transcript(&app, &session_id, &text)?; }
+                crate::live_edit::forget(&session_id);
                 if let Some(original) = original.filter(|original| original != &text) {
                     let learning_app = app.clone();
                     let corrected = text.clone();
@@ -596,10 +653,9 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
     }).await.map_err(|error| format!("Could not save transcript: {error}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn show_settings(app: AppHandle) -> Result<(), String> {
-    hotkeys::show_launcher_and_emit(&app, Some("launcher:settings"));
-    Ok(())
+    crate::settings_window::show(&app)
 }
 
 #[tauri::command]
@@ -646,6 +702,19 @@ pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyEr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_corrections_only_target_the_current_capture() {
+        use crate::hud::{HudState, Phase};
+        for phase in [Phase::Recording, Phase::Transcribing, Phase::Done] {
+            let state = HudState { phase, session_id: Some("current".into()), ..HudState::idle() };
+            assert!(super::validate_live_preview_session(&state, "current").is_ok());
+            assert!(super::validate_live_preview_session(&state, "another").is_err());
+        }
+        for phase in [Phase::Idle, Phase::Failed, Phase::Saved] {
+            let state = HudState { phase, session_id: Some("current".into()), ..HudState::idle() };
+            assert!(super::validate_live_preview_session(&state, "current").is_err());
+        }
+    }
     #[test]
     fn only_plain_app_pages_open_in_the_browser() {
         assert_eq!(super::web_app_path(Some("/settings#projects")), "/settings#projects");

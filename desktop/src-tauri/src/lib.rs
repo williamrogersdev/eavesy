@@ -1,3 +1,4 @@
+mod translation;
 mod telemetry;
 mod app_menu;
 mod audio;
@@ -5,6 +6,7 @@ mod audio_upload;
 mod base_url;
 mod captions;
 mod live_transcript;
+mod live_edit;
 mod visual;
 mod commands;
 mod diagnostics;
@@ -35,6 +37,7 @@ mod projects;
 mod recovery;
 mod screenshot_watcher;
 mod settings;
+mod settings_window;
 mod sounds;
 mod history;
 mod store;
@@ -97,6 +100,7 @@ pub fn run() {
             live_transcript::live_transcript,
             commands::set_live_captions,
             commands::set_capture_sounds,
+            commands::set_hud_look,
             commands::set_dictation_in_panel,
             commands::ack_dictation_text,
             audio::start_screen_capture,
@@ -128,6 +132,7 @@ pub fn run() {
             fs_writer::set_root_folder,
             fs_writer::reveal_in_finder,
             commands::copy_text,
+            translation::translation_request,
             commands::paste_to_frontmost,
             learning::dictionary_request,
             learning::correct_recording,
@@ -149,8 +154,11 @@ pub fn run() {
             commands::set_panel_pinned,
             commands::get_hud_state,
             commands::save_preview_transcript,
+            commands::focus_preview_editor,
+            commands::update_live_preview_edit,
             commands::sync_status,
             commands::show_settings,
+            settings_window::close_settings_window,
             commands::pair_device,
             commands::show_launcher,
             commands::dismiss_hud,

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
@@ -11,6 +11,7 @@ import {
   type LiveCaption,
   type RunningTranscript,
 } from '@/lib/desktop/live-captions';
+import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
 import { createRoot } from 'react-dom/client';
@@ -54,18 +55,34 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'wide' | 'result' | 'shot' | 'video';
+type Size = 'pill' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
 
-function sizeFor(state: HudState): Size {
+/** How the control looks while recording, from Settings → App → Capture. */
+type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
+
+const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
+
+function lookFrom(value: unknown): Look {
+  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
+  const lines = raw?.hud_preview_lines ?? raw?.lines;
+  const translucent = raw?.hud_translucent ?? raw?.translucent;
+  return {
+    lines: lines === 0 || lines === 1 || lines === 2 || lines === 4 ? lines : DEFAULT_LOOK.lines,
+    translucent: typeof translucent === 'boolean' ? translucent : DEFAULT_LOOK.translucent,
+  };
+}
+
+function sizeFor(state: HudState, lines: Look['lines']): Size {
   const video = state.mode === 'video';
   switch (state.phase) {
     case 'idle':
     case 'saved':
       return 'pill';
     case 'recording':
-      return video ? 'video' : 'wide';
+      if (video) return 'video';
+      return lines === 0 ? 'bar' : 'wide';
     case 'transcribing':
-      return video ? 'pill' : 'wide';
+      return video ? 'pill' : lines === 0 ? 'bar' : 'wide';
     case 'failed':
       return 'wide';
     case 'done':
@@ -76,7 +93,7 @@ function sizeFor(state: HudState): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 36] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 36] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -134,12 +151,13 @@ function Hud() {
   const [copied, setCopied] = useState(false);
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<{ sessionId: string | null; text: string } | null>(null);
+  const [interacted, setInteracted] = useState(false);
+  const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const pendingEdit = useRef<{ sessionId: string; text: string } | null>(null);
-  const latestEdit = useRef<{ sessionId: string; text: string } | null>(null);
+  const pendingEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
+  const latestEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const flushEdit = (): Promise<boolean> => {
     const edit = pendingEdit.current;
@@ -149,6 +167,7 @@ function Hud() {
     setSaveError(null);
     const task = saveQueue.current.then(async () => {
       try {
+        await liveUpdate.current.catch(() => {});
         await invoke('save_preview_transcript', edit);
         return true;
       } catch (error) {
@@ -173,9 +192,25 @@ function Hud() {
   const [captionsOff, setCaptionsOff] = useState<string | null>(null);
   const retrySaveButton = useRef<HTMLButtonElement>(null);
   const transcriptBox = useRef<HTMLDivElement>(null);
-  const lines = useLiveLines(state?.sessionId ?? null, 12);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const selection = useRef({ start: 0, end: 0, direction: 'none' as 'forward' | 'backward' | 'none', scroll: 0 });
+  type Selection = typeof selection.current;
+  type UndoEntry = { source: string; text: string; selection: Selection };
+  const editHistory = useRef<{ undo: UndoEntry[]; redo: UndoEntry[] }>({ undo: [], redo: [] });
+  const typingGroup = useRef<{ source: string; end: number; at: number } | null>(null);
+  const historyAction = useRef<(redo: boolean) => void>(() => {});
+  const liveRevision = useRef(Date.now() * 1000);
+  const nativeEditReady = useRef<Promise<void> | null>(null);
+  const liveUpdate = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingLiveEdit = useRef<{ sessionId: string; source: string; text: string; revision: number } | null>(null);
+  const [composition, setComposition] = useState<{ source: string; text: string } | null>(null);
+  const lines = useLiveLines(state?.sessionId ?? null, Number.MAX_SAFE_INTEGER);
   const currentSession = useRef(state?.sessionId);
   currentSession.current = state?.sessionId;
+  const [look, setLook] = useState<Look>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
+  });
   const loadShortcut = () => {
     void invoke('get_settings')
       .then((settings) => {
@@ -185,6 +220,22 @@ function Hud() {
       .catch(() => {});
   };
   useEffect(loadShortcut, []);
+  // The saved look once at start; after that only `hud:look` changes it, so a
+  // slow first read can't undo a change made in Settings meanwhile.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let disposed = false;
+    let changed = false;
+    void tauri()?.event?.listen('hud:look', (event) => { changed = true; setLook(lookFrom(event.payload)); })
+      .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    const load = (attempt: number) => {
+      void invoke('get_settings')
+        .then((settings) => { if (settings && !changed && !disposed) setLook(lookFrom(settings)); })
+        .catch(() => { if (attempt < 4 && !changed && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
+    };
+    if (tauri()) load(0);
+    return () => { disposed = true; off?.(); };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -297,7 +348,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); }, [state?.sessionId, state?.phase]);
+  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -312,41 +363,69 @@ function Hud() {
     return () => { cancelled = true; };
   }, [screenshot, state?.sessionId]);
 
-  const size = state ? sizeFor(state) : 'pill';
+  const size = state ? sizeFor(state, look.lines) : 'pill';
 
   useEffect(() => {
-    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    if (!state || interacted || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
     }, state.phase === 'done' ? 15_000 : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, editing, saving, saveError, draft, saveRevision]);
+  }, [state?.phase, state?.sessionId, interacted, editing, saving, saveError, draft, saveRevision]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
     if (tauri()) return;
-    const [width, height] = PREVIEW_SIZES[size];
+    const live = state?.phase === 'recording' || state?.phase === 'transcribing';
+    // Same as `live_size` in hud.rs.
+    const [width, height] = size === 'wide' && live ? [400, 62 + 20 * look.lines] : PREVIEW_SIZES[size];
     const root = document.getElementById('root');
     if (root) Object.assign(root.style, { width: `${width}px`, height: `${height}px`, margin: '28px auto 0' });
     document.body.style.background = 'linear-gradient(160deg, #e9e4dc, #cfd6dd)';
     document.body.style.minHeight = '100vh';
-  }, [size]);
+  }, [size, look.lines, state?.phase]);
 
   const snapshotWords = lines.map((line) => line.text).join(' ');
+  const heard = snapshotWords || (state?.sessionId && running.sessionId === state.sessionId ? runningText(running) : '');
+  const source = state?.phase === 'done' ? state.message?.trim() || heard : heard;
+  const ownDraft = draft?.sessionId === state?.sessionId ? draft : null;
+  const words = useMemo(() => ownDraft ? ownDraft.source === null ? ownDraft.text : mergeTranscript({ source: ownDraft.source, text: ownDraft.text }, source) : source, [ownDraft, source]);
+
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (document.activeElement === editor) {
+      const saved = selection.current;
+      editor.setSelectionRange(saved.start, saved.end, saved.direction);
+      editor.scrollTop = saved.scroll;
+    } else editor.scrollTop = editor.scrollHeight;
+  }, [words, state?.sessionId]);
+
   useEffect(() => {
-    const box = transcriptBox.current;
-    if (box && state?.phase !== 'done') box.scrollTop = box.scrollHeight;
-  }, [snapshotWords, running, state?.phase]);
+    const handle = (event: InputEvent) => {
+      if (event.isComposing || event.target !== editorRef.current || !['historyUndo', 'historyRedo'].includes(event.inputType)) return;
+      event.preventDefault(); historyAction.current(event.inputType === 'historyRedo');
+    };
+    document.addEventListener('beforeinput', handle);
+    return () => document.removeEventListener('beforeinput', handle);
+  }, []);
+
+  // A live draft cannot be written to history until capture registers its
+  // recording folder. Flush the full merged result when capture completes.
+  useEffect(() => {
+    if (composition || state?.phase !== 'done' || !state.sessionId || !ownDraft || ownDraft.source === null) return;
+    const edit = { sessionId: state.sessionId, text: words, live: true };
+    latestEdit.current = edit; pendingEdit.current = edit;
+    setDraft({ ...edit, source: null });
+  }, [state?.phase, state?.sessionId, ownDraft, words, composition]);
 
   if (!state) return null;
 
   const opening = state.phase === 'recording' && !state.sessionId;
   const video = state.mode === 'video';
-  const heard = snapshotWords || (state.sessionId && running.sessionId === state.sessionId ? runningText(running) : '');
-  const words = state.phase === 'done' ? (draft?.sessionId === state.sessionId ? draft.text : state.message?.trim() || heard) : heard;
-  const editable = !!(state.message?.trim() || heard) || draft?.sessionId === state.sessionId;
+  const editable = !!source || !!ownDraft;
   const notice = state.notice ?? null;
   const notPasted = !!notice?.includes('Accessibility');
   const busy = starting || state.phase === 'transcribing';
@@ -387,11 +466,113 @@ function Hud() {
     <button type="button" className="ctl-btn" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
   );
 
+  const prepareNativeEditor = (sessionId: string) => {
+    const ready = invoke('focus_preview_editor', { sessionId }).then(revision => {
+      if (currentSession.current === sessionId && typeof revision === 'number') liveRevision.current = Math.max(liveRevision.current, revision);
+    });
+    nativeEditReady.current = ready;
+    void ready.catch(error => {
+      // A transient focus failure must not poison every subsequent edit. Retry
+      // initialization on the next keystroke or explicit Retry save.
+      if (nativeEditReady.current === ready) nativeEditReady.current = null;
+      if (currentSession.current === sessionId && pendingLiveEdit.current) setSaveError(errMsg(error, 'Could not focus transcript editor'));
+    });
+    return ready;
+  };
+  const sendLiveEdit = () => {
+    if (!pendingLiveEdit.current || pendingLiveEdit.current.sessionId !== currentSession.current) return;
+    const edit = { ...pendingLiveEdit.current };
+    const sessionId = edit.sessionId;
+    const ready = nativeEditReady.current ?? prepareNativeEditor(sessionId);
+    const update = ready.then(() => {
+      if (currentSession.current !== sessionId) return;
+      edit.revision = ++liveRevision.current;
+      return invoke('update_live_preview_edit', edit);
+    });
+    const task = Promise.all([liveUpdate.current.catch(() => {}), update]).then(() => {});
+    liveUpdate.current = task;
+    void task.then(() => { if (currentSession.current === sessionId && liveUpdate.current === task) setSaveError(null); }, error => {
+      if (currentSession.current === sessionId && liveUpdate.current === task) setSaveError(errMsg(error, 'Could not keep live correction'));
+    });
+  };
+  const changeText = (text: string, base = source, record = true, before = selection.current, inputType?: string) => {
+    if (!state.sessionId) return;
+    if (record) {
+      const typed = inputType === 'insertText' && before.start === before.end && text.length === words.length + 1;
+      const group = typingGroup.current;
+      if (!typed || !group || group.source !== source || group.end !== before.end || Date.now() - group.at > 700) {
+        editHistory.current.undo.push({ source, text: words, selection: { ...before } });
+        if (editHistory.current.undo.length > 200) editHistory.current.undo.shift();
+      }
+      typingGroup.current = typed ? { source, end: selection.current.end, at: Date.now() } : null;
+      editHistory.current.redo = [];
+    }
+    const editingLive = state.phase === 'recording' || state.phase === 'transcribing';
+    setDraft({ sessionId: state.sessionId, source: editingLive ? base : null, text });
+    if (editingLive) {
+      // Send immediately, before a global Stop can begin its final paste.
+      pendingLiveEdit.current = { sessionId: state.sessionId, source: base, text, revision: ++liveRevision.current };
+      sendLiveEdit();
+    } else {
+      const edit = { sessionId: state.sessionId, text };
+      latestEdit.current = edit; pendingEdit.current = edit;
+    }
+    setCopied(false);
+  };
+  historyAction.current = redo => {
+    const from = redo ? editHistory.current.redo : editHistory.current.undo;
+    const to = redo ? editHistory.current.undo : editHistory.current.redo;
+    const entry = from.pop();
+    if (!entry) return;
+    to.push({ source, text: words, selection: { ...selection.current } });
+    typingGroup.current = null;
+    selection.current = entry.selection;
+    changeText(mergeTranscript(entry, source), source, false);
+  };
+  const rememberSelection = (editor: HTMLTextAreaElement) => {
+    selection.current = { start: editor.selectionStart, end: editor.selectionEnd, direction: editor.selectionDirection, scroll: editor.scrollTop };
+  };
+  const transcriptEditor = (hint?: string) => <textarea
+    ref={editorRef}
+    aria-label="Edit transcript preview"
+    className="ctl-words ctl-editor"
+    value={composition?.text ?? words}
+    placeholder={hint}
+    spellCheck
+    readOnly={!state.sessionId}
+    onFocus={() => {
+      if (!state.sessionId) return;
+      setEditing(true); setInteracted(true);
+      void prepareNativeEditor(state.sessionId);
+    }}
+    onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
+    onSelect={event => rememberSelection(event.currentTarget)}
+    onScroll={event => { selection.current.scroll = event.currentTarget.scrollTop; }}
+    onChange={event => {
+      const before = selection.current;
+      rememberSelection(event.currentTarget);
+      if (composition) setComposition({ ...composition, text: event.target.value });
+      else changeText(event.target.value, source, true, before, (event.nativeEvent as InputEvent).inputType);
+    }}
+    onCompositionStart={event => setComposition({ source, text: event.currentTarget.value })}
+    onCompositionEnd={event => {
+      rememberSelection(event.currentTarget);
+      changeText(mergeTranscript({ source: composition?.source ?? source, text: event.currentTarget.value }, source));
+      setComposition(null);
+    }}
+    onKeyDown={event => {
+      if (!event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey) && !event.altKey && ['z', 'y'].includes(event.key.toLowerCase())) {
+        event.preventDefault(); historyAction.current(event.shiftKey || event.key.toLowerCase() === 'y'); return;
+      }
+      if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.blur(); } }}
+  />;
+
   let top: ReactNode;
   let below: ReactNode = null;
 
   if (actionError) {
     top = <>{mark}<span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span><span className="ctl-fill" />{close}</>;
+    if (!video && state.sessionId) below = transcriptEditor();
   } else if (state.phase === 'recording') {
     top = (
       <>
@@ -407,15 +588,15 @@ function Hud() {
         <span className="ctl-fill" />
         {video && marking.tool
           ? <button type="button" onClick={() => act('stop_marking')} title="Put the marker away (esc)" className="ctl-btn ctl-primary">Done</button>
-          : <button type="button" disabled={opening} onClick={() => act('stop_capture', { sessionId: state.sessionId })} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
+          : <button type="button" disabled={opening} onClick={() => { void liveUpdate.current.catch(() => {}).then(() => act('stop_capture', { sessionId: state.sessionId })); }} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
     const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
-    if (!video) below = <Ticker text={heard} hint={opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`} />;
+    if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
-    if (!video) below = <Ticker text={heard} hint="Turning your words into text…" working />;
+    if (!video && look.lines) below = transcriptEditor('Turning your words into text…');
   } else if (state.phase === 'done' && video) {
     top = <>{mark}<span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>
       <span className="ctl-fill" />
@@ -450,19 +631,7 @@ function Hud() {
         {close}
       </>
     );
-    below = editable
-      ? <textarea
-          aria-label="Edit transcript preview"
-          className="ctl-words ctl-editor"
-          value={words}
-          spellCheck
-          readOnly={!state.sessionId}
-          onFocus={() => setEditing(true)}
-          onBlur={() => { setEditing(false); void flushEdit(); }}
-          onChange={(event) => { setDraft({ sessionId: state.sessionId, text: event.target.value }); if (state.sessionId) { const edit = { sessionId: state.sessionId, text: event.target.value }; latestEdit.current = edit; pendingEdit.current = edit; } setCopied(false); }}
-          onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.currentTarget.blur(); } }}
-        />
-      : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
+    below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
     top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{close}</>;
   } else if (state.phase === 'failed') {
@@ -483,12 +652,18 @@ function Hud() {
     );
   }
 
+  if (saveError && ['recording', 'transcribing'].includes(state.phase)) {
+    top = <>{top}<button type="button" className="ctl-btn ctl-warn" title={saveError} onClick={sendLiveEdit}>Retry save</button></>;
+  }
+
   return (
     <div
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
       data-marking={video && live && marking.tool ? 'true' : undefined}
+      data-translucent={look.translucent || undefined}
+      style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
       onMouseEnter={loadShortcut}
       className="launcher-scope ev eavesy-control"
@@ -545,15 +720,6 @@ function VoiceBars({ level }: { level: number }) {
     <span className="ctl-bars" aria-hidden style={{ '--lvl': level.toFixed(2) } as CSSProperties}>
       <i /><i /><i /><i /><i />
     </span>
-  );
-}
-
-/** Wrapped live words; the parent scrolls to keep the latest sentences visible. */
-function Ticker({ text, hint, working }: { text: string; hint: string; working?: boolean }) {
-  return (
-    <p className="ctl-ticker" aria-busy={working || undefined} aria-live="polite">
-      {text ? <bdi>{text}</bdi> : <span className="ctl-hint">{hint}</span>}
-    </p>
   );
 }
 
