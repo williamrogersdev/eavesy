@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ArrowUpRight, Check, FolderOpen, Loader2, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Card, IconButton, Switch } from '@/components/launcher/ui';
+import { Button, Card, IconButton, Segmented, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
@@ -29,7 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
-import { ProjectsCard, TranscriptionCard } from './account-settings';
+import { DictationCard, ProjectsSettings, TranscriptionCard, useAccountPrefs } from './account-settings';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -200,6 +200,18 @@ function PositionPicker({ value, custom, disabled, onPick }: {
   );
 }
 
+type SettingsTab = 'account' | 'projects' | 'app';
+const TAB_KEY = 'ev-settings-tab';
+
+function readTab(): SettingsTab {
+  try {
+    const saved = sessionStorage.getItem(TAB_KEY);
+    return saved === 'projects' || saved === 'app' ? saved : 'account';
+  } catch {
+    return 'account';
+  }
+}
+
 export function SettingsView({ permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
@@ -219,6 +231,10 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
   onBack: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
+  const [tab, setTab] = useState<SettingsTab>(() => readTab());
+  useEffect(() => { try { sessionStorage.setItem(TAB_KEY, tab); } catch { /* storage is optional */ } }, [tab]);
+  const signedIn = isDesktop() && !!account;
+  const accountPrefs = useAccountPrefs();
   const [showPermissions, setShowPermissions] = useState(false);
   const allGranted = !!permissions && permissionSpecs(fnInUse).filter((spec) => spec.need !== 'not-needed').every((spec) => isGranted(permissions, spec.kind) === true);
   useEffect(() => { if (!allGranted) setShowPermissions(false); }, [allGranted]);
@@ -295,136 +311,160 @@ export function SettingsView({ permissions, checkingPermission, onRequestPermiss
       )}
 
       <div className="ev-settings">
-        <Section title="Account">
-          <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
-        </Section>
+        <Segmented
+          label="Settings section"
+          className="mb-4"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'account', label: 'Account' },
+            { value: 'projects', label: 'Projects' },
+            { value: 'app', label: 'App' },
+          ]}
+        />
 
-        {isDesktop() && account && (
+        {tab === 'account' && (
           <>
-            <TranscriptionCard />
-            <DictionarySettings />
-            <ProjectsCard onChanged={onProjectsChanged} />
+            <Section title="Profile">
+              <AccountCard account={account} connecting={connecting} onConnect={onConnect} onCancelConnect={onCancelConnect} onDisconnect={onDisconnect} onOpenWeb={onOpenWeb} />
+            </Section>
+            {signedIn && (
+              <>
+                <DictationCard account={accountPrefs} />
+                <TranscriptionCard account={accountPrefs} />
+                <DictionarySettings />
+              </>
+            )}
           </>
         )}
 
-        <Card title="Shortcuts">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
-          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
-          {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
-        </Card>
-
-        {isDesktop() && (
-          <Section title="Sounds">
-            <Switch
-              checked={soundsOn}
-              onCheckedChange={toggleSounds}
-              disabled={!settings || soundsBusy}
-              label="Play a sound when recording starts and stops"
-              hint="A quiet tick as the mic goes live, and a pop when it stops."
-            />
-          </Section>
+        {tab === 'projects' && (
+          signedIn
+            ? <ProjectsSettings account={accountPrefs.prefs} onChanged={onProjectsChanged} />
+            : <Section title="Projects"><p className="ev-set-hint">Sign in under Account to make projects: one per codebase or client, each with its own words and dictation tone.</p></Section>
         )}
 
-        {isDesktop() && (
-          <Section title="Live captions">
-            <Switch
-              checked={captionsOn}
-              onCheckedChange={toggleCaptions}
-              disabled={!settings || captionsBusy}
-              label="Show captions while recording"
-              hint="Transcribed on this Mac as you speak. The cloud transcript replaces them."
-            />
-            {captionsOn && (speech ?? permissions?.speech) === false && (
-              <p className="ev-set-hint mt-2">
-                Speech Recognition is off for Eavesy, so there are no captions and dictation waits for the cloud.{' '}
-                <button type="button" onClick={() => onOpenPrivacy('speech')} className="ev-link">Open System Settings</button>
-              </p>
+        {tab === 'app' && (
+          <>
+            <Card title="Shortcuts">
+              <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+              <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
+              {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
+            </Card>
+
+            {isDesktop() && (
+              <Card title="Capture">
+                <div className="ev-set-row">
+                  <Switch
+                    className="w-full"
+                    checked={soundsOn}
+                    onCheckedChange={toggleSounds}
+                    disabled={!settings || soundsBusy}
+                    label="Play a sound when recording starts and stops"
+                    hint="A quiet tick as the mic goes live, and a pop when it stops."
+                  />
+                </div>
+                <div className="ev-set-row flex-col items-stretch">
+                  <Switch
+                    className="w-full"
+                    checked={captionsOn}
+                    onCheckedChange={toggleCaptions}
+                    disabled={!settings || captionsBusy}
+                    label="Show captions while recording"
+                    hint="Transcribed on this Mac as you speak. The cloud transcript replaces them."
+                  />
+                  {captionsOn && (speech ?? permissions?.speech) === false && (
+                    <p className="ev-set-hint mt-2">
+                      Speech Recognition is off for Eavesy, so there are no captions and dictation waits for the cloud.{' '}
+                      <button type="button" onClick={() => onOpenPrivacy('speech')} className="ev-link">Open System Settings</button>
+                    </p>
+                  )}
+                </div>
+                <div className="ev-set-row flex-col items-stretch">
+                  <Switch
+                    className="w-full"
+                    checked={shotsOn}
+                    onCheckedChange={toggleScreenshots}
+                    disabled={!settings || shotsBusy}
+                    label="Add macOS screenshots automatically"
+                    hint={shotFolder
+                      ? `New screenshots saved to ${shotFolder} are copied into Eavesy. The originals stay where they are.`
+                      : 'New macOS screenshots are copied into Eavesy. The originals stay where they are.'}
+                  />
+                  {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
+                </div>
+              </Card>
             )}
-          </Section>
-        )}
 
-        <Section title="Position">
-          <PositionPicker
-            value={settings?.launcher_position ?? 'top_center'}
-            custom={!!settings?.hud_frame}
-            disabled={!settings || positionBusy || !isDesktop()}
-            onPick={pickPosition}
-          />
-          {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
-        </Section>
-
-        <Section title="Recordings folder">
-          <div className="flex items-center gap-2">
-            <p className="ev-set-path flex-1" title={folder}>{folder}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              icon={FolderOpen}
-              loading={folderBusy}
-              disabled={folderBusy}
-              onClick={() => {
-                setFolderBusy(true);
-                setFolderStatus(null);
-                void chooseRecordingsFolder(settings?.recordings_root)
-                  .then((root) => {
-                    if (!root) return;
-                    setSettings((current) => current ? { ...current, recordings_root: root } : current);
-                    setFolderStatus('New recordings will be saved here. Existing ones stay put.');
-                  })
-                  .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
-                  .finally(() => setFolderBusy(false));
-              }}
-            >
-              Change
-            </Button>
-          </div>
-          {folderStatus ? <p role="status" className="ev-set-hint mt-2">{folderStatus}</p> : null}
-        </Section>
-
-        {isDesktop() && (
-          <Section title="Screenshots">
-            <Switch
-              checked={shotsOn}
-              onCheckedChange={toggleScreenshots}
-              disabled={!settings || shotsBusy}
-              label="Add macOS screenshots automatically"
-              hint={shotFolder
-                ? `New screenshots saved to ${shotFolder} are copied into Eavesy. The originals stay where they are.`
-                : 'New macOS screenshots are copied into Eavesy. The originals stay where they are.'}
-            />
-            {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
-          </Section>
-        )}
-
-        {isDesktop() && (
-          <Card title="Permissions">
-            {allGranted && !showPermissions ? (
-              <div className="ev-set-row">
-                <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--ev-leaf)]" aria-hidden />
-                <p className="ev-set-label min-w-0 flex-1">Everything Eavesy needs is turned on</p>
-                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setShowPermissions(true)}>Review</Button>
-              </div>
-            ) : (
-              <PermissionChecklist
-                permissions={permissions}
-                checking={checkingPermission}
-                fnInUse={fnInUse}
-                onRequest={onRequestPermission}
-                onOpenSettings={onOpenPrivacy}
-                onRelaunch={onRelaunch}
+            <Section title="Position">
+              <PositionPicker
+                value={settings?.launcher_position ?? 'top_center'}
+                custom={!!settings?.hud_frame}
+                disabled={!settings || positionBusy || !isDesktop()}
+                onPick={pickPosition}
               />
-            )}
-            <div className="ev-set-row">
-              <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
-              <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
-            </div>
-          </Card>
-        )}
+              {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
+            </Section>
 
-        {isDesktop() && (
-          <Section title="Updates">
-            <UpdatesCard />
-          </Section>
+            <Section title="Recordings folder">
+              <div className="flex items-center gap-2">
+                <p className="ev-set-path flex-1" title={folder}>{folder}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={FolderOpen}
+                  loading={folderBusy}
+                  disabled={folderBusy}
+                  onClick={() => {
+                    setFolderBusy(true);
+                    setFolderStatus(null);
+                    void chooseRecordingsFolder(settings?.recordings_root)
+                      .then((root) => {
+                        if (!root) return;
+                        setSettings((current) => current ? { ...current, recordings_root: root } : current);
+                        setFolderStatus('New recordings will be saved here. Existing ones stay put.');
+                      })
+                      .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
+                      .finally(() => setFolderBusy(false));
+                  }}
+                >
+                  Change
+                </Button>
+              </div>
+              {folderStatus ? <p role="status" className="ev-set-hint mt-2">{folderStatus}</p> : null}
+            </Section>
+
+            {isDesktop() && (
+              <Card title="Permissions">
+                {allGranted && !showPermissions ? (
+                  <div className="ev-set-row">
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--ev-leaf)]" aria-hidden />
+                    <p className="ev-set-label min-w-0 flex-1">Everything Eavesy needs is turned on</p>
+                    <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setShowPermissions(true)}>Review</Button>
+                  </div>
+                ) : (
+                  <PermissionChecklist
+                    permissions={permissions}
+                    checking={checkingPermission}
+                    fnInUse={fnInUse}
+                    onRequest={onRequestPermission}
+                    onOpenSettings={onOpenPrivacy}
+                    onRelaunch={onRelaunch}
+                  />
+                )}
+                <div className="ev-set-row">
+                  <p className="ev-set-hint min-w-0">Walk through sign-in, permissions and shortcuts again.</p>
+                  <Button variant="outline" size="sm" icon={RotateCcw} className="shrink-0" onClick={onRunSetup}>Run setup again</Button>
+                </div>
+              </Card>
+            )}
+
+            {isDesktop() && (
+              <Section title="Updates">
+                <UpdatesCard />
+              </Section>
+            )}
+          </>
         )}
       </div>
     </div>

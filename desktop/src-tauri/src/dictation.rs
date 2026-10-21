@@ -160,7 +160,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
-        let text = crate::transcribe::polish_dictation(&app, &text);
+        let project = crate::projects::current_project();
+        let text = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {

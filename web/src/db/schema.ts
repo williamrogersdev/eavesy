@@ -399,6 +399,10 @@ export const folders = sqliteTable(
     vocabularyJson: text('vocabulary_json').notNull().default('[]'),
     people: text('people'),
     matchJson: text('match_json').notNull().default('[]'),
+    /** Dictation tone for this project (see `DICTATION_STYLES`); null uses the account's. */
+    dictationStyle: text('dictation_style'),
+    /** Whether dictations here are formatted for AI agents; null uses the account's. */
+    dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }),
     createdAt: integer('created_at'),
     updatedAt: integer('updated_at'),
   },

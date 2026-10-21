@@ -407,12 +407,19 @@ line-strong bottom border so it looks like a key cap, round 12). Clicking the
 row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
-**Settings:** one scroll column, groups titled in `--ev-t-group`: Account,
-Shortcuts (Talk, Meeting, Screenshot, Video, Open Eavesy), Capture (live
-captions switch, HUD position),
-Storage (folder path with Change button), Permissions (status rows with leaf
-check or warn "Turn on" button). Group bodies sit on `--ev-raised`, r12,
-hairline-separated rows. These are the only card-like containers in the app.
+**Settings:** a `Segmented` at the top picks one of three tabs, each a
+scroll column of groups titled in `--ev-t-group`:
+- **Account**: Profile, Dictation (tone segmented + "Format for AI agents"
+  switch, the default for every project), Transcription (languages, custom
+  words), Personal dictionary.
+- **Projects**: a list of rows (name, then words and dictation summary,
+  chevron). A row opens that project's own page with a back arrow: Details,
+  Dictation (tone and AI format, each with a Default that uses the
+  account's), Words, Auto-pick, and a two-step Delete.
+- **App**: Shortcuts, Capture (sounds, live captions, screenshots), Position,
+  Recordings folder, Permissions, Updates.
+Group bodies sit on `--ev-raised`, r12, hairline-separated rows. These are the
+only card-like containers in the app.
 
 **HUD (floating pill, one fixed size per phase).** A solid charcoal pill
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and

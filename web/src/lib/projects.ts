@@ -1,3 +1,5 @@
+import type { DictationStyle } from '@/lib/transcription/dictation-style';
+
 export interface Project {
   id: string;
   name: string;
@@ -5,6 +7,10 @@ export interface Project {
   vocabulary: string[];
   people: string | null;
   match: string[];
+  /** Dictation tone in this project; null or missing uses the account's. */
+  dictationStyle?: DictationStyle | null;
+  /** Whether dictations in this project are formatted for AI agents; null or missing uses the account's. */
+  dictationForAgents?: boolean | null;
 }
 
 export const PROJECT_LIMITS = {
