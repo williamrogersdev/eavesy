@@ -62,6 +62,17 @@ type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
 
 const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 
+/** How long Stop waits for a live correction to reach the app before stopping anyway. */
+const LIVE_EDIT_WAIT_MS = 1500;
+
+/** Settles when `task` does (true), or after `ms` (false), whichever comes first. */
+function within(task: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(false), ms);
+    void task.catch(() => {}).finally(() => { window.clearTimeout(timer); resolve(true); });
+  });
+}
+
 function lookFrom(value: unknown): Look {
   const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
   const lines = raw?.hud_preview_lines ?? raw?.lines;
@@ -296,10 +307,40 @@ function Hud() {
     return () => window.clearInterval(id);
   }, [state?.phase]);
 
-  const act = (cmd: string, args?: Record<string, unknown>) => {
+  const act = (cmd: string, args?: Record<string, unknown>): Promise<boolean> => {
     setActionError(null);
-    void invoke(cmd, args).catch((error: unknown) => setActionError(errMsg(error, 'Could not complete action')));
+    return invoke(cmd, args).then(() => true, (error: unknown) => {
+      setActionError(errMsg(error, 'Could not complete action'));
+      return false;
+    });
   };
+
+  // One stop per recording, even if Stop is clicked again while it waits. The
+  // ref answers at once; the state only greys the button. A stop that worked
+  // keeps it greyed until the HUD moves on; one that failed can be tried again.
+  const stoppingRef = useRef<string | null>(null);
+  const [stopping, setStopping] = useState<string | null>(null);
+  const stopRecording = (sessionId: string | null | undefined) => {
+    if (!sessionId || stoppingRef.current === sessionId) return;
+    stoppingRef.current = sessionId;
+    setStopping(sessionId);
+    void within(liveUpdate.current, LIVE_EDIT_WAIT_MS)
+      .then((settled) => {
+        if (!settled) console.warn('Stopping before the last live correction reached the app');
+        return act('stop_capture', { sessionId });
+      })
+      .then((stopped) => {
+        if (stopped || stoppingRef.current !== sessionId) return;
+        stoppingRef.current = null;
+        setStopping(null);
+      });
+  };
+  useEffect(() => {
+    if (stoppingRef.current && (stoppingRef.current !== state?.sessionId || state?.phase !== 'recording')) {
+      stoppingRef.current = null;
+      setStopping(null);
+    }
+  }, [state?.sessionId, state?.phase]);
 
   const copy = (cmd: string, args: Record<string, unknown>) => {
     setActionError(null);
@@ -588,7 +629,7 @@ function Hud() {
         <span className="ctl-fill" />
         {video && marking.tool
           ? <button type="button" onClick={() => act('stop_marking')} title="Put the marker away (esc)" className="ctl-btn ctl-primary">Done</button>
-          : <button type="button" disabled={opening} onClick={() => { void liveUpdate.current.catch(() => {}).then(() => act('stop_capture', { sessionId: state.sessionId })); }} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
+          : <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? '' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>}
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
