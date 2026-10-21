@@ -25,7 +25,7 @@ for (const entry of FIRST_SEARCH_PAGES)
   );
 const linkPaths = new Set<string>();
 for (let i = 0; i < paths.length; i += 6) {
-  await Promise.all(
+  const outcomes = await Promise.allSettled(
     paths.slice(i, i + 6).map(async (path) => {
       const response = await request(`${origin}${path}`, {
         redirect: "manual",
@@ -67,10 +67,16 @@ for (let i = 0; i < paths.length; i += 6) {
       }
     }),
   );
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "rejected")
+      failures.push(
+        `${paths[i + index]}: request failed: ${String(outcome.reason)}`,
+      );
+  });
 }
 const unseen = [...linkPaths].filter((path) => !paths.includes(path));
-for (let i = 0; i < unseen.length; i += 6)
-  await Promise.all(
+for (let i = 0; i < unseen.length; i += 6) {
+  const outcomes = await Promise.allSettled(
     unseen.slice(i, i + 6).map(async (path) => {
       const response = await request(`${origin}${path}`, {
         redirect: "manual",
@@ -83,6 +89,13 @@ for (let i = 0; i < unseen.length; i += 6)
       );
     }),
   );
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "rejected")
+      failures.push(
+        `${unseen[i + index]}: request failed: ${String(outcome.reason)}`,
+      );
+  });
+}
 for (const path of [
   "/guides/not-a-real-guide",
   "/templates/not-a-real-template",

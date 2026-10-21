@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { unlinkSync } from "node:fs";
-import { stat, unlink, writeFile } from "node:fs/promises";
+import { stat, unlink, open } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   assertNoPublicationFixtures,
@@ -18,19 +18,24 @@ if (!["localhost", "127.0.0.1"].includes(new URL(origin).hostname))
   );
 assertNoPublicationFixtures();
 const id = `${PUBLICATION_PROBE_PREFIX}${randomUUID()}`;
-const probes = [
+const hiddenProbes = [
   ...PUBLICATION_PROBE_COLLECTIONS.map((collection) => ({
     collection,
     slug: `${id}-draft`,
     extra: "draft: true",
   })),
   { collection: "guides", slug: `${id}-scheduled`, extra: "date: 2999-01-01" },
-  { collection: "guides", slug: `${id}-published`, extra: "date: 2026-01-01" },
 ];
+const controls = PUBLICATION_PROBE_COLLECTIONS.map((collection) => ({
+  collection,
+  slug: `${id}-published`,
+  extra: "date: 2026-01-01",
+}));
+const probes = [...hiddenProbes, ...controls];
 const paths: string[] = [];
 const cleanupErrors: string[] = [];
 let clean = false;
-const control = probes[probes.length - 1];
+let auditFailure: unknown;
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
@@ -54,27 +59,36 @@ try {
         import.meta.url,
       ),
     );
+    // Exclusive open establishes ownership. Never register or delete an EEXIST file.
+    const handle = await open(path, "wx");
     paths.push(path);
-    await writeFile(
-      path,
-      `---\ntitle: Publication test\ndescription: Temporary publication fixture\nauthor: Eavesy\nrelated: []\n${probe.extra}\n---\n\nTemporary publication test.\n`,
-      { flag: "wx" },
-    );
-  }
-  let ready = false;
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (
-      (await request(`${origin}/${control.collection}/${control.slug}`))
-        .status === 200
-    ) {
-      ready = true;
-      break;
+    try {
+      await handle.writeFile(
+        `---\ntitle: Publication test\ndescription: Temporary publication fixture\nauthor: Eavesy\ncategory: Publication QA\nrelated: []\n${probe.extra}\n---\n\nTemporary publication test.\n`,
+      );
+    } finally {
+      await handle.close();
     }
-    await delay(250);
   }
-  if (!ready)
-    throw new Error("Vite did not discover the published control fixture");
-  for (const probe of probes.slice(0, -1)) {
+  for (const control of controls) {
+    let ready = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (
+        (await request(`${origin}/${control.collection}/${control.slug}`))
+          .status === 200
+      ) {
+        ready = true;
+        break;
+      }
+      await delay(250);
+    }
+    if (!ready)
+      throw new Error(
+        `Vite did not discover the ${control.collection} published control`,
+      );
+  }
+
+  for (const probe of hiddenProbes) {
     const response = await request(
       `${origin}/${probe.collection}/${probe.slug}`,
       { redirect: "manual" },
@@ -85,18 +99,24 @@ try {
       );
   }
   const xml = await (await request(`${origin}/sitemap.xml`)).text();
-  if (!xml.includes(control.slug))
-    throw new Error("Published control missing from sitemap");
-  for (const probe of probes.slice(0, -1))
+  for (const control of controls)
+    if (!xml.includes(`/${control.collection}/${control.slug}`))
+      throw new Error(
+        `Published ${control.collection} control missing from sitemap`,
+      );
+  for (const probe of hiddenProbes)
     if (xml.includes(probe.slug))
       throw new Error(`Unpublished ${probe.collection} leaked to sitemap`);
   for (const family of PUBLICATION_PROBE_COLLECTIONS) {
     const html = await (await request(`${origin}/${family}`)).text();
     if (html.includes(`${id}-draft`) || html.includes(`${id}-scheduled`))
       throw new Error(`Unpublished content leaked to ${family} hub`);
-    if (family === "guides" && !html.includes(control.slug))
-      throw new Error("Published control missing from guides hub");
+    const control = controls.find((probe) => probe.collection === family)!;
+    if (!html.includes(control.slug))
+      throw new Error(`Published control missing from ${family} hub`);
   }
+} catch (error) {
+  auditFailure = error;
 } finally {
   for (const path of paths) {
     try {
@@ -117,24 +137,37 @@ try {
   }
   process.removeListener("SIGINT", cleanupOnSignal);
   process.removeListener("SIGTERM", cleanupOnSignal);
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const xml = await (await request(`${origin}/sitemap.xml`)).text();
-    const response = await request(
-      `${origin}/${control.collection}/${control.slug}`,
-      { redirect: "manual" },
-    );
-    if (!xml.includes(id) && response.status === 404) {
-      clean = true;
-      break;
+  try {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const xml = await (await request(`${origin}/sitemap.xml`)).text();
+      const statuses = await Promise.all(
+        probes.map(
+          async (probe) =>
+            (
+              await request(`${origin}/${probe.collection}/${probe.slug}`, {
+                redirect: "manual",
+              })
+            ).status,
+        ),
+      );
+      if (!xml.includes(id) && statuses.every((status) => status === 404)) {
+        clean = true;
+        break;
+      }
+      await delay(250);
     }
-    await delay(250);
+  } catch (error) {
+    cleanupErrors.push(`Preview cleanup check failed: ${String(error)}`);
   }
 }
-if (cleanupErrors.length) throw new Error(cleanupErrors.join("\n"));
+if (auditFailure)
+  cleanupErrors.unshift(`Publication check failed: ${String(auditFailure)}`);
 if (!clean)
-  throw new Error(
+  cleanupErrors.push(
     "Vite still contains a removed publication fixture; restart it before continuing.",
   );
+if (cleanupErrors.length) throw new Error(cleanupErrors.join("\n"));
+
 assertNoPublicationFixtures();
 console.log(
   "PASS: published control in hub/sitemap; draft and scheduled routes hidden; all temporary files removed and control now 404.",

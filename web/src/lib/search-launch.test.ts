@@ -12,9 +12,10 @@ test("every first-cluster page has real authored content and correct supplement 
     );
     expect(content).toContain("title:");
     expect(content).toContain("description:");
-    expect(
-      content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1].trim(),
-    ).toBeTruthy();
+    const match = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+    if (!match)
+      throw new Error(`Missing or invalid frontmatter in ${page.content}`);
+    expect(match[1].trim()).toBeTruthy();
     if (page.path.startsWith("/features/")) {
       const catalog = readFileSync(
         new URL("../content/features.ts", import.meta.url),
