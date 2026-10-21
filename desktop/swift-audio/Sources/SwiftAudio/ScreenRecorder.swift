@@ -290,6 +290,9 @@ final class ScreenRecorder: NSObject, Recorder {
                 return
             }
             self.finished = true
+            if self.writer?.status == .failed {
+                fail("Recording could not be saved because the video writer failed: \(self.writer?.error?.localizedDescription ?? "unknown error")")
+            }
             guard let writer = self.writer, self.sessionStarted, writer.status == .writing else {
                 completion(0)
                 return

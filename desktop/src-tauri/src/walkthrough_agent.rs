@@ -88,6 +88,7 @@ fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
                         .map(|s| json!({"kind":"speech","timestampMs":s.start_ms,"text":s.text.chars().take(500).collect::<String>()}))
                         .chain(b.frames.iter().filter(|f| f.text.to_lowercase().contains(&query))
                             .map(|f| json!({"kind":"screen","timestampMs":f.timestamp_ms,"text":f.text.chars().take(500).collect::<String>()})))
+                        .chain((!b.corrected_transcript.is_empty() && b.corrected_transcript.to_lowercase().contains(&query)).then(|| json!({"kind":"corrected","timestampMs":null,"text":b.corrected_transcript.chars().take(500).collect::<String>()})))
                         .take(5).collect()
                 };
                 json!({"id":b.id,"title":b.title,"status":b.status,"durationMs":b.duration_ms,

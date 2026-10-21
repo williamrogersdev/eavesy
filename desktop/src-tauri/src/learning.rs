@@ -80,7 +80,7 @@ pub async fn correct_recording(
     tauri::async_runtime::spawn_blocking(move || {
         let recording = crate::store::get(&app, &id)?
             .ok_or("Recording not found")?;
-        let walkthrough_guard = if recording.has_video { Some(crate::walkthrough::correction_guard(&id)?) } else { None };
+        let walkthrough_guard = if recording.has_video && recording.source == "screen" { Some(crate::walkthrough::correction_guard(&id)?) } else { None };
         let current = recording.transcript.as_deref();
         if current != Some(original.as_str()) && current != Some(corrected.as_str()) {
             return Err("Transcript changed; reopen it before correcting".into());
@@ -94,12 +94,19 @@ pub async fn correct_recording(
             crate::store::correct_transcript(&app, &id, &original, &corrected)?;
             let _ = app.emit("recordings:updated", ());
         }
-        if recording.has_video && recording.source == "screen" { crate::walkthrough::update_correction(&app, &id, &corrected)?; }
+        let context_warning = if recording.has_video && recording.source == "screen" {
+            crate::walkthrough::update_correction(&app, &id, &corrected).err()
+        } else { None };
         drop(walkthrough_guard);
-        Ok(feedback(&app, &original, &corrected).unwrap_or_else(|_| json!({
+        let mut response = feedback(&app, &original, &corrected).unwrap_or_else(|_| json!({
             "learned": 0,
             "warning": "Transcript saved. Dictionary could not connect. Retry learning when you are online."
-        })))
+        }));
+        if let Some(error) = context_warning {
+            let previous = response["warning"].as_str().unwrap_or("");
+            response["warning"] = json!(format!("{previous} Transcript saved, but walkthrough context needs preparation/retry: {error}").trim());
+        }
+        Ok(response)
     })
     .await
     .map_err(|e| e.to_string())?
