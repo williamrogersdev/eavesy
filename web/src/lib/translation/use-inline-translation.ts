@@ -20,11 +20,14 @@ export function translationChunks(text: string): string[] {
 
 /** Keep paragraph/space boundaries instead of inventing a newline at every request boundary. */
 export function joinTranslatedChunks(source: string[], translated: string[]): string {
-  return translated.map((text, index) => {
+  if (!source.length || !translated.length) return '';
+  const leading = source[0].match(/^\s+/)?.[0] ?? '';
+  const trailing = source[source.length - 1].match(/\s+$/)?.[0] ?? '';
+  return leading + translated.map((text, index) => {
     if (index === translated.length - 1) return text.trim();
     const separator = source[index].match(/\s+$/)?.[0] ?? source[index + 1].match(/^\s+/)?.[0] ?? '';
     return text.trim() + separator;
-  }).join('');
+  }).join('') + trailing;
 }
 
 /** Each entry keeps its own original and cached languages. Never saves a translation over it. */
@@ -55,7 +58,18 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
   async function select(next: Language | null) {
     const request = ++requestId.current;
     setError('');
-    if (next === null) { activeLanguage.current = null; setLanguage(null); setDisplayed(original.current); setBusy(false); return; }
+    if (next === null) {
+      activeLanguage.current = null; setLanguage(null); setDisplayed(original.current);
+      if (!loadSource.current) { setBusy(false); return; }
+      setBusy(true);
+      try {
+        const full = await loadSource.current();
+        if (request === requestId.current) { original.current = full; setDisplayed(full); }
+      } catch (cause) {
+        if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Could not load the original. Try again.');
+      } finally { if (request === requestId.current) setBusy(false); }
+      return;
+    }
     const cached = cache.current.get(next);
     if (cached !== undefined) { activeLanguage.current = next; setLanguage(next); setDisplayed(cached); setBusy(false); return; }
     setBusy(true);

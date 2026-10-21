@@ -8,6 +8,7 @@ export function DictionarySettings() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -20,13 +21,19 @@ export function DictionarySettings() {
   }, [load]);
   useEffect(() => { void reload(); }, [reload]);
   const mutate = async (method: 'PUT' | 'DELETE', body: Record<string, unknown>) => {
-    setBusy(true); setError('');
-    try { const result = await dictionaryRequest<{ learned?: number; status?: string; message?: string }>(method, body);
-      if (result.status === 'not_saved') throw new Error(result.message ?? 'The correction could not be saved. Please try again.');
-      await load(); setFrom(''); setTo(''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not update dictionary'); }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await dictionaryRequest<{ learned?: number; status?: string; message?: string }>(method, body);
+      const confirmed = result.status === 'saved' || result.status === 'unchanged' || (result.status === undefined && (result.learned ?? 0) > 0);
+      if (method === 'PUT' && !confirmed) throw new Error(result.message ?? 'The correction could not be confirmed. Refresh the dictionary and try again.');
+      setFrom(''); setTo('');
+      setNotice(method === 'DELETE' ? 'Removed.' : result.status === 'unchanged' ? 'This correction is already saved.' : 'Saved.');
+      try { await load(); }
+      catch { setError('The change was saved, but the dictionary list could not be refreshed. Retry to load the current list.'); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not update dictionary'); }
     finally { setBusy(false); }
   };
+
   return <Card title="Personal dictionary"><div className="ev-set-body space-y-3">
     
     <p className="text-sm text-[var(--ev-ink-2)]">Corrections you make teach future recordings. Review or remove learned spellings here.</p>
@@ -35,6 +42,7 @@ export function DictionarySettings() {
       <label>Write instead<input aria-label="Correct spelling" placeholder="Your preferred spelling" value={to} maxLength={128} disabled={!loaded || busy} required onChange={e => setTo(e.target.value)} className="ev-field-input" /></label>
       <Button variant="primary" size="sm" type="submit" loading={busy} disabled={!loaded || busy || !from.trim() || !to.trim()}>Add correction</Button>
     </form>
+    {notice && <p role="status" className="ev-set-hint">{notice}</p>}
     {loading && <p role="status" className="ev-set-hint">Loading your dictionary…</p>}
     {error && <div role="alert" className="ev-settings-feedback"><p>{error}</p><Button size="sm" variant="outline" disabled={busy || loading} onClick={() => void reload()}>Retry</Button></div>}
     <ul className="ev-dictionary-list">{entries.map(entry => <li key={entry.id}>

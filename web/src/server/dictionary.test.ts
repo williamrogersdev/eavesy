@@ -89,3 +89,12 @@ test('manual dictionary writes report saved versus already unchanged from server
   const unchanged = await t.request('PUT', body);
   expect(await unchanged.json()).toMatchObject({ learned: 0, status: 'unchanged' });
 });
+
+test('casing and spacing updates are real writes, not incorrectly labeled unchanged', async () => {
+  const t = setup();
+  for (const from of ['pool', 'Pool', ' pool ']) {
+    const result = await t.request('PUT', { from, to: 'pull' });
+    expect(await result.json()).toMatchObject({ learned: 1, status: 'saved' });
+  }
+  expect(await (await t.request('PUT', { from: ' pool ', to: 'pull' })).json()).toMatchObject({ learned: 0, status: 'unchanged' });
+});

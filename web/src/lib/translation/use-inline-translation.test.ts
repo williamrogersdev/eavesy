@@ -19,3 +19,7 @@ test('translated chunk boundaries keep the source paragraph structure', () => {
   expect(joinTranslatedChunks(['first\n\n', 'second'], [' Uno ', ' Dos '])).toBe('Uno\n\nDos');
   expect(joinTranslatedChunks(['unbroken', 'token'], [' Uno ', ' Dos '])).toBe('UnoDos');
 });
+
+test('translated passages retain the source outer whitespace', () => {
+  expect(joinTranslatedChunks(['  first ', 'second\n'], ['Uno', 'Dos'])).toBe('  Uno Dos\n');
+});
