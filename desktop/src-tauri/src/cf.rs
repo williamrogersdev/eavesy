@@ -12,6 +12,8 @@ extern "C" {
     fn CFStringGetTypeID() -> usize;
     fn CFStringCreateWithCString(alloc: CFTypeRef, s: *const c_char, encoding: u32) -> CFTypeRef;
     fn CFStringGetCString(s: CFTypeRef, buf: *mut c_char, size: isize, encoding: u32) -> bool;
+    fn CFStringGetLength(s: CFTypeRef) -> isize;
+    fn CFStringGetMaximumSizeForEncoding(length: isize, encoding: u32) -> isize;
     pub fn CFArrayGetCount(array: CFTypeRef) -> isize;
     pub fn CFArrayGetValueAtIndex(array: CFTypeRef, index: isize) -> CFTypeRef;
     pub fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
@@ -40,6 +42,17 @@ pub unsafe fn cf_string(value: CFTypeRef) -> Option<String> {
     let mut buf = [0 as c_char; 256];
     CFStringGetCString(value, buf.as_mut_ptr(), buf.len() as isize, UTF8)
         .then(|| CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
+}
+
+/// Any CF string, however long, cut to `max_chars`.
+pub unsafe fn cf_text(value: CFTypeRef, max_chars: usize) -> Option<String> {
+    if value.is_null() || CFGetTypeID(value) != CFStringGetTypeID() {
+        return None;
+    }
+    let size = CFStringGetMaximumSizeForEncoding(CFStringGetLength(value), UTF8) + 1;
+    let mut buf = vec![0 as c_char; size.max(1) as usize];
+    CFStringGetCString(value, buf.as_mut_ptr(), buf.len() as isize, UTF8)
+        .then(|| CStr::from_ptr(buf.as_ptr()).to_string_lossy().chars().take(max_chars).collect())
 }
 
 pub unsafe fn cf_i32(value: CFTypeRef) -> Option<i32> {
