@@ -203,6 +203,71 @@ body {
 .eavesy-control[data-size="wide"] .ctl-below,
 .eavesy-control[data-size="result"] .ctl-below { flex: 0 0 calc(var(--ctl-lines, 4) * 20px); height: calc(var(--ctl-lines, 4) * 20px); }
 .eavesy-control[data-size="shot"].ctl-below { padding: 2px; }
+/* The result is the case file itself: cream paper and dark ink with the
+   stamp on it, so it reads as a finished note rather than a dark box. Fixed
+   light-paper values (tokens.css, light), since it floats over any app in
+   either appearance, and never see-through. */
+.eavesy-control[data-size="result"],
+.eavesy-control[data-size="result"][data-translucent],
+.eavesy-control[data-phase="failed"],
+.eavesy-control[data-phase="failed"][data-translucent] {
+  --ctl-ink: #211c1a;
+  --ctl-ink-2: #5f5751;
+  --ctl-ink-3: #968d85;
+  --ctl-hover: rgb(33 28 26 / 0.06);
+  --ctl-line: rgb(33 28 26 / 0.12);
+  background: linear-gradient(180deg, #fdfaf4, #f7f0e4);
+  box-shadow: inset 0 0 0 1px rgb(33 28 26 / 0.12), inset 0 1px 0 #fff;
+  text-shadow: none;
+}
+.eavesy-control[data-size="result"] .ctl-mark,
+.eavesy-control[data-phase="failed"] .ctl-mark {
+  --ev-mascot-body: #211c1a;
+  --ev-mascot-band: #968d85;
+  --ev-mascot-eye: #fbf7f0;
+}
+.eavesy-control[data-size="result"] .ctl-warn,
+.eavesy-control[data-phase="failed"] .ctl-warn { color: #9a5b00; }
+.eavesy-control[data-size="result"] .ctl-stamp + .ctl-say { margin-left: 4px; }
+/* Inked like a rubber stamp: a ring in the stamp colour, tilted on landing. */
+.eavesy-control[data-size="result"] .ctl-stamp {
+  --stamp: #2f8a5b;
+  margin-left: 4px;
+  padding: 0 8px 0 7px;
+  background: #ddf1e5;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--stamp) 55%, transparent);
+  font: 750 10.5px/20px var(--ev-font-round);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: rotate(-4deg);
+  animation-name: ctl-stamp-paper;
+}
+.eavesy-control[data-size="result"] .ctl-stamp[data-tone="manila"] { --stamp: #6e4a12; background: #f6e8cc; }
+.eavesy-control[data-size="result"] .ctl-stamp[data-tone="warn"] { --stamp: #9a5b00; background: #fff0d6; }
+@keyframes ctl-stamp-paper {
+  from { opacity: 0; transform: rotate(-4deg) scale(1.35); }
+  to { opacity: 1; transform: rotate(-4deg) scale(1); }
+}
+/* The words that went out, on a ruled sheet you can click into and correct. */
+.eavesy-control[data-size="result"] .ctl-below {
+  flex: 1 1 auto;
+  height: auto;
+  margin: 0 7px 7px;
+  padding: 6px 10px;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 0.7);
+  box-shadow: inset 0 0 0 1px rgb(33 28 26 / 0.07);
+  transition: box-shadow var(--ev-d-state) ease, background var(--ev-d-state) ease;
+}
+.eavesy-control[data-size="result"] .ctl-below:hover { background: #fff; }
+.eavesy-control[data-size="result"] .ctl-below:focus-within { background: #fff; box-shadow: inset 0 0 0 1px rgb(33 28 26 / 0.2); }
+.eavesy-control[data-size="result"] .ctl-words { color: #211c1a; font: 400 13px/20px var(--ev-font-text); }
+.eavesy-control[data-size="result"] .ctl-editor { caret-color: #211c1a; }
+.eavesy-control[data-size="result"] .ctl-editor:focus-visible { box-shadow: none; }
+.eavesy-control[data-size="result"] .ctl-editor::selection { background: #f6e8cc; }
+@media (prefers-reduced-motion: reduce) {
+  .eavesy-control[data-size="result"] .ctl-stamp { animation: none; }
+}
 .ctl-fill { flex: 1 1 auto; min-width: 4px; }
 
 /* The snoop, in cream on the charcoal. */
