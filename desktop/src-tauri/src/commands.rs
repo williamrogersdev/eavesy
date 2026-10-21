@@ -316,6 +316,7 @@ pub fn show_launcher(app: AppHandle) {
 
 #[tauri::command]
 pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<u64, String> {
+    validate_live_preview_session(&crate::hud::current(), &session_id)?;
     let revision = crate::live_edit::revision(&session_id);
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -345,7 +346,9 @@ pub async fn update_live_preview_edit(app: AppHandle, session_id: String, source
         if let Some(recording) = store::get(&app, &session_id)? {
             if recording.folder_path.is_some() {
                 if let Some(text) = crate::live_edit::corrected(&session_id, recording.transcript.as_deref().unwrap_or("")) {
-                    store::save_preview_transcript(&app, &session_id, &text)?;
+                    if !store::save_live_preview_transcript(&app, &session_id, &text)? {
+                        return Err("Transcript was edited in its folder; reopen it before correcting".into());
+                    }
                 }
             }
         }
@@ -615,7 +618,7 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
 }
 
 #[tauri::command]
-pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String) -> Result<(), String> {
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String, live: Option<bool>) -> Result<(), String> {
     // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
     tauri::async_runtime::spawn_blocking(move || {
         // Fast paste can finish just before the recording's folder is registered.
@@ -623,7 +626,11 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
             let ready = store::get(&app, &session_id)?.is_some_and(|rec| rec.folder_path.is_some());
             if ready {
                 let original = store::get(&app, &session_id)?.and_then(|rec| rec.transcript);
-                store::save_preview_transcript(&app, &session_id, &text)?;
+                if live.unwrap_or(false) {
+                    if !store::save_live_preview_transcript(&app, &session_id, &text)? {
+                        return Err("Transcript was edited in its folder; reopen it before correcting".into());
+                    }
+                } else { store::save_preview_transcript(&app, &session_id, &text)?; }
                 crate::live_edit::forget(&session_id);
                 if let Some(original) = original.filter(|original| original != &text) {
                     let learning_app = app.clone();

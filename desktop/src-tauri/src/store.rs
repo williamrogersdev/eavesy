@@ -186,7 +186,7 @@ pub fn set_transcript<R: Runtime>(
     status: &str,
 ) -> Result<(), String> {
     if let Some(corrected) = transcript.as_deref().and_then(|text| crate::live_edit::corrected(id, text)) {
-        save_preview_transcript(app, id, &corrected)?;
+        save_live_preview_transcript(app, id, &corrected)?;
         // Persist the deliberate correction first, then use the normal local-edit
         // guard and status bookkeeping below, as for an unedited result.
     }
@@ -221,7 +221,7 @@ pub fn set_result<R: Runtime>(
     let mut live_changed = false;
     if let Some(corrected) = crate::live_edit::corrected(id, &transcript) {
         live_changed = get(app, id)?.is_some_and(|recording| recording.transcript.as_deref() != Some(corrected.as_str()));
-        if live_changed { save_preview_transcript(app, id, &corrected)?; }
+        if live_changed { live_changed = save_live_preview_transcript(app, id, &corrected)?; }
     }
     mutate(app, id, |recording| {
         let folder = recording.folder_path.as_deref().map(Path::new);
@@ -296,7 +296,12 @@ pub fn save_preview_transcript<R: Runtime>(
     id: &str,
     content: &str,
 ) -> Result<(), String> {
-    save_transcript(app, id, content, None)
+    save_transcript(app, id, content, None, false).map(|_| ())
+}
+
+/// Automatic live merging must not overwrite a newer edit in the recording folder.
+pub fn save_live_preview_transcript<R: Runtime>(app: &AppHandle<R>, id: &str, content: &str) -> Result<bool, String> {
+    save_transcript(app, id, content, None, true)
 }
 
 fn save_transcript<R: Runtime>(
@@ -304,7 +309,8 @@ fn save_transcript<R: Runtime>(
     id: &str,
     content: &str,
     expected: Option<&str>,
-) -> Result<(), String> {
+    live: bool,
+) -> Result<bool, String> {
     use sha2::{Digest, Sha256};
     if content.len() > 5 * 1024 * 1024 {
         return Err("Transcript is too large".into());
@@ -326,6 +332,16 @@ fn save_transcript<R: Runtime>(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("Could not read saved transcript: {error}")),
     };
+    if live && crate::fs_writer::has_local_edit(app, &path)? {
+        let saved = crate::live_edit::last_saved(id);
+        let unchanged = saved.as_deref().is_some_and(|saved| {
+            previous.transcript.as_deref() == Some(saved) && old_file.as_deref() == Some(saved.as_bytes())
+        });
+        if !unchanged {
+            crate::live_edit::forget(id);
+            return Ok(false);
+        }
+    }
     let raw_path = Path::new(folder).join("transcript.raw.md");
     let raw_created = !raw_path.exists() && previous.transcript.is_some();
     let hash = hex::encode(Sha256::digest(content.as_bytes()));
@@ -375,7 +391,8 @@ fn save_transcript<R: Runtime>(
             .map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
         return Err(error);
     }
-    Ok(())
+    if live { crate::live_edit::mark_saved(id, content); }
+    Ok(true)
 }
 
 pub fn apply_external_edit<R: Runtime>(
@@ -791,6 +808,37 @@ mod persistence_tests {
     }
 
     #[test]
+    fn automatic_live_merges_preserve_newer_edits_in_the_recording_folder() {
+        let root = std::env::temp_dir().join(format!("eavesy-live-file-{}", uuid::Uuid::new_v4()));
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let app = app.handle();
+        crate::sqlite::initialize(app).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let folder = root.join("recording");
+        let mut rec = recording(id.clone());
+        rec.folder_path = Some(folder.to_string_lossy().into_owned());
+        rec.transcript = Some("Check the tickets".into());
+        append(app, rec.clone()).unwrap();
+        crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &rec, None, None).unwrap();
+        crate::live_edit::update(&id, "Check the tickets".into(), "Review the tickets".into(), 1).unwrap();
+        set_transcript(app, &id, Some("Check the tickets today.".into()), "processing").unwrap();
+        let external = "A newer correction made directly in the folder.";
+        std::fs::write(folder.join("transcript.md"), external).unwrap();
+        // The background finalizer must preserve a file the watcher has not read yet.
+        set_transcript(app, &id, Some("Check the tickets today. More speech.".into()), "complete").unwrap();
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), external);
+        apply_external_edit(app, &id, "transcript", external.into()).unwrap();
+        crate::live_edit::update(&id, "Check the tickets".into(), "Review the tickets".into(), 2).unwrap();
+        let (result, _) = set_result(app, &id, "Title", "Check the tickets again.".into(), None, None, "complete", true).unwrap().unwrap();
+        assert_eq!(result.transcript.as_deref(), Some(external));
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), external);
+        assert!(crate::live_edit::corrected(&id, "Anything").is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn live_correction_merges_later_speech_into_durable_history_and_outbox() {
         let root = std::env::temp_dir().join(format!("eavesy-live-edit-{}", uuid::Uuid::new_v4()));
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
@@ -953,5 +1001,5 @@ pub fn correct_transcript<R: Runtime>(
     original: &str,
     corrected: &str,
 ) -> Result<(), String> {
-    save_transcript(app, id, corrected, Some(original))
+    save_transcript(app, id, corrected, Some(original), false).map(|_| ())
 }

@@ -10,6 +10,7 @@ struct Edit {
     text: String,
     revision: u64,
     updated_at: Instant,
+    last_saved: Option<String>,
 }
 static EDITS: LazyLock<Mutex<HashMap<String, Edit>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -52,6 +53,7 @@ fn put(
             return Err("Live correction is out of date; refocus the editor and retry".into());
         }
     }
+    let last_saved = edits.get(id).and_then(|edit| edit.last_saved.clone());
     edits.insert(
         id.to_string(),
         Edit {
@@ -59,14 +61,24 @@ fn put(
             text,
             revision,
             updated_at: Instant::now(),
+            last_saved,
         },
     );
+    prune(edits, id);
+    Ok(())
+}
+
+fn prune(edits: &mut HashMap<String, Edit>, id: &str) {
     // Keep recently finished captures available for their final transcription,
     // without retaining abandoned transcript copies for the process lifetime.
     while edits.len() > MAX_SESSIONS
         || edits
             .values()
-            .map(|edit| edit.source.len() + edit.text.len())
+            .map(|edit| {
+                edit.source.len()
+                    + edit.text.len()
+                    + edit.last_saved.as_ref().map_or(0, String::len)
+            })
             .sum::<usize>()
             > MAX_EDIT_BYTES
     {
@@ -81,7 +93,23 @@ fn put(
             break;
         }
     }
-    Ok(())
+}
+
+pub fn last_saved(id: &str) -> Option<String> {
+    EDITS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)?
+        .last_saved
+        .clone()
+}
+
+pub fn mark_saved(id: &str, text: &str) {
+    let mut edits = EDITS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(edit) = edits.get_mut(id) {
+        edit.last_saved = Some(text.to_string());
+    }
+    prune(&mut edits, id);
 }
 
 pub fn forget(id: &str) {
@@ -313,12 +341,37 @@ mod tests {
             assert!(
                 edits
                     .values()
-                    .map(|edit| edit.source.len() + edit.text.len())
+                    .map(|edit| edit.source.len()
+                        + edit.text.len()
+                        + edit.last_saved.as_ref().map_or(0, String::len))
                     .sum::<usize>()
                     <= super::MAX_EDIT_BYTES
             );
         }
         assert!(edits.contains_key("23"));
+    }
+
+    #[test]
+    fn identical_resends_are_safe_but_stale_different_content_is_reported() {
+        let mut edits = std::collections::HashMap::new();
+        super::put(
+            &mut edits,
+            "capture",
+            "source".into(),
+            "correction".into(),
+            42,
+        )
+        .unwrap();
+        super::put(
+            &mut edits,
+            "capture",
+            "source".into(),
+            "correction".into(),
+            42,
+        )
+        .unwrap();
+        assert!(super::put(&mut edits, "capture", "source".into(), "stale".into(), 41).is_err());
+        assert_eq!(edits["capture"].text, "correction");
     }
 
     #[test]

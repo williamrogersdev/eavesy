@@ -1264,7 +1264,7 @@ fn finish_stopped_capture(
 
     store::append(&app, rec.clone())?;
     if let Some(text) = crate::live_edit::corrected(&rec.id, rec.transcript.as_deref().unwrap_or("")) {
-        store::save_preview_transcript(&app, &rec.id, &text)?;
+        store::save_live_preview_transcript(&app, &rec.id, &text)?;
     }
     crate::telemetry::track(
         "recording_saved",

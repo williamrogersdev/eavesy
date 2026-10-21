@@ -139,8 +139,8 @@ function Hud() {
   const [saveRevision, setSaveRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const pendingEdit = useRef<{ sessionId: string; text: string } | null>(null);
-  const latestEdit = useRef<{ sessionId: string; text: string } | null>(null);
+  const pendingEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
+  const latestEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const flushEdit = (): Promise<boolean> => {
     const edit = pendingEdit.current;
@@ -183,6 +183,7 @@ function Hud() {
   const typingGroup = useRef<{ source: string; end: number; at: number } | null>(null);
   const historyAction = useRef<(redo: boolean) => void>(() => {});
   const liveRevision = useRef(Date.now() * 1000);
+  const nativeEditReady = useRef<Promise<void>>(Promise.resolve());
   const liveUpdate = useRef<Promise<unknown>>(Promise.resolve());
   const pendingLiveEdit = useRef<{ sessionId: string; source: string; text: string; revision: number } | null>(null);
   const [composition, setComposition] = useState<{ source: string; text: string } | null>(null);
@@ -398,7 +399,7 @@ function Hud() {
   // recording folder. Flush the full merged result when capture completes.
   useEffect(() => {
     if (composition || state?.phase !== 'done' || !state.sessionId || !ownDraft || ownDraft.source === null) return;
-    const edit = { sessionId: state.sessionId, text: words };
+    const edit = { sessionId: state.sessionId, text: words, live: true };
     latestEdit.current = edit; pendingEdit.current = edit;
     setDraft({ ...edit, source: null });
   }, [state?.phase, state?.sessionId, ownDraft, words, composition]);
@@ -450,9 +451,13 @@ function Hud() {
 
   const sendLiveEdit = () => {
     if (!pendingLiveEdit.current || pendingLiveEdit.current.sessionId !== currentSession.current) return;
-    pendingLiveEdit.current.revision = ++liveRevision.current;
-    const sessionId = pendingLiveEdit.current.sessionId;
-    const update = invoke('update_live_preview_edit', pendingLiveEdit.current);
+    const edit = { ...pendingLiveEdit.current };
+    const sessionId = edit.sessionId;
+    const update = nativeEditReady.current.then(() => {
+      if (currentSession.current !== sessionId) return;
+      edit.revision = ++liveRevision.current;
+      return invoke('update_live_preview_edit', edit);
+    });
     const task = Promise.all([liveUpdate.current.catch(() => {}), update]).then(() => {});
     liveUpdate.current = task;
     void task.then(() => { if (currentSession.current === sessionId && liveUpdate.current === task) setSaveError(null); }, error => {
@@ -508,9 +513,10 @@ function Hud() {
       if (!state.sessionId) return;
       setEditing(true); setInteracted(true);
       const sessionId = state.sessionId;
-      void invoke('focus_preview_editor', { sessionId }).then(revision => {
+      nativeEditReady.current = invoke('focus_preview_editor', { sessionId }).then(revision => {
         if (currentSession.current === sessionId && typeof revision === 'number') liveRevision.current = Math.max(liveRevision.current, revision);
-      }).catch(error => setActionError(errMsg(error, 'Could not focus transcript editor')));
+      });
+      void nativeEditReady.current.catch(error => setActionError(errMsg(error, 'Could not focus transcript editor')));
     }}
     onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
     onSelect={event => rememberSelection(event.currentTarget)}
