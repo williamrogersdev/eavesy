@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
+import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -66,6 +66,8 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long a finished result stays open once nobody is editing it. */
 const DONE_HOLD_MS = 10_000;
+/** How long a result stays once the pointer has been over it and left. */
+const LEFT_HOLD_MS = 2500;
 
 /** Settles when `task` does (true), or after `ms` (false), whichever comes first. */
 function within(task: Promise<unknown>, ms: number): Promise<boolean> {
@@ -164,6 +166,8 @@ function Hud() {
   const [copied, setCopied] = useState(false);
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
+  const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
+  const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -390,7 +394,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -408,14 +412,14 @@ function Hud() {
   const size = state ? sizeFor(state, look.lines) : 'pill';
 
   useEffect(() => {
-    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    if (!state || pointer === 'over' || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
-    }, state.phase === 'done' ? DONE_HOLD_MS : 3500);
+    }, pointer === 'left' ? LEFT_HOLD_MS : state.phase === 'done' ? DONE_HOLD_MS : 3500);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, editing, saving, saveError, draft, saveRevision]);
+  }, [state?.phase, state?.sessionId, pointer, editing, saving, saveError, draft, saveRevision]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
@@ -463,6 +467,16 @@ function Hud() {
     setDraft({ ...edit, source: null });
   }, [state?.phase, state?.sessionId, ownDraft, words, composition]);
 
+  // Esc collapses a finished result to the pill; inside the editor it only leaves the editor.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
+      collapseRef.current?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!state) return null;
 
   const opening = state.phase === 'recording' && !state.sessionId;
@@ -499,7 +513,20 @@ function Hud() {
     </button>
   );
   const close = (
-    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : window.requestAnimationFrame(() => retrySaveButton.current?.focus())).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Close capture control" title="Close (reopen from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : window.requestAnimationFrame(() => retrySaveButton.current?.focus())).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Hide Eavesy" title="Hide Eavesy (reopen it from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+  );
+  const collapse = () => {
+    void flushEdit()
+      .then((saved) => {
+        if (!saved) return window.requestAnimationFrame(() => retrySaveButton.current?.focus());
+        if (tauri()) return invoke('dismiss_hud', { sessionId: state.sessionId });
+        setState({ ...state, phase: 'idle', message: null, notice: null });
+      })
+      .catch((error) => setActionError(errMsg(error, 'Could not close')));
+  };
+  collapseRef.current = ['done', 'saved', 'failed'].includes(state.phase) ? collapse : null;
+  const minimize = (
+    <button type="button" onClick={collapse} aria-label="Collapse to the pill" title="Collapse to the pill (esc)" className="ctl-btn ctl-icon"><Minus className="h-3.5 w-3.5" /></button>
   );
   const history = (
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn ctl-icon"><History className="h-3.5 w-3.5" /></button>
@@ -643,7 +670,7 @@ function Hud() {
     top = <>{mark}<span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>
       <span className="ctl-fill" />
       <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
-      <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{close}</>;
+      <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>
@@ -652,6 +679,7 @@ function Hud() {
         <span className="ctl-fill" />
         <button type="button" className="ctl-btn" onClick={() => act('show_launcher')}><Maximize2 className="h-3.5 w-3.5" />Open</button>
         <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>
+        {minimize}
         {close}
       </>
     );
@@ -661,7 +689,7 @@ function Hud() {
       </button>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = <span className={notPasted ? 'ctl-say ctl-warn' : 'ctl-say ctl-quiet'} role="status">{notPasted ? 'Not pasted' : notice ? 'Copied' : 'Pasted'}</span>;
+    const stamp = notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>;
     top = (
       <>
         {mark}
@@ -670,14 +698,15 @@ function Hud() {
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {words && copyWords}
+        {minimize}
         {close}
       </>
     );
     below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
-    top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{close}</>;
+    top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{minimize}{close}</>;
   } else if (state.phase === 'failed') {
-    top = <>{mark}<span className="ctl-say ctl-warn">Didn’t catch that</span><span className="ctl-fill" />{history}{close}</>;
+    top = <>{mark}<span className="ctl-say ctl-warn">Didn’t catch that</span><span className="ctl-fill" />{history}{minimize}{close}</>;
     below = <p className="ctl-line ctl-quiet" title={state.message ?? undefined}>{state.message || 'Nothing was saved. Try again?'}</p>;
   } else {
     top = (
@@ -707,7 +736,8 @@ function Hud() {
       data-translucent={look.translucent || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
-      onMouseEnter={loadShortcut}
+      onMouseEnter={() => { loadShortcut(); setPointer('over'); }}
+      onMouseLeave={() => setPointer((was) => was === 'over' ? 'left' : was)}
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>

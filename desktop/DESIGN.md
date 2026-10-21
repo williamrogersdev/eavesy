@@ -461,13 +461,17 @@ the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
 
 After stop the top row reads "Writing it down…" and the ticker shimmers. The
-result lands as a **rubber stamp** on the case file, rotated −4° with a short
-spring: **Pasted** (leaf), **Copied** (manila) or **Not pasted** (warn, with
-an Allow button for Accessibility), followed by the words that went out and
-a Copy button. Screenshots stamp **Snapped** above the thumbnail; saves stamp
+result turns the control into the **case file**: cream paper and dark ink
+(fixed light values, never see-through), with a **rubber stamp** rotated −4°
+that lands with a short spring: **Pasted** (leaf), **Copied** (manila) or
+**Not pasted** (warn, with an Allow button for Accessibility). The words that
+went out sit on a white sheet below it, editable in place, beside Copy,
+**–** (collapse to the pill) and **×** (hide the control until it is reopened
+from the menu bar). Screenshots stamp **Snapped** above the thumbnail; saves stamp
 **Saved**. Failures read "Didn't catch that" in warn, never coral. The HUD
-dismisses itself 3.5s (pill) or 7s (wide) after the result, or 2.5s after the
-pointer leaves it. A HUD low on the screen keeps its bottom edge when it
+collapses to the pill 3.5s (pill) or 10s (result) after the result, 2.5s
+after the pointer leaves it, or on Esc. It stays while the pointer is over it,
+while you edit, and while a correction is saving. A HUD low on the screen keeps its bottom edge when it
 grows, so it never moves away from where it was.
 
 ## 6. Capture lifecycle: height-stable and without view switches
