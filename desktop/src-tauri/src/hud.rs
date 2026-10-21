@@ -120,7 +120,7 @@ fn live_size(lines: u8) -> (f64, f64) {
 /// Keep the same frame after pasting so the transcript remains readable.
 const RESULT: (f64, f64) = (400.0, 142.0);
 /// A screen recording: room for the click count, Mark and the marking tools.
-const VIDEO_LIVE: (f64, f64) = (420.0, 36.0);
+const VIDEO_LIVE: (f64, f64) = (420.0, 76.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -185,6 +185,11 @@ pub fn fit_on_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
     let size = size_for(&current(), prefs(app).lines);
+    // The NSPanel is resized through Cocoa below. Keep the embedded webview's
+    // viewport in step too, including when the outer frame already matches.
+    // Otherwise the toolbar can still render inside the resting pill's width.
+    let webview: &tauri::Webview = window.as_ref();
+    let _ = webview.set_size(tauri::LogicalSize::new(size.0, size.1));
     if (from.2 - size.0).abs() < 1.0 && (from.3 - size.1).abs() < 1.0 {
         return;
     }
@@ -409,11 +414,17 @@ mod imp {
         let ns_window = ns_window as id;
         unsafe {
             let rect: NSRect = msg_send![ns_window, frame];
-            let (x, y, width, height) = super::refit_cocoa(
+            let (mut x, mut y, width, height) = super::refit_cocoa(
                 (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
                 size,
                 keep_bottom,
             );
+            let screen: id = msg_send![ns_window, screen];
+            if !screen.is_null() {
+                let area: NSRect = msg_send![screen, visibleFrame];
+                x = x.clamp(area.origin.x, (area.origin.x + area.size.width - width).max(area.origin.x));
+                y = y.clamp(area.origin.y, (area.origin.y + area.size.height - height).max(area.origin.y));
+            }
             let mut target = rect;
             target.origin.x = x;
             target.origin.y = y;
@@ -513,7 +524,7 @@ mod tests {
     #[test]
     fn a_screen_recording_makes_room_for_clicks_and_marking() {
         assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4), VIDEO_LIVE);
-        assert_eq!(VIDEO_LIVE.1, DEFAULT_SIZE.1);
+        assert_eq!(VIDEO_LIVE, (420.0, 76.0));
     }
 
     #[test]

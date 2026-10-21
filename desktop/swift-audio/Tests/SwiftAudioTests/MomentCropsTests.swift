@@ -29,6 +29,19 @@ final class MomentCropsTests: XCTestCase {
         XCTAssertEqual(MomentCrops.focusRect(area), CGRect(x: 1, y: 2, width: 3, height: 4))
     }
 
+    func testAnAreaClipsTheExactSelectedPixelsOnRetina() {
+        let selected = CGRect(x: 200, y: 120, width: 280, height: 200)
+        let target = MomentCrops.inFrame(selected, display: CGRect(x: 0, y: 0, width: 960, height: 540), frameWidth: 1920)
+        XCTAssertEqual(MomentCrops.clipRect(kind: "area", target: target, scale: 2, in: frame),
+                       CGRect(x: 400, y: 240, width: 560, height: 400))
+        XCTAssertTrue(MomentCrops.clipRect(kind: "element", target: target, scale: 2, in: frame).contains(target))
+    }
+
+    func testAnAreaClipAtTheDisplayEdgeStaysInsideTheVideo() {
+        XCTAssertEqual(MomentCrops.clipRect(kind: "area", target: CGRect(x: 1880, y: 1040, width: 80, height: 80), scale: 1, in: frame),
+                       CGRect(x: 1880, y: 1040, width: 40, height: 40))
+    }
+
     func testASecondDisplaysOriginIsTakenOff() {
         let display = CGRect(x: 1512, y: -200, width: 1920, height: 1080)
         let focus = CGRect(x: 1612, y: -100, width: 50, height: 20)

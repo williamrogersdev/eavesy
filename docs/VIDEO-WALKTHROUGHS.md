@@ -164,3 +164,17 @@ replace a packaged-app hardware/TCC check: record a narrated walkthrough with
 computer sound muted, verify microphone activity, stop, copy into a local agent,
 and have it read the manifest and open a referenced screenshot. Also verify a
 browser chat receives the text and does not claim it has accessed local images.
+
+## Highlight and clip while recording
+
+Click **Highlight** (or press **⌥H**) to open the highlighter over the recorded
+screen. **Area** is selected: drag a box around what matters. Release to save a
+numbered highlight; draw more boxes as needed. Narration continues while marking.
+Each box becomes an exact clipped image in the saved walkthrough, with nearby narration
+and screen text. **Done · esc** or Escape returns to normal screen interaction;
+**Stop** stays available and saves the recording, including its highlighted clips.
+
+Choose **Element** to outline a control under the pointer and click to tag it.
+If the app exposes no accessible control, Eavesy outlines a small screen region
+instead; use Area to choose exact bounds. Highlights on the overlay are guidance
+for you; clips and numbered tags are saved beside the original unobstructed video.
