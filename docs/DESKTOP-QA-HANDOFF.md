@@ -14,9 +14,9 @@ can edit the preview; corrections must update the saved transcript and survive
 collapse/reload. Refresh the installed app icon rather than retaining the old
 house icon.
 
-The user is moving testing to a dedicated second Mac so the next agent can
-exercise the actual foreground recording/paste flow without interrupting their
-work. Preserve that machine's user data and credentials. Do not assume that
+The user authorized continued testing on the original Mac. Use silent fixture
+replay where possible and request a short idle window before foreground tests.
+Preserve user data and credentials. Do not assume that
 permission to test also authorizes sending messages to other people.
 
 ## Changes implemented
@@ -29,7 +29,7 @@ permission to test also authorizes sending messages to other people.
   or close, serialized writes, visible retry on failure. The 15-second collapse
   timer pauses during editing/saving and on save failure. Copy uses edited text.
 - Persistence: `save_preview_transcript` writes `transcript.md` atomically,
-  updates `recordings.json`, uses the existing file-edit outbox, and emits the
+  updates the current SQLite history index, uses the existing file-edit outbox, and emits the
   history update. Existing local-edit protection stops later generated results
   from overwriting corrections. Initial HUD state reads the saved transcript.
 - Full-message assembly: retain separate pending phrases per track/time range;
@@ -130,3 +130,27 @@ The installed app is `/Applications/Eavesy.app`; rollback is
 `/private/tmp/eavesy-before-persistent-preview-htisdpid/Eavesy.app`.
 Implementation worktree was `/private/tmp/eavesy-desktop-0-5-3`; the original
 `~/Developer/eavesy` checkout has unrelated user changes and was left alone.
+
+## Native follow-up evidence (2026-10-20 evening)
+
+Actual microphone recordings of synthetic speech pasted into disposable TextEdit
+windows. A 95.7-second recording retained all first, middle and last sentences;
+Stop worked with one click after enabling macOS `acceptFirstMouse`, with Pasted
+observed about 2.5 seconds later. Initial native tests exposed two additional
+bugs: a provisional first sentence survived its settled revision, and the live
+scroll viewport exposed a clipped first line.
+
+Silent replay of the recorded audio captured the cause: the initial volatile
+range was 0–23159ms, including silence, while the final narrowed to
+18060–21240ms. Text matches now compare overlap against the shorter range when
+one result is provisional; settled results retain the stricter overlap rule.
+Disjoint repetitions and distinct settled phrases remain separate. Persisted
+provisional history rows also replace matching revisions transactionally.
+The live viewport now has exactly four 20px lines. The headless harness covers
+that scroll boundary in addition to the nine existing preview scenarios.
+
+Native preview edits were read back from `transcript.md`, `history_content`,
+and the completed file-edit outbox operation. The exact multiline correction
+survived automatic collapse and a signed app replacement/restart. No user
+recording was edited. These tests establish local persistence; remote correction
+readback and a broader recognition accuracy benchmark remain separate work.
