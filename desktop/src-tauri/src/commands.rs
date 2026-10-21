@@ -639,7 +639,7 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
                     std::thread::spawn(move || {
                         if crate::settings::device_credential(&learning_app).is_none() { return; }
                         match crate::learning::feedback(&learning_app, &original, &corrected) {
-                            Ok(value) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "saved", "learned": value["learned"] })),
+                            Ok(value) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "saved", "learned": value["learned"], "words": value["words"] })),
                             Err(_) => crate::learning::notify(&learning_app, serde_json::json!({ "status": "failed", "message": "Transcript saved. Dictionary could not connect; use Edit transcript to retry learning." })),
                         }
                     });

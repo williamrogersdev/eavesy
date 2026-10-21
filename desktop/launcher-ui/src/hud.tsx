@@ -12,6 +12,7 @@ import {
   type RunningTranscript,
 } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
+import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
 import { createRoot } from 'react-dom/client';
@@ -68,6 +69,8 @@ const LIVE_EDIT_WAIT_MS = 1500;
 const DONE_HOLD_MS = 10_000;
 /** How long a result stays once the pointer has been over it and left. */
 const LEFT_HOLD_MS = 2500;
+/** How long the pill confirms a word added to the dictionary. */
+const LEARNED_MS = 4000;
 
 /** Settles when `task` does (true), or after `ms` (false), whichever comes first. */
 function within(task: Promise<unknown>, ms: number): Promise<boolean> {
@@ -127,6 +130,12 @@ function browserPreviewState(): HudState | null {
   };
 }
 
+function browserPreviewLearned(): { text: string; tone: 'leaf' } | null {
+  if (tauri()) return null;
+  const word = new URLSearchParams(window.location.search).get('learned');
+  return word ? { text: learnedLabel({ status: 'saved', learned: 1, words: [{ from: word, to: word }] }) ?? word, tone: 'leaf' } : null;
+}
+
 function browserPreviewMarking(): MarkingState {
   if (tauri()) return NO_MARKING;
   const params = new URLSearchParams(window.location.search);
@@ -167,6 +176,7 @@ function Hud() {
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
   const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
+  const [learned, setLearned] = useState<{ text: string; title?: string; tone: 'leaf' | 'warn' } | null>(browserPreviewLearned);
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
@@ -467,6 +477,25 @@ function Hud() {
     setDraft({ ...edit, source: null });
   }, [state?.phase, state?.sessionId, ownDraft, words, composition]);
 
+  // A correction typed here or in the app the words went to reaches the
+  // dictionary in the background: say so on the control, in leaf.
+  useEffect(() => {
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void tauri()?.event?.listen('dictionary:learning', (e) => {
+      const event = e.payload as LearningEvent;
+      const text = learnedLabel(event);
+      if (text) setLearned({ text, title: 'Saved to your dictionary', tone: 'leaf' });
+      else if (event.status === 'failed') setLearned({ text: 'Not saved to dictionary', title: event.message, tone: 'warn' });
+    }).then((stop) => { if (disposed) stop?.(); else off = stop; });
+    return () => { disposed = true; off?.(); };
+  }, []);
+  useEffect(() => {
+    if (!learned) return;
+    const timer = window.setTimeout(() => setLearned(null), LEARNED_MS);
+    return () => window.clearTimeout(timer);
+  }, [learned]);
+
   // Esc collapses a finished result to the pill; inside the editor it only leaves the editor.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -486,6 +515,7 @@ function Hud() {
   const notPasted = !!notice?.includes('Accessibility');
   const busy = starting || state.phase === 'transcribing';
   const kbd = shortcut ? ` (${shortcut})` : '';
+  const learnedStamp = learned && <Stamp tone={learned.tone} fit title={learned.title}>{learned.text}</Stamp>;
 
   const pressSurface = (e: MouseEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button, textarea')) return;
@@ -689,12 +719,12 @@ function Hud() {
       </button>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>;
+    const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>);
     top = (
       <>
         {mark}
         {saveError ? <span role="alert"><span className="ctl-say ctl-warn">Save failed </span><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
-        {notice && !notPasted && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
+        {notice && !notPasted && !learnedStamp && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {words && copyWords}
@@ -703,6 +733,9 @@ function Hud() {
       </>
     );
     below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
+  } else if (learnedStamp && ['idle', 'saved', 'done'].includes(state.phase)) {
+    // Briefly, the whole pill is the confirmation: a word fits where Close was.
+    top = <>{mark}{learnedStamp}<span className="ctl-fill" /></>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
     top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{minimize}{close}</>;
   } else if (state.phase === 'failed') {
@@ -782,8 +815,8 @@ function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?
 }
 
 /** A rubber stamp on the case file: what just happened to the capture. */
-function Stamp({ tone, children }: { tone: 'leaf' | 'manila' | 'warn'; children: ReactNode }) {
-  return <span className="ctl-stamp" data-tone={tone} role="status">{tone === 'leaf' && <Check className="h-3 w-3" strokeWidth={3} />}{children}</span>;
+function Stamp({ tone, fit, title, children }: { tone: 'leaf' | 'manila' | 'warn'; fit?: boolean; title?: string; children: ReactNode }) {
+  return <span className="ctl-stamp" data-tone={tone} data-fit={fit || undefined} title={title} role="status">{tone === 'leaf' && <Check className="h-3 w-3" strokeWidth={3} />}{fit ? <span className="ctl-stamp-text">{children}</span> : children}</span>;
 }
 
 /** Bars that move with the voice: tall while words are arriving, a low idle sway in the quiet. */

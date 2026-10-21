@@ -10,6 +10,11 @@ export async function list(db: AppDb, userId: string) {
 }
 
 export async function remember(db: AppDb, userId: string, corrections: LearnedCorrection[]) {
+  return (await rememberCorrections(db, userId, corrections)).length;
+}
+
+/** Saves corrections and returns the ones that were admitted, so a client can say which words it learned. */
+export async function rememberCorrections(db: AppDb, userId: string, corrections: LearnedCorrection[]): Promise<LearnedCorrection[]> {
   const existing = await list(db, userId);
   const keys = new Set(existing.map(e => e.sourceKey));
   const unchanged = new Set(existing.map(e => JSON.stringify([e.from, e.to])));
@@ -19,7 +24,7 @@ export async function remember(db: AppDb, userId: string, corrections: LearnedCo
     if (keys.size >= 500) return false;
     keys.add(key); return true;
   });
-  if (!accepted.length) return 0;
+  if (!accepted.length) return [];
   const now = Date.now();
   // Admission and the insert/upsert share one SQLite statement. Concurrent
   // devices cannot race past the account cap, but existing words remain editable.
@@ -30,8 +35,8 @@ export async function remember(db: AppDb, userId: string, corrections: LearnedCo
   `).onConflictDoUpdate({ target: [personalDictionary.userId, personalDictionary.sourceKey],
     set: { from: c.from, to: c.to, updatedAt: now } }).returning({ id: personalDictionary.id }));
   const rows = await db.batch(writes as [typeof writes[number], ...typeof writes[number][]]);
-  // Counts admitted upserts; exact repeats observed before the batch are skipped.
-  return rows.reduce((total, result) => total + result.length, 0);
+  // Admitted upserts; exact repeats observed before the batch are skipped.
+  return accepted.filter((_, index) => rows[index].length > 0).map(({ from, to }) => ({ from, to }));
 }
 
 export async function forget(db: AppDb, userId: string, id: string) {
