@@ -33,7 +33,7 @@ try {
         }
         if(cmd==='update_live_preview_edit') { window.__qaLiveEdits.push(args); if(window.__qaFailLiveEdit) throw new Error('Test live edit failed'); }
         if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
-        if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
+        if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
         if(cmd==='get_hud_state') return state;
         if(cmd==='get_settings') return {dictation_hotkey:'Fn'};
         if(cmd==='live_transcript') return [];
@@ -247,6 +247,16 @@ try {
   await page.waitForFunction(()=>window.__qaLiveEdits.at(-1)?.sessionId==='new-live');
   assert.ok((await page.evaluate(()=>window.__qaLiveEdits.at(-1).revision))>4_000_000_000_000_000);
   console.log('PASS: a new capture clears stale retries; native revision readback recovers a renderer with an older clock');
+  await editor.blur();
+  await page.evaluate(()=>{window.__qaFailFocusCount=2;});
+  await editor.focus();
+  await editor.fill('Correction after a transient focus failure');
+  await page.getByRole('button',{name:'Retry save'}).waitFor();
+  await page.getByRole('button',{name:'Retry save'}).click();
+  await page.waitForFunction(()=>window.__qaLiveEdits.at(-1)?.text==='Correction after a transient focus failure');
+  await page.waitForFunction(()=>!document.body.textContent.includes('Retry save'));
+  console.log('PASS: transient focus initialization failure can be retried without refocusing or losing the draft');
+
   await page.screenshot({path:join(tmpdir(),'eavesy-live-lines-verified.png')});
   console.log('PASS: live captions scroll on whole line boundaries');
 } finally { await browser.close(); }

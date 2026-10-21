@@ -183,7 +183,7 @@ function Hud() {
   const typingGroup = useRef<{ source: string; end: number; at: number } | null>(null);
   const historyAction = useRef<(redo: boolean) => void>(() => {});
   const liveRevision = useRef(Date.now() * 1000);
-  const nativeEditReady = useRef<Promise<void>>(Promise.resolve());
+  const nativeEditReady = useRef<Promise<void> | null>(null);
   const liveUpdate = useRef<Promise<unknown>>(Promise.resolve());
   const pendingLiveEdit = useRef<{ sessionId: string; source: string; text: string; revision: number } | null>(null);
   const [composition, setComposition] = useState<{ source: string; text: string } | null>(null);
@@ -331,7 +331,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setInteracted(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -449,11 +449,25 @@ function Hud() {
     <button type="button" className="ctl-btn" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
   );
 
+  const prepareNativeEditor = (sessionId: string) => {
+    const ready = invoke('focus_preview_editor', { sessionId }).then(revision => {
+      if (currentSession.current === sessionId && typeof revision === 'number') liveRevision.current = Math.max(liveRevision.current, revision);
+    });
+    nativeEditReady.current = ready;
+    void ready.catch(error => {
+      // A transient focus failure must not poison every subsequent edit. Retry
+      // initialization on the next keystroke or explicit Retry save.
+      if (nativeEditReady.current === ready) nativeEditReady.current = null;
+      if (currentSession.current === sessionId && pendingLiveEdit.current) setSaveError(errMsg(error, 'Could not focus transcript editor'));
+    });
+    return ready;
+  };
   const sendLiveEdit = () => {
     if (!pendingLiveEdit.current || pendingLiveEdit.current.sessionId !== currentSession.current) return;
     const edit = { ...pendingLiveEdit.current };
     const sessionId = edit.sessionId;
-    const update = nativeEditReady.current.then(() => {
+    const ready = nativeEditReady.current ?? prepareNativeEditor(sessionId);
+    const update = ready.then(() => {
       if (currentSession.current !== sessionId) return;
       edit.revision = ++liveRevision.current;
       return invoke('update_live_preview_edit', edit);
@@ -512,11 +526,7 @@ function Hud() {
     onFocus={() => {
       if (!state.sessionId) return;
       setEditing(true); setInteracted(true);
-      const sessionId = state.sessionId;
-      nativeEditReady.current = invoke('focus_preview_editor', { sessionId }).then(revision => {
-        if (currentSession.current === sessionId && typeof revision === 'number') liveRevision.current = Math.max(liveRevision.current, revision);
-      });
-      void nativeEditReady.current.catch(error => setActionError(errMsg(error, 'Could not focus transcript editor')));
+      void prepareNativeEditor(state.sessionId);
     }}
     onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
     onSelect={event => rememberSelection(event.currentTarget)}
