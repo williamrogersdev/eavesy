@@ -21,8 +21,8 @@ export function DictionarySettings() {
   useEffect(() => { void reload(); }, [reload]);
   const mutate = async (method: 'PUT' | 'DELETE', body: Record<string, unknown>) => {
     setBusy(true); setError('');
-    try { const result = await dictionaryRequest<{ learned?: number }>(method, body);
-      if (method === 'PUT' && result.learned === 0 && !entries.some((entry) => entry.from === from && entry.to === to)) throw new Error('No new correction was saved. Refresh the dictionary to check existing spellings, then try again.');
+    try { const result = await dictionaryRequest<{ learned?: number; status?: string; message?: string }>(method, body);
+      if (result.status === 'not_saved') throw new Error(result.message ?? 'The correction could not be saved. Please try again.');
       await load(); setFrom(''); setTo(''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not update dictionary'); }
     finally { setBusy(false); }

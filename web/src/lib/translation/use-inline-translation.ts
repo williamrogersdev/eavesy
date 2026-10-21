@@ -18,9 +18,19 @@ export function translationChunks(text: string): string[] {
   return chunks;
 }
 
+/** Keep paragraph/space boundaries instead of inventing a newline at every request boundary. */
+export function joinTranslatedChunks(source: string[], translated: string[]): string {
+  return translated.map((text, index) => {
+    if (index === translated.length - 1) return text.trim();
+    const separator = source[index].match(/\s+$/)?.[0] ?? source[index + 1].match(/^\s+/)?.[0] ?? '';
+    return text.trim() + separator;
+  }).join('');
+}
+
 /** Each entry keeps its own original and cached languages. Never saves a translation over it. */
 export function useInlineTranslation(text: string, loadText?: () => Promise<string>, revision?: number) {
   const [language, setLanguage] = useState<Language | null>(null);
+  const activeLanguage = useRef<Language | null>(null);
   const [displayed, setDisplayed] = useState(text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -37,6 +47,7 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
     original.current = text;
     cache.current.clear();
     chunks.current.clear();
+    activeLanguage.current = null;
     setLanguage(null); setDisplayed(text); setBusy(false); setError('');
     return () => { requests.current++; };
   }, [text, revision]);
@@ -44,17 +55,18 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
   async function select(next: Language | null) {
     const request = ++requestId.current;
     setError('');
-    if (next === null) { setLanguage(null); setDisplayed(original.current); setBusy(false); return; }
+    if (next === null) { activeLanguage.current = null; setLanguage(null); setDisplayed(original.current); setBusy(false); return; }
     const cached = cache.current.get(next);
-    if (cached !== undefined) { setLanguage(next); setDisplayed(cached); setBusy(false); return; }
+    if (cached !== undefined) { activeLanguage.current = next; setLanguage(next); setDisplayed(cached); setBusy(false); return; }
     setBusy(true);
     try {
       const source = loadSource.current ? await loadSource.current() : original.current;
       if (request !== requestId.current) return;
       original.current = source;
-      if (!language) setDisplayed(source);
+      if (!activeLanguage.current) setDisplayed(source);
       const translated: string[] = [];
-      for (const chunk of translationChunks(source)) {
+      const sourceChunks = translationChunks(source);
+      for (const chunk of sourceChunks) {
         if (request !== requestId.current) return;
         const key = `${next}:${chunk}`;
         let output = chunks.current.get(key);
@@ -67,8 +79,9 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
         translated.push(output);
       }
       if (request !== requestId.current) return;
-      const output = translated.join('\n');
+      const output = joinTranslatedChunks(sourceChunks, translated);
       cache.current.set(next, output);
+      activeLanguage.current = next;
       setLanguage(next); setDisplayed(output);
     } catch (cause) {
       if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Could not translate. Try again.');

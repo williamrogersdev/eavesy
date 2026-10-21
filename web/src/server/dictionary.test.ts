@@ -80,3 +80,12 @@ test('competing writes respect capacity while existing entries stay editable', a
   expect(await dictionary.remember(t.db, 'u1', [{ from: 'misheard alpha', to: 'Alpha revised' }])).toBe(1);
   expect(await dictionary.remember(t.db, 'u1', [{ from: 'misheard alpha', to: 'Alpha revised' }])).toBe(0);
 });
+
+test('manual dictionary writes report saved versus already unchanged from server state', async () => {
+  const t = setup();
+  const body = { from: 'pool', to: 'pull' };
+  const saved = await t.request('PUT', body);
+  expect(await saved.json()).toMatchObject({ learned: 1, status: 'saved' });
+  const unchanged = await t.request('PUT', body);
+  expect(await unchanged.json()).toMatchObject({ learned: 0, status: 'unchanged' });
+});
