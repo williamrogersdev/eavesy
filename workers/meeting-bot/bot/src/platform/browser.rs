@@ -123,7 +123,7 @@ async fn page_ws_url() -> Result<String, String> {
 pub fn decode_audio(payload: &str) -> Option<AudioBlock> {
     let block: Value = serde_json::from_str(payload).ok()?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(block["pcm"].as_str()?).ok()?;
-    let pcm = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let pcm = bytes.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
     Some(AudioBlock { pcm, peak: block["peak"].as_f64().unwrap_or(0.0), at: Instant::now() })
 }
 
