@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-10-22 - desktop
+
+### Fixed
+
+- Mac app: size the capture control before drawing a new phase ([#183](https://github.com/williamrogersdev/eavesy/pull/183))
+
 ## [0.6.2] - 2026-10-22 - desktop
 
 ### Added
