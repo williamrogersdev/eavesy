@@ -233,8 +233,7 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 
-/** `fastLiveWords` applies from the next recording. */
-/** `fastLiveWords` is sent only when that switch changes, so other changes leave it unset. */
+/** `fastLiveWords` applies from the next recording, and is sent only when that switch changes. */
 export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords?: boolean): Promise<void> {
   await invoke('set_hud_look', { lines, translucent, fastLiveWords });
 }

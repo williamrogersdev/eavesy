@@ -66,6 +66,8 @@ struct LiveDraft {
 
     mutating func accurate(_ heard: Heard) -> [DraftCaption] {
         guard heard.isFinal else {
+            // An empty result between two non-empty ones is held over, so the
+            // HUD does not blank; the next result or final replaces it.
             guard !Self.trim(heard.text).isEmpty, heard.endMs > settledMs ?? .min else { return [] }
             accurate = heard
             return display()
