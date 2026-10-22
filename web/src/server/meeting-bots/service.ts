@@ -500,6 +500,14 @@ export async function claimBotStart(db: AppDb, botId: string) {
   return bot ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME } : null;
 }
 
+/** A claimed start still waiting for its container, for a retry; null once cancelled or given up. */
+export async function launchingBot(db: AppDb, botId: string) {
+  const bot = await botById(db, botId);
+  return bot && bot.status === 'scheduled' && bot.statusDetail === 'launching'
+    ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME }
+    : null;
+}
+
 /** The container could not be started. */
 export async function failBotStart(db: AppDb, botId: string) {
   await db.update(meetingBots)

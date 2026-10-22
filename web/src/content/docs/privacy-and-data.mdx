@@ -22,6 +22,11 @@ the audio, transcripts, briefs, notes and search index for those recordings.
 The web app stores what you make there: browser recordings, capture bar
 screenshots and videos, dictations and drops.
 
+When you send the [Notetaker](/docs/notetaker) to a call, it records the call's
+audio, the participants' display names and who was speaking when. It doesn't
+record video. The notetaker runs on Cloudflare, and its recordings are stored
+and deleted like your other recordings.
+
 Data is encrypted in transit with TLS and at rest with Cloudflare-managed
 encryption.
 
@@ -29,7 +34,7 @@ encryption.
 
 | Provider | What it does |
 | --- | --- |
-| Cloudflare | Hosting, storage and database, plus Workers AI for transcription and search embeddings |
+| Cloudflare | Hosting, storage and database, the Notetaker, plus Workers AI for transcription and search embeddings |
 | Anthropic | Briefs, action items and chat |
 | Clerk | Sign-in |
 | OpenRouter | Only if you connect your own account |
