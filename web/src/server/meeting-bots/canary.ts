@@ -113,9 +113,17 @@ async function startCanary(db: AppDb, env: CanaryRunEnv, control: MeetingBotCont
     updatedAt: now,
   });
   // Only while unclaimed: a bot that started anyway is left to its check.
-  const giveUp = async () => (await db.update(meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable', updatedAt: Date.now() })
-    .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling'), isNull(meetingBots.statusDetail)))
-    .returning({ id: meetingBots.id })).length > 0;
+  // Never throws, so the alert below always goes out.
+  const giveUp = async () => {
+    try {
+      return (await db.update(meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable', updatedAt: Date.now() })
+        .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling'), isNull(meetingBots.statusDetail)))
+        .returning({ id: meetingBots.id })).length > 0;
+    } catch (error) {
+      console.error(JSON.stringify({ message: 'canary status write failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
+      return null;
+    }
+  };
   try {
     // Queued before the bot can start, so a bot that started is always judged and sent home.
     await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId: id, platform: target.platform }, { delaySeconds: CANARY_CHECK_AFTER_SECONDS });
@@ -129,7 +137,8 @@ async function startCanary(db: AppDb, env: CanaryRunEnv, control: MeetingBotCont
     await control.schedule(id, null);
   } catch (error) {
     console.error(JSON.stringify({ message: 'canary schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
-    if (!(await giveUp())) return id;
+    // false: it claimed its start and its check judges it. null: unknown, so say so.
+    if ((await giveUp()) === false) return id;
     await stopBot(env, id); // its claim now fails; this covers anything already running
     await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
     return null;
@@ -190,9 +199,11 @@ async function stopBot(env: CanaryRunEnv, botId: string) {
 async function sendHome(db: AppDb, env: CanaryRunEnv, bot: MeetingBot, detail: string) {
   if (TERMINAL_BOT_STATUSES.includes(bot.status)) return;
   await stopBot(env, bot.id);
-  // Only from the status read: a bot that moved on since is judged as it is now.
-  await db.update(meetingBots).set({ status: 'failed', statusDetail: bot.statusDetail ?? detail, updatedAt: Date.now() })
-    .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, bot.status)));
+  // What finishBot writes, but only from the status read: a bot that moved on since keeps its own.
+  const failed = await db.update(meetingBots).set({ status: 'failed', statusDetail: bot.statusDetail ?? detail, updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, bot.status)))
+    .returning({ id: meetingBots.id });
+  if (!failed.length) console.warn(JSON.stringify({ message: 'canary moved on before it was failed', botId: bot.id, was: bot.status }));
 }
 
 /**

@@ -122,8 +122,9 @@ cd ../workers/processing && bunx wrangler secret put RESEND_API_KEY && bunx wran
 Joining and speaker detection depend on Meet's and Teams' page text, which
 changes every few weeks. Once a day (07:20 UTC, the processing Worker's
 `20 7 * * *` cron) a canary bot joins a standing test meeting on each
-platform and is told to leave on the first watch (every two minutes) after
-about two minutes in the call, so it stays roughly two to four minutes. Ten minutes after it starts,
+platform. It is told to leave on the first watch tick (every two minutes)
+once it has been in the call for about two minutes, so it typically stays
+two to four minutes. Ten minutes after it starts,
 the processing Worker checks it: a bot that never got into the call, or got
 in but read no participant or speaker names, raises an alert. Canary bots
 belong to a system account (`user_eavesy_canary`), are marked `canary` in
