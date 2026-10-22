@@ -13,7 +13,6 @@ import {
   deadLetterQueue,
   purgeDeleted,
   reconcileEmailRecaps,
-  reconcileMeetingBots,
   recoverStaleSegments,
   sealLegacyKeys,
   SUMMARY_WAIT_LIMIT_MS,
@@ -30,9 +29,6 @@ export interface Env extends ProcessingEnv {
   PROCESSING_QUEUE: Queue<ProcessingMessage>;
   AI: Ai;
   ANTHROPIC_API_KEY: string;
-  RECALL_API_KEY?: string;
-  RECALL_WEBHOOK_SECRET?: string;
-  RECALL_REGION?: string;
   RESEND_API_KEY?: string;
   RESEND_WEBHOOK_SECRET?: string;
   EMAIL_FROM?: string;
@@ -78,10 +74,12 @@ export const worker = {
     }
     await env.DB.prepare('DELETE FROM device_pairing_codes WHERE expires_at < ?').bind(now).run();
 
+    // Notetaker meetings aren't touched between segments; their bot's
+    // watchdog ends them instead (meeting-bots/service.ts, watchBot).
     const abandoned = await env.DB.prepare(
       `SELECT m.id
          FROM meetings m
-        WHERE m.source != 'import' AND m.status IN ('recording', 'uploading')
+        WHERE m.source NOT IN ('import', 'bot') AND m.status IN ('recording', 'uploading')
           AND m.updated_at < ?
           AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)
         LIMIT 200`,
@@ -143,7 +141,6 @@ export const worker = {
       await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
     }
     await recoverStaleSegments(env, now);
-    await reconcileMeetingBots(env, now);
     await reconcileEmailRecaps(env, now);
     await purgeDeleted(env, now);
     await pruneRateLimits(env.DB, now);

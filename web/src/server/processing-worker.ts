@@ -16,7 +16,7 @@ import { handleSummarize } from './processing/summarize';
 import { handleAgentTranscript } from './processing/agent-transcript';
 import { handleEmbedDictation, handleEmbedMeeting } from './processing/embed';
 import { handleCleanup, handlePurgeAccount } from './processing/cleanup';
-import { collectBotRecording, reconcileBots } from './meeting-bots/service';
+import { collectBotRecording } from './meeting-bots/service';
 import { reconcileRecaps, sendRecap } from './email/recaps';
 
 export async function queue(batch: MessageBatch<ProcessingMessage>, env: ProcessingEnv) {
@@ -141,11 +141,6 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       );
     }
   }
-}
-
-/** Hourly: catches notetaker bots up with the provider when a webhook was lost. */
-export async function reconcileMeetingBots(env: ProcessingEnv, now = Date.now()) {
-  await reconcileBots(drizzle(env.DB, { schema }), env, now);
 }
 
 /** Hourly: re-queues email recaps whose queue message was lost. */

@@ -96,16 +96,11 @@ cd workers/processing
 bunx wrangler secret put ANTHROPIC_API_KEY
 ```
 
-Notetaker bots (optional, both Workers): set `RECALL_API_KEY`,
-`RECALL_WEBHOOK_SECRET` (the `whsec_…` verification secret) and, if the
-account isn't in `us-west-2`, `RECALL_REGION`. In the Recall dashboard, point a
-webhook at `https://<app host>/api/webhooks/recall` and subscribe it to the
-`bot.*` status events. Without these the Notetaker page says it isn't set up.
-
-```bash
-cd web && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RECALL_WEBHOOK_SECRET
-cd ../workers/processing && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RECALL_WEBHOOK_SECRET
-```
+Notetaker bots: `workers/meeting-bot` deploys first (`bun run
+deploy:meeting-bot`), because the web and processing Workers bind to it. It
+needs Cloudflare Containers on the account and Docker where wrangler runs,
+which builds the bot's image and pushes it to the account's registry. It uses
+the same D1 database, R2 bucket and queue as the others and needs no secrets.
 
 Email recaps (optional, both Workers): set `RESEND_API_KEY`,
 `RESEND_WEBHOOK_SECRET` (the `whsec_…` signing secret of the Resend webhook)

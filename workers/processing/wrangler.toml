@@ -20,6 +20,12 @@ index_name = "eavesy-embeddings"
 [ai]
 binding = "AI"
 
+# Notetaker bots (workers/meeting-bot); deployed before this Worker.
+[[services]]
+binding = "MEETING_BOTS"
+service = "eavesy-meeting-bot"
+entrypoint = "BotControl"
+
 [[queues.consumers]]
 queue = "eavesy-processing"
 max_batch_size = 1

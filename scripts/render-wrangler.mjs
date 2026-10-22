@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['web/wrangler.jsonc', 'workers/processing/wrangler.toml', 'workers/mcp/wrangler.toml'];
+const FILES = ['web/wrangler.jsonc', 'workers/processing/wrangler.toml', 'workers/mcp/wrangler.toml', 'workers/meeting-bot/wrangler.jsonc'];
 
 const STATE = join(root, '.eavesy-render');
 const manifestPath = join(STATE, 'manifest.json');

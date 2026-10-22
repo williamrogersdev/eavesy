@@ -118,7 +118,6 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/meeting-bots/$id': {
     DELETE: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/meeting-bots/${BOT}`, params: { id: BOT } }, status: 404 } },
   },
-  '/api/webhooks/recall': { POST: { public: 'Recall.ai status webhook, authenticated by its Svix signature rather than a session' } },
   '/api/webhooks/resend': { POST: { public: 'Resend email delivery webhook, authenticated by its Svix signature rather than a session; it only moves delivery rows forward' } },
   '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
   '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },
@@ -526,7 +525,7 @@ async function seedOwner() {
     // Not yet confirmed by the provider, so cancelling it makes no provider call.
     testEnv.DB.prepare(
       `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)
-       VALUES (?, ?, 'recall', 'https://meet.google.com/abc-defg-hij', 'meet', 'scheduling', ?, ?)`,
+       VALUES (?, ?, 'eavesy', 'https://meet.google.com/abc-defg-hij', 'meet', 'scheduling', ?, ?)`,
     ).bind(BOT, OWNER, now, now),
     testEnv.DB.prepare(
       `INSERT INTO email_deliveries (id, user_id, meeting_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
