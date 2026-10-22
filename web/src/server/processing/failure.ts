@@ -5,6 +5,7 @@ import * as schema from '@/db/schema';
 import { meetings, meetingSegments } from '@/db/schema';
 import { encode } from '@/db/codec';
 import { failCollection } from '@/server/meeting-bots/service';
+import { failCanaryCheck } from '@/server/meeting-bots/canary';
 import { failRecap } from '@/server/email/recaps';
 import { type ProcessingEnv, type ProcessingMessage } from './shared';
 
@@ -44,6 +45,9 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       return;
     case 'send-recap':
       await failRecap(db, message.meetingId, reason);
+      return;
+    case 'check-canary':
+      await failCanaryCheck(db, env, message.botId, message.platform, reason);
       return;
     case 'rolling-summarize':
     case 'agent-transcript':

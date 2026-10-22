@@ -15,12 +15,14 @@ import {
   reconcileEmailRecaps,
   recoverStaleSegments,
   sealLegacyKeys,
+  startMeetingBotCanaries,
   SUMMARY_WAIT_LIMIT_MS,
   queue as runQueue,
   type ProcessingEnv,
   type ProcessingMessage,
 } from '../../../web/src/server/processing-worker';
 import { pruneRateLimits } from '../../../web/src/server/rate-limit-store';
+import { CANARY_CRON } from '../../../web/src/server/meeting-bots/canary';
 
 export interface Env extends ProcessingEnv {
   DB: D1Database;
@@ -63,6 +65,10 @@ export const worker = {
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     const now = Date.now();
+    if (controller.cron === CANARY_CRON) {
+      await startMeetingBotCanaries(env, now);
+      return;
+    }
     const expired = await env.DB.prepare(
       'SELECT id FROM meetings WHERE expires_at IS NOT NULL AND expires_at < ? LIMIT 500',
     )

@@ -728,6 +728,10 @@ export const meetingBots = sqliteTable('meeting_bots', {
   /** Provider time of the newest status applied; older webhook deliveries are ignored. */
   statusAt: integer('status_at'),
   collectAttempts: integer('collect_attempts').notNull().default(0),
+  /** The daily canary (meeting-bots/canary.ts): it never makes a meeting or keeps audio. */
+  canary: integer('canary', { mode: 'boolean' }).notNull().default(false),
+  /** Names a canary read off the call, participants and speakers; null until it got in. */
+  canaryNames: integer('canary_names'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 }, (t) => [

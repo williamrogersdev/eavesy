@@ -215,7 +215,8 @@ maintenance cost down:
    and measure CPU and memory with video tiles (the first real-call run).
 2. A daily canary: a scheduled bot joins a standing test Meet and Teams
    call and alerts when it can't reach `in_call` or reads no speakers, so a
-   UI change is caught before users hit it.
+   UI change is caught before users hit it. Done: `web/src/server/meeting-bots/canary.ts`,
+   set up as in `docs/DEPLOY.md` → "Notetaker canary".
 3. Switch the bot to the apps' audio-only receive mode and try the `basic`
    instance.
 4. Zoom through the Linux Meeting SDK (C++ over FFI) as a third `Session`.
