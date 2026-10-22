@@ -125,15 +125,29 @@ jobs:
       # First: the web and processing Workers will bind to it, and a binding
       # to a Worker that doesn't exist fails their deploy. Wrangler builds the
       # bot's image with Docker and pushes it to the account's registry.
+      # Needs Cloudflare Containers on the account and Docker on the runner
+      # (docs/DEPLOY.md). A self-host without them removes the MEETING_BOTS
+      # bindings from web/wrangler.jsonc and workers/processing/wrangler.toml
+      # and this step; the notetaker page then says it isn't available.
       - name: Deploy meeting bot Worker
         id: meeting_bot
-        # Until the web app depends on it, a failure here (e.g. Containers not
-        # enabled on the account) must not hold back the rest of the release.
-        continue-on-error: true
         run: bun run deploy:meeting-bot
-      - name: Report meeting bot deploy failure
-        if: steps.meeting_bot.outcome == 'failure'
-        run: echo "::warning::The meeting bot Worker did not deploy; see the step above"
+      - name: Explain a meeting bot deploy failure
+        if: failure() && steps.meeting_bot.outcome == 'failure'
+        # Wrangler only says a Containers API call failed. Ask the API directly
+        # so the log shows why: its status and error messages, never the token.
+        run: |
+          for path in containers/me containers/applications; do
+            echo "GET /accounts/<account>/$path"
+            curl -sS -o /tmp/cf.json -w 'HTTP %{http_code}\n' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/$path" || true
+            jq -c '{success, errors, messages}' /tmp/cf.json 2>/dev/null || head -c 500 /tmp/cf.json
+            echo
+          done
+          echo "Token:"
+          curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify | jq -c '{success, errors, status: .result.status}' || true
 
       - name: Deploy processing Worker
         run: bun run deploy:processing

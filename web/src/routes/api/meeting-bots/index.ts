@@ -2,8 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { getDb } from '@/db/client';
 import { resolveActor } from '@/server/auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { recallConfigured } from '@/server/meeting-bots/recall';
-import { type BotEnv, listBots, scheduleBot } from '@/server/meeting-bots/service';
+import { type BotEnv, botsAvailable, listBots, scheduleBot } from '@/server/meeting-bots/service';
 import { guardBurst, guardUserQuota } from '@/server/rate-limit';
 
 export const Route = createFileRoute('/api/meeting-bots/')({ server: { handlers: {
@@ -11,7 +10,7 @@ export const Route = createFileRoute('/api/meeting-bots/')({ server: { handlers:
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
     const env = getCloudflareContext<BotEnv>().env;
-    return Response.json({ available: recallConfigured(env), bots: await listBots(getDb(), actor.userId) });
+    return Response.json({ available: botsAvailable(env), bots: await listBots(getDb(), actor.userId) });
   },
   POST: async ({ request }) => {
     let actor;
