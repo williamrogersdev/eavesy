@@ -6,10 +6,10 @@ import { type WorkersAiRunner } from '@/lib/ai/embed';
 import type { QueueMessage } from '@/server/queue';
 
 import type { CreditEnv } from '@/lib/ai/credit-runner';
-import type { RecallEnv } from '@/server/meeting-bots/recall';
+import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
 import type { EmailEnv } from '@/server/email/resend';
 
-export interface ProcessingEnv extends CreditEnv, RecallEnv, EmailEnv {
+export interface ProcessingEnv extends CreditEnv, MeetingBotsEnv, EmailEnv {
   DB: D1Database;
   AUDIO_BUCKET: R2Bucket;
   VECTORIZE: VectorizeIndex;

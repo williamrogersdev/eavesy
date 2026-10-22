@@ -4,8 +4,8 @@
 //!
 //! One bot per process (and per container), configured by environment:
 //!   MEETING_URL, PLATFORM (meet|teams), BOT_NAME,
-//!   INGEST_URL   where segments and events go (default http://eavesy.internal,
-//!                which the container's Worker intercepts),
+//!   INGEST_URL   where segments and events go: http://eavesy.internal/bots/<id>,
+//!                which the container's Durable Object intercepts,
 //!   INGEST_TOKEN optional bearer token, for running against a plain HTTP server,
 //!   CHROME_PATH  (default chromium), CONTROL_PORT (default 8080).
 //! SIGTERM (how the Durable Object stops it) makes it leave and deliver.

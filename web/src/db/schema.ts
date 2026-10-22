@@ -699,7 +699,8 @@ export const personalDictionary = sqliteTable('personal_dictionary', {
 }, t => [uniqueIndex('personal_dictionary_user_source_uq').on(t.userId, t.sourceKey)]);
 
 /**
- * A notetaker bot sent to an online meeting through a meeting-recording provider.
+ * A notetaker bot sent to an online meeting: Eavesy's own (`eavesy`), or a
+ * Recall.ai bot from before it (`recall`, kept for old rows).
  * The meeting row is created once the bot starts recording; until then this row
  * is the user's request. Status only moves forward (see `BOT_STATUS_ORDER`).
  */
@@ -707,7 +708,7 @@ export const meetingBots = sqliteTable('meeting_bots', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id),
   meetingId: text('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
-  provider: text('provider', { enum: ['recall'] }).notNull(),
+  provider: text('provider', { enum: ['recall', 'eavesy'] }).notNull(),
   providerBotId: text('provider_bot_id'),
   meetingUrl: text('meeting_url').notNull(),
   platform: text('platform', { enum: ['zoom', 'meet', 'teams'] }).notNull(),
