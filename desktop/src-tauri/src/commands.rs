@@ -376,6 +376,26 @@ pub async fn peek_hud(app: AppHandle, session_id: String, open: bool) {
     let _ = tauri::async_runtime::spawn_blocking(move || crate::hud::set_peek(&app, session_id, open)).await;
 }
 
+/// A dictation rewritten in another tone (`style`, and as a prompt for an AI
+/// agent with `forAgents`), from the HUD's tone buttons.
+#[tauri::command]
+pub async fn restyle_dictation(app: AppHandle, session_id: String, text: String, style: String, for_agents: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = crate::dictation::pasted_project(&session_id);
+        crate::transcribe::restyle_dictation(&app, &text, project.as_deref(), &style, for_agents)
+    })
+    .await
+    .map_err(|error| format!("Could not change the tone: {error}"))?
+}
+
+/// Puts a rewrite where the dictation's words went: "replaced" in the app, or "copied".
+#[tauri::command]
+pub async fn replace_dictation(app: AppHandle, session_id: String, text: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::dictation::deliver_rewrite(&app, &session_id, &text).map(str::to_string))
+        .await
+        .map_err(|error| format!("Could not put the rewrite in place: {error}"))?
+}
+
 /// The capture control painted a new phase: its native shadow can follow now.
 #[tauri::command]
 pub fn hud_painted(app: AppHandle) {
@@ -639,7 +659,7 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
 }
 
 #[tauri::command]
-pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String, live: Option<bool>) -> Result<(), String> {
+pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: String, live: Option<bool>, learn: Option<bool>) -> Result<(), String> {
     // The readiness wait and durable writes use blocking filesystem/SQLite APIs.
     tauri::async_runtime::spawn_blocking(move || {
         // Fast paste can finish just before the recording's folder is registered.
@@ -653,7 +673,8 @@ pub async fn save_preview_transcript(app: AppHandle, session_id: String, text: S
                     }
                 } else { store::save_preview_transcript(&app, &session_id, &text)?; }
                 crate::live_edit::forget(&session_id);
-                if let Some(original) = original.filter(|original| original != &text) {
+                // A tone change rewrites on purpose: nothing in it is a spelling to learn.
+                if let Some(original) = original.filter(|original| original != &text && learn != Some(false)) {
                     let learning_app = app.clone();
                     let corrected = text.clone();
                     // Durable local edits work offline; dictionary feedback follows separately.

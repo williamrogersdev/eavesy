@@ -187,13 +187,14 @@ const MIN_POLISH_WORDS = 4;
  */
 export async function polishDictation(
   client: Anthropic | null,
-  args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[] },
+  args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[]; asked?: boolean },
 ): Promise<{ text: string; polished: boolean }> {
   const style = args.style ?? DEFAULT_DICTATION_STYLE;
   const restyle = style !== 'natural' || !!args.forAgents;
   const said = args.text.trim();
   const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
-  if (!client || (!args.hasCorrections && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
+  // A tone someone asked for is worth a call however short the words are.
+  if (!client || (!args.hasCorrections && !args.asked && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
     const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);

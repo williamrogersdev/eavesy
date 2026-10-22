@@ -6,7 +6,10 @@ mod mac {
     use std::{
         ffi::{c_char, c_void},
         ptr,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex,
+        },
         time::Duration,
     };
     use tauri::AppHandle;
@@ -20,10 +23,13 @@ mod mac {
         fn AXUIElementCreateSystemWide() -> Ref;
         fn AXUIElementSetMessagingTimeout(element: Ref, timeout: f32) -> i32;
         fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
+        fn AXUIElementSetAttributeValue(element: Ref, attr: Ref, value: Ref) -> i32;
+        fn AXValueCreate(kind: u32, value: *const c_void) -> Ref;
     }
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         fn CFRelease(value: Ref);
+        fn CFRetain(value: Ref) -> Ref;
         fn CFGetTypeID(value: Ref) -> usize;
         fn CFStringGetTypeID() -> usize;
         fn CFStringCreateWithCString(allocator: Ref, value: *const c_char, encoding: u32) -> Ref;
@@ -57,6 +63,73 @@ mod mac {
         result
     }
     pub struct Target(usize);
+    /// The passage Eavesy pasted last and the field it went into: what a tone
+    /// change replaces, only while it is still there exactly as pasted.
+    struct LastPaste {
+        field: Target,
+        prefix: String,
+        suffix: String,
+        pasted: String,
+    }
+    static LAST: Mutex<Option<LastPaste>> = Mutex::new(None);
+    fn last() -> std::sync::MutexGuard<'static, Option<LastPaste>> {
+        LAST.lock().unwrap_or_else(|error| error.into_inner())
+    }
+    #[repr(C)]
+    struct CFRange {
+        location: isize,
+        length: isize,
+    }
+    /// kAXValueCFRangeType
+    const AX_VALUE_CF_RANGE: u32 = 4;
+    /// Selects `length` UTF-16 units from `start` in `field`.
+    unsafe fn select(field: Ref, start: usize, length: usize) -> Result<(), String> {
+        let range = CFRange { location: start as isize, length: length as isize };
+        let value = AXValueCreate(AX_VALUE_CF_RANGE, (&range as *const CFRange).cast());
+        if value.is_null() {
+            return Err("could not describe the selection".into());
+        }
+        let key = std::ffi::CString::new("AXSelectedTextRange").map_err(|e| e.to_string())?;
+        let key = CFStringCreateWithCString(ptr::null(), key.as_ptr(), UTF8);
+        let result = AXUIElementSetAttributeValue(field, key, value);
+        CFRelease(key);
+        CFRelease(value);
+        if result == 0 { Ok(()) } else { Err(format!("the app refused the selection ({result})")) }
+    }
+    /// Swaps the passage Eavesy pasted last for `text`, when it is still in its
+    /// field exactly as `previous`, that field still has the keyboard, and the
+    /// app selects exactly that passage. Otherwise nothing in the app changes.
+    pub fn replace(app: &AppHandle, previous: &str, text: &str) -> Result<(), String> {
+        let Some(paste) = last().take() else {
+            return Err("nothing pasted to replace".into());
+        };
+        let ready = (|| {
+            if paste.pasted != previous {
+                return Err("the last paste was something else".to_string());
+            }
+            if !still_focused(&paste.field) {
+                return Err("the field no longer has the keyboard".into());
+            }
+            let value = unsafe { string(paste.field.0 as Ref, "AXValue") }.ok_or("the field can't be read")?;
+            if super::passage(&value, &paste.prefix, &paste.suffix).as_deref() != Some(previous) {
+                return Err("the pasted words were changed".into());
+            }
+            Ok(())
+        })();
+        if let Err(why) = ready {
+            // Untouched: a later try can still replace it.
+            last().get_or_insert(paste);
+            return Err(why);
+        }
+        // The old passage is no longer watched: a rewrite is not a correction to learn.
+        GENERATION.fetch_add(1, Ordering::SeqCst);
+        let start = paste.prefix.encode_utf16().count();
+        unsafe { select(paste.field.0 as Ref, start, previous.encode_utf16().count())? };
+        if unsafe { string(paste.field.0 as Ref, "AXSelectedText") }.as_deref() != Some(previous) {
+            return Err("the app didn't select the pasted words".into());
+        }
+        crate::commands::paste_text(app, text)
+    }
     impl Drop for Target {
         fn drop(&mut self) {
             unsafe { CFRelease(self.0 as Ref) }
@@ -131,6 +204,7 @@ mod mac {
         notify: impl Fn(serde_json::Value) + Send + 'static,
     ) -> Option<std::thread::JoinHandle<()>> {
         let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        *last() = None;
         let Some(target) = target else {
             notify(
                 json!({"status":"unsupported", "message":"This field does not expose corrections. Use Edit transcript in Eavesy."}),
@@ -145,6 +219,10 @@ mod mac {
             let Some((prefix, suffix)) = super::anchors(&initial, &pasted) else {
                 return;
             };
+            if GENERATION.load(Ordering::SeqCst) == generation {
+                let field = Target(unsafe { CFRetain(target.0 as Ref) } as usize);
+                *last() = Some(LastPaste { field, prefix: prefix.clone(), suffix: suffix.clone(), pasted: pasted.clone() });
+            }
             notify(json!({"status":"watching"}));
             let mut baseline = pasted.clone();
             let mut candidate = pasted;
@@ -276,7 +354,11 @@ pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
     Some(middle.into())
 }
 #[cfg(target_os = "macos")]
-pub use mac::{capture, observe};
+pub use mac::{capture, observe, replace};
+#[cfg(not(target_os = "macos"))]
+pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<(), String> {
+    Err("replacing pasted words is only supported on macOS".into())
+}
 
 #[cfg(test)]
 mod tests {
