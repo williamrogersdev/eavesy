@@ -233,8 +233,9 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 
-export async function setHudLook(lines: HudPreviewLines, translucent: boolean): Promise<void> {
-  await invoke('set_hud_look', { lines, translucent });
+/** `fastLiveWords` applies from the next recording. */
+export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords: boolean): Promise<void> {
+  await invoke('set_hud_look', { lines, translucent, fastLiveWords });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -427,6 +428,8 @@ export interface Settings {
   capture_sounds?: boolean;
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
+  /** Live words about a second sooner from a fast recognizer. Absent means on. */
+  fast_live_words?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

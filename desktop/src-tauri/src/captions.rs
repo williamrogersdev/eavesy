@@ -15,6 +15,9 @@ pub struct Caption {
     pub is_final: bool,
     pub start_ms: i64,
     pub end_ms: i64,
+    /// Words only the fast preview recognizer has heard: shown live, never
+    /// pasted or stored.
+    pub preview: bool,
 }
 
 /// Whether captions are running for a track, and why not when they aren't.
@@ -103,7 +106,9 @@ pub(crate) fn same_phrase(a: &Caption, b: &Caption) -> bool {
 
 impl CaptionLog {
     pub fn record(&mut self, caption: &Caption) {
-        if caption.text.trim().is_empty() {
+        // Preview words are for the HUD alone. The engine replaces them with
+        // the accurate recognizer's text, and puts that back at Stop.
+        if caption.preview || caption.text.trim().is_empty() {
             return;
         }
         // A new phrase is not a revision of every earlier phrase on a track.
@@ -320,6 +325,7 @@ mod tests {
             is_final,
             start_ms,
             end_ms: start_ms + 500,
+            preview: false,
         }
     }
 
@@ -340,6 +346,7 @@ mod tests {
                 is_final: event["final"].as_bool().expect("final"),
                 start_ms: event["startMs"].as_i64().expect("start"),
                 end_ms: event["endMs"].as_i64().expect("end"),
+                preview: event["preview"].as_bool().unwrap_or(false),
             });
         }
         log.finish(CLEAN);
@@ -373,6 +380,36 @@ mod tests {
         assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
         log.record(&caption("Trailing end.", true, 4_000));
         assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
+    }
+
+    fn preview(text: &str, start_ms: i64, end_ms: i64) -> Caption {
+        Caption { preview: true, end_ms, ..caption(text, false, start_ms) }
+    }
+
+    #[test]
+    fn preview_words_are_never_pasted() {
+        let mut log = CaptionLog::default();
+        log.record(&preview("Okay so on the posters", 0, 2_500));
+        assert_eq!(log.spoken_text(), "");
+        assert!(matches!(log.quick_paste(3_000), Paste::Whisper(_)));
+        // A preview under the accurate text's start leaves that text alone.
+        log.record(&Caption { end_ms: 2_000, ..caption("Okay, so I'm the", false, 0) });
+        log.record(&preview("Okay, so I'm the posters migration", 0, 3_000));
+        assert_eq!(log.spoken_text(), "Okay, so I'm the");
+        assert_eq!(log.quick_paste(4_000), Paste::OnDevice("Okay, so I'm the".into()));
+    }
+
+    #[test]
+    fn the_engine_handover_from_preview_to_final_pastes_only_the_final() {
+        // What the engine sends: a preview, the final's words under the
+        // preview's start, the final itself, then the next stretch's preview.
+        let mut log = CaptionLog::default();
+        log.record(&preview("So the posters migration look fine, but", 0, 4_000));
+        log.record(&Caption { end_ms: 3_900, ..caption("So the post migration looks fine.", false, 0) });
+        log.record(&Caption { end_ms: 3_900, ..caption("So the post migration looks fine.", true, 100) });
+        log.record(&preview("but Siobhan said", 3_900, 5_000));
+        assert_eq!(log.spoken_text(), "So the post migration looks fine.");
+        assert!(log.partials.is_empty());
     }
 
     #[test]

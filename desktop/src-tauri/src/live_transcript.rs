@@ -270,7 +270,7 @@ pub struct Delta {
 
 /// Stores a caption final, unless cloud lines already cover that moment.
 pub fn record_caption(conn: &Connection, caption: &Caption) -> Result<(), String> {
-    if !caption.is_final || caption.text.trim().is_empty() {
+    if !caption.is_final || caption.preview || caption.text.trim().is_empty() {
         return Ok(());
     }
     // `provisional` below means settled on-device words awaiting cloud
@@ -284,6 +284,7 @@ pub fn record_caption(conn: &Connection, caption: &Caption) -> Result<(), String
             Ok((row.get::<_, i64>(0)?, Caption {
                 session_id: caption.session_id.clone(), track: caption.track.clone(),
                 start_ms: row.get(1)?, end_ms: row.get(2)?, text: row.get(3)?, is_final: true,
+                preview: false,
             }))
         }).map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?
@@ -489,6 +490,7 @@ mod tests {
             is_final: true,
             start_ms,
             end_ms,
+            preview: false,
         }
     }
 

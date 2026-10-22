@@ -363,6 +363,31 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(finals, ["last words"])
     }
 
+    func testPreviewWordsAreMarkedAndNeverSettle() throws {
+        let events = Events()
+        let engine = FakeEngine()
+        var finals: [String] = []
+        let captions = LiveCaptions(track: "mic", emit: events.emit, onFinal: { text, _ in finals.append(text) }) {
+            $0(.success(engine))
+        }
+        captions.feed(samples, atMs: 0)
+        let deadline = Date().addingTimeInterval(1)
+        while engine.sink == nil, Date() < deadline { usleep(1_000) }
+        engine.sink?.recognized(text: "fast words", isFinal: false, startMs: 0, endMs: 900, preview: true)
+        engine.sink?.recognized(text: "fast final", isFinal: true, startMs: 0, endMs: 900, preview: true)
+        let shown = events.named("caption")
+        XCTAssertEqual(shown.count, 1)
+        XCTAssertEqual(shown.first?["preview"] as? Bool, true)
+        XCTAssertEqual(shown.first?["text"] as? String, "fast words")
+        XCTAssertTrue(finals.isEmpty)
+        let line = try XCTUnwrap(
+            EventEmitter.line(
+                CaptionEvent(track: "mic", text: "hi", isFinal: false, startMs: 0, endMs: 5, preview: true).json))
+        XCTAssertEqual(
+            String(decoding: line, as: UTF8.self),
+            #"{"endMs":5,"event":"caption","final":false,"preview":true,"startMs":0,"text":"hi","track":"mic"}"# + "\n")
+    }
+
     func testAudioHeldBeforeTheEngineIsReadyKeepsOnlyTheLatestTenSeconds() {
         let events = Events()
         let engine = FakeEngine()

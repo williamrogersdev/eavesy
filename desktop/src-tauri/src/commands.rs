@@ -183,13 +183,14 @@ pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
     settings::save(&app, &config)
 }
 
-/// How many lines of live words the control shows while recording, and whether it is see-through.
+/// How many lines of live words the control shows while recording, whether
+/// it is see-through, and (when given) whether faster live words are on.
 #[tauri::command]
-pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool) -> Result<(), String> {
+pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>) -> Result<(), String> {
     if !matches!(lines, 0 | 1 | 2 | 4) {
         return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
     }
-    crate::hud::set_look(&app, lines, translucent);
+    crate::hud::set_look(&app, lines, translucent, fast_live_words);
     Ok(())
 }
 

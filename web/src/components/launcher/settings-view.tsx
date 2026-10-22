@@ -341,15 +341,16 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   const savedLines = settings?.hud_preview_lines;
   const previewLines: HudPreviewLines = savedLines === 0 || savedLines === 1 || savedLines === 2 ? savedLines : 4;
   const translucent = settings?.hud_translucent ?? true;
+  const fastWords = settings?.fast_live_words ?? true;
   const [lookError, setLookError] = useState<string | null>(null);
-  const changeLook = (lines: HudPreviewLines, see: boolean) => {
+  const changeLook = (lines: HudPreviewLines, see: boolean, fast = fastWords) => {
     setLookError(null);
-    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see } : current);
-    void setHudLook(lines, see).catch((error: unknown) => {
+    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see, fast_live_words: fast } : current);
+    void setHudLook(lines, see, fast).catch((error: unknown) => {
       setLookError(errMsg(error, 'Could not change how the recording looks.'));
       // Show what is actually saved, whichever change failed.
       void getSettings().then((saved) => setSettings((current) => current && saved
-        ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent }
+        ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent, fast_live_words: saved.fast_live_words }
         : current)).catch(() => {});
     });
   };
@@ -507,6 +508,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
             <Select label="Lines of live words while recording" value={String(previewLines)} options={PREVIEW_OPTIONS} disabled={!settings || !captionsOn} onChange={next => changeLook(Number(next) as HudPreviewLines, translucent)} />
           </Row>
           <Switch checked={translucent} disabled={!settings} onCheckedChange={next => changeLook(previewLines, next)} label="See-through" hint="Lets the screen show through while you talk." />
+          <Switch checked={fastWords} disabled={!settings} onCheckedChange={next => changeLook(previewLines, translucent, next)} label="Faster live words" hint="Shows words about a second sooner. Turn off if live words look jumpy or your Mac runs hot." />
           {lookError && <p role="alert" className="ev-set-hint">{lookError}</p>}
         </Section>
 

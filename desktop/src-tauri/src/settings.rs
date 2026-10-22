@@ -79,6 +79,11 @@ pub struct Settings {
     /// A see-through, blurred control instead of a solid one (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_translucent: Option<bool>,
+    /// Live words from a second, fast recognizer about a second sooner, until
+    /// the accurate one catches up (on unless turned off). Read as each
+    /// capture starts, so a change applies from the next recording.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_live_words: Option<bool>,
 }
 
 impl Settings {
@@ -95,6 +100,10 @@ impl Settings {
     /// One of the line counts the control is drawn for; anything else reads as 4.
     pub fn hud_preview_lines(&self) -> u8 {
         self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(4)
+    }
+
+    pub fn fast_live_words(&self) -> bool {
+        self.fast_live_words.unwrap_or(true)
     }
 
     pub fn add_screenshots(&self) -> bool {
@@ -129,6 +138,7 @@ impl Default for Settings {
             capture_sounds: None,
             hud_preview_lines: None,
             hud_translucent: None,
+            fast_live_words: None,
         }
     }
 }
@@ -506,6 +516,18 @@ mod tests {
         assert_eq!(settings.hud_preview_lines(), 0);
         settings.hud_preview_lines = Some(3);
         assert_eq!(settings.hud_preview_lines(), 4);
+    }
+
+    #[test]
+    fn fast_live_words_are_on_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.fast_live_words());
+        assert!(!serde_json::to_string(&settings).unwrap().contains("fast_live_words"));
+        settings.fast_live_words = Some(false);
+        assert!(!settings.fast_live_words());
+        let saved: Settings =
+            serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","fast_live_words":false}"#).unwrap();
+        assert!(!saved.fast_live_words());
     }
 
     #[test]

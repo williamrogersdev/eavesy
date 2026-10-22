@@ -467,6 +467,9 @@ control, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
 the coral ring so the control sits back over whatever is underneath. Still
 no native glass, for the corner reason above. A change applies at once, even
 mid-recording: Rust refits the window and the HUD hears `hud:look`.
+**Faster live words**, on by default, shows words about a second sooner from
+a fast preview recognizer until the accurate one catches up; it applies from
+the next recording.
 
 ```
  ╭──────────────────────────────────────────────────╮
