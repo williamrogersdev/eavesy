@@ -1,14 +1,13 @@
-//! The container's only port: it tells the Durable Object the bot is up and
-//! which phase it is in, and nothing else. Asking the bot to leave is a
-//! SIGTERM (the Container's `stop()`), never a request, so whoever can reach
-//! this port can only read the phase.
+//! The container's only port. The Durable Object's start waits for it to
+//! open (`startAndWaitForPorts`), which is how it knows the bot is up; a GET
+//! answers with the bot's phase, for debugging. Nothing changes state through
+//! it: asking the bot to leave is a SIGTERM (the Container's `stop()`).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
 
 #[derive(Clone, Default)]
 pub struct Status(Arc<Mutex<String>>);
@@ -24,11 +23,9 @@ impl Status {
 
 /// Bytes of request head read at most, and how long a client gets to send it.
 const MAX_HEAD: usize = 8 * 1024;
+/// Each connection is a task holding at most this much for at most this long,
+/// so no cap on connections is needed: a slow client can't hold up others.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(2);
-/// Connections handled at once; past that, new ones are closed straight away.
-/// Reading a tiny head is cheap, so this is far above anything legitimate
-/// (Cloudflare checks once that the port is open; nothing polls it).
-const MAX_CONNECTIONS: usize = 256;
 
 /// Reads up to the end of the request head; None if it is too big, too slow or cut off.
 async fn read_head(stream: &mut (impl AsyncReadExt + Unpin)) -> Option<String> {
@@ -66,13 +63,10 @@ pub async fn serve(port: u16, status: Status) {
             return;
         }
     };
-    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
         let Ok((mut stream, _)) = listener.accept().await else { continue };
-        let Ok(slot) = slots.clone().try_acquire_owned() else { continue }; // dropping the stream closes it
         let status = status.clone();
         tokio::spawn(async move {
-            let _slot = slot;
             let Some(head) = read_head(&mut stream).await else { return };
             let (code, body) = route(&head, &status);
             let reply = format!(
