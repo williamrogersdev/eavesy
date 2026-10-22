@@ -50,6 +50,13 @@ describe('polishDictation', () => {
     });
     expect(calls).toHaveLength(0);
   });
+
+  test('rewrites a few words when a tone was asked for', async () => {
+    const { client, calls } = fakeClient('Okay, sounds good to me!');
+    const result = await polishDictation(client, { text: 'ok sounds good', context: null, style: 'friendly', asked: true });
+    expect(calls).toHaveLength(1);
+    expect(result.polished).toBe(true);
+  });
 });
 
 test('short dictations use learned context and keep confirmed spellings', async () => {

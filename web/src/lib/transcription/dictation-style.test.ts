@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dictationStyle, effectiveDictation, withoutSwearing } from './dictation-style';
+import { dictationStyle, effectiveDictation, requestedDictation, withoutSwearing } from './dictation-style';
 
 describe('withoutSwearing', () => {
   test('drops swear words and tidies the gaps', () => {
@@ -39,4 +39,11 @@ describe('effectiveDictation', () => {
   test('defaults with no account', () => {
     expect(effectiveDictation(null)).toEqual({ style: 'natural', forAgents: false });
   });
+});
+
+test('a requested tone overrides the saved one, and only what was asked for', () => {
+  const saved = { style: 'professional' as const, forAgents: true };
+  expect(requestedDictation({}, saved)).toEqual(saved);
+  expect(requestedDictation({ style: 'friendly' }, saved)).toEqual({ style: 'friendly', forAgents: true });
+  expect(requestedDictation({ forAgents: false }, saved)).toEqual({ style: 'professional', forAgents: false });
 });
