@@ -14,7 +14,12 @@
       // and ~210 MiB (docs/plans/self-hosted-meeting-bot.md); the headroom is
       // for the apps' own scripts and any video they still send.
       "instance_type": "standard-1",
-      "max_instances": 20
+      // Bots in calls at once, across all accounts: a spending cap, not a
+      // platform limit (the account allows 1,500 vCPU). At the measured
+      // $0.05-0.08 per container-hour, 200 at once costs at most ~$16/h.
+      // Each account may have 10 out at a time (ACTIVE_BOT_LIMIT); a start
+      // that finds no room is retried for about two minutes.
+      "max_instances": 200
     }
   ],
   "d1_databases": [

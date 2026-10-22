@@ -14,6 +14,7 @@ import {
   failBotStart,
   handleBotEvent,
   handleBotSegment,
+  launchingBot,
   parseMeetingUrl,
   purgeAccountBots,
   scheduleBot,
@@ -140,6 +141,17 @@ describe('starting', () => {
     await claimBotStart(t.db, id);
     await failBotStart(t.db, id);
     expect(t.bot(id)).toMatchObject({ status: 'failed', status_detail: 'start_failed' });
+  });
+
+  test('a start is retried only while it is still claimed and waiting', async () => {
+    const t = setup();
+    const { body } = await schedule(t);
+    const id = body.bot!.id;
+    expect(await launchingBot(t.db, id)).toBeNull(); // not claimed yet
+    await claimBotStart(t.db, id);
+    expect(await launchingBot(t.db, id)).toMatchObject({ meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' });
+    await cancelBot(t.db, t.env, 'u1', id);
+    expect(await launchingBot(t.db, id)).toBeNull();
   });
 
   test('a bot asked for now can start before scheduling recorded it', async () => {
