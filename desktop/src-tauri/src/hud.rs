@@ -389,8 +389,12 @@ pub fn focus_editor_on_main(app: &AppHandle) {
 fn release_editor_on_main(app: &AppHandle) {
     if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
         crate::app_menu::return_focus();
-        *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        mark_released();
     }
+}
+
+fn mark_released() {
+    *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
 }
 
 /// A recording is stopping: if the transcript box has the keyboard, give it
@@ -401,6 +405,9 @@ pub fn release_editor(app: &AppHandle) {
     if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    // Stamped now as well as once focus moves, so a paste checking in between
+    // already waits; it waits again if the later stamp lands meanwhile.
+    mark_released();
     let _ = app.emit_to("hud", "hud:release-editor", ());
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || release_editor_on_main(&handle));
@@ -420,9 +427,12 @@ pub fn release_editor_and_wait(app: &AppHandle) {
         let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
     }
     // Stop may have handed focus back a moment ago: let it arrive.
-    let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(wait) = released.and_then(|at| settle_left(at.elapsed())) {
-        std::thread::sleep(wait);
+    loop {
+        let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
+        match released.and_then(|at| settle_left(at.elapsed())) {
+            Some(wait) => std::thread::sleep(wait),
+            None => break,
+        }
     }
 }
 

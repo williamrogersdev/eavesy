@@ -122,7 +122,7 @@ const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(180
 /// `project` picks that project's tone and words over the account's.
 pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> String {
     let Some(credential) = settings::device_credential(app) else {
-        return text.to_string();
+        return strip_fillers(text);
     };
     let started = std::time::Instant::now();
     let result = polish_with(&credential, text, project, POLISH_TIMEOUT);
@@ -143,6 +143,17 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> S
 /// and the like go, with the comma after them, and spacing is tidied. Never
 /// changes a word the user meant, so it is safe on their own corrections too.
 pub fn strip_fillers(text: &str) -> String {
+    let out = drop_fillers(text);
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// [`strip_fillers`] without capitalising what is left: for the user's own
+/// corrections, whose first letter is theirs to choose.
+pub fn drop_fillers(text: &str) -> String {
     static FILLER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)(^|[\s,.;:!?])(?:u+m+|u+h+m*|e+r+m+|h+m+|m+h*m+)[,.]?([\s,.;:!?]|$)").unwrap()
     });
@@ -161,12 +172,7 @@ pub fn strip_fillers(text: &str) -> String {
     let out = SPACE_BEFORE_PUNCT.replace_all(&out, "$1");
     let out = DOUBLED_PUNCT.replace_all(&out, "$2");
     let out = SPACES.replace_all(&out, " ");
-    let out = out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end();
-    let mut chars = out.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
+    out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
 }
 
 fn polish_with(
@@ -427,6 +433,8 @@ mod tests {
         assert_eq!(strip_fillers("when this shit um, pastes"), "When this shit pastes");
         assert_eq!(strip_fillers("Hmm. Umbrella and drums stay"), "Umbrella and drums stay");
         assert_eq!(strip_fillers("um uh"), "");
+        // A correction keeps its own first letter.
+        assert_eq!(super::drop_fillers("um, iOS build, uh, fixed"), "iOS build, fixed");
     }
 
     use super::*;

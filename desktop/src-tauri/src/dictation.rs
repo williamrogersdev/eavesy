@@ -198,7 +198,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
         let text = match corrected {
-            Some(corrected) => crate::transcribe::strip_fillers(&corrected),
+            Some(corrected) => crate::transcribe::drop_fillers(&corrected),
             None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
         };
         let mut how = if panel_wants_it(&app) {
@@ -316,7 +316,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     }
     let app = app.clone();
     let text = crate::live_edit::corrected(session_id, text).unwrap_or_else(|| text.trim().to_string());
-    let text = crate::transcribe::strip_fillers(&text);
+    let text = crate::transcribe::drop_fillers(&text);
     std::thread::spawn(move || {
         crate::hud::release_editor_and_wait(&app);
         get_launcher_out_of_the_way(&app);
