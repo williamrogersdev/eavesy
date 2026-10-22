@@ -133,7 +133,21 @@ jobs:
         run: bun run deploy:meeting-bot
       - name: Report meeting bot deploy failure
         if: steps.meeting_bot.outcome == 'failure'
-        run: echo "::warning::The meeting bot Worker did not deploy; see the step above"
+        # Wrangler only says a Containers API call failed. Ask the API directly
+        # so the log shows why: its status and error messages, never the token.
+        run: |
+          echo "::warning::The meeting bot Worker did not deploy; see the step above"
+          for path in containers/me containers/applications; do
+            echo "GET /accounts/<account>/$path"
+            curl -sS -o /tmp/cf.json -w 'HTTP %{http_code}\n' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/$path" || true
+            jq -c '{success, errors, messages}' /tmp/cf.json 2>/dev/null || head -c 500 /tmp/cf.json
+            echo
+          done
+          echo "Token:"
+          curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify | jq -c '{success, errors, status: .result.status}' || true
 
       - name: Deploy processing Worker
         run: bun run deploy:processing
