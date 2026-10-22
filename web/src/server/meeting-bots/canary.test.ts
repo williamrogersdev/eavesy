@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '@/db/schema';
 import { createFakeEnv } from '@/server/testing/fake-env';
@@ -66,7 +67,7 @@ describe('starting canaries', () => {
       ['meet', 1, CANARY_USER_ID, 'scheduled'],
       ['teams', 1, CANARY_USER_ID, 'scheduled'],
     ]);
-    expect(t.sent).toEqual(ids.map((botId) => ({ body: { kind: 'check-canary', botId }, delaySeconds: CANARY_CHECK_AFTER_SECONDS })));
+    expect(t.sent).toEqual(ids.map((botId, i) => ({ body: { kind: 'check-canary', botId, platform: ['meet', 'teams'][i] }, delaySeconds: CANARY_CHECK_AFTER_SECONDS })));
     // A second day reuses the account.
     await startCanaries(t.db, t.env);
     expect(t.sqlite.query('SELECT count(*) AS n FROM users').get()).toEqual({ n: 1 });
@@ -108,6 +109,22 @@ describe('starting canaries', () => {
     expect(t.sent.map((m) => m.body.kind)).toEqual(['check-canary']);
   });
 
+  test('a failed account write alerts instead of skipping the run', async () => {
+    const t = setup();
+    t.sqlite.run("CREATE TRIGGER no_users BEFORE INSERT ON users BEGIN SELECT RAISE(ABORT, 'D1 down'); END");
+    expect(await startCanaries(t.db, t.env)).toEqual([]);
+    expect(alerts().map((a) => [a.platform, a.reason])).toEqual([['meet', 'schedule_failed'], ['teams', 'schedule_failed']]);
+  });
+
+  test('the canary account is left alone by the deleted-data purge', async () => {
+    const t = setup({ CANARY_MEET_URL: MEET });
+    await startCanaries(t.db, t.env);
+    const { purgeDeleted } = await import('@/server/processing/cleanup');
+    await purgeDeleted(t.env, Date.now() + 365 * 24 * 60 * 60 * 1_000);
+    expect(t.sqlite.query('SELECT id FROM users').all()).toEqual([{ id: CANARY_USER_ID }]);
+    expect(t.sent.filter((m) => m.body.kind === 'purge-account')).toEqual([]);
+  });
+
   test('a database error on one platform still starts and checks the other', async () => {
     const t = setup();
     t.env.PROCESSING_QUEUE.send = (async (body: { botId: string }) => {
@@ -117,6 +134,10 @@ describe('starting canaries', () => {
     const ids = await startCanaries(t.db, t.env);
     expect(ids.map((id) => t.bot(id).platform)).toEqual(['teams']);
     expect(alerts()).toEqual([expect.objectContaining({ platform: 'meet', reason: 'schedule_failed' })]);
+    // The Meet bot was never scheduled, and its row says so.
+    const meet = alerts()[0].botId as string;
+    expect(t.bot(meet)).toMatchObject({ status: 'failed', status_detail: 'provider_unavailable' });
+    expect(t.calls).not.toContain(`schedule ${meet}`);
   });
 });
 
@@ -203,7 +224,7 @@ describe('checking a canary', () => {
     const id = await inCall(t);
     await checkCanary(t.db, t.env, id);
     expect(alerts()).toEqual([]);
-    expect(t.sent.at(-1)).toMatchObject({ body: { kind: 'check-canary', botId: id, check: 2 } });
+    expect(t.sent.at(-1)).toMatchObject({ body: { kind: 'check-canary', botId: id, platform: 'meet', check: 2 } });
     await checkCanary(t.db, t.env, id, 2);
     expect(t.calls).toContain(`stop ${id}`);
     expect(alerts()).toEqual([expect.objectContaining({ reason: 'no_speakers', botId: id })]);
@@ -219,21 +240,32 @@ describe('checking a canary', () => {
     errors = [];
     const calls = [...t.calls];
     const sent = t.sent.length;
+    const row = t.bot(id);
     await checkCanary(t.db, t.env, id, 2);
-    await failCanaryCheck(t.db, t.env, id, 'boom');
+    await failCanaryCheck(t.db, t.env, id, 'meet', 'boom');
     expect(alerts()).toEqual([]);
     expect(t.calls).toEqual(calls);
     expect(t.sent).toHaveLength(sent);
-    expect(t.bot(id)).toMatchObject({ status: 'recording', status_detail: null });
+    expect(t.bot(id)).toEqual(row);
   });
 
   test('a check that runs out of retries stops the bot and still alerts', async () => {
     const t = setup({ CANARY_MEET_URL: MEET });
     const id = await inCall(t);
-    await failCanaryCheck(t.db, t.env, id, 'D1 unavailable');
+    await failCanaryCheck(t.db, t.env, id, 'meet', 'D1 unavailable');
     expect(t.calls).toContain(`stop ${id}`);
     expect(t.bot(id)).toMatchObject({ status: 'failed', status_detail: 'canary_check_failed' });
     expect(alerts()).toEqual([expect.objectContaining({ reason: 'check_failed', botId: id, platform: 'meet' })]);
+  });
+
+  test('a failed check with no readable row still names the platform from its job', async () => {
+    const t = setup({ CANARY_TEAMS_URL: TEAMS });
+    await failCanaryCheck(t.db, t.env, 'bot_gone', 'teams', 'D1 unavailable');
+    expect(t.calls).toEqual(['stop bot_gone']);
+    expect(alerts()).toEqual([expect.objectContaining({ reason: 'check_failed', botId: 'bot_gone', platform: 'teams' })]);
+    errors = [];
+    await failCanaryCheck(t.db, t.env, 'bot_older', undefined, 'D1 unavailable');
+    expect(alerts()[0].platform).toBeUndefined();
   });
 
   test('verdicts', () => {

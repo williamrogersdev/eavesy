@@ -21,7 +21,7 @@ export type QueueMessage =
   /** Copy a notetaker bot's finished recording in and hand it to the summary pipeline. */
   | { kind: 'collect-bot-recording'; botId: string }
   /** Judge a canary bot's run (meeting-bots/canary.ts); `check` counts re-looks. */
-  | { kind: 'check-canary'; botId: string; check?: number }
+  | { kind: 'check-canary'; botId: string; platform?: 'zoom' | 'meet' | 'teams'; check?: number }
   /** Email the owner the recap of a completed meeting, if they turned recaps on. */
   | { kind: 'send-recap'; meetingId: string };
 

@@ -6,7 +6,7 @@ import type { AppDb } from '@/db/client';
 import { type EmailEnv, sendEmail } from '@/server/email/resend';
 import type { QueueMessage } from '@/server/queue';
 import type { CanaryEnv, MeetingBotControl, MeetingBotsEnv } from './control';
-import { type BotPlatform, type MeetingBot, TERMINAL_BOT_STATUSES, botById, finishBot, parseMeetingUrl } from './service';
+import { type BotPlatform, type MeetingBot, TERMINAL_BOT_STATUSES, botById, parseMeetingUrl } from './service';
 
 /**
  * The notetaker's daily canary. Joining and speaker detection lean on Meet's
@@ -46,7 +46,8 @@ const FAILURE_TEXT: Record<CanaryFailure, string> = {
 };
 
 interface CanaryAlert {
-  platform: BotPlatform;
+  /** Absent only when a failed check couldn't tell which platform it was for. */
+  platform?: BotPlatform;
   reason: CanaryFailure;
   botId?: string;
   status?: string;
@@ -63,13 +64,19 @@ export async function startCanaries(db: AppDb, env: CanaryRunEnv, now = Date.now
     for (const target of targets) await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed' });
     return [];
   }
-  await db.insert(users).values({
-    id: CANARY_USER_ID,
-    displayName: 'Eavesy canary',
-    defaultTranscriptionEngine: 'whisper',
-    createdAt: 0,
-    updatedAt: 0,
-  }).onConflictDoNothing();
+  try {
+    await db.insert(users).values({
+      id: CANARY_USER_ID,
+      displayName: 'Eavesy canary',
+      defaultTranscriptionEngine: 'whisper',
+      createdAt: 0,
+      updatedAt: 0,
+    }).onConflictDoNothing();
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'canary account write failed', error: error instanceof Error ? error.message : String(error) }));
+    for (const target of targets) await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed' });
+    return [];
+  }
 
   const started: string[] = [];
   for (const target of targets) {
@@ -105,26 +112,32 @@ async function startCanary(db: AppDb, env: CanaryRunEnv, control: MeetingBotCont
     createdAt: now,
     updatedAt: now,
   });
-  // The check is queued before the bot can start, so a bot that started is always judged and sent home.
-  await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId: id }, { delaySeconds: CANARY_CHECK_AFTER_SECONDS });
+  // Only while unclaimed: a bot that started anyway is left to its check.
+  const giveUp = async () => (await db.update(meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable', updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling'), isNull(meetingBots.statusDetail)))
+    .returning({ id: meetingBots.id })).length > 0;
+  try {
+    // Queued before the bot can start, so a bot that started is always judged and sent home.
+    await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId: id, platform: target.platform }, { delaySeconds: CANARY_CHECK_AFTER_SECONDS });
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'canary check could not be queued', botId: id, error: error instanceof Error ? error.message : String(error) }));
+    await giveUp();
+    await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
+    return null;
+  }
   try {
     await control.schedule(id, null);
   } catch (error) {
     console.error(JSON.stringify({ message: 'canary schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
-    // Only while unclaimed: a bot that started anyway is left to its check.
-    const failed = await db.update(meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable', updatedAt: Date.now() })
-      .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling'), isNull(meetingBots.statusDetail)))
-      .returning({ id: meetingBots.id });
-    if (failed.length) {
-      await control.stop(id).catch(() => undefined); // its claim now fails; this covers anything already running
-      await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
-      return null;
-    }
-    return id;
+    if (!(await giveUp())) return id;
+    await stopBot(env, id); // its claim now fails; this covers anything already running
+    await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
+    return null;
   }
-  // The bot may already have claimed its start; that's further along.
+  // The bot may already have claimed its start; that's further along. Its check doesn't need this.
   await db.update(meetingBots).set({ status: 'scheduled', updatedAt: Date.now() })
-    .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling')));
+    .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling')))
+    .catch((error: unknown) => console.error(JSON.stringify({ message: 'canary status write failed', botId: id, error: error instanceof Error ? error.message : String(error) })));
   console.log(JSON.stringify({ message: 'canary started', botId: id, platform: target.platform }));
   return id;
 }
@@ -144,7 +157,7 @@ export async function checkCanary(db: AppDb, env: CanaryRunEnv, botId: string, c
   if (bot.statusDetail === 'provider_unavailable') return; // never started; alerted then
   let verdict = canaryVerdict(bot);
   if (verdict === 'pending' && check < MAX_CHECKS) {
-    await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId, check: check + 1 }, { delaySeconds: CANARY_RECHECK_SECONDS });
+    await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId, platform: bot.platform, check: check + 1 }, { delaySeconds: CANARY_RECHECK_SECONDS });
     return;
   }
   if (verdict === 'pending') verdict = 'no_speakers';
@@ -159,13 +172,13 @@ export async function checkCanary(db: AppDb, env: CanaryRunEnv, botId: string, c
 }
 
 /** The check job ran out of retries: still say so, and don't leave the bot in the meeting. */
-export async function failCanaryCheck(db: AppDb, env: CanaryRunEnv, botId: string, error: string) {
+export async function failCanaryCheck(db: AppDb, env: CanaryRunEnv, botId: string, platform: BotPlatform | undefined, error: string) {
   console.error(JSON.stringify({ message: 'canary check failed', botId, error: error.slice(0, 300) }));
   const bot = await botById(db, botId).catch(() => undefined);
   if (bot && !bot.canary) return;
   if (bot) await sendHome(db, env, bot, 'canary_check_failed');
   else await stopBot(env, botId);
-  await raiseCanaryAlert(env, { platform: bot?.platform ?? 'meet', reason: 'check_failed', botId, status: bot?.status, statusDetail: bot?.statusDetail });
+  await raiseCanaryAlert(env, { platform: bot?.platform ?? platform, reason: 'check_failed', botId, status: bot?.status, statusDetail: bot?.statusDetail });
 }
 
 async function stopBot(env: CanaryRunEnv, botId: string) {
@@ -177,7 +190,9 @@ async function stopBot(env: CanaryRunEnv, botId: string) {
 async function sendHome(db: AppDb, env: CanaryRunEnv, bot: MeetingBot, detail: string) {
   if (TERMINAL_BOT_STATUSES.includes(bot.status)) return;
   await stopBot(env, bot.id);
-  await finishBot(db, bot.id, 'failed', bot.statusDetail ?? detail);
+  // Only from the status read: a bot that moved on since is judged as it is now.
+  await db.update(meetingBots).set({ status: 'failed', statusDetail: bot.statusDetail ?? detail, updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, bot.status)));
 }
 
 /**
@@ -186,7 +201,7 @@ async function sendHome(db: AppDb, env: CanaryRunEnv, bot: MeetingBot, detail: s
  * Never the meeting link: it would let anyone into the test meeting.
  */
 export async function raiseCanaryAlert(env: CanaryRunEnv, alert: CanaryAlert) {
-  const platform = PLATFORMS.find((p) => p.platform === alert.platform)?.label ?? alert.platform;
+  const platform = PLATFORMS.find((p) => p.platform === alert.platform)?.label ?? 'an unknown platform';
   console.error(JSON.stringify({ message: 'meeting bot canary failed', alert: 'meeting_bot_canary', ...alert }));
   if (!env.RESEND_API_KEY || !env.EMAIL_FROM || !env.CANARY_ALERT_EMAIL) return;
   const lines = [

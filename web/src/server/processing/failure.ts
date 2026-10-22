@@ -47,7 +47,7 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       await failRecap(db, message.meetingId, reason);
       return;
     case 'check-canary':
-      await failCanaryCheck(db, env, message.botId, reason);
+      await failCanaryCheck(db, env, message.botId, message.platform, reason);
       return;
     case 'rolling-summarize':
     case 'agent-transcript':
