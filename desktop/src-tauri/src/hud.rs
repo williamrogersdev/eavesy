@@ -228,26 +228,45 @@ pub fn fit_on_main(app: &AppHandle) {
 /// The finished dictation whose transcript drawer is open under the pointer.
 static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// The state as the HUD gets it: with `opensItself`, so the renderer draws
-/// the drawer exactly when this side sizes the window for it, from one rule.
+/// The state as the HUD gets it, with this side's reading of it: `receipt`
+/// (what happened to a finished dictation's words) and `opensItself`. The
+/// renderer draws from these instead of working them out again, so it draws
+/// the drawer exactly when the window is sized for it.
 pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
-    let mut value = serde_json::to_value(state).unwrap_or_default();
+    let mut value = match serde_json::to_value(state) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("capture control: could not send the state: {error}");
+            return serde_json::Value::Null;
+        }
+    };
     if let Some(object) = value.as_object_mut() {
+        object.insert("receipt".into(), receipt(state).into());
         object.insert("opensItself".into(), opens_by_itself(state, prefs(app).preview).into());
     }
     value
 }
 
+/// What a finished dictation's pill says happened to its words: pasted,
+/// copied, or blocked (copied, and Accessibility is needed to paste). None
+/// for anything that isn't a finished dictation with words.
+fn receipt(state: &HudState) -> Option<&'static str> {
+    let words = state.message.as_deref().is_some_and(|text| !text.trim().is_empty());
+    if state.phase != Phase::Done || matches!(state.mode.as_deref(), Some("image" | "video")) || !words {
+        return None;
+    }
+    Some(match state.notice.as_deref() {
+        None => "pasted",
+        notice if notice == crate::dictation::Delivery::CopiedNoAccessibility.notice() => "blocked",
+        Some(_) => "copied",
+    })
+}
+
 /// A finished dictation opens straight into its drawer when the words are
-/// shown after dictation, unless it is waiting on Accessibility: then the
+/// shown after dictation, unless it is blocked on Accessibility: then the
 /// pill keeps its Allow button. Without a recording there is nothing to edit.
 fn opens_by_itself(state: &HudState, preview: bool) -> bool {
-    preview
-        && state.phase == Phase::Done
-        && state.session_id.is_some()
-        && !matches!(state.mode.as_deref(), Some("image" | "video"))
-        && state.message.as_deref().is_some_and(|text| !text.trim().is_empty())
-        && !state.notice.as_deref().is_some_and(|notice| notice.contains("Accessibility"))
+    preview && state.session_id.is_some() && matches!(receipt(state), Some("pasted" | "copied"))
 }
 
 fn peeking(state: &HudState) -> bool {
@@ -651,7 +670,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, opens_by_itself, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -683,8 +702,11 @@ mod tests {
         assert!(!opens_by_itself(&pasted, false));
         let copied = HudState { notice: Some("Copied — press ⌘V to paste".into()), ..pasted.clone() };
         assert!(opens_by_itself(&copied, true));
-        let blocked = HudState { notice: Some("Copied — allow Accessibility to paste automatically".into()), ..pasted };
+        let blocked = HudState { notice: Some("Copied — allow Accessibility to paste automatically".into()), ..pasted.clone() };
         assert!(!opens_by_itself(&blocked, true));
+        assert_eq!(receipt(&pasted), Some("pasted"));
+        assert_eq!(receipt(&copied), Some("copied"));
+        assert_eq!(receipt(&blocked), Some("blocked"));
         let empty = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("audio"), Some("  ")) };
         assert!(!opens_by_itself(&empty, true));
         let shot = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("image"), None) };

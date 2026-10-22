@@ -30,8 +30,9 @@ interface HudState {
   message: string | null;
   /** Where the words went when they were not pasted ("Copied — …"). */
   notice?: string | null;
-  /** A finished dictation that opens straight into its drawer. Rust decides,
-   * as it sizes the window for it, so the two never disagree. */
+  /** What happened to a finished dictation's words, and whether it opens
+   * straight into its drawer. Rust decides both, as it sizes the window. */
+  receipt?: Receipt | null;
   opensItself?: boolean;
 }
 
@@ -122,9 +123,7 @@ function lookFrom(value: unknown): Look {
 
 /** What the pill says happened to a finished dictation's words, or null when it isn't one. */
 function receiptFor(state: HudState): Receipt | null {
-  if (state.phase !== 'done' || state.mode === 'image' || state.mode === 'video' || !state.message?.trim()) return null;
-  if (state.notice?.includes('Accessibility')) return 'blocked';
-  return state.notice ? 'copied' : 'pasted';
+  return state.phase === 'done' && state.message?.trim() ? state.receipt ?? null : null;
 }
 
 /** "16 words", for the Pasted stamp. */
@@ -166,6 +165,8 @@ function browserPreviewState(): HudState | null {
     sessionId: params.has('opening') ? null : 'preview',
     mode,
     notice: params.get('notice'),
+    // Rust's reading of a finished dictation (`hud::shown`), stood in for here.
+    receipt: phase !== 'done' || mode !== 'audio' ? null : params.get('notice')?.includes('Accessibility') ? 'blocked' : params.has('notice') ? 'copied' : 'pasted',
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
     startedAtMs: Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
