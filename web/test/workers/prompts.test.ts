@@ -63,6 +63,9 @@ describe('/api/prompts', () => {
     await send('PATCH', { used: true }, prompt.id);
     const keys = await testEnv.DB.prepare('SELECT key FROM rate_limits').all<{ key: string }>();
     expect(keys.results.map((row) => row.key.split(':')[0]).sort()).toEqual(['prompts', 'prompts-used']);
+    await send('PATCH', { used: true, name: 'x' }, prompt.id);
+    const edits = await testEnv.DB.prepare(`SELECT count FROM rate_limits WHERE key LIKE 'prompts:%'`).first<{ count: number }>();
+    expect(edits?.count).toBe(2);
   });
 
   it('refuses a prompt without a name or text', async () => {
@@ -71,12 +74,12 @@ describe('/api/prompts', () => {
     expect((await send('POST', { name: 'x', body: 'y'.repeat(PROMPT_LIMITS.body + 1) })).status).toBe(400);
   });
 
-  it('renames the command with the prompt, keeps it when only the text changes, and counts uses', async () => {
+  it('keeps the command through renames and text changes, and counts uses', async () => {
     const { prompt } = (await send('POST', { name: 'Plan', body: 'Make a plan.' })).body;
     const edited = await send('PATCH', { body: 'Make a careful plan.' }, prompt.id);
     expect(edited.body.prompt).toMatchObject({ slug: 'plan', body: 'Make a careful plan.' });
     const renamed = await send('PATCH', { name: 'Write the plan' }, prompt.id);
-    expect(renamed.body.prompt.slug).toBe('write-the-plan');
+    expect(renamed.body.prompt).toMatchObject({ name: 'Write the plan', slug: 'plan' });
     const used = await send('PATCH', { used: true }, prompt.id);
     expect(used.body.prompt.useCount).toBe(1);
     expect(used.body.prompt.lastUsedAt).toEqual(expect.any(Number));

@@ -30,10 +30,10 @@ export async function getBySlug(db: AppDb, userId: string, slug: string): Promis
   return row ? toSavedPrompt(row) : null;
 }
 
-async function takenSlugs(db: AppDb, userId: string, except?: string): Promise<Set<string>> {
+async function takenSlugs(db: AppDb, userId: string): Promise<Set<string>> {
   const rows = await db.select({ id: savedPrompts.id, slug: savedPrompts.slug }).from(savedPrompts)
     .where(eq(savedPrompts.userId, userId));
-  return new Set(rows.filter((row) => row.id !== except).map((row) => row.slug));
+  return new Set(rows.map((row) => row.slug));
 }
 
 export class TooManyPrompts extends Error {}
@@ -54,16 +54,16 @@ function isUniqueViolation(error: unknown): boolean {
  * Picks a free slug and writes it, picking again when a concurrent request
  * took that slug in between: the unique index has the last word.
  */
-async function withFreeSlug<T>(db: AppDb, userId: string, name: string, except: string | undefined, write: (slug: string) => Promise<T>): Promise<T> {
+async function withFreeSlug<T>(db: AppDb, userId: string, name: string, write: (slug: string) => Promise<T>): Promise<T> {
   for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
-    try { return await write(freeSlug(promptSlug(name), await takenSlugs(db, userId, except))); }
+    try { return await write(freeSlug(promptSlug(name), await takenSlugs(db, userId))); }
     catch (error) { if (!isUniqueViolation(error)) throw error; }
   }
   throw new SlugConflict('slug_conflict');
 }
 
 export async function create(db: AppDb, userId: string, fields: { name: string; body: string }): Promise<SavedPrompt> {
-  return withFreeSlug(db, userId, fields.name, undefined, async (slug) => {
+  return withFreeSlug(db, userId, fields.name, async (slug) => {
     const now = Date.now();
     // The limit check and the insert are one statement, so concurrent creates can't pass it together.
     const rows = await db.insert(savedPrompts).select(sql`
@@ -75,17 +75,18 @@ export async function create(db: AppDb, userId: string, fields: { name: string; 
   });
 }
 
-/** Renaming a prompt renames its slash command too. Null when it isn't this account's. */
+/**
+ * Changes a prompt's name or text. The slug stays as it was made: it is the
+ * slash command, and a renamed prompt must keep answering to it rather than
+ * free it for another prompt. Null when it isn't this account's.
+ */
 export async function update(db: AppDb, userId: string, id: string, fields: { name?: string; body?: string }): Promise<SavedPrompt | null> {
-  const write = async (slug?: string) => {
-    const patch: Partial<typeof savedPrompts.$inferInsert> = { updatedAt: Date.now() };
-    if (fields.body !== undefined) patch.body = fields.body;
-    if (fields.name !== undefined) { patch.name = fields.name; patch.slug = slug; }
-    const row = (await db.update(savedPrompts).set(patch)
-      .where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId))).returning())[0];
-    return row ? toSavedPrompt(row) : null;
-  };
-  return fields.name === undefined ? write() : withFreeSlug(db, userId, fields.name, id, write);
+  const patch: Partial<typeof savedPrompts.$inferInsert> = { updatedAt: Date.now() };
+  if (fields.body !== undefined) patch.body = fields.body;
+  if (fields.name !== undefined) patch.name = fields.name;
+  const row = (await db.update(savedPrompts).set(patch)
+    .where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId))).returning())[0];
+  return row ? toSavedPrompt(row) : null;
 }
 
 /** Counts a paste or slash-command run, so the most used come first. */

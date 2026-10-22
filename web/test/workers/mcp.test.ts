@@ -358,6 +358,9 @@ Then debug each one.', ?, ?),
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
     expect((await rpc(token, 'prompts/list')).result?.prompts).toEqual([]);
     expect((await rpc(token, 'prompts/get', { name: 'focus' })).error?.message).toContain('can’t read your prompts');
+    expect((await rpc(token, 'prompts/get', { name: 'nope' })).error?.message).toContain('can’t read your prompts');
+    const counted = await testEnv.DB.prepare(`SELECT use_count FROM saved_prompts WHERE id = 'prm_2'`).first<{ use_count: number }>();
+    expect(counted?.use_count).toBe(0);
   });
 
   it('refuse another user’s prompt and one that doesn’t exist', async () => {

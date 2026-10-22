@@ -28,8 +28,8 @@ function PromptPage({ prompt, state, onBack }: {
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;
   const ready = name.trim() !== '' && body.trim() !== '' && changed;
-  // The slug the server will give it, unless another prompt already has that one.
-  const slug = prompt && name.trim() === prompt.name ? prompt.slug : promptSlug(name);
+  // A saved prompt keeps its slug through renames; a new one gets this, numbered if taken.
+  const slug = prompt ? prompt.slug : promptSlug(name);
 
   const save = async () => {
     if (!ready || saving) return;
@@ -67,7 +67,6 @@ function PromptPage({ prompt, state, onBack }: {
             />
             <p className="ev-set-hint">
               Find it from the panel’s search. In Claude Code it’s <code>{claudeCodeCommand(slug)}</code>.
-              {prompt && slug !== prompt.slug && ' Renaming it changes the slash command.'}
             </p>
           </div>
           <div className="ev-field">

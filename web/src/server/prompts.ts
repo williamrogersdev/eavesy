@@ -41,22 +41,19 @@ export async function promptsRequest(request: Request, db: AppDb, actor: Resolve
   if (request.method !== 'PATCH') return json({ error: 'method_not_allowed' }, 405);
   const parsed = updateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: 'invalid_request' }, 400);
-  let prompt;
-  try {
-    prompt = 'used' in parsed.data
-      ? await prompts.markUsed(db, actor.userId, id)
-      : await prompts.update(db, actor.userId, id, parsed.data);
-  } catch (error) {
-    if (error instanceof prompts.SlugConflict) return json({ error: 'slug_conflict' }, 409);
-    throw error;
-  }
+  const prompt = 'used' in parsed.data
+    ? await prompts.markUsed(db, actor.userId, id)
+    : await prompts.update(db, actor.userId, id, parsed.data);
   return prompt ? json({ prompt }) : json({ error: 'not_found' }, 404);
 }
 
-/** Whether a PATCH only counts a paste. Reads a copy, so the handler can still read the body. */
+/**
+ * Whether a PATCH only counts a paste: exactly `{ used: true }`, so an edit
+ * can't ride on the looser budget. Reads a copy, so the handler can still read the body.
+ */
 async function countsUse(request: Request): Promise<boolean> {
   const body: unknown = await request.clone().json().catch(() => null);
-  return isRecord(body) && body.used === true;
+  return isRecord(body) && body.used === true && Object.keys(body).length === 1;
 }
 
 /** `/api/prompts` and `/api/prompts/$id`: signed in, and writes rate-limited per device. */
