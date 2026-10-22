@@ -82,6 +82,7 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
     if now.phase != Phase::Recording || now.session_id.as_deref().is_some_and(|id| id != session_id) {
         return;
     }
+    release_editor(app);
     set_state(app, HudState {
         phase: Phase::Transcribing,
         session_id: Some(session_id.to_string()),
@@ -383,6 +384,37 @@ pub fn focus_editor_on_main(app: &AppHandle) {
 fn release_editor_on_main(app: &AppHandle) {
     if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
         crate::app_menu::return_focus();
+    }
+}
+
+/// A recording is stopping: if the transcript box has the keyboard, give it
+/// back to the app the user was in. Otherwise the paste, and the user's own
+/// ⌘V after "Copied", land in Eavesy's box instead of where they were typing.
+/// Safe on any thread; does not wait.
+pub fn release_editor(app: &AppHandle) {
+    if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let _ = app.emit_to("hud", "hud:release-editor", ());
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || release_editor_on_main(&handle));
+}
+
+/// [`release_editor`], then waits for focus to reach the other app so a paste
+/// right after it lands there. Never call on the main thread.
+pub fn release_editor_and_wait(app: &AppHandle) {
+    if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let _ = app.emit_to("hud", "hud:release-editor", ());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        release_editor_on_main(&handle);
+        let _ = tx.send(());
+    });
+    if rx.recv_timeout(std::time::Duration::from_millis(500)).is_ok() {
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
 }
 

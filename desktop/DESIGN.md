@@ -491,8 +491,11 @@ went out sit on a white sheet below it, editable in place, beside Copy,
 from the menu bar). Screenshots stamp **Snapped** above the thumbnail; saves stamp
 **Saved**. Failures read "Didn't catch that" in warn, never coral. The HUD
 collapses to the pill 3.5s (pill) or 10s (result) after the result, 2.5s
-after the pointer leaves it, or on Esc. It stays while the pointer is over it,
-while you edit, and while a correction is saving. A HUD low on the screen
+after the pointer leaves it, or on Esc. It stays while the pointer is over it
+(up to 30s after it last moves), while you edit, and while a correction is
+saving. Stopping a recording hands the keyboard back to the app you were in
+before anything is pasted, even if you were editing the live words, so the
+paste (or your own ⌘V after Copied) never lands in Eavesy's own box. A HUD low on the screen
 keeps its bottom edge when it grows, so it never moves away from where it was.
 
 When a correction reaches the dictionary (typed in the result, or fixed in

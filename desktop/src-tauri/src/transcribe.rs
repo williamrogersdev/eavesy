@@ -124,10 +124,16 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> S
     let Some(credential) = settings::device_credential(app) else {
         return text.to_string();
     };
-    match polish_with(&credential, text, project, POLISH_TIMEOUT) {
-        Ok(polished) => polished,
+    let started = std::time::Instant::now();
+    let result = polish_with(&credential, text, project, POLISH_TIMEOUT);
+    let polish_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(polished) => {
+            tracing::info!(polish_ms, "dictation polished in {polish_ms} ms");
+            polished
+        }
         Err(error) => {
-            eprintln!("dictation: typing the words as heard ({error})");
+            tracing::warn!(polish_ms, "dictation: typing the words as heard after {polish_ms} ms ({error})");
             text.to_string()
         }
     }
