@@ -7,8 +7,8 @@
 //!   INGEST_URL   where segments and events go (default http://eavesy.internal,
 //!                which the container's Worker intercepts),
 //!   INGEST_TOKEN optional bearer token, for running against a plain HTTP server,
-//!   CHROME_PATH  (default chromium), CONTROL_PORT (default 8080),
-//!   CONTROL_TOKEN bearer token POST /leave must carry, when set.
+//!   CHROME_PATH  (default chromium), CONTROL_PORT (default 8080).
+//! SIGTERM (how the Durable Object stops it) makes it leave and deliver.
 
 mod audio;
 mod cdp;
@@ -40,7 +40,6 @@ struct Config {
     ingest_token: Option<String>,
     chrome: String,
     control_port: u16,
-    control_token: Option<String>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -58,7 +57,6 @@ fn config() -> Result<Config, String> {
         ingest_token: env("INGEST_TOKEN"),
         chrome: env("CHROME_PATH").unwrap_or_else(|| "chromium".into()),
         control_port: env("CONTROL_PORT").and_then(|p| p.parse().ok()).unwrap_or(8080),
-        control_token: env("CONTROL_TOKEN"),
     })
 }
 
@@ -98,7 +96,7 @@ async fn main() {
     };
     let (leave_tx, leave_rx) = watch::channel(false);
     let status = control::Status::default();
-    tokio::spawn(control::serve(cfg.control_port, cfg.control_token.clone(), leave_tx.clone(), status.clone()));
+    tokio::spawn(control::serve(cfg.control_port, status.clone()));
     // The platform stops a container with SIGTERM: leave and deliver what's
     // left, exactly as for a leave request.
     let term = leave_tx.clone();
