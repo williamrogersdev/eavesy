@@ -176,6 +176,16 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'stores the key on the caller' },
   },
   '/api/contact': { POST: { public: 'Public contact form, rate limited per IP' } },
+  '/api/devices/captures/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/devices/captures' }, excludes: [CAPTURE] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a capture owned by the calling device’s user' },
+  },
+  '/api/devices/captures/$id': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/devices/captures/${CAPTURE}`, params: { id: CAPTURE } }, status: 404 },
+    },
+  },
   '/api/devices/me': {
     GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'describes the calling device' },
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'signs out the calling device' },
@@ -494,6 +504,7 @@ async function seedOwner() {
   await insertMeeting({ id: MEETING, userId: OWNER, status: 'complete', audioR2Key: AUDIO_KEY });
   await insertMeeting({ id: RECORDING, userId: OWNER, status: 'recording' });
   await testEnv.AUDIO_BUCKET.put(AUDIO_KEY, new Uint8Array([1, 2, 3]));
+  await testEnv.AUDIO_BUCKET.put(`users/${OWNER}/captures/${CAPTURE}.png`, new Uint8Array([1, 2, 3]), { httpMetadata: { contentType: 'image/png' } });
   await testEnv.DB.batch([
     testEnv.DB.prepare("INSERT INTO recording_imports(meeting_id,user_id,fingerprint,segment_count,duration_ms,state,created_at) VALUES (?,?,'owner-file',1,1000,'processing',?)").bind(MEETING,OWNER,now),
     testEnv.DB.prepare(

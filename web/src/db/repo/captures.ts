@@ -1,7 +1,7 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { captures } from '../schema';
+import { captures, devices } from '../schema';
 
 export type Capture = typeof captures.$inferSelect;
 export type CaptureKind = Capture['kind'];
@@ -26,6 +26,9 @@ export async function create(
     transcript?: string | null;
     transcriptStatus?: TranscriptStatus;
     transcriptError?: string | null;
+    clientCaptureId?: string | null;
+    deviceId?: string | null;
+    createdAt?: number;
   },
 ): Promise<string> {
   const id = pid('cap');
@@ -47,10 +50,58 @@ export async function create(
     transcriptStatus: args.transcriptStatus ?? 'none',
     transcriptError: args.transcriptError ?? null,
     folderId: args.folderId ?? null,
-    createdAt: now,
+    clientCaptureId: args.clientCaptureId ?? null,
+    deviceId: args.deviceId ?? null,
+    createdAt: args.createdAt ?? now,
     updatedAt: now,
   });
   return id;
+}
+
+/** A desktop upload already received under this Mac-side id, deleted or not. */
+export async function getByClientId(
+  db: AppDb,
+  args: { userId: string; clientCaptureId: string },
+): Promise<Capture | null> {
+  const rows = await db
+    .select()
+    .from(captures)
+    .where(and(eq(captures.userId, args.userId), eq(captures.clientCaptureId, args.clientCaptureId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** Images another device can bring into its history: everything not uploaded by `exceptDeviceId`. */
+export async function listImagesForDevice(
+  db: AppDb,
+  args: { userId: string; exceptDeviceId?: string; limit: number; offset: number },
+) {
+  return await db
+    .select({
+      id: captures.id,
+      clientCaptureId: captures.clientCaptureId,
+      title: captures.title,
+      contentType: captures.contentType,
+      bytes: captures.bytes,
+      transcript: captures.transcript,
+      createdAt: captures.createdAt,
+      deviceName: devices.name,
+    })
+    .from(captures)
+    .leftJoin(devices, eq(devices.id, captures.deviceId))
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'image'),
+        isNull(captures.deletedAt),
+        args.exceptDeviceId
+          ? or(isNull(captures.deviceId), ne(captures.deviceId, args.exceptDeviceId))
+          : undefined,
+      ),
+    )
+    .orderBy(desc(captures.createdAt), desc(captures.id))
+    .limit(args.limit)
+    .offset(args.offset);
 }
 
 export async function setTranscript(

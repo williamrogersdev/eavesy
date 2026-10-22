@@ -5,6 +5,7 @@ mod audio;
 mod audio_upload;
 mod base_url;
 mod captions;
+mod capture_sync;
 mod live_transcript;
 mod live_edit;
 mod visual;
