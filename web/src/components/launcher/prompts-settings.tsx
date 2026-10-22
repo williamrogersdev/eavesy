@@ -28,8 +28,9 @@ function PromptPage({ prompt, state, onBack }: {
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;
   const ready = name.trim() !== '' && body.trim() !== '' && changed;
-  // A saved prompt keeps its slug through renames; a new one gets the next free one.
-  const slug = prompt ? prompt.slug : freeSlug(promptSlug(name), new Set(state.prompts?.map((p) => p.slug)));
+  // A saved prompt keeps its slug through renames; a new one gets the next free one,
+  // which is only known once the list has loaded.
+  const slug = prompt ? prompt.slug : state.prompts ? freeSlug(promptSlug(name), new Set(state.prompts.map((p) => p.slug))) : null;
 
   const save = async () => {
     if (!ready || saving) return;
@@ -66,7 +67,7 @@ function PromptPage({ prompt, state, onBack }: {
               onChange={(e) => setName(e.target.value)}
             />
             <p className="ev-set-hint">
-              Find it from the panel’s search. In Claude Code it’s <code>{claudeCodeCommand(slug)}</code>.
+              Find it from the panel’s search.{slug && <> In Claude Code it’s <code>{claudeCodeCommand(slug)}</code>.</>}
             </p>
           </div>
           <div className="ev-field">
@@ -81,7 +82,7 @@ function PromptPage({ prompt, state, onBack }: {
               onChange={(e) => setBody(e.target.value)}
             />
             <p className="ev-set-hint">
-              Put <code>{DETAILS_SLOT}</code> where a word typed after the slash command should go, like <code>{claudeCodeCommand(slug)} billing</code>. Without it, the word goes at the end. Pasting from the panel leaves it blank.
+              Put <code>{DETAILS_SLOT}</code> where a word typed after the slash command should go, like <code>{claudeCodeCommand(slug ?? promptSlug(name))} billing</code>. Without it, the word goes at the end. Pasting from the panel leaves it blank.
             </p>
           </div>
           <div className="flex items-center justify-end gap-2">

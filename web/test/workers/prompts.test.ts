@@ -57,7 +57,9 @@ describe('/api/prompts', () => {
     expect(results.every((r) => r.status === 201)).toBe(true);
     const slugs = results.map((r) => r.body.prompt.slug);
     expect(new Set(slugs).size).toBe(20);
-    expect(slugs.every((slug) => slug.startsWith('plan'))).toBe(true);
+    // Numbered in order, with a random suffix only as a last resort.
+    expect(slugs.every((slug) => /^plan(-\d+)?(-[0-9a-f]{6})?$/.test(slug))).toBe(true);
+    expect(slugs).toEqual(expect.arrayContaining(['plan', 'plan-2']));
   });
 
   it('counts pastes on their own rate limit, apart from edits', async () => {
