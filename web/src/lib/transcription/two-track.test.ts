@@ -109,13 +109,17 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'something', noSpeechProb: 0.9 }, lenient)).toBe(true);
   });
 
-  test('a line made only of stock phrases counts as one', () => {
-    expect(isHallucination({ text: 'Thank you. Thank you.' })).toBe(true);
-    expect(isHallucination({ text: 'Thank you. Here we go.' })).toBe(true);
-    expect(isHallucination({ text: 'Thank you. Let’s go!' })).toBe(true);
-    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!' })).toBe(true);
-    expect(isHallucination({ text: 'Thank you. Send the deck tonight.' })).toBe(false);
-    expect(isHallucination({ text: "Here we go, that's the plan." })).toBe(false);
+  test('on suspect audio, a line made only of stock phrases counts as one', () => {
+    const suspect = { suspect: true };
+    expect(isHallucination({ text: 'Thank you. Thank you.' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Here we go.' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Let’s go!' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Send the deck tonight.' }, suspect)).toBe(false);
+    expect(isHallucination({ text: "Here we go, that's the plan." }, suspect)).toBe(false);
+    // Elsewhere real phrases like these are kept, and only exact stock lines count.
+    expect(isHallucination({ text: "Let's go.", noSpeechProb: 0.5 })).toBe(false);
+    expect(isHallucination({ text: 'Thank you. Thank you.' })).toBe(false);
     // A mic-only note still keeps stock phrases Whisper did not doubt.
     expect(isHallucination({ text: 'Thank you. Thank you.' }, { lenient: true })).toBe(false);
   });

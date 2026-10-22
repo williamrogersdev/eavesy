@@ -40,6 +40,8 @@ export function isLearnableSpelling(from: string, to: string): boolean {
     while (shared < shortest && a[shared] === b[shared]) shared++;
     if (shared >= Math.max(shortest <= 3 ? 3 : 2, shortest - 2)) return false;
   }
+  // Too different in length to be within the limit: skip the distance.
+  if (Math.abs(a.length - b.length) / Math.max(a.length, b.length) > 0.6) return false;
   return editDistance(a, b) / Math.max(a.length, b.length) <= 0.6;
 }
 

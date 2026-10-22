@@ -75,15 +75,18 @@ export async function transcribeAudioFile(opts: {
     if (again.segments.length > 0) first = again;
     else language = fixed;
   }
-  const lenient = opts.voiceNote && opts.heardOnDevice !== false;
-  const heard = keepHeard(first, { lenient, glossary: opts.vocabulary });
+  // The Mac sends a clip it heard no words in only when it had sound, so it is
+  // suspect, not measured quiet: stock phrases are judged on Whisper's score.
+  const suspect = opts.heardOnDevice === false;
+  const lenient = opts.voiceNote && !suspect;
+  const heard = keepHeard(first, { lenient, suspect, glossary: opts.vocabulary });
   if (heard.segments.length > 0 || !opts.voiceNote) return heard;
-  return keepHeard(await run(false), { lenient: false, glossary: opts.vocabulary });
+  return keepHeard(await run(false), { lenient: false, suspect, glossary: opts.vocabulary });
 }
 
 function keepHeard(
   result: FileTranscriptionResult,
-  opts: { lenient?: boolean; glossary?: readonly string[] },
+  opts: { lenient?: boolean; suspect?: boolean; glossary?: readonly string[] },
 ): FileTranscriptionResult {
   const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };

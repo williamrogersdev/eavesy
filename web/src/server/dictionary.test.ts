@@ -63,6 +63,16 @@ describe('dictionary feedback API and persistence', () => {
     expect((await dictionary.list(t.db, 'u1')).map(e => e.to).sort()).toEqual(['Eavesy', 'full', 'kept']);
     expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.to).sort()).toEqual(['Eavesy', 'full']);
   });
+  test('a word added by hand stays manual when an edit relearns it, and legacy rows take the new origin', async () => {
+    const t = setup();
+    t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, created_at, updated_at) VALUES
+      ('w1', 'u1', 'yvesy', 'Yvesy', 'Eavesy', 1, 1), ('w2', 'u1', 'curry', 'curry', 'Curry', 1, 1)`);
+    await dictionary.remember(t.db, 'u1', [{ from: 'Yvesy', to: 'Eavesi' }], 'learned');
+    await dictionary.remember(t.db, 'u1', [{ from: 'curry', to: 'Currie' }], 'manual');
+    await dictionary.remember(t.db, 'u1', [{ from: 'curry', to: 'Curie' }], 'learned');
+    const origins = Object.fromEntries((await dictionary.list(t.db, 'u1')).map(e => [e.sourceKey, e.origin]));
+    expect(origins).toEqual({ yvesy: 'learned', curry: 'manual' });
+  });
 });
 
 test('a bulk paste adds every valid replacement and counts the rest as skipped', async () => {

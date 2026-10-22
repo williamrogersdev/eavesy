@@ -54,11 +54,6 @@ pub const QUICK_PASTE_SLACK_MS: i64 = 3_000;
 /// A mic level at or above this is sound: the capture engine's own bar for an
 /// active 30 ms frame (about -48 dBFS), below quiet speech at arm's length.
 pub const ACTIVE_RMS: f64 = 0.004;
-/// The engine reports the level about every 100 ms, each reading one buffer,
-/// so the loud readings sample how much of the clip had sound in it.
-const LEVEL_EVERY_MS: i64 = 100;
-/// Less sound than this is a silent clip: the server's bar for a silent track.
-const SILENT_ACTIVE_MS: i64 = 500;
 /// Fewer readings than this say too little about a clip to call it silent.
 const MIN_LEVEL_READINGS: i64 = 5;
 
@@ -142,6 +137,7 @@ impl CaptionLog {
 
     /// One `level` reading from the capture engine.
     pub fn note_level(&mut self, rms: f64) {
+        if !rms.is_finite() { return; }
         self.levels += 1;
         if rms >= ACTIVE_RMS { self.loud_levels += 1; }
         self.loudest = self.loudest.max(rms);
@@ -149,7 +145,9 @@ impl CaptionLog {
 
     /// Whether the clip was measured and had next to no sound in it.
     fn silent(&self) -> bool {
-        self.levels >= MIN_LEVEL_READINGS && self.loud_levels * LEVEL_EVERY_MS < SILENT_ACTIVE_MS
+        // Not one loud reading: anything louder goes to Whisper, which filters
+        // invented phrases itself, rather than risk dropping quiet words.
+        self.levels >= MIN_LEVEL_READINGS && self.loud_levels == 0
     }
 
     /// Whether the recognizer ran to a clean finish over the whole clip and
@@ -670,9 +668,9 @@ mod tests {
 
     #[test]
     fn a_silent_clip_with_no_words_pastes_nothing() {
-        // 3 s of room tone, one brief click above the bar.
+        // 3 s of room tone; a bad reading says nothing either way.
         let mut levels = vec![0.001; 30];
-        levels[10] = 0.02;
+        levels[10] = f64::NAN;
         let mut log = with_levels(&levels);
         assert!(matches!(log.quick_paste(3_000), Paste::Whisper(_)), "not finished yet");
         log.finish(CLEAN);
@@ -684,9 +682,9 @@ mod tests {
     #[test]
     fn sound_or_a_recognizer_that_did_not_listen_still_goes_to_whisper() {
         let whisper = |paste: Paste| matches!(paste, Paste::Whisper(_));
-        // Half a second of sound and no words: maybe speech it missed.
+        // Any sound and no words: maybe a soft word it missed.
         let mut levels = vec![0.001; 30];
-        levels[..5].fill(0.03);
+        levels[10] = 0.02;
         assert!(whisper(finished(&mut with_levels(&levels), CLEAN)));
         let silence = || with_levels(&[0.0005; 30]);
         assert!(whisper(finished(&mut silence(), CaptionsDone { failed: true, ..CLEAN })));

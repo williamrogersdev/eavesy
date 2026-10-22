@@ -44,18 +44,18 @@ const STOCK_PHRASES = [
   'i hope you enjoyed it',
   'hope you enjoyed the video',
   'i hope you enjoyed the video',
-  'see you next time',
   'see you in the next video',
-  'here we go',
-  "let's go",
   'please subscribe',
   'like and subscribe',
   'subtitles by',
   'transcribed by',
   'bye',
-  'bye bye',
   'you',
 ];
+
+// Things people really say, but also what Whisper invents for silence: counted
+// as stock only on audio already suspected of being silent.
+const SUSPECT_PHRASES = ['here we go', "let's go", 'bye bye', 'see you next time'];
 
 function normalize(text: string): string {
   return text
@@ -72,21 +72,23 @@ export interface WhisperLine {
   compressionRatio?: number;
 }
 
-function isStockPhrase(sentence: string): boolean {
+function isStockPhrase(sentence: string, suspect: boolean): boolean {
   const normalized = normalize(sentence);
   return STOCK_PHRASES.some(
     (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
-  );
+  ) || (suspect && SUSPECT_PHRASES.includes(normalized));
 }
 
 /**
- * Whether a line is nothing but stock phrases. Silence often comes back as a
- * few of them in a row ("Thank you. Thank you.", "Thank you. Here we go."), so
- * each sentence is checked on its own.
+ * Whether a line is nothing but stock phrases. On audio suspected of being
+ * silent, a few of them in a row count too ("Thank you. Thank you.", "Thank
+ * you. Here we go."): each sentence is checked on its own.
  */
-function isStockLine(text: string): boolean {
+function isStockLine(text: string, suspect: boolean): boolean {
+  if (isStockPhrase(text, suspect)) return true;
+  if (!suspect) return false;
   const sentences = text.split(/[.!?…,;]+/).filter((sentence) => normalize(sentence));
-  return isStockPhrase(text) || (sentences.length > 0 && sentences.every(isStockPhrase));
+  return sentences.length > 0 && sentences.every((sentence) => isStockPhrase(sentence, true));
 }
 
 /**
@@ -95,11 +97,13 @@ function isStockLine(text: string): boolean {
  * "bye": a stock phrase is then dropped only when Whisper itself doubted there
  * was speech, not merely because it gave no score. `quiet` is for audio that
  * was measured to have next to no sound in it: a stock phrase there is always
- * invented, whatever the score, and it overrides `lenient`.
+ * invented, whatever the score, and it overrides `lenient`. `suspect` (implied
+ * by `quiet`) widens what counts as stock, for a dictation the Mac heard no
+ * words in.
  */
 export function isHallucination(
   line: WhisperLine,
-  opts: { lenient?: boolean; quiet?: boolean; glossary?: readonly string[] } = {},
+  opts: { lenient?: boolean; quiet?: boolean; suspect?: boolean; glossary?: readonly string[] } = {},
 ): boolean {
   const text = line.text.trim();
   if (!text) return true;
@@ -107,7 +111,7 @@ export function isHallucination(
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
-  if (!isStockLine(text)) return false;
+  if (!isStockLine(text, !!(opts.quiet || opts.suspect))) return false;
   if (opts.quiet) return true;
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
