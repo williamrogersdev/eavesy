@@ -117,6 +117,8 @@ struct CaptureEvent {
     text: Option<String>,
     #[serde(default, rename = "final")]
     is_final: Option<bool>,
+    #[serde(default)]
+    preview: Option<bool>,
     #[serde(default, rename = "endMs")]
     end_ms: Option<i64>,
     #[serde(default, rename = "epochMs")]
@@ -157,6 +159,7 @@ impl CaptureEvent {
             is_final: self.is_final.unwrap_or(false),
             start_ms: self.start_ms.unwrap_or(0),
             end_ms: self.end_ms.or(self.start_ms).unwrap_or(0),
+            preview: self.preview.unwrap_or(false),
         })
     }
 
@@ -539,6 +542,11 @@ fn spawn_capture(
         // pairing, or after the words change on the web, runs without them.
         if let Some(words) = crate::vocabulary::sidecar_arg(&crate::vocabulary::cached(app)) {
             args.extend(["--vocabulary".into(), words.into()]);
+        }
+        // Read per capture, spare engine included: it gets these args only
+        // when it takes the capture.
+        if !crate::settings::load(app).fast_live_words() {
+            args.push("--no-preview".into());
         }
         crate::vocabulary::refresh(app);
     }
@@ -933,6 +941,7 @@ fn stream_events(
                             .unwrap_or_else(|e| e.into_inner())
                             .record(&caption);
                         if caption.is_final
+                            && !caption.preview
                             && !writer.push(caption.clone())
                             && writer.dropped() == 1
                         {
@@ -1723,6 +1732,7 @@ mod tests {
                 is_final: true,
                 start_ms: 1200,
                 end_ms: 2050,
+                preview: false,
             })
         );
         assert_eq!(ev.caption_status("rec"), None);
@@ -1732,7 +1742,13 @@ mod tests {
         .unwrap();
         let partial = partial.caption("rec").unwrap();
         assert!(!partial.is_final);
+        assert!(!partial.preview);
         assert_eq!(partial.track, "system");
+        let preview: CaptureEvent = serde_json::from_str(
+            r#"{"event":"caption","final":false,"preview":true,"startMs":0,"text":"hel lo","track":"mic"}"#,
+        )
+        .unwrap();
+        assert!(preview.caption("rec").unwrap().preview);
         let segment: CaptureEvent =
             serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
         assert_eq!(segment.caption("rec"), None);

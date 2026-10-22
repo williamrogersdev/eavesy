@@ -62,8 +62,9 @@ export function installDevMock(): void {
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
-    set_hud_look: ({ lines, translucent }: Record<string, unknown>) => {
+    set_hud_look: ({ lines, translucent, fastLiveWords }: Record<string, unknown>) => {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
+      if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
       emit('hud:look', { lines, translucent });
     },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },

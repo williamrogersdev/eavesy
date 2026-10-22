@@ -237,10 +237,14 @@ fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
 
 /// How the control looks while recording: how many lines of live words, and
 /// whether it is see-through. Takes effect at once, mid-recording too.
-pub fn set_look(app: &AppHandle, lines: u8, translucent: bool) {
+/// Faster live words, when given, apply from the next recording.
+pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>) {
     update_prefs(app, |config| {
         config.hud_preview_lines = Some(lines);
         config.hud_translucent = Some(translucent);
+        if let Some(fast) = fast_live_words {
+            config.fast_live_words = Some(fast);
+        }
     });
     let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
     let app = app.clone();

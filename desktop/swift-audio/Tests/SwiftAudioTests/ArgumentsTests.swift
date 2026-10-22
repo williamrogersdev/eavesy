@@ -35,6 +35,12 @@ final class ArgumentsTests: XCTestCase {
         XCTAssertEqual(parse(["--vocabulary", "Eavesy\n Priya Raman \n\nKubernetes"]).vocabulary, ["Eavesy", "Priya Raman", "Kubernetes"])
     }
 
+    func testTheLivePreviewIsOnUnlessTurnedOff() {
+        XCTAssertTrue(parse([]).preview)
+        XCTAssertFalse(parse(["--no-preview"]).preview)
+        XCTAssertFalse(parse(["--no-preview", "--vocabulary", "Eavesy"]).preview)
+    }
+
     func testVocabularyIsCapped() {
         let many = (0..<150).map { "word\($0)" }.joined(separator: "\n")
         XCTAssertEqual(parse(["--vocabulary", many]).vocabulary.count, 100)

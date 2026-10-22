@@ -11,6 +11,7 @@ enum CaptionEngines {
     static func make(
         locale: Locale,
         vocabulary: [String] = [],
+        preview: Bool,
         completion: @escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void
     ) {
         // Asking without a usage description kills the process (TCC), so check first.
@@ -28,7 +29,7 @@ enum CaptionEngines {
             Task {
                 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
-                        switch await AnalyzerEngine.make(locale: locale, vocabulary: vocabulary) {
+                        switch await AnalyzerEngine.make(locale: locale, vocabulary: vocabulary, preview: preview) {
                         case .success(let engine):
                             completion(.success(engine))
                             return
@@ -178,7 +179,8 @@ final class SFSpeechEngine: SpeechEngine {
             let endMs =
                 segments.last.map { window.startMs + Int64(($0.timestamp + $0.duration) * 1000) }
                 ?? window.lastMs
-            sink?.recognized(text: text, isFinal: result.isFinal, startMs: startMs, endMs: max(endMs, startMs))
+            sink?.recognized(
+                text: text, isFinal: result.isFinal, startMs: startMs, endMs: max(endMs, startMs), preview: false)
         }
         if let error, !Self.isBenign(error) {
             sink?.engineFailed(error.localizedDescription)
@@ -220,18 +222,18 @@ final class SFSpeechEngine: SpeechEngine {
     enum SpeechModels {
         enum State: String { case installed, downloading, unsupported }
 
-        static func prepare(_ transcriber: SpeechTranscriber, locale: Locale, wait: Bool) async -> State {
+        static func prepare(_ transcribers: [SpeechTranscriber], locale: Locale, wait: Bool) async -> State {
             await reserve(locale)
-            switch await AssetInventory.status(forModules: [transcriber]) {
+            switch await AssetInventory.status(forModules: transcribers) {
             case .installed:
                 return .installed
             case .unsupported:
                 return .unsupported
             default:
-                let install = installing(transcriber, locale: locale)
+                let install = installing(transcribers, locale: locale)
                 guard wait else { return .downloading }
                 await install.value
-                return await AssetInventory.status(forModules: [transcriber]) == .installed ? .installed : .downloading
+                return await AssetInventory.status(forModules: transcribers) == .installed ? .installed : .downloading
             }
         }
 
@@ -239,14 +241,14 @@ final class SFSpeechEngine: SpeechEngine {
         nonisolated(unsafe) private static var inFlight: [String: Task<Void, Never>] = [:]
 
         /// One download per language at a time, however many recordings ask.
-        private static func installing(_ transcriber: SpeechTranscriber, locale: Locale) -> Task<Void, Never> {
+        private static func installing(_ transcribers: [SpeechTranscriber], locale: Locale) -> Task<Void, Never> {
             let key = locale.identifier(.bcp47)
             lock.lock()
             defer { lock.unlock() }
             if let running = inFlight[key] { return running }
             let task = Task.detached {
                 do {
-                    try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall()
+                    try await AssetInventory.assetInstallationRequest(supporting: transcribers)?.downloadAndInstall()
                 } catch {
                     EventEmitter.warning("speech model for \(locale.identifier) did not install: \(error.localizedDescription)")
                 }
@@ -275,41 +277,68 @@ final class SFSpeechEngine: SpeechEngine {
     /// macOS 26 SpeechAnalyzer + SpeechTranscriber: on-device, volatile results
     /// within a few seconds, finals as it settles phrases. Times come back on
     /// the recording clock, shifted by where the first buffer started.
+    ///
+    /// Two analyzers hear the same audio. The accurate one gives every final;
+    /// it reports in steps of about four seconds, so the first words would
+    /// show four seconds late. The preview one uses `.fastResults`, which
+    /// reports every second but drops and garbles words, so it only fills in
+    /// the HUD past what the accurate one has heard (see `LiveDraft`). They
+    /// can't share one analyzer: modules in one analyzer all get the same
+    /// results, in whichever mode it picks, which made the finals fast-mode
+    /// text in some runs. Two analyzers in one process still nudge each
+    /// other: with the preview running, the accurate one sometimes settles a
+    /// phrase differently (joins two sentences, spells a rare name another
+    /// way), though its finals are never the preview's text. The preview is
+    /// best effort: if it fails or falls behind, captions carry on with the
+    /// accurate one alone.
     @available(macOS 26.0, *)
     final class AnalyzerEngine: SpeechEngine {
         let name = "speech-analyzer"
         private let transcriber: SpeechTranscriber
+        /// Nil when the setting for faster live words is off.
+        private let previewer: SpeechTranscriber?
         private let vocabulary: [String]
         private let format: AVAudioFormat
         private var analyzer: SpeechAnalyzer?
+        private var previewAnalyzer: SpeechAnalyzer?
         private var converter: AVAudioConverter?
         private let input: AsyncStream<AnalyzerInput>
         private let feed: AsyncStream<AnalyzerInput>.Continuation
+        private let previewInput: AsyncStream<AnalyzerInput>
         private var results: Task<Void, Never>?
         private var running: Task<Void, Never>?
-        private weak var sink: CaptionSink?
-        /// Where on the recording clock the first buffer fed in starts. The
-        /// analyzer is fed contiguous audio without timestamps (stamped input
-        /// fails as soon as a converted buffer's length rounds past the next
-        /// stamp) and its times are shifted by this.
-        private let offsetLock = NSLock()
-        private var offsetMs: Int64?
+        private let relay: DraftRelay
 
-        static func make(locale: Locale, vocabulary: [String]) async -> Result<SpeechEngine, CaptionUnavailable> {
+        /// The accurate transcriber and the preview one, for `locale`. Both
+        /// use the same model, so preparing either covers it.
+        static func transcribers(locale: Locale) -> [SpeechTranscriber] {
+            [
+                SpeechTranscriber(
+                    locale: locale,
+                    transcriptionOptions: [],
+                    // No `.fastResults`: it drops and garbles words to show them a
+                    // few seconds sooner, and these finals are what dictation pastes.
+                    reportingOptions: [.volatileResults],
+                    attributeOptions: [.audioTimeRange]),
+                SpeechTranscriber(
+                    locale: locale,
+                    transcriptionOptions: [],
+                    reportingOptions: [.volatileResults, .fastResults],
+                    attributeOptions: [.audioTimeRange]),
+            ]
+        }
+
+        static func make(
+            locale: Locale, vocabulary: [String], preview: Bool
+        ) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
                 return .failure(CaptionUnavailable(reason: "transcriber unavailable on this Mac"))
             }
             guard let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
                 return .failure(CaptionUnavailable(reason: "locale \(locale.identifier) unsupported"))
             }
-            let transcriber = SpeechTranscriber(
-                locale: supported,
-                transcriptionOptions: [],
-                // No `.fastResults`: it drops and garbles words to show them a
-                // few seconds sooner, and these finals are what dictation pastes.
-                reportingOptions: [.volatileResults],
-                attributeOptions: [.audioTimeRange])
-            switch await SpeechModels.prepare(transcriber, locale: supported, wait: false) {
+            let transcribers = Array(Self.transcribers(locale: supported).prefix(preview ? 2 : 1))
+            switch await SpeechModels.prepare(transcribers, locale: supported, wait: false) {
             case .installed:
                 break
             case .unsupported:
@@ -318,91 +347,136 @@ final class SFSpeechEngine: SpeechEngine {
                 // This recording falls back; the download carries on for next time.
                 return .failure(CaptionUnavailable(reason: "model for \(supported.identifier) downloading"))
             }
-            guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+            guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: transcribers) else {
                 return .failure(CaptionUnavailable(reason: "no compatible audio format"))
             }
-            return .success(AnalyzerEngine(transcriber: transcriber, vocabulary: vocabulary, format: format))
+            return .success(
+                AnalyzerEngine(
+                    transcriber: transcribers[0], previewer: transcribers.dropFirst().first, vocabulary: vocabulary,
+                    format: format))
         }
 
-        private init(transcriber: SpeechTranscriber, vocabulary: [String], format: AVAudioFormat) {
+        private init(
+            transcriber: SpeechTranscriber, previewer: SpeechTranscriber?, vocabulary: [String], format: AVAudioFormat
+        ) {
             self.transcriber = transcriber
+            self.previewer = previewer
             self.vocabulary = vocabulary
             self.format = format
             (input, feed) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
+            let (previewInput, previewFeed) = AsyncStream.makeStream(
+                of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
+            self.previewInput = previewInput
+            relay = DraftRelay(previewFeed: previewFeed)
         }
 
         func start(sink: CaptionSink) throws {
-            self.sink = sink
+            relay.sink = sink
             let analyzer = SpeechAnalyzer(modules: [transcriber])
             self.analyzer = analyzer
             converter = AVAudioConverter(from: AudioRecorder.mixFormat, to: format)
+            let relay = self.relay
             let transcriber = self.transcriber
-            results = Task { [weak sink, weak self] in
+            results = Task {
                 do {
                     for try await result in transcriber.results {
-                        let offset = self?.startOffsetMs() ?? 0
-                        let start = result.range.start.seconds
-                        let end = result.range.end.seconds
-                        sink?.recognized(
-                            text: String(result.text.characters),
-                            isFinal: result.isFinal,
-                            startMs: offset + (start.isFinite ? Int64(start * 1000) : 0),
-                            endMs: offset + (end.isFinite ? Int64(end * 1000) : 0))
+                        let heard = relay.heard(result)
+                        relay.update { $0.accurate(heard) }
                     }
                 } catch {
-                    sink?.engineFailed(error.localizedDescription)
+                    relay.sink?.engineFailed(error.localizedDescription)
                 }
             }
             let input = self.input
             let vocabulary = self.vocabulary
-            running = Task { [weak sink] in
+            let startPreview = preview()
+            running = Task {
                 do {
-                    if !vocabulary.isEmpty {
-                        let context = AnalysisContext()
-                        context.contextualStrings[.general] = vocabulary
-                        do {
-                            try await analyzer.setContext(context)
-                        } catch {
-                            EventEmitter.warning("custom words not applied: \(error.localizedDescription)")
-                        }
-                    }
+                    try await Self.apply(vocabulary, to: analyzer)
                     try await analyzer.start(inputSequence: input)
                 } catch {
-                    sink?.engineFailed(error.localizedDescription)
+                    relay.sink?.engineFailed(error.localizedDescription)
+                    return
                 }
+                await startPreview()
+            }
+        }
+
+        /// The preview analyzer, beside the accurate one; what it returns
+        /// starts it, once the accurate one has. Its failures only end the
+        /// preview.
+        private func preview() -> () async -> Void {
+            guard let previewer else {
+                relay.endPreview(nil)
+                return {}
+            }
+            let analyzer = SpeechAnalyzer(modules: [previewer])
+            previewAnalyzer = analyzer
+            let relay = self.relay
+            Task {
+                do {
+                    for try await result in previewer.results {
+                        let heard = relay.heard(result)
+                        relay.update { $0.fast(heard) }
+                    }
+                } catch {
+                    relay.endPreview("live preview failed: \(error.localizedDescription)")
+                }
+            }
+            let input = previewInput
+            let vocabulary = self.vocabulary
+            return {
+                do {
+                    try await Self.apply(vocabulary, to: analyzer)
+                    try await analyzer.start(inputSequence: input)
+                } catch {
+                    relay.endPreview("live preview did not start: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        private static func apply(_ vocabulary: [String], to analyzer: SpeechAnalyzer) async throws {
+            guard !vocabulary.isEmpty else { return }
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = vocabulary
+            do {
+                try await analyzer.setContext(context)
+            } catch {
+                EventEmitter.warning("custom words not applied: \(error.localizedDescription)")
             }
         }
 
         func append(_ buffer: AVAudioPCMBuffer, atMs: Int64) throws {
             guard let converted = convert(buffer) else {
-                sink?.audioDropped(1)
+                relay.sink?.audioDropped(1)
                 return
             }
-            offsetLock.lock()
-            if offsetMs == nil { offsetMs = atMs }
-            offsetLock.unlock()
+            relay.noteStart(atMs)
             // A recognizer that falls behind loses the oldest audio here: say
             // so, or its text looks whole while missing what was said first.
             if case .dropped = feed.yield(AnalyzerInput(buffer: converted)) {
-                sink?.audioDropped(1)
+                relay.sink?.audioDropped(1)
             }
-        }
-
-        private func startOffsetMs() -> Int64 {
-            offsetLock.lock()
-            defer { offsetLock.unlock() }
-            return offsetMs ?? 0
+            relay.preview(converted)
         }
 
         func finish(_ done: @escaping () -> Void) {
+            // What is pasted at Stop must be the accurate text alone.
+            relay.endPreview(nil)
             feed.finish()
             let analyzer = self.analyzer
+            let previewAnalyzer = self.previewAnalyzer
             let running = self.running
             let results = self.results
+            let relay = self.relay
+            Task {
+                await previewAnalyzer?.cancelAndFinishNow()
+            }
             Task {
                 await running?.value
                 try? await analyzer?.finalizeAndFinishThroughEndOfInput()
                 await results?.value
+                relay.drain()
                 done()
             }
         }
@@ -426,6 +500,103 @@ final class SFSpeechEngine: SpeechEngine {
             }
             guard status != .error, error == nil else { return nil }
             return out
+        }
+    }
+
+    /// What both analyzers' result tasks share, kept apart from the engine so
+    /// a replaced engine's last finals still arrive: the sink, the clock
+    /// offset, the preview's feed and the `LiveDraft` merging the two.
+    ///
+    /// Results are merged and sent on a queue of its own, so neither result
+    /// loop ever waits on the other's work.
+    @available(macOS 26.0, *)
+    private final class DraftRelay: @unchecked Sendable {
+        weak var sink: CaptionSink?
+        private let lock = NSLock()
+        private let queue = DispatchQueue(label: "com.eavesy.swiftaudio.captions.draft")
+        /// Only touched on `queue`.
+        private var draft = LiveDraft()
+        private var previewFeed: AsyncStream<AnalyzerInput>.Continuation?
+        /// Where on the recording clock the first buffer fed in starts. The
+        /// analyzers are fed contiguous audio without timestamps (stamped input
+        /// fails as soon as a converted buffer's length rounds past the next
+        /// stamp) and their times are shifted by this.
+        private var offsetMs: Int64?
+
+        init(previewFeed: AsyncStream<AnalyzerInput>.Continuation) {
+            self.previewFeed = previewFeed
+        }
+
+        func noteStart(_ atMs: Int64) {
+            lock.withLock {
+                if offsetMs == nil { offsetMs = atMs }
+            }
+        }
+
+        /// The preview gets the same audio. Its losses are not counted:
+        /// nothing it hears is kept. One that loses audio would misplace its
+        /// words, so the preview ends there.
+        func preview(_ buffer: AVAudioPCMBuffer) {
+            let feed = lock.withLock { previewFeed }
+            if case .dropped = feed?.yield(AnalyzerInput(buffer: buffer)) {
+                endPreview("live preview fell behind")
+            }
+        }
+
+        /// Back to the accurate text alone; `reason` is why, when it failed.
+        func endPreview(_ reason: String?) {
+            let feed = lock.withLock {
+                let feed = previewFeed
+                previewFeed = nil
+                return feed
+            }
+            feed?.finish()
+            if let reason, feed != nil { FileHandle.standardError.write(Data("\(reason)\n".utf8)) }
+            update { $0.stopPreview() }
+        }
+
+        /// Sends what changed, in order: results from the two analyzers
+        /// arrive on separate tasks.
+        func update(_ change: @escaping (inout LiveDraft) -> [DraftCaption]) {
+            queue.async { [self] in
+                for caption in change(&draft) {
+                    sink?.recognized(
+                        text: caption.text, isFinal: caption.isFinal, startMs: caption.startMs, endMs: caption.endMs,
+                        preview: caption.preview)
+                }
+            }
+        }
+
+        /// Returns once everything already received has been sent.
+        func drain() {
+            queue.sync {}
+        }
+
+        func heard(_ result: SpeechTranscriber.Result) -> Heard {
+            let offset = lock.withLock { offsetMs ?? 0 }
+            func ms(_ time: CMTime) -> Int64 {
+                offset + (time.seconds.isFinite ? Int64(time.seconds * 1000) : 0)
+            }
+            var words: [HeardWord] = []
+            if result.isFinal {
+                // Untimed runs (spacing, punctuation) go with the next timed word.
+                var pending = ""
+                for run in result.text.runs {
+                    let text = String(result.text[run.range].characters)
+                    guard let range = run.audioTimeRange else {
+                        pending += text
+                        continue
+                    }
+                    words.append(HeardWord(text: pending + text, startMs: ms(range.start), endMs: ms(range.end)))
+                    pending = ""
+                }
+                if !pending.isEmpty, let last = words.popLast() {
+                    words.append(HeardWord(text: last.text + pending, startMs: last.startMs, endMs: last.endMs))
+                }
+            }
+            return Heard(
+                text: String(result.text.characters), isFinal: result.isFinal,
+                startMs: ms(result.range.start), endMs: ms(result.range.end), words: words)
         }
     }
 #endif
