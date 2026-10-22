@@ -16,6 +16,8 @@ import {
   renewedMcpTokenExpiry,
 } from '../../../web/src/server/mcp-token-policy';
 import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/server/mcp-scopes';
+import * as savedPrompts from '../../../web/src/db/repo/prompts';
+import { fillPrompt } from '../../../web/src/lib/prompts';
 import {
   authorizationParams,
   authorizationServerMetadata,
@@ -285,10 +287,11 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
     const protocolVersion = MCP_VERSIONS.includes(requested) ? requested : MCP_VERSIONS[0];
     return jsonRpc(body.id, {
       protocolVersion,
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
       serverInfo: { name: 'eavesy', version: '0.1.0' },
       instructions:
-        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items.',
+        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items. ' +
+        'The prompts are ones the user saved in Eavesy to reuse.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -299,6 +302,29 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
   }
   if (body.method === 'tools/list') {
     return jsonRpc(body.id, { tools });
+  }
+  if (body.method === 'prompts/list' || body.method === 'prompts/get') {
+    // Saved prompts are the user's own text; reading them needs read access, like everything else here.
+    if (!scopes.includes('read')) {
+      return body.method === 'prompts/list'
+        ? jsonRpc(body.id, { prompts: [] })
+        : jsonRpc(body.id, undefined, { code: -32602, message: 'This connection can’t read your prompts.' });
+    }
+    const db = drizzle(env.DB, { schema });
+    if (body.method === 'prompts/list') {
+      const items = await savedPrompts.list(db, userId);
+      return jsonRpc(body.id, { prompts: items.map(promptListing) });
+    }
+    const name = body.params?.name;
+    const prompt = typeof name === 'string' ? await savedPrompts.getBySlug(db, userId, name) : null;
+    if (!prompt) return jsonRpc(body.id, undefined, { code: -32602, message: `No saved prompt is called ${String(name)}.` });
+    const details = body.params?.arguments?.details;
+    // Best effort: a failed count must not fail the prompt.
+    await savedPrompts.markUsed(db, userId, prompt.id).catch(() => undefined);
+    return jsonRpc(body.id, {
+      description: prompt.name,
+      messages: [{ role: 'user', content: { type: 'text', text: fillPrompt(prompt.body, typeof details === 'string' ? details : null) } }],
+    });
   }
   if (body.method === 'tools/call') {
     const { name, arguments: args } = body.params ?? {};
@@ -346,6 +372,17 @@ function jsonRpc(id: unknown, result?: unknown, error?: { code: number; message:
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** A saved prompt as `prompts/list` describes it. Its slug is the command name. */
+function promptListing(prompt: { slug: string; name: string; body: string }) {
+  const firstLine = prompt.body.trim().split('\n')[0] ?? '';
+  return {
+    name: prompt.slug,
+    title: prompt.name,
+    description: firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine,
+    arguments: [{ name: 'details', description: 'Anything to add for this run', required: false }],
+  };
 }
 
 interface ToolDef {

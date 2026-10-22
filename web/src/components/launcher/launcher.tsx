@@ -56,6 +56,7 @@ import { useSignedOut } from './use-signed-out';
 import { useProject } from './use-project';
 import { useLauncherCommands } from './use-launcher-commands';
 import { useLauncherItems } from './use-launcher-items';
+import { useSavedPrompts } from './use-saved-prompts';
 import { useRecordingActions } from './use-recording-actions';
 import { useLauncherKeyDown } from './use-launcher-keydown';
 import { TitleBar } from './title-bar';
@@ -90,6 +91,9 @@ export function Launcher() {
   );
   const [setupPaired, setSetupPaired] = useState(false);
   const [account, setAccount] = useState<AccountState>(undefined);
+  // Bumped each time the panel opens, so prompts edited elsewhere show up.
+  const [opened, setOpened] = useState(0);
+  const savedPrompts = useSavedPrompts(desktop && !!account, opened);
   const [connecting, setConnecting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -484,6 +488,7 @@ export function Launcher() {
         setSelected(0);
         setActionsOpen(false);
         if (desktop) {
+          setOpened((n) => n + 1);
           runTask(() => refreshSetup(true), 'Could not refresh setup status');
           runTask(refreshAccount);
         } else setView('list');
@@ -811,6 +816,8 @@ export function Launcher() {
             <CaptureHistory
               recordings={recordings}
               refreshRevision={historyRevision}
+              prompts={savedPrompts.prompts}
+              onPromptUsed={savedPrompts.used}
               live={live}
               dictationHotkey={dictationHotkey}
               signedIn={account !== null}

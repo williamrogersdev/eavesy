@@ -68,6 +68,7 @@ const MCP_TOKEN = 'mcp_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
 const BOT = 'bot_owner';
+const PROMPT = 'prm_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -390,6 +391,26 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       crossUser: { call: { path: `/api/projects/${PROJECT}/suggestions`, params: { id: PROJECT } }, status: 404 },
     },
   },
+  '/api/prompts/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/prompts' }, excludes: [PROMPT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a prompt owned by the caller' },
+  },
+  '/api/prompts/$id': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/prompts/${PROMPT}`, params: { id: PROMPT }, body: json({ name: 'Mine now', body: 'Mine now' }) },
+        unchanged: () => row('SELECT name, slug, body, use_count FROM saved_prompts WHERE id = ?', PROMPT),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/prompts/${PROMPT}`, params: { id: PROMPT } },
+        unchanged: () => row('SELECT id FROM saved_prompts WHERE id = ?', PROMPT),
+      },
+    },
+  },
   '/api/sessions/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/sessions' }, excludes: [MEETING] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' },
@@ -485,6 +506,7 @@ beforeEach(async () => {
     'drops',
     'dictations',
     'prompt_templates',
+    'saved_prompts',
     'folders',
     'mcp_tokens',
     'activity_log',
@@ -523,6 +545,10 @@ async function seedOwner() {
       `INSERT INTO prompt_templates (id, user_id, name, system_prompt, applies_to, sort_order)
        VALUES (?, ?, 'Owner template', 'Owner prompt', 'meeting', 0)`,
     ).bind(TEMPLATE, OWNER),
+    testEnv.DB.prepare(
+      `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at)
+       VALUES (?, ?, 'Owner prompt', 'owner-prompt', 'Owner prompt body', ?, ?)`,
+    ).bind(PROMPT, OWNER, now, now),
     testEnv.DB.prepare(
       `INSERT INTO folders (id, user_id, name, vocabulary_json, match_json) VALUES (?, ?, 'Owner project', '[]', '[]')`,
     ).bind(PROJECT, OWNER),

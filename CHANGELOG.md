@@ -6,6 +6,10 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+### Added
+
+- Saved prompts: keep the requests you type over and over in Settings → Prompts, paste one from the panel's search with Return, or run it in Claude Code as `/mcp__eavesy__<name>` ([#199](https://github.com/williamrogersdev/eavesy/pull/199))
+
 ### Changed
 
 - Web: a Notetaker docs page, and the docs and site now say "no bot" applies to recording from your Mac. Up to 200 notetakers can be in calls at once across all accounts, and a start that finds no room is retried for up to about four minutes before it fails ([#196](https://github.com/williamrogersdev/eavesy/pull/196))

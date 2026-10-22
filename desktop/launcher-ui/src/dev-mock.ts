@@ -232,8 +232,27 @@ function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<str
     { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1', 'wrangler'], people: null, match: [], dictationStyle: 'concise', dictationForAgents: true, recordingCount: 12 },
     { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: null, match: ['acme'], recordingCount: 3 },
   ];
+  const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'prompt';
+  let prompts = [
+    { id: 'prm-triage', name: 'Triage support tickets', slug: 'triage-support-tickets', body: 'Search through all the open support tickets, debug each one, and write a plan to fix them.\n\nThen implement the plan, one ticket at a time, with a test for each fix.', useCount: 14, lastUsedAt: Date.now() - 3_600_000, updatedAt: Date.now() },
+    { id: 'prm-review', name: 'Review this PR', slug: 'review-this-pr', body: 'Review the current diff for bugs first, then simplifications. Focus on {{details}}.', useCount: 6, lastUsedAt: null, updatedAt: Date.now() },
+  ];
   return ({ method, path, body }) => {
     const fields = (body ?? {}) as Record<string, unknown>;
+    if (String(path).startsWith('/api/prompts')) {
+      if (method === 'GET') return { items: prompts };
+      if (method === 'POST') {
+        const prompt = { id: `prm-${Date.now()}`, name: String(fields.name), slug: slug(String(fields.name)), body: String(fields.body), useCount: 0, lastUsedAt: null, updatedAt: Date.now() };
+        prompts = [...prompts, prompt];
+        return { prompt };
+      }
+      const id = String(path).split('/').pop();
+      if (method === 'DELETE') { prompts = prompts.filter((p) => p.id !== id); return { ok: true }; }
+      prompts = prompts.map((p) => p.id !== id ? p : fields.used
+        ? { ...p, useCount: p.useCount + 1, lastUsedAt: Date.now() }
+        : { ...p, ...fields, ...(fields.name ? { slug: slug(String(fields.name)) } : {}), updatedAt: Date.now() });
+      return { prompt: prompts.find((p) => p.id === id) };
+    }
     if (path === '/api/me') return method === 'GET' ? me : Object.assign(me, fields) && { ok: true };
     if (path === '/api/projects' && method === 'GET') return { items: projects };
     if (path === '/api/projects' && method === 'POST') {

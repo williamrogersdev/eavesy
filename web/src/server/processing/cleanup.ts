@@ -67,6 +67,7 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
     'speakers',
     'folders',
     'prompt_templates',
+    'saved_prompts',
     'mcp_tokens',
     'device_tokens',
     'devices',
