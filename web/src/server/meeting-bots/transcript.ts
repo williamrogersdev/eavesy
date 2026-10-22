@@ -43,13 +43,16 @@ export function convertRecallTranscript(raw: unknown): BotTranscript {
 
   for (const entry of entries) {
     const participant = record(entry.participant);
-    // Only the platform's participant id identifies a person: display names
-    // repeat ("Guest", "iPhone"). Turns without an id share one unknown speaker.
-    const key = typeof participant.id === 'number' || typeof participant.id === 'string' ? String(participant.id) : 'unknown';
+    // Recall always sends a participant id; it, not the display name, tells
+    // two "Guest"s apart. Should one be missing, the name is the next best key
+    // (two same-named people would merge), and turns with neither share one speaker.
+    const name = typeof participant.name === 'string' ? participant.name.trim().slice(0, 80) : '';
+    const key = typeof participant.id === 'number' || typeof participant.id === 'string'
+      ? `id:${participant.id}`
+      : name ? `name:${name}` : 'unknown';
     const speakerId = speakerByParticipant.get(key) ?? `speaker_${speakerByParticipant.size}`;
     speakerByParticipant.set(key, speakerId);
-    const name = typeof participant.name === 'string' ? participant.name.trim().slice(0, 80) : '';
-    if (name && key !== 'unknown' && !speakerNames[speakerId]) speakerNames[speakerId] = name;
+    if (name && !speakerNames[speakerId]) speakerNames[speakerId] = name;
     const code = typeof entry.language_code === 'string' && entry.language_code ? entry.language_code.split('-')[0].toLowerCase() : null;
 
     const words = (Array.isArray(entry.words) ? entry.words.map(record) : [])
@@ -67,7 +70,8 @@ export function convertRecallTranscript(raw: unknown): BotTranscript {
       const last = chunk.at(-1)!;
       const endMs = Math.max(startMs, Math.round((last.end ?? last.start!) * 1_000));
       lines.push({ startMs, endMs, speakerId, text: chunk.map((w) => w.text).join(' '), language: code });
-      if (code) languageCounts.set(code, (languageCounts.get(code) ?? 0) + 1);
+      // Weighted by words, so many short turns don't outvote a few long ones.
+      if (code) languageCounts.set(code, (languageCounts.get(code) ?? 0) + chunk.length);
       chunk = [];
     };
     for (const word of words) {
