@@ -336,12 +336,17 @@ export const captures = sqliteTable(
       .default('none'),
     transcriptError: text('transcript_error'),
     folderId: text('folder_id'),
+    // Desktop uploads: the Mac's own id for the capture (so retries don't
+    // duplicate it and other Macs file it under the same id) and the device it came from.
+    clientCaptureId: text('client_capture_id'),
+    deviceId: text('device_id'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
   (t) => [
     index('captures_user_created_idx').on(t.userId, t.createdAt),
+    uniqueIndex('captures_user_client_uq').on(t.userId, t.clientCaptureId),
     index('captures_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
   ],
 );

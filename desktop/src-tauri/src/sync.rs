@@ -332,7 +332,17 @@ pub async fn run(app: AppHandle) -> Result<()> {
                                 Ok(Ok(arrived)) if arrived > 0 => wait = Duration::from_secs(2),
                                 Ok(Ok(_)) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::cloud_pull::refresh(&app, &api, &token)).await {
                                     Ok(Ok(changed)) if changed > 0 => wait = Duration::from_secs(2),
-                                    Ok(Ok(_)) => {}
+                                    // Meetings are current: share screenshots and images both ways.
+                                    Ok(Ok(_)) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::capture_sync::run(&app, &api, &token, &root)).await {
+                                        Ok(Ok(moved)) if moved > 0 => wait = Duration::from_secs(2),
+                                        Ok(Ok(_)) => {}
+                                        Ok(Err(error)) if is_unauthorized(&error) => {
+                                            set_signed_out(&app, true);
+                                            rejected = Some((token.clone(), Instant::now()));
+                                        }
+                                        Ok(Err(error)) => eprintln!("capture sync: {error:#}"),
+                                        Err(_) => eprintln!("capture sync: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
+                                    },
                                     Ok(Err(error)) if is_unauthorized(&error) => {
                                         set_signed_out(&app, true);
                                         rejected = Some((token.clone(), Instant::now()));
