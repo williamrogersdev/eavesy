@@ -306,10 +306,16 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
         }
     }
     let dismissed = crate::cloud_pull::dismiss(&app, &id)?;
+    let dismissed_image = crate::capture_sync::dismiss(&app, &id)?;
     let undismiss = || {
         if dismissed {
             if let Err(error) = crate::cloud_pull::undismiss(&app, &id) {
                 eprintln!("cloud pull: could not restore {id} after a failed delete: {error}");
+            }
+        }
+        if dismissed_image {
+            if let Err(error) = crate::capture_sync::undismiss(&app, &id) {
+                eprintln!("capture sync: could not restore {id} after a failed delete: {error}");
             }
         }
     };

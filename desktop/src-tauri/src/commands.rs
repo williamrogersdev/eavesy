@@ -557,7 +557,8 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
 pub fn list_recordings(app: AppHandle, offset: Option<usize>, limit: Option<usize>, query: Option<String>, filter: Option<String>, search: Option<crate::history_search::Request>) -> Result<store::HistoryPage, String> {
     let token=search.as_ref().map(crate::history_search::register).transpose()?;
     let mut page = store::page(&app, offset.unwrap_or(0), limit.unwrap_or(50), query.as_deref().unwrap_or(""), filter.as_deref().unwrap_or("all"), token.as_ref())?;
-    let origins = crate::cloud_pull::origins(&app);
+    let mut origins = crate::cloud_pull::origins(&app);
+    origins.extend(crate::capture_sync::origins(&app));
     for item in &mut page.items {
         item.device = origins.get(&item.id).cloned();
     }

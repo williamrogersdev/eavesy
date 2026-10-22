@@ -104,6 +104,8 @@ export const USER_DAILY_QUOTAS = {
   process: { limit: 100, failMode: 'closed' },
   dictation: { limit: 500, failMode: 'closed' },
   capture: { limit: 300, failMode: 'closed' },
+  // Mac screenshots synced to the user's other Macs: storage only, no AI.
+  'capture-sync': { limit: 2_000, failMode: 'closed' },
   drop: { limit: 500, failMode: 'closed' },
   chat: { limit: 300, failMode: 'closed' },
   regenerate: { limit: 60, failMode: 'closed' },
