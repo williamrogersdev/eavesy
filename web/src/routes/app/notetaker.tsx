@@ -48,6 +48,14 @@ const FAILURE: Record<string, string> = {
 const ACTIVE = new Set(['scheduling', 'scheduled', 'joining', 'waiting_room', 'in_call', 'recording', 'call_ended', 'collecting']);
 const IN_CALL = new Set(['joining', 'waiting_room', 'in_call', 'recording']);
 
+const LOAD_ERROR = 'Could not load your notetakers. Refresh to retry.';
+
+/** The server's `{ error, warning }` body, or nothing when it isn't one. */
+async function messageOf(response: Response) {
+  const parsed = errorSchema.safeParse(await response.json().catch(() => ({})));
+  return parsed.success ? parsed.data : {};
+}
+
 const field = 'h-10 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm text-ev-ink outline-none transition-colors placeholder:text-ev-ink-3 focus:border-ev-coat';
 const label = 'font-round text-[13px] font-bold text-ev-ink';
 
@@ -74,8 +82,9 @@ function NotetakerPage() {
       const data = listSchema.parse(await response.json());
       setAvailable(data.available);
       setBots(data.bots);
+      setError((current) => (current === LOAD_ERROR ? '' : current));
     } catch {
-      setError('Could not load your notetakers. Refresh to retry.');
+      setError(LOAD_ERROR);
     }
   }, []);
 
@@ -101,7 +110,7 @@ function NotetakerPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ meetingUrl, title: title || null, joinAt }),
       });
-      const body = errorSchema.parse(await response.json().catch(() => ({})));
+      const body = await messageOf(response);
       if (!response.ok) {
         setError(body.error ?? 'The notetaker could not be sent. Please retry.');
         return;
@@ -111,6 +120,8 @@ function NotetakerPage() {
       setTitle('');
       setStartAt('');
       await load();
+    } catch {
+      setError('The notetaker could not be sent. Check your connection and retry.');
     } finally {
       setBusy(false);
     }
@@ -118,9 +129,14 @@ function NotetakerPage() {
 
   async function stop(bot: MeetingBot) {
     setError('');
-    const response = await fetch(`/api/meeting-bots/${bot.id}`, { method: 'DELETE' });
-    if (!response.ok) setError(errorSchema.parse(await response.json().catch(() => ({}))).error ?? 'Could not stop the notetaker.');
-    await load();
+    try {
+      const response = await fetch(`/api/meeting-bots/${bot.id}`, { method: 'DELETE' });
+      if (!response.ok) setError((await messageOf(response)).error ?? 'Could not stop the notetaker.');
+    } catch {
+      setError('Could not stop the notetaker. Check your connection and retry.');
+    } finally {
+      await load();
+    }
   }
 
   return (

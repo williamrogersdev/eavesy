@@ -41,9 +41,12 @@ export function convertRecallTranscript(raw: unknown): BotTranscript {
   const languageCounts = new Map<string, number>();
   const lines: BotLine[] = [];
 
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const participant = record(entry.participant);
-    const key = typeof participant.id === 'number' || typeof participant.id === 'string' ? String(participant.id) : 'unknown';
+    // Without an id, the name is the best identity; without either, each turn stands alone.
+    const key = typeof participant.id === 'number' || typeof participant.id === 'string'
+      ? `id:${participant.id}`
+      : typeof participant.name === 'string' && participant.name.trim() ? `name:${participant.name.trim()}` : `turn:${index}`;
     const speakerId = speakerByParticipant.get(key) ?? `speaker_${speakerByParticipant.size}`;
     speakerByParticipant.set(key, speakerId);
     const name = typeof participant.name === 'string' ? participant.name.trim().slice(0, 80) : '';

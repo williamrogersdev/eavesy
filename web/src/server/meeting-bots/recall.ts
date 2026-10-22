@@ -57,7 +57,12 @@ async function call(env: RecallEnv, method: string, path: string, body?: unknown
   }
   if (response.status === 204) return null;
   const text = await response.text();
-  return text ? (JSON.parse(text) as unknown) : null;
+  try {
+    return text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    // Recall answered 2xx, so a write may well have taken effect.
+    throw new RecallError(`Recall.ai ${method} ${path.split('/')[1]} returned unreadable JSON`, response.status, method !== 'GET');
+  }
 }
 
 export interface CreateBotInput {

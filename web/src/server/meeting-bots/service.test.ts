@@ -148,6 +148,12 @@ describe('transcript conversion', () => {
     expect(out.lines.filter((line) => line.language === 'es').length).toBe(3);
     expect(out.language).toBe('es');
     expect(convertRecallTranscript('garbage').lines).toEqual([]);
+    const anonymous = convertRecallTranscript([
+      { participant: { name: 'Cy' }, words: [{ text: 'One.', start_timestamp: { relative: 1 } }] },
+      { participant: {}, words: [{ text: 'Two.', start_timestamp: { relative: 2 } }] },
+      { participant: { name: 'Cy' }, words: [{ text: 'Three.', start_timestamp: { relative: 3 } }] },
+    ]);
+    expect(anonymous.lines.map((line) => line.speakerId)).toEqual(['speaker_0', 'speaker_1', 'speaker_0']);
   });
 });
 
