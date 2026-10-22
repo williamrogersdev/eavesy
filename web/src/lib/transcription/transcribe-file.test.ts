@@ -170,6 +170,21 @@ describe('Workers AI file transcription', () => {
     });
     expect(thanks.text).toBe('Thank you.');
   });
+
+  test('a voice note the Mac heard no words in gets no benefit of the doubt', async () => {
+    const said = (text: string, noSpeechProb?: number) => ({
+      run: () => Promise.resolve({ text, segments: [{ start: 0, end: 1, text, ...(noSpeechProb === undefined ? {} : { no_speech_prob: noSpeechProb }) }] }),
+    });
+    for (const text of ['Thank you. Thank you', 'Thank you. Here we go', 'Hope you enjoyed it.']) {
+      const result = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said(text) });
+      expect(result.text).toBe('');
+    }
+    // Whisper sure of real words still wins.
+    const sure = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said('Thank you.', 0.05) });
+    expect(sure.text).toBe('Thank you.');
+    const words = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said('Call mom.') });
+    expect(words.text).toBe('Call mom.');
+  });
 });
 
 

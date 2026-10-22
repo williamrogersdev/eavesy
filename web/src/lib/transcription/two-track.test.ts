@@ -3,6 +3,7 @@ import {
   findEchoLines,
   hasBothSides,
   isHallucination,
+  isQuietAudio,
   isSilentTrack,
   speakerForTrack,
   speakerName,
@@ -106,6 +107,28 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.6 }, lenient)).toBe(true);
     expect(isHallucination({ text: '[BLANK_AUDIO]' }, lenient)).toBe(true);
     expect(isHallucination({ text: 'something', noSpeechProb: 0.9 }, lenient)).toBe(true);
+  });
+
+  test('a line made only of stock phrases counts as one', () => {
+    expect(isHallucination({ text: 'Thank you. Thank you.' })).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Here we go.' })).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Let’s go!' })).toBe(true);
+    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!' })).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Send the deck tonight.' })).toBe(false);
+    expect(isHallucination({ text: "Here we go, that's the plan." })).toBe(false);
+    // A mic-only note still keeps stock phrases Whisper did not doubt.
+    expect(isHallucination({ text: 'Thank you. Thank you.' }, { lenient: true })).toBe(false);
+  });
+
+  test('quiet audio drops stock phrases whatever their score, even on a mic-only note', () => {
+    const quiet = { lenient: true, quiet: true };
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.05 }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Thank you', noSpeechProb: 0.1 }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Here we go' }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Call the bank.' }, quiet)).toBe(false);
+    expect(isQuietAudio(120)).toBe(true);
+    expect(isQuietAudio(900)).toBe(false);
+    expect(isQuietAudio(null)).toBe(false);
   });
 
   test('drops looping or no-speech text', () => {

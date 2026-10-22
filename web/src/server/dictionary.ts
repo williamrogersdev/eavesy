@@ -46,7 +46,7 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     if (!parsed.success) return json({ error: 'invalid_request' }, 400);
     const valid = parsed.data.entries.filter(entry => validCorrection(entry.from, entry.to));
     // remember() admits new words only while the account is under its 500-entry cap.
-    const learned = valid.length ? await dictionary.remember(db, actor.userId, valid) : 0;
+    const learned = valid.length ? await dictionary.remember(db, actor.userId, valid, 'manual') : 0;
     return json({ learned, skipped: parsed.data.entries.length - valid.length, status: learned > 0 ? 'saved' : valid.length ? 'unchanged' : 'not_saved' });
   }
   if (request.method === 'PUT') {
@@ -54,7 +54,7 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     if (!parsed.success || !validCorrection(parsed.data.from, parsed.data.to)) return json({ error: 'invalid_correction' }, 400);
     const existing = await dictionary.list(db, actor.userId);
     if (existing.length >= 500 && !existing.some(e => e.sourceKey === normalizeTerm(parsed.data.from))) return json({ error: 'Dictionary is full. Forget an entry before adding another.' }, 400);
-    const learned = await dictionary.remember(db, actor.userId, [parsed.data]);
+    const learned = await dictionary.remember(db, actor.userId, [parsed.data], 'manual');
     if (learned > 0) return json({ learned, status: 'saved' });
     const current = await dictionary.list(db, actor.userId);
     const unchanged = current.some(entry => entry.from === parsed.data.from && entry.to === parsed.data.to);
@@ -77,6 +77,6 @@ export async function dictionaryRequest(request: Request, db: AppDb, actor: Reso
     return json({ error: 'dictation_required' }, 400);
   }
   const corrections = learnCorrections(original, corrected);
-  const words = await dictionary.rememberCorrections(db, actor.userId, corrections);
+  const words = await dictionary.rememberCorrections(db, actor.userId, corrections, 'learned');
   return json({ learned: words.length, words });
 }

@@ -37,7 +37,7 @@ export const Route = createFileRoute('/api/dictations')({
         const db = getDb();
         const audio = new Uint8Array(await file.arrayBuffer());
         const prefs = await transcriptionPrefs(db, actor.userId);
-        const entries = await dictionary.list(db, actor.userId);
+        const entries = await dictionary.listForTranscription(db, actor.userId);
         const transcription = await transcribeAudioFile({
           audio,
           language: prefs.language,

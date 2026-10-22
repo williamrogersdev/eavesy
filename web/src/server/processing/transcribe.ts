@@ -18,6 +18,7 @@ import {
   ECHO_WINDOW_MS,
   findEchoLines,
   isHallucination,
+  isQuietAudio,
   isSilentTrack,
   speakerForTrack,
 } from '@/lib/transcription/two-track';
@@ -60,7 +61,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
-  const entries = await dictionary.list(db, meeting.userId);
+  const entries = await dictionary.listForTranscription(db, meeting.userId);
   const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
@@ -241,7 +242,7 @@ export async function handleTranscribeSegment(
       const audio = new Uint8Array(await object.arrayBuffer());
       const transcriber = new WorkersAiSegmentTranscriber(meeting.source === 'import' ? createAiRunner(env, 'import-transcription') : env.AI);
       const prefs = await userPrefs(db, meeting.userId);
-      const entries = await dictionary.list(db, meeting.userId);
+      const entries = await dictionary.listForTranscription(db, meeting.userId);
       const request = {
         audio,
         language: meeting.language,
@@ -272,8 +273,10 @@ export async function handleTranscribeSegment(
       }
       const speakerId = speakerForTrack(track);
       const glossary = request.vocabulary;
+      // A near-silent segment's stock phrases are invented, even on a mic-only note.
+      const quiet = isQuietAudio(segment.activeMs);
       let lines = transcription.segments.filter(
-        (relative) => !isHallucination(relative, { lenient: micOnly, glossary }),
+        (relative) => !isHallucination(relative, { lenient: micOnly, quiet, glossary }),
       );
       // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
       // the user's own note, so give it one more pass without VAD, keeping the
@@ -281,7 +284,7 @@ export async function handleTranscribeSegment(
       if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
         const retry = await transcriber.transcribe({ ...request, language, vadFilter: false });
         language ??= retry.language;
-        lines = retry.segments.filter((relative) => !isHallucination(relative, { glossary }));
+        lines = retry.segments.filter((relative) => !isHallucination(relative, { quiet, glossary }));
       }
 
       const current = await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1);

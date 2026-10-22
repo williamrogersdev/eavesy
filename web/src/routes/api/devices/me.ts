@@ -32,7 +32,7 @@ export const Route = createFileRoute('/api/devices/me')({
         )[0];
         // Normalize in priority order, then store oldest first because the Mac
         // takes the last 100 cached words. Confirmed spellings beat manual duplicates.
-        const learnedNewestFirst = (await dictionary.list(getDb(), actor.userId)).map(e => e.to);
+        const learnedNewestFirst = (await dictionary.listForTranscription(getDb(), actor.userId)).map(e => e.to);
         const vocabulary = normalizeVocabulary([
           ...learnedNewestFirst, ...parseVocabulary(user?.customVocabularyJson).reverse(),
         ]).reverse();

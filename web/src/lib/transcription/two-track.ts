@@ -23,26 +23,44 @@ export function isSilentTrack(
   opts: { micOnly?: boolean } = {},
 ): boolean {
   if (opts.micOnly) return false;
-  return track !== 'mixed' && activeMs !== null && activeMs < SILENT_TRACK_ACTIVE_MS;
+  return track !== 'mixed' && isQuietAudio(activeMs);
 }
 
+/** Whether audio was measured to have next to no sound in it (null: not measured). */
+export function isQuietAudio(activeMs: number | null): boolean {
+  return activeMs !== null && activeMs < SILENT_TRACK_ACTIVE_MS;
+}
+
+// What Whisper says to silence: video sign-offs, mostly.
 const STOCK_PHRASES = [
   'thank you',
   'thank you very much',
+  'thank you so much',
   'thanks for watching',
   'thank you for watching',
   'thanks for listening',
+  'thank you for listening',
+  'hope you enjoyed it',
+  'i hope you enjoyed it',
+  'hope you enjoyed the video',
+  'i hope you enjoyed the video',
+  'see you next time',
+  'see you in the next video',
+  'here we go',
+  "let's go",
   'please subscribe',
   'like and subscribe',
   'subtitles by',
   'transcribed by',
   'bye',
+  'bye bye',
   'you',
 ];
 
 function normalize(text: string): string {
   return text
     .toLowerCase()
+    .replace(/[‘’]/g, "'")
     .replace(/[^\p{L}\p{N}\s']/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -54,27 +72,43 @@ export interface WhisperLine {
   compressionRatio?: number;
 }
 
+function isStockPhrase(sentence: string): boolean {
+  const normalized = normalize(sentence);
+  return STOCK_PHRASES.some(
+    (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
+  );
+}
+
+/**
+ * Whether a line is nothing but stock phrases. Silence often comes back as a
+ * few of them in a row ("Thank you. Thank you.", "Thank you. Here we go."), so
+ * each sentence is checked on its own.
+ */
+function isStockLine(text: string): boolean {
+  const sentences = text.split(/[.!?…,;]+/).filter((sentence) => normalize(sentence));
+  return isStockPhrase(text) || (sentences.length > 0 && sentences.every(isStockPhrase));
+}
+
 /**
  * Whether a Whisper line is invented rather than heard. `lenient` is for
  * mic-only recordings, where a short note can really be just "thank you" or
  * "bye": a stock phrase is then dropped only when Whisper itself doubted there
- * was speech, not merely because it gave no score.
+ * was speech, not merely because it gave no score. `quiet` is for audio that
+ * was measured to have next to no sound in it: a stock phrase there is always
+ * invented, whatever the score, and it overrides `lenient`.
  */
 export function isHallucination(
   line: WhisperLine,
-  opts: { lenient?: boolean; glossary?: readonly string[] } = {},
+  opts: { lenient?: boolean; quiet?: boolean; glossary?: readonly string[] } = {},
 ): boolean {
   const text = line.text.trim();
   if (!text) return true;
-  if (opts.glossary && readsBackGlossary(line, opts.glossary, opts.lenient ? 3 : 2)) return true;
+  if (opts.glossary && readsBackGlossary(line, opts.glossary, opts.lenient && !opts.quiet ? 3 : 2)) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
-  const normalized = normalize(text);
-  const stock = STOCK_PHRASES.some(
-    (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
-  );
-  if (!stock) return false;
+  if (!isStockLine(text)) return false;
+  if (opts.quiet) return true;
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }

@@ -18,7 +18,7 @@ pub fn spawn(
             .ok_or_else(|| {
                 "Pair this Mac with your Eavesy account before transcribing recordings.".to_string()
             })
-            .and_then(|credential| run(&media_path, is_video, false, &credential, &RETRY_DELAYS)));
+            .and_then(|credential| run(&media_path, is_video, "", &credential, &RETRY_DELAYS)));
         match result {
             Ok(text) => {
                 let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
@@ -96,14 +96,17 @@ pub fn spawn(
 
 /// Transcribes a dictation clip for its paste only. The recording uploads
 /// separately and its cloud transcript is what gets stored; if this fails,
-/// that transcript is pasted once it is ready instead.
-pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf) {
+/// that transcript is pasted once it is ready instead. `heard_on_device` is
+/// false when the Mac's recognizer ran over the whole clip and heard no words,
+/// so the server keeps out the stock phrases Whisper invents for silence.
+pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf, heard_on_device: bool) {
     std::thread::spawn(move || {
         let Some(credential) = settings::device_credential(&app) else {
             no_paste(&app, &id, "Saved. Sign in to have it typed for you");
             return;
         };
-        match run(&audio, false, true, &credential, &PASTE_RETRY_DELAYS) {
+        let query = if heard_on_device { VOICE } else { VOICE_UNHEARD };
+        match run(&audio, false, query, &credential, &PASTE_RETRY_DELAYS) {
             Ok(text) => crate::dictation::deliver_dictation(&app, &id, &text),
             Err(error) => {
                 crate::telemetry::capture("dictation.whisper_paste", &error);
@@ -244,12 +247,17 @@ const PASTE_RETRY_DELAYS: [u64; 1] = [2];
 /// How many pieces of a long recording upload at once.
 const PIECES_AT_ONCE: usize = 3;
 
-/// `voice` marks the user's own mic alone (a dictation), which the server
+/// `voice=1` marks the user's own mic alone (a dictation), which the server
 /// filters more gently and retries when quiet speech is cut.
+const VOICE: &str = "?voice=1";
+/// A dictation the Mac heard no words in: filtered strictly after all.
+const VOICE_UNHEARD: &str = "?voice=1&heard_on_device=0";
+
+/// `query` is what the server is told about the clip: "", `VOICE` or `VOICE_UNHEARD`.
 fn run(
     media_path: &Path,
     is_video: bool,
-    voice: bool,
+    query: &str,
     credential: &settings::Credential,
     delays: &[u64],
 ) -> Result<String, String> {
@@ -259,7 +267,7 @@ fn run(
         .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
     let texts = crate::work_queue::run(&pieces.pieces, PIECES_AT_ONCE, |piece| {
-        with_retry(delays, || transcribe_piece(&client, piece, voice, credential))
+        with_retry(delays, || transcribe_piece(&client, piece, query, credential))
     })?;
     let texts: Vec<&str> = texts
         .iter()
@@ -298,7 +306,7 @@ fn with_retry(
 fn transcribe_piece(
     client: &reqwest::blocking::Client,
     piece: &crate::audio_upload::AudioPiece,
-    voice: bool,
+    query: &str,
     credential: &settings::Credential,
 ) -> Result<String, PieceError> {
     let part =
@@ -308,9 +316,8 @@ fn transcribe_piece(
             .map_err(|e| PieceError::Fatal(e.to_string()))?;
     let form = reqwest::blocking::multipart::Form::new().part("audio", part);
     let url = format!(
-        "{}/api/transcribe{}",
+        "{}/api/transcribe{query}",
         credential.base.trim_end_matches('/'),
-        if voice { "?voice=1" } else { "" }
     );
 
     let resp = client
@@ -501,7 +508,7 @@ mod tests {
             Arc,
         };
         use wiremock::{
-            matchers::{method, path as request_path},
+            matchers::{method, path as request_path, query_param},
             Mock, ResponseTemplate,
         };
         let source = wav(16_000, true);
@@ -518,6 +525,8 @@ mod tests {
         runtime.block_on(
             Mock::given(method("POST"))
                 .and(request_path("/api/transcribe"))
+                .and(query_param("voice", "1"))
+                .and(query_param("heard_on_device", "0"))
                 .and(move |request: &wiremock::Request| {
                     request
                         .headers
@@ -544,7 +553,7 @@ mod tests {
         let client = reqwest::blocking::Client::new();
         let credential = credential(&server);
         let result = with_retry(&[0], || {
-            transcribe_piece(&client, piece, false, &credential)
+            transcribe_piece(&client, piece, VOICE_UNHEARD, &credential)
         });
         assert_eq!(result.unwrap(), "replayed");
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
