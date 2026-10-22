@@ -69,15 +69,21 @@ pub fn set_state(app: &AppHandle, state: HudState) {
     // gets to the resize, which can take a while when Stop is handing focus
     // back: cramped, with Close cut off. Main-thread tasks run in order, so
     // the renderer still sees the states in the order they were set.
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
-            release_editor_on_main(&app);
+    let handle = app.clone();
+    let emitted = state.clone();
+    let dispatched = app.run_on_main_thread(move || {
+        if !matches!(emitted.phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
+            release_editor_on_main(&handle);
         }
-        show_on_main(&app);
-        fit_on_main(&app);
-        let _ = app.emit_to("hud", "hud:state", state);
+        show_on_main(&handle);
+        fit_on_main(&handle);
+        let _ = handle.emit_to("hud", "hud:state", emitted);
     });
+    if let Err(error) = dispatched {
+        // No main thread to size the window: the renderer still has to move on.
+        tracing::warn!("capture control: could not reach the main thread: {error}");
+        let _ = app.emit_to("hud", "hud:state", state);
+    }
 }
 
 /// The renderer has painted the new phase. The native shadow follows the
@@ -254,11 +260,17 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool) {
         config.hud_preview_lines = Some(lines);
         config.hud_translucent = Some(translucent);
     });
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        fit_on_main(&app);
-        let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
+    let look = serde_json::json!({ "lines": lines, "translucent": translucent });
+    let handle = app.clone();
+    let emitted = look.clone();
+    let dispatched = app.run_on_main_thread(move || {
+        fit_on_main(&handle);
+        let _ = handle.emit_to("hud", "hud:look", emitted);
     });
+    if let Err(error) = dispatched {
+        tracing::warn!("capture control: could not reach the main thread: {error}");
+        let _ = app.emit_to("hud", "hud:look", look);
+    }
 }
 
 pub fn user_frame(app: &AppHandle) -> Option<HudFrame> {

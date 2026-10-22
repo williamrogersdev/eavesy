@@ -445,20 +445,24 @@ function Hud() {
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
-  // Once the new phase is on screen, let the native shadow take its shape.
-  // Two frames: the first lays it out, the second has painted it.
-  // Alternating `swap` restarts the content's fade-in on every change of shape.
-  const shape = state ? `${isOpening(state) ? 'starting' : state.phase}:${size}:${look.lines}` : '';
-  const swap = useRef({ shape, n: 0 });
-  if (swap.current.shape !== shape) swap.current = { shape, n: swap.current.n + 1 };
+  // Once the new shape is on screen, let the native shadow take it. Two
+  // frames: the first lays it out, the second has painted it. A hidden panel
+  // may not run frames, so a timer stands in.
+  const phaseKey = state ? `${isOpening(state) ? 'starting' : state.phase}:${size}` : '';
+  const shape = phaseKey && `${phaseKey}:${look.lines}`;
   useEffect(() => {
     if (!tauri() || !shape) return;
+    let sent = false;
+    const send = () => { if (!sent) { sent = true; void invoke('hud_painted').catch(() => {}); } };
     let second = 0;
-    const first = window.requestAnimationFrame(() => {
-      second = window.requestAnimationFrame(() => { void invoke('hud_painted').catch(() => {}); });
-    });
-    return () => { window.cancelAnimationFrame(first); window.cancelAnimationFrame(second); };
+    const first = window.requestAnimationFrame(() => { second = window.requestAnimationFrame(send); });
+    const fallback = window.setTimeout(send, 120);
+    return () => { window.cancelAnimationFrame(first); window.cancelAnimationFrame(second); window.clearTimeout(fallback); };
   }, [shape]);
+  // Alternating `swap` restarts the content's fade-in on every change of
+  // phase (not of line count mid-recording). Set before paint.
+  const [swap, setSwap] = useState(0);
+  useLayoutEffect(() => { if (phaseKey) setSwap((n) => n + 1); }, [phaseKey]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
@@ -799,7 +803,7 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
-      data-swap={swap.current.n % 2 ? 'a' : 'b'}
+      data-swap={swap % 2 ? 'a' : 'b'}
       data-marking={video && live && marking.tool ? 'true' : undefined}
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
