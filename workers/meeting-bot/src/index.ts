@@ -26,6 +26,8 @@ const INGEST_HOST = 'eavesy.internal';
 const WATCH_EVERY_MS = 2 * 60 * 1_000;
 
 const database = (env: Env) => botDatabase(env.DB);
+const logError = (message: string, botId: string | undefined, error: unknown) =>
+  console.error(JSON.stringify({ message, botId, error: error instanceof Error ? error.message : String(error) }));
 const botObject = (env: Env, botId: string) => env.MEETING_BOT.get(env.MEETING_BOT.idFromName(botId));
 
 /** The bot's segments and status reports. */
@@ -55,17 +57,18 @@ export class MeetingBot extends Container<Env> {
   }
 
   async launch(botId: string) {
+    // Watch from before the claim, so whatever fails from here on is noticed:
+    // a bot claimed but never started is failed by the watchdog.
+    await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
     const start = await claimBotStart(database(this.env), botId);
     if (!start) return; // cancelled, or already started
-    // Watch from now on, so a container that never comes up is noticed too.
-    await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
     try {
       await this.startContainer(botId, start);
     } catch (error) {
       // No image, no capacity, or the port never opened: say so now rather
       // than when the watchdog gives up.
-      console.error(JSON.stringify({ message: 'meeting bot did not start', botId, error: error instanceof Error ? error.message : String(error) }));
-      await failBotStart(database(this.env), botId);
+      logError('meeting bot did not start', botId, error);
+      await failBotStart(database(this.env), botId).catch((e: unknown) => logError('recording the failed start', botId, e));
       await this.shutDown().catch(() => undefined);
     }
   }
@@ -85,10 +88,15 @@ export class MeetingBot extends Container<Env> {
   }
 
   async watch(botId: string) {
-    const verdict = await watchBot(database(this.env), this.env, botId, await this.running());
+    let verdict: Awaited<ReturnType<typeof watchBot>> = 'watch';
+    try {
+      verdict = await watchBot(database(this.env), this.env, botId, await this.running());
+    } catch (error) {
+      logError('meeting bot watch failed', botId, error); // look again next time
+    }
     // The next look is set first, so a failed stop is tried again.
     if (verdict !== 'done') await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
-    if (verdict === 'stop') await this.stop(); // SIGTERM: the bot leaves and delivers what it has
+    if (verdict === 'stop') await this.stop().catch((e: unknown) => logError('stopping meeting bot', botId, e)); // SIGTERM: leave and deliver
   }
 
   /**
@@ -108,7 +116,8 @@ export class MeetingBot extends Container<Env> {
   override async onStop(params: StopParams) {
     const botId = await this.ctx.storage.get<string>('botId');
     console.log(JSON.stringify({ message: 'meeting bot stopped', botId, ...params }));
-    if (botId) await watchBot(database(this.env), this.env, botId, false);
+    // The watch still running for this bot covers a failure here.
+    if (botId) await watchBot(database(this.env), this.env, botId, false).catch((e: unknown) => logError('meeting bot stop report failed', botId, e));
   }
 
   private async running() {

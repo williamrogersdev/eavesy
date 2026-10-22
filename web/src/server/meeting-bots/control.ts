@@ -23,7 +23,7 @@ export type SpeakerSpan = [string, number, number];
 export function parseSpeakerSpans(value: unknown): SpeakerSpan[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((s): s is SpeakerSpan => Array.isArray(s) && typeof s[0] === 'string' && typeof s[1] === 'number' && typeof s[2] === 'number')
+    .filter((s): s is SpeakerSpan => Array.isArray(s) && typeof s[0] === 'string' && Number.isFinite(s[1]) && Number.isFinite(s[2]))
     .map(([name, start, end]): SpeakerSpan => [name.trim().slice(0, 80), Math.max(0, start), Math.max(start, end)])
     .filter(([name]) => name.length > 0)
     .slice(0, 50_000);
@@ -40,25 +40,16 @@ export function attributeSpeakers(lines: { id: string; startMs: number; endMs: n
   const speakerNames: Record<string, string> = {};
   const assignments = new Map<string, string>();
   const sorted = [...spans].sort((a, b) => a[1] - b[1]);
-  // Only spans starting within the longest span's length before a line can
-  // reach it; a binary search finds the first, so a long call stays linear-ish.
-  const longest = sorted.reduce((most, [, start, stop]) => Math.max(most, stop - start), 0);
-  const firstFrom = (ms: number) => {
-    let lo = 0;
-    let hi = sorted.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (sorted[mid][1] < ms) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
+  // One sweep: lines in start order take in the spans that have started and
+  // drop the ones that ended before them, so each span is added and dropped once.
+  let next = 0;
+  let active: SpeakerSpan[] = [];
   for (const line of [...lines].sort((a, b) => a.startMs - b.startMs)) {
     const end = Math.max(line.endMs, line.startMs + 500);
+    while (next < sorted.length && sorted[next][1] < end) active.push(sorted[next++]);
+    active = active.filter(([, , stop]) => stop > line.startMs);
     const overlap = new Map<string, number>();
-    for (let i = firstFrom(line.startMs - longest); i < sorted.length; i++) {
-      const [name, start, stop] = sorted[i];
-      if (start >= end) break;
+    for (const [name, start, stop] of active) {
       const shared = Math.min(stop, end) - Math.max(start, line.startMs);
       if (shared > 0) overlap.set(name, (overlap.get(name) ?? 0) + shared);
     }

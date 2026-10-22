@@ -312,6 +312,20 @@ describe('speaker attribution', () => {
     expect(speakerNames).toEqual({ speaker_0: 'Ben', speaker_1: 'Ana' });
   });
 
+  test('non-finite times are dropped', () => {
+    expect(parseSpeakerSpans([['Ana', Number.NaN, 5], ['Ben', 0, Number.POSITIVE_INFINITY], ['Cy', 1, 2]])).toEqual([['Cy', 1, 2]]);
+  });
+
+  test('a four-hour call with tens of thousands of spans is attributed line by line', () => {
+    const spans = parseSpeakerSpans(Array.from({ length: 40_000 }, (_, i) => [i % 2 ? 'Ana' : 'Ben', i * 360, i * 360 + 300]));
+    const lines = Array.from({ length: 4_000 }, (_, i) => ({ id: `l${i}`, startMs: i * 3_600, endMs: i * 3_600 + 200 }));
+    const started = performance.now();
+    const { assignments } = attributeSpeakers(lines, spans);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(assignments.get('l1')).toBe('speaker_0'); // 3600 ms falls in span 10, Ben's
+    expect(assignments.size).toBe(4_000);
+  });
+
   test('a long early span still reaches a later line among many short ones', () => {
     const spans = parseSpeakerSpans([['Ana', 0, 600_000], ...Array.from({ length: 1_000 }, (_, i) => ['Ben', i * 100, i * 100 + 50])]);
     const { assignments } = attributeSpeakers([{ id: 'late', startMs: 500_000, endMs: 505_000 }], spans);
