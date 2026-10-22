@@ -24,7 +24,7 @@ impl Status {
 
 /// Bytes of request head read at most, and how long a client gets to send it.
 const MAX_HEAD: usize = 8 * 1024;
-const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
+const HEAD_TIMEOUT: Duration = Duration::from_secs(2);
 /// Connections handled at once; past that, new ones are closed straight away.
 const MAX_CONNECTIONS: usize = 16;
 
