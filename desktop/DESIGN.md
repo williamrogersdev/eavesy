@@ -512,9 +512,11 @@ Accessibility). With **Show the words when it's done** on (the default),
 Pasted and Copied open straight into the **drawer**, so the words can be
 fixed or rewritten without hunting for them; Not pasted stays a pill with
 its Allow. With it off, the pill alone carries the stamp, and resting the
-pointer on it for 250ms (not on a button) opens the drawer. The drawer holds the words that went out, editable in place,
-beside Copy, **–** (collapse to the pill) and **×** (hide the control until it
-is reopened from the menu bar). Under the words, the **tone row** rewrites
+pointer on it for 250ms (not on a button) opens the drawer.
+
+The drawer holds the words that went out, editable in place, beside Copy,
+**–** (collapse to the pill) and **×** (hide the control until it is
+reopened from the menu bar). Under the words, the **tone row** rewrites
 them: **Original** · **Professional** · **Friendly** · **Concise**, and a
 **For AI** toggle (written as a prompt for an AI agent). Each tone
 starts from the words as pasted, so tones never compound, and Original goes

@@ -232,7 +232,12 @@ static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// shown after dictation, unless it is waiting on Accessibility: then the
 /// pill keeps its Allow button. Without a recording there is nothing to edit.
 fn opens_by_itself(state: &HudState, preview: bool) -> bool {
-    preview && state.session_id.is_some() && !state.notice.as_deref().is_some_and(|notice| notice.contains("Accessibility"))
+    preview
+        && state.phase == Phase::Done
+        && state.session_id.is_some()
+        && !matches!(state.mode.as_deref(), Some("image" | "video"))
+        && state.message.as_deref().is_some_and(|text| !text.trim().is_empty())
+        && !state.notice.as_deref().is_some_and(|notice| notice.contains("Accessibility"))
 }
 
 fn peeking(state: &HudState) -> bool {
@@ -670,6 +675,10 @@ mod tests {
         assert!(opens_by_itself(&copied, true));
         let blocked = HudState { notice: Some("Copied — allow Accessibility to paste automatically".into()), ..pasted };
         assert!(!opens_by_itself(&blocked, true));
+        let empty = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("audio"), Some("  ")) };
+        assert!(!opens_by_itself(&empty, true));
+        let shot = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("image"), None) };
+        assert!(!opens_by_itself(&shot, true));
     }
 
     #[test]

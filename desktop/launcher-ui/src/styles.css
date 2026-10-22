@@ -419,8 +419,8 @@ body {
   font: 400 13px/20px var(--ev-font-text);
 }
 .ctl-ticker > bdi { direction: ltr; }
-/* Live words sit back while you talk: a glance, not the thing to read. They
-   come up to full ink when you click in to fix one, and after Stop. */
+/* Live words sit back while you talk and while they're written down: a
+   glance, not the thing to read. Clicking in to fix one brings full ink. */
 .eavesy-control[data-phase="recording"] .ctl-words:not(:focus),
 .eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(247 241 232 / 0.62); }
 .eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: rgb(34 32 30 / 0.66); }
