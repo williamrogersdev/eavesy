@@ -478,6 +478,26 @@ export async function claimBotStart(db: AppDb, botId: string) {
   return bot ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME } : null;
 }
 
+/** Container starts tried for one bot before it is failed, and the wait between them. */
+export const START_ATTEMPTS = 4;
+export const START_RETRY_MS = 40 * 1_000;
+/** One start attempt's limits: to get a container instance, then for the bot to listen on its port. */
+export const START_INSTANCE_TIMEOUT_MS = 8 * 1_000;
+export const START_PORTS_TIMEOUT_MS = 20 * 1_000;
+/** The longest one start attempt can take, with slack, kept free before the watchdog's deadline. */
+const START_ATTEMPT_ALLOWANCE_MS = START_INSTANCE_TIMEOUT_MS + START_PORTS_TIMEOUT_MS + 30 * 1_000;
+
+/**
+ * When to try a failed container start again, or null to give up now: after
+ * the last attempt, or when one more would run past the watchdog's start
+ * timeout, counted from the claim.
+ */
+export function nextStartAttemptAt(attempt: number, claimedAt: number, now: number): number | null {
+  if (attempt >= START_ATTEMPTS) return null;
+  const at = now + START_RETRY_MS;
+  return at + START_ATTEMPT_ALLOWANCE_MS <= claimedAt + BOT_START_TIMEOUT_MS ? at : null;
+}
+
 /** A claimed start still waiting for its container, for a retry; null once cancelled or given up. */
 export async function launchingBot(db: AppDb, botId: string) {
   const bot = await botById(db, botId);
