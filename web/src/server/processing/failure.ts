@@ -5,6 +5,7 @@ import * as schema from '@/db/schema';
 import { meetings, meetingSegments } from '@/db/schema';
 import { encode } from '@/db/codec';
 import { failCollection } from '@/server/meeting-bots/service';
+import { failRecap } from '@/server/email/recaps';
 import { type ProcessingEnv, type ProcessingMessage } from './shared';
 
 export interface TerminalProcessingFailure {
@@ -40,6 +41,9 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       return;
     case 'collect-bot-recording':
       await failCollection(db, message.botId, reason);
+      return;
+    case 'send-recap':
+      await failRecap(db, message.meetingId, reason);
       return;
     case 'rolling-summarize':
     case 'agent-transcript':

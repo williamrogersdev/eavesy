@@ -6,6 +6,11 @@ export interface LiveCaption {
   isFinal: boolean;
   startMs: number;
   endMs: number;
+  /**
+   * Words only the fast preview recognizer has heard. Shown like any partial;
+   * the accurate text replaces them under the same `startMs`.
+   */
+  preview?: boolean;
 }
 
 /** A line of a recording in progress (`live_transcript`): cloud, or provisional on-device text. */

@@ -92,6 +92,18 @@ describe('running transcript', () => {
     expect(runningText(state)).toBe('I said. they say');
   });
 
+  it('replaces preview words with the accurate text, then its final, under the same start', () => {
+    const fast = { ...partial(0, 'So the posters migration look fine, but'), endMs: 4_000, preview: true };
+    const accurate = { ...partial(0, 'So the post migration looks fine.'), endMs: 3_900 };
+    const settled = { ...partial(100, 'So the post migration looks fine.', true), endMs: 3_900 };
+    const next = { ...partial(3_900, 'but Siobhan said'), endMs: 5_000, preview: true };
+    expect(runningText(add([fast]))).toBe('So the posters migration look fine, but');
+    expect(runningText(add([fast, accurate]))).toBe('So the post migration looks fine.');
+    const state = add([fast, accurate, settled, next]);
+    expect(runningText(state)).toBe('So the post migration looks fine. but Siobhan said');
+    expect(Object.keys(state.partials)).toEqual(['mic:3900']);
+  });
+
   it('starts over for a new recording', () => {
     const state = add([partial(0, 'old words', true), { ...partial(0, 'new', true), sessionId: 't' }]);
     expect(runningText(state)).toBe('new');

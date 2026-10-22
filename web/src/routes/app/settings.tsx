@@ -29,6 +29,9 @@ interface Me {
   customVocabulary: string[];
   dictationStyle: DictationStyle;
   dictationForAgents: boolean;
+  emailRecaps: boolean;
+  emailRecapTranscript: boolean;
+  emailRecapsAvailable: boolean;
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
@@ -172,6 +175,27 @@ function SettingsPage() {
     } catch (cause) {
       setMe(previous);
       setError(cause instanceof Error ? cause.message : 'Could not save the language.');
+    }
+  };
+
+  const saveRecaps = async (change: Partial<Pick<Me, 'emailRecaps' | 'emailRecapTranscript'>>) => {
+    const previous = me;
+    setError(null);
+    if (previous) setMe({ ...previous, ...change });
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(change),
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        throw new Error(isRecord(body) && typeof body.error === 'string' && body.error !== 'invalid_request' ? body.error : `Server returned ${response.status}`);
+      }
+      toast.show();
+    } catch (cause) {
+      setMe(previous);
+      setError(cause instanceof Error ? cause.message : 'Could not save email recaps.');
     }
   };
 
@@ -416,6 +440,32 @@ function SettingsPage() {
 
       <TemplateManager />
 
+      <AppSection
+        title="Email recaps"
+        description={me.emailRecapsAvailable
+          ? `When a meeting finishes, Eavesy emails ${me.email ?? 'you'} its TL;DR, decisions, action items and a link to the transcript. Only you get it.`
+          : 'Email recaps are not set up on this server.'}
+      >
+        <Row label="Email me a recap" hint="One email per finished meeting, to your account's address." htmlFor="settings-email-recaps">
+          <input
+            id="settings-email-recaps"
+            type="checkbox"
+            checked={me.emailRecaps}
+            disabled={!me.emailRecapsAvailable || me.isAnonymous || !me.email}
+            onChange={(e) => void saveRecaps({ emailRecaps: e.target.checked })}
+          />
+        </Row>
+        <Row label="Attach the transcript" hint="Adds the full transcript as a text file." htmlFor="settings-email-recap-transcript">
+          <input
+            id="settings-email-recap-transcript"
+            type="checkbox"
+            checked={me.emailRecapTranscript}
+            disabled={!me.emailRecapsAvailable || !me.emailRecaps}
+            onChange={(e) => void saveRecaps({ emailRecapTranscript: e.target.checked })}
+          />
+        </Row>
+      </AppSection>
+
       <AppSection title="AI providers" description="Optional. Without these, Eavesy’s own AI is used.">
         <Row
           label="OpenRouter"
@@ -584,6 +634,9 @@ function parseMe(value: unknown): Me | null {
       : [],
     dictationStyle: dictationStyle(value.dictationStyle),
     dictationForAgents: value.dictationForAgents === true,
+    emailRecaps: value.emailRecaps === true,
+    emailRecapTranscript: value.emailRecapTranscript === true,
+    emailRecapsAvailable: value.emailRecapsAvailable === true,
     hasAnthropicKey: value.hasAnthropicKey,
     anthropicKeyHint: nullableString(value.anthropicKeyHint),
     hasOpenRouterKey: value.hasOpenRouterKey,

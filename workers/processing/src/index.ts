@@ -12,6 +12,7 @@ import { captureMessage, withErrorReporting } from '../../../web/src/server/obse
 import {
   deadLetterQueue,
   purgeDeleted,
+  reconcileEmailRecaps,
   reconcileMeetingBots,
   recoverStaleSegments,
   sealLegacyKeys,
@@ -32,6 +33,10 @@ export interface Env extends ProcessingEnv {
   RECALL_API_KEY?: string;
   RECALL_WEBHOOK_SECRET?: string;
   RECALL_REGION?: string;
+  RESEND_API_KEY?: string;
+  RESEND_WEBHOOK_SECRET?: string;
+  EMAIL_FROM?: string;
+  APP_URL?: string;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
   RELEASE?: string;
@@ -139,6 +144,7 @@ export const worker = {
     }
     await recoverStaleSegments(env, now);
     await reconcileMeetingBots(env, now);
+    await reconcileEmailRecaps(env, now);
     await purgeDeleted(env, now);
     await pruneRateLimits(env.DB, now);
     await sealLegacyKeys(env);

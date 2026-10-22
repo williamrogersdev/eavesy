@@ -7,8 +7,9 @@ import type { QueueMessage } from '@/server/queue';
 
 import type { CreditEnv } from '@/lib/ai/credit-runner';
 import type { RecallEnv } from '@/server/meeting-bots/recall';
+import type { EmailEnv } from '@/server/email/resend';
 
-export interface ProcessingEnv extends CreditEnv, RecallEnv {
+export interface ProcessingEnv extends CreditEnv, RecallEnv, EmailEnv {
   DB: D1Database;
   AUDIO_BUCKET: R2Bucket;
   VECTORIZE: VectorizeIndex;

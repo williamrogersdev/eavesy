@@ -119,6 +119,7 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     DELETE: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/meeting-bots/${BOT}`, params: { id: BOT } }, status: 404 } },
   },
   '/api/webhooks/recall': { POST: { public: 'Recall.ai status webhook, authenticated by its Svix signature rather than a session' } },
+  '/api/webhooks/resend': { POST: { public: 'Resend email delivery webhook, authenticated by its Svix signature rather than a session; it only moves delivery rows forward' } },
   '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
   '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },
   '/api/account/': {
@@ -463,6 +464,7 @@ beforeEach(async () => {
   // rate_limits only exists once the rate-limit migration has landed.
   await testEnv.DB.prepare('DELETE FROM rate_limits').run().catch(() => undefined);
   await resetTables(
+    'email_deliveries',
     'meeting_bots',
     'recording_imports',
     'personal_dictionary',
@@ -526,6 +528,10 @@ async function seedOwner() {
       `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)
        VALUES (?, ?, 'recall', 'https://meet.google.com/abc-defg-hij', 'meet', 'scheduling', ?, ?)`,
     ).bind(BOT, OWNER, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO email_deliveries (id, user_id, meeting_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+       VALUES ('eml_owner', ?, ?, 'meeting_recap', 'owner@example.com', ?, 'resend', 'sent', ?, ?)`,
+    ).bind(OWNER, MEETING, `meeting_recap:${MEETING}:owner@example.com`, now, now),
   ]);
 }
 

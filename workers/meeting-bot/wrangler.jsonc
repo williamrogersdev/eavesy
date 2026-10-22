@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Eavesy's meeting bots: one Container, owned by one Durable Object, per bot.
+  "name": "eavesy-meeting-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "MeetingBot",
+      "image": "./Dockerfile",
+      // 1/2 vCPU, 4 GiB. Chromium in an audio-only call measured ~0.09 vCPU
+      // and ~210 MiB (docs/plans/self-hosted-meeting-bot.md); the headroom is
+      // for the apps' own scripts and any video they still send.
+      "instance_type": "standard-1",
+      "max_instances": 20
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "MEETING_BOT", "class_name": "MeetingBot" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MeetingBot"] }]
+}

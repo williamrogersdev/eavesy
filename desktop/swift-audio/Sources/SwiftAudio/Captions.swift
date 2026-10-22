@@ -3,15 +3,18 @@ import Foundation
 
 /// One caption update for a track. A partial replaces the track's previous
 /// partial; a final is settled text for `startMs..<endMs` of the recording.
+/// A `preview` partial holds words only the fast transcriber has heard: the
+/// host shows it but never pastes or stores it.
 struct CaptionEvent: Equatable {
     let track: String
     let text: String
     let isFinal: Bool
     let startMs: Int64
     let endMs: Int64
+    var preview = false
 
     var json: [String: Any] {
-        [
+        var json: [String: Any] = [
             "event": "caption",
             "track": track,
             "text": text,
@@ -19,6 +22,8 @@ struct CaptionEvent: Equatable {
             "startMs": startMs,
             "endMs": endMs,
         ]
+        if preview { json["preview"] = true }
+        return json
     }
 }
 
@@ -64,12 +69,12 @@ struct CaptionUnavailable: Error {
 /// Receives what a speech engine recognizes. Times are ms from the start of the
 /// recording, the same clock segment offsets use.
 protocol CaptionSink: AnyObject {
-    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64)
+    /// `preview` text is shown, never pasted or stored; it is never final.
+    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64, preview: Bool)
     func engineFailed(_ reason: String)
     /// Audio the engine let go of before recognizing it, so its text is missing words.
     func audioDropped(_ count: Int)
 }
-
 
 /// An on-device recognizer fed 48 kHz mono float audio.
 protocol SpeechEngine: AnyObject {
@@ -380,14 +385,19 @@ final class LiveCaptions: CaptionSink {
 
     // MARK: CaptionSink (called from engine callbacks on any thread)
 
-    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
+    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64, preview: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !isFinal else { return }
+        // Only the accurate transcriber settles text.
+        guard !(preview && isFinal) else { return }
         lock.lock()
         let off = failed
         lock.unlock()
         guard !off else { return }
-        emit(CaptionEvent(track: track, text: trimmed, isFinal: isFinal, startMs: startMs, endMs: endMs).json)
+        emit(
+            CaptionEvent(
+                track: track, text: trimmed, isFinal: isFinal, startMs: startMs, endMs: endMs, preview: preview
+            ).json)
         if isFinal { onFinal?(trimmed, endMs) }
     }
 
@@ -431,8 +441,8 @@ private final class EngineSink: CaptionSink {
         lock.unlock()
     }
 
-    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
-        captions?.recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs)
+    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64, preview: Bool) {
+        captions?.recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs, preview: preview)
     }
 
     func audioDropped(_ count: Int) {

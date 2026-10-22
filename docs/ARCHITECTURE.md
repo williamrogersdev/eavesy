@@ -196,6 +196,42 @@ It is off unless `RECALL_API_KEY` and `RECALL_WEBHOOK_SECRET` are set.
    creates fail after 3 hours, and bots still unfinished 24 hours after their
    start fail. Account deletion cancels active bots before the rows go.
 
+## Email recaps
+
+Opt-in per account (**Settings → Email recaps**, `users.email_recaps`): when a
+meeting finishes with a summary, the owner gets an email with its TL;DR,
+decisions, action items and a link to the transcript, plus the transcript as
+`transcript.txt` if `email_recap_transcript` is on (up to 5 MiB). The provider
+is [Resend](https://resend.com/docs); it is off unless `RESEND_API_KEY`,
+`RESEND_WEBHOOK_SECRET` and `EMAIL_FROM` are set. Recipients are the account's
+own address only; sending to other participants is not built.
+
+1. Where `summarize` marks a meeting `complete` with a summary, or the
+   whole-file `process-recording` path completes one with a non-empty
+   transcript, `queueRecap` queues `send-recap`. Nothing is sent inline. Quick
+   notes and empty recordings get no recap.
+2. The `send-recap` job inserts an `email_deliveries` row keyed by
+   `idempotency_key = meeting_recap:<meetingId>:<recipient>` (unique), so a
+   retried or duplicated job finds the same row. Only a `queued` row is sent.
+   It claims the row by moving it to `unknown` before calling Resend, with the
+   row id as Resend's `Idempotency-Key` and as an `eavesy_delivery` tag.
+3. Outcomes: accepted → `sent`; a 429 → back to `queued` and the queue retries;
+   another 4xx → `failed`; a timeout, dropped connection, 5xx or 409 stays
+   `unknown`. `unknown` means the email may have gone out and is **never
+   resent automatically**; a later webhook can still settle it.
+4. `POST /api/webhooks/resend` verifies the Svix signature
+   (`server/svix.ts`, 5-minute replay window), skips deliveries already in
+   `provider_webhook_events` (written only after the update is applied), finds
+   the row by Resend's email id or the tag, and moves it forward only
+   (`DELIVERY_STATUS_ORDER`): `sent` → `delivered` → `bounced`/`failed` →
+   `complained`.
+5. Bounces and complaints: an address that bounced permanently, was suppressed
+   by Resend or complained gets no more recaps (the row is `failed`,
+   `suppressed_recipient`). A complaint also turns the account's recaps off.
+6. The hourly cron (`reconcileRecaps`) re-queues `queued` rows untouched for
+   30 minutes, fails ones older than 24 hours (`expired`) and leaves `unknown`
+   alone. Account deletion removes the account's rows.
+
 ## Authentication
 
 Browser requests use Clerk. Desktop long-form requests use a random device

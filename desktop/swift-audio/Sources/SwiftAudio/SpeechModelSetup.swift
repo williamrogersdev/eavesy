@@ -22,9 +22,9 @@ enum SpeechModelSetup {
                 if #available(macOS 26.0, *), SpeechTranscriber.isAvailable,
                     let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale)
                 {
-                    let transcriber = SpeechTranscriber(
-                        locale: supported, transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
-                    state = await SpeechModels.prepare(transcriber, locale: supported, wait: true).rawValue
+                    state = await SpeechModels.prepare(
+                        AnalyzerEngine.transcribers(locale: supported), locale: supported, wait: true
+                    ).rawValue
                 }
             #endif
             semaphore.signal()
