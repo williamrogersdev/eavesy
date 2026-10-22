@@ -450,7 +450,7 @@ geometry when Settings opens or closes.
 (`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
 CSS draws its corners so the shadow and the shape always match. Rust picks the
 window size from the phase (`hud::size_for`) and animates the native frame
-once per phase change. Content never measures itself or resizes the window, so
+once per phase change, or when a receipt's drawer opens (`peek_hud`). Content never measures itself or resizes the window, so
 the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
@@ -458,7 +458,8 @@ the pill can't jitter or flip while words arrive.
 | pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
 | bar | 264 × 40 | recording and writing with live words off |
 | wide | 400 × 62 + 20 per line | recording and writing (1, 2 or 4 ticker lines, 4 unless chosen), failed |
-| result | 400 × 142 | pasted/copied, with the words that went out |
+| receipt | 248 × 36 | a finished dictation: **Pasted · 16 words**, **Copied** or **Not pasted** |
+| result | 400 × 142 | the receipt's drawer, opened by hovering it: the words that went out |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **How it looks while recording** is the user's call (Settings → General → Recording
@@ -485,16 +486,21 @@ the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
 
 After stop the top row reads "Writing it down…" and the ticker shimmers. The
-result turns the control into the **case file**: cream paper and dark ink
-(fixed light values, never see-through), with a **rubber stamp** rotated −4°
-that lands with a short spring: **Pasted** (leaf), **Copied** (manila) or
-**Not pasted** (warn, with an Allow button for Accessibility). The words that
-went out sit on a white sheet below it, editable in place, beside Copy,
-**–** (collapse to the pill) and **×** (hide the control until it is reopened
-from the menu bar). Screenshots stamp **Snapped** above the thumbnail; saves stamp
-**Saved**. Failures read "Didn't catch that" in warn, never coral. The HUD
-collapses to the pill 3.5s (pill) or 10s (result) after the result, 2.5s
-after the pointer leaves it, or on Esc. It stays while the pointer is over it
+control stays charcoal the whole way: stopping never turns it into another
+object. A dictation ends as a **receipt**, the pill with a stamp that lands
+with a short spring: **Pasted · 16 words** (leaf), **Copied** with "⌘V to
+paste" (manila) or **Not pasted** (warn, with an Allow button for
+Accessibility). The words are already where they went, so the pill doesn't
+show them again. Resting the pointer on the receipt for 250ms (not on a
+button) opens its **drawer**: the words that went out, editable in place,
+beside Copy, **–** (collapse to the pill) and **×** (hide the control until it
+is reopened from the menu bar). Screenshots stamp **Snapped** above the
+thumbnail; saves stamp **Saved**. Failures read "Didn't catch that" in warn,
+never coral. A receipt goes back to the pill after 1.6s (Pasted) or 6s
+(Copied), whatever the pointer does; Not pasted stays until Accessibility is
+allowed or it's collapsed. Otherwise the HUD collapses to the pill 3.5s (pill)
+or 10s (drawer) after the result, 2.5s after the pointer leaves it, or on Esc.
+It stays while the pointer is over it
 (up to 30s after it last moves, and 2 min at most from when it came over),
 while you edit, and while a correction is saving. Stopping a recording hands the keyboard back to the app you were in
 before anything is pasted, even if you were editing the live words, so the

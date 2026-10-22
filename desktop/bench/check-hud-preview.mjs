@@ -45,14 +45,21 @@ try {
   });
   await page.goto(process.env.EAVESY_HUD_URL ?? 'http://127.0.0.1:1420/hud.html');
   const editor=page.getByRole('textbox',{name:'Edit transcript preview'});
-  await editor.waitFor();
-  await page.clock.runFor(14_000);
-  assert.equal(await editor.count(),1);
-  await page.clock.runFor(1_101);
+  // Resting the pointer on a finished dictation's receipt opens its drawer.
+  const openDrawer = async () => {
+    await page.locator('[data-size="receipt"]').waitFor();
+    await page.mouse.move(1, 1);
+    await page.locator('.eavesy-control').hover();
+    await page.clock.runFor(300);
+    await editor.waitFor();
+  };
+  await page.getByText('Pasted').waitFor();
+  assert.equal(await editor.count(),0);
+  await page.clock.runFor(1_601);
   await page.locator('[data-phase="idle"]').waitFor();
-  console.log('PASS: returns to pill after 15 seconds');
+  console.log('PASS: a pasted dictation shows its receipt, then returns to the pill');
   await page.reload();
-  await editor.waitFor();
+  await openDrawer();
   const unfocusedBox = await editor.boundingBox();
   const unfocusedPadding = await editor.evaluate(el => getComputedStyle(el).paddingLeft);
   await editor.click();
@@ -93,12 +100,12 @@ try {
   assert.equal(await editor.count(),1);
   await page.clock.runFor(1_101);
   assert.equal(await editor.count(),1);
-  await page.getByRole('button',{name:'Close capture control'}).click();
+  await page.getByRole('button',{name:'Collapse to the pill'}).click();
   await page.locator('[data-phase="idle"]').waitFor();
   console.log('PASS: an edited preview stays open after blur until explicitly dismissed');
   assert.equal(await page.evaluate(()=>localStorage.getItem('qa-transcript')),'Corrected first sentence.\nCorrected final sentence.');
   await page.reload();
-  await editor.waitFor();
+  await openDrawer();
   assert.equal(await editor.inputValue(),'Corrected first sentence.\nCorrected final sentence.');
   console.log('PASS: corrected transcript survives collapse and reload');
   await page.evaluate(()=>{window.__qaFailSave=true;});
@@ -112,26 +119,27 @@ try {
   await page.getByRole('status').waitFor();
   await page.clock.runFor(15_001);
   assert.equal(await editor.count(),1);
-  await page.getByRole('button',{name:'Close capture control'}).click();
+  await page.getByRole('button',{name:'Collapse to the pill'}).click();
   await page.locator('[data-phase="idle"]').waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem('qa-transcript')),'Correction that must survive a failed save');
   console.log('PASS: save failures keep edits visible and block collapse until retry succeeds');
   await page.reload();
-  await editor.waitFor();
+  await openDrawer();
   await editor.fill('Edit before the next recording');
   await page.evaluate(() => window.__qaEmit({phase:'recording',sessionId:'qa-2',mode:'audio',message:null,notice:null,startedAtMs:Date.now()}));
   await page.locator('[data-phase="recording"]').waitFor();
   await page.evaluate(() => window.__qaEmit({phase:'done',sessionId:'qa-2',mode:'audio',message:'New recording text',notice:null,startedAtMs:null}));
-  await editor.waitFor();
+  await openDrawer();
   assert.equal(await editor.inputValue(),'New recording text');
   await page.clock.runFor(400);
   await page.waitForFunction(()=>window.__qaSaves.some(edit=>edit.text==='Edit before the next recording'));
   await page.waitForFunction(()=>!document.body.textContent.includes('Saving…'));
-  await page.clock.runFor(15_100);
+  // The pointer that opened the drawer is still on it: the hover hold applies.
+  await page.clock.runFor(30_100);
   await page.locator('[data-phase="idle"]').waitFor();
   console.log('PASS: a new recording resets the previous editing state');
   await page.reload();
-  await editor.waitFor();
+  await openDrawer();
   await page.evaluate(()=>{window.__qaBlockNextSave=true;});
   await editor.fill('Save must finish before collapse');
   await editor.blur();
@@ -142,7 +150,7 @@ try {
   await page.getByRole('status').waitFor();
   await page.clock.runFor(15_100);
   assert.equal(await editor.count(),1);
-  await page.getByRole('button',{name:'Close capture control'}).click();
+  await page.getByRole('button',{name:'Collapse to the pill'}).click();
   await page.locator('[data-phase="idle"]').waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem('qa-transcript')),'Save must finish before collapse');
   console.log('PASS: in-flight saves preserve the editor, and explicit dismissal keeps the saved text');
@@ -210,10 +218,9 @@ try {
   await page.waitForFunction(()=>document.querySelector('textarea')?.value.includes('語') && document.querySelector('textarea')?.value.endsWith('Speech during composition.'));
   console.log('PASS: long captures retain their opening, scrolling stays put while editing, and speech waits for composition to finish');
   await page.evaluate(() => window.__qaEmit({phase:'done',sessionId:null,mode:'audio',message:'Result without a recording identity',notice:null,startedAtMs:null}));
-  await editor.waitFor();
-  await page.waitForFunction(()=>document.querySelector('textarea')?.readOnly===true);
-  assert.equal(await editor.getAttribute('readonly'),'');
-  console.log('PASS: a preview without a recording ID cannot accept unsavable edits');
+  await page.locator('[data-size="receipt"]').waitFor();
+  assert.equal(await editor.count(),0);
+  console.log('PASS: a result without a recording ID shows only its receipt, with nothing to edit');
   await page.evaluate(() => {
     window.__qaEmit({phase:'recording',sessionId:'qa-live',mode:'audio',message:null,notice:null,startedAtMs:Date.now()});
   });
