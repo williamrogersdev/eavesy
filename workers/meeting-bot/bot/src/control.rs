@@ -26,7 +26,9 @@ impl Status {
 const MAX_HEAD: usize = 8 * 1024;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(2);
 /// Connections handled at once; past that, new ones are closed straight away.
-const MAX_CONNECTIONS: usize = 16;
+/// Reading a tiny head is cheap, so this is far above anything legitimate
+/// (Cloudflare checks once that the port is open; nothing polls it).
+const MAX_CONNECTIONS: usize = 256;
 
 /// Reads up to the end of the request head; None if it is too big, too slow or cut off.
 async fn read_head(stream: &mut (impl AsyncReadExt + Unpin)) -> Option<String> {
@@ -95,6 +97,14 @@ mod tests {
             client.write_all(b"tus HTTP/1.1\r\nhost: x\r\n\r\n").await.unwrap();
         });
         assert!(read_head(&mut server).await.unwrap().starts_with("GET /status HTTP/1.1"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_that_stalls_gets_no_reply() {
+        let (mut client, mut server) = tokio::io::duplex(64);
+        client.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
+        assert!(read_head(&mut server).await.is_none());
+        drop(client);
     }
 
     #[test]
