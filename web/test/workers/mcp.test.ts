@@ -353,6 +353,13 @@ Then debug each one.', ?, ?),
     expect(used?.use_count).toBe(1);
   });
 
+  it('stay hidden from a connection without read access', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
+    expect((await rpc(token, 'prompts/list')).result?.prompts).toEqual([]);
+    expect((await rpc(token, 'prompts/get', { name: 'focus' })).error?.message).toContain('can’t read your prompts');
+  });
+
   it('refuse another user’s prompt and one that doesn’t exist', async () => {
     const { token } = await mint();
     expect((await rpc(token, 'prompts/get', { name: 'not-yours' })).error?.message).toContain('No saved prompt');

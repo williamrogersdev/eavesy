@@ -52,6 +52,19 @@ describe('/api/prompts', () => {
     expect((await send('GET')).body.items.map((p) => p.slug)).toEqual(['triage-tickets', 'triage-tickets-2']);
   });
 
+  it('gives concurrent prompts with the same name different commands', async () => {
+    const results = await Promise.all(Array.from({ length: 4 }, () => send('POST', { name: 'Plan', body: 'x' })));
+    expect(results.map((r) => r.status)).toEqual([201, 201, 201, 201]);
+    expect(new Set(results.map((r) => r.body.prompt.slug))).toEqual(new Set(['plan', 'plan-2', 'plan-3', 'plan-4']));
+  });
+
+  it('counts pastes on their own rate limit, apart from edits', async () => {
+    const { prompt } = (await send('POST', { name: 'Plan', body: 'x' })).body;
+    await send('PATCH', { used: true }, prompt.id);
+    const keys = await testEnv.DB.prepare('SELECT key FROM rate_limits').all<{ key: string }>();
+    expect(keys.results.map((row) => row.key.split(':')[0]).sort()).toEqual(['prompts', 'prompts-used']);
+  });
+
   it('refuses a prompt without a name or text', async () => {
     expect((await send('POST', { name: ' ', body: 'x' })).status).toBe(400);
     expect((await send('POST', { name: 'x', body: '   ' })).status).toBe(400);

@@ -67,6 +67,7 @@ function PromptPage({ prompt, state, onBack }: {
             />
             <p className="ev-set-hint">
               Find it from the panel’s search. In Claude Code it’s <code>{claudeCodeCommand(slug)}</code>.
+              {prompt && slug !== prompt.slug && ' Renaming it changes the slash command.'}
             </p>
           </div>
           <div className="ev-field">
@@ -127,7 +128,7 @@ export function PromptsSettings({ state, open, onOpen }: {
       <Card title="How prompts work">
         <ol className="ev-howto">
           <li><span><b>Save what you keep typing.</b> A request you make every week, written the way that works best.</span></li>
-          <li><span><b>Paste it from the panel.</b> Press <code>/</code>, type part of its name, then press Return. It goes wherever your cursor was.</span></li>
+          <li><span><b>Paste it from the panel.</b> In the search, type <code>/</code> and part of its name, then press Return. It goes wherever your cursor was.</span></li>
           <li><span><b>Or run it in Claude Code.</b> With Eavesy connected over MCP, each prompt is a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
         </ol>
       </Card>

@@ -597,7 +597,8 @@ export function CaptureHistory({
     return () => window.clearInterval(timer);
   }, []);
 
-  // A search starting with "/" looks only for saved prompts.
+  // A search starting with "/" looks only for saved prompts, and only then does Return paste
+  // one: Return in an ordinary search must never type into another app.
   const onlyPrompts = promptsOnly(query);
   const captureQuery = onlyPrompts ? '' : query;
   const promptHits = useMemo(() => matchPrompts(prompts ?? [], query).slice(0, PROMPT_HITS), [prompts, query]);
@@ -641,7 +642,7 @@ export function CaptureHistory({
               aria-label="Search captures"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && promptHits[0] && !e.nativeEvent.isComposing) {
+                if (e.key === 'Enter' && onlyPrompts && promptHits[0] && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   pastePrompt(promptHits[0]);
                 } else if (e.key === 'Escape' && query) {
@@ -678,7 +679,7 @@ export function CaptureHistory({
             <section className="ev-group" aria-label="Prompts">
               <h2 className="ev-gh">Prompts</h2>
               {promptHits.map((prompt, i) => (
-                <PromptRow key={prompt.id} prompt={prompt} query={query} first={i === 0} onPaste={() => pastePrompt(prompt)} flash={flash} runTask={runTask} />
+                <PromptRow key={prompt.id} prompt={prompt} query={query} first={onlyPrompts && i === 0} onPaste={() => pastePrompt(prompt)} flash={flash} runTask={runTask} />
               ))}
             </section>
           )}

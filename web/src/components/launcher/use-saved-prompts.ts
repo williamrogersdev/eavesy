@@ -45,11 +45,15 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
 
   const remove = useCallback(async (id: string) => {
     setError(null);
-    const before = prompts;
+    const removed = prompts?.find((p) => p.id === id);
     setPrompts((list) => list?.filter((p) => p.id !== id) ?? list);
     try { await deletePrompt(id); }
-    catch (e) { if (mounted.current) { setPrompts(before); setError(errMsg(e, 'Couldn’t delete the prompt.')); } }
-  }, [prompts]);
+    catch (e) {
+      // Put back just this prompt, so changes that landed meanwhile stay.
+      if (removed) put(removed);
+      if (mounted.current) setError(errMsg(e, 'Couldn’t delete the prompt.'));
+    }
+  }, [prompts, put]);
 
   /** Counts a paste. Best effort: a missed count only changes the order. */
   const used = useCallback((id: string) => {

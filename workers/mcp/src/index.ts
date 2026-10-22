@@ -319,7 +319,8 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
     const prompt = typeof name === 'string' ? await savedPrompts.getBySlug(db, userId, name) : null;
     if (!prompt) return jsonRpc(body.id, undefined, { code: -32602, message: `No saved prompt is called ${String(name)}.` });
     const details = body.params?.arguments?.details;
-    await savedPrompts.markUsed(db, userId, prompt.id);
+    // Best effort: a failed count must not fail the prompt.
+    await savedPrompts.markUsed(db, userId, prompt.id).catch(() => undefined);
     return jsonRpc(body.id, {
       description: prompt.name,
       messages: [{ role: 'user', content: { type: 'text', text: fillPrompt(prompt.body, typeof details === 'string' ? details : null) } }],
