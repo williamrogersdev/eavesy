@@ -342,25 +342,40 @@ box above search. Search and history stay at the same position throughout.
 Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
-- Search: well field, r9, 32px, leading search icon, trailing `Kbd /`.
-  Matches are highlighted with `--ev-manila-soft` and `--ev-manila-ink`.
-- Chips: pill, 26px. Unselected is `--ev-line` outline with ink-2 text.
-  Selected is coat-soft fill with coat text. Show counts only when the
-  filter is active.
+- Search: well field, r9, 32px, leading search icon, trailing `Kbd /`
+  (only while the field is empty and nothing is filtered) and the **Show**
+  filter (All, Voice, Meetings, Screens, Notes) as a borderless pop-up at the
+  field's right end. One row of chrome between the toolbar and the list, not
+  two. Counts appear in the filter's options only while searching or
+  filtering. Matches are highlighted with `--ev-manila-soft` and
+  `--ev-manila-ink`.
 - Day groups: "Today", "Yesterday", weekday, then "Mar 4". A sticky header
   over 92% paper.
-- Rows: no cards. A 1px dotted `--ev-line-strong` thread runs down the left
-  gutter (x = 22) connecting the kind icons, which sit on 20px paper discs so
-  the thread looks threaded through them. Header: icon, kind label (ink),
-  duration (ink-3, tabular), time on the right.
-- Long text: clamp at 4 lines with a 24px fade to paper. "More" toggles, in
+- Rows: no cards, no thread, no discs. The words are the row: they start at
+  the row's left edge, full width. Above them a quiet 20px meta line in
+  ink-3: 13px kind icon, kind label (round 11.5/600, ink-2), duration
+  (tabular), time on the right.
+- Long text: clamp at 3 lines with a fade to paper. "More" toggles, in
   round 11.5 coat.
-- Thumbnails: max-height 148, r8, e-2, and a 1px `--ev-line` inner frame so
-  white screenshots don't bleed into paper. Video shows a duration badge
-  bottom-left in HUD glass.
-- Hover/focus actions: Copy, Paste at cursor, ⋯ (Open file, Show in Finder,
-  Delete). 28px IconButtons on a raised r9 strip with e-2, fading in over
-  160ms. They're always visible on the keyboard-focused row.
+- Thumbnails: take the image's own width (no letterbox), max-height 148, r8,
+  e-2, and a 1px `--ev-line` inner frame so white screenshots don't bleed
+  into paper. Video shows a duration badge bottom-left in HUD glass.
+- Hover/focus actions: Paste at cursor (only while another version is
+  shown), Copy, **Rewrite**, ⋯ (Edit transcript, Play audio, Show in Finder,
+  Move to Trash). 26px IconButtons and a small ghost text button on a
+  raised r9 strip with e-2, fading in over 160ms. They're always visible on
+  the keyboard-focused row and while a row's tray is open.
+- **Rewrite tray** (pulled, never shown unasked): Rewrite opens a row of
+  26px chips under the words, the same choices as the HUD drawer: Original,
+  Professional, Friendly, Concise, a 1px rule, **For AI** (a toggle that
+  works with any tone; text only, no robot), then Translate. Each version is
+  made from the saved words, never from another rewrite, is kept for the
+  session, and is never saved over the transcript. Copy and Paste use the
+  version on screen. While one is being made the words dim and "Rewriting…"
+  shows at the tray's end; a failure says why in warn ink and leaves the
+  words as they were. Past 20,000 characters tones say "Too long to rewrite
+  here"; For AI falls back to the cloud's agent transcript when there is
+  one. Clicking Rewrite again closes the tray and goes back to the original.
 - Empty: 72px idle mascot plus a speech bubble (raised, r12) whose **tail
   points down to the composer**: "It's quiet up here. Hold `fn` and talk, or
   drop something in below." Search and chips are hidden while history is
