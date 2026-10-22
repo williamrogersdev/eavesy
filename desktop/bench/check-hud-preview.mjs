@@ -37,7 +37,7 @@ try {
         if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
         if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
         if(cmd==='get_hud_state') return state;
-        if(cmd==='get_settings') return {dictation_hotkey:'Fn'};
+        if(cmd==='get_settings') return {dictation_hotkey:'Fn',hud_preview_lines:4,hud_result_preview:localStorage.getItem('qa-preview')==='on'};
         if(cmd==='live_transcript') return [];
         if(cmd==='copy_text') window.__qaCopies.push(args.text);
         if(cmd==='dismiss_hud') window.__qaEmit({...state,phase:'idle',message:null});
@@ -55,6 +55,16 @@ try {
     await page.clock.runFor(300);
     await editor.waitFor();
   };
+  // By default a finished dictation opens straight into its drawer, words and tones showing.
+  await page.evaluate(() => localStorage.setItem('qa-preview','on'));
+  await page.reload();
+  await page.locator('[data-size="result"]').waitFor();
+  await editor.waitFor();
+  await page.locator('.ctl-tone', { hasText: 'Friendly' }).waitFor();
+  await page.getByText('Pasted').waitFor();
+  console.log('PASS: with the words shown after dictation, the drawer opens by itself');
+  await page.evaluate(() => localStorage.removeItem('qa-preview'));
+  await page.reload();
   await page.getByText('Pasted').waitFor();
   assert.equal(await editor.count(),0);
   await page.clock.runFor(1_601);

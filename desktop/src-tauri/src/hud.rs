@@ -210,7 +210,8 @@ pub fn fit_on_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
     let state = current();
-    let size = size_for(&state, prefs(app).lines, peeking(&state));
+    let prefs = prefs(app);
+    let size = size_for(&state, prefs.lines, peeking(&state) || opens_by_itself(&state, prefs.preview));
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -226,6 +227,13 @@ pub fn fit_on_main(app: &AppHandle) {
 
 /// The finished dictation whose transcript drawer is open under the pointer.
 static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// A finished dictation opens straight into its drawer when the words are
+/// shown after dictation, unless it is waiting on Accessibility: then the
+/// pill keeps its Allow button. Without a recording there is nothing to edit.
+fn opens_by_itself(state: &HudState, preview: bool) -> bool {
+    preview && state.session_id.is_some() && !state.notice.as_deref().is_some_and(|notice| notice.contains("Accessibility"))
+}
 
 fn peeking(state: &HudState) -> bool {
     state.session_id.is_some() && *PEEK.lock().unwrap_or_else(|error| error.into_inner()) == state.session_id
@@ -269,6 +277,7 @@ struct Prefs {
     frame: Option<HudFrame>,
     hidden: bool,
     lines: u8,
+    preview: bool,
 }
 static PREFS: std::sync::Mutex<Option<Prefs>> = std::sync::Mutex::new(None);
 
@@ -276,7 +285,7 @@ fn prefs(app: &AppHandle) -> Prefs {
     let mut guard = PREFS.lock().unwrap_or_else(|error| error.into_inner());
     *guard.get_or_insert_with(|| {
         let config = settings::load(app);
-        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines() }
+        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
     })
 }
 
@@ -285,21 +294,25 @@ fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
     change(&mut config);
     let _ = settings::save(app, &config);
     *PREFS.lock().unwrap_or_else(|error| error.into_inner()) =
-        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines() });
+        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() });
 }
 
-/// How the control looks while recording: how many lines of live words, and
-/// whether it is see-through. Takes effect at once, mid-recording too.
+/// How the control looks: how many lines of live words while recording,
+/// whether it is see-through, and (when given) whether a finished dictation
+/// opens with its words. Takes effect at once, mid-recording too.
 /// Faster live words, when given, apply from the next recording.
-pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>) {
+pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>, result_preview: Option<bool>) {
     update_prefs(app, |config| {
         config.hud_preview_lines = Some(lines);
         config.hud_translucent = Some(translucent);
         if let Some(fast) = fast_live_words {
             config.fast_live_words = Some(fast);
         }
+        if let Some(preview) = result_preview {
+            config.hud_result_preview = Some(preview);
+        }
     });
-    let look = serde_json::json!({ "lines": lines, "translucent": translucent });
+    let look = serde_json::json!({ "lines": lines, "translucent": translucent, "preview": prefs(app).preview });
     let handle = app.clone();
     let emitted = look.clone();
     let dispatched = app.run_on_main_thread(move || {
@@ -623,7 +636,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{is_active, live_size, opens_by_itself, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -646,6 +659,17 @@ mod tests {
         // The drawer is only ever a finished dictation's.
         assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true), WIDE);
         assert_eq!(size_for(&HudState::idle(), 4, true), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn a_finished_dictation_opens_with_its_words_unless_it_needs_allowing() {
+        let pasted = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("audio"), Some("hello there")) };
+        assert!(opens_by_itself(&pasted, true));
+        assert!(!opens_by_itself(&pasted, false));
+        let copied = HudState { notice: Some("Copied — press ⌘V to paste".into()), ..pasted.clone() };
+        assert!(opens_by_itself(&copied, true));
+        let blocked = HudState { notice: Some("Copied — allow Accessibility to paste automatically".into()), ..pasted };
+        assert!(!opens_by_itself(&blocked, true));
     }
 
     #[test]

@@ -60,10 +60,11 @@ document.body.style.background = 'transparent';
  */
 type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
 
-/** How the control looks while recording, from Settings → App → Capture. */
-type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
+/** How the control looks, from Settings → App → Capture: live words while
+ * recording, see-through, and whether a finished dictation opens with its words. */
+type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean; preview: boolean };
 
-const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
+const DEFAULT_LOOK: Look = { lines: 0, translucent: true, preview: true };
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
@@ -108,12 +109,14 @@ function within(task: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 function lookFrom(value: unknown): Look {
-  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
+  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; hud_result_preview?: unknown; lines?: unknown; translucent?: unknown; preview?: unknown } | null;
   const lines = raw?.hud_preview_lines ?? raw?.lines;
   const translucent = raw?.hud_translucent ?? raw?.translucent;
+  const preview = raw?.hud_result_preview ?? raw?.preview;
   return {
     lines: lines === 0 || lines === 1 || lines === 2 || lines === 4 ? lines : DEFAULT_LOOK.lines,
     translucent: typeof translucent === 'boolean' ? translucent : DEFAULT_LOOK.translucent,
+    preview: typeof preview === 'boolean' ? preview : DEFAULT_LOOK.preview,
   };
 }
 
@@ -290,7 +293,7 @@ function Hud() {
   currentSession.current = state?.sessionId;
   const [look, setLook] = useState<Look>(() => {
     const params = new URLSearchParams(window.location.search);
-    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
+    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid'), preview: !params.has('receipt') });
   });
   const loadShortcut = () => {
     void invoke('get_settings')
@@ -491,9 +494,13 @@ function Hud() {
   // open: folding them into a stamp would hide the editor or the Retry.
   const ownTone = tone && tone.sessionId === state?.sessionId ? tone : null;
   const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || !!ownTone?.busy);
-  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer) : 'pill';
-  // Until its drawer is opened, a finished dictation is just a stamp on the pill.
-  const receipt = state && !peeking && !keepDrawer ? receiptFor(state) : null;
+  // With the words shown after dictation (the default), a pasted or copied
+  // dictation opens straight into its drawer; Not pasted keeps its Allow pill.
+  const finished = state ? receiptFor(state) : null;
+  const opensItself = look.preview && !!state?.sessionId && (finished === 'pasted' || finished === 'copied');
+  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer || opensItself) : 'pill';
+  // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
+  const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
 
   useEffect(() => {
     if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;

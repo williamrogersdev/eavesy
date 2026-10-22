@@ -471,14 +471,15 @@ the pill can't jitter or flip while words arrive.
 | Size | Px | Used for |
 |---|---|---|
 | pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
-| bar | 264 × 40 | recording and writing with live words off |
-| wide | 400 × 62 + 20 per line | recording and writing (1, 2 or 4 ticker lines, 4 unless chosen), failed |
-| receipt | 248 × 36 | a finished dictation: **Pasted · 16 words**, **Copied** or **Not pasted** |
-| result | 400 × 176 | the receipt's drawer, opened by hovering it: the words that went out and the tone row |
+| bar | 264 × 40 | recording and writing with live words off (the default) |
+| wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed |
+| receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
+| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row. Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **How it looks while recording** is the user's call (Settings → General → Recording
-control, `set_hud_look`): live words Off (the bar), 1, 2 or 4 lines, and
+control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
+lines, **Show the words when it's done**, on by default, and
 **See-through**, on by default, which drops the charcoal to 78% and softens
 the coral ring so the control sits back over whatever is underneath. Still
 no native glass, for the corner reason above. A change applies at once, even
@@ -496,7 +497,9 @@ the next recording.
 The snoop is cream on the charcoal (`.ctl-mark`) and wears the coral lens
 only while recording; its hat and the five voice bars follow the mic level.
 The coral dot, the coral ring and the coral Stop are the only red, and only
-while the mic is live. The ticker is one line of 12.5/18 text, clipped from
+while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (66%
+when see-through) so they don't pull the eye while you talk; clicking in to
+fix one brings it to full ink. The ticker is one line of 12.5/18 text, clipped from
 the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
 
@@ -505,9 +508,11 @@ control stays charcoal the whole way: stopping never turns it into another
 object. A dictation ends as a **receipt**, the pill with a stamp that lands
 with a short spring: **Pasted · 16 words** (leaf), **Copied** with "⌘V to
 paste" (manila) or **Not pasted** (warn, with an Allow button for
-Accessibility). The words are already where they went, so the pill doesn't
-show them again. Resting the pointer on the receipt for 250ms (not on a
-button) opens its **drawer**: the words that went out, editable in place,
+Accessibility). With **Show the words when it's done** on (the default),
+Pasted and Copied open straight into the **drawer**, so the words can be
+fixed or rewritten without hunting for them; Not pasted stays a pill with
+its Allow. With it off, the pill alone carries the stamp, and resting the
+pointer on it for 250ms (not on a button) opens the drawer. The drawer holds the words that went out, editable in place,
 beside Copy, **–** (collapse to the pill) and **×** (hide the control until it
 is reopened from the menu bar). Under the words, the **tone row** rewrites
 them: **Original** · **Professional** · **Friendly** · **Concise**, and a
@@ -553,9 +558,9 @@ the default flow.
 
 1. **Start** (hotkey, Talk, Meeting, or HUD): the HUD owns the session and
    turns red once the mic is live, with a quiet start sound (Settings →
-   Sounds). Its ticker echoes the words as they are heard, in the quieter
-   ink (the listening hint until the first one), and stays through "Writing
-   it down…". The panel
+   Sounds). With live words on, its ticker echoes the words as they are
+   heard, in the quieter ink (the listening hint until the first one), and
+   stays through "Writing it down…"; by default it is just the bar. The panel
    is untouched if it's closed. If it's open, the **capture toolbar becomes
    the live bar**: the one place the panel says it is recording. Nothing is
    added to the list, so nothing below it moves.
