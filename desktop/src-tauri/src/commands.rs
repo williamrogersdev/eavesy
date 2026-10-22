@@ -647,8 +647,9 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_hud_state(app: AppHandle) -> serde_json::Value {
+    let handle = app.clone();
+    let state = tauri::async_runtime::spawn_blocking(move || {
         let mut state = crate::hud::current();
         if state.phase == crate::hud::Phase::Done {
             if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
@@ -656,7 +657,8 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
             }
         }
         state
-    }).await.unwrap_or_else(|_| crate::hud::current())
+    }).await.unwrap_or_else(|_| crate::hud::current());
+    crate::hud::shown(&handle, &state)
 }
 
 #[tauri::command]

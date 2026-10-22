@@ -36,9 +36,9 @@ try {
         if(cmd==='update_live_preview_edit') { window.__qaLiveEdits.push(args); if(window.__qaFailLiveEdit) throw new Error('Test live edit failed'); }
         if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
         if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
-        if(cmd==='get_hud_state') return state;
+        if(cmd==='get_hud_state') return {...state,opensItself:localStorage.getItem('qa-preview')==='on'};
         // Four lines (not the shipped Off) so the live-word checks have a transcript box to drive.
-        if(cmd==='get_settings') return {dictation_hotkey:'Fn',hud_preview_lines:4,hud_result_preview:localStorage.getItem('qa-preview')==='on'};
+        if(cmd==='get_settings') return {dictation_hotkey:'Fn',hud_preview_lines:4};
         if(cmd==='live_transcript') return [];
         if(cmd==='copy_text') window.__qaCopies.push(args.text);
         if(cmd==='dismiss_hud') window.__qaEmit({...state,phase:'idle',message:null});

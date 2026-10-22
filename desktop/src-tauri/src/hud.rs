@@ -79,12 +79,12 @@ pub fn set_state(app: &AppHandle, state: HudState) {
         }
         show_on_main(&handle);
         fit_on_main(&handle);
-        let _ = handle.emit_to("hud", "hud:state", emitted);
+        let _ = handle.emit_to("hud", "hud:state", shown(&handle, &emitted));
     });
     if let Err(error) = dispatched {
         // No main thread to size the window: the renderer still has to move on.
         tracing::warn!("capture control: could not reach the main thread: {error}");
-        let _ = app.emit_to("hud", "hud:state", state);
+        let _ = app.emit_to("hud", "hud:state", shown(app, &state));
     }
 }
 
@@ -227,6 +227,16 @@ pub fn fit_on_main(app: &AppHandle) {
 
 /// The finished dictation whose transcript drawer is open under the pointer.
 static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The state as the HUD gets it: with `opensItself`, so the renderer draws
+/// the drawer exactly when this side sizes the window for it, from one rule.
+pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
+    let mut value = serde_json::to_value(state).unwrap_or_default();
+    if let Some(object) = value.as_object_mut() {
+        object.insert("opensItself".into(), opens_by_itself(state, prefs(app).preview).into());
+    }
+    value
+}
 
 /// A finished dictation opens straight into its drawer when the words are
 /// shown after dictation, unless it is waiting on Accessibility: then the
