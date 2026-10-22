@@ -98,14 +98,18 @@ fn launch(chrome_path: &str) -> Result<Child, String> {
         .map_err(|e| format!("launch {chrome_path}: {e}"))
 }
 
-/// The tab Chromium opened on `about:blank` at launch, the only one the bot drives.
+/// The tab Chromium opened on `about:blank` at launch, the only one the bot
+/// drives; after a few seconds without one, any page.
 async fn page_ws_url() -> Result<String, String> {
     let http = reqwest::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(30);
     loop {
         if let Ok(r) = http.get(format!("http://127.0.0.1:{DEBUG_PORT}/json/list")).send().await {
             if let Ok(targets) = r.json::<Vec<Value>>().await {
-                if let Some(url) = targets.iter().find(|t| t["type"] == "page" && t["url"] == "about:blank").and_then(|t| t["webSocketDebuggerUrl"].as_str()) {
+                let any_page = started.elapsed() > Duration::from_secs(5);
+                let ours = |t: &&Value| t["type"] == "page" && (any_page || t["url"] == "about:blank");
+                if let Some(url) = targets.iter().find(ours).and_then(|t| t["webSocketDebuggerUrl"].as_str()) {
                     return Ok(url.to_owned());
                 }
             }

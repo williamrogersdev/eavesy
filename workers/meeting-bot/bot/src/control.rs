@@ -1,14 +1,15 @@
 //! The container's only port. The Worker's Durable Object uses it to check
-//! the bot is alive and to ask it to leave. Cloudflare routes nothing else to
-//! a container's ports, and with CONTROL_TOKEN set, /leave also needs it as
-//! a bearer token, so the port is safe wherever the image runs.
+//! the bot is alive and to ask it to leave. /leave needs CONTROL_TOKEN as a
+//! bearer token and is refused when no token is set (stop a local run with
+//! Ctrl-C or `docker stop` instead), so whoever can reach the port can only
+//! read the phase.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{watch, Semaphore};
 
 #[derive(Clone, Default)]
 pub struct Status(Arc<Mutex<String>>);
@@ -25,6 +26,8 @@ impl Status {
 /// Bytes of request head read at most, and how long a client gets to send it.
 const MAX_HEAD: usize = 8 * 1024;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
+/// Connections handled at once; more wait to be accepted.
+const MAX_CONNECTIONS: usize = 16;
 
 /// Reads up to the end of the request head; None if it is too big, too slow or cut off.
 async fn read_head(stream: &mut (impl AsyncReadExt + Unpin)) -> Option<String> {
@@ -49,7 +52,7 @@ async fn read_head(stream: &mut (impl AsyncReadExt + Unpin)) -> Option<String> {
 pub fn route(head: &str, token: Option<&str>, leave: &watch::Sender<bool>, status: &Status) -> (&'static str, String) {
     let line = head.lines().next().unwrap_or("");
     if line.starts_with("POST /leave ") {
-        let authorized = token.is_none_or(|t| {
+        let authorized = token.is_some_and(|t| {
             head.lines().any(|h| h.split_once(':').is_some_and(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.trim() == format!("Bearer {t}")))
         });
         if !authorized {
@@ -72,10 +75,13 @@ pub async fn serve(port: u16, token: Option<String>, leave: watch::Sender<bool>,
             return;
         }
     };
+    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
+        let Ok(slot) = slots.clone().acquire_owned().await else { return };
         let Ok((mut stream, _)) = listener.accept().await else { continue };
         let (leave, status, token) = (leave.clone(), status.clone(), token.clone());
         tokio::spawn(async move {
+            let _slot = slot;
             let Some(head) = read_head(&mut stream).await else { return };
             let (code, body) = route(&head, token.as_deref(), &leave, &status);
             let reply = format!(
@@ -113,6 +119,9 @@ mod tests {
         assert_eq!(route(signed, Some("s3cret"), &tx, &status).0, "200 OK");
         assert!(*rx.borrow());
         assert_eq!(route("GET /x HTTP/1.1\r\n\r\n", None, &tx, &status).0, "200 OK");
+        let (tx, rx) = watch::channel(false);
+        assert_eq!(route(head, None, &tx, &status).0, "401 Unauthorized");
+        assert!(!*rx.borrow());
         assert_eq!(route("DELETE / HTTP/1.1\r\n\r\n", None, &tx, &status).0, "404 Not Found");
     }
 }

@@ -14,7 +14,7 @@ use crate::audio::Segment;
 const GIVE_UP_AFTER: Duration = Duration::from_secs(15 * 60);
 
 /// Segments waiting in memory at most (~1.9 MB each): about two hours of a
-/// delivery outage. Past that the oldest waiting segment is dropped.
+/// delivery outage. Past that each new segment is dropped (and reported).
 const MAX_QUEUED_SEGMENTS: usize = 120;
 
 pub struct Ingest {
@@ -46,7 +46,9 @@ impl Ingest {
 
         let (h, b, t, l) = (http.clone(), base.clone(), token.clone(), lost.clone());
         let segments = tokio::spawn(async move {
-            while let Some(seg) = seg_rx.recv().await {
+            while let Some(mut seg) = seg_rx.recv().await {
+                // A cheap handle per retry instead of copying ~1.9 MB each time.
+                let wav = bytes::Bytes::from(std::mem::take(&mut seg.wav));
                 let url = format!("{b}/segments/{}", seg.idx);
                 let ok = deliver(|| {
                     with_token(h.put(&url), &t)
@@ -54,10 +56,10 @@ impl Ingest {
                         .header("x-segment-start-ms", seg.offset_ms)
                         .header("x-segment-duration-ms", seg.duration_ms)
                         .header("x-segment-active-ms", seg.active_ms)
-                        .body(seg.wav.clone())
+                        .body(wav.clone())
                 })
                 .await;
-                log(json!({ "msg": "segment", "idx": seg.idx, "bytes": seg.wav.len(), "activeMs": seg.active_ms, "ok": ok }));
+                log(json!({ "msg": "segment", "idx": seg.idx, "bytes": wav.len(), "activeMs": seg.active_ms, "ok": ok }));
                 if !ok {
                     l.lock().unwrap().push(seg.idx);
                 }

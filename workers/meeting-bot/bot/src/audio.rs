@@ -16,9 +16,9 @@ const MIN_TAIL_MS: u64 = 1_000;
 /// Gaps shorter than this are jitter, not lost audio, and aren't padded.
 const PAD_AFTER_SAMPLES: u64 = SAMPLE_RATE as u64 / 2;
 const PAD_BLOCK: usize = 4_096;
-/// A gap longer than this isn't padded: the segment so far is closed and the
-/// next one starts later on the clock, so no run of silent segments is made
-/// in one go and sent to Whisper.
+/// Gaps up to this long are padded with silence (at most five silent
+/// minutes); longer ones close the segment so far and move the clock on, so
+/// an hour-long dropout doesn't become an hour of silent segments.
 const SKIP_AFTER_MS: u64 = 5 * 60_000;
 
 const fn samples(ms: u64) -> usize {
