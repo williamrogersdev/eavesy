@@ -17,7 +17,6 @@ import {
   Pencil,
   Play,
   Search,
-  Sparkles,
   StickyNote,
   Trash2,
   Users,
@@ -38,6 +37,8 @@ import {
   type RecordingMoment,
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
+import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
 import {
@@ -54,7 +55,7 @@ import {
 import type { LiveCapture } from './capture-toolbar';
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
-import { Bubble, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
+import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu, Select } from './ui';
 
 export { plainTranscript };
 export type { LiveCapture };
@@ -268,6 +269,73 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
   );
 }
 
+type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
+type Version = { tone: Tone; forAgents: boolean };
+
+const TONES: { id: Tone; label: string; hint: string }[] = [
+  { id: 'original', label: 'Original', hint: 'The words as they were saved.' },
+  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
+];
+
+/**
+ * A capture's words in another tone, or shaped as a prompt for an AI. Each
+ * version is made from the saved words, never from another rewrite, and
+ * none is saved over them.
+ */
+function useRewrite(id: string, loadText: () => Promise<string>, resetKey: string) {
+  const [shown, setShown] = useState<Version>({ tone: 'original', forAgents: false });
+  const [pending, setPending] = useState<Version | null>(null);
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const cache = useRef(new Map<string, string>());
+  const requestId = useRef(0);
+  const load = useRef(loadText);
+  load.current = loadText;
+
+  useEffect(() => {
+    const requests = requestId;
+    requests.current++;
+    cache.current.clear();
+    setShown({ tone: 'original', forAgents: false }); setPending(null); setText(null); setError('');
+    return () => { requests.current++; };
+  }, [resetKey]);
+
+  async function make({ tone, forAgents }: Version): Promise<string> {
+    const source = await load.current();
+    // Too long for a rewrite, but the cloud keeps a version for agents of any length.
+    if (source.length > MAX_RESTYLE_CHARS && forAgents && tone === 'original') {
+      const agent = await fetchAgentTranscript(id).catch(() => null);
+      if (agent) return agent;
+    }
+    return await requestRestyle(id, source, tone === 'original' ? 'natural' : tone, forAgents);
+  }
+
+  async function select(next: Version) {
+    const request = ++requestId.current;
+    setError('');
+    if (next.tone === 'original' && !next.forAgents) {
+      setShown(next); setPending(null); setText(null);
+      return;
+    }
+    const key = `${next.tone}:${next.forAgents}`;
+    const cached = cache.current.get(key);
+    if (cached !== undefined) { setShown(next); setPending(null); setText(cached); return; }
+    setPending(next);
+    try {
+      const output = await make(next);
+      if (request !== requestId.current) return;
+      cache.current.set(key, output);
+      setShown(next); setText(output);
+    } catch (cause) {
+      if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Couldn’t rewrite it. Try again');
+    } finally {
+      if (request === requestId.current) setPending(null);
+    }
+  }
+
+  return { version: pending ?? shown, text, busy: pending !== null, error, select };
+}
+
 function CaptureRow({
   rec,
   query,
@@ -287,12 +355,15 @@ function CaptureRow({
   const [editing, setEditing] = useState(false);
   const moreButton = useRef<HTMLButtonElement>(null);
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
   const kind = kindOf(rec);
   const Icon = kind.icon;
   const [detail, setDetail] = useState<Recording | null>(null);
   const current = detail?.id === rec.id && detail.revision !== undefined && rec.revision !== undefined && detail.revision >= rec.revision ? detail : rec;
   const text = plainTranscript(current.transcript ?? '');
   const translation = useInlineTranslation(text, async () => plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''), rec.revision);
+  const fullText = async () => current.transcriptTruncated ? plainTranscript((await loadRecordingDetails(rec)).transcript ?? '') : text;
+  const rewrite = useRewrite(rec.id, fullText, `${rec.revision}:${text}`);
   const expand = async () => {
     try { setDetail(await loadRecordingDetails(rec)); }
     catch (error) { flash(error instanceof Error ? error.message : 'Couldn’t load that capture', 5000, 'warn'); throw error; }
@@ -303,10 +374,29 @@ function CaptureRow({
   const timed = rec.durationSec > 0 && !image && rec.source !== 'note';
   const player = usePlayer(rec.id);
   const spoken = rec.source !== 'note' && !image && rec.source !== 'upload';
+  const rewritable = !!text && !image && !video;
+  const tones = rewritable && signedIn && rec.status !== 'processing';
+  const changed = rewrite.text !== null || !!translation.language;
+  const shownText = rewrite.text ?? translation.text;
+  const trayOpen = rewritable && (rewriting || changed || rewrite.busy || translation.busy || languageOpen);
+  const pickVersion = (next: Version) => {
+    if (translation.language) void translation.select(null);
+    void rewrite.select(next);
+  };
+  const pickLanguage = (language: Parameters<typeof translation.select>[0]) => {
+    if (rewrite.text !== null || rewrite.busy) void rewrite.select({ tone: 'original', forAgents: false });
+    void translation.select(language);
+  };
+  const toggleTray = () => {
+    if (!trayOpen) { setRewriting(true); return; }
+    setRewriting(false);
+    if (rewrite.text !== null || rewrite.busy) void rewrite.select({ tone: 'original', forAgents: false });
+    if (translation.language || translation.busy) void translation.select(null);
+  };
 
   const copy = () => runTask(async () => {
     if (image || video) await copyCaptureMedia(rec.id);
-    else await copyText(translation.language ? translation.text : plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
+    else await copyText(changed ? shownText : plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
     flash('Copied');
   }, 'Couldn’t copy that');
 
@@ -320,7 +410,13 @@ function CaptureRow({
     {text && <div style={{ marginTop: 6 }}><Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
-    <Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} />
+    <Body
+      key={`${rec.revision}-${translation.language}-${rewrite.text === null ? '' : `${rewrite.version.tone}:${rewrite.version.forAgents}`}`}
+      text={shownText}
+      query={query}
+      muted={rewrite.busy || translation.busy}
+      onExpand={!changed && current.transcriptTruncated ? expand : undefined}
+    />
     {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (!signedIn && spoken && rec.status !== 'complete') body = (
@@ -336,15 +432,33 @@ function CaptureRow({
   else body = <div className="ev-body" data-muted="true">Saved on this Mac.</div>;
 
   return (
-    <article className="ev-row" data-menu={menuOpen || languageOpen || !!translation.language || translation.busy} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
-      <span className="ev-disc-kind" aria-hidden><Icon size={13} strokeWidth={1.75} /></span>
+    <article className="ev-row" data-menu={menuOpen || trayOpen} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
       <header className="ev-rh">
+        <Icon className="ev-rh-icon" size={13} strokeWidth={1.75} aria-hidden />
         <span className="ev-rh-kind">{kind.label}</span>
         {timed && <span>· {clock(rec.durationSec)}</span>}
         {rec.device && <span className="ev-rh-device" title={`Recorded on ${rec.device}`}>· {rec.device}</span>}
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
+      {trayOpen && (
+        <div className="ev-tones" role="group" aria-label="Rewrite">
+          {tones && <>
+            {TONES.map((tone) => (
+              <Chip key={tone.id} title={tone.hint} selected={rewrite.version.tone === tone.id && !translation.language} disabled={rewrite.busy} onClick={() => pickVersion({ tone: tone.id, forAgents: rewrite.version.forAgents })}>
+                {tone.label}
+              </Chip>
+            ))}
+            <span className="ev-tones-sep" aria-hidden />
+            <Chip title={FOR_AGENTS_HINT} selected={rewrite.version.forAgents && !translation.language} disabled={rewrite.busy} onClick={() => pickVersion({ tone: rewrite.version.tone, forAgents: !rewrite.version.forAgents })}>
+              For AI
+            </Chip>
+          </>}
+          <LanguagePicker value={translation.language} pending={translation.busy} onChange={pickLanguage} onOpenChange={setLanguageOpen} />
+          {rewrite.busy && <span className="ev-tones-state" role="status">Rewriting…</span>}
+        </div>
+      )}
+      {rewrite.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{rewrite.error}</p>}
       {editing && <CorrectionEditor
         id={rec.id}
         original={current.transcript ?? ''}
@@ -359,16 +473,16 @@ function CaptureRow({
       />}
       {translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
-        {translation.language && <IconButton label="Paste translation at cursor" icon={ClipboardPaste} disabled={translation.busy} onClick={() => runTask(() => pasteToFrontmost(translation.text, false), 'Couldn’t paste that')} />}
-        <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || (!image && !video && !text)} onClick={copy} />
-        {text && !image && !video && <LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} onOpenChange={setLanguageOpen} />}
+        {changed && <IconButton label="Paste this version at cursor" icon={ClipboardPaste} disabled={translation.busy || rewrite.busy} onClick={() => runTask(() => pasteToFrontmost(shownText, false), 'Couldn’t paste that')} />}
+        <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || rewrite.busy || (!image && !video && !text)} onClick={copy} />
+        {rewritable && <Button size="sm" variant="ghost" aria-pressed={trayOpen} title="Change the tone, shape it for an AI, or translate" onClick={toggleTray}>Rewrite</Button>}
         <Menu
           align="end"
           open={menuOpen}
           onOpenChange={setMenuOpen}
           trigger={<IconButton ref={moreButton} label="More" icon={MoreHorizontal} />}
           items={[
-            ...(text && !translation.language && signedIn && spoken && rec.status !== 'processing'
+            ...(text && !changed && signedIn && spoken && rec.status !== 'processing'
               ? [{ label: 'Edit transcript', icon: Pencil, onSelect: () => setEditing(true) }]
               : []),
             ...(playable
@@ -377,17 +491,6 @@ function CaptureRow({
                   icon: player.playing ? Pause : Play,
                   disabled: player.failed,
                   onSelect: () => void player.toggle(),
-                }]
-              : []),
-            ...(text && signedIn
-              ? [{
-                  label: 'Copy without filler words',
-                  icon: Sparkles,
-                  onSelect: () => runTask(async () => {
-                    const { text: agent, cleaned } = await agentText(rec);
-                    await copyText(agent);
-                    flash(cleaned ? 'Copied without filler' : 'Copied. The tidied version isn’t ready yet');
-                  }, 'Couldn’t copy that'),
                 }]
               : []),
             { label: 'Show in Finder', icon: FolderOpen, onSelect: () => runTask(() => revealInFinder(rec.id)) },
@@ -495,15 +598,15 @@ export function CaptureHistory({
                 }
               }}
             />
-            {!query && <Kbd keys="/" />}
+            {!query && filter === 'all' && <Kbd keys="/" />}
+            <Select
+              className="ev-search-filter"
+              label="Show"
+              value={filter}
+              onChange={setFilter}
+              options={FILTERS.map((f) => ({ value: f.value, label: searching ? `${f.label} · ${counts[f.value]}` : f.label }))}
+            />
           </label>
-          <div className="ev-chips" role="group" aria-label="Show">
-            {FILTERS.map((f) => (
-              <Chip key={f.value} selected={filter === f.value} count={searching ? counts[f.value] : undefined} onClick={() => setFilter(f.value)}>
-                {f.label}
-              </Chip>
-            ))}
-          </div>
         </>
       )}
       {empty ? (

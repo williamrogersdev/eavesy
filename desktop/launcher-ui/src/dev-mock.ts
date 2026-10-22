@@ -101,6 +101,15 @@ export function installDevMock(): void {
       return method === 'GET' ? { entries: dictionary } : { learned: 1, status: 'saved' };
     },
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
+    restyle_dictation: ({ text, style, forAgents }: Record<string, unknown>) => {
+      if (forAgents) return `Remind me to do two things before Thursday:\n\n1. Send Priya the revised onboarding deck.\n2. Ask her whether the pricing page copy is final.`;
+      const tones: Record<string, string> = {
+        professional: 'Please remind me to send Priya the revised onboarding deck before Thursday and to confirm whether the pricing page copy is final.',
+        friendly: 'Hey, remember to send Priya the updated onboarding deck before Thursday! And check in on whether the pricing page copy is good to go.',
+        concise: 'Before Thursday: send Priya the revised onboarding deck; ask if pricing page copy is final.',
+      };
+      return tones[String(style)] ?? String(text);
+    },
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
   };
   if (params.has('setup')) installSetupMock(results);

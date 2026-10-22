@@ -54,11 +54,13 @@
   gap: 8px;
   height: 32px;
   margin: 10px 12px 0;
-  padding: 0 8px 0 10px;
+  padding: 0 3px 0 10px;
   border-radius: var(--ev-r-ctl);
   background: var(--ev-well);
   color: var(--ev-ink-3);
 }
+/* What to show sits inside the search field: one row of chrome, not two. */
+.ev-search-filter > select { background: transparent; box-shadow: none; color: var(--ev-ink-2); }
 .ev-search:focus-within { box-shadow: var(--ev-focus); }
 .ev-search input {
   flex: 1;
@@ -70,15 +72,6 @@
   font: 500 13px/1 var(--ev-font-round);
 }
 .ev-search input::placeholder { color: var(--ev-ink-3); }
-.ev-chips {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  margin: 8px 12px 2px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.ev-chips::-webkit-scrollbar { display: none; }
 
 .ev-history { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .ev-scroll {
@@ -94,7 +87,6 @@
 .ev-panel[data-dragging='true'] .ev-scroll,
 .ev-panel[data-dragging='true'] .ev-toolbar,
 .ev-panel[data-dragging='true'] .ev-search,
-.ev-panel[data-dragging='true'] .ev-chips,
 .ev-panel[data-dragging='true'] .ev-empty { opacity: 0.85; }
 .ev-banner {
   display: flex;
@@ -112,26 +104,18 @@
 
 /* ---------- groups + rows ---------- */
 .ev-group { position: relative; }
-.ev-group::before {
-  content: '';
-  position: absolute;
-  left: 19px;
-  top: 40px;
-  bottom: 14px;
-  border-left: 1.5px dotted var(--ev-line-strong);
-}
 .ev-gh {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 14px 0 6px 8px;
+  padding: 14px 0 4px 10px;
   background: color-mix(in srgb, var(--ev-paper) 92%, transparent);
   color: var(--ev-ink-2);
   font: var(--ev-t-group);
 }
 .ev-row {
   position: relative;
-  padding: 8px 8px 10px 42px;
+  padding: 8px 10px 10px;
   border-radius: 10px;
   outline: none;
   transition: background var(--ev-d-state) var(--ev-ease-out);
@@ -139,30 +123,18 @@
 .ev-row:hover,
 .ev-row:focus-within { background: color-mix(in srgb, var(--ev-ink) 4.5%, transparent); }
 .ev-row:focus-visible { box-shadow: var(--ev-focus); }
-.ev-disc-kind {
-  position: absolute;
-  left: 8px;
-  top: 7px;
-  display: grid;
-  place-items: center;
-  width: 23px;
-  height: 23px;
-  border-radius: 50%;
-  background: var(--ev-paper);
-  box-shadow: inset 0 0 0 1px var(--ev-line);
-  color: var(--ev-ink-2);
-}
 .ev-rh {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 22px;
+  gap: 5px;
+  height: 20px;
   color: var(--ev-ink-3);
   font: 500 11.5px/1 var(--ev-font-round);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.ev-rh-kind { color: var(--ev-ink); font: 650 13px/1 var(--ev-font-round); overflow: hidden; text-overflow: ellipsis; }
+.ev-rh-icon { flex: none; }
+.ev-rh-kind { color: var(--ev-ink-2); font: 600 11.5px/1 var(--ev-font-round); overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-device { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-time { margin-left: auto; }
 .ev-body { margin-top: 2px; color: var(--ev-ink); font: var(--ev-t-body); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -234,6 +206,12 @@
 }
 .ev-moment-said[data-muted='true'] { color: var(--ev-ink-3); }
 
+/* A capture's other versions: tones, For AI, languages. Open only when asked for. */
+.ev-tones { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ev-tones-sep { width: 1px; height: 14px; margin: 0 2px; background: var(--ev-line-strong); }
+.ev-tones-state { color: var(--ev-ink-3); font: var(--ev-t-small); }
+.ev-body[data-muted='true'] .ev-hl { background: none; color: inherit; }
+
 .ev-sub { margin-top: 3px; color: var(--ev-ink-3); font: var(--ev-t-small); }
 
 .ev-actions {
@@ -283,15 +261,15 @@
 /* Screenshots show whole: the thumb takes the image's shape, up to a height cap. */
 .ev-thumb[data-kind='image'] {
   display: flex;
-  justify-content: center;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   height: auto;
   padding: 0;
   border: 0;
   background: var(--ev-well);
   cursor: zoom-in;
 }
-.ev-thumb[data-kind='image'] img { width: auto; max-width: 100%; height: auto; max-height: 220px; object-fit: contain; }
+.ev-thumb[data-kind='image'] img { width: auto; max-width: 100%; height: auto; max-height: 148px; object-fit: contain; }
 .ev-thumb[data-kind='image']:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 
 .ev-viewer {
@@ -518,3 +496,4 @@
   .ev-thumb[data-loading='true'] { animation: none; }
 }
 @keyframes ev-fade { from { opacity: 0; } }
+.ev-actions .ev-btn[aria-pressed='true'] { background: var(--ev-coat-soft); color: var(--ev-coat); }
