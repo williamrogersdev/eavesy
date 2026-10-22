@@ -4,6 +4,11 @@ Monorepo: `web/` (TanStack Start on Cloudflare Workers — read `web/AGENTS.md`
 before touching it), `workers/processing`, `workers/mcp`, `desktop/` (Tauri +
 Swift). Setup and the exact CI commands are in `CONTRIBUTING.md`.
 
+Don't test by driving the owner's own desktop (computer use). Run
+`scripts/test-local.sh` for headless checks, and `desktop/scripts/vm-test.sh`
+to drive the real Mac app inside a throwaway VM
+(`docs/TESTING-ENVIRONMENTS.md`).
+
 ## Definition of done: the PR is merged
 
 A task that changes code is **not finished when the PR is opened**. It is
