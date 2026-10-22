@@ -31,8 +31,10 @@ claude mcp add --transport http eavesy https://mcp.eavesy.com
 
 Prompts you save in Eavesy (Mac app: Settings → Prompts) show up in Claude
 Code's slash menu as `/mcp__eavesy__<name>`, for example
-`/mcp__eavesy__triage-support-tickets`. Anything you type after the command
-fills the prompt's `{{details}}` slot, or is added at the end if it has none.
+`/mcp__eavesy__triage-support-tickets`. Each takes one optional argument,
+`details`, which fills the prompt's `{{details}}` slot or is added at the end.
+Claude Code splits arguments on spaces, so it fits one word, like
+`/mcp__eavesy__triage-support-tickets billing`.
 
 ## Local server (coming)
 

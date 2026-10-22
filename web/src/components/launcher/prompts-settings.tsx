@@ -81,7 +81,7 @@ function PromptPage({ prompt, state, onBack }: {
               onChange={(e) => setBody(e.target.value)}
             />
             <p className="ev-set-hint">
-              Put <code>{DETAILS_SLOT}</code> where words you type after the slash command should go. Without it they go at the end. Pasting from the panel leaves it blank.
+              Put <code>{DETAILS_SLOT}</code> where a word typed after the slash command should go, like <code>{claudeCodeCommand(slug)} billing</code>. Without it, the word goes at the end. Pasting from the panel leaves it blank.
             </p>
           </div>
           <div className="flex items-center justify-end gap-2">
