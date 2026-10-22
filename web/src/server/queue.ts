@@ -17,7 +17,9 @@ export type QueueMessage =
   /** Permanently remove a meeting the user deleted (R2, vectors, rows). */
   | { kind: 'purge-meeting'; meetingId: string }
   /** Permanently remove a deleted account and everything it owns. */
-  | { kind: 'purge-account'; userId: string };
+  | { kind: 'purge-account'; userId: string }
+  /** Copy a notetaker bot's finished recording in and hand it to the summary pipeline. */
+  | { kind: 'collect-bot-recording'; botId: string };
 
 export function getQueue(): Queue<QueueMessage> {
   const { env } = getCloudflareContext();

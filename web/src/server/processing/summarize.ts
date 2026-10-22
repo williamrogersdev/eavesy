@@ -57,7 +57,9 @@ export function transcriptText(
       return `${time}${who}${line.text}`;
     })
     .join('\n');
-  return { text, recorderName: labelled ? speakerName('you', names) : undefined };
+  // Only the Mac's own track has a recorder; a notetaker bot's speakers are all participants.
+  const recorded = labelled && lines.some((line) => line.speakerId === 'you');
+  return { text, labelled, recorderName: recorded ? speakerName('you', names) : undefined };
 }
 
 export async function handleSummarize(
@@ -177,6 +179,7 @@ export async function handleSummarize(
     priorSummary,
     rolling: !mode.final,
     recorderName: rendered.recorderName,
+    labelled: rendered.labelled,
     chapters: wantChapters,
     notesLanguage: userRow?.notesLanguage,
   };

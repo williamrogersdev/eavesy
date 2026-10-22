@@ -67,6 +67,7 @@ const PROJECT = 'proj_owner';
 const MCP_TOKEN = 'mcp_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
+const BOT = 'bot_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -110,6 +111,14 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/imports/$': Object.fromEntries(['GET', 'PUT', 'POST', 'DELETE'].map(method => [method, {
     unauthenticated: SIGNED_IN, scopedToCaller: 'Import service checks meeting and import ownership before any read or mutation; service tests exercise all methods across owners',
   }])),
+  '/api/meeting-bots/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/meeting-bots/' }, excludes: [BOT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a notetaker only for the authenticated owner; the bot id never comes from the caller' },
+  },
+  '/api/meeting-bots/$id': {
+    DELETE: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/meeting-bots/${BOT}`, params: { id: BOT } }, status: 404 } },
+  },
+  '/api/webhooks/recall': { POST: { public: 'Recall.ai status webhook, authenticated by its Svix signature rather than a session' } },
   '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
   '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },
   '/api/account/': {
@@ -454,6 +463,7 @@ beforeEach(async () => {
   // rate_limits only exists once the rate-limit migration has landed.
   await testEnv.DB.prepare('DELETE FROM rate_limits').run().catch(() => undefined);
   await resetTables(
+    'meeting_bots',
     'recording_imports',
     'personal_dictionary',
     'transcript_segments',
@@ -511,6 +521,11 @@ async function seedOwner() {
     testEnv.DB.prepare(
       `INSERT INTO mcp_tokens (id, user_id, token_hash, name, created_at) VALUES (?, ?, 'hash_owner', 'Owner', ?)`,
     ).bind(MCP_TOKEN, OWNER, now),
+    // Not yet confirmed by the provider, so cancelling it makes no provider call.
+    testEnv.DB.prepare(
+      `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)
+       VALUES (?, ?, 'recall', 'https://meet.google.com/abc-defg-hij', 'meet', 'scheduling', ?, ?)`,
+    ).bind(BOT, OWNER, now, now),
   ]);
 }
 

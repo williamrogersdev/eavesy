@@ -12,6 +12,7 @@ import { captureMessage, withErrorReporting } from '../../../web/src/server/obse
 import {
   deadLetterQueue,
   purgeDeleted,
+  reconcileMeetingBots,
   recoverStaleSegments,
   sealLegacyKeys,
   SUMMARY_WAIT_LIMIT_MS,
@@ -28,6 +29,9 @@ export interface Env extends ProcessingEnv {
   PROCESSING_QUEUE: Queue<ProcessingMessage>;
   AI: Ai;
   ANTHROPIC_API_KEY: string;
+  RECALL_API_KEY?: string;
+  RECALL_WEBHOOK_SECRET?: string;
+  RECALL_REGION?: string;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
   RELEASE?: string;
@@ -118,6 +122,7 @@ export const worker = {
               status_error = 'The recording stopped before any audio reached the cloud.',
               updated_at = ?
         WHERE status IN ('recording', 'uploading')
+          AND source != 'bot'
           AND updated_at < ?
           AND audio_r2_key IS NULL
           AND NOT EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = meetings.id)`,
@@ -133,6 +138,7 @@ export const worker = {
       await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
     }
     await recoverStaleSegments(env, now);
+    await reconcileMeetingBots(env, now);
     await purgeDeleted(env, now);
     await pruneRateLimits(env.DB, now);
     await sealLegacyKeys(env);

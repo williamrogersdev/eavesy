@@ -6,8 +6,9 @@ import { type WorkersAiRunner } from '@/lib/ai/embed';
 import type { QueueMessage } from '@/server/queue';
 
 import type { CreditEnv } from '@/lib/ai/credit-runner';
+import type { RecallEnv } from '@/server/meeting-bots/recall';
 
-export interface ProcessingEnv extends CreditEnv {
+export interface ProcessingEnv extends CreditEnv, RecallEnv {
   DB: D1Database;
   AUDIO_BUCKET: R2Bucket;
   VECTORIZE: VectorizeIndex;
@@ -35,7 +36,7 @@ export class SegmentBusyError extends Error {
 const D1_BATCH_SIZE = 50;
 
 /** Sends row writes to D1 in batches: one round trip per 50 rows, not per row. */
-export async function runBatched(db: Db, statements: BatchItem<'sqlite'>[]) {
+export async function runBatched(db: Pick<Db, 'batch'>, statements: BatchItem<'sqlite'>[]) {
   for (let i = 0; i < statements.length; i += D1_BATCH_SIZE) {
     const [first, ...rest] = statements.slice(i, i + D1_BATCH_SIZE);
     await db.batch([first, ...rest]);

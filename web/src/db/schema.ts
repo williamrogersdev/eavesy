@@ -109,7 +109,7 @@ export const meetings = sqliteTable(
     firstTranscriptAt: integer('first_transcript_at'),
     durationSec: integer('duration_sec'),
     source: text('source', {
-      enum: ['desktop', 'web', 'public', 'ios', 'android', 'import'],
+      enum: ['desktop', 'web', 'public', 'ios', 'android', 'import', 'bot'],
     }).notNull(),
     platform: text('platform', {
       enum: ['zoom', 'meet', 'teams', 'in-person', 'phone', 'other'],
@@ -691,3 +691,42 @@ export const personalDictionary = sqliteTable('personal_dictionary', {
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 }, t => [uniqueIndex('personal_dictionary_user_source_uq').on(t.userId, t.sourceKey)]);
+
+/**
+ * A notetaker bot sent to an online meeting through a meeting-recording provider.
+ * The meeting row is created once the bot starts recording; until then this row
+ * is the user's request. Status only moves forward (see `BOT_STATUS_ORDER`).
+ */
+export const meetingBots = sqliteTable('meeting_bots', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  meetingId: text('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
+  provider: text('provider', { enum: ['recall'] }).notNull(),
+  providerBotId: text('provider_bot_id'),
+  meetingUrl: text('meeting_url').notNull(),
+  platform: text('platform', { enum: ['zoom', 'meet', 'teams'] }).notNull(),
+  title: text('title'),
+  folderId: text('folder_id'),
+  joinAt: integer('join_at'),
+  status: text('status', {
+    enum: ['scheduling', 'scheduled', 'joining', 'waiting_room', 'in_call', 'recording', 'call_ended', 'collecting', 'done', 'failed', 'cancelled'],
+  }).notNull(),
+  /** The provider's machine-readable reason for the latest status, when it gave one. */
+  statusDetail: text('status_detail'),
+  /** Provider time of the newest status applied; older webhook deliveries are ignored. */
+  statusAt: integer('status_at'),
+  collectAttempts: integer('collect_attempts').notNull().default(0),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (t) => [
+  index('meeting_bots_user_created_idx').on(t.userId, t.createdAt),
+  uniqueIndex('meeting_bots_provider_bot_uq').on(t.provider, t.providerBotId),
+  index('meeting_bots_status_updated_idx').on(t.status, t.updatedAt),
+]);
+
+/** Provider webhook deliveries already applied, so a redelivery is a no-op. */
+export const providerWebhookEvents = sqliteTable('provider_webhook_events', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  receivedAt: integer('received_at').notNull(),
+}, (t) => [index('provider_webhook_events_received_idx').on(t.receivedAt)]);
