@@ -46,6 +46,7 @@ const FAILURE: Record<string, string> = {
   bot_removed: 'It was removed from the meeting.',
   bot_error: 'It stopped with an error.',
   bot_never_reported: 'It did not start.',
+  start_failed: 'It could not be started. Try again.',
   lost_track: 'It stopped reporting before the meeting finished.',
   provider_unavailable: 'The notetaker service was unavailable.',
   provider_retired: 'It was sent through a service Eavesy no longer uses.',

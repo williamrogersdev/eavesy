@@ -125,6 +125,10 @@ jobs:
       # First: the web and processing Workers will bind to it, and a binding
       # to a Worker that doesn't exist fails their deploy. Wrangler builds the
       # bot's image with Docker and pushes it to the account's registry.
+      # Needs Cloudflare Containers on the account and Docker on the runner
+      # (docs/DEPLOY.md). A self-host without them removes the MEETING_BOTS
+      # bindings from web/wrangler.jsonc and workers/processing/wrangler.toml
+      # and this step; the notetaker page then says it isn't available.
       - name: Deploy meeting bot Worker
         run: bun run deploy:meeting-bot
 

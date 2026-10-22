@@ -11,6 +11,7 @@ import {
   cancelBot,
   claimBotStart,
   collectBotRecording,
+  failBotStart,
   handleBotEvent,
   handleBotSegment,
   parseMeetingUrl,
@@ -128,6 +129,17 @@ describe('starting', () => {
     expect(t.bot(other)).toMatchObject({ status: 'cancelled', status_detail: 'cancelled_by_user' });
     expect(t.calls).toContain(`stop ${other}`);
     expect(await claimBotStart(t.db, other)).toBeNull();
+  });
+
+  test('a container that cannot start fails the bot at once', async () => {
+    const t = setup();
+    const { body } = await schedule(t);
+    const id = body.bot!.id;
+    await failBotStart(t.db, id); // not claimed yet: nothing changes
+    expect(t.bot(id).status).toBe('scheduled');
+    await claimBotStart(t.db, id);
+    await failBotStart(t.db, id);
+    expect(t.bot(id)).toMatchObject({ status: 'failed', status_detail: 'start_failed' });
   });
 
   test('a bot asked for now can start before scheduling recorded it', async () => {
@@ -298,5 +310,11 @@ describe('speaker attribution', () => {
     );
     expect(Object.fromEntries(assignments)).toEqual({ a: 'speaker_0', b: 'speaker_1', c: 'speaker_0' });
     expect(speakerNames).toEqual({ speaker_0: 'Ben', speaker_1: 'Ana' });
+  });
+
+  test('a long early span still reaches a later line among many short ones', () => {
+    const spans = parseSpeakerSpans([['Ana', 0, 600_000], ...Array.from({ length: 1_000 }, (_, i) => ['Ben', i * 100, i * 100 + 50])]);
+    const { assignments } = attributeSpeakers([{ id: 'late', startMs: 500_000, endMs: 505_000 }], spans);
+    expect(assignments.get('late')).toBe('speaker_0');
   });
 });

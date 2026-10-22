@@ -2,7 +2,7 @@ import { Container, ContainerProxy, type StopParams } from '@cloudflare/containe
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database, Queue, R2Bucket } from '@cloudflare/workers-types';
 import type { MeetingBotControl } from '@/server/meeting-bots/control';
-import { botDatabase, claimBotStart, handleBotEvent, handleBotSegment, watchBot } from '@/server/meeting-bots/service';
+import { botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, watchBot } from '@/server/meeting-bots/service';
 import type { QueueMessage } from '@/server/queue';
 
 /**
@@ -59,6 +59,18 @@ export class MeetingBot extends Container<Env> {
     if (!start) return; // cancelled, or already started
     // Watch from now on, so a container that never comes up is noticed too.
     await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
+    try {
+      await this.startContainer(botId, start);
+    } catch (error) {
+      // No image, no capacity, or the port never opened: say so now rather
+      // than when the watchdog gives up.
+      console.error(JSON.stringify({ message: 'meeting bot did not start', botId, error: error instanceof Error ? error.message : String(error) }));
+      await failBotStart(database(this.env), botId);
+      await this.shutDown().catch(() => undefined);
+    }
+  }
+
+  private async startContainer(botId: string, start: NonNullable<Awaited<ReturnType<typeof claimBotStart>>>) {
     await this.startAndWaitForPorts({
       startOptions: {
         envVars: {
@@ -75,8 +87,9 @@ export class MeetingBot extends Container<Env> {
 
   async watch(botId: string) {
     const verdict = await watchBot(database(this.env), this.env, botId, await this.running());
-    if (verdict === 'stop') await this.stop(); // SIGTERM: the bot leaves and delivers what it has
+    // The next look is set first, so a failed stop is tried again.
     if (verdict !== 'done') await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
+    if (verdict === 'stop') await this.stop(); // SIGTERM: the bot leaves and delivers what it has
   }
 
   /** Asks the bot to leave the call; false when no bot is running. */

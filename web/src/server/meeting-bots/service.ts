@@ -228,6 +228,7 @@ const FAILURE_TEXT: Record<string, string> = {
   bot_removed: 'The notetaker was removed from the meeting.',
   bot_error: 'The notetaker stopped with an error.',
   bot_never_reported: 'The notetaker did not start.',
+  start_failed: 'The notetaker could not be started. Please try again.',
   lost_track: 'The notetaker stopped reporting before the meeting finished.',
 };
 
@@ -475,6 +476,13 @@ export async function claimBotStart(db: AppDb, botId: string) {
     .returning();
   const bot = claimed[0] as MeetingBot | undefined;
   return bot ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME } : null;
+}
+
+/** The container could not be started. */
+export async function failBotStart(db: AppDb, botId: string) {
+  await db.update(meetingBots)
+    .set({ status: 'failed', statusDetail: 'start_failed', updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, botId), eq(meetingBots.status, 'scheduled'), eq(meetingBots.statusDetail, 'launching')));
 }
 
 /** A bot gone quiet or whose container died: keep whatever audio arrived. */

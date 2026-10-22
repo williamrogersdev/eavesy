@@ -193,8 +193,10 @@ The flow:
 1. `POST /api/meeting-bots` writes a `meeting_bots` row (`provider =
    'eavesy'`) and calls `BotControl.schedule` over the `MEETING_BOTS` service
    binding. The Durable Object sets an alarm for the start time.
-2. At the alarm, `claimBotStart` marks the row `launching` (only once, and not
-   if it was cancelled) and the container starts with the meeting link.
+2. At the alarm, `claimBotStart` sets the row's `status_detail` to
+   `launching` (only once, and not if it was cancelled) and the container
+   starts with the meeting link. A container that can't start fails the bot
+   as `start_failed` at once.
 3. The bot reports to `http://eavesy.internal/bots/<id>/…`. Those requests
    never leave Cloudflare: the Container's outbound handler takes them and
    only accepts the bot id its own container runs. Status events move the

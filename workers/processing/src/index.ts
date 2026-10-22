@@ -74,10 +74,12 @@ export const worker = {
     }
     await env.DB.prepare('DELETE FROM device_pairing_codes WHERE expires_at < ?').bind(now).run();
 
+    // Notetaker meetings aren't touched between segments; their bot's
+    // watchdog ends them instead (meeting-bots/service.ts, watchBot).
     const abandoned = await env.DB.prepare(
       `SELECT m.id
          FROM meetings m
-        WHERE m.source != 'import' AND m.status IN ('recording', 'uploading')
+        WHERE m.source NOT IN ('import', 'bot') AND m.status IN ('recording', 'uploading')
           AND m.updated_at < ?
           AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)
         LIMIT 200`,
