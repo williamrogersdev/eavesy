@@ -14,6 +14,8 @@ export interface EmailEnv {
 }
 
 export type ConfiguredEmailEnv = EmailEnv & { RESEND_API_KEY: string; RESEND_WEBHOOK_SECRET: string; EMAIL_FROM: string };
+/** What sending needs; webhooks are only for delivery tracking. */
+export type SendingEmailEnv = Pick<ConfiguredEmailEnv, 'RESEND_API_KEY' | 'EMAIL_FROM'>;
 
 /**
  * Thrown for any provider failure. `uncertain` means the email may have gone out;
@@ -49,7 +51,7 @@ export interface OutgoingEmail {
   idempotencyKey: string;
 }
 
-export function sendBody(env: ConfiguredEmailEnv, email: OutgoingEmail) {
+export function sendBody(env: SendingEmailEnv, email: OutgoingEmail) {
   return {
     from: env.EMAIL_FROM,
     to: [email.to],
@@ -63,7 +65,7 @@ export function sendBody(env: ConfiguredEmailEnv, email: OutgoingEmail) {
   };
 }
 
-export async function sendEmail(env: ConfiguredEmailEnv, email: OutgoingEmail): Promise<{ id: string }> {
+export async function sendEmail(env: SendingEmailEnv, email: OutgoingEmail): Promise<{ id: string }> {
   let response: Response;
   try {
     response = await fetch(API_URL, {

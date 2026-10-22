@@ -17,6 +17,7 @@ import { handleAgentTranscript } from './processing/agent-transcript';
 import { handleEmbedDictation, handleEmbedMeeting } from './processing/embed';
 import { handleCleanup, handlePurgeAccount } from './processing/cleanup';
 import { collectBotRecording } from './meeting-bots/service';
+import { checkCanary, startCanaries } from './meeting-bots/canary';
 import { reconcileRecaps, sendRecap } from './email/recaps';
 
 export async function queue(batch: MessageBatch<ProcessingMessage>, env: ProcessingEnv) {
@@ -134,6 +135,9 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
     case 'send-recap':
       await sendRecap(db, env, message.meetingId);
       return;
+    case 'check-canary':
+      await checkCanary(db, env, message.botId, message.check);
+      return;
     default: {
       const unhandled: never = message;
       throw new Error(
@@ -141,6 +145,11 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       );
     }
   }
+}
+
+/** Daily: sends the notetaker's canary bots to their test meetings, if configured. */
+export async function startMeetingBotCanaries(env: ProcessingEnv, now = Date.now()) {
+  await startCanaries(drizzle(env.DB, { schema }), env, now);
 }
 
 /** Hourly: re-queues email recaps whose queue message was lost. */

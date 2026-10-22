@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { D1Database } from '@cloudflare/workers-types';
 import { z } from 'zod';
@@ -53,6 +53,8 @@ export const MAX_COLLECT_ATTEMPTS = 60;
 export const BOT_SILENT_AFTER_MS = 10 * 60 * 1_000;
 /** A container that hasn't reported this long after starting never got going. */
 export const BOT_START_TIMEOUT_MS = 5 * 60 * 1_000;
+/** A canary bot leaves once it has been in the call this long (checked on its next watch). */
+export const CANARY_STAY_MS = 2 * 60 * 1_000;
 export const BOT_NAME = 'Eavesy Notetaker';
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 512 * 1024;
@@ -121,7 +123,7 @@ export async function listBots(db: AppDb, userId: string) {
   return rows.map(publicBot);
 }
 
-async function botById(db: AppDb, id: string) {
+export async function botById(db: AppDb, id: string) {
   return (await db.select().from(meetingBots).where(eq(meetingBots.id, id)).limit(1))[0] as MeetingBot | undefined;
 }
 
@@ -272,10 +274,14 @@ export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING
   if (BOT_STATUS_ORDER[next] < BOT_STATUS_ORDER[bot.status]) return bot.status;
   if (bot.statusAt !== null && at < bot.statusAt && next === bot.status) return bot.status;
 
-  if (next === 'recording') await ensureMeeting(db, bot, at);
+  // A canary makes no meeting: getting in is marked on its row, and there is
+  // nothing to collect once it is out.
+  const status: BotStatus = bot.canary && next === 'collecting' ? 'done' : next;
+  if (next === 'recording' && !bot.canary) await ensureMeeting(db, bot, at);
   const changed = await db.update(meetingBots)
     .set({
-      status: next,
+      status,
+      ...(bot.canary && next === 'recording' ? { canaryNames: bot.canaryNames ?? 0 } : {}),
       // A leave the person asked for stays the reason, whatever the bot says;
       // a report without a reason keeps the last one (`done` after `call_ended`).
       statusDetail: bot.statusDetail === 'leave_requested' ? bot.statusDetail : subCode ?? (bot.statusDetail === 'launching' ? null : bot.statusDetail),
@@ -286,14 +292,26 @@ export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING
     .returning({ id: meetingBots.id });
   if (!changed.length) return bot.status; // another delivery moved it first
 
-  if (next === 'collecting') await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id });
-  return next;
+  if (status === 'collecting') await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id });
+  return status;
 }
 
 async function failMeeting(db: AppDb, meetingId: string, message: string) {
   await db.update(meetings)
     .set({ status: 'failed', statusError: message, updatedAt: Date.now() })
     .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing'])));
+}
+
+/** Keeps how many names a canary read, never the names: the test meeting's people aren't Eavesy's to store. */
+async function noteCanaryNames(db: AppDb, bot: MeetingBot, speakers: unknown, participants: unknown) {
+  const names = new Set(parseSpeakerSpans(speakers).map(([name]) => name));
+  if (Array.isArray(participants)) {
+    for (const p of participants.slice(0, 500)) if (typeof p === 'string' && p.trim()) names.add(p.trim());
+  }
+  // Only once it is in (`canary_names` set), and never fewer than already seen.
+  await db.update(meetingBots)
+    .set({ canaryNames: sql`max(${meetingBots.canaryNames}, ${names.size})` })
+    .where(and(eq(meetingBots.id, bot.id), isNotNull(meetingBots.canaryNames)));
 }
 
 const speakersKey = (bot: MeetingBot, meetingId: string) => `users/${bot.userId}/meetings/${meetingId}/bot/speakers.json`;
@@ -314,7 +332,9 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
   const subCode = typeof body.subCode === 'string' ? body.subCode.slice(0, 100) : null;
   const at = typeof body.at === 'number' && Number.isFinite(body.at) ? body.at : Date.now();
 
-  if (Array.isArray(body.speakers) && bot.meetingId) {
+  if (bot.canary && (Array.isArray(body.speakers) || Array.isArray(body.participants))) {
+    await noteCanaryNames(db, bot, body.speakers, body.participants);
+  } else if (Array.isArray(body.speakers) && bot.meetingId) {
     const participants = Array.isArray(body.participants) ? body.participants.filter((p): p is string => typeof p === 'string').slice(0, 500) : [];
     await env.AUDIO_BUCKET.put(speakersKey(bot, bot.meetingId), JSON.stringify({ speakers: parseSpeakerSpans(body.speakers), participants }), {
       httpMetadata: { contentType: 'application/json' },
@@ -347,6 +367,8 @@ export async function handleBotSegment(db: AppDb, env: BotIngestEnv, botId: stri
   if (idx === null || startMs === null || !durationMs) return json({ error: 'invalid_segment_metadata' }, 400);
   if (Number(request.headers.get('content-length') ?? '0') > MAX_SEGMENT_BYTES) return json({ error: 'segment_too_large' }, 413);
   if (!SEGMENT_STATUSES.includes(bot.status)) return json({ error: 'bot_not_recording' }, 409);
+  // A canary's audio is taken, so the bot carries on as usual, and dropped.
+  if (bot.canary) return json({ ok: true, discarded: true }, 202);
 
   const meetingId = await ensureMeeting(db, bot, bot.statusAt ?? Date.now());
   const existing = await db.select({ id: meetingSegments.id }).from(meetingSegments)
@@ -451,7 +473,7 @@ function parseNames(value: string | null): Record<string, string> {
   }
 }
 
-async function finishBot(db: AppDb, botId: string, status: 'done' | 'failed', detail: string | null) {
+export async function finishBot(db: AppDb, botId: string, status: 'done' | 'failed', detail: string | null) {
   await db.update(meetingBots).set({ status, statusDetail: detail, updatedAt: Date.now() }).where(eq(meetingBots.id, botId));
 }
 
@@ -531,6 +553,8 @@ export async function watchBot(db: AppDb, env: BotIngestEnv, botId: string, runn
     await loseBot(db, env, bot, 'lost_track');
     return 'stop';
   }
+  // A canary has proved its point after a couple of minutes in: SIGTERM makes it leave.
+  if (bot.canary && bot.status === 'recording' && bot.statusAt !== null && now - bot.statusAt >= CANARY_STAY_MS) return 'stop';
   return 'watch';
 }
 
