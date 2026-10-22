@@ -405,8 +405,8 @@ fn mark_released() {
 /// Safe on any thread; does not wait.
 pub fn release_editor(app: &AppHandle) {
     // Stamped before the check, and again once focus moves, so a paste after
-    // Stop always waits out the settle; a stamp with nothing to release only
-    // costs a paste within FOCUS_SETTLE of Stop a few milliseconds.
+    // Stop always waits out the settle. With nothing to release, a paste
+    // within FOCUS_SETTLE of Stop waits out the rest of it (150ms at most).
     mark_released();
     if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
         return;
@@ -420,6 +420,9 @@ pub fn release_editor(app: &AppHandle) {
 /// right after it lands there. Never call on the main thread.
 pub fn release_editor_and_wait(app: &AppHandle) {
     if EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        // Stamped here too, so the settle below waits even if the main
+        // thread is too busy to hand focus back within the timeout.
+        mark_released();
         let _ = app.emit_to("hud", "hud:release-editor", ());
         let (tx, rx) = std::sync::mpsc::channel();
         let handle = app.clone();
@@ -429,8 +432,9 @@ pub fn release_editor_and_wait(app: &AppHandle) {
         });
         let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
     }
-    // Stop may have handed focus back a moment ago: let it arrive, re-reading
-    // in case the stamp moves on as focus does, but never for long.
+    // Stop may have handed focus back a moment ago: let it arrive. The main
+    // thread stamps again once it actually hands focus back, so re-read the
+    // stamp after each wait, up to SETTLE_LIMIT in all.
     let deadline = std::time::Instant::now() + SETTLE_LIMIT;
     loop {
         let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
