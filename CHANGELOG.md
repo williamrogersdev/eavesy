@@ -10,6 +10,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 - Web: the notetaker is now Eavesy's own bot instead of Recall.ai. It joins Google Meet and Teams calls, its transcript fills in live with each participant's name, and the brief lands in your library. Zoom isn't supported yet ([#185](https://github.com/williamrogersdev/eavesy/pull/185), [#186](https://github.com/williamrogersdev/eavesy/pull/186))
 
+## [0.6.3] - 2026-10-22 - desktop
+
+### Fixed
+
+- Mac app: size the capture control before drawing a new phase ([#183](https://github.com/williamrogersdev/eavesy/pull/183))
+
 ## [0.6.2] - 2026-10-22 - desktop
 
 ### Added
