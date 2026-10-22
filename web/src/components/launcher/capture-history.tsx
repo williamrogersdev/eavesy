@@ -10,6 +10,7 @@ import {
   Copy,
   ClipboardPaste,
   FolderOpen,
+  MessageSquareText,
   Image as ImageIcon,
   MoreHorizontal,
   MousePointerClick,
@@ -37,6 +38,7 @@ import {
   type RecordingMoment,
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
+import { fillPrompt, matchPrompts, promptsOnly, type SavedPrompt } from '@/lib/prompts';
 import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
@@ -511,6 +513,38 @@ function CaptureRow({
   );
 }
 
+/** How many saved prompts a search shows above the captures. */
+const PROMPT_HITS = 5;
+
+/** A saved prompt a search found: paste it where the cursor was, or copy it. */
+function PromptRow({ prompt, query, first, onPaste, flash, runTask }: {
+  prompt: SavedPrompt;
+  query: string;
+  first: boolean;
+  onPaste: () => void;
+  flash: Flash;
+  runTask: RunTask;
+}) {
+  return (
+    <article className="ev-row" aria-label={`Prompt, ${prompt.name}`}>
+      <header className="ev-rh">
+        <MessageSquareText className="ev-rh-icon" size={13} strokeWidth={1.75} aria-hidden />
+        <span className="ev-rh-kind">{prompt.name}</span>
+        <span>· /{prompt.slug}</span>
+        {first && <span className="ev-rh-time"><Kbd keys="↩" /></span>}
+      </header>
+      <Body text={fillPrompt(prompt.body)} query={promptsOnly(query) ? query.trim().slice(1) : query} />
+      <div className="ev-actions">
+        <IconButton label="Paste at cursor" icon={ClipboardPaste} filled onClick={onPaste} />
+        <IconButton label="Copy text" icon={Copy} onClick={() => runTask(async () => {
+          await copyText(fillPrompt(prompt.body));
+          flash('Copied');
+        }, 'Couldn’t copy that')} />
+      </div>
+    </article>
+  );
+}
+
 /**
  * The transcript cleaned up for an AI agent (filler gone, code in backticks,
  * speakers merged), or the plain transcript while the cloud is still on it.
@@ -533,9 +567,15 @@ export function CaptureHistory({
   scrollRef,
   loadError,
   onRetry,
+  prompts = null,
+  onPromptUsed,
 }: {
   recordings: Recording[];
   refreshRevision: number;
+  /** Saved prompts the search can find; null when signed out or still loading. */
+  prompts?: SavedPrompt[] | null;
+  /** Counts a pasted prompt. */
+  onPromptUsed?: (id: string) => void;
   live: LiveCapture | null;
   /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
   dictationHotkey: string;
@@ -557,12 +597,22 @@ export function CaptureHistory({
     return () => window.clearInterval(timer);
   }, []);
 
-  const history = useHistoryPage(refreshRevision, query, filter);
+  // A search starting with "/" looks only for saved prompts.
+  const onlyPrompts = promptsOnly(query);
+  const captureQuery = onlyPrompts ? '' : query;
+  const promptHits = useMemo(() => matchPrompts(prompts ?? [], query).slice(0, PROMPT_HITS), [prompts, query]);
+  const pastePrompt = (prompt: SavedPrompt) => runTask(async () => {
+    await pasteToFrontmost(fillPrompt(prompt.body), false);
+    setQuery('');
+    onPromptUsed?.(prompt.id);
+  }, 'Couldn’t paste that');
+
+  const history = useHistoryPage(refreshRevision, captureQuery, filter);
   const rows = history.page?.items ?? recordings;
   const liveId = live?.sessionId ?? null;
   const visible = useMemo(
-    () => (history.page ? rows : visibleRecordings(rows, filter, query)).filter((rec) => rec.id !== liveId),
-    [history.page, rows, filter, query, liveId],
+    () => onlyPrompts ? [] : (history.page ? rows : visibleRecordings(rows, filter, captureQuery)).filter((rec) => rec.id !== liveId),
+    [onlyPrompts, history.page, rows, filter, captureQuery, liveId],
   );
   const counts = history.page?.counts ?? countByFilter(recordings);
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
@@ -587,11 +637,14 @@ export function CaptureHistory({
               ref={searchRef}
               type="search"
               value={query}
-              placeholder="Search captures"
+              placeholder={prompts?.length ? 'Search captures, or / for prompts' : 'Search captures'}
               aria-label="Search captures"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape' && query) {
+                if (e.key === 'Enter' && promptHits[0] && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  pastePrompt(promptHits[0]);
+                } else if (e.key === 'Escape' && query) {
                   e.preventDefault();
                   e.stopPropagation();
                   setQuery('');
@@ -604,7 +657,7 @@ export function CaptureHistory({
               label="Show"
               value={filter}
               onChange={setFilter}
-              options={FILTERS.map((f) => ({ value: f.value, label: searching ? `${f.label} · ${counts[f.value]}` : f.label }))}
+              options={FILTERS.map((f) => ({ value: f.value, label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label }))}
             />
           </label>
         </>
@@ -621,6 +674,14 @@ export function CaptureHistory({
         </div>
       ) : (
         <div ref={scrollRef} data-capture-history className="ev-scroll">
+          {promptHits.length > 0 && (
+            <section className="ev-group" aria-label="Prompts">
+              <h2 className="ev-gh">Prompts</h2>
+              {promptHits.map((prompt, i) => (
+                <PromptRow key={prompt.id} prompt={prompt} query={query} first={i === 0} onPaste={() => pastePrompt(prompt)} flash={flash} runTask={runTask} />
+              ))}
+            </section>
+          )}
           {groups.map((group) => (
             <section key={group.label} className="ev-group" aria-label={group.label}>
               <h2 className="ev-gh">{group.label}</h2>
@@ -637,7 +698,14 @@ export function CaptureHistory({
               {history.loading ? 'Loading…' : 'Load more captures'}
             </button>
           )}
-          {searching && visible.length === 0 && !history.loading && (
+          {onlyPrompts && promptHits.length === 0 && (
+            <p className="ev-empty-search">
+              {!prompts?.length
+                ? 'No saved prompts yet. Add one in Settings → Prompts.'
+                : query.trim().length > 1 ? `No prompts match “${query.trim().slice(1).trim()}”.` : 'No saved prompts yet.'}
+            </p>
+          )}
+          {!onlyPrompts && searching && visible.length === 0 && promptHits.length === 0 && !history.loading && (
             <p className="ev-empty-search">
               {query.trim() ? `No captures match “${query.trim()}”.` : 'Nothing here yet.'}
             </p>

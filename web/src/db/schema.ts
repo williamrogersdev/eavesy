@@ -394,6 +394,29 @@ export const promptTemplates = sqliteTable(
   (t) => [index('templates_user_idx').on(t.userId)],
 );
 
+/**
+ * Text the user sends often, saved to paste from the panel or run as a slash
+ * command through MCP. Unlike `prompt_templates`, which rewrite a capture,
+ * these are sent as they are. `slug` is the command name, unique per account.
+ */
+export const savedPrompts = sqliteTable(
+  'saved_prompts',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    body: text('body').notNull(),
+    useCount: integer('use_count').notNull().default(0),
+    lastUsedAt: integer('last_used_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('saved_prompts_user_slug_uq').on(t.userId, t.slug)],
+);
+
 export const folders = sqliteTable(
   'folders',
   {

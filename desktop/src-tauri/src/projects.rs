@@ -34,12 +34,16 @@ pub async fn list_projects(app: AppHandle) -> Option<Vec<Value>> {
 }
 
 /// Which account endpoints the panel may call with this Mac's sign-in, and how:
-/// the settings it shares with eavesy.com (languages, custom words) and projects.
+/// the settings it shares with eavesy.com (languages, custom words), projects
+/// and saved prompts.
 fn account_call_allowed(method: &str, path: &str) -> bool {
     match (method, path.strip_prefix("/api/")) {
         ("GET" | "PATCH", Some("me")) => true,
-        ("GET" | "POST", Some("projects")) => true,
-        ("PATCH" | "DELETE", Some(rest)) => rest.strip_prefix("projects/").is_some_and(is_plain_id),
+        ("GET" | "POST", Some("projects" | "prompts")) => true,
+        ("PATCH" | "DELETE", Some(rest)) => rest
+            .strip_prefix("projects/")
+            .or_else(|| rest.strip_prefix("prompts/"))
+            .is_some_and(is_plain_id),
         _ => false,
     }
 }
@@ -232,6 +236,12 @@ mod tests {
         assert!(!account_call_allowed("GET", "/api/account/export"));
         assert!(!account_call_allowed("PATCH", "/api/projects/../me"));
         assert!(!account_call_allowed("DELETE", "/api/projects/"));
+        assert!(account_call_allowed("GET", "/api/prompts"));
+        assert!(account_call_allowed("POST", "/api/prompts"));
+        assert!(account_call_allowed("PATCH", "/api/prompts/prm_01ABC"));
+        assert!(account_call_allowed("DELETE", "/api/prompts/prm_01ABC"));
+        assert!(!account_call_allowed("DELETE", "/api/prompts"));
+        assert!(!account_call_allowed("PATCH", "/api/prompts/../me"));
     }
 
     #[test]

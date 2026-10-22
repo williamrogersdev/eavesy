@@ -2,7 +2,7 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Loader2, LogOut, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Loader2, LogOut, MessageSquareText, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Mascot, Row, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
@@ -34,6 +34,8 @@ import { cn } from '@/lib/utils';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
+import { PromptsSettings } from './prompts-settings';
+import { useSavedPrompts } from './use-saved-prompts';
 
 export type AccountState = AccountInfo | null | undefined;
 
@@ -308,18 +310,21 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   const [openProject, setOpenProject] = useState<string | null>(null);
   const accountPrefs = useAccountPrefs();
   const projects = useProjects(!!account, onProjectsChanged);
+  const prompts = useSavedPrompts(!!account);
+  const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const sections = [
     { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
     { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
     { id: 'transcription', label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
     { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
+    { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
     { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
   const activeSection = sections.find((item) => item.id === section)!;
-  const go = (id: string) => { setSection(id); if (id !== 'projects') setOpenProject(null); };
+  const go = (id: string) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -457,6 +462,11 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
         </div>
         <div id="settings-dictionary" hidden={section !== 'dictionary'}>
           {account ? <><WordsCard account={accountPrefs} /><DictionarySettings /></> : signInFirst('keep a dictionary')}
+        </div>
+        <div id="settings-prompts" hidden={section !== 'prompts'}>
+          {account
+            ? <PromptsSettings state={prompts} open={openPrompt} onOpen={setOpenPrompt} />
+            : signInFirst('save prompts')}
         </div>
         <div id="settings-projects" hidden={section !== 'projects'}>
           {account

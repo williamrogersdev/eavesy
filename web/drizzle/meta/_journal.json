@@ -281,6 +281,13 @@
       "when": 1792693096614,
       "tag": "0039_capture_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792696271295,
+      "tag": "0040_saved_prompts",
+      "breakpoints": true
     }
   ]
 }

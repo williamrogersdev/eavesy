@@ -295,3 +295,67 @@ Will: Bump it.
     expect(recent[0].project).toBe('eavesy');
   });
 });
+
+describe('MCP prompts', () => {
+  const rpc = async (token: string, method: string, params?: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      }),
+      mcpEnv(),
+    )).json<{
+      result?: {
+        capabilities?: Record<string, unknown>;
+        prompts?: { name: string; title: string; description: string; arguments: unknown[] }[];
+        messages?: { role: string; content: { type: string; text: string } }[];
+      };
+      error?: { message: string };
+    }>();
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at)
+       VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
+    ).bind(now, now).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at) VALUES
+       ('prm_1', 'user_mcp', 'Triage tickets', 'triage-tickets', 'Search every support ticket.
+Then debug each one.', ?, ?),
+       ('prm_2', 'user_mcp', 'Focus', 'focus', 'Look at {{details}} first.', ?, ?),
+       ('prm_3', 'user_other', 'Not yours', 'not-yours', 'Secret', ?, ?)`,
+    ).bind(now, now, now, now, now, now).run();
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.prepare('DELETE FROM saved_prompts').run();
+  });
+
+  it('are offered at initialize and listed by slug, only the caller’s own', async () => {
+    const { token } = await mint();
+    expect((await rpc(token, 'initialize', { protocolVersion: '2025-06-18' })).result?.capabilities)
+      .toMatchObject({ prompts: { listChanged: false } });
+    expect((await rpc(token, 'prompts/list')).result?.prompts).toEqual([
+      { name: 'focus', title: 'Focus', description: 'Look at {{details}} first.', arguments: [{ name: 'details', description: 'Anything to add for this run', required: false }] },
+      { name: 'triage-tickets', title: 'Triage tickets', description: 'Search every support ticket.', arguments: [{ name: 'details', description: 'Anything to add for this run', required: false }] },
+    ]);
+  });
+
+  it('give the prompt text with the details filled in, and count the use', async () => {
+    const { token } = await mint();
+    const got = (await rpc(token, 'prompts/get', { name: 'triage-tickets', arguments: { details: 'only billing' } })).result;
+    expect(got?.messages).toEqual([{ role: 'user', content: { type: 'text', text: 'Search every support ticket.\nThen debug each one.\n\nonly billing' } }]);
+    const slotted = (await rpc(token, 'prompts/get', { name: 'focus', arguments: { details: 'auth' } })).result;
+    expect(slotted?.messages?.[0]?.content.text).toBe('Look at auth first.');
+    const used = await testEnv.DB.prepare(`SELECT use_count FROM saved_prompts WHERE id = 'prm_1'`).first<{ use_count: number }>();
+    expect(used?.use_count).toBe(1);
+  });
+
+  it('refuse another user’s prompt and one that doesn’t exist', async () => {
+    const { token } = await mint();
+    expect((await rpc(token, 'prompts/get', { name: 'not-yours' })).error?.message).toContain('No saved prompt');
+    expect((await rpc(token, 'prompts/get', { name: 'nope' })).error?.message).toContain('No saved prompt');
+  });
+});

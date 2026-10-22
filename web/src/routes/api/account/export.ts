@@ -5,6 +5,7 @@ import * as dictionaryRepo from '@/db/repo/dictionary';
 import * as capturesRepo from '@/db/repo/captures';
 import * as dictationsRepo from '@/db/repo/dictations';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as promptsRepo from '@/db/repo/prompts';
 import * as templatesRepo from '@/db/repo/templates';
 import * as usersRepo from '@/db/repo/users';
 import { addMeetingFolder, zipInputFor } from '@/lib/export/zip';
@@ -18,6 +19,7 @@ meetings/        One folder per recording: summary, transcript, your notes, and
 dictations.json  Your dictations and their text.
 captures.json    Screenshots and videos you captured, with their transcripts.
 templates.json   Your brief templates.
+prompts.json     Your saved prompts.
 dictionary.json  Your learned speech corrections.
 account.json     Your profile.
 
@@ -47,6 +49,7 @@ export const Route = createFileRoute('/api/account/export')({
         const zip = new JSZip();
         zip.file('README.txt', README);
         zip.file('dictionary.json', json(await dictionaryRepo.list(db, actor.userId)));
+        zip.file('prompts.json', json(await promptsRepo.list(db, actor.userId)));
 
         const meetings = await meetingsRepo.listForUser(db, { userId: actor.userId, limit: 10_000 });
         for (const meeting of meetings) {
