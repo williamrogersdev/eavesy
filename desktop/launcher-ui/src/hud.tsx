@@ -15,6 +15,7 @@ import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
+import { holdMs } from './hud-hold';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -65,13 +66,6 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
-/** How long a finished result stays open once nobody is editing it. */
-const DONE_HOLD_MS = 10_000;
-/** How long a result stays once the pointer has been over it and left. */
-const LEFT_HOLD_MS = 2500;
-/** How long a result stays under a still pointer. macOS may never report the
- * pointer leaving a window that isn't key, so hovering can't hold it forever. */
-const OVER_HOLD_MS = 30_000;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
 
@@ -182,6 +176,8 @@ function Hud() {
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
   const lastPointerMove = useRef(0);
+  // When the pointer came over the control, so moving it can't hold a result forever.
+  const overSince = useRef(0);
   const [learned, setLearned] = useState<{ text: string; title?: string; tone: 'leaf' | 'warn' } | null>(browserPreviewLearned);
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
@@ -445,7 +441,7 @@ function Hud() {
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
-    }, pointer === 'over' ? OVER_HOLD_MS : pointer === 'left' ? LEFT_HOLD_MS : state.phase === 'done' ? DONE_HOLD_MS : 3500);
+    }, holdMs(state.phase, pointer, overSince.current, Date.now()));
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
@@ -792,10 +788,11 @@ function Hud() {
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
-      onMouseEnter={() => { loadShortcut(); setPointer('over'); }}
+      onMouseEnter={() => { loadShortcut(); if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); }}
       onMouseMove={() => {
         if (Date.now() - lastPointerMove.current < 1000) return;
         lastPointerMove.current = Date.now();
+        if (pointer !== 'over') overSince.current = Date.now();
         setPointer('over');
         setPointerMoved((n) => n + 1);
       }}

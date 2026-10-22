@@ -129,13 +129,43 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> S
     let polish_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(polished) => {
-            tracing::info!(polish_ms, "dictation polished in {polish_ms} ms");
+            tracing::info!(polish_ms, "dictation polished");
             polished
         }
         Err(error) => {
-            tracing::warn!(polish_ms, "dictation: typing the words as heard after {polish_ms} ms ({error})");
-            text.to_string()
+            tracing::warn!(polish_ms, "dictation: typing the words as heard, fillers dropped ({error})");
+            strip_fillers(text)
         }
+    }
+}
+
+/// The model-free part of tidying, as the server does it: "um", "uh", "hmm"
+/// and the like go, with the comma after them, and spacing is tidied. Never
+/// changes a word the user meant, so it is safe on their own corrections too.
+pub fn strip_fillers(text: &str) -> String {
+    static FILLER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(^|[\s,.;:!?])(?:u+m+|u+h+m*|e+r+m+|h+m+|m+h*m+)[,.]?([\s,.;:!?]|$)").unwrap()
+    });
+    static SPACE_BEFORE_PUNCT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\s+([,.;:!?])").unwrap());
+    static DOUBLED_PUNCT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"([,;:])([,.;:!?])").unwrap());
+    static SPACES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
+    // Neighbouring fillers share a separator, so one pass can miss the next.
+    let mut out = text.to_string();
+    loop {
+        let next = FILLER.replace_all(&out, "$1$2").into_owned();
+        if next == out { break; }
+        out = next;
+    }
+    let out = SPACE_BEFORE_PUNCT.replace_all(&out, "$1");
+    let out = DOUBLED_PUNCT.replace_all(&out, "$2");
+    let out = SPACES.replace_all(&out, " ");
+    let out = out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end();
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -389,6 +419,16 @@ fn transcode_to_wav(input: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fillers_go_and_words_stay() {
+        use super::strip_fillers;
+        assert_eq!(strip_fillers("Also add, um,"), "Also add,");
+        assert_eq!(strip_fillers("um so ship it, uh, today"), "So ship it, today");
+        assert_eq!(strip_fillers("when this shit um, pastes"), "When this shit pastes");
+        assert_eq!(strip_fillers("Hmm. Umbrella and drums stay"), "Umbrella and drums stay");
+        assert_eq!(strip_fillers("um uh"), "");
+    }
+
     use super::*;
 
     #[test]

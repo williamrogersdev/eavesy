@@ -187,16 +187,20 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let app = app.clone();
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
+        let started = Instant::now();
         // Should the transcript box still have the keyboard, the paste (and
         // the focus check before it) must see the user's app, not Eavesy.
         crate::hud::release_editor_and_wait(&app);
-        let started = Instant::now();
         // Deliberate live corrections already express the user's wording. Keep
         // the untouched remainder as heard too: polishing the whole sentence
         // could rewrite a correction or make its source offsets ambiguous.
         let corrected = crate::live_edit::corrected(&session_id, &text);
         let source_text = corrected.as_ref().map(|_| text.clone());
-        let text = corrected.unwrap_or_else(|| crate::transcribe::polish_dictation(&app, &text, project.as_deref()));
+        // Fillers still go: nobody types "um", corrected or not.
+        let text = match corrected {
+            Some(corrected) => crate::transcribe::strip_fillers(&corrected),
+            None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
+        };
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {
@@ -226,7 +230,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
         }
         let delivery_ms = started.elapsed().as_millis() as u64;
-        tracing::info!(session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(), "dictation delivered in {delivery_ms} ms");
+        tracing::info!(session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(), "dictation delivered");
         crate::telemetry::track(how.event(), serde_json::json!({ "delivery": how.label(), "delivery_ms": delivery_ms }));
         // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
@@ -312,6 +316,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     }
     let app = app.clone();
     let text = crate::live_edit::corrected(session_id, text).unwrap_or_else(|| text.trim().to_string());
+    let text = crate::transcribe::strip_fillers(&text);
     std::thread::spawn(move || {
         crate::hud::release_editor_and_wait(&app);
         get_launcher_out_of_the_way(&app);

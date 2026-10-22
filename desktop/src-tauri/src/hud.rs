@@ -372,6 +372,11 @@ fn save_frame(app: &AppHandle) {
 pub fn hide_on_main(app: &AppHandle) { imp::hide(app); }
 
 static EDITOR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// When the editor last handed the keyboard back, so a paste right after
+/// waits for focus to arrive even if another thread did the handing back.
+static RELEASED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// How long focus takes to reach the other app once Eavesy lets go.
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Editing opts into app activation so AppKit routes the Edit menu shortcuts
 /// to WKWebView. Merely showing a completed dictation remains passive.
@@ -384,6 +389,7 @@ pub fn focus_editor_on_main(app: &AppHandle) {
 fn release_editor_on_main(app: &AppHandle) {
     if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
         crate::app_menu::return_focus();
+        *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     }
 }
 
@@ -403,19 +409,26 @@ pub fn release_editor(app: &AppHandle) {
 /// [`release_editor`], then waits for focus to reach the other app so a paste
 /// right after it lands there. Never call on the main thread.
 pub fn release_editor_and_wait(app: &AppHandle) {
-    if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
-        return;
+    if EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = app.emit_to("hud", "hud:release-editor", ());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            release_editor_on_main(&handle);
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
     }
-    let _ = app.emit_to("hud", "hud:release-editor", ());
-    let (tx, rx) = std::sync::mpsc::channel();
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        release_editor_on_main(&handle);
-        let _ = tx.send(());
-    });
-    if rx.recv_timeout(std::time::Duration::from_millis(500)).is_ok() {
-        std::thread::sleep(std::time::Duration::from_millis(150));
+    // Stop may have handed focus back a moment ago: let it arrive.
+    let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(wait) = released.and_then(|at| settle_left(at.elapsed())) {
+        std::thread::sleep(wait);
     }
+}
+
+/// What is left of the focus settle, `elapsed` after the hand-back.
+fn settle_left(elapsed: std::time::Duration) -> Option<std::time::Duration> {
+    FOCUS_SETTLE.checked_sub(elapsed).filter(|left| !left.is_zero())
 }
 
 #[cfg(target_os = "macos")]
@@ -513,7 +526,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{is_active, live_size, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -541,6 +554,10 @@ mod tests {
     #[test]
     fn a_result_stays_on_screen_even_with_the_pill_put_away() {
         assert!(is_active(&Phase::Done));
+        // A paste right after Stop's hand-back waits out the rest of the settle.
+        assert_eq!(settle_left(std::time::Duration::ZERO), Some(FOCUS_SETTLE));
+        assert_eq!(settle_left(std::time::Duration::from_millis(100)), Some(std::time::Duration::from_millis(50)));
+        assert_eq!(settle_left(FOCUS_SETTLE), None);
         assert!(is_active(&Phase::Failed));
         assert!(!is_active(&Phase::Idle));
     }
