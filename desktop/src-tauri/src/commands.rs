@@ -376,6 +376,13 @@ pub async fn peek_hud(app: AppHandle, session_id: String, open: bool) {
     let _ = tauri::async_runtime::spawn_blocking(move || crate::hud::set_peek(&app, session_id, open)).await;
 }
 
+/// The capture control painted a new phase: its native shadow can follow now.
+#[tauri::command]
+pub fn hud_painted(app: AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || crate::hud::repainted_on_main(&handle));
+}
+
 #[tauri::command]
 pub fn close_hud(app: AppHandle) -> Result<(), String> {
     let handle = app.clone();

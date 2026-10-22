@@ -156,7 +156,17 @@ body {
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  transition: box-shadow var(--ev-d-state) ease;
+  transition: box-shadow var(--ev-d-state) ease, background-color var(--ev-d-state) ease, color var(--ev-d-state) ease;
+}
+/* A change of phase fades the new content in rather than swapping it hard.
+   The two names alternate (data-swap) so every change restarts it. Opacity
+   only: moving text would blur it, and the window has already taken its size. */
+.eavesy-control[data-swap="a"] > * { animation: ctl-swap-a var(--ev-d-state) ease-out both; }
+.eavesy-control[data-swap="b"] > * { animation: ctl-swap-b var(--ev-d-state) ease-out both; }
+@keyframes ctl-swap-a { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ctl-swap-b { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .eavesy-control > * { animation: none !important; }
 }
 .eavesy-control[data-size="wide"],
 .eavesy-control[data-size="result"] { border-radius: 18px; }
