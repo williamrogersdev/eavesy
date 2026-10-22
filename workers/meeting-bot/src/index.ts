@@ -66,6 +66,7 @@ export class MeetingBot extends Container<Env> {
           PLATFORM: start.platform,
           BOT_NAME: start.botName,
           INGEST_URL: `http://${INGEST_HOST}/bots/${botId}`,
+          CONTROL_TOKEN: await this.controlToken(),
         },
         labels: { bot: botId },
       },
@@ -81,8 +82,21 @@ export class MeetingBot extends Container<Env> {
   /** Asks the bot to leave the call; false when no bot is running. */
   async requestLeave() {
     if (!(await this.running())) return false;
-    const response = await this.containerFetch('http://bot/leave', { method: 'POST' });
+    const response = await this.containerFetch('http://bot/leave', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await this.controlToken()}` },
+    });
     return response.ok;
+  }
+
+  /** A secret only this object and its container know, for the bot's control port. */
+  private async controlToken() {
+    let token = await this.ctx.storage.get<string>('controlToken');
+    if (!token) {
+      token = crypto.randomUUID();
+      await this.ctx.storage.put('controlToken', token);
+    }
+    return token;
   }
 
   async shutDown() {

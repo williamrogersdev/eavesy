@@ -303,7 +303,7 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
   if (!bot) return json({ error: 'not_found' }, 404);
   const text = await request.text();
   if (text.length > MAX_EVENT_BYTES) return json({ error: 'too_large' }, 413);
-  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; participants?: unknown };
+  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; participants?: unknown; lostSegments?: unknown };
   try {
     body = JSON.parse(text) as typeof body;
   } catch {
@@ -318,6 +318,10 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
     await env.AUDIO_BUCKET.put(speakersKey(bot, bot.meetingId), JSON.stringify({ speakers: parseSpeakerSpans(body.speakers), participants }), {
       httpMetadata: { contentType: 'application/json' },
     });
+  }
+  if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
+    // Segments the bot gave up delivering; the meeting has a gap there.
+    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: body.lostSegments.slice(0, 100) }));
   }
   if (code === 'heartbeat' || code === 'speakers') {
     // The watchdog reads this as the bot being alive.
