@@ -45,7 +45,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const text = parsed.data.text.trim();
         if (!text || text.length > MAX_POLISH_CHARS) {
-          return Response.json({ text: stripFillers(text), polished: false });
+          return Response.json({ text: stripFillers(text), polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
 
         const overQuota = await guardUserQuota(actor.userId, 'dictation');
@@ -63,6 +63,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
           ...requestedDictation(parsed.data, effectiveDictation(user, project)),
+          asked: parsed.data.style !== undefined || parsed.data.forAgents !== undefined,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,

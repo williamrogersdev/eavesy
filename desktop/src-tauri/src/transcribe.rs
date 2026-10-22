@@ -178,15 +178,18 @@ pub fn drop_fillers(text: &str) -> String {
     out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
 }
 
-/// How long a tone change waits for its rewrite: asked for, and watched.
-const RESTYLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+/// How long a tone change waits for its rewrite: asked for, and watched, but
+/// a long dictation takes the model a while to write out again.
+fn restyle_timeout(text: &str) -> std::time::Duration {
+    std::time::Duration::from_secs((12 + text.chars().count() as u64 / 400).min(60))
+}
 
 /// A dictation's words rewritten in `style` ("professional", "friendly",
 /// "concise" or "natural"), as a prompt for an AI agent with `for_agents`:
 /// the HUD's tone buttons. Saved settings are left as they are.
 pub fn restyle_dictation(app: &AppHandle, text: &str, project: Option<&str>, style: &str, for_agents: bool) -> Result<String, String> {
     let credential = settings::device_credential(app).ok_or("Sign in to change the tone")?;
-    restyle_with(&credential, text, project, style, for_agents, RESTYLE_TIMEOUT)
+    restyle_with(&credential, text, project, style, for_agents, restyle_timeout(text))
 }
 
 fn restyle_with(
@@ -200,7 +203,13 @@ fn restyle_with(
     let mut body = polish_body(text, project);
     body["style"] = serde_json::Value::from(style);
     body["forAgents"] = serde_json::Value::from(for_agents);
-    post_polish(credential, &body, timeout)
+    let reply = post_polish(credential, &body, timeout)?;
+    // The plain cleanup came back instead: saying "Updated" would be a lie.
+    match (reply.polished, reply.reason.as_deref()) {
+        (true, _) => Ok(reply.text),
+        (false, Some("too_long")) => Err("Too long to rewrite here".into()),
+        (false, _) => Err("Couldn't rewrite it in that tone".into()),
+    }
 }
 
 fn polish_body(text: &str, project: Option<&str>) -> serde_json::Value {
@@ -217,10 +226,25 @@ fn polish_with(
     project: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    post_polish(credential, &polish_body(text, project), timeout)
+    post_polish(credential, &polish_body(text, project), timeout).map(|reply| reply.text)
 }
 
-fn post_polish(credential: &settings::Credential, body: &serde_json::Value, timeout: std::time::Duration) -> Result<String, String> {
+#[derive(serde::Deserialize)]
+struct PolishReply {
+    text: String,
+    /// False when the server fell back to the model-free cleanup.
+    #[serde(default = "yes")]
+    polished: bool,
+    /// Why it fell back, when it says ("too_long").
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn post_polish(credential: &settings::Credential, body: &serde_json::Value, timeout: std::time::Duration) -> Result<PolishReply, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
@@ -237,18 +261,11 @@ fn post_polish(credential: &settings::Credential, body: &serde_json::Value, time
     if !resp.status().is_success() {
         return Err(format!("polish HTTP {}", resp.status()));
     }
-    #[derive(serde::Deserialize)]
-    struct Body {
-        text: String,
-    }
-    let polished = resp
-        .json::<Body>()
-        .map_err(|e| format!("bad response: {e}"))?
-        .text;
-    if polished.trim().is_empty() {
+    let reply = resp.json::<PolishReply>().map_err(|e| format!("bad response: {e}"))?;
+    if reply.text.trim().is_empty() {
         return Err("empty polish".to_string());
     }
-    Ok(polished)
+    Ok(reply)
 }
 
 /// A dictation whose words could not be had in time: say it is saved, so
@@ -741,8 +758,42 @@ mod tests {
                 ))
                 .mount(&server),
         );
-        let restyled = restyle_with(&credential(&server), "Ship it today.", Some("proj_1"), "friendly", false, RESTYLE_TIMEOUT);
+        let restyled = restyle_with(&credential(&server), "Ship it today.", Some("proj_1"), "friendly", false, restyle_timeout("Ship it today."));
         assert_eq!(restyled, Ok("Let's ship it today!".to_string()));
+    }
+
+    #[test]
+    fn a_tone_change_the_server_could_not_make_is_an_error_not_an_update() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        let (runtime, server) = mock_server();
+        runtime.block_on(async {
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .and(body_partial_json(serde_json::json!({ "style": "concise" })))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "text": "Long words.", "polished": false, "reason": "too_long" }),
+                ))
+                .mount(&server)
+                .await;
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .and(body_partial_json(serde_json::json!({ "style": "friendly" })))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "text": "Ship it today.", "polished": false }),
+                ))
+                .mount(&server)
+                .await;
+        });
+        let credential = credential(&server);
+        assert_eq!(restyle_with(&credential, "Long words.", None, "concise", false, POLISH_TIMEOUT), Err("Too long to rewrite here".into()));
+        assert_eq!(restyle_with(&credential, "Ship it today.", None, "friendly", false, POLISH_TIMEOUT), Err("Couldn't rewrite it in that tone".into()));
+    }
+
+    #[test]
+    fn a_long_dictation_gets_longer_to_rewrite() {
+        assert_eq!(restyle_timeout("short"), std::time::Duration::from_secs(12));
+        assert_eq!(restyle_timeout(&"word ".repeat(2000)), std::time::Duration::from_secs(37));
+        assert_eq!(restyle_timeout(&"word ".repeat(40_000)), std::time::Duration::from_secs(60));
     }
 
     #[test]

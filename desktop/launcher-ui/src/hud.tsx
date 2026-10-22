@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Bot, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
+import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -86,6 +86,9 @@ interface ToneChange {
   landed: 'replaced' | 'copied' | null;
 }
 
+/** Past this many characters (MAX_POLISH_CHARS on the server) words are too long to rewrite here. */
+const MAX_REWRITE_CHARS = 20_000;
+
 /** In the browser preview, rewrites of the sample words instead of a server round trip. */
 const PREVIEW_REWRITES: Record<Exclude<Tone, 'original'>, string> = {
   professional: 'For the onboarding email, I suggest leading with the mascot, using one screenshot rather than three, and closing with the shortcut so that people try it immediately.',
@@ -162,7 +165,9 @@ function browserPreviewState(): HudState | null {
     notice: params.get('notice'),
     startedAtMs: Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
-      ? 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
+      ? params.has('long')
+        ? Array.from({ length: Number(params.get('long')) || 12 }, (_, i) => `Point ${i + 1}: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.`).join(' ')
+        : 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
       : phase === 'failed' ? 'No speech was heard' : null,
   };
 }
@@ -557,6 +562,8 @@ function Hud() {
   const ownDraft = draft?.sessionId === state?.sessionId ? draft : null;
   const words = useMemo(() => ownDraft ? ownDraft.source === null ? ownDraft.text : mergeTranscript({ source: ownDraft.source, text: ownDraft.text }, source) : source, [ownDraft, source]);
 
+  // Live words follow the newest; a finished dictation in the drawer reads from its start.
+  const reading = state?.phase === 'done';
   useLayoutEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -564,8 +571,9 @@ function Hud() {
       const saved = selection.current;
       editor.setSelectionRange(saved.start, saved.end, saved.direction);
       editor.scrollTop = saved.scroll;
-    } else editor.scrollTop = editor.scrollHeight;
-  }, [words, state?.sessionId]);
+    } else editor.scrollTop = reading ? 0 : editor.scrollHeight;
+    markMore(editor);
+  }, [words, state?.sessionId, reading, peek]);
 
   useEffect(() => {
     const handle = (event: InputEvent) => {
@@ -742,6 +750,7 @@ function Hud() {
     selection.current = { start: editor.selectionStart, end: editor.selectionEnd, direction: editor.selectionDirection, scroll: editor.scrollTop };
   };
   const transcriptEditor = (hint?: string) => <textarea
+    onScrollCapture={(event) => markMore(event.currentTarget)}
     ref={editorRef}
     aria-label="Edit transcript preview"
     className="ctl-words ctl-editor"
@@ -803,7 +812,14 @@ function Hud() {
   };
   const tonePick = ownTone?.pick ?? 'original';
   const forAgents = ownTone?.forAgents ?? false;
-  const toneRow = !!state.sessionId && (
+  const tooLong = words.length > MAX_REWRITE_CHARS;
+  const toneRow = !!state.sessionId && (tooLong ? (
+    <div className="ctl-tones">
+      <span className="ctl-say ctl-quiet">Too long to change the tone here</span>
+      <span className="ctl-fill" />
+      <button type="button" className="ctl-tone" onClick={() => act('show_launcher')}>Open in Eavesy</button>
+    </div>
+  ) : (
     <div className="ctl-tones" role="group" aria-label="Rewrite in another tone">
       {TONES.map((choice) => (
         <button key={choice.id} type="button" className="ctl-tone" aria-pressed={tonePick === choice.id} disabled={!!ownTone?.busy} title={choice.hint}
@@ -812,12 +828,13 @@ function Hud() {
         </button>
       ))}
       <span className="ctl-fill" />
-      <button type="button" className="ctl-tone ctl-icon" aria-pressed={forAgents} disabled={!!ownTone?.busy} aria-label="Write it as a prompt for an AI agent" title={FOR_AGENTS_HINT}
+      <span className="ctl-sep" aria-hidden />
+      <button type="button" className="ctl-tone" aria-pressed={forAgents} disabled={!!ownTone?.busy} title={FOR_AGENTS_HINT}
         onClick={() => void restyle(tonePick, !forAgents)}>
-        <Bot className="h-3.5 w-3.5" />
+        For AI
       </button>
     </div>
-  );
+  ));
   const toneStamp = ownTone?.busy ? <span className="ctl-say ctl-quiet">Rewriting<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>
     : ownTone?.landed === 'replaced' ? <Stamp tone="leaf">Updated</Stamp>
     : ownTone?.landed === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
@@ -896,7 +913,7 @@ function Hud() {
       </>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = toneStamp ?? learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>);
+    const stamp = toneStamp ?? learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>);
     top = (
       <>
         {mark}
@@ -904,6 +921,7 @@ function Hud() {
         {notice && !notPasted && !learnedStamp && !toneStamp && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
+        {size === 'result' && <button type="button" className="ctl-btn ctl-icon" onClick={() => act('show_launcher')} aria-label="Open in Eavesy" title="Open in Eavesy, with the whole transcript"><Maximize2 className="h-3.5 w-3.5" /></button>}
         {words && copyWords}
         {minimize}
         {close}
@@ -966,6 +984,12 @@ function Hud() {
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
   );
+}
+
+/** Fades the editor's last line while more words are below it: Mac scrollbars hide until you scroll. */
+function markMore(editor: HTMLTextAreaElement) {
+  const more = editor.scrollTop + editor.clientHeight < editor.scrollHeight - 2;
+  editor.closest('.ctl-below')?.toggleAttribute('data-more', more);
 }
 
 /** Recording was asked for, and the mic is not live yet. */

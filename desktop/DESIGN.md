@@ -495,15 +495,21 @@ show them again. Resting the pointer on the receipt for 250ms (not on a
 button) opens its **drawer**: the words that went out, editable in place,
 beside Copy, **–** (collapse to the pill) and **×** (hide the control until it
 is reopened from the menu bar). Under the words, the **tone row** rewrites
-them: **Original** · **Professional** · **Friendly** · **Concise**, and a robot
-toggle for **For agents** (written as a prompt for an AI agent). Each tone
+them: **Original** · **Professional** · **Friendly** · **Concise**, and a
+**For AI** toggle (written as a prompt for an AI agent). Each tone
 starts from the words as pasted, so tones never compound, and Original goes
 back to them without asking the server. The rewrite replaces the pasted words
 in the app only while they are still there exactly as pasted and that field
 still has the keyboard; otherwise it is copied, and the stamp says
 **Updated** or **Copied**. A rewrite is saved as the transcript but never
 taught to the dictionary, and typing over it makes the typed words the new
-starting point. Screenshots stamp **Snapped** above the
+starting point. When the server can't rewrite it (the model fails, or the
+rewrite strays from what was said) the stamp area says so and nothing
+changes; it never claims **Updated** for the plain cleanup. The drawer reads
+a long dictation from its start, fades its last line while more is below,
+and its stamp counts the words; past 20,000 characters the tone row gives
+way to "Too long to change the tone here" and **Open in Eavesy**, which the
+⤢ button in the top row also does for any dictation. Screenshots stamp **Snapped** above the
 thumbnail; saves stamp **Saved**. Failures read "Didn't catch that" in warn,
 never coral. A receipt goes back to the pill after 1.6s (Pasted) or 6s
 (Copied), whatever the pointer does; Not pasted stays until Accessibility is

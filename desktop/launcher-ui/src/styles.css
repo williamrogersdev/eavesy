@@ -229,7 +229,7 @@ body {
 .eavesy-control[data-size="result"] .ctl-below:focus-within { background: var(--ctl-hover); box-shadow: inset 0 0 0 1px var(--ctl-line); }
 .eavesy-control[data-size="result"] .ctl-editor:focus-visible { box-shadow: none; }
 /* Under the words in the drawer: rewrite them in another tone. The picked
-   tone is lit; the robot writes it as a prompt for an AI agent. */
+   tone is lit; For AI writes it as a prompt for an AI agent. */
 .ctl-foot { flex: none; padding: 0 7px 7px; }
 .ctl-tones { display: flex; align-items: center; gap: 2px; }
 .ctl-tone {
@@ -240,11 +240,14 @@ body {
   font: 600 11.5px/24px var(--ev-font-round);
   transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
 }
-.ctl-tone.ctl-icon { display: inline-grid; place-items: center; width: 26px; padding: 0; }
 .ctl-tone:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
 .ctl-tone[aria-pressed="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
 .ctl-tone:disabled { cursor: default; }
 .ctl-tone:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+/* In the drawer the words take all the room above the tones, and a long
+   dictation scrolls; the last line fades while more is below it. */
+.eavesy-control[data-size="result"] .ctl-editor { height: 100%; }
+.ctl-below[data-more] .ctl-editor { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
 /* The words while they're being rewritten: dimmed and breathing, not editable. */
 .ctl-below[data-busy] .ctl-words { animation: ctl-breathe 1.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {

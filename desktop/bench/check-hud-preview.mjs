@@ -70,7 +70,7 @@ try {
   assert.equal(await page.evaluate(() => window.__qaReplaced.at(-1).text), 'friendly: ' + original);
   assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).learn), false);
   await page.getByText('Updated').waitFor();
-  await page.getByRole('button', { name: 'Write it as a prompt for an AI agent' }).click();
+  await page.locator('.ctl-tone', { hasText: 'For AI' }).click();
   await page.waitForFunction(() => window.__qaRestyles.length === 2);
   // Tones start from the words as pasted: they don't compound.
   assert.deepEqual(await page.evaluate(() => window.__qaRestyles.at(-1)), { sessionId: 'qa-1', text: original, style: 'friendly', forAgents: true });
@@ -78,7 +78,7 @@ try {
   await tone('Concise').click();
   await page.getByText('⌘V to paste').waitFor();
   await page.evaluate(() => { window.__qaReplaceAs = 'replaced'; });
-  await page.getByRole('button', { name: 'Write it as a prompt for an AI agent' }).click();
+  await page.locator('.ctl-tone', { hasText: 'For AI' }).click();
   await page.waitForFunction(() => window.__qaRestyles.length === 4);
   await tone('Original').click();
   await page.waitForFunction(text => document.querySelector('textarea')?.value === text, original);
