@@ -74,6 +74,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd workers/meeting-bot && bun install --frozen-lockfile)
       - name: Check migration numbering
         run: scripts/check-migrations.sh
       - name: Write placeholder env for the build
@@ -95,6 +96,7 @@ jobs:
           (cd web && bun run typecheck)
           (cd workers/processing && bun run typecheck)
           (cd workers/mcp && bun run typecheck)
+          (cd workers/meeting-bot && bun run typecheck)
       # Keep upstream diagnostics visible while the pinned tsrs is experimental.
       # tsrs remains the required gate; this reference check is advisory.
       - name: TypeScript reference (advisory)
@@ -125,6 +127,18 @@ jobs:
         run: |
           (cd workers/processing && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/processing")
           (cd workers/mcp && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/mcp")
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Meeting bot (Rust)
+        working-directory: workers/meeting-bot
+        run: |
+          bun run test:bot
+          bun run lint:bot
+      - name: Meeting bot image
+        # The image deploy.yml ships: catches a broken Dockerfile or package
+        # before it reaches production.
+        run: docker build --platform linux/amd64 -t eavesy-meeting-bot:ci workers/meeting-bot
 
   desktop:
     name: Desktop (Rust + Swift)
