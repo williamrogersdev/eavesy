@@ -17,6 +17,8 @@ import {
   launchingBot,
   nextStartAttemptAt,
   START_ATTEMPTS,
+  START_INSTANCE_TIMEOUT_MS,
+  START_PORTS_TIMEOUT_MS,
   START_RETRY_MS,
   parseMeetingUrl,
   purgeAccountBots,
@@ -159,14 +161,15 @@ describe('starting', () => {
 
   test('a failed container start is retried a few times, all before the watchdog gives up', () => {
     const claimedAt = 1_000_000;
-    // Each attempt fails after the container library's longest wait (~30 s).
-    let now = claimedAt + 30_000;
+    // Each attempt fails only after its longest allowed wait.
+    const attemptMs = START_INSTANCE_TIMEOUT_MS + START_PORTS_TIMEOUT_MS;
+    let now = claimedAt + attemptMs;
     let attempt = 1;
     const tries = [now];
     for (let at = nextStartAttemptAt(attempt, claimedAt, now); at !== null; at = nextStartAttemptAt(attempt, claimedAt, now)) {
       expect(at).toBe(now + START_RETRY_MS);
       attempt += 1;
-      now = at + 30_000;
+      now = at + attemptMs;
       tries.push(now);
     }
     expect(attempt).toBe(START_ATTEMPTS);

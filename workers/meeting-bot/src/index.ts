@@ -2,7 +2,7 @@ import { Container, ContainerProxy, type StopParams } from '@cloudflare/containe
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database, Queue, R2Bucket } from '@cloudflare/workers-types';
 import type { MeetingBotControl } from '@/server/meeting-bots/control';
-import { START_ATTEMPTS, botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, launchingBot, nextStartAttemptAt, watchBot } from '@/server/meeting-bots/service';
+import { START_ATTEMPTS, START_INSTANCE_TIMEOUT_MS, START_PORTS_TIMEOUT_MS, botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, launchingBot, nextStartAttemptAt, watchBot } from '@/server/meeting-bots/service';
 import type { QueueMessage } from '@/server/queue';
 
 /**
@@ -104,7 +104,10 @@ export class MeetingBot extends Container<Env> {
     }
   }
 
-  /** Schedules the next start attempt; with none left, or none schedulable, fails the bot now rather than at the watchdog. */
+  /**
+   * Schedules the next start attempt. When none is left, or scheduling it
+   * throws, the bot is failed now rather than at the watchdog.
+   */
   private async retryOrFail(botId: string, attempt: number, claimedAt: number) {
     const at = nextStartAttemptAt(attempt, claimedAt, Date.now());
     if (at !== null) {
@@ -122,6 +125,8 @@ export class MeetingBot extends Container<Env> {
 
   private async startContainer(botId: string, start: NonNullable<Awaited<ReturnType<typeof launchingBot>>>) {
     await this.startAndWaitForPorts({
+      // Explicit, so the retry timing in nextStartAttemptAt can count on them.
+      cancellationOptions: { instanceGetTimeoutMS: START_INSTANCE_TIMEOUT_MS, portReadyTimeoutMS: START_PORTS_TIMEOUT_MS },
       startOptions: {
         envVars: {
           MEETING_URL: start.meetingUrl,

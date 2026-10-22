@@ -481,8 +481,11 @@ export async function claimBotStart(db: AppDb, botId: string) {
 /** Container starts tried for one bot before it is failed, and the wait between them. */
 export const START_ATTEMPTS = 4;
 export const START_RETRY_MS = 40 * 1_000;
-/** What one start attempt can take (the container library's own waits are ~30 s), kept free before the watchdog's deadline. */
-const START_ATTEMPT_ALLOWANCE_MS = 60 * 1_000;
+/** One start attempt's limits: to get a container instance, then for the bot to listen on its port. */
+export const START_INSTANCE_TIMEOUT_MS = 8 * 1_000;
+export const START_PORTS_TIMEOUT_MS = 20 * 1_000;
+/** The longest one start attempt can take, with slack, kept free before the watchdog's deadline. */
+const START_ATTEMPT_ALLOWANCE_MS = START_INSTANCE_TIMEOUT_MS + START_PORTS_TIMEOUT_MS + 30 * 1_000;
 
 /**
  * When to try a failed container start again, or null to give up now: after
