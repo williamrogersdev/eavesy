@@ -12,7 +12,17 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/eavesy-test.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+# shellcheck source=../desktop/scripts/sdkroot.sh
+source "$ROOT/desktop/scripts/sdkroot.sh"
+
+HUD_PID=
+kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill "$1" 2>/dev/null || true; }
+cleanup() {
+  [[ -n "$HUD_PID" ]] && kill_tree "$HUD_PID"
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 AREAS=("$@")
 [[ ${#AREAS[@]} -eq 0 ]] && AREAS=(web desktop)
@@ -55,13 +65,7 @@ run_web() {
 }
 
 run_desktop() {
-  # The macOS 27 SDK's libSystem stub breaks aws-lc-sys linking; a 26.x SDK
-  # works. Only applies when SDKROOT isn't already chosen.
-  if [[ -z "${SDKROOT:-}" && "$(xcrun --show-sdk-version 2>/dev/null)" == 27* ]]; then
-    local old
-    old="$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk 2>/dev/null | sort -V | tail -1)"
-    [[ -n "$old" ]] && export SDKROOT="$old" && echo "  using SDKROOT=$old"
-  fi
+  eavesy_pick_sdkroot
   step "prebuild (launcher UI + Swift sidecar)" "$ROOT/desktop/scripts/prebuild.sh"
   # XCTest ships with Xcode, not the Command Line Tools.
   local xcode=()
@@ -80,12 +84,14 @@ run_ux() {
 
 run_hud() {
   step "launcher UI install" in_dir desktop/launcher-ui bun install
-  local port=1420 pid
-  (cd "$ROOT/desktop/launcher-ui" && exec bunx vite --host 127.0.0.1 --port "$port" --strictPort) >"$TMP/vite.log" 2>&1 &
-  pid=$!
+  # A free port, so a dev server you already have on 1420 is left alone.
+  local port
+  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+  (cd "$ROOT/desktop/launcher-ui" && exec node_modules/.bin/vite --host 127.0.0.1 --port "$port" --strictPort) >"$TMP/vite.log" 2>&1 &
+  HUD_PID=$!
   for _ in $(seq 60); do curl -sf "http://127.0.0.1:$port/hud.html" >/dev/null && break; sleep 0.5; done
   step "HUD preview (headless Chromium)" env EAVESY_HUD_URL="http://127.0.0.1:$port/hud.html" node "$ROOT/desktop/bench/check-hud-preview.mjs"
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  kill_tree "$HUD_PID"; wait "$HUD_PID" 2>/dev/null; HUD_PID=
 }
 
 for area in "${AREAS[@]}"; do

@@ -43,7 +43,17 @@
       "Bash(swift test)",
       "Bash(scripts/check-migrations.sh)",
       "Bash(scripts/test-local.sh:*)",
-      "Bash(desktop/scripts/vm-test.sh:*)"
+      "Bash(desktop/scripts/vm-test.sh setup)",
+      "Bash(desktop/scripts/vm-test.sh build)",
+      "Bash(desktop/scripts/vm-test.sh up)",
+      "Bash(desktop/scripts/vm-test.sh smoke)",
+      "Bash(desktop/scripts/vm-test.sh shot:*)",
+      "Bash(desktop/scripts/vm-test.sh click:*)",
+      "Bash(desktop/scripts/vm-test.sh type:*)",
+      "Bash(desktop/scripts/vm-test.sh key:*)",
+      "Bash(desktop/scripts/vm-test.sh say:*)",
+      "Bash(desktop/scripts/vm-test.sh logs)",
+      "Bash(desktop/scripts/vm-test.sh down)"
     ],
     "deny": [
       "Bash(git push --force:*)",

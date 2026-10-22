@@ -27,8 +27,9 @@ Notes for this machine's toolchain:
 - `swift test` needs Xcode, not just the Command Line Tools (XCTest ships with
   Xcode). The script uses `/Applications/Xcode.app` automatically. If it says
   you haven't agreed to the Xcode license, run `sudo xcodebuild -license` once.
-- On the macOS 27 SDK, `aws-lc-sys` fails to link. The script falls back to a
-  26.x Command Line Tools SDK when one is installed.
+- On the macOS 27 SDK, `aws-lc-sys` fails to link (see `desktop/BUILD.md`).
+  Both scripts fall back to a 26.x Command Line Tools SDK when one is
+  installed (`desktop/scripts/sdkroot.sh`).
 
 ## The real app in a VM: `desktop/scripts/vm-test.sh`
 
@@ -87,7 +88,14 @@ prompts inside the VM, so the real first-run path gets tested. `up --granted`
 pre-grants microphone, screen recording, speech recognition, accessibility
 and System Events automation in the guest instead. Use it when a test isn't
 about onboarding. It writes the guest's TCC database, which only works because
-SIP is off in Cirrus Labs images. It never touches the host.
+SIP is off in Cirrus Labs images. It never touches the host. It also sets
+dates in replayd's private screen-capture approvals file to stop macOS's
+recurring "bypass the private window picker" prompt. That file is
+undocumented, so a macOS update can bring the prompt back. If it does, it shows
+up in the next `shot`.
+
+`.claude/settings.json` lets agents run the everyday subcommands without a
+prompt. `exec` and `up --granted` still ask.
 
 `EAVESY_APP=/path/to/Eavesy.app` installs a different build, such as a
 notarized release candidate, instead of the debug one.
