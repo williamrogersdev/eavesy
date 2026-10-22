@@ -1,6 +1,6 @@
 [package]
 name = "eavesy"
-version = "0.6.3"
+version = "0.6.4"
 description = "Eavesy desktop shell"
 authors = ["Eavesy contributors"]
 license = "Apache-2.0"

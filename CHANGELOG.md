@@ -6,8 +6,18 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-22 - desktop
+
+### Added
+
+- Mac app: screenshots and pasted images now sync between your Macs. A picture taken on one Mac shows up in the others' history, labelled with the device it came from; deleting it on one Mac keeps it deleted there ([#192](https://github.com/williamrogersdev/eavesy/pull/192))
+- Mac app: change a dictation's tone (Professional, Friendly, Concise or For agents) right from the dictation drawer ([#193](https://github.com/williamrogersdev/eavesy/pull/193))
+- Mac app: rewrite any capture's tone from the history ([#194](https://github.com/williamrogersdev/eavesy/pull/194))
+
 ### Changed
 
+- Mac app: a finished dictation ends quietly on the pill with a "Pasted · N words" stamp instead of the result card ([#191](https://github.com/williamrogersdev/eavesy/pull/191))
+- Mac app: a calmer capture history: the words are the row, filters live in a Show pop-up inside search, and screenshot thumbnails keep their own shape ([#194](https://github.com/williamrogersdev/eavesy/pull/194))
 - Web: the notetaker is now Eavesy's own bot instead of Recall.ai. It joins Google Meet and Teams calls, its transcript fills in live with each participant's name, and the brief lands in your library. Zoom isn't supported yet ([#185](https://github.com/williamrogersdev/eavesy/pull/185), [#186](https://github.com/williamrogersdev/eavesy/pull/186))
 - Web: a Notetaker docs page, and the docs and site now say "no bot" applies to recording from your Mac. Up to 200 notetakers can be in calls at once across all accounts, and a start that finds no room is retried for up to about four minutes before it fails ([#196](https://github.com/williamrogersdev/eavesy/pull/196))
 
