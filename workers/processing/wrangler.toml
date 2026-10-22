@@ -52,4 +52,5 @@ tag = "v2"
 deleted_classes = ["MeetingRoom"]
 
 [triggers]
-crons = ["0 * * * *"]
+# Hourly sweeps; daily, the notetaker canary (web/src/server/meeting-bots/canary.ts, CANARY_CRON).
+crons = ["0 * * * *", "20 7 * * *"]

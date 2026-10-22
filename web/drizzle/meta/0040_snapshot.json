@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e2f25876-3c31-4ea3-8855-f5bcb6e57031",
+  "id": "71fe8ed8-2981-44a2-a0bd-1230d5f7b232",
   "prevId": "10f2db09-5662-4e1a-8273-2e43eb8ceeb0",
   "tables": {
     "activity_log": {
@@ -1853,6 +1853,21 @@
           "autoincrement": false,
           "default": 0
         },
+        "canary": {
+          "name": "canary",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "canary_names": {
+          "name": "canary_names",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -3170,103 +3185,6 @@
         "recording_imports_user_id_users_id_fk": {
           "name": "recording_imports_user_id_users_id_fk",
           "tableFrom": "recording_imports",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "saved_prompts": {
-      "name": "saved_prompts",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slug": {
-          "name": "slug",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "use_count": {
-          "name": "use_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "last_used_at": {
-          "name": "last_used_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "saved_prompts_user_slug_uq": {
-          "name": "saved_prompts_user_slug_uq",
-          "columns": [
-            "user_id",
-            "slug"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "saved_prompts_user_id_users_id_fk": {
-          "name": "saved_prompts_user_id_users_id_fk",
-          "tableFrom": "saved_prompts",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

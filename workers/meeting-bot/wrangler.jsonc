@@ -17,8 +17,9 @@
       // Bots in calls at once, across all accounts: a spending cap, not a
       // platform limit (the account allows 1,500 vCPU). At the measured
       // $0.05-0.08 per container-hour, 200 at once costs at most ~$16/h.
-      // Each account may have 10 out at a time (ACTIVE_BOT_LIMIT); a start
-      // that finds no room is retried for up to about four minutes.
+      // Each account may have 10 out at a time (ACTIVE_BOT_LIMIT in
+      // web/src/server/meeting-bots/service.ts); a start that finds no room
+      // is retried within the five-minute start timeout (nextStartAttemptAt).
       "max_instances": 200
     }
   ],

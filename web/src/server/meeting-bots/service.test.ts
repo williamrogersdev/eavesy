@@ -15,6 +15,11 @@ import {
   handleBotEvent,
   handleBotSegment,
   launchingBot,
+  nextStartAttemptAt,
+  START_ATTEMPTS,
+  START_INSTANCE_TIMEOUT_MS,
+  START_PORTS_TIMEOUT_MS,
+  START_RETRY_MS,
   parseMeetingUrl,
   purgeAccountBots,
   scheduleBot,
@@ -152,6 +157,27 @@ describe('starting', () => {
     expect(await launchingBot(t.db, id)).toMatchObject({ meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' });
     await cancelBot(t.db, t.env, 'u1', id);
     expect(await launchingBot(t.db, id)).toBeNull();
+  });
+
+  test('a failed container start is retried a few times, all before the watchdog gives up', () => {
+    const claimedAt = 1_000_000;
+    // Each attempt fails only after its longest allowed wait.
+    const attemptMs = START_INSTANCE_TIMEOUT_MS + START_PORTS_TIMEOUT_MS;
+    let now = claimedAt + attemptMs;
+    let attempt = 1;
+    const tries = [now];
+    for (let at = nextStartAttemptAt(attempt, claimedAt, now); at !== null; at = nextStartAttemptAt(attempt, claimedAt, now)) {
+      expect(at).toBe(now + START_RETRY_MS);
+      attempt += 1;
+      now = at + attemptMs;
+      tries.push(now);
+    }
+    expect(attempt).toBe(START_ATTEMPTS);
+    expect(tries.at(-1)!).toBeLessThan(claimedAt + BOT_START_TIMEOUT_MS);
+
+    // Out of attempts, or too close to the start timeout for another: give up now.
+    expect(nextStartAttemptAt(START_ATTEMPTS, claimedAt, claimedAt)).toBeNull();
+    expect(nextStartAttemptAt(1, claimedAt, claimedAt + BOT_START_TIMEOUT_MS - START_RETRY_MS)).toBeNull();
   });
 
   test('a bot asked for now can start before scheduling recorded it', async () => {

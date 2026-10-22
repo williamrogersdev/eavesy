@@ -17,6 +17,14 @@ export interface MeetingBotsEnv {
   MEETING_BOTS?: MeetingBotControl;
 }
 
+/** The daily canary's standing test meetings (meeting-bots/canary.ts); unset means no canary. */
+export interface CanaryEnv {
+  CANARY_MEET_URL?: string;
+  CANARY_TEAMS_URL?: string;
+  /** Where a failed canary is emailed, when Resend is set up. */
+  CANARY_ALERT_EMAIL?: string;
+}
+
 /** One speaking span from the bot: [name, startMs, endMs] on the recording's clock. */
 export type SpeakerSpan = [string, number, number];
 
