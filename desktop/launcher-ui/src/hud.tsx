@@ -15,7 +15,7 @@ import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
-import { holdMs } from './hud-hold';
+import { holdMs, type Receipt } from './hud-hold';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -57,7 +57,7 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
+type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
 
 /** How the control looks while recording, from Settings → App → Capture. */
 type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
@@ -68,6 +68,8 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
+/** How long the pointer rests on a finished dictation before its drawer opens. */
+const PEEK_DWELL_MS = 250;
 
 /** Settles when `task` does (true), or after `ms` (false), whichever comes first. */
 function within(task: Promise<unknown>, ms: number): Promise<boolean> {
@@ -87,7 +89,20 @@ function lookFrom(value: unknown): Look {
   };
 }
 
-function sizeFor(state: HudState, lines: Look['lines']): Size {
+/** What the pill says happened to a finished dictation's words, or null when it isn't one. */
+function receiptFor(state: HudState): Receipt | null {
+  if (state.phase !== 'done' || state.mode === 'image' || state.mode === 'video' || !state.message?.trim()) return null;
+  if (state.notice?.includes('Accessibility')) return 'blocked';
+  return state.notice ? 'copied' : 'pasted';
+}
+
+/** "16 words", for the Pasted stamp. */
+function wordCount(text: string): string {
+  const count = text.trim() ? text.trim().split(/\s+/).length : 0;
+  return `${count.toLocaleString()} ${count === 1 ? 'word' : 'words'}`;
+}
+
+function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   const video = state.mode === 'video';
   switch (state.phase) {
     case 'idle':
@@ -103,12 +118,12 @@ function sizeFor(state: HudState, lines: Look['lines']): Size {
     case 'done':
       if (state.mode === 'image') return 'shot';
       if (video) return 'pill';
-      if (state.message?.trim()) return 'result';
+      if (state.message?.trim()) return peek ? 'result' : 'receipt';
       return state.notice ? 'wide' : 'pill';
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], receipt: [248, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -125,6 +140,10 @@ function browserPreviewState(): HudState | null {
       ? 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
       : phase === 'failed' ? 'No speech was heard' : null,
   };
+}
+
+function browserPreviewPeek(): string | null {
+  return !tauri() && new URLSearchParams(window.location.search).has('peek') ? 'preview' : null;
 }
 
 function browserPreviewLearned(): { text: string; tone: 'leaf' } | null {
@@ -173,6 +192,9 @@ function Hud() {
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
   const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
+  // The finished dictation whose transcript drawer is open: hovering its pill opens it.
+  const [peek, setPeek] = useState<string | null>(browserPreviewPeek);
+  const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
   const lastPointerMove = useRef(0);
@@ -418,7 +440,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -433,17 +455,43 @@ function Hud() {
     return () => { cancelled = true; };
   }, [screenshot, state?.sessionId]);
 
-  const size = state ? sizeFor(state, look.lines) : 'pill';
+  const peeking = !!state?.sessionId && peek === state.sessionId;
+  // Words being corrected, or a correction that didn't save, keep the drawer
+  // open: folding them into a stamp would hide the editor or the Retry.
+  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError);
+  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer) : 'pill';
+  // Until its drawer is opened, a finished dictation is just a stamp on the pill.
+  const receipt = state && !peeking && !keepDrawer ? receiptFor(state) : null;
 
   useEffect(() => {
     if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt);
+    if (hold === null) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
-    }, holdMs(state.phase, pointer, overSince.current, Date.now()));
+    }, hold);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision, receipt]);
+
+  const cancelPeekDwell = () => {
+    if (peekDwell.current !== null) window.clearTimeout(peekDwell.current);
+    peekDwell.current = null;
+  };
+  useEffect(() => cancelPeekDwell, []);
+  // The window takes the drawer's size first, so the words never render squeezed into the pill.
+  const showDrawer = (sessionId: string) => invoke('peek_hud', { sessionId, open: true }).catch(() => {}).finally(() => {
+    if (currentSession.current === sessionId) setPeek(sessionId);
+  });
+  const openPeek = () => {
+    const sessionId = state?.sessionId;
+    if (!sessionId || peekDwell.current !== null) return;
+    peekDwell.current = window.setTimeout(() => { peekDwell.current = null; void showDrawer(sessionId); }, PEEK_DWELL_MS);
+  };
+  useEffect(() => {
+    if (keepDrawer && !peeking && state?.sessionId && state.phase === 'done' && receiptFor(state)) void showDrawer(state.sessionId);
+  }, [keepDrawer, peeking, state?.phase, state?.sessionId]);
 
   // Once the new shape is on screen, let the native shadow take it: at the
   // second frame (the first lays it out, the second has painted it), and
@@ -756,6 +804,20 @@ function Hud() {
         {imageSrc ? <img src={imageSrc} alt="" draggable={false} /> : <span className="ctl-shot-wait" />}
       </button>
     );
+  } else if (receipt) {
+    // The words are already where they went: say so on the pill, and keep them one hover away.
+    const stamp = receipt === 'blocked' ? <Stamp tone="warn">Not pasted</Stamp>
+      : receipt === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
+      : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>;
+    top = (
+      <>
+        {mark}
+        {learnedStamp ?? stamp}
+        <span className="ctl-fill" />
+        {receipt === 'blocked' && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
+        {receipt === 'blocked' && minimize}
+      </>
+    );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
     const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>);
     top = (
@@ -808,15 +870,17 @@ function Hud() {
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
-      onMouseEnter={() => { loadShortcut(); if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); }}
-      onMouseMove={() => {
+      onMouseEnter={(event) => { loadShortcut(); if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); if (receipt && !(event.target as HTMLElement).closest('button')) openPeek(); }}
+      onMouseMove={(event) => {
+        // Resting on a button (Allow, collapse) is aiming at it, not asking for the words.
+        if (receipt) { if ((event.target as HTMLElement).closest('button')) cancelPeekDwell(); else openPeek(); }
         if (Date.now() - lastPointerMove.current < 1000) return;
         lastPointerMove.current = Date.now();
         if (pointer !== 'over') overSince.current = Date.now();
         setPointer('over');
         setPointerMoved((n) => n + 1);
       }}
-      onMouseLeave={() => setPointer((was) => was === 'over' ? 'left' : was)}
+      onMouseLeave={() => { cancelPeekDwell(); setPointer((was) => was === 'over' ? 'left' : was); }}
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>

@@ -138,17 +138,21 @@ const BAR: (f64, f64) = (264.0, 40.0);
 fn live_size(lines: u8) -> (f64, f64) {
     if lines == 0 { BAR } else { (WIDE.0, WIDE.1 - 80.0 + 20.0 * f64::from(lines)) }
 }
-/// Keep the same frame after pasting so the transcript remains readable.
+/// The transcript drawer, opened by hovering a finished dictation: the same
+/// frame as recording, so the words stay where they were read.
 const RESULT: (f64, f64) = (400.0, 142.0);
+/// A finished dictation at rest: the pill with what happened to the words
+/// ("Pasted · 16 words", "Copied", "Not pasted" and Allow).
+const RECEIPT: (f64, f64) = (248.0, 36.0);
 /// A screen recording: room for the click count, Mark and the marking tools.
 const VIDEO_LIVE: (f64, f64) = (420.0, 76.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
-/// The control's size in each phase. The window takes it in one step when the
-/// phase changes and never measures its content, so stopping, writing and
-/// pasting all happen in the same frame and nothing jumps.
-pub fn size_for(state: &HudState, lines: u8) -> (f64, f64) {
+/// The control's size in each phase, and with a finished dictation's drawer
+/// open (`peek`). The window takes it in one step when either changes and
+/// never measures its content.
+pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     match state.phase {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
@@ -159,7 +163,7 @@ pub fn size_for(state: &HudState, lines: u8) -> (f64, f64) {
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
             Some("video") => DEFAULT_SIZE,
-            _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) => RESULT,
+            _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) => if peek { RESULT } else { RECEIPT },
             _ if state.notice.is_some() => WIDE,
             _ => DEFAULT_SIZE,
         },
@@ -205,7 +209,8 @@ fn frame_of(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
 pub fn fit_on_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
-    let size = size_for(&current(), prefs(app).lines);
+    let state = current();
+    let size = size_for(&state, prefs(app).lines, peeking(&state));
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -217,6 +222,34 @@ pub fn fit_on_main(app: &AppHandle) {
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     let visible = window.is_visible().unwrap_or(false);
     imp::resize(&window, from, size, low, visible);
+}
+
+/// The finished dictation whose transcript drawer is open under the pointer.
+static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn peeking(state: &HudState) -> bool {
+    state.session_id.is_some() && *PEEK.lock().unwrap_or_else(|error| error.into_inner()) == state.session_id
+}
+
+/// Opens or closes the transcript drawer of a finished dictation, and gives
+/// the control its size. Returns once the window has it, so the drawer never
+/// renders inside the smaller pill. Never call on the main thread.
+pub fn set_peek(app: &AppHandle, session_id: String, open: bool) {
+    {
+        let mut peek = PEEK.lock().unwrap_or_else(|error| error.into_inner());
+        if open {
+            *peek = Some(session_id);
+        } else if peek.as_deref() == Some(session_id.as_str()) {
+            *peek = None;
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        fit_on_main(&handle);
+        let _ = tx.send(());
+    });
+    let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
 }
 
 /// The user closed the control with its X: it stays hidden while idle, until
@@ -590,7 +623,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{is_active, live_size, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -599,20 +632,30 @@ mod tests {
     #[test]
     fn talking_writing_and_the_pasted_words_share_one_width() {
         let talk = Some("audio");
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4), WIDE);
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4), WIDE);
-        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4), RESULT);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4, true), RESULT);
         assert_eq!(RESULT.0, WIDE.0);
+    }
+
+    #[test]
+    fn a_finished_dictation_rests_as_a_receipt_until_hovered() {
+        let pasted = state(Phase::Done, Some("audio"), Some("hello there"));
+        assert_eq!(size_for(&pasted, 4, false), RECEIPT);
+        assert_eq!(size_for(&pasted, 4, true), RESULT);
+        // The drawer is only ever a finished dictation's.
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true), WIDE);
+        assert_eq!(size_for(&HudState::idle(), 4, true), DEFAULT_SIZE);
     }
 
     #[test]
     fn fewer_preview_lines_make_a_shorter_control() {
         let talk = Some("audio");
         assert_eq!(live_size(4), WIDE);
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1), (WIDE.0, 82.0));
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2), (WIDE.0, 102.0));
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0), BAR);
-        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1, false), (WIDE.0, 82.0));
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2, false), (WIDE.0, 102.0));
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0, false), BAR);
+        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0, false), WIDE);
     }
 
     #[test]
@@ -628,21 +671,21 @@ mod tests {
 
     #[test]
     fn resting_saved_and_video_stay_a_small_pill() {
-        assert_eq!(size_for(&HudState::idle(), 4), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4, false), DEFAULT_SIZE);
     }
 
     #[test]
     fn a_screen_recording_makes_room_for_clicks_and_marking() {
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4), VIDEO_LIVE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false), VIDEO_LIVE);
         assert_eq!(VIDEO_LIVE, (420.0, 76.0));
     }
 
     #[test]
     fn a_screenshot_makes_room_for_its_thumbnail() {
-        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4), SHOT);
+        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4, false), SHOT);
     }
 
     #[test]
