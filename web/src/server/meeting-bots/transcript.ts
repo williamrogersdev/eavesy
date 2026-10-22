@@ -41,16 +41,15 @@ export function convertRecallTranscript(raw: unknown): BotTranscript {
   const languageCounts = new Map<string, number>();
   const lines: BotLine[] = [];
 
-  for (const [index, entry] of entries.entries()) {
+  for (const entry of entries) {
     const participant = record(entry.participant);
-    // Without an id, the name is the best identity; without either, each turn stands alone.
-    const key = typeof participant.id === 'number' || typeof participant.id === 'string'
-      ? `id:${participant.id}`
-      : typeof participant.name === 'string' && participant.name.trim() ? `name:${participant.name.trim()}` : `turn:${index}`;
+    // Only the platform's participant id identifies a person: display names
+    // repeat ("Guest", "iPhone"). Turns without an id share one unknown speaker.
+    const key = typeof participant.id === 'number' || typeof participant.id === 'string' ? String(participant.id) : 'unknown';
     const speakerId = speakerByParticipant.get(key) ?? `speaker_${speakerByParticipant.size}`;
     speakerByParticipant.set(key, speakerId);
     const name = typeof participant.name === 'string' ? participant.name.trim().slice(0, 80) : '';
-    if (name && !speakerNames[speakerId]) speakerNames[speakerId] = name;
+    if (name && key !== 'unknown' && !speakerNames[speakerId]) speakerNames[speakerId] = name;
     const code = typeof entry.language_code === 'string' && entry.language_code ? entry.language_code.split('-')[0].toLowerCase() : null;
 
     const words = (Array.isArray(entry.words) ? entry.words.map(record) : [])

@@ -148,12 +148,15 @@ describe('transcript conversion', () => {
     expect(out.lines.filter((line) => line.language === 'es').length).toBe(3);
     expect(out.language).toBe('es');
     expect(convertRecallTranscript('garbage').lines).toEqual([]);
-    const anonymous = convertRecallTranscript([
-      { participant: { name: 'Cy' }, words: [{ text: 'One.', start_timestamp: { relative: 1 } }] },
-      { participant: {}, words: [{ text: 'Two.', start_timestamp: { relative: 2 } }] },
+    // Two different people both called "Guest" stay apart; id-less turns share one unnamed speaker.
+    const guests = convertRecallTranscript([
+      { participant: { id: 1, name: 'Guest' }, words: [{ text: 'One.', start_timestamp: { relative: 1 } }] },
+      { participant: { id: 2, name: 'Guest' }, words: [{ text: 'Two.', start_timestamp: { relative: 2 } }] },
       { participant: { name: 'Cy' }, words: [{ text: 'Three.', start_timestamp: { relative: 3 } }] },
+      { participant: {}, words: [{ text: 'Four.', start_timestamp: { relative: 4 } }] },
     ]);
-    expect(anonymous.lines.map((line) => line.speakerId)).toEqual(['speaker_0', 'speaker_1', 'speaker_0']);
+    expect(guests.lines.map((line) => line.speakerId)).toEqual(['speaker_0', 'speaker_1', 'speaker_2', 'speaker_2']);
+    expect(guests.speakerNames).toEqual({ speaker_0: 'Guest', speaker_1: 'Guest' });
   });
 });
 
@@ -199,6 +202,17 @@ describe('notetaker lifecycle', () => {
     await webhook(t, 'bot.done', 'rb_1');
     expect(t.sent).toHaveLength(1);
     expect((t.sqlite.query('SELECT count(*) n FROM meetings').get() as { n: number }).n).toBe(1);
+  });
+
+  test('a delivery that fails partway is not recorded, so its retry still applies', async () => {
+    const t = setup();
+    const { body } = await schedule(t);
+    t.sqlite.run('ALTER TABLE meetings RENAME TO meetings_away');
+    await expect(webhook(t, 'bot.in_call_recording', 'rb_1', { id: 'retry_me' })).rejects.toThrow();
+    t.sqlite.run('ALTER TABLE meetings_away RENAME TO meetings');
+    expect((t.sqlite.query('SELECT count(*) n FROM provider_webhook_events').get() as { n: number }).n).toBe(0);
+    expect(await (await webhook(t, 'bot.in_call_recording', 'rb_1', { id: 'retry_me' })).json()).toEqual({ ok: true });
+    expect(t.bot(body.bot.id).status).toBe('recording');
   });
 
   test('unsigned or unknown deliveries change nothing', async () => {
