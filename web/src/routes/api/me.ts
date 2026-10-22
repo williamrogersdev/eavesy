@@ -17,6 +17,8 @@ import { dictationStyle, isDictationStyle } from '@/lib/transcription/dictation-
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
 import { resolveIngestActor } from '@/server/device-auth';
+import { getCloudflareContext } from '@/server/cloudflare-context';
+import { type EmailEnv, emailConfigured } from '@/server/email/resend';
 
 /** What the Mac app may change with its device token; the rest needs a web sign-in. */
 const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents']);
@@ -33,6 +35,8 @@ const updateSchema = z.object({
   byoAnthropicKey: z.string().max(200).nullable().optional(),
   dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').optional(),
   dictationForAgents: z.boolean().optional(),
+  emailRecaps: z.boolean().optional(),
+  emailRecapTranscript: z.boolean().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
 
@@ -74,6 +78,9 @@ export const Route = createFileRoute('/api/me')({
           customVocabulary: parseVocabulary(u.customVocabularyJson),
           dictationStyle: dictationStyle(u.dictationStyle),
           dictationForAgents: u.dictationForAgents,
+          emailRecaps: u.emailRecaps,
+          emailRecapTranscript: u.emailRecapTranscript,
+          emailRecapsAvailable: emailConfigured(getCloudflareContext<EmailEnv>().env),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
           hasOpenRouterKey: !!u.byoOpenRouterKey,
@@ -117,6 +124,15 @@ export const Route = createFileRoute('/api/me')({
         }
         if (body.dictationStyle) patch.dictationStyle = body.dictationStyle === 'natural' ? null : body.dictationStyle;
         if (body.dictationForAgents !== undefined) patch.dictationForAgents = body.dictationForAgents;
+        if (body.emailRecaps !== undefined) {
+          // Recaps go to the account's own address, so a guest account has nowhere to send them.
+          const [owner] = await db.select({ email: users.email, isAnonymous: users.isAnonymous }).from(users).where(eq(users.id, actor.userId)).limit(1);
+          if (body.emailRecaps && (owner?.isAnonymous || !owner?.email)) {
+            return Response.json({ error: 'Add an email address to your account to get recaps.' }, { status: 400 });
+          }
+          patch.emailRecaps = body.emailRecaps;
+        }
+        if (body.emailRecapTranscript !== undefined) patch.emailRecapTranscript = body.emailRecapTranscript;
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;

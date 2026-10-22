@@ -39,6 +39,10 @@ export const users = sqliteTable(
     dictationStyle: text('dictation_style'),
     /** Whether dictations are structured as a prompt for an AI agent, in addition to their tone. */
     dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }).notNull().default(false),
+    /** Whether a recap of each finished meeting is emailed to the account's own address. */
+    emailRecaps: integer('email_recaps', { mode: 'boolean' }).notNull().default(false),
+    /** Whether that recap carries the transcript as a text attachment. */
+    emailRecapTranscript: integer('email_recap_transcript', { mode: 'boolean' }).notNull().default(false),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),
@@ -732,3 +736,38 @@ export const providerWebhookEvents = sqliteTable('provider_webhook_events', {
   provider: text('provider').notNull(),
   receivedAt: integer('received_at').notNull(),
 }, (t) => [index('provider_webhook_events_received_idx').on(t.receivedAt)]);
+
+/**
+ * One email sent, or to be sent, through the transactional email provider.
+ * `idempotency_key` is unique per meeting and recipient, so a retried job finds
+ * the row it already made instead of sending again. `unknown` means a send was
+ * attempted without a definite answer; it is never resent automatically, and a
+ * later provider webhook can still settle it.
+ */
+export const emailDeliveries = sqliteTable('email_deliveries', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  meetingId: text('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
+  kind: text('kind', { enum: ['meeting_recap'] }).notNull(),
+  recipient: text('recipient').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  provider: text('provider', { enum: ['resend'] }).notNull(),
+  providerMessageId: text('provider_message_id'),
+  status: text('status', {
+    enum: ['queued', 'sent', 'delivered', 'bounced', 'complained', 'failed', 'unknown'],
+  }).notNull(),
+  /** Why the latest status was set: a provider bounce type, an error code, a skip reason. */
+  statusDetail: text('status_detail'),
+  /** Provider time of the newest event applied; older webhook deliveries are ignored. */
+  statusAt: integer('status_at'),
+  attempts: integer('attempts').notNull().default(0),
+  sentAt: integer('sent_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (t) => [
+  uniqueIndex('email_deliveries_idempotency_uq').on(t.idempotencyKey),
+  uniqueIndex('email_deliveries_provider_message_uq').on(t.provider, t.providerMessageId),
+  index('email_deliveries_user_created_idx').on(t.userId, t.createdAt),
+  index('email_deliveries_recipient_status_idx').on(t.recipient, t.status),
+  index('email_deliveries_status_updated_idx').on(t.status, t.updatedAt),
+]);

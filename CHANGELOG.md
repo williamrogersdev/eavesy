@@ -9,6 +9,7 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 ### Added
 
 - Web: send a notetaker to a Zoom, Google Meet or Teams call; its transcript, with each participant's name, and the brief land in your library (pilot, needs a Recall.ai key)
+- Web: opt-in email recaps of finished meetings (TL;DR, decisions, action items, transcript link and optional transcript attachment), sent through Resend with delivery tracking
 
 ## [0.6.1] - 2026-10-21 - desktop
 

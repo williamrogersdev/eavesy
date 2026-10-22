@@ -107,6 +107,21 @@ cd web && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RE
 cd ../workers/processing && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RECALL_WEBHOOK_SECRET
 ```
 
+Email recaps (optional, both Workers): set `RESEND_API_KEY`,
+`RESEND_WEBHOOK_SECRET` (the `whsec_…` signing secret of the Resend webhook)
+and `EMAIL_FROM` (a sender on a domain verified in Resend, e.g.
+`Eavesy <recaps@eavesy.com>`). `APP_URL` sets where links in the email point;
+it defaults to `https://eavesy.com`. In the Resend dashboard, add a webhook at
+`https://<app host>/api/webhooks/resend` for the `email.sent`,
+`email.delivered`, `email.bounced`, `email.complained`, `email.failed` and
+`email.suppressed` events. Without all three secrets the setting says recaps
+aren't set up and nothing is sent.
+
+```bash
+cd web && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
+cd ../workers/processing && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
+```
+
 Workers AI transcription and embeddings use the `AI` binding and do not need
 an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
 authenticates token hashes stored in D1. PostHog is optional for all three
