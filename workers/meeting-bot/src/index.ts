@@ -2,7 +2,7 @@ import { Container, ContainerProxy, type StopParams } from '@cloudflare/containe
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database, Queue, R2Bucket } from '@cloudflare/workers-types';
 import type { MeetingBotControl } from '@/server/meeting-bots/control';
-import { botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, watchBot } from '@/server/meeting-bots/service';
+import { botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, launchingBot, watchBot } from '@/server/meeting-bots/service';
 import type { QueueMessage } from '@/server/queue';
 
 /**
@@ -26,6 +26,14 @@ const INGEST_HOST = 'eavesy.internal';
 const WATCH_EVERY_MS = 2 * 60 * 1_000;
 /** A start whose claim hit a database error is tried again this soon. */
 const CLAIM_RETRY_MS = 30 * 1_000;
+/**
+ * A container that didn't start (most often no capacity free at that moment)
+ * is tried again this often, this many times, before the bot is failed. With
+ * each attempt's own wait (about 30 s at most), that is under four minutes,
+ * inside the watchdog's start timeout (`BOT_START_TIMEOUT_MS`, five minutes).
+ */
+const START_RETRY_MS = 40 * 1_000;
+const START_ATTEMPTS = 4;
 
 const database = (env: Env) => botDatabase(env.DB);
 const logError = (message: string, botId: string | undefined, error: unknown) =>
@@ -72,18 +80,38 @@ export class MeetingBot extends Container<Env> {
       return;
     }
     if (!start) return; // cancelled, or already started
+    await this.tryStart(botId, start, 1);
+  }
+
+  /** A later attempt at a start that failed; the bot may have been cancelled meanwhile. */
+  async retryStart({ botId, attempt }: { botId: string; attempt: number }) {
+    let start: Awaited<ReturnType<typeof launchingBot>>;
+    try {
+      start = await launchingBot(database(this.env), botId);
+    } catch (error) {
+      logError('reading meeting bot before a start retry failed', botId, error);
+      start = null; // the watchdog fails it if nothing else does
+    }
+    if (start) await this.tryStart(botId, start, attempt);
+  }
+
+  private async tryStart(botId: string, start: NonNullable<Awaited<ReturnType<typeof launchingBot>>>, attempt: number) {
     try {
       await this.startContainer(botId, start);
     } catch (error) {
+      logError(`meeting bot did not start (attempt ${attempt} of ${START_ATTEMPTS})`, botId, error);
+      await this.shutDown().catch(() => undefined);
+      if (attempt < START_ATTEMPTS) {
+        await this.schedule(new Date(Date.now() + START_RETRY_MS), 'retryStart', { botId, attempt: attempt + 1 });
+        return;
+      }
       // No image, no capacity, or the port never opened: say so now rather
       // than when the watchdog gives up.
-      logError('meeting bot did not start', botId, error);
       await failBotStart(database(this.env), botId).catch((e: unknown) => logError('recording the failed start', botId, e));
-      await this.shutDown().catch(() => undefined);
     }
   }
 
-  private async startContainer(botId: string, start: NonNullable<Awaited<ReturnType<typeof claimBotStart>>>) {
+  private async startContainer(botId: string, start: NonNullable<Awaited<ReturnType<typeof launchingBot>>>) {
     await this.startAndWaitForPorts({
       startOptions: {
         envVars: {
