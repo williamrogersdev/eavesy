@@ -43,6 +43,11 @@ struct DraftCaption: Equatable {
 struct LiveDraft {
     /// Fast-volatile snapshots kept per stretch; one is added a second.
     static let maxSnapshots = 600
+    /// Fast settled words kept while no accurate final covers them.
+    static let maxFastWords = 400
+    /// How far a snapshot's audio may be from where the accurate text ends
+    /// and still say how much of the fast volatile text that covers.
+    static let snapshotReachMs: Int64 = 1_500
 
     /// Where the last accurate final ended.
     private var settledMs: Int64?
@@ -78,7 +83,7 @@ struct LiveDraft {
         let settled = max(settledMs ?? .min, heard.endMs)
         settledMs = settled
         accurate = nil
-        fastWords.removeAll { $0.startMs < settled }
+        fastWords.removeAll { $0.endMs <= settled }
         return out + display()
     }
 
@@ -86,7 +91,10 @@ struct LiveDraft {
     mutating func fast(_ heard: Heard) -> [DraftCaption] {
         guard previewing else { return [] }
         if heard.isFinal {
-            fastWords += heard.words.filter { $0.startMs >= settledMs ?? .min }
+            // A word still being said where the accurate text settled is kept,
+            // as `fastTail` shows it.
+            fastWords += heard.words.filter { $0.endMs > settledMs ?? .min }
+            if fastWords.count > Self.maxFastWords { fastWords.removeFirst(fastWords.count - Self.maxFastWords) }
             if let volatile = fastVolatile, volatile.startMs < heard.endMs {
                 fastVolatile = nil
                 snapshots = []
@@ -147,8 +155,14 @@ struct LiveDraft {
         if let volatile = fastVolatile, volatile.endMs > coverMs {
             var words = Self.words(volatile.text)
             if volatile.startMs < coverMs {
-                let reached = snapshots.min { abs($0.endMs - coverMs) < abs($1.endMs - coverMs) }?.words ?? 0
-                words = Array(words.dropFirst(reached))
+                // With no snapshot near `coverMs` there is no telling which
+                // words the accurate text already has, so none are shown.
+                let nearest = snapshots.min { abs($0.endMs - coverMs) < abs($1.endMs - coverMs) }
+                if let nearest, abs(nearest.endMs - coverMs) <= Self.snapshotReachMs {
+                    words = Array(words.dropFirst(nearest.words))
+                } else {
+                    words = []
+                }
             }
             if !words.isEmpty {
                 pieces.append(words.joined(separator: " "))

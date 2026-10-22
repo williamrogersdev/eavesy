@@ -76,12 +76,6 @@ protocol CaptionSink: AnyObject {
     func audioDropped(_ count: Int)
 }
 
-extension CaptionSink {
-    func recognized(text: String, isFinal: Bool, startMs: Int64, endMs: Int64) {
-        recognized(text: text, isFinal: isFinal, startMs: startMs, endMs: endMs, preview: false)
-    }
-}
-
 /// An on-device recognizer fed 48 kHz mono float audio.
 protocol SpeechEngine: AnyObject {
     var name: String { get }

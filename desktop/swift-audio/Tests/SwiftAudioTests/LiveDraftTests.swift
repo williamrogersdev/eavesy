@@ -75,6 +75,25 @@ final class LiveDraftTests: XCTestCase {
             [partial("kind of flaky Tuesday.", 6_000, 8_220, preview: true)])
     }
 
+    func testAFastFinalWordStraddlingWhereTheAccurateFinalEndedIsKept() {
+        var draft = LiveDraft()
+        _ = draft.accurate(final([("Ship", 1_000, 1_400), (" it", 1_400, 2_000)]))
+        XCTAssertEqual(
+            draft.fast(final([(" the", 1_800, 2_200), (" plan", 2_200, 2_600)])),
+            [partial("the plan", 2_000, 2_600, preview: true)])
+    }
+
+    func testNoSnapshotNearTheAccurateTextShowsNoVolatileFastWords() {
+        var draft = LiveDraft()
+        _ = draft.fast(volatile("one two", 0, 1_000))
+        _ = draft.fast(volatile("one two three four five six seven eight", 0, 8_000))
+        // The nearest snapshot is two seconds off, so how many fast words the
+        // accurate text covers is unknown: show the accurate text alone.
+        XCTAssertEqual(
+            draft.accurate(volatile("one two three", 0, 3_000)),
+            [partial("one two three", 0, 3_000, preview: false)])
+    }
+
     func testStoppingThePreviewLeavesTheAccurateTextAlone() {
         var draft = LiveDraft()
         _ = draft.accurate(volatile("Let's sync with", 8_000, 9_000))

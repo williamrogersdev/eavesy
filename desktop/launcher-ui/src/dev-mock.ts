@@ -63,7 +63,8 @@ export function installDevMock(): void {
     },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
     set_hud_look: ({ lines, translucent, fastLiveWords }: Record<string, unknown>) => {
-      Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent, fast_live_words: fastLiveWords });
+      Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
+      if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
       emit('hud:look', { lines, translucent });
     },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },

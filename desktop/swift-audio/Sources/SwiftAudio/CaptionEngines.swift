@@ -11,7 +11,7 @@ enum CaptionEngines {
     static func make(
         locale: Locale,
         vocabulary: [String] = [],
-        preview: Bool = true,
+        preview: Bool,
         completion: @escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void
     ) {
         // Asking without a usage description kills the process (TCC), so check first.
@@ -179,7 +179,8 @@ final class SFSpeechEngine: SpeechEngine {
             let endMs =
                 segments.last.map { window.startMs + Int64(($0.timestamp + $0.duration) * 1000) }
                 ?? window.lastMs
-            sink?.recognized(text: text, isFinal: result.isFinal, startMs: startMs, endMs: max(endMs, startMs))
+            sink?.recognized(
+                text: text, isFinal: result.isFinal, startMs: startMs, endMs: max(endMs, startMs), preview: false)
         }
         if let error, !Self.isBenign(error) {
             sink?.engineFailed(error.localizedDescription)
@@ -328,7 +329,7 @@ final class SFSpeechEngine: SpeechEngine {
         }
 
         static func make(
-            locale: Locale, vocabulary: [String], preview: Bool = true
+            locale: Locale, vocabulary: [String], preview: Bool
         ) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
                 return .failure(CaptionUnavailable(reason: "transcriber unavailable on this Mac"))

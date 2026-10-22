@@ -25,7 +25,7 @@ private final class FakeEngine: SpeechEngine {
 
     func finish(_ done: @escaping () -> Void) {
         finished = true
-        sink?.recognized(text: " last words ", isFinal: true, startMs: 900, endMs: 1_400)
+        sink?.recognized(text: " last words ", isFinal: true, startMs: 900, endMs: 1_400, preview: false)
         done()
     }
 }
@@ -155,7 +155,7 @@ final class CaptionsTests: XCTestCase {
         let expectation = expectation(description: "off")
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { expectation.fulfill() }
         wait(for: [expectation], timeout: 1)
-        engine.sink?.recognized(text: "ignored", isFinal: true, startMs: 0, endMs: 1)
+        engine.sink?.recognized(text: "ignored", isFinal: true, startMs: 0, endMs: 1, preview: false)
         XCTAssertFalse(events.named("caption").contains { $0["text"] as? String == "ignored" })
     }
 
@@ -359,7 +359,7 @@ final class CaptionsTests: XCTestCase {
         }
         captions.feed(samples, atMs: 0)
         captions.finish(timeout: 1)
-        engine.sink?.recognized(text: "partial", isFinal: false, startMs: 0, endMs: 1)
+        engine.sink?.recognized(text: "partial", isFinal: false, startMs: 0, endMs: 1, preview: false)
         XCTAssertEqual(finals, ["last words"])
     }
 

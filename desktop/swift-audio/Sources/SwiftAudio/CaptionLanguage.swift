@@ -216,7 +216,7 @@ final class CaptionLanguages {
     /// The language the engines are actually running in.
     private var running: String
 
-    init(locale: Locale, follows: Bool, vocabulary: [String], preview: Bool = true) {
+    init(locale: Locale, follows: Bool, vocabulary: [String], preview: Bool) {
         let current = Locale.current
         self.current = current
         self.vocabulary = vocabulary

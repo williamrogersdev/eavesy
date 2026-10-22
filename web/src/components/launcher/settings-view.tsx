@@ -343,9 +343,9 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   const translucent = settings?.hud_translucent ?? true;
   const fastWords = settings?.fast_live_words ?? true;
   const [lookError, setLookError] = useState<string | null>(null);
-  const changeLook = (lines: HudPreviewLines, see: boolean, fast = fastWords) => {
+  const changeLook = (lines: HudPreviewLines, see: boolean, fast?: boolean) => {
     setLookError(null);
-    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see, fast_live_words: fast } : current);
+    setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see, fast_live_words: fast ?? current.fast_live_words } : current);
     void setHudLook(lines, see, fast).catch((error: unknown) => {
       setLookError(errMsg(error, 'Could not change how the recording looks.'));
       // Show what is actually saved, whichever change failed.
