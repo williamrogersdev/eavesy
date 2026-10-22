@@ -21,7 +21,9 @@ try {
     window.__qaFocusRequests=[];
     window.__qaLiveEdits=[];
     window.__qaFailSave=false;
-    window.__qaEmit = (next) => { state=next; (listeners.get('hud:state')??[]).forEach(fn=>fn({payload:state})); };
+    // As hud::shown sends it: Rust's receipt, and whether it opens by itself.
+    const shown = (s) => { const words=s.phase==='done'&&s.mode==='audio'&&!!s.message?.trim(); const receipt=!words?null:s.notice?.includes('Accessibility')?'blocked':s.notice?'copied':'pasted'; return {...s,receipt,opensItself:localStorage.getItem('qa-preview')==='on'&&!!s.sessionId&&(receipt==='pasted'||receipt==='copied')}; };
+    window.__qaEmit = (next) => { state=next; (listeners.get('hud:state')??[]).forEach(fn=>fn({payload:shown(state)})); };
     window.__TAURI__ = {
       core:{invoke:async (cmd,args) => {
         if(cmd==='save_preview_transcript') {
@@ -36,8 +38,9 @@ try {
         if(cmd==='update_live_preview_edit') { window.__qaLiveEdits.push(args); if(window.__qaFailLiveEdit) throw new Error('Test live edit failed'); }
         if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
         if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
-        if(cmd==='get_hud_state') return state;
-        if(cmd==='get_settings') return {dictation_hotkey:'Fn'};
+        if(cmd==='get_hud_state') return shown(state);
+        // Four lines (not the shipped Off) so the live-word checks have a transcript box to drive.
+        if(cmd==='get_settings') return {dictation_hotkey:'Fn',hud_preview_lines:4};
         if(cmd==='live_transcript') return [];
         if(cmd==='copy_text') window.__qaCopies.push(args.text);
         if(cmd==='dismiss_hud') window.__qaEmit({...state,phase:'idle',message:null});
@@ -55,6 +58,22 @@ try {
     await page.clock.runFor(300);
     await editor.waitFor();
   };
+  // By default a finished dictation opens straight into its drawer, words and tones showing.
+  await page.evaluate(() => localStorage.setItem('qa-preview','on'));
+  await page.reload();
+  await page.locator('[data-size="result"]').waitFor();
+  await editor.waitFor();
+  await page.locator('.ctl-tone', { hasText: 'Friendly' }).waitFor();
+  await page.getByText('Pasted').waitFor();
+  console.log('PASS: with the words shown after dictation, the drawer opens by itself');
+  // Collapsing it ends the result: the phase leaves done, so it can't reopen by itself.
+  await page.getByRole('button',{name:'Collapse to the pill'}).click();
+  await page.locator('[data-phase="idle"]').waitFor();
+  await page.clock.runFor(1_000);
+  assert.equal(await page.locator('[data-size="result"]').count(),0);
+  console.log('PASS: collapsing a drawer that opened by itself leaves it closed');
+  await page.evaluate(() => localStorage.removeItem('qa-preview'));
+  await page.reload();
   await page.getByText('Pasted').waitFor();
   assert.equal(await editor.count(),0);
   await page.clock.runFor(1_601);

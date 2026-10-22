@@ -184,13 +184,14 @@ pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
 }
 
 /// How many lines of live words the control shows while recording, whether
-/// it is see-through, and (when given) whether faster live words are on.
+/// it is see-through, and (when given) whether faster live words are on and
+/// whether a finished dictation opens with its words.
 #[tauri::command]
-pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>) -> Result<(), String> {
+pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>, result_preview: Option<bool>) -> Result<(), String> {
     if !matches!(lines, 0 | 1 | 2 | 4) {
         return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
     }
-    crate::hud::set_look(&app, lines, translucent, fast_live_words);
+    crate::hud::set_look(&app, lines, translucent, fast_live_words, result_preview);
     Ok(())
 }
 
@@ -646,8 +647,9 @@ pub fn sync_status() -> SyncStatus {
 }
 
 #[tauri::command]
-pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_hud_state(app: AppHandle) -> serde_json::Value {
+    let handle = app.clone();
+    let state = tauri::async_runtime::spawn_blocking(move || {
         let mut state = crate::hud::current();
         if state.phase == crate::hud::Phase::Done {
             if let Some(recording) = state.session_id.as_deref().and_then(|id| store::get(&app, id).ok().flatten()) {
@@ -655,7 +657,8 @@ pub async fn get_hud_state(app: AppHandle) -> crate::hud::HudState {
             }
         }
         state
-    }).await.unwrap_or_else(|_| crate::hud::current())
+    }).await.unwrap_or_else(|_| crate::hud::current());
+    crate::hud::shown(&handle, &state)
 }
 
 #[tauri::command]

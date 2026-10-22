@@ -233,9 +233,9 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 
-/** `fastLiveWords` applies from the next recording, and is sent only when that switch changes. */
-export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords?: boolean): Promise<void> {
-  await invoke('set_hud_look', { lines, translucent, fastLiveWords });
+/** `fastLiveWords` applies from the next recording; it and `resultPreview` are sent only when that switch changes. */
+export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords?: boolean, resultPreview?: boolean): Promise<void> {
+  await invoke('set_hud_look', { lines, translucent, fastLiveWords, resultPreview });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -426,8 +426,11 @@ export interface Settings {
   add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
+  /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
+  /** A finished dictation opens with its words to edit. Absent means on. */
+  hud_result_preview?: boolean;
   /** Live words about a second sooner from a fast recognizer. Absent means on. */
   fast_live_words?: boolean;
 }

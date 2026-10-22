@@ -73,7 +73,8 @@ pub struct Settings {
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
-    /// Lines of live words the control shows while recording: 0, 1, 2 or 4 (4 unless chosen).
+    /// Lines of live words the control shows while recording: 0, 1, 2 or 4
+    /// (off unless chosen: the plain bar is quieter while you talk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_preview_lines: Option<u8>,
     /// A see-through, blurred control instead of a solid one (on unless turned off).
@@ -84,6 +85,10 @@ pub struct Settings {
     /// capture starts, so a change applies from the next recording.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_live_words: Option<bool>,
+    /// A finished dictation opens with its words, editable, and the tone row,
+    /// instead of only a Pasted stamp (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_result_preview: Option<bool>,
 }
 
 impl Settings {
@@ -97,9 +102,13 @@ impl Settings {
         self.live_captions.unwrap_or(true)
     }
 
-    /// One of the line counts the control is drawn for; anything else reads as 4.
+    /// One of the line counts the control is drawn for; anything else reads as off.
     pub fn hud_preview_lines(&self) -> u8 {
-        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(4)
+        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(0)
+    }
+
+    pub fn hud_result_preview(&self) -> bool {
+        self.hud_result_preview.unwrap_or(true)
     }
 
     pub fn fast_live_words(&self) -> bool {
@@ -139,6 +148,7 @@ impl Default for Settings {
             hud_preview_lines: None,
             hud_translucent: None,
             fast_live_words: None,
+            hud_result_preview: None,
         }
     }
 }
@@ -509,13 +519,21 @@ mod tests {
     }
 
     #[test]
-    fn the_preview_shows_four_lines_unless_another_count_is_chosen() {
+    fn live_words_are_off_unless_a_line_count_is_chosen() {
         let mut settings = Settings::default();
-        assert_eq!(settings.hud_preview_lines(), 4);
-        settings.hud_preview_lines = Some(0);
         assert_eq!(settings.hud_preview_lines(), 0);
-        settings.hud_preview_lines = Some(3);
+        settings.hud_preview_lines = Some(4);
         assert_eq!(settings.hud_preview_lines(), 4);
+        settings.hud_preview_lines = Some(3);
+        assert_eq!(settings.hud_preview_lines(), 0);
+    }
+
+    #[test]
+    fn a_finished_dictation_shows_its_words_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.hud_result_preview());
+        settings.hud_result_preview = Some(false);
+        assert!(!settings.hud_result_preview());
     }
 
     #[test]

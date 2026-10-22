@@ -44,6 +44,7 @@ export function installDevMock(): void {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
+    fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
   };
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
@@ -62,10 +63,11 @@ export function installDevMock(): void {
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
-    set_hud_look: ({ lines, translucent, fastLiveWords }: Record<string, unknown>) => {
+    set_hud_look: ({ lines, translucent, fastLiveWords, resultPreview }: Record<string, unknown>) => {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
       if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
-      emit('hud:look', { lines, translucent });
+      if (resultPreview !== undefined) settings.hud_result_preview = Boolean(resultPreview);
+      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? true });
     },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
