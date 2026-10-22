@@ -220,7 +220,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         if !in_eavesy && target.is_some() {
             get_launcher_out_of_the_way(&app);
         }
-        let front = target.and_then(|_| front_app());
+        let (front, role) = target.and_then(|_| front_app_and_role()).map_or((None, None), |(front, role)| (Some(front), role));
         let mut how = if in_eavesy { Delivery::InEavesy } else { delivery(accessibility_trusted(), target, front) };
         match how {
             // The box acknowledges delivery; otherwise the clipboard remains available.
@@ -249,7 +249,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let delivery_ms = started.elapsed().as_millis() as u64;
         tracing::info!(
             session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(),
-            target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), "dictation delivered"
+            target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), focused_role = role.as_deref(),
+            "dictation delivered"
         );
         crate::telemetry::track(how.event(), serde_json::json!({ "delivery": how.label(), "delivery_ms": delivery_ms }));
         // Never over a newer recording that is running or being written down.
@@ -444,8 +445,15 @@ pub fn press_paste() -> Result<(), String> {
 /// dictations fall back to the clipboard. A ⌘V where there is no text box
 /// does nothing, and the words stay in the HUD to copy. Only a focus that
 /// plainly isn't text (a file list, a button) rules the app out.
-#[cfg(target_os = "macos")]
 fn front_app() -> Option<Target> {
+    front_app_and_role().map(|(target, _)| target)
+}
+
+/// `front_app`, with what its focused element calls itself (None when it
+/// doesn't say), for the delivery log: a paste into an unrecognised role
+/// that went nowhere shows up there.
+#[cfg(target_os = "macos")]
+fn front_app_and_role() -> Option<(Target, Option<String>)> {
     use ax::*;
     unsafe {
         if !AXIsProcessTrusted() {
@@ -462,7 +470,7 @@ fn front_app() -> Option<Target> {
             .map(Owned)
             .and_then(|element| copy_attribute(element.0, "AXRole").map(Owned))
             .and_then(|role| cf_string(role.0));
-        (!rules_out_text(role.as_deref())).then_some(Target { pid })
+        (!rules_out_text(role.as_deref())).then_some((Target { pid }, role))
     }
 }
 
@@ -487,7 +495,7 @@ fn rules_out_text(role: Option<&str>) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn front_app() -> Option<Target> {
+fn front_app_and_role() -> Option<(Target, Option<String>)> {
     None
 }
 
