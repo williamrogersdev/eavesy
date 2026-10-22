@@ -72,7 +72,9 @@ pub fn set_state(app: &AppHandle, state: HudState) {
     let handle = app.clone();
     let emitted = state.clone();
     let dispatched = app.run_on_main_thread(move || {
-        if !matches!(emitted.phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
+        // The latest phase, like the sizing below: a queued idle must not
+        // hand the keyboard away from a recording that has started since.
+        if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
             release_editor_on_main(&handle);
         }
         show_on_main(&handle);

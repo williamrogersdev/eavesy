@@ -446,8 +446,9 @@ function Hud() {
   }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
   // Once the new shape is on screen, let the native shadow take it. Two
-  // frames: the first lays it out, the second has painted it. A hidden panel
-  // may not run frames, so a timer stands in.
+  // frames: the first lays it out, the second has painted it. Only a hidden
+  // page, which may run no frames, falls back to a timer: on a visible one a
+  // timer could fire before the paint and bring the old shape's ring back.
   const phaseKey = state ? `${isOpening(state) ? 'starting' : state.phase}:${size}` : '';
   const shape = phaseKey && `${phaseKey}:${look.lines}`;
   useEffect(() => {
@@ -456,7 +457,7 @@ function Hud() {
     const send = () => { if (!sent) { sent = true; void invoke('hud_painted').catch(() => {}); } };
     let second = 0;
     const first = window.requestAnimationFrame(() => { second = window.requestAnimationFrame(send); });
-    const fallback = window.setTimeout(send, 120);
+    const fallback = document.visibilityState === 'visible' ? 0 : window.setTimeout(send, 120);
     return () => { window.cancelAnimationFrame(first); window.cancelAnimationFrame(second); window.clearTimeout(fallback); };
   }, [shape]);
   // Alternating `swap` restarts the content's fade-in on every change of
