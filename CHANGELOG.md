@@ -6,10 +6,23 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+### Changed
+
+- Web: the notetaker is now Eavesy's own bot instead of Recall.ai. It joins Google Meet and Teams calls, its transcript fills in live with each participant's name, and the brief lands in your library. Zoom isn't supported yet ([#185](https://github.com/williamrogersdev/eavesy/pull/185), [#186](https://github.com/williamrogersdev/eavesy/pull/186))
+
+## [0.6.2] - 2026-10-22 - desktop
+
 ### Added
 
-- Web: send a notetaker to a Google Meet or Teams call; Eavesy's own bot joins, its transcript fills in live with each participant's name, and the brief lands in your library
-- Web: opt-in email recaps of finished meetings (TL;DR, decisions, action items, transcript link and optional transcript attachment), sent through Resend with delivery tracking
+- Mac app: live words show about a second sooner while you talk, with a "Faster live words" switch to turn it off ([#184](https://github.com/williamrogersdev/eavesy/pull/184))
+- Web: send a notetaker to a Zoom, Google Meet or Teams call; its transcript, with each participant's name, and the brief land in your library (pilot, needs a Recall.ai key) ([#180](https://github.com/williamrogersdev/eavesy/pull/180))
+- Web: opt-in email recaps of finished meetings (TL;DR, decisions, action items, transcript link and optional transcript attachment), sent through Resend with delivery tracking ([#182](https://github.com/williamrogersdev/eavesy/pull/182))
+
+### Fixed
+
+- Mac app: dictation pastes back where you were typing, without the long wait or duplicated text, and drops filler words like "um" and "uh" ([#179](https://github.com/williamrogersdev/eavesy/pull/179))
+- Mac app: the "Copied" card no longer stays on screen forever ([#179](https://github.com/williamrogersdev/eavesy/pull/179))
+- Mac app: the dictionary stops learning ordinary words, and a silent clip no longer pastes "Thank you" ([#181](https://github.com/williamrogersdev/eavesy/pull/181))
 
 ## [0.6.1] - 2026-10-21 - desktop
 
