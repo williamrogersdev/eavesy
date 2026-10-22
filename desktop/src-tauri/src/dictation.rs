@@ -33,9 +33,10 @@ pub fn arm(session_id: &str) {
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
-/// Points a recording's paste at where the cursor is as it stops, when that is
-/// a text box: a meeting can run long after the box it started in. Otherwise it
-/// keeps the box it started in. Either way the paste window runs from now.
+/// Points a recording's paste at the app in front as it stops (see
+/// `front_app`): a meeting can run long after the app it started in, and the
+/// paste follows the user. With no such app it keeps the one it started in.
+/// Either way the paste window runs from now.
 pub fn rearm_at_stop(session_id: &str) {
     let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
     let now = pick_target(pressed, front_app);
@@ -174,22 +175,21 @@ impl Delivery {
     }
 }
 
-fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> Delivery {
+fn delivery(trusted: bool, target: Option<Target>, front: Option<Target>) -> Delivery {
     match (trusted, target) {
         (false, _) => Delivery::CopiedNoAccessibility,
-        // The same app is still in front: paste. Whether its focused element
-        // calls itself a text box isn't asked (see `front_app`).
-        (true, Some(target)) if focused == Some(target) => Delivery::Pasted,
+        // The same app is still in front, its focus not plainly elsewhere
+        // than text (see `front_app`): paste.
+        (true, Some(target)) if front == Some(target) => Delivery::Pasted,
         _ => Delivery::CopiedNoTextBox,
     }
 }
 
 /// Delivers a dictation the moment it has text, tidied first: pasted at the
 /// cursor when the app it was dictated in is still in front, otherwise put
-/// on the clipboard. Never
-/// opens the launcher, and the HUD says which happened. Called once per
-/// dictation: it takes the paste target, so the cloud transcript that follows
-/// does not paste a second time.
+/// on the clipboard. Never opens the launcher, and the HUD says which
+/// happened. Called once per dictation: it takes the paste target, so the
+/// cloud transcript that follows does not paste a second time.
 pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
     let project = project_for(session_id);
@@ -214,12 +214,14 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Some(corrected) => crate::transcribe::drop_fillers(&corrected),
             None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
         };
+        let in_eavesy = panel_wants_it(&app);
+        // The launcher goes first, so the front app read here is the one
+        // the ⌘V below reaches.
+        if !in_eavesy && target.is_some() {
+            get_launcher_out_of_the_way(&app);
+        }
         let front = target.and_then(|_| front_app());
-        let mut how = if panel_wants_it(&app) {
-            Delivery::InEavesy
-        } else {
-            delivery(accessibility_trusted(), target, front)
-        };
+        let mut how = if in_eavesy { Delivery::InEavesy } else { delivery(accessibility_trusted(), target, front) };
         match how {
             // The box acknowledges delivery; otherwise the clipboard remains available.
             Delivery::InEavesy if !hand_to_panel(&app, &session_id, &text) => {
@@ -227,7 +229,6 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
             Delivery::InEavesy => {}
             Delivery::Pasted => {
-                get_launcher_out_of_the_way(&app);
                 if crate::commands::paste_text(&app, &text).is_ok() {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
@@ -365,6 +366,8 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     let text = crate::transcribe::drop_fillers(&text);
     std::thread::spawn(move || {
         crate::hud::release_editor_and_wait(&app);
+        // Read after the launcher is out of the way, like the dictation path:
+        // the app in front then is the one the ⌘V reaches.
         get_launcher_out_of_the_way(&app);
         if front_app() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
             return;
@@ -439,7 +442,8 @@ pub fn press_paste() -> Result<(), String> {
 /// on web views (Claude, ChatGPT, Slack, Chrome) often report their message
 /// box as a web area or a group, so requiring a text role made most
 /// dictations fall back to the clipboard. A ⌘V where there is no text box
-/// does nothing, and the words stay in the HUD to copy.
+/// does nothing, and the words stay in the HUD to copy. Only a focus that
+/// plainly isn't text (a file list, a button) rules the app out.
 #[cfg(target_os = "macos")]
 fn front_app() -> Option<Target> {
     use ax::*;
@@ -451,11 +455,35 @@ fn front_app() -> Option<Target> {
         AXUIElementSetMessagingTimeout(system.0, 0.25);
         let app = Owned(copy_attribute(system.0, "AXFocusedApplication")?);
         let mut pid = 0;
-        if AXUIElementGetPid(app.0, &mut pid) != 0 || pid <= 0 || pid == std::process::id() as i32 {
+        if !is_other_app(AXUIElementGetPid(app.0, &mut pid) == 0, pid) {
             return None;
         }
-        Some(Target { pid })
+        let role = copy_attribute(app.0, "AXFocusedUIElement")
+            .map(Owned)
+            .and_then(|element| copy_attribute(element.0, "AXRole").map(Owned))
+            .and_then(|role| cf_string(role.0));
+        (!rules_out_text(role.as_deref())).then_some(Target { pid })
     }
+}
+
+/// A real app that isn't Eavesy.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn is_other_app(read: bool, pid: i32) -> bool {
+    read && pid > 0 && pid != std::process::id() as i32
+}
+
+/// Focus that can't take typed words. Anything else, an unreadable role
+/// included, could be a text box: web views often don't say.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn rules_out_text(role: Option<&str>) -> bool {
+    matches!(
+        role,
+        Some(
+            "AXButton" | "AXCheckBox" | "AXRadioButton" | "AXPopUpButton" | "AXMenuButton" | "AXList" | "AXOutline"
+                | "AXTable" | "AXBrowser" | "AXImage" | "AXMenu" | "AXMenuBar" | "AXMenuItem" | "AXSlider" | "AXTabGroup"
+                | "AXToolbar"
+        )
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -465,7 +493,7 @@ fn front_app() -> Option<Target> {
 
 #[cfg(target_os = "macos")]
 mod ax {
-    pub use crate::cf::{CFTypeRef, Owned};
+    pub use crate::cf::{cf_string, CFTypeRef, Owned};
     use crate::cf::cf_str;
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -510,6 +538,21 @@ mod tests {
         assert_eq!(delivery(false, None, None), Delivery::CopiedNoAccessibility);
         assert_eq!(Delivery::CopiedNoAccessibility.notice(), Some("Copied — allow Accessibility to paste automatically"));
         assert_eq!(Delivery::Pasted.notice(), None);
+    }
+
+    #[test]
+    fn only_another_app_whose_focus_could_be_text_is_a_target() {
+        assert!(is_other_app(true, 42));
+        assert!(!is_other_app(false, 42));
+        assert!(!is_other_app(true, 0));
+        assert!(!is_other_app(true, std::process::id() as i32));
+        // Web views (Claude, Slack, Chrome) report groups or web areas, or nothing.
+        for role in [None, Some("AXTextArea"), Some("AXWebArea"), Some("AXGroup")] {
+            assert!(!rules_out_text(role), "{role:?}");
+        }
+        for role in ["AXOutline", "AXButton", "AXList"] {
+            assert!(rules_out_text(Some(role)), "{role}");
+        }
     }
 
     #[test]
