@@ -8,7 +8,7 @@ import { anthropic, anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
-import { effectiveDictation } from '@/lib/transcription/dictation-style';
+import { DICTATION_STYLES, effectiveDictation, requestedDictation, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -17,7 +17,15 @@ import { guardUserQuota } from '@/server/rate-limit';
 /** About twenty minutes of speech; anything longer gets only the model-free cleanup. */
 export const MAX_POLISH_CHARS = 20_000;
 
-const schema = z.object({ text: z.string().max(200_000), projectId: z.string().max(64).optional() });
+const STYLE_IDS = DICTATION_STYLES.map((style) => style.id) as [DictationStyle, ...DictationStyle[]];
+
+/** `style` and `forAgents` override the saved tone for this one request: the Mac app's tone buttons. */
+const schema = z.object({
+  text: z.string().max(200_000),
+  projectId: z.string().max(64).optional(),
+  style: z.enum(STYLE_IDS).optional(),
+  forAgents: z.boolean().optional(),
+});
 
 /**
  * Tidies a dictation's words before the Mac app types them: the recognizer's
@@ -54,7 +62,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          ...effectiveDictation(user, project),
+          ...requestedDictation(parsed.data, effectiveDictation(user, project)),
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,

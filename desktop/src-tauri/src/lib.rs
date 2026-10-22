@@ -163,6 +163,8 @@ pub fn run() {
             commands::show_launcher,
             commands::dismiss_hud,
             commands::peek_hud,
+            commands::restyle_dictation,
+            commands::replace_dictation,
             commands::hud_painted,
             commands::close_hud,
             commands::account_info,

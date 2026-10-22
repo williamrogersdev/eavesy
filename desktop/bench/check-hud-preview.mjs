@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const browser = await chromium.launch({headless:true});
 try {
-  const page = await browser.newPage({viewport:{width:400,height:142}});
+  const page = await browser.newPage({viewport:{width:400,height:176}});
   page.setDefaultTimeout(5000);
   await page.clock.install();
   await page.addInitScript(() => {
@@ -31,6 +31,8 @@ try {
           localStorage.setItem('qa-transcript',args.text);
           state={...state,message:args.text};
         }
+        if(cmd==='restyle_dictation') { (window.__qaRestyles ??= []).push(args); return `${args.forAgents ? 'Prompt' : args.style}: ${args.text}`; }
+        if(cmd==='replace_dictation') { (window.__qaReplaced ??= []).push(args); return window.__qaReplaceAs ?? 'replaced'; }
         if(cmd==='update_live_preview_edit') { window.__qaLiveEdits.push(args); if(window.__qaFailLiveEdit) throw new Error('Test live edit failed'); }
         if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
         if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
@@ -58,6 +60,31 @@ try {
   await page.clock.runFor(1_601);
   await page.locator('[data-phase="idle"]').waitFor();
   console.log('PASS: a pasted dictation shows its receipt, then returns to the pill');
+  await page.reload();
+  await openDrawer();
+  const original = 'Original first sentence. Original last sentence.';
+  const tone = (name) => page.locator('.ctl-tone', { hasText: name });
+  await tone('Friendly').click();
+  await page.waitForFunction(() => document.querySelector('textarea')?.value === 'friendly: Original first sentence. Original last sentence.');
+  assert.deepEqual(await page.evaluate(() => window.__qaRestyles.at(-1)), { sessionId: 'qa-1', text: original, style: 'friendly', forAgents: false });
+  assert.equal(await page.evaluate(() => window.__qaReplaced.at(-1).text), 'friendly: ' + original);
+  assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).learn), false);
+  await page.getByText('Updated').waitFor();
+  await page.getByRole('button', { name: 'Write it as a prompt for an AI agent' }).click();
+  await page.waitForFunction(() => window.__qaRestyles.length === 2);
+  // Tones start from the words as pasted: they don't compound.
+  assert.deepEqual(await page.evaluate(() => window.__qaRestyles.at(-1)), { sessionId: 'qa-1', text: original, style: 'friendly', forAgents: true });
+  await page.evaluate(() => { window.__qaReplaceAs = 'copied'; });
+  await tone('Concise').click();
+  await page.getByText('⌘V to paste').waitFor();
+  await page.evaluate(() => { window.__qaReplaceAs = 'replaced'; });
+  await page.getByRole('button', { name: 'Write it as a prompt for an AI agent' }).click();
+  await page.waitForFunction(() => window.__qaRestyles.length === 4);
+  await tone('Original').click();
+  await page.waitForFunction(text => document.querySelector('textarea')?.value === text, original);
+  assert.equal(await page.evaluate(() => window.__qaRestyles.length), 4);
+  assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).text), original);
+  console.log('PASS: tone buttons rewrite from the pasted words, put the rewrite in place or copy it, and never teach the dictionary');
   await page.reload();
   await openDrawer();
   const unfocusedBox = await editor.boundingBox();

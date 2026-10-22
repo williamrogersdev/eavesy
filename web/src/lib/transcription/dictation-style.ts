@@ -50,6 +50,14 @@ export function effectiveDictation(
   };
 }
 
+/** The tone a request asked for, over the saved one: the Mac app's tone buttons rewrite one dictation without changing Settings. */
+export function requestedDictation(
+  request: { style?: DictationStyle; forAgents?: boolean },
+  saved: { style: DictationStyle; forAgents: boolean },
+): { style: DictationStyle; forAgents: boolean } {
+  return { style: request.style ?? saved.style, forAgents: request.forAgents ?? saved.forAgents };
+}
+
 /** "What the hell" keeps its "what": the "the" goes only with the swear word after it. */
 const THE_SWEAR = /\bthe\s+(?:fuck|hell|heck)\b/gi;
 const SWEARING =

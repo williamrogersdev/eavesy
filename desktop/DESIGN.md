@@ -459,7 +459,7 @@ the pill can't jitter or flip while words arrive.
 | bar | 264 × 40 | recording and writing with live words off |
 | wide | 400 × 62 + 20 per line | recording and writing (1, 2 or 4 ticker lines, 4 unless chosen), failed |
 | receipt | 248 × 36 | a finished dictation: **Pasted · 16 words**, **Copied** or **Not pasted** |
-| result | 400 × 142 | the receipt's drawer, opened by hovering it: the words that went out |
+| result | 400 × 176 | the receipt's drawer, opened by hovering it: the words that went out and the tone row |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **How it looks while recording** is the user's call (Settings → General → Recording
@@ -494,7 +494,16 @@ Accessibility). The words are already where they went, so the pill doesn't
 show them again. Resting the pointer on the receipt for 250ms (not on a
 button) opens its **drawer**: the words that went out, editable in place,
 beside Copy, **–** (collapse to the pill) and **×** (hide the control until it
-is reopened from the menu bar). Screenshots stamp **Snapped** above the
+is reopened from the menu bar). Under the words, the **tone row** rewrites
+them: **Original** · **Professional** · **Friendly** · **Concise**, and a robot
+toggle for **For agents** (written as a prompt for an AI agent). Each tone
+starts from the words as pasted, so tones never compound, and Original goes
+back to them without asking the server. The rewrite replaces the pasted words
+in the app only while they are still there exactly as pasted and that field
+still has the keyboard; otherwise it is copied, and the stamp says
+**Updated** or **Copied**. A rewrite is saved as the transcript but never
+taught to the dictionary, and typing over it makes the typed words the new
+starting point. Screenshots stamp **Snapped** above the
 thumbnail; saves stamp **Saved**. Failures read "Didn't catch that" in warn,
 never coral. A receipt goes back to the pill after 1.6s (Pasted) or 6s
 (Copied), whatever the pointer does; Not pasted stays until Accessibility is

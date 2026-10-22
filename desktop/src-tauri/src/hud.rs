@@ -138,9 +138,9 @@ const BAR: (f64, f64) = (264.0, 40.0);
 fn live_size(lines: u8) -> (f64, f64) {
     if lines == 0 { BAR } else { (WIDE.0, WIDE.1 - 80.0 + 20.0 * f64::from(lines)) }
 }
-/// The transcript drawer, opened by hovering a finished dictation: the same
-/// frame as recording, so the words stay where they were read.
-const RESULT: (f64, f64) = (400.0, 142.0);
+/// The transcript drawer, opened by hovering a finished dictation: recording's
+/// width, so the words stay where they were read, with the tone row under them.
+const RESULT: (f64, f64) = (400.0, 176.0);
 /// A finished dictation at rest: the pill with what happened to the words
 /// ("Pasted · 16 words", "Copied", "Not pasted" and Allow).
 const RECEIPT: (f64, f64) = (248.0, 36.0);

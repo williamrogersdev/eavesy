@@ -178,16 +178,49 @@ pub fn drop_fillers(text: &str) -> String {
     out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
 }
 
+/// How long a tone change waits for its rewrite: asked for, and watched.
+const RESTYLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// A dictation's words rewritten in `style` ("professional", "friendly",
+/// "concise" or "natural"), as a prompt for an AI agent with `for_agents`:
+/// the HUD's tone buttons. Saved settings are left as they are.
+pub fn restyle_dictation(app: &AppHandle, text: &str, project: Option<&str>, style: &str, for_agents: bool) -> Result<String, String> {
+    let credential = settings::device_credential(app).ok_or("Sign in to change the tone")?;
+    restyle_with(&credential, text, project, style, for_agents, RESTYLE_TIMEOUT)
+}
+
+fn restyle_with(
+    credential: &settings::Credential,
+    text: &str,
+    project: Option<&str>,
+    style: &str,
+    for_agents: bool,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let mut body = polish_body(text, project);
+    body["style"] = serde_json::Value::from(style);
+    body["forAgents"] = serde_json::Value::from(for_agents);
+    post_polish(credential, &body, timeout)
+}
+
+fn polish_body(text: &str, project: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::json!({ "text": text });
+    if let Some(project) = project {
+        body["projectId"] = serde_json::Value::from(project);
+    }
+    body
+}
+
 fn polish_with(
     credential: &settings::Credential,
     text: &str,
     project: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    let mut body = serde_json::json!({ "text": text });
-    if let Some(project) = project {
-        body["projectId"] = serde_json::Value::from(project);
-    }
+    post_polish(credential, &polish_body(text, project), timeout)
+}
+
+fn post_polish(credential: &settings::Credential, body: &serde_json::Value, timeout: std::time::Duration) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
@@ -198,7 +231,7 @@ fn polish_with(
             credential.base.trim_end_matches('/')
         ))
         .bearer_auth(&credential.token)
-        .json(&body)
+        .json(body)
         .send()
         .map_err(|e| format!("request failed: {e}"))?;
     if !resp.status().is_success() {
@@ -693,6 +726,23 @@ mod tests {
         );
         let polished = polish_with(&credential(&server), "fix the build", Some("proj_1"), POLISH_TIMEOUT);
         assert_eq!(polished, Ok("Fix the build.".to_string()));
+    }
+
+    #[test]
+    fn a_tone_change_asks_for_that_tone() {
+        use wiremock::matchers::{body_json, method, path};
+        let (runtime, server) = mock_server();
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .and(body_json(serde_json::json!({ "text": "Ship it today.", "projectId": "proj_1", "style": "friendly", "forAgents": false })))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "text": "Let's ship it today!", "polished": true }),
+                ))
+                .mount(&server),
+        );
+        let restyled = restyle_with(&credential(&server), "Ship it today.", Some("proj_1"), "friendly", false, RESTYLE_TIMEOUT);
+        assert_eq!(restyled, Ok("Let's ship it today!".to_string()));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
+import { AudioLines, Bot, Camera, Check, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -13,6 +13,7 @@ import {
 } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
+import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
 import { holdMs, type Receipt } from './hud-hold';
@@ -68,6 +69,30 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
+/** The drawer's tone buttons: the words as pasted, then each rewrite tone ("As spoken" is the original's). */
+type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
+const TONES: { id: Tone; label: string; hint: string }[] = [
+  { id: 'original', label: 'Original', hint: 'The words as they were first pasted.' },
+  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
+];
+
+/** A finished dictation's tone change: what it's rewritten from, what's picked, and where the rewrite went. */
+interface ToneChange {
+  sessionId: string;
+  base: string;
+  pick: Tone;
+  forAgents: boolean;
+  busy: boolean;
+  landed: 'replaced' | 'copied' | null;
+}
+
+/** In the browser preview, rewrites of the sample words instead of a server round trip. */
+const PREVIEW_REWRITES: Record<Exclude<Tone, 'original'>, string> = {
+  professional: 'For the onboarding email, I suggest leading with the mascot, using one screenshot rather than three, and closing with the shortcut so that people try it immediately.',
+  friendly: 'Ideas for the onboarding email: let’s lead with the mascot, keep it to one screenshot instead of three, and finish on the shortcut so people can try it right away!',
+  concise: 'Onboarding email: lead with the mascot, one screenshot not three, end on the shortcut.',
+};
+
 /** How long the pointer rests on a finished dictation before its drawer opens. */
 const PEEK_DWELL_MS = 250;
 
@@ -123,7 +148,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], receipt: [248, 36], bar: [264, 40], wide: [400, 142], result: [400, 142], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], receipt: [248, 36], bar: [264, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -194,6 +219,7 @@ function Hud() {
   const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
   // The finished dictation whose transcript drawer is open: hovering its pill opens it.
   const [peek, setPeek] = useState<string | null>(browserPreviewPeek);
+  const [tone, setTone] = useState<ToneChange | null>(null);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
@@ -440,7 +466,7 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); setTone(null); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -458,13 +484,14 @@ function Hud() {
   const peeking = !!state?.sessionId && peek === state.sessionId;
   // Words being corrected, or a correction that didn't save, keep the drawer
   // open: folding them into a stamp would hide the editor or the Retry.
-  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError);
+  const ownTone = tone && tone.sessionId === state?.sessionId ? tone : null;
+  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || !!ownTone?.busy);
   const size = state ? sizeFor(state, look.lines, peeking || keepDrawer) : 'pill';
   // Until its drawer is opened, a finished dictation is just a stamp on the pill.
   const receipt = state && !peeking && !keepDrawer ? receiptFor(state) : null;
 
   useEffect(() => {
-    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt);
     if (hold === null) return;
     const sessionId = state.sessionId;
@@ -473,7 +500,7 @@ function Hud() {
       else setState({ ...state, phase: 'idle', message: null, notice: null });
     }, hold);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision, receipt]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision, receipt, ownTone?.busy]);
 
   const cancelPeekDwell = () => {
     if (peekDwell.current !== null) window.clearTimeout(peekDwell.current);
@@ -677,6 +704,8 @@ function Hud() {
   };
   const changeText = (text: string, base = source, record = true, before = selection.current, inputType?: string) => {
     if (!state.sessionId) return;
+    // Typed over a rewrite: that's now the words, and the next tone starts from them.
+    if (ownTone) setTone(null);
     if (record) {
       const typed = inputType === 'insertText' && before.start === before.end && text.length === words.length + 1;
       const group = typingGroup.current;
@@ -719,7 +748,7 @@ function Hud() {
     value={composition?.text ?? words}
     placeholder={hint}
     spellCheck
-    readOnly={!state.sessionId}
+    readOnly={!state.sessionId || !!ownTone?.busy}
     onFocus={() => {
       if (!state.sessionId) return;
       setEditing(true);
@@ -747,8 +776,56 @@ function Hud() {
       if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.blur(); } }}
   />;
 
+  // A tone button rewrites the words from where they started (so tones don't
+  // compound), puts the rewrite where the words went, and saves it as the
+  // transcript without teaching the dictionary: a rewrite isn't a correction.
+  const restyle = async (pick: Tone, forAgents: boolean) => {
+    const sessionId = state.sessionId;
+    if (!sessionId || ownTone?.busy) return;
+    const base = ownTone?.base ?? words;
+    const before = ownTone;
+    setActionError(null);
+    setTone({ sessionId, base, pick, forAgents, busy: true, landed: null });
+    try {
+      const text = pick === 'original' && !forAgents ? base
+        : !tauri() ? (pick === 'original' ? base : PREVIEW_REWRITES[pick])
+        : String(await invoke('restyle_dictation', { sessionId, text: base, style: pick === 'original' ? 'natural' : pick, forAgents }));
+      if (currentSession.current !== sessionId) return;
+      const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
+      setDraft({ sessionId, source: null, text });
+      void invoke('save_preview_transcript', { sessionId, text, learn: false }).catch(() => {});
+      setCopied(false);
+      setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
+    } catch (error) {
+      setTone((now) => now?.sessionId === sessionId ? before : now);
+      setActionError(errMsg(error, 'Could not change the tone'));
+    }
+  };
+  const tonePick = ownTone?.pick ?? 'original';
+  const forAgents = ownTone?.forAgents ?? false;
+  const toneRow = !!state.sessionId && (
+    <div className="ctl-tones" role="group" aria-label="Rewrite in another tone">
+      {TONES.map((choice) => (
+        <button key={choice.id} type="button" className="ctl-tone" aria-pressed={tonePick === choice.id} disabled={!!ownTone?.busy} title={choice.hint}
+          onClick={() => { if (choice.id !== tonePick) void restyle(choice.id, forAgents); }}>
+          {choice.label}
+        </button>
+      ))}
+      <span className="ctl-fill" />
+      <button type="button" className="ctl-tone ctl-icon" aria-pressed={forAgents} disabled={!!ownTone?.busy} aria-label="Write it as a prompt for an AI agent" title={FOR_AGENTS_HINT}
+        onClick={() => void restyle(tonePick, !forAgents)}>
+        <Bot className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+  const toneStamp = ownTone?.busy ? <span className="ctl-say ctl-quiet">Rewriting<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>
+    : ownTone?.landed === 'replaced' ? <Stamp tone="leaf">Updated</Stamp>
+    : ownTone?.landed === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
+    : null;
+
   let top: ReactNode;
   let below: ReactNode = null;
+  let foot: ReactNode = null;
 
   if (actionError && !(video && state.phase === 'recording')) {
     top = <>{mark}<span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span><span className="ctl-fill" />{close}</>;
@@ -819,12 +896,12 @@ function Hud() {
       </>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>);
+    const stamp = toneStamp ?? learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted</Stamp>);
     top = (
       <>
         {mark}
         {saveError ? <span role="alert"><span className="ctl-say ctl-warn">Save failed </span><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
-        {notice && !notPasted && !learnedStamp && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
+        {notice && !notPasted && !learnedStamp && !toneStamp && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {words && copyWords}
@@ -833,6 +910,7 @@ function Hud() {
       </>
     );
     below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
+    if (size === 'result' && editable) foot = toneRow;
   } else if (learnedStamp && ['idle', 'saved', 'done'].includes(state.phase)) {
     // Briefly, the whole pill is the confirmation: a word fits where Close was.
     top = <>{mark}{learnedStamp}<span className="ctl-fill" /></>;
@@ -884,7 +962,8 @@ function Hud() {
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>
-      {below && <div ref={transcriptBox} className="ctl-below" onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
+      {below && <div ref={transcriptBox} className="ctl-below" data-busy={ownTone?.busy || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
+      {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
   );
 }

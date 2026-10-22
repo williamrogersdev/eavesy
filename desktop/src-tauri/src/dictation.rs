@@ -15,6 +15,10 @@ static PENDING: Mutex<Option<(String, Instant, Target)>> = Mutex::new(None);
 /// was dictating into, not whichever is in front once the words are back.
 static PROJECT_AT_STOP: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
 
+/// The last dictation's words as they went into the user's app (session,
+/// words, project), so a tone change can swap them for its rewrite.
+static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
+
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
 
@@ -220,7 +224,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Delivery::InEavesy => {}
             Delivery::Pasted => {
                 get_launcher_out_of_the_way(&app);
-                if crate::commands::paste_text(&app, &text).is_err() {
+                if crate::commands::paste_text(&app, &text).is_ok() {
+                    *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
+                } else {
                     // Say what actually stopped it: the permission, or anything else.
                     how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
                 }
@@ -253,6 +259,33 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             });
         }
     });
+}
+
+/// The project a dictation was written for, while it is the last one pasted:
+/// a tone change keeps its words and spellings.
+pub fn pasted_project(session_id: &str) -> Option<String> {
+    PASTED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, _, _)| id == session_id).and_then(|(_, _, project)| project.clone())
+}
+
+/// Puts a dictation's rewrite where its words went: in place of the pasted
+/// words when they are still there exactly as pasted, otherwise on the
+/// clipboard. Says which: "replaced" or "copied". Never on the main thread.
+pub fn deliver_rewrite(app: &AppHandle, session_id: &str, text: &str) -> Result<&'static str, String> {
+    // Clicking in the transcript box may have taken the keyboard: hand it back first.
+    crate::hud::release_editor_and_wait(app);
+    let pasted = PASTED.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(id, _, _)| id == session_id);
+    if let Some((_, previous, project)) = pasted {
+        match crate::paste_learning::replace(app, &previous, text) {
+            Ok(()) => {
+                *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), text.to_string(), project));
+                return Ok("replaced");
+            }
+            Err(why) => tracing::info!(session_id, "rewrite copied instead of replaced: {why}"),
+        }
+    }
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text.to_string()).map_err(|e| format!("could not copy the rewrite: {e}"))?;
+    Ok("copied")
 }
 
 #[derive(Clone, serde::Serialize)]
