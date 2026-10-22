@@ -24,6 +24,8 @@ interface Env {
 const INGEST_HOST = 'eavesy.internal';
 /** How often the Durable Object checks on a bot it started. */
 const WATCH_EVERY_MS = 2 * 60 * 1_000;
+/** A start whose claim hit a database error is tried again this soon. */
+const CLAIM_RETRY_MS = 30 * 1_000;
 
 const database = (env: Env) => botDatabase(env.DB);
 const logError = (message: string, botId: string | undefined, error: unknown) =>
@@ -60,7 +62,15 @@ export class MeetingBot extends Container<Env> {
     // Watch from before the claim, so whatever fails from here on is noticed:
     // a bot claimed but never started is failed by the watchdog.
     await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
-    const start = await claimBotStart(database(this.env), botId);
+    let start: Awaited<ReturnType<typeof claimBotStart>>;
+    try {
+      start = await claimBotStart(database(this.env), botId);
+    } catch (error) {
+      // Nothing was claimed, and a failed callback isn't run again: try shortly.
+      logError('claiming meeting bot start failed', botId, error);
+      await this.schedule(new Date(Date.now() + CLAIM_RETRY_MS), 'launch', botId);
+      return;
+    }
     if (!start) return; // cancelled, or already started
     try {
       await this.startContainer(botId, start);
@@ -94,7 +104,9 @@ export class MeetingBot extends Container<Env> {
     } catch (error) {
       logError('meeting bot watch failed', botId, error); // look again next time
     }
-    // The next look is set first, so a failed stop is tried again.
+    // The next look is set before stopping, so a failed stop is tried again.
+    // Everything that can fail above is caught; what's left is a row in this
+    // object's own SQLite, which only fails if its storage does.
     if (verdict !== 'done') await this.schedule(new Date(Date.now() + WATCH_EVERY_MS), 'watch', botId);
     if (verdict === 'stop') await this.stop().catch((e: unknown) => logError('stopping meeting bot', botId, e)); // SIGTERM: leave and deliver
   }

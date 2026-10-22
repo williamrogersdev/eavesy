@@ -41,7 +41,8 @@ export function attributeSpeakers(lines: { id: string; startMs: number; endMs: n
   const assignments = new Map<string, string>();
   const sorted = [...spans].sort((a, b) => a[1] - b[1]);
   // One sweep: lines in start order take in the spans that have started and
-  // drop the ones that ended before them, so each span is added and dropped once.
+  // drop the ones that ended before them. Each line looks only at spans live
+  // around it, a handful at once in a real call (people talking over each other).
   let next = 0;
   let active: SpeakerSpan[] = [];
   for (const line of [...lines].sort((a, b) => a.startMs - b.startMs)) {
