@@ -16,6 +16,7 @@ import { handleSummarize } from './processing/summarize';
 import { handleAgentTranscript } from './processing/agent-transcript';
 import { handleEmbedDictation, handleEmbedMeeting } from './processing/embed';
 import { handleCleanup, handlePurgeAccount } from './processing/cleanup';
+import { collectBotRecording, reconcileBots } from './meeting-bots/service';
 
 export async function queue(batch: MessageBatch<ProcessingMessage>, env: ProcessingEnv) {
   if (batch.queue === DEAD_LETTER_QUEUE) {
@@ -126,6 +127,9 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
     case 'purge-account':
       await handlePurgeAccount(message.userId, db, env);
       return;
+    case 'collect-bot-recording':
+      await collectBotRecording(db, env, message.botId);
+      return;
     default: {
       const unhandled: never = message;
       throw new Error(
@@ -133,6 +137,11 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       );
     }
   }
+}
+
+/** Hourly: catches notetaker bots up with the provider when a webhook was lost. */
+export async function reconcileMeetingBots(env: ProcessingEnv, now = Date.now()) {
+  await reconcileBots(drizzle(env.DB, { schema }), env, now);
 }
 
 export { DROP_TTL_MS, PURGE_AFTER_MS, purgeDeleted } from './processing/cleanup';

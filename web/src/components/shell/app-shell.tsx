@@ -2,6 +2,7 @@
 
 import {
   Apple,
+  Bot,
   ChevronsUpDown,
   FolderOpen,
   LayoutGrid,
@@ -32,6 +33,7 @@ import { cn } from '@/lib/utils';
 const NAV_ITEMS = [
   { href: '/app', label: 'Library', icon: LayoutGrid },
   { href: '/app/projects', label: 'Projects', icon: FolderOpen },
+  { href: '/app/notetaker', label: 'Notetaker', icon: Bot },
   { href: '/app/search', label: 'Search', icon: Search },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ] as const;

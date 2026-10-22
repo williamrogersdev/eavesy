@@ -147,13 +147,23 @@ export function findEchoLines(lines: AttributedLine[], windowMs = ECHO_WINDOW_MS
   return echoes;
 }
 
+/**
+ * Whether a transcript is a conversation worth labelling by speaker: the Mac's
+ * two sides (`you` and `them`), or two or more diarized speakers (a notetaker
+ * bot's participants, `speaker_N`).
+ */
 export function hasBothSides(lines: { speakerId: string | null }[]): boolean {
   let you = false;
   let them = false;
+  let first: string | null = null;
   for (const line of lines) {
     if (line.speakerId === 'you') you = true;
     else if (line.speakerId === 'them') them = true;
     if (you && them) return true;
+    if (line.speakerId?.startsWith('speaker_')) {
+      if (first === null) first = line.speakerId;
+      else if (line.speakerId !== first) return true;
+    }
   }
   return false;
 }

@@ -4,6 +4,7 @@ import type { MessageBatch } from '@cloudflare/workers-types';
 import * as schema from '@/db/schema';
 import { meetings, meetingSegments } from '@/db/schema';
 import { encode } from '@/db/codec';
+import { failCollection } from '@/server/meeting-bots/service';
 import { type ProcessingEnv, type ProcessingMessage } from './shared';
 
 export interface TerminalProcessingFailure {
@@ -36,6 +37,9 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
         .update(meetings)
         .set({ status: 'failed', statusError: `Summary failed: ${reason.slice(0, 500)}`, updatedAt: Date.now() })
         .where(eq(meetings.id, message.meetingId));
+      return;
+    case 'collect-bot-recording':
+      await failCollection(db, message.botId, reason);
       return;
     case 'rolling-summarize':
     case 'agent-transcript':

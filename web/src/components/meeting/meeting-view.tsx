@@ -179,6 +179,10 @@ function Loaded({
           hasTranscript={segments.length > 0 || Boolean(meeting.transcriptOverrideMd)}
           hasBrief={hasBrief}
         />
+      ) : meeting.status === 'recording' && meeting.source === 'bot' ? (
+        <AppAlert tone="info">
+          The notetaker is in this meeting now. The transcript and brief arrive a few minutes after the call ends.
+        </AppAlert>
       ) : meeting.status === 'failed' ? (
         <AppAlert>This one didn&apos;t finish: {meeting.statusError || 'no details were given.'}</AppAlert>
       ) : null}

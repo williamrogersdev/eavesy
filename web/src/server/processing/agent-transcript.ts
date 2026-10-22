@@ -46,7 +46,7 @@ export async function handleAgentTranscript(
       title: meeting.title,
       startedAt: meeting.startedAt,
       project: project?.name,
-      recorderName: kind === 'conversation' ? speakerName('you', names) : undefined,
+      recorderName: kind === 'conversation' && lines.some((line) => line.speakerId === 'you') ? speakerName('you', names) : undefined,
     },
   });
   if (apiKey && result.fallbackChunks > 0) {

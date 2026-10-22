@@ -96,6 +96,17 @@ cd workers/processing
 bunx wrangler secret put ANTHROPIC_API_KEY
 ```
 
+Notetaker bots (optional, both Workers): set `RECALL_API_KEY`,
+`RECALL_WEBHOOK_SECRET` (the `whsec_…` verification secret) and, if the
+account isn't in `us-west-2`, `RECALL_REGION`. In the Recall dashboard, point a
+webhook at `https://<app host>/api/webhooks/recall` and subscribe it to the
+`bot.*` status events. Without these the Notetaker page says it isn't set up.
+
+```bash
+cd web && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RECALL_WEBHOOK_SECRET
+cd ../workers/processing && bunx wrangler secret put RECALL_API_KEY && bunx wrangler secret put RECALL_WEBHOOK_SECRET
+```
+
 Workers AI transcription and embeddings use the `AI` binding and do not need
 an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
 authenticates token hashes stored in D1. PostHog is optional for all three

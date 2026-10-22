@@ -60,6 +60,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   ios: 'iPhone',
   android: 'Android',
   import: 'Import',
+  bot: 'Notetaker',
 };
 
 function fromMeeting(x: MeetingListItem): LibItem {
