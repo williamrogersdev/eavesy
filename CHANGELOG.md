@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-22 - desktop
+
 ### Added
 
 - Saved prompts: keep the requests you type over and over in Settings → Prompts, paste one from the panel's search with Return, or run it in Claude Code as `/mcp__eavesy__<name>` ([#199](https://github.com/williamrogersdev/eavesy/pull/199))
