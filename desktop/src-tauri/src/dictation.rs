@@ -247,12 +247,15 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
         }
         let delivery_ms = started.elapsed().as_millis() as u64;
+        // A paste into a focus that didn't say it takes text may have gone
+        // nowhere: count those apart, so the trade-off in `front_app` shows.
+        let label = if how == Delivery::Pasted && !says_text(role.as_deref()) { "pasted_unverified" } else { how.label() };
         tracing::info!(
-            session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(),
+            session_id = %session_id, delivery = label, delivery_ms, corrected = source_text.is_some(),
             target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), focused_role = role.as_deref(),
             "dictation delivered"
         );
-        crate::telemetry::track(how.event(), serde_json::json!({ "delivery": how.label(), "delivery_ms": delivery_ms }));
+        crate::telemetry::track(how.event(), serde_json::json!({ "delivery": label, "delivery_ms": delivery_ms }));
         // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
@@ -480,6 +483,11 @@ fn is_other_app(read: bool, pid: i32) -> bool {
     read && pid > 0 && pid != std::process::id() as i32
 }
 
+/// Focus that says it takes typed words.
+fn says_text(role: Option<&str>) -> bool {
+    matches!(role, Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField"))
+}
+
 /// Focus that can't take typed words. Anything else, an unreadable role
 /// included, could be a text box: web views often don't say.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -561,6 +569,9 @@ mod tests {
         for role in ["AXOutline", "AXButton", "AXList"] {
             assert!(rules_out_text(Some(role)), "{role}");
         }
+        // Pasted into those web-view roles is logged as unverified.
+        assert!(says_text(Some("AXTextArea")));
+        assert!(!says_text(Some("AXWebArea")) && !says_text(None));
     }
 
     #[test]
