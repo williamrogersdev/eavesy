@@ -5,6 +5,7 @@ import * as schema from '@/db/schema';
 import { meetings, meetingSegments } from '@/db/schema';
 import { encode } from '@/db/codec';
 import { failCollection } from '@/server/meeting-bots/service';
+import { failCanaryCheck } from '@/server/meeting-bots/canary';
 import { failRecap } from '@/server/email/recaps';
 import { type ProcessingEnv, type ProcessingMessage } from './shared';
 
@@ -46,7 +47,7 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       await failRecap(db, message.meetingId, reason);
       return;
     case 'check-canary':
-      console.error(JSON.stringify({ message: 'meeting bot canary failed', alert: 'meeting_bot_canary', reason: 'check_failed', botId: message.botId, error: reason.slice(0, 300) }));
+      await failCanaryCheck(db, env, message.botId, reason);
       return;
     case 'rolling-summarize':
     case 'agent-transcript':

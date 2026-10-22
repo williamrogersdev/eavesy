@@ -1,11 +1,11 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Queue } from '@cloudflare/workers-types';
 import { meetingBots, users } from '@/db/schema';
 import { pid } from '@/db/ids';
 import type { AppDb } from '@/db/client';
 import { type EmailEnv, sendEmail } from '@/server/email/resend';
 import type { QueueMessage } from '@/server/queue';
-import type { CanaryEnv, MeetingBotsEnv } from './control';
+import type { CanaryEnv, MeetingBotControl, MeetingBotsEnv } from './control';
 import { type BotPlatform, type MeetingBot, TERMINAL_BOT_STATUSES, botById, finishBot, parseMeetingUrl } from './service';
 
 /**
@@ -35,13 +35,14 @@ const PLATFORMS: { platform: BotPlatform; label: string; url: (env: CanaryEnv) =
   { platform: 'teams', label: 'Teams', url: (env) => env.CANARY_TEAMS_URL },
 ];
 
-export type CanaryFailure = 'invalid_url' | 'schedule_failed' | 'did_not_join' | 'no_speakers';
+export type CanaryFailure = 'invalid_url' | 'schedule_failed' | 'did_not_join' | 'no_speakers' | 'check_failed';
 
 const FAILURE_TEXT: Record<CanaryFailure, string> = {
   invalid_url: 'The configured test meeting link is not one the notetaker can join.',
   schedule_failed: 'The meeting-bot Worker could not be reached to start the bot.',
   did_not_join: 'The bot did not get into the call.',
   no_speakers: 'The bot got into the call but read no participant or speaker names.',
+  check_failed: 'The check on the bot kept failing, so this run could not be judged.',
 };
 
 interface CanaryAlert {
@@ -55,7 +56,13 @@ interface CanaryAlert {
 /** Sends a bot to each configured test meeting. Does nothing when none is configured. */
 export async function startCanaries(db: AppDb, env: CanaryRunEnv, now = Date.now()) {
   const targets = PLATFORMS.map((p) => ({ ...p, configured: p.url(env)?.trim() })).filter((p) => p.configured);
-  if (!targets.length || !env.MEETING_BOTS) return [];
+  if (!targets.length) return [];
+  const control = env.MEETING_BOTS;
+  if (!control) {
+    // Configured but not bound: a misdeploy, which is what the canary is for.
+    for (const target of targets) await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed' });
+    return [];
+  }
   await db.insert(users).values({
     id: CANARY_USER_ID,
     displayName: 'Eavesy canary',
@@ -71,36 +78,55 @@ export async function startCanaries(db: AppDb, env: CanaryRunEnv, now = Date.now
       await raiseCanaryAlert(env, { platform: target.platform, reason: 'invalid_url' });
       continue;
     }
-    const id = pid('bot', now);
-    await db.insert(meetingBots).values({
-      id,
-      userId: CANARY_USER_ID,
-      provider: 'eavesy',
-      providerBotId: id,
-      meetingUrl: parsed.url,
-      platform: parsed.platform,
-      title: `Canary: ${target.label}`,
-      status: 'scheduling',
-      canary: true,
-      createdAt: now,
-      updatedAt: now,
-    });
     try {
-      await env.MEETING_BOTS.schedule(id, null);
+      const id = await startCanary(db, env, control, parsed, target.label, now);
+      if (id) started.push(id);
     } catch (error) {
-      console.error(JSON.stringify({ message: 'canary schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
-      await finishBot(db, id, 'failed', 'provider_unavailable');
-      await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
-      continue;
+      // One platform's failure doesn't keep the other from being checked.
+      console.error(JSON.stringify({ message: 'canary start failed', platform: target.platform, error: error instanceof Error ? error.message : String(error) }));
+      await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed' });
     }
-    // The bot may already have claimed its start; that's further along.
-    await db.update(meetingBots).set({ status: 'scheduled', updatedAt: Date.now() })
-      .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling')));
-    await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId: id }, { delaySeconds: CANARY_CHECK_AFTER_SECONDS });
-    console.log(JSON.stringify({ message: 'canary started', botId: id, platform: target.platform }));
-    started.push(id);
   }
   return started;
+}
+
+async function startCanary(db: AppDb, env: CanaryRunEnv, control: MeetingBotControl, target: { url: string; platform: BotPlatform }, label: string, now: number) {
+  const id = pid('bot', now);
+  await db.insert(meetingBots).values({
+    id,
+    userId: CANARY_USER_ID,
+    provider: 'eavesy',
+    providerBotId: id,
+    meetingUrl: target.url,
+    platform: target.platform,
+    title: `Canary: ${label}`,
+    status: 'scheduling',
+    canary: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  // The check is queued before the bot can start, so a bot that started is always judged and sent home.
+  await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId: id }, { delaySeconds: CANARY_CHECK_AFTER_SECONDS });
+  try {
+    await control.schedule(id, null);
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'canary schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
+    // Only while unclaimed: a bot that started anyway is left to its check.
+    const failed = await db.update(meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable', updatedAt: Date.now() })
+      .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling'), isNull(meetingBots.statusDetail)))
+      .returning({ id: meetingBots.id });
+    if (failed.length) {
+      await control.stop(id).catch(() => undefined); // its claim now fails; this covers anything already running
+      await raiseCanaryAlert(env, { platform: target.platform, reason: 'schedule_failed', botId: id });
+      return null;
+    }
+    return id;
+  }
+  // The bot may already have claimed its start; that's further along.
+  await db.update(meetingBots).set({ status: 'scheduled', updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling')));
+  console.log(JSON.stringify({ message: 'canary started', botId: id, platform: target.platform }));
+  return id;
 }
 
 /** What a canary bot's row says about its run: passed, failed, or still too early to tell. */
@@ -115,23 +141,43 @@ export function canaryVerdict(bot: Pick<MeetingBot, 'status' | 'canaryNames'>): 
 export async function checkCanary(db: AppDb, env: CanaryRunEnv, botId: string, check = 1) {
   const bot = await botById(db, botId);
   if (!bot?.canary) return;
+  if (bot.statusDetail === 'provider_unavailable') return; // never started; alerted then
   let verdict = canaryVerdict(bot);
   if (verdict === 'pending' && check < MAX_CHECKS) {
     await env.PROCESSING_QUEUE.send({ kind: 'check-canary', botId, check: check + 1 }, { delaySeconds: CANARY_RECHECK_SECONDS });
     return;
   }
   if (verdict === 'pending') verdict = 'no_speakers';
-  if (!TERMINAL_BOT_STATUSES.includes(bot.status)) {
-    // Stuck in a lobby, still loading, or overstaying: it has had its time.
-    await env.MEETING_BOTS?.stop(bot.id).catch((error: unknown) =>
-      console.error(JSON.stringify({ message: 'canary stop failed', botId, error: error instanceof Error ? error.message : String(error) })));
-    if (verdict !== 'passed') await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'canary_timeout');
-  }
+  // Stuck in a lobby, still loading, or overstaying: it has had its time.
+  if (verdict !== 'passed') await sendHome(db, env, bot, 'canary_timeout');
+  else if (!TERMINAL_BOT_STATUSES.includes(bot.status)) await stopBot(env, bot.id);
   if (verdict === 'passed') {
     console.log(JSON.stringify({ message: 'canary passed', botId, platform: bot.platform, names: bot.canaryNames }));
     return;
   }
   await raiseCanaryAlert(env, { platform: bot.platform, reason: verdict, botId, status: bot.status, statusDetail: bot.statusDetail });
+}
+
+/** The check job ran out of retries: still say so, and don't leave the bot in the meeting. */
+export async function failCanaryCheck(db: AppDb, env: CanaryRunEnv, botId: string, error: string) {
+  console.error(JSON.stringify({ message: 'canary check failed', botId, error: error.slice(0, 300) }));
+  const bot = await botById(db, botId).catch(() => undefined);
+  if (bot && !bot.canary) return;
+  if (bot) await sendHome(db, env, bot, 'canary_check_failed');
+  else await stopBot(env, botId);
+  await raiseCanaryAlert(env, { platform: bot?.platform ?? 'meet', reason: 'check_failed', botId, status: bot?.status, statusDetail: bot?.statusDetail });
+}
+
+async function stopBot(env: CanaryRunEnv, botId: string) {
+  await env.MEETING_BOTS?.stop(botId).catch((error: unknown) =>
+    console.error(JSON.stringify({ message: 'canary stop failed', botId, error: error instanceof Error ? error.message : String(error) })));
+}
+
+/** Stops a failed canary still out and marks it failed, keeping the reason it gave. */
+async function sendHome(db: AppDb, env: CanaryRunEnv, bot: MeetingBot, detail: string) {
+  if (TERMINAL_BOT_STATUSES.includes(bot.status)) return;
+  await stopBot(env, bot.id);
+  await finishBot(db, bot.id, 'failed', bot.statusDetail ?? detail);
 }
 
 /**

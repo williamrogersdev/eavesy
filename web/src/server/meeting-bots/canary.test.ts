@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '@/db/schema';
 import { createFakeEnv } from '@/server/testing/fake-env';
 import type { MeetingBotControl } from './control';
-import { CANARY_CHECK_AFTER_SECONDS, CANARY_USER_ID, canaryVerdict, checkCanary, startCanaries } from './canary';
+import { CANARY_CHECK_AFTER_SECONDS, CANARY_USER_ID, canaryVerdict, checkCanary, failCanaryCheck, startCanaries } from './canary';
 import { type BotEnv, CANARY_STAY_MS, claimBotStart, handleBotEvent, handleBotSegment, watchBot } from './service';
 
 const MEET = 'https://meet.google.com/abc-defg-hij';
@@ -81,7 +81,42 @@ describe('starting canaries', () => {
     errors = [];
     expect(await startCanaries(down.db, down.env)).toEqual([]);
     expect(alerts()).toEqual([expect.objectContaining({ platform: 'teams', reason: 'schedule_failed' })]);
-    expect(down.sent).toEqual([]);
+    const id = alerts()[0].botId as string;
+    expect(down.bot(id)).toMatchObject({ status: 'failed', status_detail: 'provider_unavailable' });
+    expect(down.calls).toEqual([`schedule ${id}`, `stop ${id}`]);
+    // Its queued check knows it was already alerted on.
+    errors = [];
+    await checkCanary(down.db, down.env, id);
+    expect(alerts()).toEqual([]);
+  });
+
+  test('alerts when links are set but the meeting-bot Worker is not bound', async () => {
+    const t = setup();
+    delete (t.env as { MEETING_BOTS?: unknown }).MEETING_BOTS;
+    expect(await startCanaries(t.db, t.env)).toEqual([]);
+    expect(alerts().map((a) => [a.platform, a.reason])).toEqual([['meet', 'schedule_failed'], ['teams', 'schedule_failed']]);
+  });
+
+  test('a bot that started though scheduling reported an error is left to its check', async () => {
+    const t = setup({ CANARY_MEET_URL: MEET });
+    t.env.MEETING_BOTS!.schedule = async (id) => {
+      await claimBotStart(t.db, id);
+      throw new Error('timed out after starting');
+    };
+    expect(await startCanaries(t.db, t.env)).toHaveLength(1);
+    expect(alerts()).toEqual([]);
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['check-canary']);
+  });
+
+  test('a database error on one platform still starts and checks the other', async () => {
+    const t = setup();
+    t.env.PROCESSING_QUEUE.send = (async (body: { botId: string }) => {
+      if (t.bot(body.botId).platform === 'meet') throw new Error('queue down');
+      t.sent.push({ body: body as never });
+    }) as typeof t.env.PROCESSING_QUEUE.send;
+    const ids = await startCanaries(t.db, t.env);
+    expect(ids.map((id) => t.bot(id).platform)).toEqual(['teams']);
+    expect(alerts()).toEqual([expect.objectContaining({ platform: 'meet', reason: 'schedule_failed' })]);
   });
 });
 
@@ -114,6 +149,13 @@ describe('a canary in the call', () => {
     await t.event(id, { code: 'done' });
     expect(t.bot(id).status).toBe('done');
     expect(t.sent.map((m) => m.body.kind)).toEqual(['check-canary']);
+  });
+
+  test('a canary whose container dies is failed without touching any meeting', async () => {
+    const t = setup({ CANARY_MEET_URL: MEET });
+    const id = await inCall(t);
+    expect(await watchBot(t.db, t.env, id, false)).toBe('done');
+    expect(t.bot(id)).toMatchObject({ status: 'failed', status_detail: 'bot_error', meeting_id: null });
   });
 
   test('names read before it got in are ignored', async () => {
@@ -173,10 +215,25 @@ describe('checking a canary', () => {
     const [id] = await startCanaries(t.db, t.env);
     await checkCanary(t.db, t.env, id, 2);
     expect(alerts()).toHaveLength(1);
-    t.sqlite.run("UPDATE meeting_bots SET canary = 0 WHERE id = ?", [id]);
+    t.sqlite.run("UPDATE meeting_bots SET canary = 0, status = 'recording', status_detail = NULL WHERE id = ?", [id]);
     errors = [];
+    const calls = [...t.calls];
+    const sent = t.sent.length;
     await checkCanary(t.db, t.env, id, 2);
+    await failCanaryCheck(t.db, t.env, id, 'boom');
     expect(alerts()).toEqual([]);
+    expect(t.calls).toEqual(calls);
+    expect(t.sent).toHaveLength(sent);
+    expect(t.bot(id)).toMatchObject({ status: 'recording', status_detail: null });
+  });
+
+  test('a check that runs out of retries stops the bot and still alerts', async () => {
+    const t = setup({ CANARY_MEET_URL: MEET });
+    const id = await inCall(t);
+    await failCanaryCheck(t.db, t.env, id, 'D1 unavailable');
+    expect(t.calls).toContain(`stop ${id}`);
+    expect(t.bot(id)).toMatchObject({ status: 'failed', status_detail: 'canary_check_failed' });
+    expect(alerts()).toEqual([expect.objectContaining({ reason: 'check_failed', botId: id, platform: 'meet' })]);
   });
 
   test('verdicts', () => {
