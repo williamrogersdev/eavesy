@@ -445,6 +445,25 @@ function Hud() {
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
+  // Once the new shape is on screen, let the native shadow take it: at the
+  // second frame (the first lays it out, the second has painted it), and
+  // again a moment later in case frames are stalled or a slow resize landed
+  // after them. Recomputing the shadow twice is harmless; too early is not.
+  const phaseKey = state ? `${isOpening(state) ? 'starting' : state.phase}:${size}` : '';
+  const shape = phaseKey && `${phaseKey}:${look.lines}`;
+  useEffect(() => {
+    if (!tauri() || !shape) return;
+    const send = () => { void invoke('hud_painted').catch(() => {}); };
+    let second = 0;
+    const first = window.requestAnimationFrame(() => { second = window.requestAnimationFrame(send); });
+    const settled = window.setTimeout(send, 500);
+    return () => { window.cancelAnimationFrame(first); window.cancelAnimationFrame(second); window.clearTimeout(settled); };
+  }, [shape]);
+  // Alternating `swap` restarts the content's fade-in on every change of
+  // phase (not of line count mid-recording). Set before paint.
+  const [swap, setSwap] = useState(0);
+  useLayoutEffect(() => { if (phaseKey) setSwap((n) => n + 1); }, [phaseKey]);
+
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
     if (tauri()) return;
@@ -522,7 +541,7 @@ function Hud() {
 
   if (!state) return null;
 
-  const opening = state.phase === 'recording' && !state.sessionId;
+  const opening = isOpening(state);
   const video = state.mode === 'video';
   const editable = !!source || !!ownDraft;
   const notice = state.notice ?? null;
@@ -784,6 +803,7 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
+      data-swap={swap % 2 ? 'a' : 'b'}
       data-marking={video && live && marking.tool ? 'true' : undefined}
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
@@ -803,6 +823,11 @@ function Hud() {
       {below && <div ref={transcriptBox} className="ctl-below" onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
     </div>
   );
+}
+
+/** Recording was asked for, and the mic is not live yet. */
+function isOpening(state: HudState): boolean {
+  return state.phase === 'recording' && !state.sessionId;
 }
 
 function MicState({ heard, silent }: { heard: boolean; silent: boolean }) {
