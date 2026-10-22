@@ -28,9 +28,9 @@ const WATCH_EVERY_MS = 2 * 60 * 1_000;
 const CLAIM_RETRY_MS = 30 * 1_000;
 /**
  * A container that didn't start (most often no capacity free at that moment)
- * is tried again this often, this many times, before the bot is failed. The
- * two minutes this takes fit inside the watchdog's start timeout
- * (`BOT_START_TIMEOUT_MS`, five minutes).
+ * is tried again this often, this many times, before the bot is failed. With
+ * each attempt's own wait (about 30 s at most), that is under four minutes,
+ * inside the watchdog's start timeout (`BOT_START_TIMEOUT_MS`, five minutes).
  */
 const START_RETRY_MS = 40 * 1_000;
 const START_ATTEMPTS = 4;
