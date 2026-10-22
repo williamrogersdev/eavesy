@@ -77,12 +77,12 @@ export const FEATURE_PAGES: FeaturePage[] = [
       'Eavesy records from your Mac instead of joining your call. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
     highlights: [
       { title: 'Three modes', body: 'Talk uses your mic only. Meeting adds the audio your Mac plays, without recording the screen. Video records your screen, its audio, and your mic.' },
-      { title: 'No meeting bot', body: 'Nothing joins the participant list. Eavesy records from your Mac while you handle consent according to your organization and local requirements.' },
+      { title: 'No meeting bot needed', body: 'Recording from your Mac adds nothing to the participant list. For a call you can’t record from your Mac, you can send a visible Eavesy Notetaker instead. Either way, you handle consent according to your organization and local requirements.' },
       { title: 'Works in person too', body: 'No meeting link required. Record a hallway conversation, a workshop, or a 1:1 over coffee the same way you record a Zoom call.' },
       { title: 'Shortcuts to start', body: 'Press ⌘⇧D to talk from anywhere, or ⌘⇧Space to open the launcher and start a meeting or video.' },
     ],
     faqs: [
-      { q: 'Does anyone on the call know I’m recording?', a: 'Eavesy does not add a participant to the call. Tell participants when required and follow the consent laws in your jurisdiction and your organization’s policy.' },
+      { q: 'Does anyone on the call know I’m recording?', a: 'Recording from your Mac does not add a participant to the call. The optional Notetaker joins under the visible name “Eavesy Notetaker” and says in the chat that it is transcribing. Tell participants when required and follow the consent laws in your jurisdiction and your organization’s policy.' },
       { q: 'Does it work for in-person meetings?', a: 'Yes. Meeting mode records your Mac’s microphone directly, so no meeting link is needed. It works in the room just as well as on a call.' },
     ],
     related: ['live-summary', 'transcription', 'privacy'],

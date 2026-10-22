@@ -58,6 +58,7 @@ export const INTEGRATIONS: Integration[] = [
     ],
     faqs: [
       { q: 'Does this need a browser extension?', a: 'No. Eavesy records system audio at the OS level, so it works with Google Meet in any browser without an extension.' },
+      { q: 'Can Eavesy join a Meet call for me?', a: 'Yes, if you want it to. When you can’t record from your Mac, send the Eavesy Notetaker from the web app. It joins as a visible participant, and the transcript fills in during the call.' },
     ],
   },
   {
@@ -72,6 +73,9 @@ export const INTEGRATIONS: Integration[] = [
       'Hit record in Eavesy to capture Teams audio and your mic.',
       'Long Mac sessions upload and process sealed segments in batches.',
       'Stop to get a transcript, brief, and audio you control.',
+    ],
+    faqs: [
+      { q: 'Can Eavesy join a Teams meeting for me?', a: 'Yes, if you want it to. When you can’t record from your Mac, send the Eavesy Notetaker from the web app. It joins as a guest under a visible name, so the meeting has to allow guests.' },
     ],
   },
   {
