@@ -60,11 +60,15 @@ pub fn set_state(app: &AppHandle, state: HudState) {
     }
     crate::tray::set_recording(app, state.is_live());
     let _ = app.emit_to("main", "capture:state", state.clone());
-    let Some(window) = app.get_webview_window("hud") else {
+    if app.get_webview_window("hud").is_none() {
         return;
-    };
-    let _ = window.emit_to("hud", "hud:state", state);
+    }
 
+    // Size the window first, then tell the renderer. The other way round, a
+    // result card is laid out inside the resting pill until the main thread
+    // gets to the resize, which can take a while when Stop is handing focus
+    // back: cramped, with Close cut off. Main-thread tasks run in order, so
+    // the renderer still sees the states in the order they were set.
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
         if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
@@ -72,7 +76,15 @@ pub fn set_state(app: &AppHandle, state: HudState) {
         }
         show_on_main(&app);
         fit_on_main(&app);
+        let _ = app.emit_to("hud", "hud:state", state);
     });
+}
+
+/// The renderer has painted the new phase. The native shadow follows the
+/// pill's opaque pixels, so it is recomputed now, not at resize time when the
+/// old content was still on screen (that left a dark ring of the last shape).
+pub fn repainted_on_main(app: &AppHandle) {
+    imp::refresh_shadow(app);
 }
 
 /// A recording is stopping: leave the red state at once, with the stop sound,
@@ -242,9 +254,11 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool) {
         config.hud_preview_lines = Some(lines);
         config.hud_translucent = Some(translucent);
     });
-    let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
     let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || fit_on_main(&app));
+    let _ = app.clone().run_on_main_thread(move || {
+        fit_on_main(&app);
+        let _ = app.emit_to("hud", "hud:look", serde_json::json!({ "lines": lines, "translucent": translucent }));
+    });
 }
 
 pub fn user_frame(app: &AppHandle) -> Option<HudFrame> {
@@ -466,6 +480,17 @@ mod imp {
         if let Ok(panel) = app.get_webview_panel("hud") { panel.order_out(None); }
     }
 
+    pub fn refresh_shadow(app: &AppHandle) {
+        use tauri_nspanel::cocoa::base::id;
+        use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+        use tauri::Manager;
+        let Some(window) = app.get_webview_window("hud") else { return };
+        let Ok(ns_window) = window.ns_window() else { return };
+        unsafe {
+            let _: () = msg_send![ns_window as id, invalidateShadow];
+        }
+    }
+
     /// Gives the window `size` in one step, animated when it is on screen,
     /// keeping its centre and its top edge (or bottom edge when `keep_bottom`).
     /// Snap to the live Cocoa frame without animation, so repeated state
@@ -534,6 +559,7 @@ mod imp {
         if let Some(window) = app.get_webview_window("hud") { let _ = window.set_focus(); }
     }
     pub fn hide(app: &AppHandle) { if let Some(window) = app.get_webview_window("hud") { let _ = window.hide(); } }
+    pub fn refresh_shadow(_app: &AppHandle) {}
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
     }

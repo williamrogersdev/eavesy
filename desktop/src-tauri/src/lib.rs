@@ -162,6 +162,7 @@ pub fn run() {
             commands::pair_device,
             commands::show_launcher,
             commands::dismiss_hud,
+            commands::hud_painted,
             commands::close_hud,
             commands::account_info,
             projects::list_projects,

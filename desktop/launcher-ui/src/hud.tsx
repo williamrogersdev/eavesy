@@ -445,6 +445,21 @@ function Hud() {
     return () => window.clearTimeout(timeout);
   }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
+  // Once the new phase is on screen, let the native shadow take its shape.
+  // Two frames: the first lays it out, the second has painted it.
+  // Alternating `swap` restarts the content's fade-in on every change of shape.
+  const shape = state ? `${isOpening(state) ? 'starting' : state.phase}:${size}:${look.lines}` : '';
+  const swap = useRef({ shape, n: 0 });
+  if (swap.current.shape !== shape) swap.current = { shape, n: swap.current.n + 1 };
+  useEffect(() => {
+    if (!tauri() || !shape) return;
+    let second = 0;
+    const first = window.requestAnimationFrame(() => {
+      second = window.requestAnimationFrame(() => { void invoke('hud_painted').catch(() => {}); });
+    });
+    return () => { window.cancelAnimationFrame(first); window.cancelAnimationFrame(second); };
+  }, [shape]);
+
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
     if (tauri()) return;
@@ -522,7 +537,7 @@ function Hud() {
 
   if (!state) return null;
 
-  const opening = state.phase === 'recording' && !state.sessionId;
+  const opening = isOpening(state);
   const video = state.mode === 'video';
   const editable = !!source || !!ownDraft;
   const notice = state.notice ?? null;
@@ -784,6 +799,7 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
+      data-swap={swap.current.n % 2 ? 'a' : 'b'}
       data-marking={video && live && marking.tool ? 'true' : undefined}
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
@@ -803,6 +819,11 @@ function Hud() {
       {below && <div ref={transcriptBox} className="ctl-below" onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
     </div>
   );
+}
+
+/** Recording was asked for, and the mic is not live yet. */
+function isOpening(state: HudState): boolean {
+  return state.phase === 'recording' && !state.sessionId;
 }
 
 function MicState({ heard, silent }: { heard: boolean; silent: boolean }) {
