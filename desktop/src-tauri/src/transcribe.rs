@@ -122,15 +122,57 @@ const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(180
 /// `project` picks that project's tone and words over the account's.
 pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> String {
     let Some(credential) = settings::device_credential(app) else {
-        return text.to_string();
+        return strip_fillers(text);
     };
-    match polish_with(&credential, text, project, POLISH_TIMEOUT) {
-        Ok(polished) => polished,
+    let started = std::time::Instant::now();
+    let result = polish_with(&credential, text, project, POLISH_TIMEOUT);
+    let polish_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(polished) => {
+            tracing::info!(polish_ms, "dictation polished");
+            polished
+        }
         Err(error) => {
-            eprintln!("dictation: typing the words as heard ({error})");
-            text.to_string()
+            tracing::warn!(polish_ms, "dictation: typing the words as heard, fillers dropped ({error})");
+            strip_fillers(text)
         }
     }
+}
+
+/// The model-free part of tidying, as the server does it: "um", "uh", "hmm"
+/// and the like go, with the comma after them, and spacing is tidied. Never
+/// changes a word the user meant, so it is safe on their own corrections too.
+pub fn strip_fillers(text: &str) -> String {
+    let out = drop_fillers(text);
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// [`strip_fillers`] without capitalising what is left: for the user's own
+/// corrections, whose first letter is theirs to choose.
+pub fn drop_fillers(text: &str) -> String {
+    static FILLER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(^|[\s,.;:!?])(?:u+m+|u+h+m*|e+r+m+|h+m+|m+h*m+)[,.]?([\s,.;:!?]|$)").unwrap()
+    });
+    static SPACE_BEFORE_PUNCT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\s+([,.;:!?])").unwrap());
+    static DOUBLED_PUNCT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"([,;:])([,.;:!?])").unwrap());
+    static SPACES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
+    // Neighbouring fillers share a separator, so one pass can miss the next.
+    let mut out = text.to_string();
+    loop {
+        let next = FILLER.replace_all(&out, "$1$2").into_owned();
+        if next == out { break; }
+        out = next;
+    }
+    let out = SPACE_BEFORE_PUNCT.replace_all(&out, "$1");
+    let out = DOUBLED_PUNCT.replace_all(&out, "$2");
+    let out = SPACES.replace_all(&out, " ");
+    out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
 }
 
 fn polish_with(
@@ -383,6 +425,18 @@ fn transcode_to_wav(input: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fillers_go_and_words_stay() {
+        use super::strip_fillers;
+        assert_eq!(strip_fillers("Also add, um,"), "Also add,");
+        assert_eq!(strip_fillers("um so ship it, uh, today"), "So ship it, today");
+        assert_eq!(strip_fillers("when this shit um, pastes"), "When this shit pastes");
+        assert_eq!(strip_fillers("Hmm. Umbrella and drums stay"), "Umbrella and drums stay");
+        assert_eq!(strip_fillers("um uh"), "");
+        // A correction keeps its own first letter.
+        assert_eq!(super::drop_fillers("um, iOS build, uh, fixed"), "iOS build, fixed");
+    }
+
     use super::*;
 
     #[test]

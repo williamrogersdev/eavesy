@@ -15,6 +15,7 @@ import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
+import { holdMs } from './hud-hold';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -65,10 +66,6 @@ const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
-/** How long a finished result stays open once nobody is editing it. */
-const DONE_HOLD_MS = 10_000;
-/** How long a result stays once the pointer has been over it and left. */
-const LEFT_HOLD_MS = 2500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
 
@@ -176,6 +173,11 @@ function Hud() {
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
   const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
+  // Bumped (at most once a second) while the pointer moves over the control.
+  const [pointerMoved, setPointerMoved] = useState(0);
+  const lastPointerMove = useRef(0);
+  // When the pointer came over the control, so moving it can't hold a result forever.
+  const overSince = useRef(0);
   const [learned, setLearned] = useState<{ text: string; title?: string; tone: 'leaf' | 'warn' } | null>(browserPreviewLearned);
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
@@ -296,6 +298,18 @@ function Hud() {
       if (disposed) { off?.(); offStatus?.(); } else unlisten = () => { off?.(); offStatus?.(); };
     })().catch(() => {});
     return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  // A stop hands the keyboard back to the user's app, so the paste lands
+  // there; leaving the app does too. Either way this box is no longer typed in.
+  useEffect(() => {
+    let disposed = false;
+    let off: (() => void) | undefined;
+    const release = () => { editorRef.current?.blur(); setEditing(false); };
+    window.addEventListener('blur', release);
+    void tauri()?.event?.listen('hud:release-editor', release)
+      .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    return () => { disposed = true; off?.(); window.removeEventListener('blur', release); };
   }, []);
 
   useEffect(() => {
@@ -422,14 +436,14 @@ function Hud() {
   const size = state ? sizeFor(state, look.lines) : 'pill';
 
   useEffect(() => {
-    if (!state || pointer === 'over' || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
+    if (!state || editing || saving || saveError || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
       if (tauri()) void invoke('dismiss_hud', { sessionId }).catch(() => {});
       else setState({ ...state, phase: 'idle', message: null, notice: null });
-    }, pointer === 'left' ? LEFT_HOLD_MS : state.phase === 'done' ? DONE_HOLD_MS : 3500);
+    }, holdMs(state.phase, pointer, overSince.current, Date.now()));
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, editing, saving, saveError, draft, saveRevision]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision]);
 
   // In a browser the page stands in for the window: give it the window's size.
   useEffect(() => {
@@ -774,7 +788,14 @@ function Hud() {
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
-      onMouseEnter={() => { loadShortcut(); setPointer('over'); }}
+      onMouseEnter={() => { loadShortcut(); if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); }}
+      onMouseMove={() => {
+        if (Date.now() - lastPointerMove.current < 1000) return;
+        lastPointerMove.current = Date.now();
+        if (pointer !== 'over') overSince.current = Date.now();
+        setPointer('over');
+        setPointerMoved((n) => n + 1);
+      }}
       onMouseLeave={() => setPointer((was) => was === 'over' ? 'left' : was)}
       className="launcher-scope ev eavesy-control"
     >

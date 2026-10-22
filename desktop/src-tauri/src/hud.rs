@@ -82,6 +82,7 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
     if now.phase != Phase::Recording || now.session_id.as_deref().is_some_and(|id| id != session_id) {
         return;
     }
+    release_editor(app);
     set_state(app, HudState {
         phase: Phase::Transcribing,
         session_id: Some(session_id.to_string()),
@@ -371,6 +372,13 @@ fn save_frame(app: &AppHandle) {
 pub fn hide_on_main(app: &AppHandle) { imp::hide(app); }
 
 static EDITOR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// When the editor last handed the keyboard back, so a paste right after
+/// waits for focus to arrive even if another thread did the handing back.
+static RELEASED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// How long focus takes to reach the other app once Eavesy lets go.
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+/// The longest a paste waits for focus to settle, however the stamp moves.
+const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Editing opts into app activation so AppKit routes the Edit menu shortcuts
 /// to WKWebView. Merely showing a completed dictation remains passive.
@@ -383,7 +391,64 @@ pub fn focus_editor_on_main(app: &AppHandle) {
 fn release_editor_on_main(app: &AppHandle) {
     if EDITOR_ACTIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && !crate::panel::is_visible(app) {
         crate::app_menu::return_focus();
+        mark_released();
     }
+}
+
+fn mark_released() {
+    *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+}
+
+/// A recording is stopping: if the transcript box has the keyboard, give it
+/// back to the app the user was in. Otherwise the paste, and the user's own
+/// ⌘V after "Copied", land in Eavesy's box instead of where they were typing.
+/// Safe on any thread; does not wait.
+pub fn release_editor(app: &AppHandle) {
+    // Stamped before the check, and again once focus moves, so a paste after
+    // Stop always waits out the settle. With nothing to release, a paste
+    // within FOCUS_SETTLE of Stop waits out the rest of it (150ms at most).
+    mark_released();
+    if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let _ = app.emit_to("hud", "hud:release-editor", ());
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || release_editor_on_main(&handle));
+}
+
+/// [`release_editor`], then waits for focus to reach the other app so a paste
+/// right after it lands there. Never call on the main thread.
+pub fn release_editor_and_wait(app: &AppHandle) {
+    if EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        // Stamped here too, so the settle below waits even if the main
+        // thread is too busy to hand focus back within the timeout.
+        mark_released();
+        let _ = app.emit_to("hud", "hud:release-editor", ());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            release_editor_on_main(&handle);
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+    }
+    // Stop may have handed focus back a moment ago: let it arrive. The main
+    // thread stamps again once it actually hands focus back, so re-read the
+    // stamp after each wait, up to SETTLE_LIMIT in all.
+    let deadline = std::time::Instant::now() + SETTLE_LIMIT;
+    loop {
+        let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match released.and_then(|at| settle_left(at.elapsed())).map(|wait| wait.min(left)) {
+            Some(wait) if !wait.is_zero() => std::thread::sleep(wait),
+            _ => break,
+        }
+    }
+}
+
+/// What is left of the focus settle, `elapsed` after the hand-back.
+fn settle_left(elapsed: std::time::Duration) -> Option<std::time::Duration> {
+    FOCUS_SETTLE.checked_sub(elapsed).filter(|left| !left.is_zero())
 }
 
 #[cfg(target_os = "macos")]
@@ -481,7 +546,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, refit, refit_cocoa, resting, size_for, HudFrame, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{is_active, live_size, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
@@ -509,6 +574,10 @@ mod tests {
     #[test]
     fn a_result_stays_on_screen_even_with_the_pill_put_away() {
         assert!(is_active(&Phase::Done));
+        // A paste right after Stop's hand-back waits out the rest of the settle.
+        assert_eq!(settle_left(std::time::Duration::ZERO), Some(FOCUS_SETTLE));
+        assert_eq!(settle_left(std::time::Duration::from_millis(100)), Some(std::time::Duration::from_millis(50)));
+        assert_eq!(settle_left(FOCUS_SETTLE), None);
         assert!(is_active(&Phase::Failed));
         assert!(!is_active(&Phase::Idle));
     }
