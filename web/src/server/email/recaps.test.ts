@@ -202,6 +202,43 @@ describe('sending', () => {
     expect(t.rows()).toHaveLength(0);
   });
 
+  test('re-checks the recipient at send time: a removed address or guest account gets nothing', async () => {
+    const t = setup();
+    const calls = mockResend(() => Response.json({ id: 're_1' }));
+    t.sqlite.run(`UPDATE users SET email = NULL`);
+    await sendRecap(t.db, t.env, 'm1');
+    t.sqlite.run(`UPDATE users SET email = 'owner@example.com', is_anonymous = 1`);
+    await sendRecap(t.db, t.env, 'm1');
+    expect(calls).toHaveLength(0);
+    expect(t.rows()).toHaveLength(0);
+  });
+
+  test('a complete meeting without a summary row still sends, with a placeholder TL;DR', async () => {
+    const t = setup();
+    t.sqlite.run(`DELETE FROM summaries`);
+    const calls = mockResend(() => Response.json({ id: 're_1' }));
+    await sendRecap(t.db, t.env, 'm1');
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0].body.text)).toContain('No summary was written for this meeting.');
+    expect(t.rows()[0].status).toBe('sent');
+  });
+
+  test('a provider error keeps only its code, not the response text', async () => {
+    const t = setup();
+    mockResend(() => Response.json({ name: 'validation_error', message: 'Invalid `to`: owner@example.com' }, { status: 422 }));
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (line: string) => void logged.push(line);
+    try {
+      await sendRecap(t.db, t.env, 'm1');
+    } finally {
+      console.error = original;
+    }
+    expect(logged.join('\n')).toContain('validation_error');
+    expect(logged.join('\n')).not.toContain('owner@example.com');
+    expect(t.rows()[0].status_detail).toBe('provider_rejected_422');
+  });
+
   test('a timeout is recorded as unknown and never resent; its webhook still settles it', async () => {
     const t = setup();
     let calls = mockResend(() => { throw new DOMException('timed out', 'TimeoutError'); });

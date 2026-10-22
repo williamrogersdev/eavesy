@@ -81,11 +81,13 @@ export async function sendEmail(env: ConfiguredEmailEnv, email: OutgoingEmail): 
     throw new EmailError(`Resend request failed: ${error instanceof Error ? error.message : String(error)}`, null, true);
   }
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    // Only Resend's error code: its message can echo the recipient's address.
+    const body = await response.json().catch(() => null) as { name?: unknown } | null;
+    const code = typeof body?.name === 'string' ? body.name.replace(/[^a-z_]/gi, '').slice(0, 60) : 'error';
     const status = response.status;
     // 409: another request with this key is in flight or already went out.
     // 5xx: Resend may have accepted it before failing. 429: refused before sending.
-    throw new EmailError(`Resend returned ${status}: ${detail}`, status, status === 409 || status >= 500, status === 429);
+    throw new EmailError(`Resend returned ${status}: ${code}`, status, status === 409 || status >= 500, status === 429);
   }
   const result = await response.json().catch(() => null) as { id?: unknown } | null;
   // A 2xx means it was accepted, even if the body didn't say as what.

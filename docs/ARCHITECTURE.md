@@ -206,9 +206,10 @@ is [Resend](https://resend.com/docs); it is off unless `RESEND_API_KEY`,
 `RESEND_WEBHOOK_SECRET` and `EMAIL_FROM` are set. Recipients are the account's
 own address only; sending to other participants is not built.
 
-1. Where `summarize` (or the whole-file `process-recording` path) marks a
-   meeting `complete` with a summary, `queueRecap` queues `send-recap`. Nothing
-   is sent inline.
+1. Where `summarize` marks a meeting `complete` with a summary, or the
+   whole-file `process-recording` path completes one with a non-empty
+   transcript, `queueRecap` queues `send-recap`. Nothing is sent inline. Quick
+   notes and empty recordings get no recap.
 2. The `send-recap` job inserts an `email_deliveries` row keyed by
    `idempotency_key = meeting_recap:<meetingId>:<recipient>` (unique), so a
    retried or duplicated job finds the same row. Only a `queued` row is sent.
