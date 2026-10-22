@@ -66,6 +66,12 @@ try {
   await page.locator('.ctl-tone', { hasText: 'Friendly' }).waitFor();
   await page.getByText('Pasted').waitFor();
   console.log('PASS: with the words shown after dictation, the drawer opens by itself');
+  // Collapsing it ends the result: the phase leaves done, so it can't reopen by itself.
+  await page.getByRole('button',{name:'Collapse to the pill'}).click();
+  await page.locator('[data-phase="idle"]').waitFor();
+  await page.clock.runFor(1_000);
+  assert.equal(await page.locator('[data-size="result"]').count(),0);
+  console.log('PASS: collapsing a drawer that opened by itself leaves it closed');
   await page.evaluate(() => localStorage.removeItem('qa-preview'));
   await page.reload();
   await page.getByText('Pasted').waitFor();
