@@ -688,6 +688,8 @@ export const personalDictionary = sqliteTable('personal_dictionary', {
   sourceKey: text('source_key').notNull(),
   from: text('from_text').notNull(),
   to: text('to_text').notNull(),
+  /** 'manual' (typed in Settings) or 'learned' (from an edit); NULL rows predate tracking. */
+  origin: text('origin').$type<'manual' | 'learned'>(),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 }, t => [uniqueIndex('personal_dictionary_user_source_uq').on(t.userId, t.sourceKey)]);

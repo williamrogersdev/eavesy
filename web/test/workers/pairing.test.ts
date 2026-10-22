@@ -94,8 +94,8 @@ describe('moving a Mac between accounts', () => {
 
 it('feeds learned spellings only to the owning Mac recognizer', async () => {
   const token = await pair('owner');
-  await dictionary.remember(db(), 'owner', [{ from: 'repack a fi', to: 'Repackify' }]);
-  await dictionary.remember(db(), 'other', [{ from: 'private phrase', to: 'Other account secret' }]);
+  await dictionary.remember(db(), 'owner', [{ from: 'repack a fi', to: 'Repackify' }], 'manual');
+  await dictionary.remember(db(), 'other', [{ from: 'private phrase', to: 'Other account secret' }], 'manual');
   const get = (DevicesMeRoute.options as unknown as { server: { handlers: { GET: RouteHandler } } }).server.handlers.GET;
   const response = await get({ request: new Request('https://eavesy.test/api/devices/me', { headers: { authorization: `Bearer ${token}` } }), params: {} });
   expect(response.status).toBe(200);
@@ -117,8 +117,8 @@ it('atomically admits one of two competing dictionary inserts at capacity in D1'
     INSERT INTO personal_dictionary(id,user_id,source_key,from_text,to_text,created_at,updated_at)
     SELECT 'word_'||i,'owner','source_'||i,'source_'||i,'target_'||i,1,1 FROM n`).run();
   const counts = await Promise.all([
-    dictionary.remember(db(), 'owner', [{ from: 'misheard alpha', to: 'Alpha' }]),
-    dictionary.remember(db(), 'owner', [{ from: 'misheard beta', to: 'Beta' }]),
+    dictionary.remember(db(), 'owner', [{ from: 'misheard alpha', to: 'Alpha' }], 'manual'),
+    dictionary.remember(db(), 'owner', [{ from: 'misheard beta', to: 'Beta' }], 'manual'),
   ]);
   expect(counts.reduce((a, b) => a+b, 0)).toBe(1);
   expect(await dictionary.list(db(), 'owner')).toHaveLength(500);

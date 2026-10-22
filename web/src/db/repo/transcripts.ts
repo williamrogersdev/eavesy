@@ -84,7 +84,7 @@ export async function editSegment(
     )).limit(1))[0]?.line;
   if (!original) return false;
   const patch: Partial<typeof transcriptSegments.$inferInsert> = { isEdited: true, rawText: original.rawText ?? original.text };
-  if (args.text !== undefined) await remember(db, args.userId, learnCorrections(original.text, args.text));
+  if (args.text !== undefined) await remember(db, args.userId, learnCorrections(original.text, args.text), 'learned');
   if (args.text !== undefined) patch.text = args.text;
   if (args.speakerId !== undefined) patch.speakerId = args.speakerId;
   await db

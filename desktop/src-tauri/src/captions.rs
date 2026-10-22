@@ -41,12 +41,21 @@ pub enum Paste {
     OnDevice(String),
     /// Transcribe the clip with cloud Whisper instead, for this reason.
     Whisper(String),
+    /// Paste nothing: the recognizer heard no words in a silent clip, and
+    /// Whisper only invents some for silence ("Thank you."). Says why.
+    Silent(String),
 }
 
 /// How close to the end of the clip the on-device words must reach for the
 /// quick paste: a recognizer running behind has only the start of what was
 /// said, sometimes a single "yeah", and pasting that loses the rest.
 pub const QUICK_PASTE_SLACK_MS: i64 = 3_000;
+
+/// A mic level at or above this is sound: the capture engine's own bar for an
+/// active 30 ms frame (about -48 dBFS), below quiet speech at arm's length.
+pub const ACTIVE_RMS: f64 = 0.004;
+/// Fewer readings than this say too little about a clip to call it silent.
+const MIN_LEVEL_READINGS: i64 = 5;
 
 /// The captions of one recording, and how they ended.
 #[derive(Debug, Default)]
@@ -59,6 +68,10 @@ pub struct CaptionLog {
     dropped_live: i64,
     /// How captions ended, merged over every track that reported.
     done: Option<CaptionsDone>,
+    /// Mic level readings: how many, how many were sound, and the loudest.
+    levels: i64,
+    loud_levels: i64,
+    loudest: f64,
 }
 
 pub(crate) fn same_phrase(a: &Caption, b: &Caption) -> bool {
@@ -122,6 +135,31 @@ impl CaptionLog {
         self.dropped_live += count.max(1);
     }
 
+    /// One `level` reading from the capture engine.
+    pub fn note_level(&mut self, rms: f64) {
+        if !rms.is_finite() { return; }
+        self.levels += 1;
+        if rms >= ACTIVE_RMS { self.loud_levels += 1; }
+        self.loudest = self.loudest.max(rms);
+    }
+
+    /// Whether the clip was measured and had next to no sound in it.
+    fn silent(&self) -> bool {
+        // Not one loud reading: anything louder goes to Whisper, which filters
+        // invented phrases itself, rather than risk dropping quiet words.
+        self.levels >= MIN_LEVEL_READINGS && self.loud_levels == 0
+    }
+
+    /// Whether the recognizer ran to a clean finish over the whole clip and
+    /// heard no words in it. One that could not run or lost audio heard nothing
+    /// only because it was not listening.
+    pub fn heard_no_words(&self) -> bool {
+        self.unavailable.is_none()
+            && self.dropped_live == 0
+            && self.done.is_some_and(|done| !done.failed && !done.timed_out && done.dropped == 0)
+            && self.spoken_text().is_empty()
+    }
+
     /// Whether a track has reported how its captions ended.
     pub fn is_done(&self) -> bool {
         self.done.is_some()
@@ -131,7 +169,8 @@ impl CaptionLog {
     /// recognizer to finish cleanly: every final plus what it was still
     /// hearing, as long as those words reach close to the end of the
     /// `clip_ms`-long clip. A recognizer that could not run, failed, lost
-    /// audio, heard nothing or is still behind sends the clip to Whisper.
+    /// audio, heard no words in a clip with sound in it, or is still behind
+    /// sends the clip to Whisper; a silent clip with no words pastes nothing.
     /// So does a note that ends in more than `QUICK_PASTE_SLACK_MS` of
     /// silence: it pastes a moment later, whole, rather than risk a gap.
     pub fn quick_paste(&self, clip_ms: i64) -> Paste {
@@ -185,7 +224,12 @@ impl CaptionLog {
             return Paste::Whisper("on-device words are missing the beginning of the clip".to_string());
         }
         let text = self.spoken_text();
-        if text.is_empty() {
+        if text.is_empty() && self.heard_no_words() && self.silent() {
+            Paste::Silent(format!(
+                "no words and a silent clip: loudest level {:.4}, {} of {} readings above {ACTIVE_RMS}",
+                self.loudest, self.loud_levels, self.levels
+            ))
+        } else if text.is_empty() {
             Paste::Whisper("no words recognized on device".to_string())
         } else {
             Paste::OnDevice(text)
@@ -612,7 +656,51 @@ mod tests {
         let mut unavailable = heard();
         unavailable.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: Some("locale unsupported".into()) });
         assert_eq!(finished(&mut unavailable, CLEAN), Paste::Whisper("captions unavailable: locale unsupported".into()));
-        assert!(whisper(finished(&mut CaptionLog::default(), CLEAN)), "silence");
+        // No words, but no level readings to show the clip was silent either.
+        assert!(whisper(finished(&mut CaptionLog::default(), CLEAN)), "unmeasured");
+    }
+
+    fn with_levels(levels: &[f64]) -> CaptionLog {
+        let mut log = CaptionLog::default();
+        levels.iter().for_each(|rms| log.note_level(*rms));
+        log
+    }
+
+    #[test]
+    fn a_silent_clip_with_no_words_pastes_nothing() {
+        // 3 s of room tone; a bad reading says nothing either way.
+        let mut levels = vec![0.001; 30];
+        levels[10] = f64::NAN;
+        let mut log = with_levels(&levels);
+        assert!(matches!(log.quick_paste(3_000), Paste::Whisper(_)), "not finished yet");
+        log.finish(CLEAN);
+        assert!(log.heard_no_words());
+        assert!(matches!(log.quick_paste(3_000), Paste::Silent(_)));
+        assert!(matches!(log.paste(), Paste::Silent(_)));
+    }
+
+    #[test]
+    fn sound_or_a_recognizer_that_did_not_listen_still_goes_to_whisper() {
+        let whisper = |paste: Paste| matches!(paste, Paste::Whisper(_));
+        // Any sound and no words: maybe a soft word it missed.
+        let mut levels = vec![0.001; 30];
+        levels[10] = 0.02;
+        assert!(whisper(finished(&mut with_levels(&levels), CLEAN)));
+        let silence = || with_levels(&[0.0005; 30]);
+        assert!(whisper(finished(&mut silence(), CaptionsDone { failed: true, ..CLEAN })));
+        assert!(whisper(finished(&mut silence(), CaptionsDone { timed_out: true, ..CLEAN })));
+        assert!(whisper(finished(&mut silence(), CaptionsDone { dropped: 2, ..CLEAN })));
+        let mut unavailable = silence();
+        unavailable.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: None });
+        assert!(whisper(finished(&mut unavailable, CLEAN)));
+        assert!(!unavailable.heard_no_words());
+        // Too few readings to know.
+        assert!(whisper(finished(&mut with_levels(&[0.0005; 4]), CLEAN)));
+        // Words heard in a quiet clip are still pasted.
+        let mut whispered = silence();
+        whispered.record(&caption("Okay.", true, 0));
+        assert_eq!(finished(&mut whispered, CLEAN), Paste::OnDevice("Okay.".into()));
+        assert!(!whispered.heard_no_words());
     }
 
     #[test]

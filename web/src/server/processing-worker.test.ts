@@ -537,6 +537,16 @@ describe('mic-only notes', () => {
     expect(t.lines().map((l) => l.text)).toEqual(['Thank you.']);
   });
 
+  test('stock phrases on a near-silent mic-only segment are dropped', async () => {
+    for (const text of ['Thank you. Thank you', 'Thank you. Here we go']) {
+      const t = setup({ transcribe: () => ({ text: '', segments: [{ start: 0, end: 1, text, no_speech_prob: 0.1 }] }) });
+      t.addSegment(0, 'pending', 'mic', 90);
+      await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+      expect(t.lines()).toEqual([]);
+      expect(t.segmentStatus(0, 'mic')).toBe('complete');
+    }
+  });
+
   test('speech the VAD cut away gets one more pass without it', async () => {
     const passes: boolean[] = [];
     const t = setup({

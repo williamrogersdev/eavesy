@@ -868,9 +868,11 @@ fn stream_events(
                         continue;
                     };
                     if ev.event == "level" {
+                        let rms = ev.rms.unwrap_or(0.0);
+                        captions.lock().unwrap_or_else(|e| e.into_inner()).note_level(rms);
                         let _ = app.emit(
                             "recording:level",
-                            serde_json::json!({"sessionId":session_id,"rms":ev.rms.unwrap_or(0.0)}),
+                            serde_json::json!({"sessionId":session_id,"rms":rms}),
                         );
                         continue;
                     }
@@ -1424,10 +1426,25 @@ fn paste_dictation_now(
             crate::dictation::deliver_dictation(app, session_id, &text);
             true
         }
+        Paste::Silent(reason) => {
+            paste_nothing(app, session_id, &reason);
+            true
+        }
         Paste::Whisper(reason) => {
             eprintln!("dictation: no quick paste ({reason}); waiting for the saved clip");
             false
         }
+    }
+}
+
+/// A dictation of silence: paste nothing, and say so instead of "Writing it
+/// down…". The clip is still saved; its cloud transcript must not paste later.
+fn paste_nothing(app: &AppHandle, session_id: &str, reason: &str) {
+    eprintln!("dictation: nothing to paste ({reason})");
+    crate::dictation::disarm(session_id);
+    let current = crate::hud::current();
+    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(session_id) {
+        show_stop_failed(app, session_id, "Didn't hear anything, so nothing was pasted.");
     }
 }
 
@@ -1441,12 +1458,16 @@ fn paste_dictation(
     audio: PathBuf,
     captions: &Mutex<CaptionLog>,
 ) {
-    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
+    let (decision, heard_on_device) = {
+        let log = captions.lock().unwrap_or_else(|e| e.into_inner());
+        (log.paste(), !log.heard_no_words())
+    };
     match decision {
         Paste::OnDevice(text) => crate::dictation::deliver_dictation(app, session_id, &text),
+        Paste::Silent(reason) => paste_nothing(app, session_id, &reason),
         Paste::Whisper(reason) => {
             eprintln!("dictation: using Whisper for the paste ({reason})");
-            crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio);
+            crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio, heard_on_device);
         }
     }
 }

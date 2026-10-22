@@ -88,11 +88,13 @@ export const Route = createFileRoute('/api/transcribe')({
 
         const url = new URL(request.url);
         const prefs = await transcriptionPrefs(getDb(), actor.userId);
-        const entries = await dictionary.list(getDb(), actor.userId);
+        const entries = await dictionary.listForTranscription(getDb(), actor.userId);
         const requested = url.searchParams.get('language')?.trim().toLowerCase();
         const language = requested && isTranscriptionLanguage(requested) ? requested : prefs.language;
         // `voice=1` marks the user's own mic alone, such as a dictation.
         const voiceNote = url.searchParams.get('voice') === '1';
+        // `heard_on_device=0`: the Mac's recognizer heard no words in the clip.
+        const heardOnDevice = url.searchParams.get('heard_on_device') !== '0';
 
         try {
           const result = await transcribeAudioFile({
@@ -101,6 +103,7 @@ export const Route = createFileRoute('/api/transcribe')({
             vocabulary: [...entries.map(e => e.to), ...prefs.vocabulary],
             spoken: prefs.spoken,
             voiceNote,
+            heardOnDevice,
           });
           const repaired = await repairTranscript(result.text, { dictionary: entries, clean: voiceNote, ai: repairAi(getCloudflareContext<CreditEnv>().env) });
           return Response.json({

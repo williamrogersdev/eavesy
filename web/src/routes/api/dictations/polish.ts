@@ -45,7 +45,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
 
         const [user, entries, projectRow] = await Promise.all([
           actor.isAnonymous ? null : usersRepo.getById(getDb(), actor.userId),
-          dictionary.list(getDb(), actor.userId),
+          dictionary.listForTranscription(getDb(), actor.userId),
           !actor.isAnonymous && parsed.data.projectId
             ? projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
             : null,

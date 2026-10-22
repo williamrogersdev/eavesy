@@ -93,6 +93,12 @@ fn take_pending(session_id: &str) -> Option<Target> {
     }
 }
 
+/// This recording will paste nothing: drops its paste target so a transcript
+/// that arrives later does not paste either.
+pub fn disarm(session_id: &str) {
+    take_pending(session_id);
+}
+
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
     deliver_then(app, session_id, text, false);
 }

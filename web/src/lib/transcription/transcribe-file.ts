@@ -24,7 +24,9 @@ export interface FileTranscriptionRunner {
  * Transcribes a whole file and drops the lines Whisper invents on silence.
  * `voiceNote` is for the user's own mic alone (a dictation, a voice note): a
  * short "thank you" there can be real, and if Whisper's VAD cuts quiet speech
- * down to nothing the clip gets one more pass without it.
+ * down to nothing the clip gets one more pass without it. `heardOnDevice: false`
+ * says the Mac's own recognizer heard no words in it: then nobody is given the
+ * benefit of the doubt, and stock phrases need Whisper to be sure of them.
  */
 export async function transcribeAudioFile(opts: {
   audio: Buffer | Uint8Array;
@@ -34,6 +36,7 @@ export async function transcribeAudioFile(opts: {
   /** The languages the user speaks, which an unsure detection is steered toward. */
   spoken?: readonly string[];
   voiceNote?: boolean;
+  heardOnDevice?: boolean;
   ai?: FileTranscriptionRunner;
 }): Promise<FileTranscriptionResult> {
   const ai = opts.ai ?? aiFromRequestContext();
@@ -72,14 +75,18 @@ export async function transcribeAudioFile(opts: {
     if (again.segments.length > 0) first = again;
     else language = fixed;
   }
-  const heard = keepHeard(first, { lenient: opts.voiceNote, glossary: opts.vocabulary });
+  // The Mac sends a clip it heard no words in only when it had sound, so it is
+  // suspect, not measured quiet: stock phrases are judged on Whisper's score.
+  const suspect = opts.heardOnDevice === false;
+  const lenient = opts.voiceNote && !suspect;
+  const heard = keepHeard(first, { lenient, suspect, glossary: opts.vocabulary });
   if (heard.segments.length > 0 || !opts.voiceNote) return heard;
-  return keepHeard(await run(false), { lenient: false, glossary: opts.vocabulary });
+  return keepHeard(await run(false), { lenient: false, suspect, glossary: opts.vocabulary });
 }
 
 function keepHeard(
   result: FileTranscriptionResult,
-  opts: { lenient?: boolean; glossary?: readonly string[] },
+  opts: { lenient?: boolean; suspect?: boolean; glossary?: readonly string[] },
 ): FileTranscriptionResult {
   const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };

@@ -12,6 +12,39 @@ export function validCorrection(from: string, to: string): boolean {
     && JSON.stringify(protectedWords(from)) === JSON.stringify(protectedWords(to));
 }
 
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Automatic learning keeps only fixes that look like a mis-heard name or term.
+ * Capitalisation tweaks, lowercase words, grammar edits (keep -> kept) and
+ * rewrites (Is -> Seems) are prose editing, not vocabulary.
+ */
+export function isLearnableSpelling(from: string, to: string): boolean {
+  if (normalizeTerm(from) === normalizeTerm(to)) return false;
+  if (!/[\p{Lu}\p{N}.+#@&]/u.test(to)) return false;
+  const a = normalizeTerm(from).replace(/\s+/g, ''), b = normalizeTerm(to).replace(/\s+/g, '');
+  const upper = (text: string) => /^\p{Lu}/u.test(text.trim());
+  const sameShape = upper(from) === upper(to) && !/\p{Lu}/u.test(to.trim().slice(1));
+  if (sameShape) {
+    // Same stem, different ending. Four-letter words share less (keep -> kept).
+    const shortest = Math.min(a.length, b.length);
+    let shared = 0;
+    while (shared < shortest && a[shared] === b[shared]) shared++;
+    if (shared >= Math.max(shortest <= 3 ? 3 : 2, shortest - 2)) return false;
+  }
+  // Too different in length to be within the limit: skip the distance.
+  if (Math.abs(a.length - b.length) / Math.max(a.length, b.length) > 0.6) return false;
+  return editDistance(a, b) / Math.max(a.length, b.length) <= 0.6;
+}
+
 /** Word-level LCS separates independent edits and avoids learning sentence rewrites. */
 export function learnCorrections(original: string, corrected: string): LearnedCorrection[] {
   if (original === corrected || original.length > 12_000 || corrected.length > 12_000) return [];
@@ -35,7 +68,7 @@ export function learnCorrections(original: string, corrected: string): LearnedCo
     if (i === ai || j === bj) continue; // additions and deletions are not vocabulary.
     const from = original.slice(a[ai].start, a[i - 1].end);
     const to = corrected.slice(b[bj].start, b[j - 1].end);
-    if (validCorrection(from, to)) result.push({ from, to });
+    if (validCorrection(from, to) && isLearnableSpelling(from, to)) result.push({ from, to });
   }
   // The last edit wins for a repeated source, matching later human corrections.
   return [...new Map(result.map(r => [normalizeTerm(r.from), r])).values()].slice(0, 20);

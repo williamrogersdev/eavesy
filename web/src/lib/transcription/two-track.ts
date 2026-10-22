@@ -23,15 +23,28 @@ export function isSilentTrack(
   opts: { micOnly?: boolean } = {},
 ): boolean {
   if (opts.micOnly) return false;
-  return track !== 'mixed' && activeMs !== null && activeMs < SILENT_TRACK_ACTIVE_MS;
+  return track !== 'mixed' && isQuietAudio(activeMs);
 }
 
+/** Whether audio was measured to have next to no sound in it (null: not measured). */
+export function isQuietAudio(activeMs: number | null): boolean {
+  return activeMs !== null && activeMs < SILENT_TRACK_ACTIVE_MS;
+}
+
+// What Whisper says to silence: video sign-offs, mostly.
 const STOCK_PHRASES = [
   'thank you',
   'thank you very much',
+  'thank you so much',
   'thanks for watching',
   'thank you for watching',
   'thanks for listening',
+  'thank you for listening',
+  'hope you enjoyed it',
+  'i hope you enjoyed it',
+  'hope you enjoyed the video',
+  'i hope you enjoyed the video',
+  'see you in the next video',
   'please subscribe',
   'like and subscribe',
   'subtitles by',
@@ -40,9 +53,14 @@ const STOCK_PHRASES = [
   'you',
 ];
 
+// Things people really say, but also what Whisper invents for silence: counted
+// as stock only on audio already suspected of being silent.
+const SUSPECT_PHRASES = ['here we go', "let's go", 'bye bye', 'see you next time'];
+
 function normalize(text: string): string {
   return text
     .toLowerCase()
+    .replace(/[‘’]/g, "'")
     .replace(/[^\p{L}\p{N}\s']/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -54,27 +72,54 @@ export interface WhisperLine {
   compressionRatio?: number;
 }
 
+function isStockPhrase(sentence: string, suspect: boolean): boolean {
+  const normalized = normalize(sentence);
+  return STOCK_PHRASES.some(
+    (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
+  ) || (suspect && SUSPECT_PHRASES.includes(normalized));
+}
+
+/**
+ * Whether a line is nothing but stock phrases. On audio suspected of being
+ * silent, a few of them in a row count too ("Thank you. Thank you.", "Thank
+ * you. Here we go."): each sentence is checked on its own.
+ */
+function isStockLine(text: string, suspect: boolean): boolean {
+  if (isStockPhrase(text, suspect)) return true;
+  if (!suspect) return false;
+  const sentences = text.split(/[.!?…,;]+/).filter((sentence) => normalize(sentence));
+  return sentences.length > 0 && sentences.every((sentence) => isStockPhrase(sentence, true));
+}
+
 /**
  * Whether a Whisper line is invented rather than heard. `lenient` is for
  * mic-only recordings, where a short note can really be just "thank you" or
  * "bye": a stock phrase is then dropped only when Whisper itself doubted there
- * was speech, not merely because it gave no score.
+ * was speech, not merely because it gave no score. `quiet` is for audio that
+ * was measured to have next to no sound in it: a stock phrase there is always
+ * invented, whatever the score, and it overrides `lenient`. `suspect` (implied
+ * by `quiet`) widens what counts as stock, for a dictation the Mac heard no
+ * words in.
  */
 export function isHallucination(
   line: WhisperLine,
-  opts: { lenient?: boolean; glossary?: readonly string[] } = {},
+  opts: { lenient?: boolean; quiet?: boolean; suspect?: boolean; glossary?: readonly string[] } = {},
 ): boolean {
   const text = line.text.trim();
   if (!text) return true;
-  if (opts.glossary && readsBackGlossary(line, opts.glossary, opts.lenient ? 3 : 2)) return true;
+  if (opts.glossary && readsBackGlossary(line, opts.glossary, opts.lenient && !opts.quiet ? 3 : 2)) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
-  const normalized = normalize(text);
-  const stock = STOCK_PHRASES.some(
-    (phrase) => normalized === phrase || (phrase.endsWith(' by') && normalized.startsWith(phrase)),
-  );
-  if (!stock) return false;
+  if (!isStockLine(text, !!(opts.quiet || opts.suspect))) return false;
+  if (opts.quiet) return true;
+  // Nothing but phrases people really say ("Let's go."): only Whisper's own
+  // doubt drops them. Mixed with a sign-off ("Thank you. Here we go.") it is
+  // judged like any stock line.
+  const sentences = text.split(/[.!?…,;]+/).map(normalize).filter(Boolean);
+  if (sentences.every((sentence) => SUSPECT_PHRASES.includes(sentence))) {
+    return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
+  }
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }
