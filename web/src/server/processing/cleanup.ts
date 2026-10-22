@@ -15,6 +15,7 @@ import { DROP_TTL_MS } from '@/db/repo/drops';
 import { type Db, type ProcessingEnv } from './shared';
 import { deleteEmbeddings, deletePrefix } from './embed';
 import { purgeAccountBots } from '@/server/meeting-bots/service';
+import { purgeAccountEmails } from '@/server/email/recaps';
 
 export async function handleCleanup(meetingId: string, db: Db, env: ProcessingEnv) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
@@ -75,6 +76,7 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
   }
   await env.DB.prepare('DELETE FROM device_pairing_codes WHERE claimed_by_user_id = ?').bind(userId).run();
+  await purgeAccountEmails(db, userId);
   await db.delete(users).where(eq(users.id, userId));
 }
 

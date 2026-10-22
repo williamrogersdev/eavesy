@@ -20,6 +20,7 @@ import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { openUserKeys } from '@/server/secret-box';
+import { queueRecap } from '@/server/email/recaps';
 import {
   type Db,
   type ProcessingEnv,
@@ -233,6 +234,7 @@ export async function handleSummarize(
     await logMeetingComplete(db, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
+    await queueRecap(env, userRow, meetingId);
   } else {
     await db
       .update(meetings)

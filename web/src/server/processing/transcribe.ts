@@ -32,6 +32,7 @@ import {
   runBatched,
 } from './shared';
 import { logMeetingComplete } from './summarize';
+import { queueRecap } from '@/server/email/recaps';
 
 /** Rolling notes refresh each time the transcribed audio crosses another interval. */
 export const ROLLING_NOTES_EVERY_MS = 4 * 60 * 1_000;
@@ -171,6 +172,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     if (fullText.trim()) await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   }
+  if (fullText.trim()) await queueRecap(env, userRow, meetingId);
 }
 
 export async function handleTranscribeSegment(
