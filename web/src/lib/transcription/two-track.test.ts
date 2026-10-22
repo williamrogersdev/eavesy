@@ -42,6 +42,8 @@ describe('speaker attribution', () => {
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'you' }])).toBe(false);
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'them' }])).toBe(true);
     expect(hasBothSides([{ speakerId: null }])).toBe(false);
+    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: 'speaker_0' }])).toBe(false);
+    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: null }, { speakerId: 'speaker_2' }])).toBe(true);
   });
 
   test('renames win over defaults', () => {

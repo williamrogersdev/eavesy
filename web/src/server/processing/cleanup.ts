@@ -14,6 +14,7 @@ import {
 import { DROP_TTL_MS } from '@/db/repo/drops';
 import { type Db, type ProcessingEnv } from './shared';
 import { deleteEmbeddings, deletePrefix } from './embed';
+import { purgeAccountBots } from '@/server/meeting-bots/service';
 
 export async function handleCleanup(meetingId: string, db: Db, env: ProcessingEnv) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
@@ -43,6 +44,8 @@ export async function handleCleanup(meetingId: string, db: Db, env: ProcessingEn
 }
 
 export async function handlePurgeAccount(userId: string, db: Db, env: ProcessingEnv) {
+  // First, so no bot joins another call for an account that is going away.
+  await purgeAccountBots(db, env, userId);
   const owned = await db.select({ id: meetings.id }).from(meetings).where(eq(meetings.userId, userId));
   for (const meeting of owned) await handleCleanup(meeting.id, db, env);
 

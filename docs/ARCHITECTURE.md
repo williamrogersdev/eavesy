@@ -169,6 +169,33 @@ How it fits together:
 Dictation stops after step 1 and pastes the on-device text, using Whisper only
 when there is none.
 
+## Notetaker bots (pilot)
+
+For calls the Mac can't record, **Notetaker** (`/app/notetaker`) sends a bot
+from a managed provider, [Recall.ai](https://docs.recall.ai), into the call.
+It is off unless `RECALL_API_KEY` and `RECALL_WEBHOOK_SECRET` are set.
+
+1. `POST /api/meeting-bots` writes a `meeting_bots` row first, then creates the
+   bot with our row id in its metadata. A create that times out stays
+   `scheduling`; the bot's first webhook carries the id and adopts the row.
+   Only mixed MP3 audio and Recall's diarized transcript are requested, no video.
+2. `POST /api/webhooks/recall` verifies the Svix signature (`webhook-*` or
+   `svix-*` headers, 5-minute replay window), skips deliveries already in
+   `provider_webhook_events`, and moves the bot forward only (status order in
+   `BOT_STATUS_ORDER`). `in_call_recording` creates the meeting
+   (`source = 'bot'`, status `recording`); `done` or `fatal` queues
+   `collect-bot-recording`.
+3. The collect job asks Recall for the recording. It re-queues itself every
+   minute (up to an hour) while the transcript or audio is still processing.
+   It then writes one line per turn with `speaker_N` ids and the participants'
+   names in `speaker_names_json`, stores the MP3 in R2, queues `summarize`, and
+   asks Recall to delete its copy. If Recall's transcript failed, audio up to
+   20 MiB goes through Whisper (`process-recording`) instead.
+4. The hourly cron calls `reconcileBots`: bots quiet for 30 minutes past their
+   start are checked against Recall in case a webhook was lost; unconfirmed
+   creates fail after 3 hours, and bots still unfinished 24 hours after their
+   start fail. Account deletion cancels active bots before the rows go.
+
 ## Authentication
 
 Browser requests use Clerk. Desktop long-form requests use a random device
