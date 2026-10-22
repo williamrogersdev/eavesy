@@ -23,13 +23,13 @@ const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 pub fn note_shortcut_press() {
-    let target = focused_text_target();
+    let target = front_app();
     *PRESSED.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (Instant::now(), t));
 }
 
 pub fn arm(session_id: &str) {
     let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let target = pick_target(pressed, focused_text_target);
+    let target = pick_target(pressed, front_app);
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = target.map(|t| (session_id.to_string(), Instant::now(), t));
 }
 
@@ -38,7 +38,7 @@ pub fn arm(session_id: &str) {
 /// keeps the box it started in. Either way the paste window runs from now.
 pub fn rearm_at_stop(session_id: &str) {
     let pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let now = pick_target(pressed, focused_text_target);
+    let now = pick_target(pressed, front_app);
     let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
     let started_in = pending
         .as_ref()
@@ -142,7 +142,8 @@ pub enum Delivery {
     InEavesy,
     /// On the clipboard: Eavesy may not paste (no Accessibility permission).
     CopiedNoAccessibility,
-    /// On the clipboard: the cursor is not in a text box any more.
+    /// On the clipboard: no app to paste into was noted at the start, or
+    /// another app is in front now.
     CopiedNoTextBox,
 }
 
@@ -176,14 +177,16 @@ impl Delivery {
 fn delivery(trusted: bool, target: Option<Target>, focused: Option<Target>) -> Delivery {
     match (trusted, target) {
         (false, _) => Delivery::CopiedNoAccessibility,
+        // The same app is still in front: paste. Whether its focused element
+        // calls itself a text box isn't asked (see `front_app`).
         (true, Some(target)) if focused == Some(target) => Delivery::Pasted,
         _ => Delivery::CopiedNoTextBox,
     }
 }
 
 /// Delivers a dictation the moment it has text, tidied first: pasted at the
-/// cursor when it is still in the text box it was in, otherwise put on the
-/// clipboard. Never
+/// cursor when the app it was dictated in is still in front, otherwise put
+/// on the clipboard. Never
 /// opens the launcher, and the HUD says which happened. Called once per
 /// dictation: it takes the paste target, so the cloud transcript that follows
 /// does not paste a second time.
@@ -211,10 +214,11 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Some(corrected) => crate::transcribe::drop_fillers(&corrected),
             None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
         };
+        let front = target.and_then(|_| front_app());
         let mut how = if panel_wants_it(&app) {
             Delivery::InEavesy
         } else {
-            delivery(accessibility_trusted(), target, target.and_then(|_| focused_text_target()))
+            delivery(accessibility_trusted(), target, front)
         };
         match how {
             // The box acknowledges delivery; otherwise the clipboard remains available.
@@ -242,7 +246,10 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
         }
         let delivery_ms = started.elapsed().as_millis() as u64;
-        tracing::info!(session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(), "dictation delivered");
+        tracing::info!(
+            session_id = %session_id, delivery = how.label(), delivery_ms, corrected = source_text.is_some(),
+            target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), "dictation delivered"
+        );
         crate::telemetry::track(how.event(), serde_json::json!({ "delivery": how.label(), "delivery_ms": delivery_ms }));
         // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
@@ -359,7 +366,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     std::thread::spawn(move || {
         crate::hud::release_editor_and_wait(&app);
         get_launcher_out_of_the_way(&app);
-        if focused_text_target() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
+        if front_app() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
             return;
         }
         use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -368,7 +375,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
                 .notification()
                 .builder()
                 .title("Transcript copied")
-                .body("The text box you were in lost focus. Press ⌘V to paste it.")
+                .body("You switched apps before it was ready. Press ⌘V to paste it.")
                 .show();
         }
         if launcher_on_fallback {
@@ -426,8 +433,15 @@ pub fn press_paste() -> Result<(), String> {
     Err("pasting is only supported on macOS".to_string())
 }
 
+/// The app the user is dictating into: the frontmost one, never Eavesy.
+///
+/// It doesn't ask whether the focused element is a text box. Chat apps built
+/// on web views (Claude, ChatGPT, Slack, Chrome) often report their message
+/// box as a web area or a group, so requiring a text role made most
+/// dictations fall back to the clipboard. A ⌘V where there is no text box
+/// does nothing, and the words stay in the HUD to copy.
 #[cfg(target_os = "macos")]
-fn focused_text_target() -> Option<Target> {
+fn front_app() -> Option<Target> {
     use ax::*;
     unsafe {
         if !AXIsProcessTrusted() {
@@ -437,67 +451,36 @@ fn focused_text_target() -> Option<Target> {
         AXUIElementSetMessagingTimeout(system.0, 0.25);
         let app = Owned(copy_attribute(system.0, "AXFocusedApplication")?);
         let mut pid = 0;
-        if AXUIElementGetPid(app.0, &mut pid) != 0 || pid == std::process::id() as i32 {
+        if AXUIElementGetPid(app.0, &mut pid) != 0 || pid <= 0 || pid == std::process::id() as i32 {
             return None;
         }
-        let text_focused = || copy_attribute(app.0, "AXFocusedUIElement").map(Owned).is_some_and(|el| is_text_input(el.0));
-        if text_focused() {
-            return Some(Target { pid });
-        }
-        if enable_manual_accessibility(app.0) {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            if text_focused() {
-                return Some(Target { pid });
-            }
-        }
-        None
+        Some(Target { pid })
     }
 }
 
-#[cfg(target_os = "macos")]
-unsafe fn is_text_input(element: ax::CFTypeRef) -> bool {
-    use ax::*;
-    let role = copy_attribute(element, "AXRole").map(Owned).and_then(|r| cf_string(r.0));
-    matches!(role.as_deref(), Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField"))
-        || value_settable(element)
-}
-
 #[cfg(not(target_os = "macos"))]
-fn focused_text_target() -> Option<Target> {
+fn front_app() -> Option<Target> {
     None
 }
 
 #[cfg(target_os = "macos")]
 mod ax {
-    pub use crate::cf::{cf_string, CFTypeRef, Owned};
-    use crate::cf::{cf_str, kCFBooleanTrue};
+    pub use crate::cf::{CFTypeRef, Owned};
+    use crate::cf::cf_str;
 
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         pub fn AXIsProcessTrusted() -> bool;
         pub fn AXUIElementCreateSystemWide() -> CFTypeRef;
         fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
-        fn AXUIElementIsAttributeSettable(element: CFTypeRef, attribute: CFTypeRef, settable: *mut u8) -> i32;
         pub fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> i32;
         pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
-        fn AXUIElementSetAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: CFTypeRef) -> i32;
     }
 
     pub unsafe fn copy_attribute(element: CFTypeRef, name: &str) -> Option<CFTypeRef> {
         let attr = cf_str(name);
         let mut value: CFTypeRef = std::ptr::null();
         (AXUIElementCopyAttributeValue(element, attr.0, &mut value) == 0 && !value.is_null()).then_some(value)
-    }
-
-    pub unsafe fn enable_manual_accessibility(app: CFTypeRef) -> bool {
-        let attr = cf_str("AXManualAccessibility");
-        AXUIElementSetAttributeValue(app, attr.0, kCFBooleanTrue) == 0
-    }
-
-    pub unsafe fn value_settable(element: CFTypeRef) -> bool {
-        let attr = cf_str("AXValue");
-        let mut settable = 0u8;
-        AXUIElementIsAttributeSettable(element, attr.0, &mut settable) == 0 && settable != 0
     }
 }
 
@@ -518,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dictation_pastes_only_into_the_box_it_was_in_and_otherwise_copies() {
+    fn a_dictation_pastes_into_the_app_it_was_in_and_otherwise_copies() {
         let box_a = Some(Target { pid: 7 });
         assert_eq!(delivery(true, box_a, box_a), Delivery::Pasted);
         assert_eq!(delivery(true, box_a, Some(Target { pid: 8 })), Delivery::CopiedNoTextBox);
