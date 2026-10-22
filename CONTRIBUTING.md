@@ -83,6 +83,8 @@ bun run test:workers             # Miniflare-based worker tests, no credentials
 bun bench/score.ts --check       # two-track transcription bench
 (cd ../workers/processing && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/p)
 (cd ../workers/mcp && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/m)
+(cd ../workers/meeting-bot && bun run typecheck && bun run test:bot && bun run lint:bot)
+docker build --platform linux/amd64 ../workers/meeting-bot   # the bot's image
 
 # desktop
 cd desktop/src-tauri && cargo test --locked

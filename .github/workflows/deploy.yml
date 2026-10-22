@@ -65,6 +65,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd workers/meeting-bot && bun install --frozen-lockfile)
 
       - name: Render Wrangler configs
         run: node scripts/render-wrangler.mjs
@@ -93,6 +94,15 @@ jobs:
           (cd web && bun run typecheck)
           (cd workers/processing && bun run typecheck)
           (cd workers/mcp && bun run typecheck)
+          (cd workers/meeting-bot && bun run typecheck)
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Meeting bot tests
+        working-directory: workers/meeting-bot
+        run: |
+          bun run test:bot
+          bun run lint:bot
       - name: Lint
         working-directory: web
         run: bun run lint
@@ -111,6 +121,19 @@ jobs:
 
       - name: Apply D1 migrations
         run: bun run db:apply:remote
+
+      # First: the web and processing Workers will bind to it, and a binding
+      # to a Worker that doesn't exist fails their deploy. Wrangler builds the
+      # bot's image with Docker and pushes it to the account's registry.
+      - name: Deploy meeting bot Worker
+        id: meeting_bot
+        # Until the web app depends on it, a failure here (e.g. Containers not
+        # enabled on the account) must not hold back the rest of the release.
+        continue-on-error: true
+        run: bun run deploy:meeting-bot
+      - name: Report meeting bot deploy failure
+        if: steps.meeting_bot.outcome == 'failure'
+        run: echo "::warning::The meeting bot Worker did not deploy; see the step above"
 
       - name: Deploy processing Worker
         run: bun run deploy:processing

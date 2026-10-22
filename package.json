@@ -11,6 +11,7 @@
     "cf:restore": "node scripts/render-wrangler.mjs --restore",
     "deploy:processing": "cd workers/processing && ../../scripts/cf sh -c 'bunx wrangler deploy ${RELEASE:+--var RELEASE:$RELEASE} ${POSTHOG_KEY:+--var POSTHOG_KEY:$POSTHOG_KEY}'",
     "deploy:mcp": "cd workers/mcp && ../../scripts/cf sh -c 'bunx wrangler deploy ${RELEASE:+--var RELEASE:$RELEASE} ${POSTHOG_KEY:+--var POSTHOG_KEY:$POSTHOG_KEY}'",
+    "deploy:meeting-bot": "cd workers/meeting-bot && ../../scripts/cf bunx wrangler deploy",
     "lint": "cd web && bun run lint",
     "typecheck": "cd web && bun run typecheck",
     "test": "cd web && bun run test",

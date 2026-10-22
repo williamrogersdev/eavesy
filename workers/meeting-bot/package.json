@@ -1,0 +1,22 @@
+{
+  "name": "eavesy-meeting-bot",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "../../scripts/cf wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test:bot": "cd bot && cargo test --locked",
+    "lint:bot": "cd bot && cargo clippy --locked --all-targets -- -D warnings"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.0"
+  }
+}
