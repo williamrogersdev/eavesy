@@ -169,32 +169,49 @@ How it fits together:
 Dictation stops after step 1 and pastes the on-device text, using Whisper only
 when there is none.
 
-## Notetaker bots (pilot)
+## Notetaker bots
 
-For calls the Mac can't record, **Notetaker** (`/app/notetaker`) sends a bot
-from a managed provider, [Recall.ai](https://docs.recall.ai), into the call.
-It is off unless `RECALL_API_KEY` and `RECALL_WEBHOOK_SECRET` are set.
+For calls the Mac can't record, **Notetaker** (`/app/notetaker`) sends
+Eavesy's own bot into a Google Meet or Teams call. Zoom is not supported yet;
+it will join through Zoom's Linux Meeting SDK behind the same platform trait.
+The bot lives in `workers/meeting-bot`:
 
-1. `POST /api/meeting-bots` writes a `meeting_bots` row first, then creates the
-   bot with our row id in its metadata. A create that times out stays
-   `scheduling`; the bot's first webhook carries the id and adopts the row.
-   Only mixed MP3 audio and Recall's diarized transcript are requested, no video.
-2. `POST /api/webhooks/recall` verifies the Svix signature (`webhook-*` or
-   `svix-*` headers, 5-minute replay window), skips deliveries already in
-   `provider_webhook_events`, and moves the bot forward only (status order in
-   `BOT_STATUS_ORDER`). `in_call_recording` creates the meeting
-   (`source = 'bot'`, status `recording`); `done` or `fatal` queues
-   `collect-bot-recording`.
-3. The collect job asks Recall for the recording. It re-queues itself every
-   minute (up to an hour) while the transcript or audio is still processing.
-   It then writes one line per turn with `speaker_N` ids and the participants'
-   names in `speaker_names_json`, stores the MP3 in R2, queues `summarize`, and
-   asks Recall to delete its copy. If Recall's transcript failed, audio up to
-   20 MiB goes through Whisper (`process-recording`) instead.
-4. The hourly cron calls `reconcileBots`: bots quiet for 30 minutes past their
-   start are checked against Recall in case a webhook was lost; unconfirmed
-   creates fail after 3 hours, and bots still unfinished 24 hours after their
-   start fail. Account deletion cancels active bots before the rows go.
+- `bot/` is a Rust binary (tokio) that starts Chromium under Xvfb and drives
+  it over the DevTools protocol. An injected script taps every remote WebRTC
+  audio track into a 16 kHz AudioWorklet and hands PCM blocks to Rust, which
+  cuts ~1-minute WAV segments at the first quiet moment after 60 s (90 s at
+  most, the Mac app's rule) and uploads them in order. Video is hidden and
+  never decoded. Meet and Teams are adapters (`platform/js/*.js`) behind the
+  `Session` trait; the leave rules (`rules.rs`) are pure and unit-tested:
+  call ended, removed, not admitted, 15 minutes in the lobby, 15 minutes with
+  nobody else, 60 seconds alone after others left, 4 hours.
+- `src/index.ts` is a Worker with one Durable Object (a Cloudflare Container,
+  `standard-1`) per bot, named after the `meeting_bots` id.
+
+The flow:
+
+1. `POST /api/meeting-bots` writes a `meeting_bots` row (`provider =
+   'eavesy'`) and calls `BotControl.schedule` over the `MEETING_BOTS` service
+   binding. The Durable Object sets an alarm for the start time.
+2. At the alarm, `claimBotStart` marks the row `launching` (only once, and not
+   if it was cancelled) and the container starts with the meeting link.
+3. The bot reports to `http://eavesy.internal/bots/<id>/…`. Those requests
+   never leave Cloudflare: the Container's outbound handler takes them and
+   only accepts the bot id its own container runs. Status events move the
+   bot forward only (`BOT_STATUS_ORDER`); `in_call_recording` creates the
+   meeting (`source = 'bot'`). Each segment becomes a `meeting_segments` row
+   and a `transcribe-segment` job, so the transcript and rolling notes are
+   live, as for the Mac. A heartbeat each minute carries who was speaking.
+4. After the call the bot uploads its last segment and sends `done`, which
+   queues `collect-bot-recording`. That job waits for the last segments'
+   transcription, names each line's speaker from the speaking timeline
+   (`speaker_N` plus `speaker_names_json`), and queues `summarize`.
+5. Instead of webhooks and a reconcile cron, the Durable Object checks on its
+   bot every two minutes and when its container stops (`watchBot`): a
+   container that never reported fails after 5 minutes, and a bot silent for
+   10 minutes or whose container died keeps whatever audio arrived.
+   "Make it leave" and account deletion reach the container through the
+   same binding. Old `recall` rows are failed as `provider_retired`.
 
 ## Email recaps
 

@@ -13,7 +13,6 @@ import {
   deadLetterQueue,
   purgeDeleted,
   reconcileEmailRecaps,
-  reconcileMeetingBots,
   recoverStaleSegments,
   sealLegacyKeys,
   SUMMARY_WAIT_LIMIT_MS,
@@ -30,9 +29,6 @@ export interface Env extends ProcessingEnv {
   PROCESSING_QUEUE: Queue<ProcessingMessage>;
   AI: Ai;
   ANTHROPIC_API_KEY: string;
-  RECALL_API_KEY?: string;
-  RECALL_WEBHOOK_SECRET?: string;
-  RECALL_REGION?: string;
   RESEND_API_KEY?: string;
   RESEND_WEBHOOK_SECRET?: string;
   EMAIL_FROM?: string;
@@ -143,7 +139,6 @@ export const worker = {
       await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
     }
     await recoverStaleSegments(env, now);
-    await reconcileMeetingBots(env, now);
     await reconcileEmailRecaps(env, now);
     await purgeDeleted(env, now);
     await pruneRateLimits(env.DB, now);

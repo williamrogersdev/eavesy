@@ -17,6 +17,13 @@
       "max_instances": 20
     }
   ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "eavesy", "database_id": "00000000-0000-0000-0000-000000000000" }
+  ],
+  "r2_buckets": [{ "binding": "AUDIO_BUCKET", "bucket_name": "eavesy-audio" }],
+  "queues": {
+    "producers": [{ "queue": "eavesy-processing", "binding": "PROCESSING_QUEUE" }]
+  },
   "durable_objects": {
     "bindings": [{ "name": "MEETING_BOT", "class_name": "MeetingBot" }]
   },

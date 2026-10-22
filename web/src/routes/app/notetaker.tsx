@@ -37,13 +37,18 @@ const STATUS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 const FAILURE: Record<string, string> = {
-  recording_permission_denied: 'The host did not allow recording.',
   bot_kicked_from_waiting_room: 'It was not admitted from the waiting room.',
   timeout_exceeded_waiting_room: 'Nobody admitted it from the waiting room.',
   timeout_exceeded_noone_joined: 'Nobody joined the meeting.',
   meeting_not_found: 'The link did not lead to a meeting.',
-  provider_unconfirmed: 'The notetaker service never confirmed it.',
-  provider_rejected: 'The notetaker service refused this link.',
+  sign_in_required: 'The meeting only admits signed-in accounts.',
+  join_failed: 'It could not find its way into the meeting.',
+  bot_removed: 'It was removed from the meeting.',
+  bot_error: 'It stopped with an error.',
+  bot_never_reported: 'It did not start.',
+  lost_track: 'It stopped reporting before the meeting finished.',
+  provider_unavailable: 'The notetaker service was unavailable.',
+  provider_retired: 'It was sent through a service Eavesy no longer uses.',
 };
 const ACTIVE = new Set(['scheduling', 'scheduled', 'joining', 'waiting_room', 'in_call', 'recording', 'call_ended', 'collecting']);
 const IN_CALL = new Set(['joining', 'waiting_room', 'in_call', 'recording']);
@@ -143,7 +148,7 @@ function NotetakerPage() {
     <AppPage width="compact">
       <AppPageHeader
         title="Notetaker"
-        description="Send a notetaker to a Zoom, Google Meet or Teams call you can't record from your Mac. It joins as a participant, and the transcript and brief land in your library after the call."
+        description="Send a notetaker to a Google Meet or Teams call you can't record from your Mac. It joins as a participant, the transcript fills in as the call goes, and the brief lands in your library when it ends."
       />
       {error ? <AppAlert>{error}</AppAlert> : null}
       {notice ? <AppAlert tone="success">{notice}</AppAlert> : null}
@@ -152,7 +157,7 @@ function NotetakerPage() {
         <AppEmptyState
           icon={<Bot />}
           title="Notetaker isn't set up here"
-          description="This Eavesy server has no meeting-bot provider configured. Record calls with the Mac app instead."
+          description="This Eavesy server doesn't run the meeting bot. Record calls with the Mac app instead."
         />
       ) : (
         <form onSubmit={(event) => void send(event)} className="flex flex-col gap-3">
@@ -164,7 +169,7 @@ function NotetakerPage() {
               required
               value={meetingUrl}
               onChange={(event) => setMeetingUrl(event.target.value)}
-              placeholder="https://zoom.us/j/…  or  https://meet.google.com/abc-defg-hij"
+              placeholder="https://meet.google.com/abc-defg-hij  or a Teams link"
               autoComplete="off"
               className={field}
             />
