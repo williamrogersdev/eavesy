@@ -80,13 +80,17 @@ pub struct Rules {
     phase: Phase,
     since: Duration,
     call_started: Option<Duration>,
+    /// When the bot started its way into the call (or came back out of the
+    /// lobby): a page flapping between loading and the join screen doesn't
+    /// restart the clock.
+    joining_since: Option<Duration>,
     alone_since: Option<Duration>,
     seen_others: bool,
 }
 
 impl Rules {
     pub fn new(limits: Limits) -> Self {
-        Self { limits, phase: Phase::Loading, since: Duration::ZERO, call_started: None, alone_since: None, seen_others: false }
+        Self { limits, phase: Phase::Loading, since: Duration::ZERO, call_started: None, joining_since: Some(Duration::ZERO), alone_since: None, seen_others: false }
     }
 
     pub fn phase(&self) -> Phase {
@@ -115,8 +119,15 @@ impl Rules {
             }
         }
 
+        if matches!(self.phase, Phase::Loading | Phase::Prejoin) {
+            self.joining_since.get_or_insert(now);
+        } else {
+            self.joining_since = None;
+        }
         match self.phase {
-            Phase::Loading | Phase::Prejoin if now - self.since > self.limits.join && self.call_started.is_none() => {
+            Phase::Loading | Phase::Prejoin
+                if self.joining_since.is_some_and(|t| now - t > self.limits.join) && self.call_started.is_none() =>
+            {
                 return Step::Exit(Exit::JoinFailed)
             }
             Phase::Lobby if now - self.since > self.limits.lobby => return Step::Exit(Exit::LobbyTimeout),
@@ -195,6 +206,16 @@ mod tests {
         assert_eq!(exit(r.step(&at(Phase::Lobby, false), S(10 + 15 * 60 + 1))), Some(Exit::LobbyTimeout));
         let mut r = Rules::new(Limits::default());
         assert_eq!(exit(r.step(&at(Phase::Loading, false), S(121))), Some(Exit::JoinFailed));
+    }
+
+    #[test]
+    fn a_flapping_join_page_still_times_out() {
+        let mut r = Rules::new(Limits::default());
+        for s in 0..120 {
+            let phase = if s % 2 == 0 { Phase::Loading } else { Phase::Prejoin };
+            assert!(exit(r.step(&at(phase, false), S(s))).is_none());
+        }
+        assert_eq!(exit(r.step(&at(Phase::Prejoin, false), S(121))), Some(Exit::JoinFailed));
     }
 
     #[test]

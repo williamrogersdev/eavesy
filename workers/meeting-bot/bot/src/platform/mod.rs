@@ -13,6 +13,9 @@ use tokio::sync::mpsc;
 pub struct AudioBlock {
     pub pcm: Vec<i16>,
     pub peak: f64,
+    /// When the block reached the bot; it is placed on the wall clock by this,
+    /// not by when it is processed.
+    pub at: tokio::time::Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]

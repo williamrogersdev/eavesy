@@ -16,6 +16,10 @@ const MIN_TAIL_MS: u64 = 1_000;
 /// Gaps shorter than this are jitter, not lost audio, and aren't padded.
 const PAD_AFTER_SAMPLES: u64 = SAMPLE_RATE as u64 / 2;
 const PAD_BLOCK: usize = 4_096;
+/// A gap longer than this isn't padded: the segment so far is closed and the
+/// next one starts later on the clock, so no run of silent segments is made
+/// in one go and sent to Whisper.
+const SKIP_AFTER_MS: u64 = 5 * 60_000;
 
 const fn samples(ms: u64) -> usize {
     (ms * SAMPLE_RATE as u64 / 1_000) as usize
@@ -48,12 +52,21 @@ impl Default for Segmenter {
 
 impl Segmenter {
     /// Adds a block that ended `elapsed_ms` after recording started. Time
-    /// missing before it becomes silence. Returns the segments it completed.
+    /// missing before it becomes silence (or, past a minute, a jump in the
+    /// clock). A block arriving early is simply appended: audio is never
+    /// placed before what was already taken. Returns the segments it completed.
     pub fn push(&mut self, pcm: &[i16], peak: f64, elapsed_ms: u64) -> Vec<Segment> {
         let mut done = Vec::new();
         let starts_at = (elapsed_ms * SAMPLE_RATE as u64 / 1_000).saturating_sub(pcm.len() as u64);
         let total = self.emitted + self.buf.len() as u64;
-        if starts_at > total + PAD_AFTER_SAMPLES {
+        if starts_at > total + samples(SKIP_AFTER_MS) as u64 {
+            if millis(self.buf.len() as u64) >= MIN_TAIL_MS {
+                done.push(self.cut());
+            }
+            self.buf.clear();
+            self.active = 0;
+            self.emitted = starts_at;
+        } else if starts_at > total + PAD_AFTER_SAMPLES {
             let silence = [0i16; PAD_BLOCK];
             let mut gap = starts_at - total;
             while gap > 0 {
@@ -182,6 +195,35 @@ mod tests {
         assert!(out[0].duration_ms >= TARGET_MS && out[0].duration_ms < TARGET_MS + 300);
         let tail = seg.finish().unwrap();
         assert_eq!(tail.offset_ms + tail.duration_ms, 90_512);
+    }
+
+    #[test]
+    fn a_long_gap_moves_the_clock_instead_of_sending_silence() {
+        let mut seg = Segmenter::default();
+        let block = vec![3000i16; BLOCK];
+        for i in 1..=20 {
+            seg.push(&block, 0.1, millis((i * BLOCK) as u64));
+        }
+        // An hour with no audio: the 5 s so far close, nothing is padded.
+        let out = seg.push(&block, 0.1, 3_600_000);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].duration_ms, millis(20 * BLOCK as u64));
+        for i in 1..=4 {
+            assert!(seg.push(&block, 0.1, 3_600_000 + millis((i * BLOCK) as u64)).is_empty());
+        }
+        let tail = seg.finish().unwrap();
+        assert_eq!(tail.offset_ms, 3_600_000 - millis(BLOCK as u64));
+        assert_eq!(tail.duration_ms, millis(5 * BLOCK as u64));
+    }
+
+    #[test]
+    fn a_block_from_the_past_is_appended_not_rewound() {
+        let mut seg = Segmenter::default();
+        let block = vec![3000i16; BLOCK];
+        seg.push(&block, 0.1, 10_000);
+        assert!(seg.push(&block, 0.1, 100).is_empty());
+        let tail = seg.finish().unwrap();
+        assert_eq!(tail.duration_ms, 10_000 - millis(BLOCK as u64) + millis(2 * BLOCK as u64));
     }
 
     #[test]

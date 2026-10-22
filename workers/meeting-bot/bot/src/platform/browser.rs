@@ -98,13 +98,14 @@ fn launch(chrome_path: &str) -> Result<Child, String> {
         .map_err(|e| format!("launch {chrome_path}: {e}"))
 }
 
+/// The tab Chromium opened on `about:blank` at launch, the only one the bot drives.
 async fn page_ws_url() -> Result<String, String> {
     let http = reqwest::Client::new();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(r) = http.get(format!("http://127.0.0.1:{DEBUG_PORT}/json/list")).send().await {
             if let Ok(targets) = r.json::<Vec<Value>>().await {
-                if let Some(url) = targets.iter().find(|t| t["type"] == "page").and_then(|t| t["webSocketDebuggerUrl"].as_str()) {
+                if let Some(url) = targets.iter().find(|t| t["type"] == "page" && t["url"] == "about:blank").and_then(|t| t["webSocketDebuggerUrl"].as_str()) {
                     return Ok(url.to_owned());
                 }
             }
@@ -121,7 +122,7 @@ pub fn decode_audio(payload: &str) -> Option<AudioBlock> {
     let block: Value = serde_json::from_str(payload).ok()?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(block["pcm"].as_str()?).ok()?;
     let pcm = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
-    Some(AudioBlock { pcm, peak: block["peak"].as_f64().unwrap_or(0.0) })
+    Some(AudioBlock { pcm, peak: block["peak"].as_f64().unwrap_or(0.0), at: Instant::now() })
 }
 
 impl Session for Browser {
