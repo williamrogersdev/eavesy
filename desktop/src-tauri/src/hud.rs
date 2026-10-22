@@ -377,6 +377,8 @@ static EDITOR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 static RELEASED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 /// How long focus takes to reach the other app once Eavesy lets go.
 const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+/// The longest a paste waits for focus to settle, however the stamp moves.
+const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Editing opts into app activation so AppKit routes the Edit menu shortcuts
 /// to WKWebView. Merely showing a completed dictation remains passive.
@@ -402,12 +404,13 @@ fn mark_released() {
 /// ⌘V after "Copied", land in Eavesy's box instead of where they were typing.
 /// Safe on any thread; does not wait.
 pub fn release_editor(app: &AppHandle) {
+    // Stamped before the check, and again once focus moves, so a paste after
+    // Stop always waits out the settle; a stamp with nothing to release only
+    // costs a paste within FOCUS_SETTLE of Stop a few milliseconds.
+    mark_released();
     if !EDITOR_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    // Stamped now as well as once focus moves, so a paste checking in between
-    // already waits; it waits again if the later stamp lands meanwhile.
-    mark_released();
     let _ = app.emit_to("hud", "hud:release-editor", ());
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || release_editor_on_main(&handle));
@@ -426,12 +429,15 @@ pub fn release_editor_and_wait(app: &AppHandle) {
         });
         let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
     }
-    // Stop may have handed focus back a moment ago: let it arrive.
+    // Stop may have handed focus back a moment ago: let it arrive, re-reading
+    // in case the stamp moves on as focus does, but never for long.
+    let deadline = std::time::Instant::now() + SETTLE_LIMIT;
     loop {
         let released = *RELEASED_AT.lock().unwrap_or_else(|e| e.into_inner());
-        match released.and_then(|at| settle_left(at.elapsed())) {
-            Some(wait) => std::thread::sleep(wait),
-            None => break,
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match released.and_then(|at| settle_left(at.elapsed())).map(|wait| wait.min(left)) {
+            Some(wait) if !wait.is_zero() => std::thread::sleep(wait),
+            _ => break,
         }
     }
 }

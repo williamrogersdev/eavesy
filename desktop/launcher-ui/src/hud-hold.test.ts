@@ -7,7 +7,7 @@ test('a hover holds the result, but never past the cap', () => {
   expect(holdMs('done', 'over', 0, OVER_MAX_MS + 1)).toBe(0);
 });
 
-test('moving the pointer every second cannot hold past the cap', () => {
+test('holdMs re-armed every second never runs past the cap', () => {
   // Each move re-arms the timer with what holdMs gives at that moment.
   let collapsesAt = Infinity;
   for (let now = 0; now < collapsesAt; now += 1000) collapsesAt = now + holdMs('done', 'over', 0, now);
