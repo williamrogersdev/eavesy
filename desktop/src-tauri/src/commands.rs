@@ -369,6 +369,13 @@ pub fn dismiss_hud(app: AppHandle, session_id: Option<String>) {
 }
 
 
+/// Hovering a finished dictation opens its transcript drawer; returns once
+/// the control has the drawer's size.
+#[tauri::command]
+pub async fn peek_hud(app: AppHandle, session_id: String, open: bool) {
+    let _ = tauri::async_runtime::spawn_blocking(move || crate::hud::set_peek(&app, session_id, open)).await;
+}
+
 #[tauri::command]
 pub fn close_hud(app: AppHandle) -> Result<(), String> {
     let handle = app.clone();
