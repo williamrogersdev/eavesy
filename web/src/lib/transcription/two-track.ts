@@ -113,6 +113,13 @@ export function isHallucination(
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
   if (!isStockLine(text, !!(opts.quiet || opts.suspect))) return false;
   if (opts.quiet) return true;
+  // Nothing but phrases people really say ("Let's go."): only Whisper's own
+  // doubt drops them. Mixed with a sign-off ("Thank you. Here we go.") it is
+  // judged like any stock line.
+  const sentences = text.split(/[.!?…,;]+/).map(normalize).filter(Boolean);
+  if (sentences.every((sentence) => SUSPECT_PHRASES.includes(sentence))) {
+    return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
+  }
   if (opts.lenient) return line.noSpeechProb !== undefined && line.noSpeechProb > 0.5;
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }

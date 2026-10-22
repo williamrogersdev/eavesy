@@ -116,7 +116,10 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'Thank you. Thank you.' }, suspect)).toBe(true);
     expect(isHallucination({ text: 'Thank you. Here we go.' }, suspect)).toBe(true);
     expect(isHallucination({ text: 'Thank you. Let’s go!' }, suspect)).toBe(true);
-    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!', noSpeechProb: 0.6 }, suspect)).toBe(true);
+    // A real "Let's go." the Mac missed is kept unless Whisper doubted it.
+    expect(isHallucination({ text: "Let's go." }, suspect)).toBe(false);
+    expect(isHallucination({ text: 'Here we go.', noSpeechProb: 0.2 }, suspect)).toBe(false);
     expect(isHallucination({ text: 'Thank you. Send the deck tonight.' }, suspect)).toBe(false);
     expect(isHallucination({ text: "Here we go, that's the plan." }, suspect)).toBe(false);
     // Elsewhere real phrases like these are kept, and only exact stock lines count.
