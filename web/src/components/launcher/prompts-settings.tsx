@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ChevronRight, MessageSquareText, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { claudeCodeCommand, DETAILS_SLOT, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
+import { claudeCodeCommand, DETAILS_SLOT, freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
 import { Button, Card } from './ui';
 import type { SavedPromptsState } from './use-saved-prompts';
 
@@ -28,8 +28,8 @@ function PromptPage({ prompt, state, onBack }: {
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;
   const ready = name.trim() !== '' && body.trim() !== '' && changed;
-  // A saved prompt keeps its slug through renames; a new one gets this, numbered if taken.
-  const slug = prompt ? prompt.slug : promptSlug(name);
+  // A saved prompt keeps its slug through renames; a new one gets the next free one.
+  const slug = prompt ? prompt.slug : freeSlug(promptSlug(name), new Set(state.prompts?.map((p) => p.slug)));
 
   const save = async () => {
     if (!ready || saving) return;

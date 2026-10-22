@@ -52,10 +52,12 @@ describe('/api/prompts', () => {
     expect((await send('GET')).body.items.map((p) => p.slug)).toEqual(['triage-tickets', 'triage-tickets-2']);
   });
 
-  it('gives concurrent prompts with the same name different commands', async () => {
-    const results = await Promise.all(Array.from({ length: 4 }, () => send('POST', { name: 'Plan', body: 'x' })));
-    expect(results.map((r) => r.status)).toEqual([201, 201, 201, 201]);
-    expect(new Set(results.map((r) => r.body.prompt.slug))).toEqual(new Set(['plan', 'plan-2', 'plan-3', 'plan-4']));
+  it('gives many concurrent prompts with the same name different commands', async () => {
+    const results = await Promise.all(Array.from({ length: 20 }, () => send('POST', { name: 'Plan', body: 'x' })));
+    expect(results.every((r) => r.status === 201)).toBe(true);
+    const slugs = results.map((r) => r.body.prompt.slug);
+    expect(new Set(slugs).size).toBe(20);
+    expect(slugs.every((slug) => slug.startsWith('plan'))).toBe(true);
   });
 
   it('counts pastes on their own rate limit, apart from edits', async () => {

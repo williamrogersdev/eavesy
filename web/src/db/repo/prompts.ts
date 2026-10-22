@@ -50,13 +50,22 @@ function isUniqueViolation(error: unknown): boolean {
   return false;
 }
 
+/** `slug` with a random suffix, for when numbered picks keep losing races. */
+function randomSlug(slug: string): string {
+  const suffix = `-${crypto.randomUUID().slice(0, 6)}`;
+  return `${slug.slice(0, PROMPT_LIMITS.slug - suffix.length).replace(/-+$/, '')}${suffix}`;
+}
+
 /**
  * Picks a free slug and writes it, picking again when a concurrent request
- * took that slug in between: the unique index has the last word.
+ * took that slug in between: the unique index has the last word. After
+ * `SLUG_ATTEMPTS` numbered picks, a random suffix all but ends the race.
  */
 async function withFreeSlug<T>(db: AppDb, userId: string, name: string, write: (slug: string) => Promise<T>): Promise<T> {
-  for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
-    try { return await write(freeSlug(promptSlug(name), await takenSlugs(db, userId))); }
+  for (let attempt = 0; attempt <= SLUG_ATTEMPTS; attempt++) {
+    const taken = await takenSlugs(db, userId);
+    const picked = freeSlug(promptSlug(name), taken);
+    try { return await write(attempt < SLUG_ATTEMPTS ? picked : randomSlug(picked)); }
     catch (error) { if (!isUniqueViolation(error)) throw error; }
   }
   throw new SlugConflict('slug_conflict');
