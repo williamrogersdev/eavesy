@@ -33,9 +33,10 @@ const HEARTBEAT: Duration = Duration::from_secs(60);
 /// How often the speaking indicator is read, and so how long one look covers.
 const TICK_MS: u64 = 1_000;
 /// Spans per report, so one report stays well under Eavesy's size limit for
-/// an event (512 KB; a span is some 30 bytes); a backlog goes out over the
-/// next reports. `Speakers::report` runs past it only to finish the spans
-/// sharing a start with the last one: at most one per person in the call.
+/// an event (512 KB; a span is some 30 bytes, so 2,000 make about 60 KB); a
+/// backlog goes out over the next reports. `Speakers::report` runs past it
+/// only to finish the spans sharing a start with the last one, at most one
+/// per person in the call: a thousand people starting on one tick add 30 KB.
 const MAX_SPANS_PER_REPORT: usize = 2_000;
 const ANNOUNCEMENT: &str = "Eavesy Notetaker is transcribing this call for the person who invited it.";
 
@@ -117,7 +118,9 @@ impl Speakers {
         self.sent_final = chunk.iter().position(|(_, _, end)| open(*end)).map_or(to, |i| from + i);
         json!({
             "participants": self.participants,
+            // The unit tells Eavesy this isn't an index, as images before it sent.
             "speakersFrom": from_ms,
+            "speakersFromUnit": "ms",
             "speakers": chunk.iter().map(|(n, s, e)| json!([n, s, e])).collect::<Vec<_>>(),
         })
     }
@@ -288,6 +291,7 @@ mod tests {
     }
 
     fn spans(report: &Value) -> (u64, Vec<(String, u64, u64)>) {
+        assert_eq!(report["speakersFromUnit"], "ms");
         let from = report["speakersFrom"].as_u64().unwrap();
         let list = report["speakers"].as_array().unwrap().iter().map(|s| (s[0].as_str().unwrap().to_owned(), s[1].as_u64().unwrap(), s[2].as_u64().unwrap())).collect();
         (from, list)

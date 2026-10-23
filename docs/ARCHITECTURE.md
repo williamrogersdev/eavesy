@@ -206,10 +206,11 @@ The flow:
    live, as for the Mac. A heartbeat each minute, in every phase from
    launch on, proves the bot is alive; once in the call it also carries the
    speaking spans from the first one still open or not yet sent, with that
-   span's start as `speakersFrom`: the server replaces every stored span
-   from that time on with them (a time, not an index, so a lost report
-   leaves a gap but never doubles or shifts later spans). A report with no
-   `speakersFrom` is the whole timeline, as older bot images send it.
+   span's start as `speakersFrom` (`speakersFromUnit: 'ms'`): the server
+   replaces every stored span from that time on with them (a time, not an
+   index, so a lost report leaves a gap but never doubles or shifts later
+   spans). Older bot images send `speakersFrom` as an index, or the whole
+   timeline with none; the server still takes both.
 4. After the call the bot uploads its last segment and sends `done`, which
    queues `collect-bot-recording`. That job waits for the last segments'
    transcription, names each line's speaker from the speaking timeline
