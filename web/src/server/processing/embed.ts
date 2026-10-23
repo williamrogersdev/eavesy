@@ -5,6 +5,14 @@ import { dictations, embeddings, meetings, transcriptSegments } from '@/db/schem
 import { embedTexts } from '@/lib/ai/embed';
 import { type Db, type ProcessingEnv, chunkText, runBatched } from './shared';
 import { transcriptText } from './summarize';
+import { consumeRateLimit } from '@/server/rate-limit-store';
+
+/**
+ * Edit-triggered re-index runs per meeting per UTC day. Edits coalesce into
+ * about one run per five-minute window, so this is hours of steady editing;
+ * past it, search catches up on the next day's first edit.
+ */
+export const EDIT_REINDEX_RUNS_PER_DAY = 48;
 
 export async function handleEmbedMeeting(
   meetingId: string,
@@ -18,6 +26,18 @@ export async function handleEmbedMeeting(
   // after the edit has finished: every edit in a burst queues one, and the
   // first to run covers them all.
   if (opts.queuedAt !== undefined && (await embeddedSince(db, 'meeting', meetingId, opts.queuedAt))) return;
+  if (opts.queuedAt !== undefined) {
+    const allowed = await consumeRateLimit(env.DB, {
+      key: `embed-refresh:${meetingId}`,
+      limit: EDIT_REINDEX_RUNS_PER_DAY,
+      windowSec: 24 * 60 * 60,
+      failMode: 'closed',
+    });
+    if (!allowed.allowed) {
+      console.warn(JSON.stringify({ message: 'edit re-index skipped: daily cap reached', meetingId }));
+      return;
+    }
+  }
   const readAt = Date.now();
   const segments = await db
     .select()
@@ -70,19 +90,23 @@ async function replaceEmbeddings(
     .select({ id: embeddings.id })
     .from(embeddings)
     .where(and(eq(embeddings.sourceType, source.sourceType), eq(embeddings.sourceId, source.sourceId)));
-  if (previous.length > 0) await env.VECTORIZE.deleteByIds(previous.map((row) => row.id));
-  await db
-    .delete(embeddings)
-    .where(and(eq(embeddings.sourceType, source.sourceType), eq(embeddings.sourceId, source.sourceId)));
-  if (chunks.length === 0) return;
-
   const vectorRows = vectors.map((values, chunkIdx) => ({
     id: `${source.sourceId}__${chunkIdx}`,
     values,
     metadata: { userId: source.userId, sourceType: source.sourceType, sourceId: source.sourceId, chunkIdx },
   }));
-  await runBatched(db, chunks.map((chunk, chunkIdx) =>
-    db.insert(embeddings).values({
+
+  // Vectors first. Their ids are stable per chunk, so an upsert replaces them
+  // in place, and only chunks past the new end are deleted. The rows, which
+  // carry this run's read time, are written last: a failed upsert leaves the
+  // old rows, so the retry is not skipped as already done.
+  if (vectorRows.length) await env.VECTORIZE.upsert(vectorRows);
+  const kept = new Set(vectorRows.map((row) => row.id));
+  const stale = previous.map((row) => row.id).filter((id) => !kept.has(id));
+  if (stale.length) await env.VECTORIZE.deleteByIds(stale);
+  await runBatched(db, [
+    db.delete(embeddings).where(and(eq(embeddings.sourceType, source.sourceType), eq(embeddings.sourceId, source.sourceId))),
+    ...chunks.map((chunk, chunkIdx) => db.insert(embeddings).values({
       id: vectorRows[chunkIdx].id,
       userId: source.userId,
       sourceType: source.sourceType,
@@ -90,9 +114,8 @@ async function replaceEmbeddings(
       chunkIdx,
       contentExcerpt: chunk.slice(0, 280),
       createdAt: readAt,
-    }),
-  ));
-  await env.VECTORIZE.upsert(vectorRows);
+    })),
+  ]);
 }
 
 export async function deletePrefix(bucket: R2Bucket, prefix: string) {

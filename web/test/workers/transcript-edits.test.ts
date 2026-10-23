@@ -3,7 +3,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { drizzle } from 'drizzle-orm/d1';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema';
-import { handleEmbedMeeting } from '../../src/server/processing/embed';
+import { EDIT_REINDEX_RUNS_PER_DAY, handleEmbedMeeting } from '../../src/server/processing/embed';
 import { EMBED_REFRESH_DELAY_SECONDS, REFRESH_DELAY_SECONDS } from '../../src/server/agent-transcript-refresh';
 import { Route as LineRoute } from '../../src/routes/api/meetings/$id/lines/$lineId';
 import { Route as MeetingRoute } from '../../src/routes/api/meetings/$id';
@@ -129,8 +129,39 @@ describe('a burst of edits embeds once', () => {
     // An edit after it needs a fresh pass.
     await handleEmbedMeeting('meet_burst', db, e, { queuedAt: embeddedAt + 1 });
     expect(e.ai.run).toHaveBeenCalledTimes(2);
-    expect(e.vectorize.deleteByIds).toHaveBeenCalledTimes(1);
+    // Same chunks: replaced in place, nothing left over to delete.
+    expect(e.vectorize.deleteByIds).not.toHaveBeenCalled();
     expect(e.vectorize.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a re-index whose vectors did not land', async () => {
+    await insertMeeting({ id: 'meet_retry', userId: USER, status: 'complete' });
+    await addLine('meet_retry', 'line_1', 'Some words to embed');
+    const db = drizzle(testEnv.DB, { schema });
+    const e = env();
+    await handleEmbedMeeting('meet_retry', db, e);
+    const queuedAt = Date.now() + 1;
+    e.vectorize.upsert.mockRejectedValueOnce(new Error('vectorize down'));
+    await expect(handleEmbedMeeting('meet_retry', db, e, { queuedAt })).rejects.toThrow('vectorize down');
+    // The queue's retry carries the same queuedAt: it must run, not skip.
+    await handleEmbedMeeting('meet_retry', db, e, { queuedAt });
+    expect(e.vectorize.upsert).toHaveBeenCalledTimes(3);
+  });
+
+  it('caps edit re-index runs per meeting per day', async () => {
+    await insertMeeting({ id: 'meet_cap', userId: USER, status: 'complete' });
+    await addLine('meet_cap', 'line_1', 'Some words to embed');
+    const db = drizzle(testEnv.DB, { schema });
+    const e = env();
+    const day = Math.floor(Date.now() / 86_400_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, ?, ?)')
+      .bind(`embed-refresh:meet_cap:${day}`, EDIT_REINDEX_RUNS_PER_DAY, (day + 1) * 86_400_000).run();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await handleEmbedMeeting('meet_cap', db, e, { queuedAt: Date.now() });
+    expect(e.ai.run).not.toHaveBeenCalled();
+    // The pipeline's own embed is never capped.
+    await handleEmbedMeeting('meet_cap', db, e);
+    expect(e.ai.run).toHaveBeenCalledTimes(1);
   });
 
   it('re-embeds after an edit that landed while a run was embedding', async () => {
