@@ -164,7 +164,8 @@ impl Session for Browser {
         match self.eval(&self.call_adapter(&body)).await {
             Ok(Value::Null) => Observation::loading(),
             Ok(value) => serde_json::from_value(value.clone()).unwrap_or_else(|e| {
-                log(json!({ "msg": "observe", "error": e.to_string(), "value": value }));
+                // Not the value itself: it holds the names of the people in the call.
+                log(json!({ "msg": "observe", "error": e.to_string(), "phase": value.get("phase") }));
                 Observation::loading()
             }),
             // Navigations destroy the context mid-evaluate; the next look succeeds.

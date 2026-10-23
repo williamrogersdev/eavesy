@@ -30,6 +30,11 @@ use platform::{browser::Browser, AudioBlock, Kind, Phase, Session};
 use rules::{Exit, Limits, Rules, Step};
 
 const HEARTBEAT: Duration = Duration::from_secs(60);
+/// How often the speaking indicator is read, and so how long one look covers.
+const TICK_MS: u64 = 1_000;
+/// Spans per report at most, so one report stays well under Eavesy's size
+/// limit for an event; a backlog goes out over the next reports.
+const MAX_SPANS_PER_REPORT: usize = 2_000;
 const ANNOUNCEMENT: &str = "Eavesy Notetaker is transcribing this call for the person who invited it.";
 
 struct Config {
@@ -65,6 +70,10 @@ fn config() -> Result<Config, String> {
 struct Speakers {
     spans: Vec<(String, u64, u64)>,
     participants: BTreeSet<String>,
+    /// Spans before this index were final when they were sent: each report
+    /// carries only the spans from here on (`speakersFrom`), and Eavesy
+    /// replaces what it has from that index.
+    sent_final: usize,
 }
 
 impl Speakers {
@@ -77,11 +86,27 @@ impl Speakers {
         }
     }
 
-    fn json(&self) -> Value {
+    /// The next report's speakers: spans from the first one not yet sent for
+    /// good, at most `cap` of them. A span stays open while its speaker may
+    /// still carry on (`note` extends a span ending within two ticks), so it
+    /// is sent again, grown, in the next report. `now_ms` None means the call
+    /// is over and every span is final.
+    fn report(&mut self, now_ms: Option<u64>, tick_ms: u64, cap: usize) -> Value {
+        let from = self.sent_final.min(self.spans.len());
+        let to = (from + cap).min(self.spans.len());
+        let chunk = &self.spans[from..to];
+        let open = |end: u64| now_ms.is_some_and(|now| end + tick_ms * 2 >= now);
+        self.sent_final = chunk.iter().position(|(_, _, end)| open(*end)).map_or(to, |i| from + i);
         json!({
             "participants": self.participants,
-            "speakers": self.spans.iter().map(|(n, s, e)| json!([n, s, e])).collect::<Vec<_>>(),
+            "speakersFrom": from,
+            "speakers": chunk.iter().map(|(n, s, e)| json!([n, s, e])).collect::<Vec<_>>(),
         })
+    }
+
+    /// Whether every span has gone out final.
+    fn all_sent(&self) -> bool {
+        self.sent_final >= self.spans.len()
     }
 }
 
@@ -182,19 +207,25 @@ async fn run(
                     if rules.phase() == Phase::InCall {
                         speakers.participants.extend(seen.participants.iter().filter(|n| **n != cfg.bot_name).cloned());
                         let others: Vec<String> = seen.speaking.into_iter().filter(|n| *n != cfg.bot_name).collect();
-                        speakers.note(&others, since.elapsed().as_millis() as u64, 1_000);
+                        speakers.note(&others, since.elapsed().as_millis() as u64, TICK_MS);
                         if !announced {
                             announced = session.announce(ANNOUNCEMENT).await;
                             if announced { log(json!({ "msg": "announced" })); }
                         }
                     }
-                    if last_heartbeat.elapsed() >= HEARTBEAT {
-                        last_heartbeat = Instant::now();
-                        log(json!({ "msg": "heartbeat", "audioBlocks": blocks, "detail": seen.detail }));
-                        ingest.event("heartbeat", None, speakers.json());
-                    }
                 } else if rules.phase() == Phase::Loading && started.elapsed().as_secs() % 15 == 14 {
                     log(json!({ "msg": "still loading", "detail": seen.detail }));
+                }
+                // In every phase, the lobby included: Eavesy's watchdog takes a
+                // bot it hasn't heard from in a while for lost.
+                if last_heartbeat.elapsed() >= HEARTBEAT {
+                    last_heartbeat = Instant::now();
+                    log(json!({ "msg": "heartbeat", "phase": format!("{:?}", rules.phase()), "audioBlocks": blocks, "detail": seen.detail }));
+                    let body = match recording_since {
+                        Some(since) => speakers.report(Some(since.elapsed().as_millis() as u64), TICK_MS, MAX_SPANS_PER_REPORT),
+                        None => json!({}),
+                    };
+                    ingest.event("heartbeat", None, body);
                 }
             }
         }
@@ -214,7 +245,13 @@ async fn run(
     if let Some(segment) = segmenter.finish() {
         ingest.segment(segment);
     }
-    ingest.event("speakers", None, speakers.json());
+    // The rest of the timeline, final now, in as many reports as it takes.
+    loop {
+        ingest.event("speakers", None, speakers.report(None, TICK_MS, MAX_SPANS_PER_REPORT));
+        if speakers.all_sent() {
+            break;
+        }
+    }
     Ok(exit)
 }
 
@@ -230,5 +267,64 @@ mod tests {
         s.note(&["Ana".into()], 2_000, 1_000);
         s.note(&["Ana".into()], 9_000, 1_000);
         assert_eq!(s.spans, vec![("Ana".into(), 0, 3_000), ("Ben".into(), 1_000, 2_000), ("Ana".into(), 9_000, 10_000)]);
+    }
+
+    fn spans(report: &Value) -> (u64, Vec<(String, u64, u64)>) {
+        let from = report["speakersFrom"].as_u64().unwrap();
+        let list = report["speakers"].as_array().unwrap().iter().map(|s| (s[0].as_str().unwrap().to_owned(), s[1].as_u64().unwrap(), s[2].as_u64().unwrap())).collect();
+        (from, list)
+    }
+
+    /// What Eavesy keeps: everything before `speakersFrom`, then the report.
+    fn apply(stored: &mut Vec<(String, u64, u64)>, report: &Value) {
+        let (from, list) = spans(report);
+        stored.truncate(from as usize);
+        stored.extend(list);
+    }
+
+    #[test]
+    fn reports_carry_only_what_changed_and_resend_open_spans() {
+        let mut s = Speakers::default();
+        let mut stored = Vec::new();
+        s.note(&["Ana".into()], 0, 1_000);
+        s.note(&["Ben".into()], 5_000, 1_000);
+        // Ben may still be talking at 6 s: his span goes again next time.
+        let first = s.report(Some(6_000), 1_000, 100);
+        assert_eq!(spans(&first).0, 0);
+        assert_eq!(spans(&first).1.len(), 2);
+        apply(&mut stored, &first);
+        s.note(&["Ben".into()], 6_000, 1_000);
+        s.note(&["Cy".into()], 20_000, 1_000);
+        let second = s.report(Some(21_000), 1_000, 100);
+        assert_eq!(spans(&second).0, 1);
+        apply(&mut stored, &second);
+        assert_eq!(stored, s.spans);
+        // Nothing new and everything closed: an empty report from the end.
+        let third = s.report(Some(60_000), 1_000, 100);
+        apply(&mut stored, &third);
+        let fourth = s.report(Some(61_000), 1_000, 100);
+        assert_eq!(spans(&fourth), (3, vec![]));
+        assert_eq!(stored, s.spans);
+    }
+
+    #[test]
+    fn a_long_timeline_goes_out_in_capped_reports() {
+        let mut s = Speakers::default();
+        for i in 0..25u64 {
+            s.note(&[format!("P{}", i % 3)], i * 10_000, 1_000);
+        }
+        let mut stored = Vec::new();
+        let mut reports = 0;
+        loop {
+            let report = s.report(None, 1_000, 10);
+            assert!(spans(&report).1.len() <= 10);
+            apply(&mut stored, &report);
+            reports += 1;
+            if s.all_sent() {
+                break;
+            }
+        }
+        assert_eq!(reports, 3);
+        assert_eq!(stored, s.spans);
     }
 }

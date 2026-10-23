@@ -2,7 +2,7 @@ import { Container, ContainerProxy, type StopParams } from '@cloudflare/containe
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database, Queue, R2Bucket } from '@cloudflare/workers-types';
 import type { MeetingBotControl } from '@/server/meeting-bots/control';
-import { START_ATTEMPTS, START_INSTANCE_TIMEOUT_MS, START_PORTS_TIMEOUT_MS, botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, launchingBot, nextStartAttemptAt, watchBot } from '@/server/meeting-bots/service';
+import { START_ATTEMPTS, START_INSTANCE_TIMEOUT_MS, START_PORTS_TIMEOUT_MS, botDatabase, claimBotStart, failBotStart, handleBotEvent, handleBotSegment, launchingBot, nextStartAttemptAt, startWasCancelled, watchBot } from '@/server/meeting-bots/service';
 import type { QueueMessage } from '@/server/queue';
 
 /**
@@ -101,6 +101,15 @@ export class MeetingBot extends Container<Env> {
       logError(`meeting bot did not start (attempt ${attempt} of ${START_ATTEMPTS})`, botId, error);
       await this.shutDown().catch(() => undefined);
       await this.retryOrFail(botId, attempt, claimedAt);
+      return;
+    }
+    // A cancel while the container was starting found nothing to stop: stop
+    // it now, before it joins the call. Should this look fail, the watchdog
+    // stops a cancelled bot's container at its next look.
+    try {
+      if (await startWasCancelled(database(this.env), botId)) await this.shutDown();
+    } catch (error) {
+      logError('checking for a cancel after the start failed', botId, error);
     }
   }
 

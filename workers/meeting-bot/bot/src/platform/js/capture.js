@@ -192,7 +192,20 @@
       return { phase: 'prejoin', joined: click(a.join) };
     }
     if (click(a.join)) return { phase: 'prejoin', joined: true };
-    return { phase: 'loading', url: location.href, title: document.title };
+    return { phase: 'loading', page: pageShape(), title: titleShape() };
+  }
+
+  // The meeting link (and Meet's code in the title) lets anyone into the
+  // call, so the logs only get the shape of where the page is: plain words
+  // in the path stay, anything else is masked, and the query never leaves.
+  const MEET_CODE = /[a-z]{3}-[a-z]{4}-[a-z]{3}/gi;
+  const mask = (value) => value.replace(/[0-9]/g, '9').replace(/[A-Za-z]/g, 'x');
+  const plainWord = (part) => part.length <= 24 && /^[a-z]+(?:[-._][a-z]+)*$/.test(part) && !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(part);
+  function pageShape() {
+    return location.origin + location.pathname.split('/').map((part) => (plainWord(part) ? part : mask(part))).join('/');
+  }
+  function titleShape() {
+    return document.title.replace(MEET_CODE, 'xxx-xxxx-xxx').replace(/\d{3,}/g, (d) => mask(d)).slice(0, 80);
   }
 
   window.__eavesy = { step, click, findButton, setInput, names, countIn, clean, visible, adapters: {} };
