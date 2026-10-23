@@ -286,7 +286,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
             && current.session_id.as_deref() != Some(session_id.as_str());
         if !busy_elsewhere {
-            // Before the state, which carries it to the HUD (`hud::shown`).
+            // Before the state, which carries it to the HUD (`hud::shown`). A
+            // delivery skipped above leaves an older session's entry here, which
+            // is harmless: `written_as` answers only for its own session id.
             *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.map(|written| (session_id.clone(), written));
             crate::hud::set_state(&app, crate::hud::HudState {
                 phase: crate::hud::Phase::Done,

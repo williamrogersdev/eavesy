@@ -12,6 +12,20 @@ vi.mock('../../src/server/auth', () => ({
   tryResolveActor: async () => (actor.userId ? { userId: actor.userId, isAnonymous: false } : null),
 }));
 
+// The model is never called for real: it answers, or fails, as each test says.
+const model = vi.hoisted(() => ({ reply: null as string | null }));
+vi.mock('../../src/lib/ai/client', async (importOriginal) => {
+  const client = () => ({
+    messages: {
+      create: async () => {
+        if (model.reply === null) throw new Error('model down');
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: model.reply }] };
+      },
+    },
+  });
+  return { ...(await importOriginal<object>()), anthropic: client, anthropicForUser: client };
+});
+
 const USER = 'user_polish';
 const PROJECT = 'proj_polish';
 
@@ -37,6 +51,7 @@ beforeEach(async () => {
   await insertUser(USER);
   await testEnv.DB.prepare(`UPDATE users SET dictation_style = 'professional', dictation_for_agents = 1 WHERE id = ?`).bind(USER).run();
   actor.userId = USER;
+  model.reply = null;
 });
 
 /**
@@ -63,9 +78,19 @@ describe('/api/dictations/polish written', () => {
     expect(body.written).toEqual({ style: 'concise', forAgents: true, projectId: PROJECT, applied: false });
   });
 
-  it('reports the tone a rewrite asked for', async () => {
-    const { body } = await polish({ text: 'um ship it', style: 'natural', forAgents: false });
-    expect(body.written).toMatchObject({ style: 'natural', forAgents: false, projectId: null });
+  it('reports the tone a rewrite asked for, applied when the model wrote it', async () => {
+    model.reply = 'Please ship it today.';
+    const { body } = await polish({ text: 'um ship it today', style: 'professional', forAgents: false });
+    expect(body.polished).toBe(true);
+    expect(body.text).toBe('Please ship it today.');
+    expect(body.written).toEqual({ style: 'professional', forAgents: false, projectId: null, applied: true });
+  });
+
+  it('reports a requested tone as not applied when the model fails and the words go out plain', async () => {
+    const { body } = await polish({ text: 'um ship it today', style: 'friendly', forAgents: true });
+    expect(body.polished).toBe(false);
+    expect(body.text).toBe('Ship it today');
+    expect(body.written).toEqual({ style: 'friendly', forAgents: true, projectId: null, applied: false });
   });
 
   it('says nothing about the tone when there are no words to write', async () => {

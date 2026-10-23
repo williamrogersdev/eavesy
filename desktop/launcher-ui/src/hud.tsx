@@ -947,21 +947,33 @@ function Hud() {
     setTone({ sessionId, base, from: row.from, pick: next.style, forAgents: next.forAgents, busy: true, landed: null });
     let kept = false;
     try {
-      kept = (await keep(next)).ok;
-      if (!wanted() || !kept) throw new Error('not kept');
-      // The rewrite goes where the words went, so that app needs the keyboard back first.
-      const released = releaseEditor(sessionId);
-      const text = todo === 'restore' ? base
-        : !tauri() ? (next.forAgents ? PREVIEW_FOR_AGENTS : next.style === 'natural' ? base : PREVIEW_REWRITES[next.style])
-        : String(await invoke('restyle_dictation', { sessionId, text: base, style: next.style, forAgents: next.forAgents }));
-      await within(released, 500);
-      if (!wanted()) return;
-      const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
-      // The words are in the app now: what follows is bookkeeping that can't
-      // fail the change (a save failure shows Retry save on its own).
-      // Saved through the same queue as a typed correction, so an older
-      // unsaved edit can't land on top of the rewrite, and even if the drawer
-      // was put away meanwhile: history keeps what's in the app.
+      let text = '';
+      let landed: 'replaced' | 'copied' = 'copied';
+      try {
+        kept = (await keep(next)).ok;
+        if (!wanted() || !kept) throw new Error('not kept');
+        // The rewrite goes where the words went, so that app needs the keyboard back first.
+        const released = releaseEditor(sessionId);
+        text = todo === 'restore' ? base
+          : !tauri() ? (next.forAgents ? PREVIEW_FOR_AGENTS : next.style === 'natural' ? base : PREVIEW_REWRITES[next.style])
+          : String(await invoke('restyle_dictation', { sessionId, text: base, style: next.style, forAgents: next.forAgents }));
+        await within(released, 500);
+        if (!wanted()) return;
+        landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
+      } catch (error) {
+        // Keeping, the rewrite or putting it in place failed: the words are as they were.
+        if (!wanted()) return;
+        const outcome = changeOutcome(kept, false);
+        setTone((now) => now?.sessionId === sessionId ? outcome.revert ? toneBefore.current : { ...now, busy: false, landed: null } : now);
+        setActionError(kept ? outcome.say : hudError(error, outcome.say ?? ''));
+        return;
+      }
+      // The words are in the app now. What follows is bookkeeping, outside
+      // that catch: nothing here can be reported as a failed rewrite (a save
+      // failure shows Retry save on its own). Saved through the same queue
+      // as a typed correction, so an older unsaved edit can't land on top of
+      // the rewrite, and even if the drawer was put away meanwhile: history
+      // keeps what's in the app.
       const edit: Edit = { sessionId, text, learn: false };
       latestEdit.current = edit; pendingEdit.current = edit;
       void flushEdit();
@@ -969,13 +981,6 @@ function Hud() {
       setDraft({ sessionId, source: null, text });
       setCopied(false);
       setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
-    } catch (error) {
-      // Only keeping, the rewrite and putting it in place can throw, so the
-      // words are still as they were.
-      if (!wanted()) return;
-      const outcome = changeOutcome(kept, false);
-      setTone((now) => now?.sessionId === sessionId ? outcome.revert ? toneBefore.current : { ...now, busy: false, landed: null } : now);
-      setActionError(kept ? outcome.say : hudError(error, outcome.say ?? ''));
     } finally {
       if (toneRequest.current === token) toneRequest.current = null;
     }

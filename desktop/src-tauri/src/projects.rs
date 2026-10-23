@@ -91,6 +91,7 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     if path == "/api/me" && method == "PATCH" {
         crate::vocabulary::refresh(&app);
     }
+    // Any change to the account or a project, tone or not: the HUD reads the account again (cheap, rare).
     if reloads_hud(&method, &path) {
         let _ = app.emit_to("hud", "account:changed", ());
     }
