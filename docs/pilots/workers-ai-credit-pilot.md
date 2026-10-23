@@ -19,6 +19,12 @@ stops November 17, 2026 at 00:00 UTC. The deployment stores these as Worker
 secrets so future deployments preserve the configuration. Pause by setting
 `AI_CREDITS_PAUSED=true` on all three Workers.
 
+Only the pilot's own calls go through the credits account: purposes named
+`import-*`, `library-answer` and `mcp-library` (`isCreditPurpose` in
+`web/src/lib/ai/credit-runner.ts`). Meeting embeddings, search, translation
+and transcript repair predate the pilot and always run on the Worker's own
+`AI` binding, so pausing or ending the pilot leaves them alone.
+
 D1 atomically reserves conservative per-request costs before inference. Failed
 and interrupted requests retain their reservations. The programme counter is
 shared by all Workers. One dollar of that ceiling is pre-reserved for setup and
@@ -62,6 +68,37 @@ responses and credentials outside Git.
 
 Migration aliases already applied from the old checkout are documented in
 `web/drizzle/README.md`. Never reapply or delete that history.
+
+## After the pilot
+
+The runner fails closed from November 17, 2026 at 00:00 UTC: imports,
+`/app/memory` answers and the MCP library tools stop with "paused or expired"
+until someone acts. Within the week before, in this order:
+
+1. Decide what survives. `search_library`, `ask_library` and `/app/memory`
+   answer with `@cf/qwen/qwen3-30b-a3b-fp8` and could run on the Worker's own
+   `AI` binding at Workers AI list prices (roughly $0.05 per million input
+   tokens and $0.34 per million output tokens). Keeping them means removing
+   the `creditsConfigured` gates in `web/src/routes/api/library/ask.ts`,
+   `web/src/routes/api/library/reindex.ts` and `workers/mcp/src/index.ts`
+   and adding a daily quota per user; dropping them means removing the two
+   MCP tools from `TOOL_DEFS`, the plugin's skill and `connect-mcp.mdx`, and
+   the Memory page. Imports keep working either way: with the pilot off,
+   `import-transcription` and `import-summary` fall through to the `AI`
+   binding, so leave `AI_SUMMARY_PROVIDER=workers-ai` only if that cost is
+   acceptable, otherwise unset it so imports use the Anthropic summary path.
+2. Turn the pilot off, don't just let it expire: set `AI_CREDITS_ENABLED=false`
+   on all three Workers, then delete `WORKERS_AI_API_KEY`,
+   `WORKERS_AI_ACCOUNT_ID`, `AI_CREDITS_EXPECTED_ACCOUNT_ID`,
+   `AI_CREDITS_STOP_AT`, `AI_CREDITS_BUDGET_USD` and
+   `AI_CREDITS_DAILY_BUDGET_USD` (`wrangler secret delete`). Revoke the Workers
+   AI token in the Cloudflare dashboard.
+3. Keep the ledger. `ai_credit_budgets` and `ai_credit_usage` are the only
+   record of what the pilot spent; export them before any cleanup migration and
+   leave the tables in place (additive schema only).
+4. Check nothing else depended on the credits account: run one import, one
+   search, one translation and one MCP `search_meetings` on production after
+   the switch, and watch `/api/ops/metrics` for a day.
 
 ## Initial synthetic comparison
 

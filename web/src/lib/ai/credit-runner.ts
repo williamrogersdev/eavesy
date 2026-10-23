@@ -61,8 +61,19 @@ export function creditsConfigured(env: CreditEnv): boolean {
   return env.AI_CREDITS_ENABLED === 'true';
 }
 
+/**
+ * The purposes the credit pilot pays for (docs/pilots/workers-ai-credit-pilot.md):
+ * imports, transcript-backed library answers and the MCP library tools. Every
+ * other Workers AI call (meeting embeddings, search, translation, transcript
+ * repair) predates the pilot and runs on the account's own `AI` binding, so
+ * pausing or ending the pilot cannot take them down with it.
+ */
+export function isCreditPurpose(purpose: string): boolean {
+  return purpose.startsWith('import-') || purpose === 'library-answer' || purpose === 'mcp-library';
+}
+
 export function createAiRunner(env: CreditEnv, purpose: string, transport: typeof fetch = fetch): WorkersAiRunner {
-  if (!creditsConfigured(env)) {
+  if (!creditsConfigured(env) || !isCreditPurpose(purpose)) {
     if (!env.AI) throw new Error('AI binding unavailable');
     return env.AI;
   }
