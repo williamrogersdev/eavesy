@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createFakeEnv } from '@/server/testing/fake-env';
-import { createAiRunner, isCreditPurpose, LIBRARY_MODEL, reservation } from './credit-runner';
+import { BINDING_PURPOSES, CREDIT_PURPOSES, createAiRunner, isCreditPurpose, LIBRARY_MODEL, reservation } from './credit-runner';
 import { encodeWav } from '../imports/wav';
 const MODEL = '@cf/qwen/qwen3-embedding-0.6b';
 function setup(budget = '1') {
@@ -17,13 +17,21 @@ describe('credit routing and accounting', () => {
     expect(() => createAiRunner({ ...t.env, WORKERS_AI_ACCOUNT_ID: 'wrong' }, 'import-summary', t.transport)).toThrow('account');
     expect(t.calls).toHaveLength(0);
   });
-  test('only pilot purposes go through credits; the rest stay on the binding even when the pilot is paused or over', () => {
+  test('only pilot purposes go through credits; the rest stay on the binding even when the pilot is paused or over', async () => {
     const t = setup();
-    for (const purpose of ['import-transcription', 'import-summary', 'library-answer', 'mcp-library']) {
+    const ledgerRows = () => (t.sqlite.query('SELECT count(*) n FROM ai_credit_usage').get() as { n: number }).n;
+    for (const purpose of CREDIT_PURPOSES) {
       expect(isCreditPurpose(purpose)).toBe(true);
       expect(createAiRunner(t.env, purpose, t.transport)).not.toBe(t.env.AI);
     }
-    for (const purpose of ['library-embedding', 'search-embedding', 'mcp-search', 'translation', 'transcript-repair']) {
+    // A pilot purpose writes a ledger row and calls the credits account; a binding purpose does neither.
+    await createAiRunner(t.env, 'library-answer', t.transport).run(MODEL, { text: ['hello'] });
+    expect(ledgerRows()).toBe(1);
+    expect(t.calls).toHaveLength(1);
+    await createAiRunner(t.env, 'library-embedding', t.transport).run(MODEL, { text: ['hello'] });
+    expect(ledgerRows()).toBe(1);
+    expect(t.calls).toHaveLength(1);
+    for (const purpose of BINDING_PURPOSES) {
       expect(isCreditPurpose(purpose)).toBe(false);
       expect(createAiRunner(t.env, purpose, t.transport)).toBe(t.env.AI);
       expect(createAiRunner({ ...t.env, AI_CREDITS_PAUSED: 'true' }, purpose, t.transport)).toBe(t.env.AI);
@@ -32,7 +40,6 @@ describe('credit routing and accounting', () => {
       expect(createAiRunner({ ...t.env, WORKERS_AI_ACCOUNT_ID: 'wrong' }, purpose, t.transport)).toBe(t.env.AI);
     }
     expect(() => createAiRunner({ ...t.env, AI: undefined }, 'translation', t.transport)).toThrow('AI binding unavailable');
-    expect(t.calls).toHaveLength(0);
   });
   test('conditional debit prevents concurrent requests from exceeding the budget', async () => {
     const t = setup('0.01');
