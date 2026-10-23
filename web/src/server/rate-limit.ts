@@ -109,8 +109,8 @@ function quotaPolicy(userId: string, scope: QuotaScope) {
   return userQuotaPolicy(scope, userId, process.env);
 }
 
-export async function guardUserQuota(userId: string, scope: QuotaScope): Promise<Response | null> {
-  const result = await consumeRateLimit(db(), quotaPolicy(userId, scope));
+export async function guardUserQuota(userId: string, scope: QuotaScope, now = Date.now()): Promise<Response | null> {
+  const result = await consumeRateLimit(db(), quotaPolicy(userId, scope), now);
   if (result.allowed) return null;
   return tooMany(
     'You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.',
@@ -119,9 +119,9 @@ export async function guardUserQuota(userId: string, scope: QuotaScope): Promise
   );
 }
 
-/** Gives back one use of a quota the request turned out not to need. */
-export async function refundUserQuota(userId: string, scope: QuotaScope): Promise<void> {
-  await refundRateLimit(db(), quotaPolicy(userId, scope));
+/** Gives back one use of a quota the request turned out not to need; `chargedAt` is the `now` it was charged at. */
+export async function refundUserQuota(userId: string, scope: QuotaScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), quotaPolicy(userId, scope), chargedAt);
 }
 
 /**

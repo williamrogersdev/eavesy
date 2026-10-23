@@ -519,14 +519,15 @@ const ACTION_ITEMS_MAX = 200;
  */
 async function withQuota<T>(env: Env, userId: string, scope: QuotaScope, run: () => Promise<T>): Promise<T> {
   const policy = userQuotaPolicy(scope, userId, env as unknown as Record<string, unknown>);
-  const result = await consumeRateLimit(env.DB, policy);
+  const chargedAt = Date.now();
+  const result = await consumeRateLimit(env.DB, policy, chargedAt);
   if (!result.allowed) {
     throw new UserFacingError('You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.');
   }
   try {
     return await run();
   } catch (error) {
-    await refundRateLimit(env.DB, policy);
+    await refundRateLimit(env.DB, policy, chargedAt);
     throw error;
   }
 }

@@ -114,17 +114,17 @@ export function userQuotaPolicy(scope: QuotaScope, userId: string, vars: Record<
 /**
  * Gives back one use counted by `consumeRateLimit` for a request that ended up
  * doing nothing (an interrupted upload, a duplicate, a failed model call).
- * Best effort: a refund that can't be written leaves the user one use short
- * until the window ends. The window is the refund's own, so a request that
- * spans the end of a window refunds the new one; that is one use either way.
+ * `chargedAt` is the `now` the use was counted at, so the refund lands in
+ * that window even when the request ends in the next one. Best effort: a
+ * refund that can't be written leaves the user one use short until then.
  */
 export async function refundRateLimit(
   db: D1Database | null | undefined,
   policy: Pick<RateLimitPolicy, 'key' | 'windowSec'>,
-  now = Date.now(),
+  chargedAt: number,
 ): Promise<void> {
   if (!db) return;
-  const windowId = Math.floor(now / (policy.windowSec * 1000));
+  const windowId = Math.floor(chargedAt / (policy.windowSec * 1000));
   try {
     await db.prepare('UPDATE rate_limits SET count = count - 1 WHERE key = ? AND count > 0')
       .bind(`${policy.key}:${windowId}`).run();
