@@ -121,8 +121,8 @@ async fn deliver(build: impl Fn() -> reqwest::RequestBuilder) -> bool {
     loop {
         match build().send().await {
             Ok(r) if r.status().is_success() => return true,
-            // 4xx other than throttling won't change on retry.
-            Ok(r) if r.status().is_client_error() && r.status().as_u16() != 429 => {
+            // 4xx other than a timeout, "too early" and throttling won't change on retry.
+            Ok(r) if r.status().is_client_error() && !matches!(r.status().as_u16(), 408 | 425 | 429) => {
                 log(json!({ "msg": "rejected", "status": r.status().as_u16() }));
                 return false;
             }
