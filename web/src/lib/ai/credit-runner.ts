@@ -63,16 +63,22 @@ export function creditsConfigured(env: CreditEnv): boolean {
 
 /**
  * The purposes the credit pilot pays for (docs/pilots/workers-ai-credit-pilot.md):
- * imports, transcript-backed library answers and the MCP library tools. Every
- * other Workers AI call (meeting embeddings, search, translation, transcript
- * repair) predates the pilot and runs on the account's own `AI` binding, so
- * pausing or ending the pilot cannot take them down with it.
+ * imports, transcript-backed library answers and the MCP library tools.
  */
-export function isCreditPurpose(purpose: string): boolean {
-  return purpose.startsWith('import-') || purpose === 'library-answer' || purpose === 'mcp-library';
+export const CREDIT_PURPOSES = ['import-transcription', 'import-summary', 'library-answer', 'mcp-library'] as const;
+/**
+ * Every other Workers AI call predates the pilot and runs on the account's own
+ * `AI` binding, so pausing or ending the pilot cannot take it down with it.
+ */
+export const BINDING_PURPOSES = ['library-embedding', 'search-embedding', 'mcp-search', 'translation', 'transcript-repair'] as const;
+export type CreditPurpose = (typeof CREDIT_PURPOSES)[number];
+export type AiPurpose = CreditPurpose | (typeof BINDING_PURPOSES)[number];
+
+export function isCreditPurpose(purpose: AiPurpose): purpose is CreditPurpose {
+  return (CREDIT_PURPOSES as readonly string[]).includes(purpose);
 }
 
-export function createAiRunner(env: CreditEnv, purpose: string, transport: typeof fetch = fetch): WorkersAiRunner {
+export function createAiRunner(env: CreditEnv, purpose: AiPurpose, transport: typeof fetch = fetch): WorkersAiRunner {
   if (!creditsConfigured(env) || !isCreditPurpose(purpose)) {
     if (!env.AI) throw new Error('AI binding unavailable');
     return env.AI;

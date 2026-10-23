@@ -19,11 +19,15 @@ stops November 17, 2026 at 00:00 UTC. The deployment stores these as Worker
 secrets so future deployments preserve the configuration. Pause by setting
 `AI_CREDITS_PAUSED=true` on all three Workers.
 
-Only the pilot's own calls go through the credits account: purposes named
-`import-*`, `library-answer` and `mcp-library` (`isCreditPurpose` in
-`web/src/lib/ai/credit-runner.ts`). Meeting embeddings, search, translation
-and transcript repair predate the pilot and always run on the Worker's own
-`AI` binding, so pausing or ending the pilot leaves them alone.
+Only the pilot's own calls go through the credits account: the purposes in
+`CREDIT_PURPOSES` (`web/src/lib/ai/credit-runner.ts`): import transcription
+and summaries, library answers, and the MCP library tools. Meeting embeddings,
+search, translation and transcript repair predate the pilot and always run on
+the Worker's own `AI` binding, so pausing or ending the pilot leaves them
+alone. That includes the embeddings `/api/library/reindex` backfills: the
+route is only offered while the pilot is on, but the vectors it queues are
+the same ones every new meeting gets, on the binding and outside the pilot's
+caps.
 
 D1 atomically reserves conservative per-request costs before inference. Failed
 and interrupted requests retain their reservations. The programme counter is
@@ -71,14 +75,18 @@ Migration aliases already applied from the old checkout are documented in
 
 ## After the pilot
 
-The runner fails closed from November 17, 2026 at 00:00 UTC: imports,
-`/app/memory` answers and the MCP library tools stop with "paused or expired"
-until someone acts. Within the week before, in this order:
+The runner fails closed from November 17, 2026 at 00:00 UTC: imports, the
+answer step of `/app/memory` and the MCP library tools stop with "paused or
+expired" until someone acts. Retrieval keeps working, since query embeddings
+run on the binding; only the written answer is credit-gated. Within the week
+before, in this order:
 
 1. Decide what survives. `search_library`, `ask_library` and `/app/memory`
    answer with `@cf/qwen/qwen3-30b-a3b-fp8` and could run on the Worker's own
-   `AI` binding at Workers AI list prices (roughly $0.05 per million input
-   tokens and $0.34 per million output tokens). Keeping them means removing
+   `AI` binding at Workers AI list prices (the `TEXT_MODELS` figures in
+   `credit-runner.ts`, taken on `PRICING_VERSION` 2026-10-20: about $0.05 per
+   million input tokens and $0.34 per million output tokens; check the
+   Workers AI pricing page before deciding). Keeping them means removing
    the `creditsConfigured` gates in `web/src/routes/api/library/ask.ts`,
    `web/src/routes/api/library/reindex.ts` and `workers/mcp/src/index.ts`
    and adding a daily quota per user; dropping them means removing the two
