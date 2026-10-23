@@ -254,9 +254,13 @@ function Loaded({
               ) : (
                 <p className="text-sm text-ev-ink-2">The brief appears here once the transcript is done.</p>
               )}
-              <div className="mt-5 border-t border-ev-line pt-3">
-                <BriefControls data={data} meetingId={meetingId} onSaved={onSaved} />
-              </div>
+              {/* The pipeline writes the brief once the recording is processed;
+                  regenerating from a partial transcript would race it. */}
+              {isMeetingLive(data) ? null : (
+                <div className="mt-5 border-t border-ev-line pt-3">
+                  <BriefControls data={data} meetingId={meetingId} onSaved={onSaved} />
+                </div>
+              )}
             </Section>
           ) : null}
 
