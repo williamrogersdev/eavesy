@@ -24,9 +24,11 @@ function PrivacyPage() {
           <li>
             <strong>Local first.</strong> In the Mac app, every capture is a real folder on
             your disk: Markdown, JSON metadata, and audio, video or images. You can use it
-            without an account. When you sign in, recordings also get a cloud copy for
-            transcripts, briefs, search and sync. Screenshots, clipboard captures and notes
-            from the Mac app are never uploaded. Anything you capture in the web app, including
+            without an account, and then nothing leaves your Mac. When you sign in, recordings
+            also get a cloud copy for transcripts, briefs, search and sync, and the Mac app
+            uploads your screenshots and pasted images to your account so they show up on your
+            other signed-in Macs. Clipboard text and notes from the Mac app are not uploaded.
+            Anything you capture in the web app, including
             screenshots and screen or webcam video, is stored in your account. A Notetaker
             you send to a call records that call&rsquo;s audio, the participants&rsquo; display
             names and who spoke when, never video, and stores them in your account the same way.

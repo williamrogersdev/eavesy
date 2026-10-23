@@ -23,9 +23,12 @@ Counters reset at midnight UTC.
 | Recording processing runs | 100 | `QUOTA_PROCESS_PER_DAY` |
 | Dictations | 500 | `QUOTA_DICTATION_PER_DAY` |
 | Web captures | 300 | `QUOTA_CAPTURE_PER_DAY` |
+| Mac screenshots and images synced | 2,000 | `QUOTA_CAPTURE_SYNC_PER_DAY` |
 | Drops | 500 | `QUOTA_DROP_PER_DAY` |
 | Chat messages | 300 | `QUOTA_CHAT_PER_DAY` |
 | Brief regenerations | 60 | `QUOTA_REGENERATE_PER_DAY` |
+| Translations | 600 | `QUOTA_TRANSLATE_PER_DAY` |
+| Library index refreshes | 20 | `QUOTA_LIBRARY_REINDEX_PER_DAY` |
 | Searches | 1,000 | `QUOTA_SEARCH_PER_DAY` |
 | Full account exports | 10 | `QUOTA_EXPORT_PER_DAY` |
 | Single recording exports | 200 | `QUOTA_MEETING_EXPORT_PER_DAY` |
@@ -37,13 +40,14 @@ When you reach a limit, the request returns HTTP 429 with the code
 
 ## Server-wide limits
 
-Transcription and processing also have a per-IP limit per minute and a daily
-budget for the whole server:
+Transcription, processing and translation also have a per-IP limit per minute
+and a daily budget for the whole server:
 
 | Endpoint | Per IP, per minute | Whole server, per day |
 | --- | --- | --- |
-| Transcribe | 20 (`RL_TRANSCRIBE_PER_MIN`) | 5,000 (`BUDGET_TRANSCRIBE_PER_DAY`) |
-| Process | 10 (`RL_PROCESS_PER_MIN`) | 2,000 (`BUDGET_PROCESS_PER_DAY`) |
+| Transcribe (including web dictations) | 20 (`RL_TRANSCRIBE_PER_MIN`) | 5,000 (`BUDGET_TRANSCRIBE_PER_DAY`) |
+| Process (including imports) | 10 (`RL_PROCESS_PER_MIN`) | 2,000 (`BUDGET_PROCESS_PER_DAY`) |
+| Translation | 20 (`RL_TRANSLATION_PER_MIN`) | 5,000 (`BUDGET_TRANSLATION_PER_DAY`) |
 
 ## Self-hosting
 
