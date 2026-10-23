@@ -5,9 +5,8 @@ import type { Database } from 'bun:sqlite';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
 mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
-const { MAX_ATTEMPTS, queue, recoverStaleSegments, runCronSteps, SUMMARY_WAIT_LIMIT_MS } = await import(
-  '@/server/processing-worker'
-);
+const { DEAD_LETTER_QUEUE, MAX_ATTEMPTS, queue, recoverStaleSegments, runCronSteps, SUMMARY_WAIT_LIMIT_MS } =
+  await import('@/server/processing-worker');
 const { ACCOUNT_TABLES } = await import('./cleanup');
 const { PENDING_SEGMENT_GRACE_MS } = await import('./recovery');
 const { SUMMARY_CLAIM_TTL_MS } = await import('./shared');
@@ -97,12 +96,13 @@ describe('the recovery sweep', () => {
     expect(requeued(t)).toEqual([0]);
   });
 
-  test('skips deleted meetings, failed meetings and imports still uploading', async () => {
+  test('skips deleted, failed and complete meetings, and imports still uploading', async () => {
     const t = setup();
     const old = t.now - 60 * 60 * 1_000;
     for (const [id, extra] of [
       ['gone', `deleted_at = ${old}`],
       ['failed', `status = 'failed'`],
+      ['done', `status = 'complete'`],
       ['upload', `source = 'import'`],
     ] as const) {
       t.sqlite.run(
@@ -173,6 +173,27 @@ describe('the final summary claim', () => {
     expect(t.api.calls).toHaveLength(1);
     expect(t.status(`SELECT status s FROM meetings`)).toBe('complete');
     expect(t.status(`SELECT summary_claimed_at s FROM meetings`)).toBeNull();
+  });
+
+  test('the dead-letter queue leaves a meeting alone while a live job holds its summary', async () => {
+    const t = setup();
+    const meetingStatus = () => t.status(`SELECT status AS s FROM meetings WHERE id = 'm1'`);
+    const deadLetter = async () => {
+      const d = delivery({ kind: 'summarize', meetingId: 'm1' }, MAX_ATTEMPTS);
+      await queue(
+        { queue: DEAD_LETTER_QUEUE, messages: [d.message] } as unknown as MessageBatch<ProcessingMessage>,
+        t.env,
+      );
+      return d.outcome;
+    };
+
+    t.sqlite.run(`UPDATE meetings SET summary_claimed_at = ? WHERE id = 'm1'`, [t.now]);
+    expect(await deadLetter()).toMatchObject({ acked: true, retried: false });
+    expect(meetingStatus()).toBe('processing');
+
+    t.sqlite.run(`UPDATE meetings SET summary_claimed_at = ? WHERE id = 'm1'`, [t.now - SUMMARY_CLAIM_TTL_MS - 1]);
+    expect(await deadLetter()).toMatchObject({ acked: true, retried: false });
+    expect(meetingStatus()).toBe('failed');
   });
 
   test('a failed model call releases the claim for the retry', async () => {

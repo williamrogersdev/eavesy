@@ -8,6 +8,13 @@ export type CaptureKind = Capture['kind'];
 export type CaptureMode = Capture['captureMode'];
 export type TranscriptStatus = Capture['transcriptStatus'];
 
+/**
+ * A transcript `processing` for longer than this never finished: the request
+ * that claimed it was cut off (the tab closed during "Saving…", or the isolate
+ * went away). The next upload of the audio may claim it again.
+ */
+export const TRANSCRIPT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+
 export async function create(
   db: AppDb,
   args: {
@@ -133,19 +140,28 @@ export async function setTranscript(
  */
 export async function claimTranscript(
   db: AppDb,
-  args: { captureId: string; userId: string; from: TranscriptStatus; to: TranscriptStatus },
+  args: {
+    captureId: string;
+    userId: string;
+    from: TranscriptStatus;
+    to: TranscriptStatus;
+    /** Also take over a row already at `to` that has sat there this long. */
+    staleAfterMs?: number;
+    error?: string | null;
+  },
 ): Promise<boolean> {
+  const now = Date.now();
+  const claimable =
+    args.staleAfterMs === undefined
+      ? eq(captures.transcriptStatus, args.from)
+      : or(
+          eq(captures.transcriptStatus, args.from),
+          and(eq(captures.transcriptStatus, args.to), lt(captures.updatedAt, now - args.staleAfterMs)),
+        );
   const rows = await db
     .update(captures)
-    .set({ transcriptStatus: args.to, transcriptError: null, updatedAt: Date.now() })
-    .where(
-      and(
-        eq(captures.id, args.captureId),
-        eq(captures.userId, args.userId),
-        eq(captures.transcriptStatus, args.from),
-        isNull(captures.deletedAt),
-      ),
-    )
+    .set({ transcriptStatus: args.to, transcriptError: args.error ?? null, updatedAt: now })
+    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId), claimable, isNull(captures.deletedAt)))
     .returning({ id: captures.id });
   return rows.length > 0;
 }

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '@/db/schema';
 import { meetings, meetingSegments, users } from '@/db/schema';
@@ -21,9 +21,12 @@ export const PENDING_SEGMENT_GRACE_MS = 15 * 60 * 1_000;
  * that never got a message at all. Without this either one leaves a gap in
  * the transcript, and the final summary waits on it for hours.
  *
- * Deleted meetings and failed meetings are skipped: their audio never needs
- * transcribing again. So are imports still uploading or cancelled, whose
- * segments are queued by finalize, or never.
+ * Only meetings still in progress are swept. A deleted or failed meeting's
+ * audio never needs transcribing again, and a completed one already has its
+ * summary, recap and embeddings built on the transcript it has: a segment the
+ * final summary gave up waiting for must not change that transcript later.
+ * Imports still uploading or cancelled are skipped too; finalize queues their
+ * segments, or never.
  *
  * Rows are sent first and a stale claim is reset to 'pending' only after its
  * send succeeds, so a failed send leaves the row for the next sweep. Failures
@@ -41,7 +44,7 @@ export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now())
   );
   const stillWanted = and(
     isNull(meetings.deletedAt),
-    ne(meetings.status, 'failed'),
+    inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing']),
     sql`NOT EXISTS (
       SELECT 1 FROM recording_imports i
        WHERE i.meeting_id = ${meetingSegments.meetingId} AND i.state IN ('uploading', 'cancelled')
