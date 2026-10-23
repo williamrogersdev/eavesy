@@ -116,7 +116,7 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       });
       return;
     case 'embed':
-      await handleEmbedMeeting(message.meetingId, db, env);
+      await handleEmbedMeeting(message.meetingId, db, env, { queuedAt: message.queuedAt });
       return;
     case 'agent-transcript':
       await handleAgentTranscript(message.meetingId, db, env, { onlyIfMissing: message.onlyIfMissing });
