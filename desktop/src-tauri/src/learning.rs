@@ -103,7 +103,7 @@ pub async fn correct_recording(
             "warning": "Transcript saved. Dictionary could not connect. Retry learning when you are online."
         }));
         if let Some(error) = context_warning {
-            eprintln!("Could not synchronize corrected walkthrough: {error}");
+            tracing::warn!("Could not synchronize corrected walkthrough: {error}");
             let previous = response["warning"].as_str().unwrap_or("");
             let message = "Transcript saved, but walkthrough context needs preparation/retry.";
             response["warning"] = json!(if previous.is_empty() { message.into() } else { format!("{previous} {message}") });

@@ -312,6 +312,7 @@ impl History {
         id.map(|id| self.get(&id)).transpose().map(Option::flatten)
     }
 
+    #[allow(dead_code)] // Tests and the history benchmark.
     pub fn ids(&self) -> Result<Vec<String>, String> {
         let mut stmt = self
             .conn
@@ -319,6 +320,56 @@ impl History {
             .map_err(error)?;
         let rows = stmt.query_map([], |r| r.get(0)).map_err(error)?;
         rows.collect::<rusqlite::Result<_>>().map_err(error)
+    }
+
+    /// Which of `ids` are in the history.
+    pub fn existing(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, String> {
+        let mut found = std::collections::HashSet::new();
+        for chunk in ids.chunks(200) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let mut stmt = self
+                .conn
+                .prepare(&format!("SELECT id FROM history_recordings WHERE id IN ({marks})"))
+                .map_err(error)?;
+            let rows = stmt.query_map(params_from_iter(chunk), |r| r.get::<_, String>(0)).map_err(error)?;
+            for row in rows {
+                found.insert(row.map_err(error)?);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Screenshots and images added after row `after`, oldest first, as
+    /// (row, id). Rows only grow, so the last row seen is a high-water mark.
+    pub fn images_after(&self, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT rowid, id FROM history_recordings
+                 WHERE rowid > ?1 AND source IN ('screenshot','image') ORDER BY rowid LIMIT ?2",
+            )
+            .map_err(error)?;
+        let rows = stmt
+            .query_map(params![after, limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(error)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(error)
+    }
+
+    /// Every screenshot and image at or before row `upto`.
+    pub fn images_upto(&self, upto: i64) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM history_recordings WHERE rowid <= ?1 AND source IN ('screenshot','image')")
+            .map_err(error)?;
+        let rows = stmt.query_map([upto], |r| r.get(0)).map_err(error)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(error)
+    }
+
+    /// The newest row, or 0 for an empty history.
+    pub fn last_row(&self) -> Result<i64, String> {
+        self.conn
+            .query_row("SELECT COALESCE(max(rowid), 0) FROM history_recordings", [], |r| r.get(0))
+            .map_err(error)
     }
 
     pub fn page(
