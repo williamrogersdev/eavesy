@@ -169,21 +169,32 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
     crate::telemetry::capture("recording upload paused", "device credential rejected");
     if let Some(app) = crate::ui::wry(app) {
         let message = "Eavesy is signed out. Recordings are kept on this Mac and will upload after you reconnect your account.";
-        if crate::hud::current().phase != crate::hud::Phase::Recording {
-            crate::hud::set_state(app, crate::hud::HudState {
+        // Only over a control with nothing on it: a recording, or words the
+        // user is still reading or editing, stay put. The notification below
+        // and `sync:status` carry the message either way.
+        crate::hud::set_state_if(
+            app,
+            crate::hud::HudState {
                 phase: crate::hud::Phase::Failed,
                 session_id: None,
                 mode: None,
                 started_at_ms: None,
                 message: Some(message.to_string()),
                 notice: None,
-            });
-        }
+            },
+            signed_out_may_replace,
+        );
         use tauri_plugin_notification::NotificationExt;
         if let Err(error) = app.notification().builder().title("Sign in to keep syncing").body(message).show() {
             tracing::warn!("desktop ingest: could not show sign-in notice: {error}");
         }
     }
+}
+
+/// Whether the signed-out notice may take the control's place: only from rest
+/// or another failure, never over a recording or a result being read.
+fn signed_out_may_replace(now: &crate::hud::HudState) -> bool {
+    matches!(now.phase, crate::hud::Phase::Idle | crate::hud::Phase::Failed)
 }
 
 pub(crate) fn is_permanent(error: &anyhow::Error) -> bool {
@@ -1135,6 +1146,22 @@ pub(crate) async fn http_error(operation: &str, response: reqwest::Response) -> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_signed_out_notice_never_covers_a_recording_or_a_result() {
+        use crate::hud::{HudState, Phase};
+        for (phase, replaces) in [
+            (Phase::Idle, true),
+            (Phase::Failed, true),
+            (Phase::Recording, false),
+            (Phase::Transcribing, false),
+            (Phase::Done, false),
+            (Phase::Saved, false),
+        ] {
+            let now = HudState { phase: phase.clone(), ..HudState::idle() };
+            assert_eq!(super::signed_out_may_replace(&now), replaces, "{phase:?}");
+        }
+    }
+
     #[test]
     fn an_edited_transcript_pastes_its_words_without_markdown() {
         let segments = [
