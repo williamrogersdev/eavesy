@@ -87,7 +87,9 @@ export const Route = createFileRoute('/api/devices/captures/')({
         try {
           await Promise.all([putObject(r2Key, readable as unknown as Parameters<typeof putObject>[1], contentType), piped]);
         } catch {
-          // The Mac retries an interrupted upload; only a stored capture counts.
+          // The Mac retries an interrupted upload under a new id, so nothing
+          // written here is wanted, and only a stored capture counts.
+          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
           await refundUserQuota(actor.userId, 'capture-sync');
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
         }

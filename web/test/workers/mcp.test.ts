@@ -355,6 +355,13 @@ Will: Bump it.
       expect(library.error?.message).toContain('today’s limit');
       // Tools that don't call a model are not counted.
       expect((await tool(token, 'recent_meetings', {})).error).toBeUndefined();
+
+      // A search whose model call fails gives its use back. (The test Worker
+      // has no AI binding, so embedding the query throws.)
+      await testEnv.DB.prepare('UPDATE rate_limits SET count = 5').run();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      expect((await tool(token, 'search_meetings', { query: 'cask' })).error?.code).toBe(-32000);
+      expect(await testEnv.DB.prepare('SELECT count FROM rate_limits').first()).toEqual({ count: 5 });
     } finally {
       await testEnv.DB.prepare('DELETE FROM rate_limits').run();
     }

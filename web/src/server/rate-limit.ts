@@ -4,7 +4,6 @@ import {
   type FailMode,
   type QuotaScope,
   type RateLimitResult,
-  USER_DAILY_QUOTAS,
   consumeRateLimit,
   refundRateLimit,
   userQuotaPolicy,
@@ -107,7 +106,7 @@ function envName(scope: string): string {
 }
 
 function quotaPolicy(userId: string, scope: QuotaScope) {
-  return userQuotaPolicy(scope, userId, intEnv(`QUOTA_${envName(scope)}_PER_DAY`, USER_DAILY_QUOTAS[scope].limit));
+  return userQuotaPolicy(scope, userId, process.env);
 }
 
 export async function guardUserQuota(userId: string, scope: QuotaScope): Promise<Response | null> {

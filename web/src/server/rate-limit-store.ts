@@ -100,15 +100,23 @@ export const USER_DAILY_QUOTAS = {
 
 export type QuotaScope = keyof typeof USER_DAILY_QUOTAS;
 
-/** The per-UTC-day policy for one user's quota scope. */
-export function userQuotaPolicy(scope: QuotaScope, userId: string, limit: number = USER_DAILY_QUOTAS[scope].limit): RateLimitPolicy {
+/**
+ * The per-UTC-day policy for one user's quota scope. `vars` is the Worker's
+ * environment: `QUOTA_<SCOPE>_PER_DAY` (say `QUOTA_CAPTURE_SYNC_PER_DAY`)
+ * overrides the limit, read the same way by every Worker that charges it.
+ */
+export function userQuotaPolicy(scope: QuotaScope, userId: string, vars: Record<string, unknown> = {}): RateLimitPolicy {
+  const override = Number(vars[`QUOTA_${scope.toUpperCase().replaceAll('-', '_')}_PER_DAY`]);
+  const limit = Number.isFinite(override) && override > 0 ? override : USER_DAILY_QUOTAS[scope].limit;
   return { key: `budget:user:${scope}:${userId}`, limit, windowSec: DAY_SEC, failMode: USER_DAILY_QUOTAS[scope].failMode };
 }
 
 /**
  * Gives back one use counted by `consumeRateLimit` for a request that ended up
- * doing nothing (an interrupted upload, a duplicate). Best effort: a refund
- * that can't be written leaves the user one use short until midnight UTC.
+ * doing nothing (an interrupted upload, a duplicate, a failed model call).
+ * Best effort: a refund that can't be written leaves the user one use short
+ * until the window ends. The window is the refund's own, so a request that
+ * spans the end of a window refunds the new one; that is one use either way.
  */
 export async function refundRateLimit(
   db: D1Database | null | undefined,

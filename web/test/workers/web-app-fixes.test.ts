@@ -253,6 +253,26 @@ describe('captures', () => {
     expect(await used()).toBe(0);
     expect((await upload(PNG.byteLength)).status).toBe(201);
     expect(await used()).toBe(1);
+    // No object is left behind by the cut-short upload.
+    expect((await testEnv.AUDIO_BUCKET.list({ prefix: 'users/user_quota/' })).objects).toHaveLength(1);
+  });
+
+  it('counts a capture once however many of its uploads race', async () => {
+    const token = await insertDeviceActor('user_race', 'device_race');
+    const clientId = crypto.randomUUID();
+    const upload = () => call(DeviceCapturesRoute, 'POST', '/api/devices/captures', {
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'image/png',
+        'content-length': String(PNG.byteLength),
+        'x-client-capture-id': clientId,
+      },
+      body: requestBody(PNG),
+    });
+    const responses = await Promise.all([upload(), upload(), upload()]);
+    expect(responses.every((response) => response.status === 201 || response.status === 200)).toBe(true);
+    expect(await row("SELECT count(*) AS n FROM captures WHERE user_id = 'user_race'")).toEqual({ n: 1 });
+    expect(await row("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture-sync:user_race:%'")).toEqual({ n: 1 });
   });
 });
 
