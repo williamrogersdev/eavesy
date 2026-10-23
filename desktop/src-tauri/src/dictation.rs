@@ -303,8 +303,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
 }
 
 /// The tone a dictation's words were written in, while it is the last one
-/// delivered and the server said which. None for any other session, however
-/// late its delivery was.
+/// the HUD was given (a delivery skipped for a busier HUD doesn't count) and
+/// the server said which. None for any other session, however late its
+/// delivery was.
 pub fn written_as(session_id: &str) -> Option<crate::transcribe::Written> {
     WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, _)| id == session_id).map(|(_, written)| written.clone())
 }
