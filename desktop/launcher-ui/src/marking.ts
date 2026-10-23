@@ -14,12 +14,15 @@ export interface MarkingState {
 
 export const NO_MARKING: MarkingState = { sessionId: null, clicks: 0, marks: [], tool: null, shortcut: null };
 
-interface TauriGlobal {
-  core?: { invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> };
+/** The slice of `window.__TAURI__` the HUD and the marker use. */
+export interface TauriGlobal {
+  core?: { convertFileSrc?(path: string): string; invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> };
   event?: { listen(event: string, handler: (e: { payload: unknown }) => void): Promise<() => void> };
 }
 
-function tauri(): TauriGlobal | null {
+/** The Tauri bridge, or null in a plain browser (the dev previews). */
+export function tauri(): TauriGlobal | null {
+  if (typeof window === 'undefined') return null;
   return (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__ ?? null;
 }
 
