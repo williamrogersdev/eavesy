@@ -472,7 +472,7 @@ the pill can't jitter or flip while words arrive.
 |---|---|---|
 | pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
 | bar | 264 × 40 | recording and writing with live words off (the default) |
-| wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed |
+| wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
 | result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row. Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
@@ -532,16 +532,25 @@ a long dictation from its start, fades its last line while more is below,
 and its stamp counts the words; past 20,000 characters the tone row gives
 way to "Too long to change the tone here" and **Open in Eavesy**, which the
 ⤢ button in the top row also does for any dictation. Screenshots stamp **Snapped** above the
-thumbnail; saves stamp **Saved**. Failures read "Didn't catch that" in warn,
-never coral. A receipt goes back to the pill after 1.6s (Pasted) or 6s
-(Copied), whatever the pointer does; Not pasted stays until Accessibility is
-allowed or it's collapsed. Otherwise the HUD collapses to the pill 3.5s (pill)
-or 10s (drawer) after the result, 2.5s after the pointer leaves it, or on Esc.
+thumbnail; saves stamp **Saved**. A dictation that was saved but not typed
+(signed out, or the words came too late) never stamps a plain Saved: it
+stamps **Not typed** in warn, with the reason on the line below. Failures
+read "Didn't catch that" in warn, never coral. When one of the control's own
+actions fails (Stop, a tone, Copy), it says so in plain words where the phase
+shows its status (the voice bars, "Writing it down", the stamp) and every
+control stays; the next tone click clears a tone's error. A receipt goes
+back to the pill after 1.6s (Pasted) or 6s (Copied), whatever the pointer
+does; Not pasted stays until Accessibility is allowed or it's collapsed.
+Otherwise the HUD collapses to the pill 3.5s (pill), 6s (a failure, or Not
+typed) or 10s (drawer) after the result, 2.5s after the pointer leaves it,
+or on Esc.
 It stays while the pointer is over it
 (up to 30s after it last moves, and 2 min at most from when it came over),
 while you edit, and while a correction is saving. Stopping a recording hands the keyboard back to the app you were in
 before anything is pasted, even if you were editing the live words, so the
-paste (or your own ⌘V after Copied) never lands in Eavesy's own box. A HUD
+paste (or your own ⌘V after Copied) never lands in Eavesy's own box. Leaving
+the drawer's editor (Esc, a click elsewhere in the control, a tone, Copy)
+hands it back too, so the next keystroke goes to that app again. A HUD
 low on the screen keeps its bottom edge when it grows, so it never moves away
 from where it was.
 
