@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '@/db/schema';
 mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 import { createFakeEnv } from '@/server/testing/fake-env';
-import { claimTranscript, create, get, TRANSCRIPT_CLAIM_TTL_MS } from './captures';
+import { claimTranscript, create, get, setTranscript, TRANSCRIPT_CLAIM_TTL_MS } from './captures';
 
 async function setup() {
   const fake = createFakeEnv();
@@ -23,7 +23,7 @@ async function setup() {
     claimTranscript(db, { captureId: id, userId: 'u1', from: 'none', to, staleAfterMs: TRANSCRIPT_CLAIM_TTL_MS, error });
   const age = (ms: number) => fake.sqlite.run(`UPDATE captures SET updated_at = ? WHERE id = ?`, [Date.now() - ms, id]);
   const row = async () => (await get(db, { captureId: id, userId: 'u1' }))!;
-  return { claim, age, row, fake, id };
+  return { db, claim, age, row, fake, id };
 }
 
 describe('claiming a capture transcript', () => {
@@ -42,6 +42,18 @@ describe('claiming a capture transcript', () => {
     t.age(TRANSCRIPT_CLAIM_TTL_MS * 10);
     expect(await t.claim('processing')).toBe(false);
     expect((await t.row()).transcript).toBe('hello');
+  });
+
+  test('a result that outlived its claim does not overwrite the one that won', async () => {
+    const t = await setup();
+    expect(await t.claim('processing')).toBe(true);
+    t.age(TRANSCRIPT_CLAIM_TTL_MS + 1);
+    expect(await t.claim('processing')).toBe(true);
+    const write = (transcript: string) =>
+      setTranscript(t.db, { captureId: t.id, userId: 'u1', status: 'complete', transcript, ifStatus: 'processing' });
+    expect(await write('second upload')).toBe(true);
+    expect(await write('first upload, late')).toBe(false);
+    expect((await t.row()).transcript).toBe('second upload');
   });
 
   test('giving up on a transcript records why, so the capture page can say so', async () => {

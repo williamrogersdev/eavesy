@@ -36,13 +36,18 @@ export const Route = createFileRoute('/api/captures/$id/audio')({
         // has to say why there is no transcript, so a track too large to
         // transcribe fails the transcript instead of leaving it missing.
         const tooLarge = async () => {
-          await capturesRepo.claimTranscript(db, {
-            captureId: capture.id,
-            userId: actor.userId,
-            from: 'none',
-            to: 'failed',
-            error: `The audio track is too large to transcribe (${MAX_AUDIO_MB} MB max).`,
-          });
+          try {
+            await capturesRepo.claimTranscript(db, {
+              captureId: capture.id,
+              userId: actor.userId,
+              from: 'none',
+              to: 'failed',
+              error: `The audio track is too large to transcribe (${MAX_AUDIO_MB} MB max).`,
+            });
+          } catch (err) {
+            // The answer is still the size; the page just can't say why yet.
+            console.warn('[captures] could not record the too-large audio track', err);
+          }
           return Response.json({ error: `audio too large (${MAX_AUDIO_MB} MB max)` }, { status: 413 });
         };
         const declared = Number(request.headers.get('content-length') ?? '');
@@ -66,11 +71,14 @@ export const Route = createFileRoute('/api/captures/$id/audio')({
           const { language, vocabulary, spoken } = await usersRepo.transcriptionPrefs(db, actor.userId);
           const result = await transcribeAudioFile({ audio, language, vocabulary, spoken });
           const transcript = result.text?.trim() || null;
+          // Only while this request still holds the claim: a result that
+          // outlived its claim and lost to a second upload is dropped.
           await capturesRepo.setTranscript(db, {
             captureId: capture.id,
             userId: actor.userId,
             status: transcript ? 'complete' : 'failed',
             transcript,
+            ifStatus: 'processing',
           });
           return Response.json({ ok: true, transcriptStatus: transcript ? 'complete' : 'failed' });
         } catch (err) {
@@ -80,6 +88,7 @@ export const Route = createFileRoute('/api/captures/$id/audio')({
             userId: actor.userId,
             status: 'failed',
             error: 'Could not transcribe this recording.',
+            ifStatus: 'processing',
           });
           return Response.json({ error: 'transcription failed' }, { status: 502 });
         }

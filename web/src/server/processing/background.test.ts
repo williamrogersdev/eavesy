@@ -5,7 +5,7 @@ import type { Database } from 'bun:sqlite';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
 mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
-const { DEAD_LETTER_QUEUE, MAX_ATTEMPTS, queue, recoverStaleSegments, runCronSteps, SUMMARY_WAIT_LIMIT_MS } =
+const { DEAD_LETTER_QUEUE, deadLetterQueue, MAX_ATTEMPTS, queue, recoverStaleSegments, runCronSteps, SUMMARY_WAIT_LIMIT_MS } =
   await import('@/server/processing-worker');
 const { ACCOUNT_TABLES } = await import('./cleanup');
 const { PENDING_SEGMENT_GRACE_MS } = await import('./recovery');
@@ -178,22 +178,30 @@ describe('the final summary claim', () => {
   test('the dead-letter queue leaves a meeting alone while a live job holds its summary', async () => {
     const t = setup();
     const meetingStatus = () => t.status(`SELECT status AS s FROM meetings WHERE id = 'm1'`);
+    const failures: { outcome: string }[] = [];
     const deadLetter = async () => {
       const d = delivery({ kind: 'summarize', meetingId: 'm1' }, MAX_ATTEMPTS);
-      await queue(
+      await deadLetterQueue(
         { queue: DEAD_LETTER_QUEUE, messages: [d.message] } as unknown as MessageBatch<ProcessingMessage>,
         t.env,
+        (failure) => failures.push(failure),
       );
       return d.outcome;
     };
+    const failRows = () =>
+      t.sqlite.query(`SELECT COUNT(*) AS n FROM activity_log WHERE event_type = 'meeting.fail'`).get() as { n: number };
 
     t.sqlite.run(`UPDATE meetings SET summary_claimed_at = ? WHERE id = 'm1'`, [t.now]);
     expect(await deadLetter()).toMatchObject({ acked: true, retried: false });
     expect(meetingStatus()).toBe('processing');
+    expect(failRows().n).toBe(0);
+    expect(failures.map((f) => f.outcome)).toEqual(['left-to-live-job']);
 
     t.sqlite.run(`UPDATE meetings SET summary_claimed_at = ? WHERE id = 'm1'`, [t.now - SUMMARY_CLAIM_TTL_MS - 1]);
     expect(await deadLetter()).toMatchObject({ acked: true, retried: false });
     expect(meetingStatus()).toBe('failed');
+    expect(failRows().n).toBe(1);
+    expect(failures.map((f) => f.outcome)).toEqual(['left-to-live-job', 'recording-failed']);
   });
 
   test('a failed model call releases the claim for the retry', async () => {

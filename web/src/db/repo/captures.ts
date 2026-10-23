@@ -12,6 +12,13 @@ export type TranscriptStatus = Capture['transcriptStatus'];
  * A transcript `processing` for longer than this never finished: the request
  * that claimed it was cut off (the tab closed during "Saving…", or the isolate
  * went away). The next upload of the audio may claim it again.
+ *
+ * The claim's age is the row's `updatedAt`. Any other write to the row (a
+ * rename) only pushes the claim later, never earlier, and a finished
+ * transcript is not `processing` any more, so the only way to reclaim a live
+ * one is a single Whisper call outlasting this, far longer than Workers AI
+ * allows a request. Should it ever happen, the first result to land wins and
+ * the other is dropped (`setTranscript` with `ifStatus`).
  */
 export const TRANSCRIPT_CLAIM_TTL_MS = 15 * 60 * 1_000;
 
@@ -113,6 +120,7 @@ export async function listImagesForDevice(
     .offset(args.offset);
 }
 
+/** Returns false when `ifStatus` was given and the row had moved on. */
 export async function setTranscript(
   db: AppDb,
   args: {
@@ -121,9 +129,11 @@ export async function setTranscript(
     status: TranscriptStatus;
     transcript?: string | null;
     error?: string | null;
+    /** Only write while the transcript is still at this status. */
+    ifStatus?: TranscriptStatus;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(captures)
     .set({
       transcriptStatus: args.status,
@@ -131,7 +141,15 @@ export async function setTranscript(
       transcriptError: args.error ?? null,
       updatedAt: Date.now(),
     })
-    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId)));
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        args.ifStatus === undefined ? undefined : eq(captures.transcriptStatus, args.ifStatus),
+      ),
+    )
+    .returning({ id: captures.id });
+  return rows.length > 0;
 }
 
 /**

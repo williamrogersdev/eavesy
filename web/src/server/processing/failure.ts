@@ -12,7 +12,8 @@ import { type ProcessingEnv, type ProcessingMessage, SUMMARY_CLAIM_TTL_MS } from
 
 export interface TerminalProcessingFailure {
   kind: ProcessingMessage['kind'];
-  outcome: 'recorded' | 'recording-failed';
+  /** `left-to-live-job`: another job still holds the meeting's summary claim, so nothing was failed. */
+  outcome: 'recorded' | 'recording-failed' | 'left-to-live-job';
 }
 
 type TerminalFailureReporter = (failure: TerminalProcessingFailure) => void;
@@ -159,7 +160,14 @@ async function recordTerminalFailure(
     )
     .run();
   if ((update.meta.changes ?? 0) === 0) {
-    return { kind: message.kind, outcome: 'recorded' };
+    const claim = await env.DB.prepare(
+      `SELECT summary_claimed_at AS claimedAt FROM meetings
+        WHERE id = ? AND status IN ('recording', 'queued', 'uploading', 'processing')`,
+    )
+      .bind(message.meetingId)
+      .first<{ claimedAt: number | null }>();
+    const live = claim?.claimedAt != null && claim.claimedAt >= now - SUMMARY_CLAIM_TTL_MS;
+    return { kind: message.kind, outcome: live ? 'left-to-live-job' : 'recorded' };
   }
   await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_log
