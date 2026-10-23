@@ -11,8 +11,13 @@ import { Route as DeviceCapturesRoute } from '../../src/routes/api/devices/captu
 import { Route as TemplatesRoute } from '../../src/routes/api/templates';
 import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
 import { TEMPLATE_LIMIT } from '../../src/db/repo/templates';
+import * as capturesRepo from '../../src/db/repo/captures';
 
 const actor = vi.hoisted(() => ({ userId: null as string | null }));
+vi.mock('../../src/db/repo/captures', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/db/repo/captures')>();
+  return { ...original, create: vi.fn(original.create), getByClientId: vi.fn(original.getByClientId) };
+});
 vi.mock('../../src/server/auth', () => ({
   resolveActor: async () => {
     if (!actor.userId) throw new Error('not_authenticated');
@@ -273,6 +278,46 @@ describe('captures', () => {
     expect(responses.every((response) => response.status === 201 || response.status === 200)).toBe(true);
     expect(await row("SELECT count(*) AS n FROM captures WHERE user_id = 'user_race'")).toEqual({ n: 1 });
     expect(await row("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture-sync:user_race:%'")).toEqual({ n: 1 });
+  });
+
+  const captureUpload = (token: string, clientId: string) => call(DeviceCapturesRoute, 'POST', '/api/devices/captures', {
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'image/png',
+      'content-length': String(PNG.byteLength),
+      'x-client-capture-id': clientId,
+    },
+    body: requestBody(PNG),
+  });
+  const captureQuotaUsed = async (userId: string) =>
+    (await row<{ n: number }>(`SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture-sync:${userId}:%'`))?.n;
+
+  it('refunds and cleans up an upload that loses the insert race', async () => {
+    const token = await insertDeviceActor('user_lost', 'device_lost');
+    const clientId = crypto.randomUUID();
+    expect((await captureUpload(token, clientId)).status).toBe(201);
+    // The second upload misses the first one's row in its early check, as it
+    // would when both pass that check together, so its insert collides.
+    vi.mocked(capturesRepo.getByClientId).mockResolvedValueOnce(null);
+    const second = await captureUpload(token, clientId);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ idempotent: true });
+    expect(await captureQuotaUsed('user_lost')).toBe(1);
+    expect((await testEnv.AUDIO_BUCKET.list({ prefix: 'users/user_lost/' })).objects).toHaveLength(1);
+  });
+
+  it('keeps a capture whose row was written before the error', async () => {
+    const token = await insertDeviceActor('user_reply', 'device_reply');
+    const original = await vi.importActual<typeof import('../../src/db/repo/captures')>('../../src/db/repo/captures');
+    vi.mocked(capturesRepo.create).mockImplementationOnce(async (...args) => {
+      await original.create(...args);
+      throw new Error('reply lost');
+    });
+    const response = await captureUpload(token, crypto.randomUUID());
+    expect(response.status).toBe(201);
+    expect(await row("SELECT count(*) AS n FROM captures WHERE user_id = 'user_reply'")).toEqual({ n: 1 });
+    expect(await captureQuotaUsed('user_reply')).toBe(1);
+    expect((await testEnv.AUDIO_BUCKET.list({ prefix: 'users/user_reply/' })).objects).toHaveLength(1);
   });
 });
 
