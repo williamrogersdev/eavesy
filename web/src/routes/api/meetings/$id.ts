@@ -73,7 +73,7 @@ export const Route = createFileRoute('/api/meetings/$id')({
         }
         const updated = await meetingsRepo.update(getDb(), { meetingId: id, userId: actor.userId, ...fields, speakerNamesJson });
         if (!updated) return Response.json({ error: 'not found' }, { status: 404 });
-        if (speakerNames || fields.folderId !== undefined) refreshAgentTranscriptLater(id, actor.userId);
+        if (speakerNames || fields.folderId !== undefined) refreshAgentTranscriptLater(id, actor.userId, { embed: Boolean(speakerNames) });
         return Response.json({ ok: true });
       },
 
