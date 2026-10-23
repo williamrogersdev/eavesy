@@ -230,7 +230,6 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 (polished.text, polished.written)
             }
         };
-        *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.map(|written| (session_id.clone(), written));
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
@@ -284,6 +283,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
             && current.session_id.as_deref() != Some(session_id.as_str());
         if !busy_elsewhere {
+            // Before the state, which carries it to the HUD (`hud::shown`).
+            *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.map(|written| (session_id.clone(), written));
             crate::hud::set_state(&app, crate::hud::HudState {
                 phase: crate::hud::Phase::Done,
                 session_id: Some(session_id),

@@ -60,18 +60,21 @@ export const Route = createFileRoute('/api/dictations/polish')({
         ]);
         const project = user ? projectRow : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
-        // Told back with the words: the Mac app's drawer shows the tone they are in.
-        const { projectId, ...written } = writtenWith(parsed.data, user, project);
+        const tone = writtenWith(parsed.data, user, project);
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          ...written,
+          style: tone.style,
+          forAgents: tone.forAgents,
           asked: parsed.data.style !== undefined || parsed.data.forAgents !== undefined,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
           context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
-        return Response.json({ ...result, written: { ...written, projectId } });
+        // Told back with the words, for the Mac app's tone row: the tone in
+        // force for them (the setting the row shows and changes) and whether
+        // the model applied it. When it didn't, the words went out plain.
+        return Response.json({ ...result, written: { ...tone, applied: result.polished } });
       },
     },
   },

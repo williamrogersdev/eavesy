@@ -7,10 +7,11 @@ import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, sameWriting, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
+import { DICTATION_STYLES, FOR_AGENTS_HINT, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, invoke, NO_MARKING, tauri, useEvent, useMarking, type MarkingState } from './marking';
 import { HELD_PHASES, holdMs, type Receipt } from './hud-hold';
+import { changeOutcome, needsRewrite, PLAIN, toneRow, type TonePick, type WrittenAs } from './hud-writing';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -28,9 +29,8 @@ interface HudState {
    * straight into its drawer. Rust decides both, as it sizes the window. */
   receipt?: Receipt | null;
   opensItself?: boolean;
-  /** The tone a finished dictation's words are in, when the server said:
-   * the saved choice, and the project when it is the project's own. */
-  written?: (Writing & { projectId: string | null }) | null;
+  /** The tone in force for a finished dictation's words, when the server said. */
+  written?: WrittenAs | null;
 }
 
 /**
@@ -72,17 +72,11 @@ const DEFAULT_LOOK: Look = { lines: 0, translucent: true };
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
-/** How dictations are written until the account says otherwise. */
-const DEFAULT_WRITING: Writing = { style: 'natural', forAgents: false };
-
 /** A finished dictation's tone change: what it's rewritten from, what's picked, and where the rewrite went. */
-interface ToneChange {
+interface ToneChange extends TonePick {
   sessionId: string;
-  base: string;
-  /** The tone the words in `base` are in: picking it again needs no rewrite. */
-  from: Writing;
-  pick: DictationStyle;
-  forAgents: boolean;
+  /** The words as pasted, which every rewrite starts from; null once typed over (the words as they are now). */
+  base: string | null;
   busy: boolean;
   landed: 'replaced' | 'copied' | null;
 }
@@ -167,6 +161,8 @@ function browserPreviewState(): HudState | null {
     notice: params.get('notice'),
     // Rust's reading of a finished dictation (`hud::shown`), stood in for here.
     receipt: phase !== 'done' || mode !== 'audio' ? null : params.get('notice')?.includes('Accessibility') ? 'blocked' : params.has('notice') ? 'copied' : 'pasted',
+    // The server's word on the tone (`?style=concise&forai`; `?plain` when the model didn't apply it, `?untold` when it didn't say).
+    written: phase === 'done' && mode === 'audio' && !params.has('untold') ? { ...browserPreviewWriting() ?? PLAIN, projectId: params.get('project'), applied: !params.has('plain') } : null,
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
     startedAtMs: Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
@@ -181,7 +177,8 @@ function browserPreviewState(): HudState | null {
 function browserPreviewWriting(): Writing | null {
   if (tauri()) return null;
   const params = new URLSearchParams(window.location.search);
-  return { ...DEFAULT_WRITING, ...writingFrom({ style: params.get('style') ?? 'natural', forAgents: params.has('forai') }) };
+  const writing = writingFrom({ style: params.get('style') ?? 'natural', forAgents: params.has('forai') }) ?? PLAIN;
+  return { style: writing.style, forAgents: writing.forAgents };
 }
 
 function browserPreviewPeek(): string | null {
@@ -828,8 +825,8 @@ function Hud() {
   const changeText = (text: string, base = source, record = true, before = selection.current, inputType?: string) => {
     if (!state.sessionId) return;
     // Typed over a rewrite: that's now the words, and the next tone starts
-    // from them (an empty base). The row keeps showing the tone picked.
-    if (ownTone && !ownTone.busy && ownTone.base) setTone({ ...ownTone, base: '', landed: null });
+    // from them. The row keeps showing the tone picked.
+    if (ownTone && !ownTone.busy && ownTone.base !== null) setTone({ ...ownTone, base: null, landed: null });
     if (record) {
       const typed = inputType === 'insertText' && before.start === before.end && text.length === words.length + 1;
       const group = typingGroup.current;
@@ -915,28 +912,50 @@ function Hud() {
   />;
 
   // The tone row is the dictation setting itself (Settings → Dictation): a
-  // change is kept for every dictation to come, and this one is rewritten to
-  // match. The rewrite starts from the words as pasted (so tones don't
-  // compound; picking the tone they were written in puts them back without
-  // asking the server), goes where the words went, and is saved as the
-  // transcript without teaching the dictionary: a rewrite isn't a correction.
-  const written: Writing = ownTone?.from ?? state.written ?? prefs ?? DEFAULT_WRITING;
-  const picked: Writing = ownTone ? { style: ownTone.pick, forAgents: ownTone.forAgents } : written;
-  const rewrite = async (sessionId: string, next: Writing): Promise<{ ok: boolean; error?: unknown }> => {
+  // change is kept first, for every dictation to come, then this one is
+  // rewritten to match. The rewrite starts from the words as pasted (so
+  // tones don't compound; picking the tone they were written in puts them
+  // back without asking the server), goes where the words went, and is
+  // saved as the transcript without teaching the dictionary: a rewrite isn't
+  // a correction.
+  const row = toneRow(state.written, prefs, ownTone);
+  const picked = row.picked;
+  // Kept on the account, or on the project when the tone is the project's own.
+  const keep = async (next: Writing): Promise<{ ok: boolean; error?: unknown }> => {
+    const project = state.written?.projectId ?? null;
+    const before = prefs;
+    if (!project) setPrefs(next);
+    if (!tauri()) return { ok: true };
+    try {
+      await invoke('account_call', { method: 'PATCH', path: project ? `/api/projects/${project}` : '/api/me', body: { dictationStyle: next.style, dictationForAgents: next.forAgents } });
+      return { ok: true };
+    } catch (error) {
+      if (!project) setPrefs(before);
+      return { ok: false, error };
+    }
+  };
+  const change = async (next: Writing) => {
+    const sessionId = state.sessionId;
+    const todo = needsRewrite(next, row);
+    if (!sessionId || toneRequest.current !== null || todo === 'none') return;
+    setActionError(null);
     const token = ++toneSeq.current;
     toneRequest.current = token;
     const wanted = () => toneRequest.current === token && currentSession.current === sessionId;
-    const base = ownTone?.base || words;
+    const base = ownTone?.base ?? words;
     toneBefore.current = ownTone;
-    // The rewrite goes where the words went, so that app needs the keyboard back first.
-    const released = releaseEditor(sessionId);
-    setTone({ sessionId, base, from: written, pick: next.style, forAgents: next.forAgents, busy: true, landed: null });
+    setTone({ sessionId, base, from: row.from, pick: next.style, forAgents: next.forAgents, busy: true, landed: null });
+    let kept = false;
     try {
-      const text = sameWriting(next, written) ? base
+      kept = (await keep(next)).ok;
+      if (!wanted() || !kept) throw new Error('not kept');
+      // The rewrite goes where the words went, so that app needs the keyboard back first.
+      const released = releaseEditor(sessionId);
+      const text = todo === 'restore' ? base
         : !tauri() ? (next.forAgents ? PREVIEW_FOR_AGENTS : next.style === 'natural' ? base : PREVIEW_REWRITES[next.style])
         : String(await invoke('restyle_dictation', { sessionId, text: base, style: next.style, forAgents: next.forAgents }));
       await within(released, 500);
-      if (!wanted()) return { ok: true };
+      if (!wanted()) return;
       const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
       // Saved through the same queue as a typed correction, so a failure shows
       // Retry save, and an older unsaved edit can't land on top of the rewrite.
@@ -944,49 +963,21 @@ function Hud() {
       const edit: Edit = { sessionId, text, learn: false };
       latestEdit.current = edit; pendingEdit.current = edit;
       void flushEdit();
-      if (!wanted()) return { ok: true };
+      if (!wanted()) return;
       setDraft({ sessionId, source: null, text });
       setCopied(false);
       setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
-      return { ok: true };
     } catch (error) {
-      if (!wanted()) return { ok: true };
-      // The words stay as they were; the row keeps the choice, which is kept for next time either way.
-      setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed: null } : now);
-      return { ok: false, error };
+      if (!wanted()) return;
+      const outcome = changeOutcome(kept, false);
+      setTone((now) => now?.sessionId === sessionId ? outcome.revert ? toneBefore.current : { ...now, busy: false, landed: null } : now);
+      setActionError(kept ? outcome.say : hudError(error, outcome.say ?? ''));
     } finally {
       if (toneRequest.current === token) toneRequest.current = null;
     }
   };
-  // Kept on the account, or on the project when the tone is the project's own.
-  const keep = async (next: Writing): Promise<boolean> => {
-    const project = state.written?.projectId ?? null;
-    const before = prefs;
-    if (!project) setPrefs(next);
-    if (!tauri()) return true;
-    try {
-      await invoke('account_call', { method: 'PATCH', path: project ? `/api/projects/${project}` : '/api/me', body: { dictationStyle: next.style, dictationForAgents: next.forAgents } });
-      return true;
-    } catch {
-      if (!project) setPrefs(before);
-      return false;
-    }
-  };
-  const change = (next: Writing) => {
-    const sessionId = state.sessionId;
-    if (!sessionId || toneRequest.current !== null || sameWriting(next, picked)) return;
-    setActionError(null);
-    void Promise.all([keep(next), rewrite(sessionId, next)]).then(([kept, rewritten]) => {
-      if (currentSession.current !== sessionId || (kept && rewritten.ok)) return;
-      if (!kept && !rewritten.ok) {
-        setTone((now) => now?.sessionId === sessionId ? toneBefore.current : now);
-        setActionError(hudError(rewritten.error, 'Couldn’t change the tone. Try again?'));
-      } else if (!kept) setActionError('Changed here, but couldn’t keep it for next time');
-      else setActionError('Kept for next time, but this one couldn’t be rewritten');
-    });
-  };
   const tooLong = words.length > MAX_REWRITE_CHARS;
-  const toneRow = !!state.sessionId && (tooLong ? (
+  const toneControls = !!state.sessionId && (tooLong ? (
     <div className="ctl-tones">
       <span className="ctl-say ctl-quiet">Too long to change the tone here</span>
       <span className="ctl-fill" />
@@ -997,7 +988,7 @@ function Hud() {
       <label className="ctl-field" title={`${DICTATION_STYLES.find((style) => style.id === picked.style)?.hint ?? ''} Your tone for every dictation.`}>
         <span>Tone</span>
         <span className="ctl-select">
-          <select aria-label="Dictation tone" value={picked.style} disabled={!!ownTone?.busy} onChange={(event) => change({ ...picked, style: event.target.value as DictationStyle })}>
+          <select aria-label="Dictation tone" value={picked.style} disabled={!!ownTone?.busy} onChange={(event) => void change({ ...picked, style: event.target.value as DictationStyle })}>
             {DICTATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
           </select>
           <ChevronsUpDown className="ctl-select-icon" aria-hidden />
@@ -1005,7 +996,7 @@ function Hud() {
       </label>
       <span className="ctl-sep" aria-hidden />
       <button type="button" role="switch" aria-checked={picked.forAgents} disabled={!!ownTone?.busy} className="ctl-switch-row" title={FOR_AGENTS_HINT}
-        onClick={() => change({ ...picked, forAgents: !picked.forAgents })}>
+        onClick={() => void change({ ...picked, forAgents: !picked.forAgents })}>
         For AI<span className="ctl-switch" aria-hidden />
       </button>
       <span className="ctl-fill" />
@@ -1108,7 +1099,7 @@ function Hud() {
       </>
     );
     below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
-    if (size === 'result' && editable) foot = toneRow;
+    if (size === 'result' && editable) foot = toneControls;
   } else if (state.phase === 'saved' && notice) {
     // Saved, but not typed where the cursor was: say so, and why, never a plain "Saved".
     top = <>{mark}{errorSay ?? learnedStamp ?? <Stamp tone="warn" title={notice}>Not typed</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;

@@ -92,10 +92,11 @@ pub struct Polished {
     pub written: Option<Written>,
 }
 
-/// The tone a dictation's words were written in, as the server tells it: the
-/// style, whether as a prompt for an AI, and the project when that tone is
-/// the project's own rather than the account's. The HUD's tone row shows it
-/// and changes it.
+/// The tone in force for a dictation's words, as the server tells it: the
+/// style, whether as a prompt for an AI, the project when that tone is the
+/// project's own rather than the account's, and whether the model applied
+/// it (when not, the words went out plain). The HUD's tone row shows it and
+/// changes it.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Written {
@@ -103,6 +104,8 @@ pub struct Written {
     pub for_agents: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub applied: bool,
 }
 
 /// The model-free part of tidying, as the server does it: "um", "uh", "hmm"
@@ -724,16 +727,16 @@ mod tests {
                 .and(path("/api/dictations/polish"))
                 .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "text": "Ship it today.", "polished": true,
-                    "written": { "style": "concise", "forAgents": true, "projectId": "proj_1" }
+                    "written": { "style": "concise", "forAgents": true, "projectId": "proj_1", "applied": true }
                 })))
                 .mount(&server),
         );
         let polished = polish_with(&credential(&server), "um ship it today", Some("proj_1"), POLISH_TIMEOUT).unwrap();
         assert_eq!(polished.text, "Ship it today.");
-        assert_eq!(polished.written, Some(Written { style: "concise".into(), for_agents: true, project_id: Some("proj_1".into()) }));
+        assert_eq!(polished.written, Some(Written { style: "concise".into(), for_agents: true, project_id: Some("proj_1".into()), applied: true }));
         // Sent on to the HUD as the server spelled it, and without a project when there is none.
-        let written = Written { style: "natural".into(), for_agents: false, project_id: None };
-        assert_eq!(serde_json::to_value(written).unwrap(), serde_json::json!({ "style": "natural", "forAgents": false }));
+        let written = Written { style: "natural".into(), for_agents: false, project_id: None, applied: false };
+        assert_eq!(serde_json::to_value(written).unwrap(), serde_json::json!({ "style": "natural", "forAgents": false, "applied": false }));
     }
 
     #[test]

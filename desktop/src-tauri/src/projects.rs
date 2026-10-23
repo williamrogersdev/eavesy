@@ -84,8 +84,8 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     if path == "/api/me" && method == "PATCH" {
         crate::vocabulary::refresh(&app);
     }
-    // A changed dictation tone, on the account or a project: the HUD's tone row reads it again.
-    if method == "PATCH" {
+    // The account or a project changed (a dictation tone, maybe): the HUD's tone row reads the account again.
+    if method == "PATCH" && (path == "/api/me" || path.starts_with("/api/projects/")) {
         let _ = app.emit_to("hud", "account:changed", ());
     }
     Ok(value)
