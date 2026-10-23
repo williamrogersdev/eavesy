@@ -7,7 +7,7 @@ import { clampLimit } from '@/lib/http/clamp-limit';
 import { embeddings, meetings, dictations } from '@/db/schema';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
-import { createAiRunner, creditsConfigured, type CreditEnv } from '@/lib/ai/credit-runner';
+import { createAiRunner, type CreditEnv } from '@/lib/ai/credit-runner';
 import { embedTexts } from '@/lib/ai/embed';
 
 type SearchItem =
@@ -83,7 +83,8 @@ export const Route = createFileRoute('/api/search')({
         if (!vectorize || (await guardUserQuota(actor.userId, 'search'))) return fallback();
         let queryVec: number[] | undefined;
         try {
-          const ai = ((env as CreditEnv).AI || creditsConfigured(env as CreditEnv)) ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
+          // Query embeddings never go through the credit pilot: without the binding there is no vector to search with.
+          const ai = (env as CreditEnv).AI ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
           if (!ai) return fallback();
           queryVec = (await embedTexts(ai, [q]))[0];
         } catch { console.warn(JSON.stringify({ message: 'semantic search unavailable; using lexical results' })); return fallback(); }
