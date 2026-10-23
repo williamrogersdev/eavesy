@@ -1,14 +1,22 @@
 import { createAiRunner } from '@/lib/ai/credit-runner';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, max } from 'drizzle-orm';
 import type { R2Bucket } from '@cloudflare/workers-types';
 import { dictations, embeddings, meetings, transcriptSegments } from '@/db/schema';
 import { embedTexts } from '@/lib/ai/embed';
 import { type Db, type ProcessingEnv, chunkText, runBatched } from './shared';
 import { transcriptText } from './summarize';
 
-export async function handleEmbedMeeting(meetingId: string, db: Db, env: ProcessingEnv) {
+export async function handleEmbedMeeting(
+  meetingId: string,
+  db: Db,
+  env: ProcessingEnv,
+  opts: { queuedAt?: number } = {},
+) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
+  // A re-index queued by an edit is moot once a later run embedded the meeting:
+  // every edit in a burst queues one, and the first to run covers them all.
+  if (opts.queuedAt !== undefined && (await embeddedSince(db, 'meeting', meetingId, opts.queuedAt))) return;
   const segments = await db
     .select()
     .from(transcriptSegments)
@@ -33,6 +41,14 @@ export async function handleEmbedDictation(dictationId: string, db: Db, env: Pro
     sourceId: dictation.id,
     text: dictation.cleanedText || dictation.transcript,
   });
+}
+
+async function embeddedSince(db: Db, sourceType: 'meeting' | 'dictation', sourceId: string, since: number) {
+  const latest = await db
+    .select({ at: max(embeddings.createdAt) })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceType, sourceType), eq(embeddings.sourceId, sourceId)));
+  return (latest[0]?.at ?? 0) >= since;
 }
 
 async function replaceEmbeddings(
