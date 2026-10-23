@@ -385,7 +385,7 @@ describe('reports from the bot', () => {
     }
   });
 
-  test('a report that keeps losing the race gives up without failing the event', async () => {
+  test('a report that keeps losing the race is refused, so the bot sends it again', async () => {
     const t = setup();
     const id = await recordingBot(t);
     await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: 0, speakers: [['Ana', 0, 1_000]] });
@@ -397,7 +397,7 @@ describe('reports from the bot', () => {
     console.warn = (line: string) => { warned.push(line); };
     try {
       const response = await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: 500, speakers: [['Ben', 500, 900]] });
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(503);
     } finally {
       console.warn = warn;
       t.env.AUDIO_BUCKET.put = put;
@@ -454,6 +454,11 @@ describe('collection', () => {
     const timeline = JSON.parse(new TextDecoder().decode(t.objects.get(key))) as { speakers: unknown[]; truncated?: boolean };
     expect(timeline.speakers).toHaveLength(50_000);
     expect(timeline.truncated).toBe(true);
+    // A later report keeps the flag and the cut.
+    await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: 600_000, speakers: [['A', 600_000, 600_005]] });
+    const later = JSON.parse(new TextDecoder().decode(t.objects.get(key))) as { speakers: unknown[]; truncated?: boolean };
+    expect(later.truncated).toBe(true);
+    expect(later.speakers).toHaveLength(50_000);
     await event(t, id, { code: 'done' });
     t.sqlite.run("UPDATE meeting_segments SET transcribe_status = 'complete'");
     const meetingId = t.bot(id).meeting_id as string;

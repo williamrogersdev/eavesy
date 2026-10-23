@@ -403,10 +403,12 @@ const TIMELINE_WRITE_ATTEMPTS = 5;
  * A merge is written only if the timeline is still the one it was read from
  * (R2 conditional put), else it is read and merged again: a slow request that
  * finishes after a later one must not take that one's spans back out, and the
- * bot never resends what it has sent. A timeline past `MAX_SPANS` is cut and
- * marked `truncated`, for collection to pass on.
+ * bot never resends what it has sent. A report that loses every attempt is
+ * refused (false), so the bot, which retries a 5xx, sends it again. A timeline
+ * past `MAX_SPANS` is cut and marked `truncated`, for collection to pass on.
+ * A report without `speakersFrom` replaces the whole timeline, flag included.
  */
-async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }) {
+async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }): Promise<boolean> {
   const spans = parseSpeakerSpans(body.speakers);
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
@@ -415,17 +417,22 @@ async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: strin
     // R2 has no "absent" field in `R2Conditional`; `If-None-Match: *` is its create-once.
     const onlyIf = !expected ? undefined : expected.etag === null ? new Headers({ 'if-none-match': '*' }) : { etagMatches: expected.etag };
     const options = { httpMetadata: { contentType: 'application/json' }, ...(onlyIf && { onlyIf }) };
-    return (await env.AUDIO_BUCKET.put(key, JSON.stringify(cap(key, timeline)), options as never)) !== null;
+    const capped = cap(timeline);
+    // `put` gives null, and stores nothing, when `onlyIf` fails. (`never`: this build's `Headers` isn't the Workers one `R2PutOptions` names.)
+    const stored = (await env.AUDIO_BUCKET.put(key, JSON.stringify(capped), options as never)) !== null;
+    // Once per cut, not once per attempt.
+    if (stored && capped !== timeline) console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
+    return stored;
   };
   if (from === undefined) {
     // The whole timeline: nothing to merge with, so the latest report wins.
     await put({ speakers: spans, participants });
-    return;
+    return true;
   }
   if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) {
     // Malformed: better to miss this report than to guess what it replaces.
     console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
-    return;
+    return true;
   }
   for (let attempt = 1; attempt <= TIMELINE_WRITE_ATTEMPTS; attempt += 1) {
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
@@ -435,17 +442,16 @@ async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: strin
       participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
       ...(stored.truncated && { truncated: true }),
     }, stored);
-    if (written) return;
+    if (written) return true;
   }
   console.warn(JSON.stringify({ message: 'notetaker timeline write lost the race', key, attempts: TIMELINE_WRITE_ATTEMPTS }));
+  return false;
 }
 
-/** Cuts a timeline to `MAX_SPANS`, marking it `truncated` (and staying so). */
-function cap(key: string, timeline: Timeline): Timeline {
-  if (timeline.speakers.length <= MAX_SPANS) return timeline;
-  // The bot has sent these for good and won't again: the call's end goes unattributed.
-  console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
-  return { ...timeline, speakers: timeline.speakers.slice(0, MAX_SPANS), truncated: true };
+/** Cuts a timeline to `MAX_SPANS`, marking it `truncated` (and staying so); the same object when it fits. */
+function cap(timeline: Timeline): Timeline {
+  // The bot has sent the cut spans for good and won't again: the call's end goes unattributed.
+  return timeline.speakers.length <= MAX_SPANS ? timeline : { ...timeline, speakers: timeline.speakers.slice(0, MAX_SPANS), truncated: true };
 }
 
 /** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, speakersFromUnit?, participants? }` (`storeTimeline` says how the timeline fields read). */
@@ -476,7 +482,8 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
     if (Array.isArray(body.speakers) || Array.isArray(body.participants)) await noteCanaryNames(db, bot, body.speakers, body.participants);
   } else if (Array.isArray(body.speakers)) {
     const meetingId = bot.meetingId ?? (SEGMENT_STATUSES.includes(bot.status) ? await ensureMeeting(db, bot, bot.statusAt ?? Date.now()) : null);
-    if (meetingId) await storeTimeline(env, speakersKey(bot, meetingId), body);
+    // Refused rather than dropped when it can't be stored: the bot retries a 5xx, and never resends what it thinks was taken.
+    if (meetingId && !(await storeTimeline(env, speakersKey(bot, meetingId), body))) return json({ error: 'timeline_busy' }, 503);
   }
   if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
     // Segments the bot gave up delivering; the meeting has a gap there.
@@ -642,7 +649,7 @@ async function nameSpeakers(db: AppDb, env: Pick<BotEnv, 'AUDIO_BUCKET'>, bot: M
     await runBatched(db, [...assignments].map(([id, speakerId]) =>
       db.update(transcriptSegments).set({ speakerId }).where(and(eq(transcriptSegments.id, id), eq(transcriptSegments.isEdited, false)))));
     // Where the timeline stops, for the page to say the rest has no names (kept beside them, not in a column of its own).
-    if (truncated) speakerNames[PARTIAL_ATTRIBUTION_KEY] = String(Math.max(...speakers.map(([, , end]) => end)));
+    if (truncated) speakerNames[PARTIAL_ATTRIBUTION_KEY] = String(speakers.reduce((max, [, , end]) => Math.max(max, end), 0));
     return speakerNames;
   } catch (error) {
     console.error(JSON.stringify({ message: 'notetaker speaker names failed', botId: bot.id, error: error instanceof Error ? error.message : String(error) }));
