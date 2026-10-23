@@ -1,6 +1,6 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
 import { Pencil } from 'lucide-react';
-import { getAllDocs, getDoc } from '@/lib/content';
+import { getDoc } from '@/lib/content';
 import { extractToc } from '@/lib/toc';
 import { categoryMeta, docEditUrl, DOC_REDIRECTS } from '@/lib/docs-meta';
 import { siteConfig } from '@/lib/site';
@@ -12,11 +12,14 @@ import { GithubMark } from '@/components/github-mark';
 import { seoHead } from '@/lib/seo-head';
 
 export const Route = createFileRoute('/(marketing)/docs/$slug')({
-  loader: ({ params }) => {
+  // Imported on demand: loaders stay in the entry bundle, and the content
+  // module carries every compiled MDX page.
+  loader: async ({ params }) => {
     const moved = DOC_REDIRECTS[params.slug];
     if (moved) {
       throw redirect({ to: '/docs/$slug', params: { slug: moved }, statusCode: 301 });
     }
+    const { getAllDocs, getDoc } = await import('@/lib/content');
     const doc = getDoc(params.slug);
     if (!doc) throw notFound();
 

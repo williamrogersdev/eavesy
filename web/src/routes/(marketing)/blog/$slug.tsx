@@ -14,9 +14,12 @@ import { seoHead } from "@/lib/seo-head";
 import { formatDate, readingTimeMinutes } from "@/lib/format";
 
 export const Route = createFileRoute("/(marketing)/blog/$slug")({
-  loader: ({ params }) => {
+  // Imported on demand: loaders stay in the entry bundle, and the content
+  // module carries every compiled MDX page.
+  loader: async ({ params }) => {
     const destination = PUBLIC_BLOG_REDIRECTS.get(params.slug);
     if (destination) throw redirect({ href: destination, statusCode: 301 });
+    const { getPost } = await import("@/lib/content");
     const post = getPost(params.slug);
     if (!post) throw notFound();
     return { slug: post.slug, frontmatter: post.frontmatter };
