@@ -1106,14 +1106,15 @@ pub fn stop_capture(
         if error != NO_ACTIVE_CAPTURE {
             if !show_stop_failed(&app, &session_id, error) {
                 // The words were already pasted (Done), or the user moved on:
-                // say what went wrong without taking that back. The engine's
-                // own words stay in the log and in Copy Diagnostics.
+                // say what went wrong without taking that back. Whether the
+                // words reached the paste is the HUD's story, not this one's;
+                // the engine's own words stay in the log and Copy Diagnostics.
                 use tauri_plugin_notification::NotificationExt;
                 let _ = app
                     .notification()
                     .builder()
                     .title("Recording not fully saved")
-                    .body("The audio file couldn't be finished. Your words were still delivered; Copy Diagnostics has the details.")
+                    .body("The audio file couldn't be finished. Copy Diagnostics has the details.")
                     .show();
             }
         } else if !Stopping::in_flight_or_just_finished(&session_id) {
@@ -1132,8 +1133,11 @@ pub fn stop_capture(
 /// the HUD to the first: its words may still be on their way to the paste.
 static STOPPING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static JUST_STOPPED: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
-/// How long after a stop finishes a duplicate stop is still told to stand down.
-const JUST_STOPPED_FOR: Duration = Duration::from_secs(60);
+/// How long after a stop finishes a duplicate stop is still told to stand
+/// down: as long as `show_stopping` gives a stop to end in Saved, Done or
+/// Failed before it drops a stuck pill to Idle itself, so standing down can
+/// never leave the control saying it is writing for longer than that.
+const JUST_STOPPED_FOR: Duration = crate::hud::STOPPING_TIMEOUT;
 
 struct Stopping(String);
 
@@ -1161,7 +1165,9 @@ impl Drop for Stopping {
         if let Some(index) = stopping.iter().position(|id| *id == self.0) {
             stopping.remove(index);
         }
-        JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.0.clone(), Instant::now()));
+        let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
+        recent.push((self.0.clone(), Instant::now()));
     }
 }
 
