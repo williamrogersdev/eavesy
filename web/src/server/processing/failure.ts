@@ -8,11 +8,12 @@ import { captureMessage } from '@/server/observability';
 import { failCollection } from '@/server/meeting-bots/service';
 import { failCanaryCheck } from '@/server/meeting-bots/canary';
 import { failRecap } from '@/server/email/recaps';
-import { type ProcessingEnv, type ProcessingMessage } from './shared';
+import { type ProcessingEnv, type ProcessingMessage, SUMMARY_CLAIM_TTL_MS } from './shared';
 
 export interface TerminalProcessingFailure {
   kind: ProcessingMessage['kind'];
-  outcome: 'recorded' | 'recording-failed';
+  /** `left-to-live-job`: another job still holds the meeting's summary claim, so nothing was failed. */
+  outcome: 'recorded' | 'recording-failed' | 'left-to-live-job';
 }
 
 type TerminalFailureReporter = (failure: TerminalProcessingFailure) => void;
@@ -136,22 +137,37 @@ async function recordTerminalFailure(
   message: Extract<ProcessingMessage, { kind: 'process-recording' | 'summarize' }>,
   env: ProcessingEnv,
 ): Promise<TerminalProcessingFailure> {
+  // A meeting whose summary a live job still holds is not lost: that job
+  // finishes it, or the stuck-summary sweep takes over once the claim goes
+  // stale. (A busy summarize job that could not requeue itself ends up here
+  // while the other job is still running.) Failing it underneath would show
+  // a failure the other job then reverts.
+  const now = Date.now();
   const update = await env.DB.prepare(
     `UPDATE meetings
         SET status = 'failed',
             status_error = ?,
             updated_at = ?
       WHERE id = ?
-        AND status IN ('recording', 'queued', 'uploading', 'processing')`,
+        AND status IN ('recording', 'queued', 'uploading', 'processing')
+        AND (summary_claimed_at IS NULL OR summary_claimed_at < ?)`,
   )
     .bind(
       `Automatic ${message.kind} processing failed after retries. The uploaded recording has been preserved.`,
-      Date.now(),
+      now,
       message.meetingId,
+      now - SUMMARY_CLAIM_TTL_MS,
     )
     .run();
   if ((update.meta.changes ?? 0) === 0) {
-    return { kind: message.kind, outcome: 'recorded' };
+    const claim = await env.DB.prepare(
+      `SELECT summary_claimed_at AS claimedAt FROM meetings
+        WHERE id = ? AND status IN ('recording', 'queued', 'uploading', 'processing')`,
+    )
+      .bind(message.meetingId)
+      .first<{ claimedAt: number | null }>();
+    const live = claim?.claimedAt != null && claim.claimedAt >= now - SUMMARY_CLAIM_TTL_MS;
+    return { kind: message.kind, outcome: live ? 'left-to-live-job' : 'recorded' };
   }
   await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_log

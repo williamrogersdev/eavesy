@@ -8,6 +8,20 @@ export type CaptureKind = Capture['kind'];
 export type CaptureMode = Capture['captureMode'];
 export type TranscriptStatus = Capture['transcriptStatus'];
 
+/**
+ * A transcript `processing` for longer than this never finished: the request
+ * that claimed it was cut off (the tab closed during "Saving…", or the isolate
+ * went away). The next upload of the audio may claim it again.
+ *
+ * The claim's age is the row's `updatedAt`. Any other write to the row (a
+ * rename) only pushes the claim later, never earlier, and a finished
+ * transcript is not `processing` any more, so the only way to reclaim a live
+ * one is a single Whisper call outlasting this, far longer than Workers AI
+ * allows a request. Should it ever happen, the first result to land wins and
+ * the other is dropped (`setTranscript` with `ifStatus`).
+ */
+export const TRANSCRIPT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+
 export async function create(
   db: AppDb,
   args: {
@@ -106,6 +120,7 @@ export async function listImagesForDevice(
     .offset(args.offset);
 }
 
+/** Returns false when `ifStatus` was given and the row had moved on. */
 export async function setTranscript(
   db: AppDb,
   args: {
@@ -114,9 +129,11 @@ export async function setTranscript(
     status: TranscriptStatus;
     transcript?: string | null;
     error?: string | null;
+    /** Only write while the transcript is still at this status. */
+    ifStatus?: TranscriptStatus;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(captures)
     .set({
       transcriptStatus: args.status,
@@ -124,7 +141,15 @@ export async function setTranscript(
       transcriptError: args.error ?? null,
       updatedAt: Date.now(),
     })
-    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId)));
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        args.ifStatus === undefined ? undefined : eq(captures.transcriptStatus, args.ifStatus),
+      ),
+    )
+    .returning({ id: captures.id });
+  return rows.length > 0;
 }
 
 /**
@@ -133,19 +158,28 @@ export async function setTranscript(
  */
 export async function claimTranscript(
   db: AppDb,
-  args: { captureId: string; userId: string; from: TranscriptStatus; to: TranscriptStatus },
+  args: {
+    captureId: string;
+    userId: string;
+    from: TranscriptStatus;
+    to: TranscriptStatus;
+    /** Also take over a row already at `to` that has sat there this long. */
+    staleAfterMs?: number;
+    error?: string | null;
+  },
 ): Promise<boolean> {
+  const now = Date.now();
+  const claimable =
+    args.staleAfterMs === undefined
+      ? eq(captures.transcriptStatus, args.from)
+      : or(
+          eq(captures.transcriptStatus, args.from),
+          and(eq(captures.transcriptStatus, args.to), lt(captures.updatedAt, now - args.staleAfterMs)),
+        );
   const rows = await db
     .update(captures)
-    .set({ transcriptStatus: args.to, transcriptError: null, updatedAt: Date.now() })
-    .where(
-      and(
-        eq(captures.id, args.captureId),
-        eq(captures.userId, args.userId),
-        eq(captures.transcriptStatus, args.from),
-        isNull(captures.deletedAt),
-      ),
-    )
+    .set({ transcriptStatus: args.to, transcriptError: args.error ?? null, updatedAt: now })
+    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId), claimable, isNull(captures.deletedAt)))
     .returning({ id: captures.id });
   return rows.length > 0;
 }
