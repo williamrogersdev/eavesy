@@ -9,6 +9,7 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 ### Fixed
 
 - Web: pausing or ending the Workers AI credit pilot no longer takes semantic search, translation and transcript repair down with it; only imports and library answers run on the pilot's credits, and a meeting that could not be indexed is now reported instead of silently missing from search ([#213](https://github.com/williamrogersdev/eavesy/pull/213))
+- Web: regenerating a brief now names each speaker and uses the project's context, the way the first brief does, and a regenerated meeting is re-indexed for search; a failed meeting you regenerate no longer stays missing from search and the library ([#214](https://github.com/williamrogersdev/eavesy/pull/214))
 
 ## [0.6.7] - 2026-10-23 - desktop
 

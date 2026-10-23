@@ -3,11 +3,10 @@ import { repairTranscriptSegments, repairAi } from '@/lib/ai/repair-transcript';
 import { guardedImportWrite } from './import-guard';
 import { createAiRunner } from '@/lib/ai/credit-runner';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
-import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
-import { encode } from '@/db/codec';
+import { meetings, meetingSegments, transcriptSegments, users } from '@/db/schema';
 import * as projectsRepo from '@/db/repo/projects';
-import { MODELS } from '@/lib/ai/client';
-import { summarizeMeeting } from '@/lib/ai/summarize';
+import { upsertSummary } from '@/db/repo/summaries';
+import { summarizeMeeting, summarizeMeetingModel } from '@/lib/ai/summarize';
 import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { retryLanguage, spokenLanguages, whisperLanguage } from '@/lib/transcription/language';
@@ -123,26 +122,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
       notesLanguage: userRow?.notesLanguage,
     });
-    const generatedByModel = plan.openRouter
-      ? 'openrouter:anthropic/claude-sonnet-4.6'
-      : plan.summary.apiKey
-        ? `byo-anthropic:${MODELS.summary}`
-        : MODELS.summary;
-    const values = {
-      tldr: summary.tldr,
-      decisionsJson: encode(summary.decisions),
-      actionItemsJson: encode(summary.actionItems),
-      followUpsJson: encode(summary.followUps),
-      openQuestionsJson: encode(summary.openQuestions),
-      topicsJson: encode(summary.topics),
-      mentionsJson: encode(summary.mentions),
-      generatedByModel,
-      generatedAt: now,
-    };
-    await db
-      .insert(summaries)
-      .values({ id: `summary_${meetingId}`, meetingId, ...values })
-      .onConflictDoUpdate({ target: summaries.meetingId, set: values });
+    await upsertSummary(db, { meetingId, summary, generatedByModel: summarizeMeetingModel(plan), generatedAt: now });
     await db
       .update(meetings)
       .set({
