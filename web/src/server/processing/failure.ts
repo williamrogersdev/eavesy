@@ -64,12 +64,22 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
         tags: { job_kind: message.kind, user_id: message.userId, reason: reason.slice(0, 200) },
       });
       return;
+    // A meeting that never gets embedded is usable but invisible to semantic
+    // search and the library, and nothing re-queues it on its own: say so.
+    case 'embed':
+      captureMessage('Meeting embedding failed permanently; it is missing from semantic search', {
+        tags: { job_kind: message.kind, meeting_id: message.meetingId, reason: reason.slice(0, 200) },
+      });
+      return;
+    case 'embed-dictation':
+      captureMessage('Dictation embedding failed permanently; it is missing from semantic search', {
+        tags: { job_kind: message.kind, dictation_id: message.dictationId, reason: reason.slice(0, 200) },
+      });
+      return;
     // The hourly cron re-sends deleted-meeting and expiry purges; the rest are
     // best effort on a meeting that is already usable.
     case 'rolling-summarize':
     case 'agent-transcript':
-    case 'embed':
-    case 'embed-dictation':
     case 'cleanup-anonymous':
     case 'purge-meeting':
       return;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createFakeEnv } from '@/server/testing/fake-env';
-import { createAiRunner, LIBRARY_MODEL, reservation } from './credit-runner';
+import { createAiRunner, isCreditPurpose, LIBRARY_MODEL, reservation } from './credit-runner';
 import { encodeWav } from '../imports/wav';
 const MODEL = '@cf/qwen/qwen3-embedding-0.6b';
 function setup(budget = '1') {
@@ -13,15 +13,32 @@ function setup(budget = '1') {
 describe('credit routing and accounting', () => {
   test('disabled mode uses existing binding and wrong-account mode fails before fetch', async () => {
     const t = setup();
-    expect(createAiRunner({ ...t.env, AI_CREDITS_ENABLED: 'false' }, 'test', t.transport)).toBe(t.env.AI);
-    expect(() => createAiRunner({ ...t.env, WORKERS_AI_ACCOUNT_ID: 'wrong' }, 'test', t.transport)).toThrow('account');
+    expect(createAiRunner({ ...t.env, AI_CREDITS_ENABLED: 'false' }, 'import-summary', t.transport)).toBe(t.env.AI);
+    expect(() => createAiRunner({ ...t.env, WORKERS_AI_ACCOUNT_ID: 'wrong' }, 'import-summary', t.transport)).toThrow('account');
+    expect(t.calls).toHaveLength(0);
+  });
+  test('only pilot purposes go through credits; the rest stay on the binding even when the pilot is paused or over', () => {
+    const t = setup();
+    for (const purpose of ['import-transcription', 'import-summary', 'library-answer', 'mcp-library']) {
+      expect(isCreditPurpose(purpose)).toBe(true);
+      expect(createAiRunner(t.env, purpose, t.transport)).not.toBe(t.env.AI);
+    }
+    for (const purpose of ['library-embedding', 'search-embedding', 'mcp-search', 'translation', 'transcript-repair']) {
+      expect(isCreditPurpose(purpose)).toBe(false);
+      expect(createAiRunner(t.env, purpose, t.transport)).toBe(t.env.AI);
+      expect(createAiRunner({ ...t.env, AI_CREDITS_PAUSED: 'true' }, purpose, t.transport)).toBe(t.env.AI);
+      expect(createAiRunner({ ...t.env, AI_CREDITS_STOP_AT: '2000-01-01' }, purpose, t.transport)).toBe(t.env.AI);
+      // A misconfigured pilot is still not the binding's problem.
+      expect(createAiRunner({ ...t.env, WORKERS_AI_ACCOUNT_ID: 'wrong' }, purpose, t.transport)).toBe(t.env.AI);
+    }
+    expect(() => createAiRunner({ ...t.env, AI: undefined }, 'translation', t.transport)).toThrow('AI binding unavailable');
     expect(t.calls).toHaveLength(0);
   });
   test('conditional debit prevents concurrent requests from exceeding the budget', async () => {
     const t = setup('0.01');
     const wav = encodeWav(new Float32Array(160));
     const audio = btoa(String.fromCharCode(...wav));
-    const ai = createAiRunner(t.env, 'test', t.transport);
+    const ai = createAiRunner(t.env, 'import-transcription', t.transport);
     const results = await Promise.allSettled(Array.from({ length: 10 }, () => ai.run('@cf/openai/whisper-large-v3-turbo', { audio })));
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
     expect(t.calls).toHaveLength(1);
@@ -32,7 +49,7 @@ describe('credit routing and accounting', () => {
     const t = setup('1');
     const day = new Date().toISOString().slice(0, 10);
     t.sqlite.run('INSERT INTO ai_credit_budgets(scope,reserved_microusd) VALUES (?,?)', [`day:${day}`, 1_000_000]);
-    const ai = createAiRunner(t.env, 'test', t.transport);
+    const ai = createAiRunner(t.env, 'import-transcription', t.transport);
     await expect(ai.run(MODEL, { text: ['hello'] })).rejects.toThrow('budget');
     expect(t.calls).toHaveLength(0);
     expect(t.sqlite.query("SELECT * FROM ai_credit_budgets WHERE scope='programme'").get()).toBeNull();
@@ -40,7 +57,7 @@ describe('credit routing and accounting', () => {
   });
   test('timeouts and provider errors retain reservations and never expose provider bodies', async () => {
     const t = setup();
-    const ai = createAiRunner(t.env, 'test', async () => new Response('private submitted words', { status: 429 }));
+    const ai = createAiRunner(t.env, 'library-answer', async () => new Response('private submitted words', { status: 429 }));
     await expect(ai.run(MODEL, { text: ['hello'] })).rejects.toThrow('429');
     expect(t.sqlite.query('SELECT state FROM ai_credit_usage').get()).toEqual({ state: 'failed' });
     expect((t.sqlite.query('SELECT sum(reserved_microusd) n FROM ai_credit_budgets').get() as { n: number }).n).toBeGreaterThan(0);
@@ -48,7 +65,7 @@ describe('credit routing and accounting', () => {
   test('pause and expiry fail closed with no request', async () => {
     const t = setup();
     for (const override of [{ AI_CREDITS_PAUSED: 'true' }, { AI_CREDITS_STOP_AT: '2000-01-01' }, { AI_CREDITS_STOP_AT: '' }]) {
-      await expect(createAiRunner({ ...t.env, ...override }, 'test', t.transport).run(MODEL, { text: ['hi'] })).rejects.toThrow();
+      await expect(createAiRunner({ ...t.env, ...override }, 'import-summary', t.transport).run(MODEL, { text: ['hi'] })).rejects.toThrow();
     }
     expect(t.calls).toHaveLength(0);
   });
