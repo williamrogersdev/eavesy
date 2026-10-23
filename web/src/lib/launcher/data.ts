@@ -45,15 +45,8 @@ function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+/** The web palette's list (the desktop panel pages through the native history instead). */
 export async function loadRecordings(now: number): Promise<Recording[]> {
-  if (isDesktop()) {
-    // Errors propagate: an empty list here would read as "you have no recordings".
-    const { core } = window.__TAURI__!;
-    const page = await core.invoke<NativePage>('list_recordings', { offset: 0, limit: 50 });
-    return normalizeRows(page.items);
-
-  }
-
   try {
     const res = await fetch('/api/meetings/list?limit=100', {
       headers: { accept: 'application/json' },

@@ -2,8 +2,9 @@ import { version } from '../../src-tauri/tauri.conf.json';
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
 // &live for a recording in progress, &setup for first-run onboarding with
-// nothing allowed yet, &settings to open Settings, &fn=ready for a Mac where
-// fn is fully set up). Never active in a production build.
+// nothing allowed yet, &perms-missing for Screen Recording off, &fn=ready for
+// a Mac where fn is fully set up). Settings is its own page: /settings.html?mock.
+// Never active in a production build.
 
 type Handler = (e: { payload: unknown }) => void;
 
@@ -113,13 +114,25 @@ export function installDevMock(): void {
       return tones[String(style)] ?? String(text);
     },
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
+    // ⌘V in the panel: text lands in the composer as a draft.
+    paste_to_composer: () => ({ kind: 'text', text: copiedText || 'Pasted from the clipboard' }),
+    save_note: ({ text }: Record<string, unknown>) => {
+      recordings.unshift({ id: `note-${Date.now()}`, title: 'Note', started_at_ms: Date.now(), duration_sec: 0, source: 'note', status: 'complete', has_audio: false, transcript: String(text) });
+      setTimeout(() => emit('recordings:updated'), 0);
+    },
+    import_files: ({ paths }: Record<string, unknown>) => ({ ids: Array.isArray(paths) ? paths.map(String) : [], skipped: [] }),
+    cancel_history_search: null,
+    // The real app opens the Settings window; the browser preview opens its page.
+    show_settings: () => { window.open(`settings.html${window.location.search || '?mock'}`, 'eavesy-settings'); },
+    open_privacy_settings: null,
+    set_panel_pinned: null,
+    set_project_choice: null,
   };
   if (params.has('setup')) installSetupMock(results);
   const listeners = new Map<string, Handler[]>();
   const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
   const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
   (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), get copiedText() { return copiedText; } };
-  if (params.has('settings')) setTimeout(() => emit('launcher:settings'), 400);
   window.__TAURI__ = {
     core: {
       convertFileSrc: () => SHOT,

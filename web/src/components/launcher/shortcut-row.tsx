@@ -165,7 +165,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     if (isHotkeyError(error) && error.kind === 'taken' && error.by !== 'other') {
       setNotice({ kind: 'taken', accelerator, by: error.by });
     } else {
-      setNotice({ kind: 'error', text: isHotkeyError(error) ? hotkeyErrorText(error, accelerator) : errMsg(error, 'Could not change the shortcut.') });
+      setNotice({ kind: 'error', text: isHotkeyError(error) ? hotkeyErrorText(error, accelerator) : errMsg(error, 'Couldn’t change the shortcut.') });
     }
   }, []);
 
@@ -407,7 +407,7 @@ function FnSetupCard({ fn, onRecheck }: { fn: FnStatus; onRecheck: () => Promise
                     Open Privacy settings
                   </Button>
                   {opened ? (
-                    <Button variant="primary" size="sm" onClick={() => { void relaunchApp().catch((e: unknown) => setRelaunchError(errMsg(e, 'Could not relaunch Eavesy.'))); }}>
+                    <Button variant="primary" size="sm" onClick={() => { void relaunchApp().catch((e: unknown) => setRelaunchError(errMsg(e, 'Couldn’t relaunch Eavesy.'))); }}>
                       Relaunch Eavesy
                     </Button>
                   ) : null}
@@ -448,7 +448,7 @@ export function RestoreDefaultShortcuts({ shortcuts }: { shortcuts: Shortcuts })
     setError(null);
     void resetAllHotkeys()
       .then(async () => { setConfirming(false); await reload(); changed(); })
-      .catch((e: unknown) => setError(isHotkeyError(e) ? hotkeyErrorText(e, '') : errMsg(e, 'Could not restore the shortcuts.')))
+      .catch((e: unknown) => setError(isHotkeyError(e) ? hotkeyErrorText(e, '') : errMsg(e, 'Couldn’t restore the shortcuts.')))
       .finally(() => setBusy(false));
   };
   return (

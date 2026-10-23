@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDownCircle, ArrowLeft, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
+import { ArrowDownCircle, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
 import { hidePanel, installUpdate, openRecordingsFolder, openWebApp } from '@/lib/desktop/bridge';
 import { accountInitial, type AccountState } from '@/components/launcher/settings-view';
 import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
-import { type LauncherView, type RunTask } from './types';
+import { type RunTask } from './types';
 import { useUpdateStatus } from './use-update-status';
 import { ProjectChip } from './project-chip';
 import type { ProjectChoice } from './use-project';
@@ -43,29 +43,31 @@ function UpdateButton({ runTask }: { runTask: RunTask }) {
  * "Sign in") and Settings. Recording state lives in the HUD, not here.
  */
 export function TitleBar({
-  view,
+  setup,
   account,
   connecting,
   signedOut,
   goSettings,
-  goBack,
   connect,
   disconnect,
   runTask,
   project,
+  onManageProjects,
 }: {
-  view: LauncherView;
+  /** First-run setup is showing: no update pill, sign-in button or project chip. */
+  setup: boolean;
   account: AccountState;
   connecting: boolean;
   /** The sync loop's token was rejected: recordings wait on this Mac. */
   signedOut: boolean;
   goSettings: () => void;
-  goBack: () => void;
   connect: () => void;
   disconnect: () => void;
   runTask: RunTask;
   /** Shown on the main list once signed in. */
   project?: ProjectChoice;
+  /** Opens Settings on Projects. */
+  onManageProjects?: () => void;
 }) {
   const folderItem: MenuItem = {
     label: 'Open ~/Eavesy folder',
@@ -85,25 +87,16 @@ export function TitleBar({
       >
         <X size={11} strokeWidth={2.5} aria-hidden />
       </button>
-      {view === 'settings' ? (
-        <>
-          <IconButton size={24} label="Back" icon={ArrowLeft} onClick={goBack} />
-          <span data-tauri-drag-region className="ev-tb-back">Settings</span>
-        </>
-      ) : (
-        <>
-          <Mascot size={22} state="idle" />
-          <span data-tauri-drag-region className="ev-tb-word">Eavesy</span>
-        </>
-      )}
+      <Mascot size={22} state="idle" />
+      <span data-tauri-drag-region className="ev-tb-word">Eavesy</span>
       <span data-tauri-drag-region className="ev-tb-spacer" />
-      {view !== 'setup' && <UpdateButton runTask={runTask} />}
-      {view !== 'settings' && view !== 'setup' && account === null && (
+      {!setup && <UpdateButton runTask={runTask} />}
+      {!setup && account === null && (
         <Button size="sm" variant="ghost" loading={connecting} onClick={connect}>
-          {connecting ? 'Waiting…' : 'Sign in'}
+          {connecting ? 'Waiting for you in the browser…' : 'Sign in'}
         </Button>
       )}
-      {account && project && view === 'list' && <ProjectChip choice={project} runTask={runTask} onManage={goSettings} />}
+      {account && project && !setup && <ProjectChip choice={project} runTask={runTask} onManage={onManageProjects ?? goSettings} />}
       {account && (
         <Menu
           align="end"
@@ -134,16 +127,14 @@ export function TitleBar({
           ]}
         />
       )}
-      {view !== 'settings' && (
-        account === null ? (
-          <Menu
-            align="end"
-            trigger={<IconButton label="Settings" icon={Settings} title="Settings (⌘,)" />}
-            items={[folderItem, settingsItem]}
-          />
-        ) : (
-          <IconButton label="Settings" icon={Settings} title="Settings (⌘,)" onClick={goSettings} />
-        )
+      {account === null ? (
+        <Menu
+          align="end"
+          trigger={<IconButton label="Settings" icon={Settings} title="Settings (⌘,)" />}
+          items={[folderItem, settingsItem]}
+        />
+      ) : (
+        <IconButton label="Settings" icon={Settings} title="Settings (⌘,)" onClick={goSettings} />
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { cancelHistorySearch, loadRecordingDetails, loadRecordingPage, loadRecordings, reloadRecordingPages } from './data';
+import { cancelHistorySearch, loadRecordingDetails, loadRecordingPage, reloadRecordingPages } from './data';
 import type { Recording } from './types';
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 afterEach(() => {
@@ -21,7 +21,6 @@ test('history requests a bounded page and forwards full-history search and filte
   expect(page.counts.all).toBe(1000);
   expect(page.items[0]).toMatchObject(rec);
   expect(page.items[0].detailsLoaded).not.toBe(true);
-  expect(await loadRecordings(0)).toHaveLength(1);
 });
 
 test('details retrieve the complete transcript for copy and expansion', async () => {

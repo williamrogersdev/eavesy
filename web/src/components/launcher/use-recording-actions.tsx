@@ -114,7 +114,7 @@ export function useRecordingActions({
               icon: <FolderOpen className="h-4 w-4" />,
               hint: '⌘⇧R',
               run: () => {
-                runTask(() => revealInFinder(rec.id), 'Could not reveal recording');
+                runTask(() => revealInFinder(rec.id), 'Couldn’t reveal recording');
                 close();
               },
             } as Action,

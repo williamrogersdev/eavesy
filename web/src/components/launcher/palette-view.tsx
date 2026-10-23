@@ -159,7 +159,7 @@ export function PaletteView({
                     runTask(async () => {
                       await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
                       flash('Transcript copied');
-                    }, 'Could not copy transcript')
+                    }, 'Couldn’t copy transcript')
                   }
                 >
                   <Copy className="h-4 w-4" />
@@ -169,7 +169,7 @@ export function PaletteView({
                   onClick={() => {
                     runTask(
                       async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
-                      'Could not paste transcript',
+                      'Couldn’t paste transcript',
                     );
                     if (!desktop) flash('Transcript copied — paste anywhere');
                   }}
@@ -211,7 +211,7 @@ export function PaletteView({
                   onClick={() =>
                     runTask(
                       () => beginRecording('screen', { mic: false }),
-                      'Could not start screen recording',
+                      'Couldn’t start screen recording',
                     )
                   }
                 />

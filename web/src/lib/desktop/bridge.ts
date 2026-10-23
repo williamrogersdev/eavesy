@@ -49,8 +49,58 @@ export function isDesktop(): boolean {
   return tauri() !== null;
 }
 
-export async function openSettingsWindow(): Promise<void> {
-  if (isDesktop()) await invoke('show_settings');
+/** Settings sections another window can ask the Settings window to show. */
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'permissions', 'account'];
+/** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
+const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
+/** A request older than this was for a Settings window that has come and gone. */
+const SETTINGS_SECTION_TTL_MS = 10_000;
+
+/** Opens the Settings window, on `section` when given. */
+export async function openSettingsWindow(section?: SettingsSection): Promise<void> {
+  if (!isDesktop()) return;
+  if (section) {
+    try { window.localStorage.setItem(SETTINGS_SECTION_KEY, JSON.stringify({ section, at: Date.now() })); }
+    catch { /* No storage: Settings opens where it was. */ }
+  }
+  await invoke('show_settings');
+}
+
+function readSettingsSection(raw: string | null, now: number): SettingsSection | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object') return null;
+    const { section, at } = value as { section?: unknown; at?: unknown };
+    if (typeof at !== 'number' || now - at > SETTINGS_SECTION_TTL_MS) return null;
+    return SETTINGS_SECTIONS.find((known) => known === section) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The section the panel asked Settings to show, read once. */
+export function takeSettingsSection(now = Date.now()): SettingsSection | null {
+  try {
+    const section = readSettingsSection(window.localStorage.getItem(SETTINGS_SECTION_KEY), now);
+    window.localStorage.removeItem(SETTINGS_SECTION_KEY);
+    return section;
+  } catch {
+    return null;
+  }
+}
+
+/** Calls back when the panel asks an open Settings window for a section. */
+export function onSettingsSection(cb: (section: SettingsSection) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== SETTINGS_SECTION_KEY || !event.newValue) return;
+    const section = takeSettingsSection();
+    if (section) cb(section);
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
 }
 
 export async function closeSettingsWindow(): Promise<void> {
@@ -589,11 +639,6 @@ export async function onLauncherSetup(cb: () => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<unknown>('launcher:setup', () => cb());
-}
-export async function onLauncherSettings(cb: () => void): Promise<UnlistenFn> {
-  const t = tauri();
-  if (!t) return () => {};
-  return t.event.listen<unknown>('launcher:settings', () => cb());
 }
 export async function captureMediaUrl(id: string): Promise<string> {
   const path = await invoke<string>('capture_media', { id });
