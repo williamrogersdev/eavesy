@@ -1,44 +1,17 @@
-import type {
-  D1Database,
-  MessageBatch,
-  Queue,
-  R2Bucket,
-  ScheduledController,
-  VectorizeIndex,
-  Ai,
-} from '@cloudflare/workers-types';
-import { captureMessage, withErrorReporting } from '../../../web/src/server/observability';
+import type { D1Database, MessageBatch, ScheduledController } from '@cloudflare/workers-types';
+import { type ObservabilityEnv, withErrorReporting } from '../../../web/src/server/observability';
 
 import {
-  deadLetterQueue,
-  purgeDeleted,
-  reconcileEmailRecaps,
-  recoverStaleSegments,
-  sealLegacyKeys,
+  hourlySweeps,
+  runCronSteps,
   startMeetingBotCanaries,
-  SUMMARY_WAIT_LIMIT_MS,
   queue as runQueue,
   type ProcessingEnv,
   type ProcessingMessage,
 } from '../../../web/src/server/processing-worker';
-import { pruneRateLimits } from '../../../web/src/server/rate-limit-store';
 import { CANARY_CRON } from '../../../web/src/server/meeting-bots/canary';
 
-export interface Env extends ProcessingEnv {
-  DB: D1Database;
-  AUDIO_BUCKET: R2Bucket;
-  VECTORIZE: VectorizeIndex;
-  PROCESSING_QUEUE: Queue<ProcessingMessage>;
-  AI: Ai;
-  ANTHROPIC_API_KEY: string;
-  RESEND_API_KEY?: string;
-  RESEND_WEBHOOK_SECRET?: string;
-  EMAIL_FROM?: string;
-  APP_URL?: string;
-  POSTHOG_KEY?: string;
-  POSTHOG_HOST?: string;
-  RELEASE?: string;
-}
+export type Env = ProcessingEnv & ObservabilityEnv;
 
 export const worker = {
   async fetch(): Promise<Response> {
@@ -48,18 +21,8 @@ export const worker = {
     });
   },
 
+  /** The main queue and its dead-letter queue both land here. */
   async queue(batch: MessageBatch<ProcessingMessage>, env: Env): Promise<void> {
-    if (batch.queue === 'eavesy-processing-dlq') {
-      await deadLetterQueue(batch, env, (failure) => {
-        captureMessage('Processing job exhausted automatic retries', {
-          tags: {
-            job_kind: failure.kind,
-            failure_outcome: failure.outcome,
-          },
-        });
-      });
-      return;
-    }
     await runQueue(batch, env);
   },
 
@@ -69,89 +32,11 @@ export const worker = {
       await startMeetingBotCanaries(env, now);
       return;
     }
-    const expired = await env.DB.prepare(
-      'SELECT id FROM meetings WHERE expires_at IS NOT NULL AND expires_at < ? LIMIT 500',
-    )
-      .bind(now)
-      .all<{ id: string }>();
-
-    for (const m of expired.results) {
-      await env.PROCESSING_QUEUE.send({ kind: 'cleanup-anonymous', meetingId: m.id });
-    }
-    await env.DB.prepare('DELETE FROM device_pairing_codes WHERE expires_at < ?').bind(now).run();
-
-    // Notetaker meetings aren't touched between segments; their bot's
-    // watchdog ends them instead (meeting-bots/service.ts, watchBot).
-    const abandoned = await env.DB.prepare(
-      `SELECT m.id
-         FROM meetings m
-        WHERE m.source NOT IN ('import', 'bot') AND m.status IN ('recording', 'uploading')
-          AND m.updated_at < ?
-          AND EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id)
-        LIMIT 200`,
-    )
-      .bind(now - 30 * 60 * 1000)
-      .all<{ id: string }>();
-    for (const meeting of abandoned.results) {
-      await env.DB.prepare(
-        `UPDATE meetings
-            SET status = 'processing', ended_at = COALESCE(ended_at, ?), updated_at = ?
-          WHERE id = ? AND status IN ('recording', 'uploading')`,
-      )
-        .bind(now, now, meeting.id)
-        .run();
-      await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id });
-    }
-
-    const delayedBrowserJobs = await env.DB.prepare(
-      `SELECT m.id
-         FROM meetings m
-        WHERE m.source IN ('web', 'import')
-          AND m.status = 'processing'
-          AND m.audio_r2_key IS NOT NULL
-          AND m.updated_at < ?
-          AND NOT EXISTS (
-            SELECT 1 FROM transcript_segments t WHERE t.meeting_id = m.id
-          )
-          -- Streamed sessions are transcribed per segment, never as one file.
-          AND NOT EXISTS (
-            SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id
-          )
-        LIMIT 200`,
-    )
-      .bind(now - 5 * 60 * 1000)
-      .all<{ id: string }>();
-    for (const meeting of delayedBrowserJobs.results) {
-      await env.PROCESSING_QUEUE.send({ kind: 'process-recording', meetingId: meeting.id });
-    }
-
-    await env.DB.prepare(
-      `UPDATE meetings
-          SET status = 'failed',
-              status_error = 'The recording stopped before any audio reached the cloud.',
-              updated_at = ?
-        WHERE status IN ('recording', 'uploading')
-          AND source != 'bot'
-          AND updated_at < ?
-          AND audio_r2_key IS NULL
-          AND NOT EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = meetings.id)`,
-    )
-      .bind(now, now - SUMMARY_WAIT_LIMIT_MS)
-      .run();
-
-    const stuck = await env.DB.prepare(
-      `SELECT id, updated_at FROM meetings WHERE status = 'processing' AND updated_at < ? LIMIT 200`,
-    ).bind(now - 2 * SUMMARY_WAIT_LIMIT_MS).all<{ id: string; updated_at: number }>();
-    for (const meeting of stuck.results) {
-      await env.DB.prepare('UPDATE meetings SET updated_at = ? WHERE id = ?').bind(now, meeting.id).run();
-      await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id, waitingSince: meeting.updated_at });
-    }
-    await recoverStaleSegments(env, now);
-    await reconcileEmailRecaps(env, now);
-    await purgeDeleted(env, now);
-    await pruneRateLimits(env.DB, now);
-    await sealLegacyKeys(env);
-    await rollupOperationalMetrics(env, now);
+    // One failing sweep no longer stops the ones after it (web/src/server/processing/cron.ts).
+    await runCronSteps([
+      ...hourlySweeps(env, now),
+      ['roll up operational metrics', () => rollupOperationalMetrics(env, now)],
+    ]);
   },
 };
 

@@ -20,17 +20,35 @@ export interface ProcessingEnv extends CreditEnv, MeetingBotsEnv, CanaryEnv, Ema
 
 export type ProcessingMessage = QueueMessage;
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
+/**
+ * Deliveries of one queue message, the first included. The consumer handles
+ * the last one itself: it records the failure (`handleTerminalFailure`) and
+ * acks. `max_retries` in workers/processing/wrangler.toml is MAX_ATTEMPTS - 1,
+ * so the queue gives up at the same point; the dead-letter queue then only
+ * sees messages whose last delivery crashed the consumer or could not record
+ * its failure, and records it from there.
+ */
 export const MAX_ATTEMPTS = 5;
 export const SUMMARY_WAIT_LIMIT_MS = 6 * 60 * 60 * 1_000;
 export const DEAD_LETTER_QUEUE = 'eavesy-processing-dlq';
 // A queue consumer can run for at most 15 minutes, so a claim older than that
 // belongs to a worker that died without releasing it.
 export const SEGMENT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+export const SUMMARY_CLAIM_TTL_MS = 15 * 60 * 1_000;
 export const SEGMENT_BUSY_RETRY_SECONDS = 300;
 
-export class SegmentBusyError extends Error {
+/** Another job holds the claim on this work; the message checks back later. */
+export class ClaimBusyError extends Error {}
+
+export class SegmentBusyError extends ClaimBusyError {
   constructor() {
     super('segment is being transcribed by another job');
+  }
+}
+
+export class SummaryBusyError extends ClaimBusyError {
+  constructor() {
+    super('the final summary is being written by another job');
   }
 }
 

@@ -294,6 +294,65 @@ Will: Bump it.
     expect(recent.map((meeting) => meeting.id)).toEqual(['m1']);
     expect(recent[0].project).toBe('eavesy');
   });
+
+  const raw = async (token: string, body: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { content?: { text: string }[] }; error?: { code: number; message: string } }>();
+  const tool = (token: string, name: string, args: unknown) =>
+    raw(token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+
+  it('clamp list limits to 1–50 and ignore ones that are not numbers', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'recent_meetings', { limit: -1 })).toHaveLength(1);
+    expect(await call(token, 'recent_meetings', { limit: 0 })).toHaveLength(2);
+    expect(await call(token, 'recent_meetings', { limit: 'lots' })).toHaveLength(2);
+    expect(await call(token, 'recent_meetings', { limit: 1e9 })).toHaveLength(2);
+  });
+
+  it('hide imports that have not finished, as search does', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO meetings (id, user_id, title, started_at, source, status, created_at, updated_at)
+       VALUES ('m3', 'user_mcp', 'Half imported', ?, 'import', 'processing', ?, ?)`,
+    ).bind(now + 1, now, now).run();
+    expect((await call(token, 'recent_meetings', {})).map((meeting) => meeting.id)).toEqual(['m1', 'm2']);
+    expect((await tool(token, 'get_meeting', { id: 'm3' })).error?.message).toBe('not found');
+  });
+
+  it('match LIKE wildcards literally and refuse a query that is not text', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at)
+       VALUES ('d1', 'user_mcp', 'a', 'rename user_id', 1, ?), ('d2', 'user_mcp', 'b', 'rename userXid', 1, ?),
+              ('d3', 'user_mcp', 'c', '100% done', 1, ?), ('d4', 'user_mcp', 'd', '100 done', 1, ?)`,
+    ).bind(now, now, now, now).run();
+    try {
+      expect((await call(token, 'search_dictations', { query: 'user_id' })).map((d) => d.id)).toEqual(['d1']);
+      expect((await call(token, 'search_dictations', { query: '100%' })).map((d) => d.id)).toEqual(['d3']);
+      expect(await call(token, 'search_dictations', { query: 42 })).toEqual([]);
+    } finally {
+      await testEnv.DB.prepare('DELETE FROM dictations').run();
+    }
+  });
+
+  it('answer a request that is not an object, and keep internal errors to themselves', async () => {
+    const { token } = await mint();
+    expect((await raw(token, null)).error?.code).toBe(-32600);
+    expect((await raw(token, [1, 2])).error?.code).toBe(-32600);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // The test Worker has no AI binding, so embedding the query throws inside.
+    const failed = await tool(token, 'search_meetings', { query: 'cask' });
+    expect(failed.error).toEqual({ code: -32000, message: 'The tool call failed. Please try again.' });
+    expect((await tool(token, 'no_such_tool', {})).error?.message).toBe('unknown tool: no_such_tool');
+  });
 });
 
 describe('MCP prompts', () => {
