@@ -30,6 +30,10 @@ interface HudState {
   message: string | null;
   /** Where the words went when they were not pasted ("Copied — …"). */
   notice?: string | null;
+  /** What happened to a finished dictation's words, and whether it opens
+   * straight into its drawer. Rust decides both, as it sizes the window. */
+  receipt?: Receipt | null;
+  opensItself?: boolean;
 }
 
 interface TauriGlobal {
@@ -63,7 +67,7 @@ type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
 /** How the control looks while recording, from Settings → App → Capture. */
 type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
 
-const DEFAULT_LOOK: Look = { lines: 4, translucent: true };
+const DEFAULT_LOOK: Look = { lines: 0, translucent: true };
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
@@ -119,9 +123,7 @@ function lookFrom(value: unknown): Look {
 
 /** What the pill says happened to a finished dictation's words, or null when it isn't one. */
 function receiptFor(state: HudState): Receipt | null {
-  if (state.phase !== 'done' || state.mode === 'image' || state.mode === 'video' || !state.message?.trim()) return null;
-  if (state.notice?.includes('Accessibility')) return 'blocked';
-  return state.notice ? 'copied' : 'pasted';
+  return state.phase === 'done' && state.message?.trim() ? state.receipt ?? null : null;
 }
 
 /** "16 words", for the Pasted stamp. */
@@ -163,6 +165,9 @@ function browserPreviewState(): HudState | null {
     sessionId: params.has('opening') ? null : 'preview',
     mode,
     notice: params.get('notice'),
+    // Rust's reading of a finished dictation (`hud::shown`), stood in for here.
+    receipt: phase !== 'done' || mode !== 'audio' ? null : params.get('notice')?.includes('Accessibility') ? 'blocked' : params.has('notice') ? 'copied' : 'pasted',
+    opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
     startedAtMs: Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
       ? params.has('long')
@@ -491,9 +496,13 @@ function Hud() {
   // open: folding them into a stamp would hide the editor or the Retry.
   const ownTone = tone && tone.sessionId === state?.sessionId ? tone : null;
   const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || !!ownTone?.busy);
-  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer) : 'pill';
-  // Until its drawer is opened, a finished dictation is just a stamp on the pill.
-  const receipt = state && !peeking && !keepDrawer ? receiptFor(state) : null;
+  // With the words shown after dictation (the default), a pasted or copied
+  // dictation opens straight into its drawer; Not pasted keeps its Allow pill.
+  const finished = state ? receiptFor(state) : null;
+  const opensItself = !!state?.opensItself && finished !== null;
+  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer || opensItself) : 'pill';
+  // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
+  const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
 
   useEffect(() => {
     if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;

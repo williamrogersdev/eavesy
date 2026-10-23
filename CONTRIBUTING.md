@@ -93,6 +93,11 @@ cd desktop/swift-audio && swift test
 
 Browser UX tests (Playwright, optional locally): `cd web && bun run test:ux`.
 
+`scripts/test-local.sh` runs all of the above headless in one go. To test the
+installed Mac app without touching your own desktop, use a throwaway VM:
+`desktop/scripts/vm-test.sh smoke`. See
+[docs/TESTING-ENVIRONMENTS.md](docs/TESTING-ENVIRONMENTS.md).
+
 ## Pull requests and review
 
 - Open an issue first for larger changes; small fixes can go straight to a PR.
