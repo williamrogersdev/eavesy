@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-10-23 - desktop
+
 ### Changed
 
 - Mac app: a finished dictation opens with its words again, editable, with Copy and the tone row, instead of only a "Pasted" stamp. Settings → Recording appearance → "Show the words when it's done" turns it off ([#201](https://github.com/williamrogersdev/eavesy/pull/201))
