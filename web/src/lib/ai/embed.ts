@@ -31,6 +31,8 @@ export async function embedTexts(ai: WorkersAiRunner, texts: string[]): Promise<
   return vectors;
 }
 
+// Kept local on purpose: the MCP Worker bundles this file (see
+// workers/mcp/tsconfig.json), so it stays free of imports.
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }

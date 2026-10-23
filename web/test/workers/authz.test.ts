@@ -139,6 +139,12 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/captures' }, excludes: [CAPTURE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a capture owned by the caller' },
   },
+  '/api/captures/$id/audio': {
+    POST: {
+      unauthenticated: SIGNED_IN,
+      scopedToCaller: 'Transcribes only into a video capture the caller owns (404 otherwise); web-app-fixes tests cover both owners',
+    },
+  },
   '/api/captures/$id': {
     GET: {
       unauthenticated: SIGNED_IN,

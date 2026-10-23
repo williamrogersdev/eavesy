@@ -1,10 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { clampLimit } from '@/lib/http/clamp-limit';
+import { headerText } from '@/lib/http/header-text';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { pid } from '@/db/ids';
 import * as capturesRepo from '@/db/repo/captures';
 import { resolveIngestActor } from '@/server/device-auth';
-import { captureKey, putObject } from '@/server/r2';
+import { captureKey, deleteObject, putObject } from '@/server/r2';
 import { guardUserQuota } from '@/server/rate-limit';
 
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -34,7 +36,7 @@ export const Route = createFileRoute('/api/devices/captures/')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const search = new URL(request.url).searchParams;
-        const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
+        const limit = clampLimit(search.get('limit'), 50, 200);
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
         if (offset > MAX_OFFSET) return Response.json({ items: [] });
         const items = await capturesRepo.listImagesForDevice(getDb(), {
@@ -55,7 +57,6 @@ export const Route = createFileRoute('/api/devices/captures/')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'sign in to sync captures' }, { status: 403 });
 
         const clientId = clientIdSchema.safeParse(request.headers.get('x-client-capture-id'));
         if (!clientId.success) return Response.json({ error: 'invalid x-client-capture-id' }, { status: 400 });
@@ -78,7 +79,9 @@ export const Route = createFileRoute('/api/devices/captures/')({
         const capturedAt = Math.floor(Number(request.headers.get('x-captured-at')));
         const createdAt = Number.isFinite(capturedAt) && capturedAt > 0 && capturedAt <= Date.now() + 60_000 ? capturedAt : Date.now();
 
-        const r2Key = captureKey({ userId: actor.userId, captureId: pid('cap'), ext });
+        // One id names both the row and its R2 object.
+        const captureId = pid('cap');
+        const r2Key = captureKey({ userId: actor.userId, captureId, ext });
         const { readable, writable } = new FixedLengthStream(bytes);
         const piped = (request.body as unknown as ReadableStream).pipeTo(writable);
         try {
@@ -89,6 +92,7 @@ export const Route = createFileRoute('/api/devices/captures/')({
 
         try {
           const id = await capturesRepo.create(db, {
+            id: captureId,
             userId: actor.userId,
             kind: 'image',
             captureMode: 'screenshot',
@@ -103,6 +107,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
           });
           return Response.json({ id }, { status: 201 });
         } catch (error) {
+          // No row points at this object now, so don't leave it behind.
+          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
           // Two uploads of the same capture raced: the other one won.
           const winner = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
           if (winner) return Response.json({ id: winner.id, idempotent: true });
@@ -112,19 +118,3 @@ export const Route = createFileRoute('/api/devices/captures/')({
     },
   },
 });
-
-/** Percent-decoded, printable, at most 200 characters. */
-function headerText(raw: string | null): string {
-  let value = raw ?? '';
-  try {
-    value = decodeURIComponent(value);
-  } catch {
-    // Not percent-encoded; use it as-is.
-  }
-  return value
-    .split('')
-    .filter((ch) => ch.charCodeAt(0) >= 0x20 && ch.charCodeAt(0) !== 0x7f)
-    .join('')
-    .trim()
-    .slice(0, 200);
-}

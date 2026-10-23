@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ChevronDown, Laptop, Mic, Search, X } from 'lucide-react';
+import { ChevronDown, Laptop, Mic, Search, Video, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Bubble, Button, Chip, Mascot, Menu } from '@/components/launcher/ui';
 import { KindIcon, kindOf } from '@/components/library/kind';
@@ -224,13 +224,18 @@ function LibraryRow({ item }: { item: LibItem }) {
       {item.thumbUrl ? (
         <span className="hidden h-[58px] w-[92px] shrink-0 overflow-hidden rounded-[var(--ev-r-media)] bg-ev-well shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)] sm:block">
           {item.mediaKind === 'video' ? (
-            <video src={item.thumbUrl} className="h-full w-full object-cover" muted preload="metadata" />
+            // A <video> per row would fetch every recording's metadata; the row
+            // only needs to say it is a video.
+            <span className="grid h-full w-full place-items-center text-ev-ink-3">
+              <Video size={20} strokeWidth={1.75} aria-hidden />
+            </span>
           ) : (
             <img
               src={item.thumbUrl}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
+              decoding="async"
               onError={(e) => {
                 e.currentTarget.style.visibility = 'hidden';
               }}

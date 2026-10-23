@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isRecord } from '@/lib/json';
 import { createResource } from './shared-resource';
 import type { TranscriptRange } from '@/lib/transcription/live-transcript';
-import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 
 export interface UseMeetingResult<T> {
   data: T | null;
@@ -99,13 +99,7 @@ export function useMeeting<T = unknown>(
 }
 
 function meetingUrl(meetingId: string, suffix = '') {
-  const token =
-    typeof window !== 'undefined'
-      ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY)
-      : null;
-  const url = new URL(`/api/meetings/${meetingId}${suffix}`, window.location.origin);
-  if (token) url.searchParams.set('anonymousSessionToken', token);
-  return url;
+  return new URL(`/api/meetings/${meetingId}${suffix}`, window.location.origin);
 }
 
 export interface LiveTranscriptDelta<L> {
@@ -211,8 +205,4 @@ export function parseMeetingList(value: unknown): MeetingListItem[] {
       deviceName: typeof item.deviceName === 'string' ? item.deviceName : null,
     }];
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

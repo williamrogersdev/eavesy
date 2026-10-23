@@ -14,7 +14,6 @@ export const Route = createFileRoute('/api/drops/ticket')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'sign in to sync drops' }, { status: 403 });
         const ticket = await issueLiveTicket(actor.userId);
         return Response.json({ userId: actor.userId, ticket }, { headers: { 'cache-control': 'no-store' } });
       },

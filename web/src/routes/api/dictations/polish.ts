@@ -52,9 +52,9 @@ export const Route = createFileRoute('/api/dictations/polish')({
         if (overQuota) return overQuota;
 
         const [user, entries, projectRow] = await Promise.all([
-          actor.isAnonymous ? null : usersRepo.getById(getDb(), actor.userId),
+          usersRepo.getById(getDb(), actor.userId),
           dictionary.listForTranscription(getDb(), actor.userId),
-          !actor.isAnonymous && parsed.data.projectId
+          parsed.data.projectId
             ? projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
             : null,
         ]);

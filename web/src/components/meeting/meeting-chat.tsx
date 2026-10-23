@@ -2,7 +2,6 @@
 
 import { Loader2, Send } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 import { cn } from '@/lib/utils';
 import { Mascot } from '@/components/launcher/ui';
 import { Section } from './layout';
@@ -39,14 +38,10 @@ export function MeetingChat({ meetingId, ready }: { meetingId: string; ready: bo
       setInput('');
       setBusy(true);
       try {
-        const token =
-          typeof window !== 'undefined'
-            ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY)
-            : null;
         const res = await fetch(`/api/meetings/${meetingId}/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ messages: next, anonymousSessionToken: token ?? undefined }),
+          body: JSON.stringify({ messages: next }),
         });
         const json = (await res.json().catch(() => ({}))) as { reply?: string; error?: string; message?: string };
         if (!res.ok) throw new Error(json.message || json.error || 'Chat failed');

@@ -13,9 +13,7 @@ export const Route = createFileRoute('/api/audio/$')({
 
         let actor;
         try {
-          actor = await resolveActor({
-            anonymousSessionToken: new URL(request.url).searchParams.get('anonymousSessionToken'),
-          });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }

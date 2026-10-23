@@ -4,6 +4,7 @@ import type { SegmentTranscriber, SegmentTranscription } from '@/lib/transcripti
 import { audioBase64 } from '@/lib/transcription/base64';
 import { whisperLanguage } from '@/lib/transcription/language';
 import { whisperPrompt } from '@/lib/transcription/vocabulary';
+import { isRecord } from '@/lib/json';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -76,8 +77,4 @@ function mapResult(result: unknown, fallbackLanguage?: string): SegmentTranscrip
       : {}),
     durationSec: typeof info.duration === 'number' ? info.duration : undefined,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
