@@ -69,41 +69,49 @@ const R2_DELETE_MAX = 1000;
  * rows. Resuming later still works: the import shows nothing uploaded, so the
  * file is sent again.
  *
- * Only the objects its rows name are deleted, after a fresh check that it is
- * still cancelled, and then the rows naming them, whatever the import's state
- * by then: a row never outlives its audio. An import resumed in between sees
- * those pieces missing and uploads them again. A failed object delete leaves
- * the rows, so the next run tries again.
+ * The sweep first claims the import by moving it to 'freeing', which resume
+ * and finalize refuse, so nothing can upload or start processing while its
+ * objects and rows go. Objects go before the rows naming them, and the rows,
+ * the audio key and the claim go in one batch. A run that stops part way
+ * leaves the import 'freeing' with its rows, and the next run finishes it.
  */
 export async function freeCancelledImports(env: Pick<ProcessingEnv, 'DB' | 'AUDIO_BUCKET'>, now: number) {
   const cancelled = await env.DB.prepare(
-    `SELECT m.id, m.audio_r2_key AS audioKey
+    `SELECT m.id
        FROM meetings m
        JOIN recording_imports r ON r.meeting_id = m.id
-      WHERE r.state = 'cancelled' AND m.status = 'failed' AND m.deleted_at IS NULL AND m.updated_at < ?
+      WHERE r.state IN ('cancelled', 'freeing') AND m.status = 'failed' AND m.deleted_at IS NULL AND m.updated_at < ?
         AND (m.audio_r2_key IS NOT NULL OR EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id))
       LIMIT 50`,
   )
     .bind(now - CANCELLED_IMPORT_KEEP_MS)
-    .all<{ id: string; audioKey: string | null }>();
+    .all<{ id: string }>();
   let freed = 0;
-  for (const meeting of cancelled.results) {
+  for (const { id } of cancelled.results) {
+    const claimed = await env.DB.prepare(
+      `UPDATE recording_imports SET state = 'freeing' WHERE meeting_id = ? AND state IN ('cancelled', 'freeing')`,
+    )
+      .bind(id)
+      .run();
+    if (!claimed.meta.changes) continue;
+    // Read after the claim: nothing can add to these now.
+    const meeting = await env.DB.prepare('SELECT audio_r2_key AS audioKey FROM meetings WHERE id = ?')
+      .bind(id)
+      .first<{ audioKey: string | null }>();
     const segments = await env.DB.prepare('SELECT r2_key AS key FROM meeting_segments WHERE meeting_id = ?')
-      .bind(meeting.id)
+      .bind(id)
       .all<{ key: string }>();
-    const state = await env.DB.prepare('SELECT state FROM recording_imports WHERE meeting_id = ?')
-      .bind(meeting.id)
-      .first<{ state: string }>();
-    if (state?.state !== 'cancelled') continue;
     const segmentKeys = segments.results.map((row) => row.key);
-    const keys = [...segmentKeys, ...(meeting.audioKey ? [meeting.audioKey] : [])];
+    const audioKey = meeting?.audioKey ?? null;
+    const keys = [...segmentKeys, ...(audioKey ? [audioKey] : [])];
     for (let i = 0; i < keys.length; i += R2_DELETE_MAX) await env.AUDIO_BUCKET.delete(keys.slice(i, i + R2_DELETE_MAX));
     await env.DB.batch([
       ...chunked(segmentKeys, D1_IN_LIST_SIZE).map((chunk) =>
         env.DB.prepare(`DELETE FROM meeting_segments WHERE meeting_id = ? AND r2_key IN (${chunk.map(() => '?').join(', ')})`)
-          .bind(meeting.id, ...chunk)),
+          .bind(id, ...chunk)),
       env.DB.prepare('UPDATE meetings SET audio_r2_key = NULL, audio_format = NULL, audio_bytes = NULL WHERE id = ? AND audio_r2_key IS ?')
-        .bind(meeting.id, meeting.audioKey),
+        .bind(id, audioKey),
+      env.DB.prepare(`UPDATE recording_imports SET state = 'cancelled' WHERE meeting_id = ? AND state = 'freeing'`).bind(id),
     ]);
     freed += 1;
   }

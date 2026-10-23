@@ -47,7 +47,7 @@ export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now())
     inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing']),
     sql`NOT EXISTS (
       SELECT 1 FROM recording_imports i
-       WHERE i.meeting_id = ${meetingSegments.meetingId} AND i.state IN ('uploading', 'cancelled')
+       WHERE i.meeting_id = ${meetingSegments.meetingId} AND i.state IN ('uploading', 'cancelled', 'freeing')
     )`,
   );
   const lookup = (which: typeof staleClaim) =>

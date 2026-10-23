@@ -12,6 +12,9 @@ const { PENDING_SEGMENT_GRACE_MS } = await import('./recovery');
 const { SUMMARY_CLAIM_TTL_MS } = await import('./shared');
 const { DEAD_LETTER_RETRY_SECONDS } = await import('./failure');
 const { freeCancelledImports, pruneAuthRecords, stopStalledImports } = await import('./stale-records');
+const { importRequest } = await import('@/server/imports/service');
+const { drizzle } = await import('drizzle-orm/d1');
+const schema = await import('@/db/schema');
 import { createFakeEnv, delivery, stubAnthropic, summaryReply } from '@/server/testing/fake-env';
 
 const SUMMARY = {
@@ -302,10 +305,10 @@ describe('stale records', () => {
     const t = setup();
     importMeeting(t, 'imp_back', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
     importSegment(t, 'imp_back', 0, t.now - 8 * DAY);
-    // The user resumes between the sweep's read and its fresh check.
+    // The user resumes between the sweep's read and its claim.
     const prepare = t.env.DB.prepare.bind(t.env.DB);
     t.env.DB.prepare = ((sql: string) => {
-      if (sql.startsWith('SELECT state FROM recording_imports')) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
+      if (sql.startsWith("UPDATE recording_imports SET state = 'freeing'")) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
       return prepare(sql);
     }) as typeof t.env.DB.prepare;
     expect(await freeCancelledImports(t.env, t.now)).toBe(0);
@@ -313,19 +316,32 @@ describe('stale records', () => {
     expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_back'`).get()).toEqual({ n: 1 });
   });
 
-  test('an import resumed while its audio is deleted has no rows left pointing at it', async () => {
+  test('an import cannot be resumed or finalized while its audio is deleted', async () => {
     const t = setup();
     importMeeting(t, 'imp_mid', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
     importSegment(t, 'imp_mid', 0, t.now - 8 * DAY);
+    importSegment(t, 'imp_mid', 1, t.now - 8 * DAY);
+    const db = drizzle(t.env.DB as unknown as D1Database, { schema });
+    const send = (path: string, method: string) =>
+      importRequest(db, t.env as never, 'u1', path, new Request(`https://eavesy.test/api/imports/${path}`, { method }));
+    const seen: { resume: number; state: string; finalize: number }[] = [];
     const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
     t.env.AUDIO_BUCKET.delete = (async (keys: string | string[]) => {
-      t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_mid'");
+      // The user comes back mid-sweep: every piece still looks uploaded.
+      const resume = await send('imp_mid/resume', 'POST');
+      const state = (await (await send('imp_mid', 'GET')).json()) as { state: string };
+      const finalize = await send('imp_mid/finalize', 'POST');
+      seen.push({ resume: resume.status, state: state.state, finalize: finalize.status });
       return remove(keys);
     }) as typeof t.env.AUDIO_BUCKET.delete;
-    await freeCancelledImports(t.env, t.now);
-    // Every row and the audio key went with their objects: the resumed import uploads them again.
+    expect(await freeCancelledImports(t.env, t.now)).toBe(1);
+    expect(seen).toEqual([{ resume: 409, state: 'cancelled', finalize: 409 }]);
     expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_mid'`).get()).toEqual({ n: 0 });
     expect(t.status(`SELECT audio_r2_key s FROM meetings WHERE id = 'imp_mid'`)).toBeNull();
+    // Once freed it resumes from scratch.
+    expect(t.status(`SELECT state s FROM recording_imports WHERE meeting_id = 'imp_mid'`)).toBe('cancelled');
+    expect((await send('imp_mid/resume', 'POST')).status).toBe(200);
+    expect(t.status(`SELECT state s FROM recording_imports WHERE meeting_id = 'imp_mid'`)).toBe('uploading');
   });
 
   test('a failed object delete keeps the rows for the next run', async () => {
@@ -336,8 +352,11 @@ describe('stale records', () => {
     t.env.AUDIO_BUCKET.delete = (async () => { throw new Error('r2 down'); }) as typeof t.env.AUDIO_BUCKET.delete;
     await expect(freeCancelledImports(t.env, t.now)).rejects.toThrow('r2 down');
     expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_err'`).get()).toEqual({ n: 1 });
+    // Still claimed, so nothing resumes onto rows whose audio may be gone.
+    expect(t.status(`SELECT state s FROM recording_imports WHERE meeting_id = 'imp_err'`)).toBe('freeing');
     t.env.AUDIO_BUCKET.delete = remove;
     expect(await freeCancelledImports(t.env, t.now)).toBe(1);
+    expect(t.status(`SELECT state s FROM recording_imports WHERE meeting_id = 'imp_err'`)).toBe('cancelled');
     expect([...t.objects.keys()].filter((key) => key.includes('imp_err'))).toEqual([]);
   });
 
