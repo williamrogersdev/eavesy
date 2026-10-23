@@ -12,7 +12,7 @@ it('rolls back all reservation statements on a real D1 daily-budget rejection', 
   await testEnv.DB.prepare('INSERT INTO ai_credit_budgets(scope,reserved_microusd) VALUES (?,?)').bind(day,1_000_000).run();
   const env: CreditEnv = { DB:testEnv.DB, AI_CREDITS_ENABLED:'true', WORKERS_AI_ACCOUNT_ID:'11111111111111111111111111111111', AI_CREDITS_EXPECTED_ACCOUNT_ID:'11111111111111111111111111111111', WORKERS_AI_API_KEY:'fake', AI_CREDITS_STOP_AT:'2099-01-01',AI_CREDITS_BUDGET_USD:'100',AI_CREDITS_DAILY_BUDGET_USD:'1' };
   let calls=0;
-  const ai=createAiRunner(env,'test',async () => { calls++; return Response.json({success:true,result:{data:[[1]]}}); });
+  const ai=createAiRunner(env,'import-transcription',async () => { calls++; return Response.json({success:true,result:{data:[[1]]}}); });
   await expect(ai.run('@cf/qwen/qwen3-embedding-0.6b',{text:['hello']})).rejects.toThrow('budget');
   expect(calls).toBe(0);
   expect(await testEnv.DB.prepare("SELECT * FROM ai_credit_budgets WHERE scope='programme'").first()).toBeNull();
