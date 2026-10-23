@@ -370,28 +370,30 @@ async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise
 }
 
 /**
- * Keeps the timeline a report carries. Bots send the spans from
- * `speakersFrom` on (the ones before it are already here and final), so a
- * report replaces everything from that index. A report without it is the
- * whole timeline, as images from before incremental reports send it.
+ * Keeps the timeline a report carries. Bots send the spans from the first one
+ * still open or not yet sent, with its start as `speakersFrom` (ms on the
+ * recording's clock): the report replaces every stored span starting at or
+ * after that time. A time rather than an index, so a report that never
+ * arrived, or a span `parseSpeakerSpans` threw out, leaves a gap but never
+ * shifts or doubles the spans after it. A report without `speakersFrom` is
+ * the whole timeline, as images from before incremental reports send it.
  */
 async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; participants?: unknown }) {
   const spans = parseSpeakerSpans(body.speakers);
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
   let timeline: Timeline = { speakers: spans, participants };
-  if (typeof from === 'number' && Number.isSafeInteger(from) && from > 0) {
+  if (typeof from === 'number' && Number.isFinite(from)) {
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
-    // A report that never arrived leaves a gap: the later spans still go on the end.
     timeline = {
-      speakers: [...stored.speakers.slice(0, from), ...spans].slice(0, MAX_SPANS),
+      speakers: [...stored.speakers.filter(([, start]) => start < from), ...spans].slice(0, MAX_SPANS),
       participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
     };
   }
   await env.AUDIO_BUCKET.put(key, JSON.stringify(timeline), { httpMetadata: { contentType: 'application/json' } });
 }
 
-/** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, participants? }`. */
+/** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, participants? }`; `speakersFrom` is a start time in ms. */
 export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string, request: Request): Promise<Response> {
   const bot = await botById(db, botId);
   if (!bot) return json({ error: 'not_found' }, 404);
