@@ -6,6 +6,10 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web: regenerating a brief now names each speaker and uses the project's context, the way the first brief does, and a regenerated meeting is re-indexed for search; a failed meeting you regenerate no longer stays missing from search and the library ([#214](https://github.com/williamrogersdev/eavesy/pull/214))
+
 ## [0.6.7] - 2026-10-23 - desktop
 
 ### Fixed
