@@ -10,6 +10,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 - Web: pausing or ending the Workers AI credit pilot no longer takes semantic search, translation and transcript repair down with it; only imports and library answers run on the pilot's credits, and a meeting that could not be indexed is now reported instead of silently missing from search ([#213](https://github.com/williamrogersdev/eavesy/pull/213))
 - Web: regenerating a brief now names each speaker and uses the project's context, the way the first brief does, and a regenerated meeting is re-indexed for search; a failed meeting you regenerate no longer stays missing from search and the library ([#214](https://github.com/williamrogersdev/eavesy/pull/214))
+- Web: editing a transcript line or renaming a speaker now updates search within a few minutes, and a meeting whose lines were all deleted is no longer found by its old words ([#216](https://github.com/williamrogersdev/eavesy/pull/216))
+- Notetaker: a bot from the retired Recall.ai service no longer sits "in progress" forever and counts toward your active-bot limit, and a meeting whose bot lost part of the audio now says its transcript has gaps ([#217](https://github.com/williamrogersdev/eavesy/pull/217))
+- Mac app sync: an interrupted screenshot upload no longer uses up part of the daily sync allowance ([#218](https://github.com/williamrogersdev/eavesy/pull/218))
+- MCP: library answers and searches from an AI client now count toward the same daily limits as the web app ([#218](https://github.com/williamrogersdev/eavesy/pull/218))
+- Mac app: the "signed out" notice no longer replaces a dictation you are reading or editing; it shows as a system notification instead ([#219](https://github.com/williamrogersdev/eavesy/pull/219))
+- Web: an import abandoned mid-upload is stopped after a day and can be resumed by selecting the file again, and a cancelled import's audio is deleted after a week ([#220](https://github.com/williamrogersdev/eavesy/pull/220))
 
 ## [0.6.7] - 2026-10-23 - desktop
 
