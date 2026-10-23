@@ -29,6 +29,7 @@ import {
   parseMeetingUrl,
   purgeAccountBots,
   requeueStaleCollections,
+  retireRecallBots,
   scheduleBot,
   startWasCancelled,
   watchBot,
@@ -471,6 +472,56 @@ describe('collection', () => {
     t.sqlite.run("UPDATE meeting_segments SET transcribe_status = 'complete'");
     await collectBotRecording(t.db, t.env, id);
     expect(await watchBot(t.db, t.env, id, false)).toBe('done');
+  });
+
+  test('segments the bot lost become failed rows, so the brief notes the gap', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    await segment(t, id, 0, 0);
+    await segment(t, id, 2, 120_000);
+    await event(t, id, { code: 'call_ended', subCode: 'call_ended_by_host' });
+    await event(t, id, { code: 'done', lostSegments: [1, 2, 3, -1, 1.5, 'x'] });
+    const rows = t.sqlite.query('SELECT idx, bytes, transcribe_status FROM meeting_segments ORDER BY idx').all();
+    expect(rows).toEqual([
+      { idx: 0, bytes: 8, transcribe_status: 'pending' },
+      { idx: 1, bytes: 0, transcribe_status: 'failed' },
+      // Delivered after all: the real row stays.
+      { idx: 2, bytes: 8, transcribe_status: 'pending' },
+      { idx: 3, bytes: 0, transcribe_status: 'failed' },
+    ]);
+
+    t.sqlite.run("UPDATE meeting_segments SET transcribe_status = 'complete' WHERE bytes > 0");
+    await collectBotRecording(t.db, t.env, id);
+    expect(t.sent.at(-1)).toMatchObject({ body: { kind: 'summarize' } });
+    expect(t.sqlite.query('SELECT duration_sec FROM meetings').get()).toEqual({ duration_sec: 180 });
+  });
+
+  test('a bot that lost every segment has no recording', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    await event(t, id, { code: 'call_ended', subCode: 'call_ended_by_host' });
+    await event(t, id, { code: 'done', lostSegments: [0, 1] });
+    await collectBotRecording(t.db, t.env, id);
+    expect(t.bot(id)).toMatchObject({ status: 'failed' });
+    expect(t.sqlite.query('SELECT status FROM meetings').get()).toEqual({ status: 'failed' });
+  });
+
+  test('the hourly sweep fails Recall bots still on their way', async () => {
+    const t = setup();
+    t.sqlite.run("INSERT INTO meetings (id,user_id,title,status,source,started_at,created_at,updated_at) VALUES ('m_r','u1','Old','recording','bot',1,1,1)");
+    t.sqlite.run(`INSERT INTO meeting_bots (id,user_id,provider,meeting_url,platform,status,meeting_id,created_at,updated_at) VALUES
+      ('bot_r1','u1','recall','https://meet.google.com/abc-defg-hij','meet','in_call','m_r',1,1),
+      ('bot_r2','u1','recall','https://meet.google.com/abc-defg-hij','meet','scheduled',NULL,1,1),
+      ('bot_r3','u1','recall','https://meet.google.com/abc-defg-hij','meet','done',NULL,1,1)`);
+    const live = await recordingBot(t);
+    expect(await retireRecallBots(t.env)).toBe(2);
+    expect(t.bot('bot_r1')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
+    expect(t.bot('bot_r2')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
+    expect(t.bot('bot_r3')).toMatchObject({ status: 'done' });
+    expect(t.bot(live)).toMatchObject({ status: 'recording' });
+    expect(t.sqlite.query("SELECT status, status_error FROM meetings WHERE id = 'm_r'").get())
+      .toEqual({ status: 'failed', status_error: 'The notetaker was sent through a service Eavesy no longer uses.' });
+    expect(await retireRecallBots(t.env)).toBe(0);
   });
 
   test('a Recall bot from before is retired', async () => {
