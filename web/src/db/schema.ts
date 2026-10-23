@@ -136,6 +136,8 @@ export const meetings = sqliteTable(
     deviceId: text('device_id'),
     clientSessionId: text('client_session_id'),
     rollingNotesAt: integer('rolling_notes_at'),
+    /** When a job claimed the final summary, so two jobs never both call the model. */
+    summaryClaimedAt: integer('summary_claimed_at'),
     speakerNamesJson: text('speaker_names_json'),
     summaryOverrideMd: text('summary_override_md'),
     transcriptOverrideMd: text('transcript_override_md'),
@@ -190,6 +192,10 @@ export const meetingSegments = sqliteTable(
     index('meeting_segments_processing_idx')
       .on(t.transcribeClaimedAt)
       .where(sql`${t.transcribeStatus} = 'processing'`),
+    // The recovery sweep's other half: segments whose transcription job was never queued.
+    index('meeting_segments_pending_idx')
+      .on(t.createdAt)
+      .where(sql`${t.transcribeStatus} = 'pending'`),
     index('meeting_segments_transcribed_idx')
       .on(t.meetingId, t.transcribedAt)
       .where(sql`${t.transcribedAt} IS NOT NULL`),
@@ -761,6 +767,7 @@ export const meetingBots = sqliteTable('meeting_bots', {
   index('meeting_bots_user_created_idx').on(t.userId, t.createdAt),
   uniqueIndex('meeting_bots_provider_bot_uq').on(t.provider, t.providerBotId),
   index('meeting_bots_status_updated_idx').on(t.status, t.updatedAt),
+  index('meeting_bots_meeting_idx').on(t.meetingId),
 ]);
 
 /** Provider webhook deliveries already applied, so a redelivery is a no-op. */
@@ -803,4 +810,5 @@ export const emailDeliveries = sqliteTable('email_deliveries', {
   index('email_deliveries_user_created_idx').on(t.userId, t.createdAt),
   index('email_deliveries_recipient_status_idx').on(t.recipient, t.status),
   index('email_deliveries_status_updated_idx').on(t.status, t.updatedAt),
+  index('email_deliveries_meeting_idx').on(t.meetingId),
 ]);

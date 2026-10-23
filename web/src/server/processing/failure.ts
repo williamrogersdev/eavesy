@@ -1,9 +1,10 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import * as schema from '@/db/schema';
 import { meetings, meetingSegments } from '@/db/schema';
 import { encode } from '@/db/codec';
+import { captureMessage } from '@/server/observability';
 import { failCollection } from '@/server/meeting-bots/service';
 import { failCanaryCheck } from '@/server/meeting-bots/canary';
 import { failRecap } from '@/server/email/recaps';
@@ -16,6 +17,10 @@ export interface TerminalProcessingFailure {
 
 type TerminalFailureReporter = (failure: TerminalProcessingFailure) => void;
 
+/** A meeting in one of these can still be failed; a finished one is left alone. */
+const IN_PROGRESS = ['recording', 'queued', 'uploading', 'processing'] as const;
+
+/** Records a job that is out of retries, so nothing waits on it forever. */
 export async function handleTerminalFailure(message: ProcessingMessage, env: ProcessingEnv, reason: string) {
   const db = drizzle(env.DB, { schema });
   switch (message.kind) {
@@ -28,6 +33,8 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
             eq(meetingSegments.meetingId, message.meetingId),
             eq(meetingSegments.idx, message.idx),
             eq(meetingSegments.track, message.track ?? 'mixed'),
+            // A duplicate's failure must not undo another job's transcript.
+            ne(meetingSegments.transcribeStatus, 'complete'),
           ),
         );
       return;
@@ -38,7 +45,7 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       await db
         .update(meetings)
         .set({ status: 'failed', statusError: `Summary failed: ${reason.slice(0, 500)}`, updatedAt: Date.now() })
-        .where(eq(meetings.id, message.meetingId));
+        .where(and(eq(meetings.id, message.meetingId), inArray(meetings.status, [...IN_PROGRESS])));
       return;
     case 'collect-bot-recording':
       await failCollection(db, message.botId, reason);
@@ -49,13 +56,21 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
     case 'check-canary':
       await failCanaryCheck(db, env, message.botId, message.platform, reason);
       return;
+    case 'purge-account':
+      // Nothing retries this on its own, and the account's data is still
+      // there: someone has to look.
+      captureMessage('Account purge failed permanently; the account and its data remain', {
+        tags: { job_kind: message.kind, user_id: message.userId, reason: reason.slice(0, 200) },
+      });
+      return;
+    // The hourly cron re-sends deleted-meeting and expiry purges; the rest are
+    // best effort on a meeting that is already usable.
     case 'rolling-summarize':
     case 'agent-transcript':
     case 'embed':
     case 'embed-dictation':
     case 'cleanup-anonymous':
     case 'purge-meeting':
-    case 'purge-account':
       return;
     default: {
       const unhandled: never = message;
@@ -64,14 +79,25 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
   }
 }
 
+function reportDeadLetter(failure: TerminalProcessingFailure) {
+  captureMessage('Processing job exhausted automatic retries', {
+    tags: { job_kind: failure.kind, failure_outcome: failure.outcome },
+  });
+}
+
+/**
+ * The dead-letter queue gets a message whose last delivery crashed the
+ * consumer, or could not record its own failure. It records the failure the
+ * way the consumer would have.
+ */
 export async function deadLetterQueue(
   batch: MessageBatch<ProcessingMessage>,
   env: ProcessingEnv,
-  report: TerminalFailureReporter = () => undefined,
+  report: TerminalFailureReporter = reportDeadLetter,
 ) {
   for (const message of batch.messages) {
     try {
-      const failure = await recordTerminalFailure(message.body, env);
+      const failure = await recordDeadLetter(message.body, env);
       console.error(
         JSON.stringify({
           message: 'processing job exhausted retries',
@@ -96,51 +122,50 @@ export async function deadLetterQueue(
   }
 }
 
+async function recordDeadLetter(message: ProcessingMessage, env: ProcessingEnv): Promise<TerminalProcessingFailure> {
+  // Only these two jobs carry the whole meeting. One lost segment or a
+  // rolling note leaves a gap, not a failed meeting.
+  if (message.kind === 'process-recording' || message.kind === 'summarize') {
+    return recordTerminalFailure(message, env);
+  }
+  await handleTerminalFailure(message, env, 'consumer crashed');
+  return { kind: message.kind, outcome: 'recorded' };
+}
+
 async function recordTerminalFailure(
-  message: ProcessingMessage,
+  message: Extract<ProcessingMessage, { kind: 'process-recording' | 'summarize' }>,
   env: ProcessingEnv,
 ): Promise<TerminalProcessingFailure> {
-  const terminalMeetingKinds = new Set<ProcessingMessage['kind']>([
-    'process-recording',
-    'transcribe-segment',
-    'rolling-summarize',
-    'summarize',
-  ]);
-
-  if ('meetingId' in message && terminalMeetingKinds.has(message.kind)) {
-    const update = await env.DB.prepare(
-      `UPDATE meetings
-          SET status = 'failed',
-              status_error = ?,
-              updated_at = ?
-        WHERE id = ?
-          AND status IN ('recording', 'queued', 'uploading', 'processing')`,
+  const update = await env.DB.prepare(
+    `UPDATE meetings
+        SET status = 'failed',
+            status_error = ?,
+            updated_at = ?
+      WHERE id = ?
+        AND status IN ('recording', 'queued', 'uploading', 'processing')`,
+  )
+    .bind(
+      `Automatic ${message.kind} processing failed after retries. The uploaded recording has been preserved.`,
+      Date.now(),
+      message.meetingId,
     )
-      .bind(
-        `Automatic ${message.kind} processing failed after retries. The uploaded recording has been preserved.`,
-        Date.now(),
-        message.meetingId,
-      )
-      .run();
-    if ((update.meta.changes ?? 0) === 0) {
-      return { kind: message.kind, outcome: 'recorded' };
-    }
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO activity_log
-        (id, user_id, event_type, meeting_id, metadata_json, created_at)
-       SELECT ?, user_id, 'meeting.fail', id, ?, ?
-         FROM meetings
-        WHERE id = ?`,
-    )
-      .bind(
-        `act_dlq_${message.kind}_${message.meetingId}`,
-        encode({ reason: 'automatic_retries_exhausted', jobKind: message.kind }),
-        Date.now(),
-        message.meetingId,
-      )
-      .run();
-    return { kind: message.kind, outcome: 'recording-failed' };
+    .run();
+  if ((update.meta.changes ?? 0) === 0) {
+    return { kind: message.kind, outcome: 'recorded' };
   }
-
-  return { kind: message.kind, outcome: 'recorded' };
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO activity_log
+      (id, user_id, event_type, meeting_id, metadata_json, created_at)
+     SELECT ?, user_id, 'meeting.fail', id, ?, ?
+       FROM meetings
+      WHERE id = ?`,
+  )
+    .bind(
+      `act_dlq_${message.kind}_${message.meetingId}`,
+      encode({ reason: 'automatic_retries_exhausted', jobKind: message.kind }),
+      Date.now(),
+      message.meetingId,
+    )
+    .run();
+  return { kind: message.kind, outcome: 'recording-failed' };
 }

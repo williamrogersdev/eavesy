@@ -101,6 +101,9 @@ export function createFakeEnv(
       async send(body: ProcessingMessage, options?: { delaySeconds?: number }) {
         sent.push({ body, delaySeconds: options?.delaySeconds });
       },
+      async sendBatch(messages: Iterable<{ body: ProcessingMessage; delaySeconds?: number }>) {
+        for (const { body, delaySeconds } of messages) sent.push({ body, delaySeconds });
+      },
     },
     AI: {
       async run(
