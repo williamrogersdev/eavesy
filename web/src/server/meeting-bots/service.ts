@@ -77,7 +77,12 @@ export const CANARY_STAY_MS = 2 * 60 * 1_000;
 export const BOT_NAME = 'Eavesy Notetaker';
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 512 * 1024;
-/** Spans kept per meeting, as `parseSpeakerSpans` reads them. */
+/**
+ * Spans kept per meeting, as `parseSpeakerSpans` reads them. A span is one
+ * turn of speech (the bot merges looks within two seconds), so a speaker
+ * makes at most 4,800 in the four hours a bot stays at most (`Limits::max_call`):
+ * ten people trading turns every three seconds for the whole call fit.
+ */
 const MAX_SPANS = 50_000;
 const MAX_PARTICIPANTS = 500;
 
@@ -370,28 +375,46 @@ async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise
 }
 
 /**
- * Keeps the timeline a report carries. Bots send the spans from
- * `speakersFrom` on (the ones before it are already here and final), so a
- * report replaces everything from that index. A report without it is the
- * whole timeline, as images from before incremental reports send it.
+ * Keeps the timeline a report carries. Bots send the spans from the first one
+ * still open or not yet sent, with its start as `speakersFrom` (ms on the
+ * recording's clock, `speakersFromUnit: 'ms'`): the report replaces every
+ * stored span starting at or after that time. A time rather than an index,
+ * so a report that never arrived, or a span `parseSpeakerSpans` threw out,
+ * leaves a gap but never shifts or doubles the spans after it.
+ *
+ * Images from before that (#210) send `speakersFrom` as an index into the
+ * timeline they believe is here and no unit; a report without `speakersFrom`
+ * at all is the whole timeline, from before incremental reports (#205). Both
+ * can be dropped once no bot from before #210 can still be in a call. A
+ * `speakersFrom` that is neither is ignored, timeline and all.
  */
-async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; participants?: unknown }) {
+async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }) {
   const spans = parseSpeakerSpans(body.speakers);
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
   let timeline: Timeline = { speakers: spans, participants };
-  if (typeof from === 'number' && Number.isSafeInteger(from) && from > 0) {
+  if (from !== undefined) {
+    if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) {
+      // Malformed: better to miss this report than to guess what it replaces.
+      console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
+      return;
+    }
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
-    // A report that never arrived leaves a gap: the later spans still go on the end.
+    const kept = body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
     timeline = {
-      speakers: [...stored.speakers.slice(0, from), ...spans].slice(0, MAX_SPANS),
+      speakers: [...kept, ...spans],
       participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
     };
+  }
+  if (timeline.speakers.length > MAX_SPANS) {
+    // The bot has sent these for good and won't again: the call's end goes unattributed.
+    console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
+    timeline.speakers = timeline.speakers.slice(0, MAX_SPANS);
   }
   await env.AUDIO_BUCKET.put(key, JSON.stringify(timeline), { httpMetadata: { contentType: 'application/json' } });
 }
 
-/** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, participants? }`. */
+/** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, speakersFromUnit?, participants? }` (`storeTimeline` says how the timeline fields read). */
 export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string, request: Request): Promise<Response> {
   const bot = await botById(db, botId);
   if (!bot) return json({ error: 'not_found' }, 404);
@@ -404,7 +427,7 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
   }
   const text = await request.text();
   if (text.length > MAX_EVENT_BYTES) return json({ error: 'too_large' }, 413);
-  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; speakersFrom?: unknown; participants?: unknown; lostSegments?: unknown } | null;
+  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown; lostSegments?: unknown } | null;
   try {
     body = JSON.parse(text) as typeof body;
   } catch {

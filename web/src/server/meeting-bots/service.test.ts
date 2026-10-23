@@ -302,16 +302,34 @@ describe('reports from the bot', () => {
     const id = await recordingBot(t);
     const key = () => [...t.objects.keys()].find((k) => k.endsWith('/bot/speakers.json'))!;
     const stored = () => JSON.parse(new TextDecoder().decode(t.objects.get(key()))) as { speakers: unknown[]; participants: string[] };
-    await event(t, id, { code: 'heartbeat', speakersFrom: 0, speakers: [['Ana', 0, 1_000], ['Ben', 500, 2_000]], participants: ['Ana', 'Ben'] });
-    // Ben's span was still open: it is sent again, grown, with what came after.
-    await event(t, id, { code: 'heartbeat', speakersFrom: 1, speakers: [['Ben', 500, 4_000], ['Ana', 5_000, 6_000]], participants: ['Cy'] });
+    const ms = { speakersFromUnit: 'ms' };
+    // A nameless span is thrown out; being a time, `speakersFrom` doesn't care.
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 0, speakers: [['Ana', 0, 1_000], [' ', 200, 300], ['Ben', 500, 2_000]], participants: ['Ana', 'Ben'] });
+    expect(stored().speakers).toEqual([['Ana', 0, 1_000], ['Ben', 500, 2_000]]);
+    // Ben's span was still open: it is sent again, grown, with what came
+    // after, from its start. Nothing is doubled and Ana's span stays put.
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 500, speakers: [['Ben', 500, 4_000], ['Ana', 5_000, 6_000]], participants: ['Cy'] });
     expect(stored()).toEqual({ speakers: [['Ana', 0, 1_000], ['Ben', 500, 4_000], ['Ana', 5_000, 6_000]], participants: ['Ana', 'Ben', 'Cy'] });
     // The same piece again (a retried delivery) changes nothing.
-    await event(t, id, { code: 'heartbeat', speakersFrom: 1, speakers: [['Ben', 500, 4_000], ['Ana', 5_000, 6_000]], participants: ['Cy'] });
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 500, speakers: [['Ben', 500, 4_000], ['Ana', 5_000, 6_000]], participants: ['Cy'] });
     expect(stored().speakers).toHaveLength(3);
     // A piece after one that never arrived still goes on the end.
-    await event(t, id, { code: 'speakers', speakersFrom: 9, speakers: [['Cy', 9_000, 9_500]] });
+    await event(t, id, { code: 'speakers', ...ms, speakersFrom: 9_000, speakers: [['Cy', 9_000, 9_500]] });
     expect(stored().speakers).toHaveLength(4);
+    // Nothing new since: an empty report from past the last start keeps everything.
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 9_001, speakers: [], participants: [] });
+    expect(stored()).toEqual({ speakers: [['Ana', 0, 1_000], ['Ben', 500, 4_000], ['Ana', 5_000, 6_000], ['Cy', 9_000, 9_500]], participants: ['Ana', 'Ben', 'Cy'] });
+    // A malformed time (fractional, negative, a string) is ignored rather than guessed at.
+    for (const speakersFrom of [2.5, -1, '500']) {
+      await event(t, id, { code: 'heartbeat', ...ms, speakersFrom, speakers: [['Zed', 0, 100]], participants: ['Zed'] });
+    }
+    expect(stored()).toEqual({ speakers: [['Ana', 0, 1_000], ['Ben', 500, 4_000], ['Ana', 5_000, 6_000], ['Cy', 9_000, 9_500]], participants: ['Ana', 'Ben', 'Cy'] });
+    // A bot from before start-time reports (#210) means an index by `speakersFrom`...
+    await event(t, id, { code: 'heartbeat', speakersFrom: 1, speakers: [['Eve', 7_000, 7_500]] });
+    expect(stored().speakers).toEqual([['Ana', 0, 1_000], ['Eve', 7_000, 7_500]]);
+    // ...and a report from the new image goes on top of what it left.
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 7_000, speakers: [['Eve', 7_000, 8_000]] });
+    expect(stored().speakers).toEqual([['Ana', 0, 1_000], ['Eve', 7_000, 8_000]]);
     // A bot from before incremental reports sends the whole timeline each time.
     await event(t, id, { code: 'heartbeat', speakers: [['Dee', 0, 100]], participants: ['Dee'] });
     expect(stored()).toEqual({ speakers: [['Dee', 0, 100]], participants: ['Dee'] });
