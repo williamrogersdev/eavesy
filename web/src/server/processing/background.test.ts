@@ -298,14 +298,14 @@ describe('stale records', () => {
     expect(await freeCancelledImports(t.env, t.now)).toBe(0);
   });
 
-  test('an import resumed while the sweep runs keeps its uploads', async () => {
+  test('an import resumed before its audio is freed keeps it', async () => {
     const t = setup();
     importMeeting(t, 'imp_back', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
     importSegment(t, 'imp_back', 0, t.now - 8 * DAY);
-    // The user resumes between the sweep's read and its write.
+    // The user resumes between the sweep's read and its fresh check.
     const prepare = t.env.DB.prepare.bind(t.env.DB);
     t.env.DB.prepare = ((sql: string) => {
-      if (sql.startsWith('DELETE FROM meeting_segments')) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
+      if (sql.startsWith('SELECT state FROM recording_imports')) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
       return prepare(sql);
     }) as typeof t.env.DB.prepare;
     expect(await freeCancelledImports(t.env, t.now)).toBe(0);
@@ -313,12 +313,40 @@ describe('stale records', () => {
     expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_back'`).get()).toEqual({ n: 1 });
   });
 
+  test('an import resumed while its audio is deleted has no rows left pointing at it', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_mid', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_mid', 0, t.now - 8 * DAY);
+    const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
+    t.env.AUDIO_BUCKET.delete = (async (keys: string | string[]) => {
+      t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_mid'");
+      return remove(keys);
+    }) as typeof t.env.AUDIO_BUCKET.delete;
+    await freeCancelledImports(t.env, t.now);
+    // Every row and the audio key went with their objects: the resumed import uploads them again.
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_mid'`).get()).toEqual({ n: 0 });
+    expect(t.status(`SELECT audio_r2_key s FROM meetings WHERE id = 'imp_mid'`)).toBeNull();
+  });
+
+  test('a failed object delete keeps the rows for the next run', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_err', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_err', 0, t.now - 8 * DAY);
+    const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
+    t.env.AUDIO_BUCKET.delete = (async () => { throw new Error('r2 down'); }) as typeof t.env.AUDIO_BUCKET.delete;
+    await expect(freeCancelledImports(t.env, t.now)).rejects.toThrow('r2 down');
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_err'`).get()).toEqual({ n: 1 });
+    t.env.AUDIO_BUCKET.delete = remove;
+    expect(await freeCancelledImports(t.env, t.now)).toBe(1);
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_err'))).toEqual([]);
+  });
+
   test('an import that starts uploading again before the stop lands is left alone', async () => {
     const t = setup();
     importMeeting(t, 'imp_live', { status: 'uploading', state: 'uploading', updatedAt: t.now - 2 * DAY });
     const prepare = t.env.DB.prepare.bind(t.env.DB);
     t.env.DB.prepare = ((sql: string) => {
-      if (sql.includes('UPDATE meetings AS m')) importSegment(t, 'imp_live', 0, t.now);
+      if (sql.startsWith('UPDATE recording_imports')) importSegment(t, 'imp_live', 0, t.now);
       return prepare(sql);
     }) as typeof t.env.DB.prepare;
     expect(await stopStalledImports(t.env, t.now)).toBe(0);

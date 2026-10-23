@@ -1,4 +1,3 @@
-import { deletePrefix } from './embed';
 import { chunked, D1_IN_LIST_SIZE } from './queue-batch';
 import type { ProcessingEnv } from './shared';
 
@@ -26,13 +25,13 @@ const PRUNE_BATCH = 5_000;
  */
 export async function stopStalledImports(env: Pick<ProcessingEnv, 'DB'>, now: number) {
   const before = now - IMPORT_IDLE_MS;
-  // The same test on read and on write: an upload that resumes in between
-  // makes the write a no-op for it.
-  const idle = `m.source = 'import' AND m.status = 'uploading' AND m.deleted_at IS NULL AND m.updated_at < ?
-        AND NOT EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = m.id AND s.created_at >= ?)`;
+  // The same test on read and on both writes: an upload that resumes in
+  // between makes the writes no-ops for it.
+  const idle = (m: string) => `${m}.source = 'import' AND ${m}.status = 'uploading' AND ${m}.deleted_at IS NULL AND ${m}.updated_at < ?
+        AND NOT EXISTS (SELECT 1 FROM meeting_segments s WHERE s.meeting_id = ${m}.id AND s.created_at >= ?)`;
   const stalled = await env.DB.prepare(
     `SELECT m.id FROM meetings m JOIN recording_imports r ON r.meeting_id = m.id
-      WHERE r.state = 'uploading' AND ${idle}
+      WHERE r.state = 'uploading' AND ${idle('m')}
       LIMIT 200`,
   )
     .bind(before, before)
@@ -40,40 +39,45 @@ export async function stopStalledImports(env: Pick<ProcessingEnv, 'DB'>, now: nu
   let stopped = 0;
   for (const ids of chunked(stalled.results.map((m) => m.id), D1_IN_LIST_SIZE)) {
     const list = ids.map(() => '?').join(', ');
-    const failed = await env.DB.prepare(
-      `UPDATE meetings AS m
-          SET status = 'failed',
-              status_error = 'The import stopped before it finished uploading. Select the file again to resume.',
-              updated_at = ?
-        WHERE ${idle} AND m.id IN (${list})
-        RETURNING id`,
-    )
-      .bind(now, before, before, ...ids)
-      .all<{ id: string }>();
-    const failedIds = failed.results.map((m) => m.id);
-    if (!failedIds.length) continue;
-    stopped += failedIds.length;
-    // Cancelled, as a user cancel leaves it, so selecting the file resumes it.
-    await env.DB.prepare(
-      `UPDATE recording_imports SET state = 'cancelled' WHERE state = 'uploading' AND meeting_id IN (${failedIds.map(() => '?').join(', ')})`,
-    )
-      .bind(...failedIds)
-      .run();
+    // One batch, so the import is cancelled exactly when its meeting fails:
+    // cancelled, as a user cancel leaves it, so selecting the file resumes it.
+    // The import goes first, while its meeting still reads as uploading.
+    const [, failed] = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE recording_imports SET state = 'cancelled'
+          WHERE state = 'uploading' AND meeting_id IN (${list})
+            AND EXISTS (SELECT 1 FROM meetings m WHERE m.id = recording_imports.meeting_id AND ${idle('m')})`,
+      ).bind(...ids, before, before),
+      env.DB.prepare(
+        `UPDATE meetings
+            SET status = 'failed',
+                status_error = 'The import stopped before it finished uploading. Select the file again to resume.',
+                updated_at = ?
+          WHERE ${idle('meetings')} AND id IN (${list})
+            AND EXISTS (SELECT 1 FROM recording_imports r WHERE r.meeting_id = meetings.id AND r.state = 'cancelled')`,
+      ).bind(now, before, before, ...ids),
+    ]);
+    stopped += failed.meta.changes ?? 0;
   }
   return stopped;
 }
 
+const R2_DELETE_MAX = 1000;
+
 /**
  * A cancelled import's audio is kept a week, then deleted with its segment
  * rows. Resuming later still works: the import shows nothing uploaded, so the
- * file is sent again. The rows go first, in one step with the check that the
- * import is still cancelled, and the objects only for an import that passed
- * it: resuming flips the state before any upload, so a resumed import keeps
- * its audio. Objects a failed delete leaves behind go with the meeting.
+ * file is sent again.
+ *
+ * Only the objects its rows name are deleted, after a fresh check that it is
+ * still cancelled, and then the rows naming them, whatever the import's state
+ * by then: a row never outlives its audio. An import resumed in between sees
+ * those pieces missing and uploads them again. A failed object delete leaves
+ * the rows, so the next run tries again.
  */
 export async function freeCancelledImports(env: Pick<ProcessingEnv, 'DB' | 'AUDIO_BUCKET'>, now: number) {
   const cancelled = await env.DB.prepare(
-    `SELECT m.id, m.user_id AS userId
+    `SELECT m.id, m.audio_r2_key AS audioKey
        FROM meetings m
        JOIN recording_imports r ON r.meeting_id = m.id
       WHERE r.state = 'cancelled' AND m.status = 'failed' AND m.deleted_at IS NULL AND m.updated_at < ?
@@ -81,19 +85,27 @@ export async function freeCancelledImports(env: Pick<ProcessingEnv, 'DB' | 'AUDI
       LIMIT 50`,
   )
     .bind(now - CANCELLED_IMPORT_KEEP_MS)
-    .all<{ id: string; userId: string }>();
+    .all<{ id: string; audioKey: string | null }>();
   let freed = 0;
   for (const meeting of cancelled.results) {
-    const stillCancelled = `EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ? AND state = 'cancelled')`;
-    const [, cleared] = await env.DB.batch([
-      env.DB.prepare(`DELETE FROM meeting_segments WHERE meeting_id = ? AND ${stillCancelled}`).bind(meeting.id, meeting.id),
-      env.DB.prepare(
-        `UPDATE meetings SET audio_r2_key = NULL, audio_format = NULL, audio_bytes = NULL WHERE id = ? AND ${stillCancelled}`,
-      ).bind(meeting.id, meeting.id),
+    const segments = await env.DB.prepare('SELECT r2_key AS key FROM meeting_segments WHERE meeting_id = ?')
+      .bind(meeting.id)
+      .all<{ key: string }>();
+    const state = await env.DB.prepare('SELECT state FROM recording_imports WHERE meeting_id = ?')
+      .bind(meeting.id)
+      .first<{ state: string }>();
+    if (state?.state !== 'cancelled') continue;
+    const segmentKeys = segments.results.map((row) => row.key);
+    const keys = [...segmentKeys, ...(meeting.audioKey ? [meeting.audioKey] : [])];
+    for (let i = 0; i < keys.length; i += R2_DELETE_MAX) await env.AUDIO_BUCKET.delete(keys.slice(i, i + R2_DELETE_MAX));
+    await env.DB.batch([
+      ...chunked(segmentKeys, D1_IN_LIST_SIZE).map((chunk) =>
+        env.DB.prepare(`DELETE FROM meeting_segments WHERE meeting_id = ? AND r2_key IN (${chunk.map(() => '?').join(', ')})`)
+          .bind(meeting.id, ...chunk)),
+      env.DB.prepare('UPDATE meetings SET audio_r2_key = NULL, audio_format = NULL, audio_bytes = NULL WHERE id = ? AND audio_r2_key IS ?')
+        .bind(meeting.id, meeting.audioKey),
     ]);
-    if (!cleared.meta.changes) continue;
     freed += 1;
-    await deletePrefix(env.AUDIO_BUCKET, `users/${meeting.userId}/meetings/${meeting.id}/import/`);
   }
   return freed;
 }
