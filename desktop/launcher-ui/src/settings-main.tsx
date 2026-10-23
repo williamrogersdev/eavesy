@@ -4,10 +4,10 @@ import { SettingsView, type AccountState } from '@/components/launcher/settings-
 import { usesFnKey } from '@/components/launcher/permission-checklist';
 import { useSetupPermissions } from '@/components/launcher/use-setup-permissions';
 import { useToastTasks } from '@/components/launcher/use-toast-tasks';
-import type { LauncherView } from '@/components/launcher/types';
 import {
   cancelPairing, closeSettingsWindow, disconnectAccount, getAccountInfo, getSettings,
-  openSetup, openWebApp, pairDevice, relaunchApp,
+  onSettingsSection, openSetup, openWebApp, pairDevice, relaunchApp, takeSettingsSection,
+  type SettingsSection,
 } from '@/lib/desktop/bridge';
 import './styles.css';
 
@@ -16,16 +16,23 @@ if (import.meta.env.DEV) {
   installDevMock();
 }
 
+/** Escape closes the window unless something on it wants the key (a field, a menu, a dialog). */
+function wantsEscape(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
+  return !!document.querySelector('[role="dialog"][data-state="open"], [role="menu"][data-state="open"]');
+}
+
 function Preferences() {
   const [account, setAccount] = useState<AccountState>(undefined);
   const [connecting, setConnecting] = useState(false);
+  const connectingRef = useRef(false);
   const [fnInUse, setFnInUse] = useState(false);
-  const [view, setView] = useState<LauncherView>('settings');
-  const forced = useRef(false);
-  const search = useRef<HTMLInputElement>(null);
+  // The panel can ask for a section (Manage projects… opens Projects).
+  const [section, setSection] = useState<SettingsSection>(() => takeSettingsSection() ?? 'capture');
   const { toast, flash, runTask } = useToastTasks();
   const { setupPermissions, checkingSetupPermissions, requestSetupPermission, openPrivacy } = useSetupPermissions({
-    desktop: true, view, setView, setupForced: forced, searchRef: search, flash, runTask,
+    desktop: true, poll: section === 'permissions', fnInUse, flash, runTask,
   });
   const refreshShortcuts = useCallback(async () => {
     const settings = await getSettings();
@@ -35,15 +42,18 @@ function Preferences() {
     const refresh = () => {
       void getAccountInfo().then(setAccount);
       void refreshShortcuts();
+      const asked = takeSettingsSection();
+      if (asked) setSection(asked);
     };
     refresh();
     window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
+    const stop = onSettingsSection(setSection);
+    return () => { window.removeEventListener('focus', refresh); stop(); };
   }, [refreshShortcuts]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && event.target === document.body) {
-        runTask(closeSettingsWindow, 'Could not close settings');
+      if (event.key === 'Escape' && !event.defaultPrevented && !wantsEscape(event.target)) {
+        runTask(closeSettingsWindow, 'Couldn’t close settings');
       }
     };
     window.addEventListener('keydown', escape);
@@ -52,28 +62,31 @@ function Preferences() {
   return <main className="launcher-scope ev-panel ev-preferences-window">
     <SettingsView
       standalone
+      section={section}
+      onSection={setSection}
       permissions={setupPermissions}
       checkingPermission={checkingSetupPermissions}
       onRequestPermission={requestSetupPermission}
       onOpenPrivacy={openPrivacy}
-      onRelaunch={() => runTask(relaunchApp, 'Could not reopen Eavesy')}
-      onRunSetup={() => runTask(async () => { await openSetup(); await closeSettingsWindow(); }, 'Could not open setup')}
+      onRelaunch={() => runTask(relaunchApp, 'Couldn’t reopen Eavesy')}
+      onRunSetup={() => runTask(async () => { await openSetup(); await closeSettingsWindow(); }, 'Couldn’t open setup')}
       fnInUse={fnInUse}
       account={account}
       connecting={connecting}
       onConnect={() => {
-        if (connecting) return;
+        if (connectingRef.current) return;
+        connectingRef.current = true;
         setConnecting(true);
         runTask(async () => {
           try { await pairDevice(); setAccount(await getAccountInfo()); }
-          finally { setConnecting(false); }
-        }, 'Could not connect your account');
+          finally { connectingRef.current = false; setConnecting(false); }
+        }, 'Couldn’t connect your account');
       }}
-      onCancelConnect={() => runTask(cancelPairing, 'Could not cancel sign-in')}
-      onDisconnect={() => runTask(async () => { await disconnectAccount(); setAccount(await getAccountInfo()); }, 'Could not sign out')}
-      onOpenWeb={() => runTask(openWebApp, 'Could not open your account')}
+      onCancelConnect={() => runTask(cancelPairing, 'Couldn’t cancel sign-in')}
+      onDisconnect={() => runTask(async () => { await disconnectAccount(); setAccount(await getAccountInfo()); }, 'Couldn’t sign out')}
+      onOpenWeb={() => runTask(openWebApp, 'Couldn’t open your account')}
       onShortcutsChanged={() => { void refreshShortcuts(); }}
-      onBack={() => runTask(closeSettingsWindow, 'Could not close settings')}
+      onBack={() => runTask(closeSettingsWindow, 'Couldn’t close settings')}
     />
     {toast && <div className="ev-preferences-notice" role="status">{toast.message}</div>}
   </main>;

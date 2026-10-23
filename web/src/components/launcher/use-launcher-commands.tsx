@@ -25,8 +25,8 @@ export function useLauncherCommands({
 }) {
   return useMemo<Command[]>(() => {
     const go = (href: string) => () => {
-      if (desktop) runTask(hidePanel, 'Could not close the launcher');
-      runTask(() => router.push(href), 'Could not open that page');
+      if (desktop) runTask(hidePanel, 'Couldn’t close the launcher');
+      runTask(() => router.push(href), 'Couldn’t open that page');
     };
     return [
       {
@@ -36,7 +36,7 @@ export function useLauncherCommands({
         subtitle: 'Pair this Mac for cloud transcription and sync',
         icon: <Globe className="h-4 w-4" />,
         keywords: 'connect account pair login sync cloud',
-        run: () => runTask(connectAccount, 'Could not connect account'),
+        run: () => runTask(connectAccount, 'Couldn’t connect account'),
       },
       {
         kind: 'command',
@@ -57,7 +57,7 @@ export function useLauncherCommands({
         run: () =>
           runTask(
             () => beginRecording('screen', { mic: false }),
-            'Could not start screen recording',
+            'Couldn’t start screen recording',
           ),
       },
       {
@@ -70,7 +70,7 @@ export function useLauncherCommands({
         run: () =>
           runTask(
             () => beginRecording('audio', { source: 'mic', dictation: true }),
-            'Could not start dictation',
+            'Couldn’t start dictation',
           ),
       },
       {

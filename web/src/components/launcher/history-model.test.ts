@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Recording } from '@/lib/launcher/types';
-import { clock, countByFilter, dayLabel, groupByDay, highlightParts, plainTranscript, visibleRecordings } from './history-model';
+import { clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, visibleRecordings } from './history-model';
 
 const NOW = new Date(2026, 9, 17, 15, 0).getTime();
 const at = (daysAgo: number, hour = 10) => new Date(2026, 9, 17 - daysAgo, hour).getTime();
@@ -50,5 +50,63 @@ describe('history model', () => {
     expect(clock(42)).toBe('0:42');
     expect(clock(3725)).toBe('1:02:05');
     expect(plainTranscript('# Title\n\n## Transcript\n\n[00:00:01] hello')).toBe('hello');
+  });
+});
+
+describe('history view state', () => {
+  const page = (all: number) => ({ counts: { all } });
+  test('is loading until the first page, never empty', () => {
+    expect(historyView(null, null, false)).toBe('loading');
+  });
+  test('is empty only once a page says there is nothing', () => {
+    expect(historyView(page(0), null, false)).toBe('empty');
+    expect(historyView(page(3), null, false)).toBe('list');
+  });
+  test('a failed load is never the empty state', () => {
+    expect(historyView(null, 'offline', false)).toBe('list');
+    expect(historyView(page(0), 'offline', false)).toBe('list');
+  });
+  test('a running capture keeps the list in place', () => {
+    expect(historyView(page(0), null, true)).toBe('list');
+    expect(historyView(null, null, true)).toBe('list');
+  });
+});
+
+describe('row identity across refreshes', () => {
+  const a = rec('a', 'dictation', at(0), 'one');
+  const b = rec('b', 'note', at(0, 9), 'two');
+  test('keeps unchanged rows, and the list itself when nothing changed', () => {
+    const previous = [a, b];
+    const same = reuseRows(previous, [{ ...a }, { ...b }]);
+    expect(same).toBe(previous);
+  });
+  test('replaces only the row that changed', () => {
+    const changed = { ...b, transcript: 'two, refined', revision: 2 };
+    const next = reuseRows([a, b], [{ ...a }, changed]);
+    expect(next[0]).toBe(a);
+    expect(next[1]).toBe(changed);
+  });
+  test('a new row at the top keeps the others', () => {
+    const c = rec('c', 'mic', at(0, 11));
+    const next = reuseRows([a, b], [c, { ...a }, { ...b }]);
+    expect(next.map((row) => row.id)).toEqual(['c', 'a', 'b']);
+    expect(next[1]).toBe(a);
+    expect(next[2]).toBe(b);
+  });
+  test('compares every field, not just the revision', () => {
+    expect(sameRecording(a, { ...a })).toBe(true);
+    expect(sameRecording({ ...a, revision: 1 }, { ...a, revision: 1, status: 'processing' })).toBe(false);
+    expect(sameRecording(a, { ...a, device: 'iPhone' })).toBe(false);
+  });
+});
+
+describe('kinds', () => {
+  test('one table names the kind and picks the filter', () => {
+    expect(kindLabel(rec('a', 'dictation', 0))).toBe('Voice note');
+    expect(kindLabel(rec('a', 'system', 0))).toBe('Meeting');
+    expect(kindLabel({ ...rec('a', 'upload', 0), title: 'Interview.m4a' })).toBe('Interview.m4a');
+    expect(filterOf(rec('a', 'image', 0))).toBe('screens');
+    expect(filterOf({ ...rec('a', 'upload', 0), hasVideo: true })).toBe('screens');
+    expect(filterOf(rec('a', 'upload', 0))).toBe('voice');
   });
 });

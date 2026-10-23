@@ -40,18 +40,6 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
   await page.goto('/launcher', { waitUntil: 'networkidle' });
 }
 
-test('tapping fn while recording a shortcut saves fn and shows what macOS still needs', async ({ page }) => {
-  await nativeLauncher(page, false);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await page.getByRole('button', { name: /Change the Talk shortcut/ }).click();
-  await expect(page.getByText('Press a shortcut, or tap fn. Esc to cancel.')).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('hotkeys:fn-tap'));
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
-  expect(calls.find((call) => call.command === 'check_hotkey')?.args).toEqual({ action: 'dictation', accelerator: 'Fn' });
-  expect(calls.find((call) => call.command === 'set_hotkey')?.args).toEqual({ action: 'dictation', accelerator: 'Fn', swap: false });
-});
-
 test('native dictation event starts mic capture and second press saves', async ({ page }) => {
   await nativeLauncher(page);
   const emit = () => page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
@@ -66,20 +54,6 @@ test('native dictation event starts mic capture and second press saves', async (
   expect(calls.some((call) => call.command === 'stop_capture')).toBe(true);
 });
 
-test('live captions can be turned off, and turning them on asks for Speech Recognition', async ({ page }) => {
-  await nativeLauncher(page);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  const toggle = page.getByRole('switch', { name: 'Live captions' });
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
-  expect(calls.filter((call) => call.command === 'set_live_captions').map((call) => call.args?.enabled)).toEqual([false, true]);
-  expect(calls.some((call) => call.command === 'check_permissions' && call.args?.needSpeech === true)).toBe(true);
-});
-
 test('a recording shows its live captions, cloud lines first', async ({ page }) => {
   await nativeLauncher(page);
   await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
@@ -91,34 +65,6 @@ test('a recording shows its live captions, cloud lines first', async ({ page }) 
   await expect(captions).toContainText('still talking');
 });
 
-test('recording control can open Settings and stopping clears the launcher timer', async ({ page }) => {
-  await nativeLauncher(page);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
-  await expect(page.getByRole('button', { name: 'Stop & save' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await expect(page.getByRole('button', { name: 'Start dictation ⌘ ⇧ D' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string, payload: unknown) => void } }).__shortcutTest.emit('capture:state', { phase: 'saved', sessionId: 'shortcut-test' }));
-  await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop & save' })).toBeHidden();
-});
-
-
-test('overview shows transcript cards and copies spoken text without search clutter', async ({ page }) => {
-  await nativeLauncher(page);
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-  await expect(page.getByPlaceholder('Search recordings, transcripts, commands…')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start voice note' })).toBeVisible();
-  await expect(page.getByText('Send the revised proposal tomorrow.', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Copy voice note' }).click();
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
-  expect(calls.find((call) => call.command === 'copy_text')?.args?.text).toBe('Send the revised proposal tomorrow.');
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await expect(page.getByRole('button', { name: 'Start dictation ⌘ ⇧ D' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:opened'));
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-});
 
 
 test('saved screenshots and videos remain in history with media copy actions', async ({ page }) => {

@@ -11,6 +11,8 @@ import type { SavedPrompt } from '@/lib/prompts';
 export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
   const [prompts, setPrompts] = useState<SavedPrompt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by Try again.
+  const [attempt, setAttempt] = useState(0);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -21,7 +23,9 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
       .then((items) => { if (live) { setPrompts(items); setError(null); } })
       .catch((e: unknown) => { if (live) setError(errMsg(e, 'Couldn’t load your prompts.')); });
     return () => { live = false; };
-  }, [enabled, reloadKey]);
+  }, [enabled, reloadKey, attempt]);
+
+  const reload = useCallback(() => { setError(null); setAttempt((n) => n + 1); }, []);
 
   const put = useCallback((prompt: SavedPrompt) => {
     if (!mounted.current) return;
@@ -60,7 +64,7 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
     void markPromptUsed(id).then(put, () => undefined);
   }, [put]);
 
-  return { prompts, error, create, update, remove, used };
+  return { prompts, error, create, update, remove, used, reload };
 }
 
 export type SavedPromptsState = ReturnType<typeof useSavedPrompts>;

@@ -23,6 +23,7 @@ import {
   installUpdate,
   setAutoImportScreenshots,
   type AccountInfo,
+  type SettingsSection,
   type HudPreviewLines,
   type LauncherPosition,
   type Permissions,
@@ -68,7 +69,7 @@ function UpdatesCard() {
       ? checkForUpdates().then((next) => { if (next) setStatus(next); })
       : installUpdate();
     void task
-      .catch((e: unknown) => setError(errMsg(e, kind === 'check' ? 'Could not check for updates.' : 'Could not install the update.')))
+      .catch((e: unknown) => setError(errMsg(e, kind === 'check' ? 'Couldn’t check for updates.' : 'Couldn’t install the update.')))
       .finally(() => setBusy(null));
   };
   const line = !status ? '' : status.state === 'upToDate'
@@ -112,7 +113,7 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
       <div className="flex items-center gap-3">
         <Loader2 className="ev-spin h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" />
         <div className="min-w-0">
-          <p className="ev-set-label">Approve this Mac in your browser</p>
+          <p className="ev-set-label">Waiting for you in the browser…</p>
           <p className="ev-set-hint">Click “Approve this Mac” on the page that opened. This updates on its own.</p>
         </div>
         {onCancelConnect && (
@@ -130,7 +131,7 @@ function AccountCard({ account, connecting, onConnect, onCancelConnect, onDiscon
             Sign in to get transcripts and summaries, and to see your captures on the web and your other devices.
           </p>
         </div>
-        <Button variant="primary" size="sm" className="self-start" onClick={onConnect}>Sign in to Eavesy</Button>
+        <Button variant="primary" size="sm" className="self-start" onClick={onConnect}>Sign in at eavesy.com</Button>
       </div>
     );
   }
@@ -283,8 +284,11 @@ function PermissionsPage({ permissions, checkingPermission, fnInUse, account, co
   );
 }
 
-export function SettingsView({ standalone = false, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
+export function SettingsView({ standalone = false, section: shownSection, onSection, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
   standalone?: boolean;
+  /** The section on screen, when the window decides it (another window can ask for one). */
+  section?: SettingsSection;
+  onSection?: (section: SettingsSection) => void;
   permissions: Permissions | null;
   checkingPermission: SetupPermissionKind | null;
   onRequestPermission: (kind: SetupPermissionKind) => Promise<boolean>;
@@ -306,13 +310,16 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [loadingLocal, setLoadingLocal] = useState(true);
-  const [section, setSection] = useState('capture');
+  const [ownSection, setOwnSection] = useState<SettingsSection>('capture');
+  const section = shownSection ?? ownSection;
+  const setSection = (id: SettingsSection) => { setOwnSection(id); onSection?.(id); };
   const [openProject, setOpenProject] = useState<string | null>(null);
-  const accountPrefs = useAccountPrefs();
+  // Loaded per account: after signing in here, and cleared on sign-out.
+  const accountPrefs = useAccountPrefs(account ? account.email ?? account.name ?? 'signed-in' : null);
   const projects = useProjects(!!account, onProjectsChanged);
   const prompts = useSavedPrompts(!!account);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
-  const sections = [
+  const sections: { id: SettingsSection; label: string; icon: typeof SlidersHorizontal; hint: string }[] = [
     { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
     { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
     { id: 'transcription', label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
@@ -324,7 +331,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
   const activeSection = sections.find((item) => item.id === section)!;
-  const go = (id: string) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
+  const go = (id: SettingsSection) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -340,7 +347,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     setLocalError(null);
     void setCaptureSounds(next)
       .then(() => setSettings((current) => current ? { ...current, capture_sounds: next } : current))
-      .catch(() => setLocalError('The recording sound preference could not be saved. Try the switch again.'))
+      .catch(() => setLocalError('The recording sound preference couldn’t be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
   };
   const savedLines = settings?.hud_preview_lines;
@@ -353,7 +360,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     setLookError(null);
     setSettings((current) => current ? { ...current, hud_preview_lines: lines, hud_translucent: see, fast_live_words: fast ?? current.fast_live_words, hud_result_preview: preview ?? current.hud_result_preview } : current);
     void setHudLook(lines, see, fast, preview).catch((error: unknown) => {
-      setLookError(errMsg(error, 'Could not change how the recording looks.'));
+      setLookError(errMsg(error, 'Couldn’t change how the recording looks.'));
       // Show what is actually saved, whichever change failed.
       void getSettings().then((saved) => setSettings((current) => current && saved
         ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent, fast_live_words: saved.fast_live_words, hud_result_preview: saved.hud_result_preview }
@@ -372,7 +379,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     setShotsError(null);
     void setAutoImportScreenshots(next)
       .then(() => setSettings((current) => current ? { ...current, add_screenshots: next } : current))
-      .catch((error: unknown) => setShotsError(errMsg(error, 'Could not change that setting.')))
+      .catch((error: unknown) => setShotsError(errMsg(error, 'Couldn’t change that setting.')))
       .finally(() => setShotsBusy(false));
   };
 
@@ -385,7 +392,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
         // Turning captions on is when Speech Recognition is asked for.
         if (next) setSpeech((await checkPermissions({ needScreen: false, needSpeech: true }))?.speech);
       })
-      .catch(() => setLocalError('The live captions preference could not be saved. Try the switch again.'))
+      .catch(() => setLocalError('The live captions preference couldn’t be saved. Try the switch again.'))
       .finally(() => setCaptionsBusy(false));
   };
 
@@ -394,7 +401,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     setLocalError(null);
     const current = await getSettings();
     if (current) setSettings(current);
-    else setLocalError('Preferences on this Mac could not be loaded. Try again.');
+    else setLocalError('Preferences on this Mac couldn’t be loaded. Try again.');
     setLoadingLocal(false);
   }, []);
   useEffect(() => { void loadLocal(); }, [loadLocal]);
@@ -404,7 +411,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
     setPositionError(null);
     void setLauncherPosition(position)
       .then(() => setSettings((current) => current ? { ...current, launcher_position: position, hud_frame: null } : current))
-      .catch((error: unknown) => setPositionError(errMsg(error, 'Could not change position.')))
+      .catch((error: unknown) => setPositionError(errMsg(error, 'Couldn’t change position.')))
       .finally(() => setPositionBusy(false));
   };
 
@@ -552,7 +559,7 @@ export function SettingsView({ standalone = false, permissions, checkingPermissi
                     setSettings((current) => current ? { ...current, recordings_root: root } : current);
                     setFolderStatus('New recordings will be saved here. Existing ones stay put.');
                   })
-                  .catch((error: unknown) => setFolderStatus(errMsg(error, 'Could not change the recordings folder.')))
+                  .catch((error: unknown) => setFolderStatus(errMsg(error, 'Couldn’t change the recordings folder.')))
                   .finally(() => setFolderBusy(false));
               }}
             >

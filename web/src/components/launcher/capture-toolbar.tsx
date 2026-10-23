@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Camera, Clapperboard, Square, Users } from 'lucide-react';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
@@ -16,7 +16,25 @@ export interface LiveCapture {
   kind: CaptureKind;
   /** `thinking` once stopped, while the words are written down. */
   phase: 'listening' | 'thinking';
-  elapsed: number;
+  /** When it started; the live bar counts from here on its own clock. */
+  startedAtMs: number | null;
+}
+
+/** Seconds since `startedAtMs`, ticking once a second only inside the live bar. */
+function secondsSince(startedAtMs: number | null): number {
+  return startedAtMs === null ? 0 : Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+}
+
+/** Seconds since `startedAtMs`, ticking once a second only inside the live bar. */
+function useElapsed(startedAtMs: number | null): number {
+  const [elapsed, setElapsed] = useState(() => secondsSince(startedAtMs));
+  useEffect(() => {
+    setElapsed(secondsSince(startedAtMs));
+    if (startedAtMs === null) return;
+    const timer = window.setInterval(() => setElapsed(secondsSince(startedAtMs)), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAtMs]);
+  return elapsed;
 }
 
 /**
@@ -70,6 +88,7 @@ const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'M
 /** Replaces the capture shelf in place, without adding a row above search. */
 function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
   const lines = useLiveLines(live.sessionId, 1);
+  const elapsed = useElapsed(live.sessionId !== null ? live.startedAtMs : null);
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
   const text = lines.map((line) => line.text).join(' ');
@@ -82,7 +101,7 @@ function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string
     <div className="ev-livebar" data-phase={live.phase}>
       <Mascot size={18} state={thinking ? 'thinking' : started ? 'listening' : 'idle'} recording={!thinking && started} />
       <span className="ev-livebar-label" role="status">{label}</span>
-      {started && !thinking && <span className="ev-livebar-time">{clock(live.elapsed)}</span>}
+      {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
       <span ref={ticker} className="ev-livebar-ticker" title={text}>{text}</span>
       {!thinking && started && (
         <button type="button" className="ev-livebar-stop" onClick={onStop} title={`Stop and save${stopKey ? ` (${stopKey})` : ''}`} aria-label={`Stop and save${stopKey ? ` (${stopKey})` : ''}`}>
