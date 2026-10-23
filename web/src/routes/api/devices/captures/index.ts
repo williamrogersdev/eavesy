@@ -7,7 +7,7 @@ import { pid } from '@/db/ids';
 import * as capturesRepo from '@/db/repo/captures';
 import { resolveIngestActor } from '@/server/device-auth';
 import { captureKey, deleteObject, putObject } from '@/server/r2';
-import { guardUserQuota } from '@/server/rate-limit';
+import { guardUserQuota, refundUserQuota } from '@/server/rate-limit';
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const MAX_OFFSET = 100_000;
@@ -72,7 +72,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
         const existing = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
         if (existing) return Response.json({ id: existing.id, idempotent: true });
 
-        const overQuota = await guardUserQuota(actor.userId, 'capture-sync');
+        const chargedAt = Date.now();
+        const overQuota = await guardUserQuota(actor.userId, 'capture-sync', chargedAt);
         if (overQuota) return overQuota;
 
         const title = headerText(request.headers.get('x-title')) || 'Screenshot';
@@ -87,6 +88,10 @@ export const Route = createFileRoute('/api/devices/captures/')({
         try {
           await Promise.all([putObject(r2Key, readable as unknown as Parameters<typeof putObject>[1], contentType), piped]);
         } catch {
+          // The Mac retries an interrupted upload under a new id, so nothing
+          // written here is wanted, and only a stored capture counts.
+          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
+          await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
         }
 
@@ -107,10 +112,15 @@ export const Route = createFileRoute('/api/devices/captures/')({
           });
           return Response.json({ id }, { status: 201 });
         } catch (error) {
-          // No row points at this object now, so don't leave it behind.
-          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
-          // Two uploads of the same capture raced: the other one won.
+          // The error may have come after the row was written (a lost
+          // reply): then this capture is stored, and stays.
           const winner = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
+          if (winner?.id === captureId) return Response.json({ id: captureId }, { status: 201 });
+          // No row points at this object, so don't leave it behind, and this
+          // request stored nothing, so it doesn't count.
+          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
+          await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
+          // Two uploads of the same capture raced: the other one won.
           if (winner) return Response.json({ id: winner.id, idempotent: true });
           throw error;
         }
