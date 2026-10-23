@@ -4,7 +4,12 @@ import type { BotPlatform } from '@/server/meeting-bots/service';
 
 export type QueueMessage =
   | { kind: 'process-recording'; meetingId: string }
-  | { kind: 'embed'; meetingId: string }
+  /**
+   * `queuedAt` marks a re-index after a transcript edit: the job is skipped
+   * when the meeting was embedded after that time, so a burst of edits
+   * embeds once.
+   */
+  | { kind: 'embed'; meetingId: string; queuedAt?: number }
   | { kind: 'embed-dictation'; dictationId: string }
   /** `track` is absent on messages from before two-track capture; read as `mixed`. */
   | { kind: 'transcribe-segment'; meetingId: string; idx: number; track?: 'mixed' | 'mic' | 'system' }

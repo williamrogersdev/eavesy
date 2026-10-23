@@ -51,8 +51,8 @@ const FAILURE: Record<string, string> = {
   provider_unavailable: 'The notetaker service was unavailable.',
   provider_retired: 'It was sent through a service Eavesy no longer uses.',
 };
-const ACTIVE = new Set(['scheduling', 'scheduled', 'joining', 'waiting_room', 'in_call', 'recording', 'call_ended', 'collecting']);
-const IN_CALL = new Set(['joining', 'waiting_room', 'in_call', 'recording']);
+const ACTIVE = new Set(['scheduling', 'scheduled', 'joining', 'waiting_room', 'recording', 'call_ended', 'collecting']);
+const IN_CALL = new Set(['joining', 'waiting_room', 'recording']);
 
 const LOAD_ERROR = 'Could not load your notetakers. Refresh to retry.';
 
