@@ -7,6 +7,7 @@ import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { clock } from '../../../web/src/lib/ai/chapters';
+import { sha256Hex } from '../../../web/src/lib/sha256';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
@@ -44,13 +45,6 @@ interface Env extends CreditEnv {
 }
 
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
-
-async function sha256Hex(input: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 const MCP_REQUESTS_PER_MINUTE = 120;

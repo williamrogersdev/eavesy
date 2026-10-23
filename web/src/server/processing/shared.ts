@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import type { D1Database, Queue, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 import { type WorkersAiRunner } from '@/lib/ai/embed';
 import type { QueueMessage } from '@/server/queue';
+import { isRecord } from '@/lib/json';
 
 import type { CreditEnv } from '@/lib/ai/credit-runner';
 import type { CanaryEnv, MeetingBotsEnv } from '@/server/meeting-bots/control';
@@ -89,6 +90,3 @@ export function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
