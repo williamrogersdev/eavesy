@@ -48,11 +48,24 @@ function fakeControl(fail = false) {
 function setup(fail = false) {
   const t = createFakeEnv();
   t.sqlite.run("INSERT INTO users(id,created_at,updated_at,default_language) VALUES ('u1',1,1,'en'),('u2',1,1,'en')");
-  t.env.AUDIO_BUCKET.put = (async (key: string, body: Uint8Array | string) => {
+  // Like R2: an object's etag follows its content, and a put whose `onlyIf` fails stores nothing and gives null.
+  const etagOf = (bytes: Uint8Array) => String(Bun.hash(bytes));
+  t.env.AUDIO_BUCKET.get = (async (key: string) => {
+    const bytes = t.objects.get(key);
+    return bytes ? { arrayBuffer: async () => bytes.buffer, etag: etagOf(bytes) } : null;
+  }) as unknown as typeof t.env.AUDIO_BUCKET.get;
+  t.env.AUDIO_BUCKET.put = (async (key: string, body: Uint8Array | string, options?: { onlyIf?: { etagMatches?: string } | Headers }) => {
     const bytes = body instanceof Uint8Array ? body : new TextEncoder().encode(body);
+    const current = t.objects.get(key);
+    const only = options?.onlyIf;
+    if (only instanceof Headers) {
+      if (only.get('if-none-match') === '*' && current) return null;
+    } else if (only?.etagMatches !== undefined && (!current || etagOf(current) !== only.etagMatches)) {
+      return null;
+    }
     t.objects.set(key, bytes);
     return { size: bytes.length };
-  }) as typeof t.env.AUDIO_BUCKET.put;
+  }) as unknown as typeof t.env.AUDIO_BUCKET.put;
   const { control, calls } = fakeControl(fail);
   const env = Object.assign(t.env, { MEETING_BOTS: control }) as BotEnv;
   const db = drizzle(t.env.DB, { schema });
@@ -335,6 +348,64 @@ describe('reports from the bot', () => {
     expect(stored()).toEqual({ speakers: [['Dee', 0, 100]], participants: ['Dee'] });
   });
 
+  test('two reports that both read the timeline before either writes lose no spans', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    const key = () => [...t.objects.keys()].find((k) => k.endsWith('/bot/speakers.json'))!;
+    const stored = () => JSON.parse(new TextDecoder().decode(t.objects.get(key()))) as { speakers: unknown[]; participants: string[] };
+    const ms = { speakersFromUnit: 'ms' };
+    // Once for a timeline there is, once for the first write of one.
+    for (const seeded of [true, false]) {
+      t.objects.clear();
+      if (seeded) await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 0, speakers: [['Ana', 0, 1_000]], participants: ['Ana'] });
+      // Hold both reads until both have happened, then let both write.
+      const read = t.env.AUDIO_BUCKET.get;
+      let reads = 0;
+      let release!: () => void;
+      const bothRead = new Promise<void>((resolve) => { release = resolve; });
+      t.env.AUDIO_BUCKET.get = (async (k: string) => {
+        const object = await read.call(t.env.AUDIO_BUCKET, k);
+        reads += 1;
+        if (reads === 2) release();
+        if (reads <= 2) await bothRead;
+        return object;
+      }) as typeof read;
+      try {
+        await Promise.all([
+          event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 5_000, speakers: [['Ben', 5_000, 6_000]], participants: ['Ben'] }),
+          event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 9_000, speakers: [['Cy', 9_000, 9_500]], participants: ['Cy'] }),
+        ]);
+      } finally {
+        t.env.AUDIO_BUCKET.get = read;
+      }
+      expect(reads).toBeGreaterThan(2); // the loser read again
+      const { speakers, participants } = stored();
+      expect(speakers).toEqual([...(seeded ? [['Ana', 0, 1_000]] : []), ['Ben', 5_000, 6_000], ['Cy', 9_000, 9_500]]);
+      expect(participants.sort()).toEqual([...(seeded ? ['Ana'] : []), 'Ben', 'Cy']);
+    }
+  });
+
+  test('a report that keeps losing the race gives up without failing the event', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: 0, speakers: [['Ana', 0, 1_000]] });
+    const put = t.env.AUDIO_BUCKET.put;
+    let puts = 0;
+    t.env.AUDIO_BUCKET.put = (async () => { puts += 1; return null; }) as unknown as typeof put;
+    const warn = console.warn;
+    const warned: string[] = [];
+    console.warn = (line: string) => { warned.push(line); };
+    try {
+      const response = await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: 500, speakers: [['Ben', 500, 900]] });
+      expect(response.status).toBe(200);
+    } finally {
+      console.warn = warn;
+      t.env.AUDIO_BUCKET.put = put;
+    }
+    expect(puts).toBe(5);
+    expect(warned.some((line) => line.includes('lost the race'))).toBe(true);
+  });
+
   test('a meeting made for an account set to detect the language detects it', async () => {
     const t = setup();
     t.sqlite.run("UPDATE users SET default_language = 'auto' WHERE id = 'u1'");
@@ -370,6 +441,40 @@ describe('collection', () => {
     expect(JSON.parse(meeting.speaker_names_json as string)).toEqual({ speaker_0: 'Ana', speaker_1: 'Ben' });
     expect(t.sent.at(-1)).toMatchObject({ body: { kind: 'summarize', meetingId } });
     expect(t.bot(id)).toMatchObject({ status: 'done', status_detail: 'call_ended_by_host' });
+  });
+
+  test('a timeline cut at its size limit is passed on to the meeting', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    await segment(t, id, 0, 0);
+    // 60,000 one-second-apart turns in three reports; the limit is 50,000.
+    const chunk = (n: number) => Array.from({ length: 20_000 }, (_, i) => ['A', (n * 20_000 + i) * 10, (n * 20_000 + i) * 10 + 5]);
+    for (const n of [0, 1, 2]) await event(t, id, { code: 'heartbeat', speakersFromUnit: 'ms', speakersFrom: n * 200_000, speakers: chunk(n) });
+    const key = [...t.objects.keys()].find((k) => k.endsWith('/bot/speakers.json'))!;
+    const timeline = JSON.parse(new TextDecoder().decode(t.objects.get(key))) as { speakers: unknown[]; truncated?: boolean };
+    expect(timeline.speakers).toHaveLength(50_000);
+    expect(timeline.truncated).toBe(true);
+    await event(t, id, { code: 'done' });
+    t.sqlite.run("UPDATE meeting_segments SET transcribe_status = 'complete'");
+    const meetingId = t.bot(id).meeting_id as string;
+    t.sqlite.run('INSERT INTO transcript_segments(id, meeting_id, start_ms, end_ms, text, is_edited, is_final) VALUES (?, ?, ?, ?, ?, 0, 1)', ['l0', meetingId, 0, 4, 'hello']);
+    await collectBotRecording(t.db, t.env, id);
+    const row = t.sqlite.query('SELECT speaker_names_json FROM meetings').get() as { speaker_names_json: string };
+    expect(JSON.parse(row.speaker_names_json)).toEqual({ speaker_0: 'A', _partialAttributionMs: '499995' });
+  });
+
+  test('a timeline within the limit is not flagged', async () => {
+    const t = setup();
+    const id = await recordingBot(t);
+    await segment(t, id, 0, 0);
+    await event(t, id, { code: 'speakers', speakers: [['Ana', 0, 30_000]] });
+    await event(t, id, { code: 'done' });
+    t.sqlite.run("UPDATE meeting_segments SET transcribe_status = 'complete'");
+    const meetingId = t.bot(id).meeting_id as string;
+    t.sqlite.run('INSERT INTO transcript_segments(id, meeting_id, start_ms, end_ms, text, is_edited, is_final) VALUES (?, ?, ?, ?, ?, 0, 1)', ['l0', meetingId, 0, 4, 'hello']);
+    await collectBotRecording(t.db, t.env, id);
+    const row = t.sqlite.query('SELECT speaker_names_json FROM meetings').get() as { speaker_names_json: string };
+    expect(JSON.parse(row.speaker_names_json)).toEqual({ speaker_0: 'Ana' });
   });
 
   test('a bot that never got in fails with its reason', async () => {

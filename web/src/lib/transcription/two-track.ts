@@ -235,3 +235,16 @@ export function parseSpeakerNames(json: string | null | undefined): Record<strin
     return {};
   }
 }
+
+/**
+ * Beside the speaker names in `speaker_names_json`, not a speaker: when a
+ * bot's speaker timeline was cut at its size limit, the ms it ends at. Lines
+ * after it were left unnamed.
+ */
+export const PARTIAL_ATTRIBUTION_KEY = '_partialAttributionMs';
+
+/** Where names stop being attributed in a call whose timeline was cut, else null. */
+export function partialAttributionMs(names: Record<string, string>): number | null {
+  const ms = Number(names[PARTIAL_ATTRIBUTION_KEY]);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
