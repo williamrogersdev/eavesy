@@ -61,8 +61,8 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
         // speaker when the meeting has both sides, and the model is told who
         // the labels are. A transcript the user rewrote by hand wins as is.
         const override = data.meeting.transcriptOverrideMd?.trim();
-        const rendered = transcriptText(data.segments, data.meeting.speakerNamesJson);
-        const transcript = override || rendered.text.trim();
+        const rendered = override ? null : transcriptText(data.segments, data.meeting.speakerNamesJson);
+        const transcript = override || rendered?.text.trim();
         if (!transcript) {
           return Response.json(
             { error: 'transcript_not_ready', message: 'A transcript is required before regenerating.' },
@@ -88,14 +88,14 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
 
         const user = await usersRepo.getById(db, actor.userId);
         const plan = resolveModelPlan(user);
-        const project = await projectsRepo.getForMeeting(db, data.meeting);
         let generated;
         try {
+          const project = await projectsRepo.getForMeeting(db, data.meeting);
           generated = await summarizeMeeting({
             transcript,
             userNotes: data.notes?.contentMd,
             contextBlurb: combinedContext(data.meeting.contextBlurb, project) || undefined,
-            speakers: override ? undefined : speakerNote(rendered),
+            speakers: rendered ? speakerNote(rendered) : undefined,
             customTemplatePrompt: templatePrompt,
             openRouter: plan.openRouter,
             byoApiKey: plan.summary.apiKey,
@@ -109,14 +109,10 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
           );
         }
 
+        // The meeting first, guarded on its status: one that went back into
+        // processing while the model ran keeps its pipeline status, and its
+        // brief is left for the pipeline to write.
         const now = Date.now();
-        await upsertSummary(db, {
-          meetingId: params.id,
-          summary: generated,
-          generatedByModel: summarizeMeetingModel(plan),
-          templateId: body.templateId ?? body.format,
-          generatedAt: now,
-        });
         const updated = await db
           .update(meetings)
           .set({
@@ -124,8 +120,6 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
             description: generated.description,
             summaryOverrideMd: null,
             // A failed meeting now has a brief; a complete one stays complete.
-            // Only those two are touched, so a meeting that went back into
-            // processing meanwhile keeps its pipeline status.
             status: 'complete',
             statusError: null,
             updatedAt: now,
@@ -138,13 +132,31 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
             ),
           )
           .returning({ status: meetings.status });
-        if (updated.length) {
-          // What follows a new brief, as after the pipeline's own: the search
-          // index (the brief changed, and a meeting that was failed never had
-          // one) and the cleaned transcript agents paste, rebuilt from scratch
-          // because the title and description are part of it.
-          await enqueue({ kind: 'embed', meetingId: params.id });
-          await enqueue({ kind: 'agent-transcript', meetingId: params.id });
+        if (!updated.length) {
+          return Response.json(
+            { error: 'meeting_in_progress', message: 'The meeting started processing again. Its brief will update when it finishes.' },
+            { status: 409 },
+          );
+        }
+        await upsertSummary(db, {
+          meetingId: params.id,
+          summary: generated,
+          generatedByModel: summarizeMeetingModel(plan),
+          templateId: body.templateId ?? body.format,
+          generatedAt: now,
+        });
+        // What follows a new brief, as after the pipeline's own: the search
+        // index (the brief changed, and a meeting that was failed never had
+        // one) and the cleaned transcript agents paste, rebuilt from scratch
+        // because the title and description are part of it. The brief is
+        // saved either way, so a failed send is logged rather than reported:
+        // a retry would only spend quota on a second brief.
+        for (const kind of ['embed', 'agent-transcript'] as const) {
+          try {
+            await enqueue({ kind, meetingId: params.id });
+          } catch (error) {
+            console.error(JSON.stringify({ message: 'regenerate follow-up not queued', kind, meetingId: params.id, error: error instanceof Error ? error.message : String(error) }));
+          }
         }
         await activityRepo.log(db, {
           userId: actor.userId,
