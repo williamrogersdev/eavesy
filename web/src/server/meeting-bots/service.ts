@@ -383,12 +383,17 @@ async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: strin
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
   let timeline: Timeline = { speakers: spans, participants };
-  if (typeof from === 'number' && Number.isFinite(from)) {
+  if (typeof from === 'number' && Number.isFinite(from) && from >= 0) {
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
     timeline = {
-      speakers: [...stored.speakers.filter(([, start]) => start < from), ...spans].slice(0, MAX_SPANS),
+      speakers: [...stored.speakers.filter(([, start]) => start < from), ...spans],
       participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
     };
+  }
+  if (timeline.speakers.length > MAX_SPANS) {
+    // The bot has sent these for good and won't again: the call's end goes unattributed.
+    console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
+    timeline.speakers = timeline.speakers.slice(0, MAX_SPANS);
   }
   await env.AUDIO_BUCKET.put(key, JSON.stringify(timeline), { httpMetadata: { contentType: 'application/json' } });
 }

@@ -32,8 +32,10 @@ use rules::{Exit, Limits, Rules, Step};
 const HEARTBEAT: Duration = Duration::from_secs(60);
 /// How often the speaking indicator is read, and so how long one look covers.
 const TICK_MS: u64 = 1_000;
-/// Spans per report at most, so one report stays well under Eavesy's size
-/// limit for an event; a backlog goes out over the next reports.
+/// Spans per report, so one report stays well under Eavesy's size limit for
+/// an event (512 KB; a span is some 30 bytes); a backlog goes out over the
+/// next reports. `Speakers::report` runs past it only to finish the spans
+/// sharing a start with the last one: at most one per person in the call.
 const MAX_SPANS_PER_REPORT: usize = 2_000;
 const ANNOUNCEMENT: &str = "Eavesy Notetaker is transcribing this call for the person who invited it.";
 
