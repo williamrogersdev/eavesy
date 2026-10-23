@@ -1106,13 +1106,21 @@ pub fn stop_capture(
         if error != NO_ACTIVE_CAPTURE {
             if !show_stop_failed(&app, &session_id, error) {
                 // The words were already pasted (Done), or the user moved on:
-                // say what went wrong without taking that back.
+                // say what went wrong without taking that back. Whether the
+                // words reached the paste is the HUD's story, not this one's;
+                // the engine's own words stay in the log and Copy Diagnostics.
                 use tauri_plugin_notification::NotificationExt;
-                let _ = app.notification().builder().title("Recording not fully saved").body(error).show();
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("Recording not fully saved")
+                    .body("The audio file couldn't be finished. Copy Diagnostics has the details.")
+                    .show();
             }
-        } else if !Stopping::in_flight(&session_id) {
+        } else if !Stopping::in_flight_or_just_finished(&session_id) {
             // Shown as stopping by the key press, but something else stopped
-            // it first, and nothing is still finishing it.
+            // it first, and nothing is still finishing it, nor finished it a
+            // moment ago (its words may still be on their way to the paste).
             let idle = crate::hud::HudState { session_id: Some(session_id.clone()), ..crate::hud::HudState::idle() };
             crate::hud::advance_from(&app, &session_id, &[crate::hud::Phase::Transcribing], idle);
         }
@@ -1120,9 +1128,16 @@ pub fn stop_capture(
     result
 }
 
-/// The sessions some stop is finishing right now, so a second stop racing it
-/// (and finding no capture) leaves the HUD to the first.
+/// The sessions some stop is finishing right now, and the ones a stop just
+/// finished, so a second stop racing either (and finding no capture) leaves
+/// the HUD to the first: its words may still be on their way to the paste.
 static STOPPING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static JUST_STOPPED: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// How long after a stop finishes a duplicate stop is still told to stand
+/// down: as long as `show_stopping` gives a stop to end in Saved, Done or
+/// Failed before it drops a stuck pill to Idle itself, so standing down can
+/// never leave the control saying it is writing for longer than that.
+const JUST_STOPPED_FOR: Duration = crate::hud::STOPPING_TIMEOUT;
 
 struct Stopping(String);
 
@@ -1132,17 +1147,42 @@ impl Stopping {
         Stopping(session_id.to_string())
     }
 
-    fn in_flight(session_id: &str) -> bool {
-        STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|id| id == session_id)
+    fn in_flight_or_just_finished(session_id: &str) -> bool {
+        if STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|id| id == session_id) {
+            return true;
+        }
+        let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
+        recent.iter().any(|(id, _)| id == session_id)
     }
 }
 
 impl Drop for Stopping {
     fn drop(&mut self) {
+        // Moved from "stopping" to "just stopped" under the first lock, so no
+        // check lands in between and sees neither.
         let mut stopping = STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(index) = stopping.iter().position(|id| *id == self.0) {
             stopping.remove(index);
         }
+        let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
+        recent.push((self.0.clone(), Instant::now()));
+    }
+}
+
+#[cfg(test)]
+mod stopping_tests {
+    use super::Stopping;
+
+    #[test]
+    fn a_stop_counts_while_running_and_for_a_while_after() {
+        assert!(!Stopping::in_flight_or_just_finished("stop-test-a"));
+        let guard = Stopping::start("stop-test-a");
+        assert!(Stopping::in_flight_or_just_finished("stop-test-a"));
+        drop(guard);
+        assert!(Stopping::in_flight_or_just_finished("stop-test-a"));
+        assert!(!Stopping::in_flight_or_just_finished("stop-test-b"));
     }
 }
 
