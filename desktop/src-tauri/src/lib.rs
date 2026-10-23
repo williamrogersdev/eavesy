@@ -156,6 +156,7 @@ pub fn run() {
             commands::get_hud_state,
             commands::save_preview_transcript,
             commands::focus_preview_editor,
+            commands::release_preview_editor,
             commands::update_live_preview_edit,
             commands::sync_status,
             commands::show_settings,

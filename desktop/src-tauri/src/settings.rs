@@ -77,7 +77,7 @@ pub struct Settings {
     /// (off unless chosen: the plain bar is quieter while you talk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_preview_lines: Option<u8>,
-    /// A see-through, blurred control instead of a solid one (on unless turned off).
+    /// A see-through control instead of a solid one (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_translucent: Option<bool>,
     /// Live words from a second, fast recognizer about a second sooner, until
@@ -161,38 +161,141 @@ pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
+/// Every read and write of settings.json goes through this lock, so a
+/// load-modify-save never interleaves with another one and a reader never
+/// sees a file another thread is replacing.
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The device id from the last file that parsed. A damaged file must never
+/// hand out a new one: it names the Keychain item that holds the credential.
+static KNOWN_DEVICE_ID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn known_device_id() -> Option<String> {
+    KNOWN_DEVICE_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+fn remember_device_id(id: &str) {
+    *KNOWN_DEVICE_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id.to_string());
+}
+
 pub fn load(app: &AppHandle) -> Settings {
-    let settings = load_unapplied(app);
+    let settings = match settings_path(app) {
+        Ok(path) => {
+            let _guard = lock();
+            load_at(&path, &keychain::System)
+        }
+        Err(_) => fallback(None, &keychain::System),
+    };
     crate::base_url::set_settings_override(settings.api_base_url.as_deref());
     settings
 }
 
-fn load_unapplied(app: &AppHandle) -> Settings {
-    let path = match settings_path(app) {
-        Ok(p) => p,
-        Err(_) => return Settings::default(),
+/// Loads the settings, lets `change` edit them, and saves the result, all
+/// under one lock so concurrent writers never undo each other. `change` must
+/// only edit fields: anything that loads settings itself would deadlock.
+pub fn update(app: &AppHandle, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+    let path = settings_path(app)?;
+    let settings = {
+        let _guard = lock();
+        update_at(&path, &keychain::System, change)?
     };
+    crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    Ok(settings)
+}
 
-    match std::fs::read_to_string(&path) {
+pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    let path = settings_path(app)?;
+    let _guard = lock();
+    save_at(&path, settings)
+}
+
+/// Defaults for when the file can't be used, keeping the device id whenever
+/// one can be found: from the damaged text, this run, or the Keychain.
+fn fallback(raw: Option<&str>, keychain: &impl Keychain) -> Settings {
+    let mut settings = Settings::default();
+    if let Some(id) = salvage_device_id(raw, known_device_id, || keychain.accounts().unwrap_or_default()) {
+        settings.device_id = id;
+    }
+    settings
+}
+
+/// The device id a damaged settings file still names, or one known some other
+/// way. The Keychain only counts when it holds exactly one Eavesy credential.
+fn salvage_device_id(
+    raw: Option<&str>,
+    known: impl FnOnce() -> Option<String>,
+    accounts: impl FnOnce() -> Vec<String>,
+) -> Option<String> {
+    static DEVICE_ID: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""device_id"\s*:\s*"([^"\\]+)""#).unwrap());
+    raw.and_then(|raw| DEVICE_ID.captures(raw))
+        .map(|found| found[1].to_string())
+        .or_else(known)
+        .or_else(|| match accounts().as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        })
+}
+
+/// Reads the file, assuming the lock is held. A file that is missing gets
+/// defaults written; one that doesn't parse is kept as `settings.json.bad`
+/// and replaced by defaults with its device id; one that can't be read at
+/// all is left alone.
+fn load_at(path: &std::path::Path, keychain: &impl Keychain) -> Settings {
+    match std::fs::read_to_string(path) {
         Ok(raw) => match serde_json::from_str::<Settings>(&raw) {
             Ok(settings) => {
+                remember_device_id(&settings.device_id);
+                // Written back when serde filled anything in: a device id
+                // generated just now must be the one used next time too.
                 if serde_json::to_string_pretty(&settings).ok().as_deref() != Some(raw.as_str()) {
-                    let _ = save(app, &settings);
+                    let _ = save_at(path, &settings);
                 }
                 settings
             }
-            Err(_) => {
-                let defaults = Settings::default();
-                let _ = save(app, &defaults);
-                defaults
+            Err(error) => {
+                let settings = fallback(Some(&raw), keychain);
+                let bad = path.with_extension("json.bad");
+                tracing::warn!("settings.json could not be read ({error}); kept it as {}", bad.display());
+                if std::fs::rename(path, &bad).is_ok() || !path.exists() {
+                    let _ = save_at(path, &settings);
+                }
+                remember_device_id(&settings.device_id);
+                settings
             }
         },
-        Err(_) => {
-            let defaults = Settings::default();
-            let _ = save(app, &defaults);
-            defaults
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let settings = fallback(None, keychain);
+            let _ = save_at(path, &settings);
+            remember_device_id(&settings.device_id);
+            settings
+        }
+        Err(error) => {
+            tracing::warn!("settings.json could not be opened ({error}); using defaults without saving");
+            fallback(None, keychain)
         }
     }
+}
+
+fn update_at(path: &std::path::Path, keychain: &impl Keychain, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+    let mut settings = load_at(path, keychain);
+    change(&mut settings);
+    save_at(path, &settings)?;
+    Ok(settings)
+}
+
+/// Replaces the file in one step (a temporary file renamed over it), so a
+/// reader sees the old settings or the new, never half of either.
+fn save_at(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("could not serialize settings: {e}"))?;
+    crate::fs_writer::atomic_write(path, json.as_bytes()).map_err(|e| format!("could not write settings: {e}"))?;
+    remember_device_id(&settings.device_id);
+    Ok(())
 }
 
 /// Where builds before the Security framework switch stored the credential, using
@@ -270,6 +373,8 @@ pub(crate) trait Keychain {
     fn read_legacy(&self, account: &str) -> Legacy;
     /// Succeeds when there is no item.
     fn delete_legacy(&self, account: &str) -> Result<(), String>;
+    /// The accounts (device ids) holding an Eavesy credential.
+    fn accounts(&self) -> Result<Vec<String>, String>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -455,6 +560,25 @@ mod keychain {
                 status => Err(format!("security exited with {status:?} removing the old credential")),
             }
         }
+
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+            match ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .service(DEVICE_TOKEN_SERVICE)
+                .load_attributes(true)
+                .limit(Limit::All)
+                .search()
+            {
+                Ok(found) => Ok(found
+                    .iter()
+                    .filter_map(|item| item.simplify_dict()?.get("acct").cloned())
+                    .filter(|account| !account.is_empty())
+                    .collect()),
+                Err(error) if error.code() == ITEM_NOT_FOUND => Ok(Vec::new()),
+                Err(error) => Err(format!("Keychain search failed: {error}")),
+            }
+        }
     }
 }
 
@@ -480,19 +604,10 @@ mod keychain {
         fn delete_legacy(&self, _account: &str) -> Result<(), String> {
             Ok(())
         }
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
     }
-}
-
-pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("could not create config dir: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(settings)
-        .map_err(|e| format!("could not serialize settings: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("could not write settings: {e}"))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -614,6 +729,93 @@ mod tests {
             *self.legacy.borrow_mut() = None;
             Ok(())
         }
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            Ok(self.item.borrow().iter().map(|_| "from-keychain".to_string()).collect())
+        }
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("eavesy-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_missing_file_gets_defaults_written() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let settings = load_at(&path, &FakeKeychain::default());
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.device_id, settings.device_id);
+        assert_eq!(load_at(&path, &FakeKeychain::default()).device_id, settings.device_id, "stable once written");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_damaged_file_is_kept_aside_and_its_device_id_survives() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let damaged = r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"keep-me","hud_fra"#;
+        std::fs::write(&path, damaged).unwrap();
+        let settings = load_at(&path, &FakeKeychain::default());
+        assert_eq!(settings.device_id, "keep-me");
+        assert_eq!(std::fs::read_to_string(dir.join("settings.json.bad")).unwrap(), damaged);
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.device_id, "keep-me");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_empty_file_keeps_a_device_id_known_some_other_way() {
+        assert_eq!(salvage_device_id(Some(""), || Some("known".into()), Vec::new), Some("known".into()));
+        assert_eq!(salvage_device_id(Some(""), || None, || vec!["only".into()]), Some("only".into()));
+        // Two credentials: no way to tell which is this Mac's.
+        assert_eq!(salvage_device_id(None, || None, || vec!["a".into(), "b".into()]), None);
+        assert_eq!(
+            salvage_device_id(Some(r#"{"device_id": "from-file"}"#), || Some("known".into()), Vec::new),
+            Some("from-file".into())
+        );
+        let keychain = FakeKeychain { item: RefCell::new(Some("token".into())), ..Default::default() };
+        assert_eq!(salvage_device_id(Some("{"), || None, || keychain.accounts().unwrap()), Some("from-keychain".into()));
+    }
+
+    #[test]
+    fn concurrent_updates_never_lose_each_other() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let threads: Vec<_> = (0..8u8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        let _guard = lock();
+                        update_at(&path, &FakeKeychain::default(), |settings| match n {
+                            0 => settings.live_captions = Some(false),
+                            1 => settings.capture_sounds = Some(false),
+                            2 => settings.hud_hidden = true,
+                            3 => settings.setup_completed = true,
+                            4 => settings.add_screenshots = Some(false),
+                            5 => settings.fast_live_words = Some(false),
+                            6 => settings.hud_result_preview = Some(false),
+                            _ => settings.hud_preview_lines = Some(2),
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.live_captions, Some(false));
+        assert_eq!(saved.capture_sounds, Some(false));
+        assert!(saved.hud_hidden && saved.setup_completed);
+        assert_eq!(saved.add_screenshots, Some(false));
+        assert_eq!(saved.fast_live_words, Some(false));
+        assert_eq!(saved.hud_result_preview, Some(false));
+        assert_eq!(saved.hud_preview_lines, Some(2));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn legacy(token: &str) -> FakeKeychain {

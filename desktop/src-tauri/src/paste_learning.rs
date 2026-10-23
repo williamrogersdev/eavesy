@@ -124,8 +124,17 @@ mod mac {
         // The old passage is no longer watched: a rewrite is not a correction to learn.
         GENERATION.fetch_add(1, Ordering::SeqCst);
         let start = paste.prefix.encode_utf16().count();
-        unsafe { select(paste.field.0 as Ref, start, previous.encode_utf16().count())? };
+        let length = previous.encode_utf16().count();
+        if let Err(why) = unsafe { select(paste.field.0 as Ref, start, length) } {
+            last().get_or_insert(paste);
+            return Err(why);
+        }
         if unsafe { string(paste.field.0 as Ref, "AXSelectedText") }.as_deref() != Some(previous) {
+            // Whatever the app did select must not stay selected: the user's
+            // next keystroke would type over it. Put the caret back after
+            // the pasted words, and keep them for a later try.
+            let _ = unsafe { select(paste.field.0 as Ref, start + length, 0) };
+            last().get_or_insert(paste);
             return Err("the app didn't select the pasted words".into());
         }
         crate::commands::paste_text(app, text)
