@@ -417,12 +417,13 @@ async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: strin
   const put = async (timeline: Timeline, expected?: { etag: string | null }) => {
     // R2 has no "absent" field in `R2Conditional`; `If-None-Match: *` is its create-once.
     const onlyIf = !expected ? undefined : expected.etag === null ? new Headers({ 'if-none-match': '*' }) : { etagMatches: expected.etag };
-    const options = { httpMetadata: { contentType: 'application/json' }, ...(onlyIf && { onlyIf }) };
+    // `never` on `onlyIf` alone: this build's `Headers` isn't the Workers one `R2PutOptions` names.
+    const options: NonNullable<Parameters<BotIngestEnv['AUDIO_BUCKET']['put']>[2]> = { httpMetadata: { contentType: 'application/json' }, ...(onlyIf && { onlyIf: onlyIf as never }) };
     const capped = cap(timeline);
-    // `put` gives null, and stores nothing, when `onlyIf` fails. (`never`: this build's `Headers` isn't the Workers one `R2PutOptions` names.)
-    const stored = (await env.AUDIO_BUCKET.put(key, JSON.stringify(capped), options as never)) !== null;
-    // Once per cut, not once per attempt.
-    if (stored && capped !== timeline) console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
+    // `put` gives null, and stores nothing, when `onlyIf` fails.
+    const stored = (await env.AUDIO_BUCKET.put(key, JSON.stringify(capped), options)) !== null;
+    // When a write makes the cut, not on every attempt or on later writes to a timeline already cut.
+    if (stored && capped !== timeline && !timeline.truncated) console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
     return stored;
   };
   if (from !== undefined && (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0)) {
