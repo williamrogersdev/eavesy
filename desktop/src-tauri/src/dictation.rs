@@ -21,6 +21,9 @@ const PROJECT_WAIT: Duration = Duration::from_secs(1);
 /// The last dictation's words as they went into the user's app (session,
 /// words, project), so a tone change can swap them for its rewrite.
 static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
+/// The tone the last dictation's words were written in, when the server
+/// said: the HUD's tone row shows it as what is picked.
+static WRITTEN: Mutex<Option<(String, crate::transcribe::Written)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
@@ -220,10 +223,14 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let corrected = crate::live_edit::corrected(&session_id, &text);
         let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
-        let text = match corrected {
-            Some(corrected) => crate::transcribe::drop_fillers(&corrected),
-            None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
+        let (text, written) = match corrected {
+            Some(corrected) => (crate::transcribe::drop_fillers(&corrected), None),
+            None => {
+                let polished = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
+                (polished.text, polished.written)
+            }
         };
+        *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.map(|written| (session_id.clone(), written));
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
@@ -287,6 +294,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             });
         }
     });
+}
+
+/// The tone a dictation's words were written in, while it is the last one
+/// delivered and the server said which.
+pub fn written_as(session_id: &str) -> Option<crate::transcribe::Written> {
+    WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, _)| id == session_id).map(|(_, written)| written.clone())
 }
 
 /// The project a dictation was written for, while it is the last one pasted:

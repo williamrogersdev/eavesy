@@ -65,9 +65,9 @@ const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(180
 /// and false starts gone, punctuated, their own words spelled their way. The
 /// words as heard when the Mac isn't signed in or the server can't help in time.
 /// `project` picks that project's tone and words over the account's.
-pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> String {
+pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> Polished {
     let Some(credential) = settings::device_credential(app) else {
-        return strip_fillers(text);
+        return Polished { text: strip_fillers(text), written: None };
     };
     let started = std::time::Instant::now();
     let result = polish_with(&credential, text, project, POLISH_TIMEOUT);
@@ -79,9 +79,30 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> S
         }
         Err(error) => {
             tracing::warn!(polish_ms, "dictation: typing the words as heard, fillers dropped ({error})");
-            strip_fillers(text)
+            Polished { text: strip_fillers(text), written: None }
         }
     }
+}
+
+/// A dictation's words as they go out, and the tone they are in when the
+/// server said (it didn't when the Mac typed them as heard).
+#[derive(Debug, PartialEq)]
+pub struct Polished {
+    pub text: String,
+    pub written: Option<Written>,
+}
+
+/// The tone a dictation's words were written in, as the server tells it: the
+/// style, whether as a prompt for an AI, and the project when that tone is
+/// the project's own rather than the account's. The HUD's tone row shows it
+/// and changes it.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Written {
+    pub style: String,
+    pub for_agents: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 /// The model-free part of tidying, as the server does it: "um", "uh", "hmm"
@@ -167,8 +188,8 @@ fn polish_with(
     text: &str,
     project: Option<&str>,
     timeout: std::time::Duration,
-) -> Result<String, String> {
-    post_polish(credential, &polish_body(text, project), timeout).map(|reply| reply.text)
+) -> Result<Polished, String> {
+    post_polish(credential, &polish_body(text, project), timeout).map(|reply| Polished { text: reply.text, written: reply.written })
 }
 
 #[derive(serde::Deserialize)]
@@ -180,6 +201,9 @@ struct PolishReply {
     /// Why it fell back, when it says ("too_long").
     #[serde(default)]
     reason: Option<String>,
+    /// The tone the words are in, from servers that say.
+    #[serde(default)]
+    written: Option<Written>,
 }
 
 fn yes() -> bool {
@@ -688,7 +712,28 @@ mod tests {
             None,
             POLISH_TIMEOUT,
         );
-        assert_eq!(polished, Ok("So ship it today.".to_string()));
+        assert_eq!(polished.map(|polished| polished.text), Ok("So ship it today.".to_string()));
+    }
+
+    #[test]
+    fn polish_says_which_tone_the_words_are_in() {
+        use wiremock::matchers::{method, path};
+        let (runtime, server) = mock_server();
+        runtime.block_on(
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/dictations/polish"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "text": "Ship it today.", "polished": true,
+                    "written": { "style": "concise", "forAgents": true, "projectId": "proj_1" }
+                })))
+                .mount(&server),
+        );
+        let polished = polish_with(&credential(&server), "um ship it today", Some("proj_1"), POLISH_TIMEOUT).unwrap();
+        assert_eq!(polished.text, "Ship it today.");
+        assert_eq!(polished.written, Some(Written { style: "concise".into(), for_agents: true, project_id: Some("proj_1".into()) }));
+        // Sent on to the HUD as the server spelled it, and without a project when there is none.
+        let written = Written { style: "natural".into(), for_agents: false, project_id: None };
+        assert_eq!(serde_json::to_value(written).unwrap(), serde_json::json!({ "style": "natural", "forAgents": false }));
     }
 
     #[test]
@@ -705,7 +750,7 @@ mod tests {
                 .mount(&server),
         );
         let polished = polish_with(&credential(&server), "fix the build", Some("proj_1"), POLISH_TIMEOUT);
-        assert_eq!(polished, Ok("Fix the build.".to_string()));
+        assert_eq!(polished.map(|polished| polished.text), Ok("Fix the build.".to_string()));
     }
 
     #[test]

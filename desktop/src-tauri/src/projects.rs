@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::front_window::FrontWindow;
 
@@ -83,6 +83,10 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     }
     if path == "/api/me" && method == "PATCH" {
         crate::vocabulary::refresh(&app);
+    }
+    // A changed dictation tone, on the account or a project: the HUD's tone row reads it again.
+    if method == "PATCH" {
+        let _ = app.emit_to("hud", "account:changed", ());
     }
     Ok(value)
 }

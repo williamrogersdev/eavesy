@@ -8,7 +8,7 @@ import { anthropic, anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
-import { DICTATION_STYLES, effectiveDictation, requestedDictation, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -60,16 +60,18 @@ export const Route = createFileRoute('/api/dictations/polish')({
         ]);
         const project = user ? projectRow : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
+        // Told back with the words: the Mac app's drawer shows the tone they are in.
+        const { projectId, ...written } = writtenWith(parsed.data, user, project);
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          ...requestedDictation(parsed.data, effectiveDictation(user, project)),
+          ...written,
           asked: parsed.data.style !== undefined || parsed.data.forAgents !== undefined,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
           context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
-        return Response.json(result);
+        return Response.json({ ...result, written: { ...written, projectId } });
       },
     },
   },
