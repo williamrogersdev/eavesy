@@ -6,6 +6,16 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+### Fixed
+
+- Mac app: a dictation you dismissed no longer pops back open stamped "Pasted" when its cloud transcript arrives; only a dictation still writing its words down moves on, and one with nothing to paste into says "Saved. The words are in History" ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+- Mac app: an error during a recording no longer replaces the control. Stop, Copy, the tone row and the timer stay, the error shows in the status line, and a failed recording collapses on its own like a finished one ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+- Mac app: settings can no longer be lost, or the Mac signed out, by two writes to the settings file racing; a damaged file is kept aside instead of being replaced ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+- Mac app: the panel stops re-drawing every row once a second during a recording, the empty-state mascot no longer flashes before the first page loads, and a denied Screen Recording or Microphone permission shows a banner with an "Open settings" button instead of swapping the whole panel ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+- Mac app: the control stays where you parked it between recordings, the keyboard goes back to the app you were in after editing in the drawer, a slow paste no longer lands minutes later in whatever field has focus, and Copy no longer gets undone by the clipboard restore ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+- Mac app: pressing Stop twice no longer drops the control back to idle while the first stop is still delivering its words, and the "Recording not fully saved" notice says what to do instead of showing engine output ([#206](https://github.com/williamrogersdev/eavesy/pull/206))
+- Mac app: sync keeps going when one note edit keeps failing, screenshot uploads no longer hold up everything else, and a damaged sync-state file no longer breaks sync or deletes ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
+
 ## [0.6.6] - 2026-10-23 - desktop
 
 ### Changed
