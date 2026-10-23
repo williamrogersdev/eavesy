@@ -163,10 +163,13 @@ jobs:
             local url=$1 status
             for attempt in 1 2 3 4 5; do
               status=$(curl -s -o /tmp/body -w '%{http_code}' "$url" || echo 000)
-              if [ "$status" -ge 200 ] && [ "$status" -lt 500 ]; then
-                echo "ok $status $url"
-                return 0
-              fi
+              # 2xx and redirects are healthy. 401/403/429 can be the edge
+              # turning a CI runner away, not the app. A 404 or a 5xx is a
+              # broken deploy.
+              case "$status" in
+                2??|3??) echo "ok $status $url"; return 0 ;;
+                401|403|429) echo "::warning::$url returned $status; treating it as up"; return 0 ;;
+              esac
               sleep 5
             done
             echo "::error::$url returned $status"
@@ -183,8 +186,15 @@ jobs:
             exit 1
           fi
 
-      - name: Roll back web Worker
+      # The web, MCP and processing Workers ship together from one commit, so
+      # they go back together. The meeting bot Worker (a Durable Object with a
+      # container image) is left as deployed.
+      - name: Roll back Workers
         if: failure() && steps.smoke.outcome == 'failure'
-        working-directory: web
         run: |
-          ../scripts/cf bunx wrangler rollback --yes --message "auto-rollback: smoke test failed on ${GITHUB_SHA::7}"
+          message="auto-rollback: smoke test failed on ${GITHUB_SHA::7}"
+          failed=0
+          (cd web && ../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          (cd workers/mcp && ../../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          (cd workers/processing && ../../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          exit $failed
