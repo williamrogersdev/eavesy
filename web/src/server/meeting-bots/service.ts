@@ -24,6 +24,7 @@ export type BotEnv = ProcessingEnv & MeetingBotsEnv;
 /** What the meeting-bot Worker needs to take a bot's reports. */
 export type BotIngestEnv = Pick<ProcessingEnv, 'AUDIO_BUCKET' | 'PROCESSING_QUEUE'>;
 export type MeetingBot = typeof meetingBots.$inferSelect;
+type MeetingStatus = (typeof meetings.$inferSelect)['status'];
 export type BotStatus = MeetingBot['status'];
 export type BotPlatform = MeetingBot['platform'];
 
@@ -343,10 +344,10 @@ export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING
   return status;
 }
 
-async function failMeeting(db: AppDb, meetingId: string, message: string) {
+async function failMeeting(db: AppDb, meetingId: string, message: string, from: MeetingStatus[] = ['recording', 'queued', 'uploading', 'processing']) {
   await db.update(meetings)
     .set({ status: 'failed', statusError: message, updatedAt: Date.now() })
-    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing'])));
+    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, from)));
 }
 
 /** Keeps how many names a canary read, never the names: the test meeting's people aren't Eavesy's to store. */
@@ -493,7 +494,10 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
     // Segments the bot gave up delivering; the meeting has a gap there.
     const lost = body.lostSegments.filter((idx): idx is number => Number.isSafeInteger(idx) && idx >= 0 && idx <= 100_000).slice(0, MAX_LOST_SEGMENTS);
     console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: lost }));
-    if (!bot.canary && bot.meetingId && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
+    // Before the move to `collecting`, so collection finds them; a late or
+    // replayed `done` for a bot already finished changes nothing.
+    const collectable = SEGMENT_STATUSES.includes(bot.status) || bot.status === 'collecting';
+    if (!bot.canary && bot.meetingId && collectable && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
   }
   // The watchdog reads either as the bot being alive (noted above).
   if (code === 'heartbeat' || code === 'speakers') return json({ ok: true });
@@ -749,6 +753,7 @@ export async function requeueStaleCollections(env: Pick<ProcessingEnv, 'DB' | 'P
  */
 export async function retireRecallBots(env: Pick<ProcessingEnv, 'DB'>) {
   const db = botDatabase(env.DB);
+  // A handful of old rows at most; any past the batch go on the next run.
   const stuck = await db.select({ id: meetingBots.id, status: meetingBots.status, meetingId: meetingBots.meetingId }).from(meetingBots)
     .where(and(eq(meetingBots.provider, 'recall'), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)))
     .limit(200);
@@ -756,7 +761,8 @@ export async function retireRecallBots(env: Pick<ProcessingEnv, 'DB'>) {
   for (const bot of stuck) {
     if (!(await finishBot(db, bot.id, 'failed', 'provider_retired', bot.status))) continue;
     retired += 1;
-    if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText('provider_retired'));
+    // A meeting already being summarized has its audio; the pipeline finishes it.
+    if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText('provider_retired'), ['recording', 'queued', 'uploading']);
   }
   return retired;
 }

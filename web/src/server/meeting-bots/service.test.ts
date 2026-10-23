@@ -609,6 +609,10 @@ describe('collection', () => {
     await collectBotRecording(t.db, t.env, id);
     expect(t.sent.at(-1)).toMatchObject({ body: { kind: 'summarize' } });
     expect(t.sqlite.query('SELECT duration_sec FROM meetings').get()).toEqual({ duration_sec: 180 });
+
+    // A `done` replayed after the bot finished adds nothing.
+    await event(t, id, { code: 'done', lostSegments: [7] });
+    expect(t.sqlite.query('SELECT count(*) AS n FROM meeting_segments WHERE idx = 7').get()).toEqual({ n: 0 });
   });
 
   test('a bot that lost every segment has no recording', async () => {
@@ -623,17 +627,20 @@ describe('collection', () => {
 
   test('the hourly sweep fails Recall bots still on their way', async () => {
     const t = setup();
-    t.sqlite.run("INSERT INTO meetings (id,user_id,title,status,source,started_at,created_at,updated_at) VALUES ('m_r','u1','Old','recording','bot',1,1,1)");
+    t.sqlite.run("INSERT INTO meetings (id,user_id,title,status,source,started_at,created_at,updated_at) VALUES ('m_r','u1','Old','recording','bot',1,1,1), ('m_p','u1','Summarizing','processing','bot',1,1,1)");
     t.sqlite.run(`INSERT INTO meeting_bots (id,user_id,provider,meeting_url,platform,status,meeting_id,created_at,updated_at) VALUES
       ('bot_r1','u1','recall','https://meet.google.com/abc-defg-hij','meet','in_call','m_r',1,1),
       ('bot_r2','u1','recall','https://meet.google.com/abc-defg-hij','meet','scheduled',NULL,1,1),
-      ('bot_r3','u1','recall','https://meet.google.com/abc-defg-hij','meet','done',NULL,1,1)`);
+      ('bot_r3','u1','recall','https://meet.google.com/abc-defg-hij','meet','done',NULL,1,1),
+      ('bot_r4','u1','recall','https://meet.google.com/abc-defg-hij','meet','collecting','m_p',1,1)`);
     const live = await recordingBot(t);
-    expect(await retireRecallBots(t.env)).toBe(2);
+    expect(await retireRecallBots(t.env)).toBe(3);
     expect(t.bot('bot_r1')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
     expect(t.bot('bot_r2')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
     expect(t.bot('bot_r3')).toMatchObject({ status: 'done' });
     expect(t.bot(live)).toMatchObject({ status: 'recording' });
+    // Its audio is already with the summary: the pipeline finishes it.
+    expect(t.sqlite.query("SELECT status FROM meetings WHERE id = 'm_p'").get()).toEqual({ status: 'processing' });
     expect(t.sqlite.query("SELECT status, status_error FROM meetings WHERE id = 'm_r'").get())
       .toEqual({ status: 'failed', status_error: 'The notetaker was sent through a service Eavesy no longer uses.' });
     expect(await retireRecallBots(t.env)).toBe(0);
