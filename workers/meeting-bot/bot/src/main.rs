@@ -32,8 +32,11 @@ use rules::{Exit, Limits, Rules, Step};
 const HEARTBEAT: Duration = Duration::from_secs(60);
 /// How often the speaking indicator is read, and so how long one look covers.
 const TICK_MS: u64 = 1_000;
-/// Spans per report at most, so one report stays well under Eavesy's size
-/// limit for an event; a backlog goes out over the next reports.
+/// Spans per report, so one report stays well under Eavesy's size limit for
+/// an event (512 KB; a span is some 30 bytes, so 2,000 make about 60 KB); a
+/// backlog goes out over the next reports. `Speakers::report` runs past it
+/// only to finish the spans sharing a start with the last one, at most one
+/// per person in the call: a thousand people starting on one tick add 30 KB.
 const MAX_SPANS_PER_REPORT: usize = 2_000;
 const ANNOUNCEMENT: &str = "Eavesy Notetaker is transcribing this call for the person who invited it.";
 
@@ -66,13 +69,18 @@ fn config() -> Result<Config, String> {
 }
 
 /// Who spoke when, on the recording's clock, plus everyone seen in the call.
+/// `spans` stays in start order: `note` only ever adds a span at the current
+/// time, and only grows spans that may still be going on.
 #[derive(Default)]
 struct Speakers {
     spans: Vec<(String, u64, u64)>,
     participants: BTreeSet<String>,
-    /// Spans before this index were final when they were sent: each report
-    /// carries only the spans from here on (`speakersFrom`), and Eavesy
-    /// replaces what it has from that index.
+    /// Spans before this index were final when they were sent. Each report
+    /// carries the spans from the first still-open or unsent one on and names
+    /// that span's start as `speakersFrom`: Eavesy drops what it holds from
+    /// that time and keeps the report instead. A time, not an index, so a
+    /// report that never arrived (or a span Eavesy threw out) leaves a gap
+    /// but never shifts or doubles the spans after it.
     sent_final: usize,
 }
 
@@ -87,19 +95,32 @@ impl Speakers {
     }
 
     /// The next report's speakers: spans from the first one not yet sent for
-    /// good, at most `cap` of them. A span stays open while its speaker may
+    /// good, about `cap` of them. A span stays open while its speaker may
     /// still carry on (`note` extends a span ending within two ticks), so it
     /// is sent again, grown, in the next report. `now_ms` None means the call
     /// is over and every span is final.
+    ///
+    /// Eavesy replaces by start time, so a report always carries every span
+    /// sharing a start with its first and last (two people starting on the
+    /// same tick): a start never straddles two reports.
     fn report(&mut self, now_ms: Option<u64>, tick_ms: u64, cap: usize) -> Value {
-        let from = self.sent_final.min(self.spans.len());
-        let to = (from + cap).min(self.spans.len());
+        let len = self.spans.len();
+        let first = self.sent_final.min(len);
+        // With everything sent, a time past every span: Eavesy keeps all it has.
+        let from_ms = self.spans.get(first).map_or_else(|| self.spans.last().map_or(0, |s| s.1 + 1), |s| s.1);
+        let from = self.spans.partition_point(|s| s.1 < from_ms);
+        let mut to = (from + cap).min(len);
+        if to > from && to < len {
+            to = self.spans.partition_point(|s| s.1 <= self.spans[to - 1].1);
+        }
         let chunk = &self.spans[from..to];
         let open = |end: u64| now_ms.is_some_and(|now| end + tick_ms * 2 >= now);
         self.sent_final = chunk.iter().position(|(_, _, end)| open(*end)).map_or(to, |i| from + i);
         json!({
             "participants": self.participants,
-            "speakersFrom": from,
+            // The unit tells Eavesy this isn't an index, as images before it sent.
+            "speakersFrom": from_ms,
+            "speakersFromUnit": "ms",
             "speakers": chunk.iter().map(|(n, s, e)| json!([n, s, e])).collect::<Vec<_>>(),
         })
     }
@@ -270,15 +291,16 @@ mod tests {
     }
 
     fn spans(report: &Value) -> (u64, Vec<(String, u64, u64)>) {
+        assert_eq!(report["speakersFromUnit"], "ms");
         let from = report["speakersFrom"].as_u64().unwrap();
         let list = report["speakers"].as_array().unwrap().iter().map(|s| (s[0].as_str().unwrap().to_owned(), s[1].as_u64().unwrap(), s[2].as_u64().unwrap())).collect();
         (from, list)
     }
 
-    /// What Eavesy keeps: everything before `speakersFrom`, then the report.
+    /// What Eavesy keeps: its spans starting before `speakersFrom`, then the report.
     fn apply(stored: &mut Vec<(String, u64, u64)>, report: &Value) {
         let (from, list) = spans(report);
-        stored.truncate(from as usize);
+        stored.retain(|s| s.1 < from);
         stored.extend(list);
     }
 
@@ -296,15 +318,64 @@ mod tests {
         s.note(&["Ben".into()], 6_000, 1_000);
         s.note(&["Cy".into()], 20_000, 1_000);
         let second = s.report(Some(21_000), 1_000, 100);
-        assert_eq!(spans(&second).0, 1);
+        assert_eq!(spans(&second).0, 5_000);
         apply(&mut stored, &second);
         assert_eq!(stored, s.spans);
         // Nothing new and everything closed: an empty report from the end.
         let third = s.report(Some(60_000), 1_000, 100);
         apply(&mut stored, &third);
         let fourth = s.report(Some(61_000), 1_000, 100);
-        assert_eq!(spans(&fourth), (3, vec![]));
+        assert_eq!(spans(&fourth), (20_001, vec![]));
         assert_eq!(stored, s.spans);
+    }
+
+    #[test]
+    fn a_dropped_report_leaves_a_gap_but_shifts_and_doubles_nothing() {
+        let mut s = Speakers::default();
+        let mut stored = Vec::new();
+        s.note(&["Ana".into()], 0, 1_000);
+        apply(&mut stored, &s.report(Some(5_000), 1_000, 100));
+        s.note(&["Ben".into()], 10_000, 1_000);
+        s.note(&["Cy".into()], 15_000, 1_000);
+        // Ben is final and Cy still open in this report, which Eavesy never gets.
+        let dropped = s.report(Some(16_000), 1_000, 100);
+        assert_eq!(spans(&dropped).0, 10_000);
+        s.note(&["Cy".into()], 16_000, 1_000);
+        s.note(&["Dee".into()], 30_000, 1_000);
+        // The next one starts where Cy's span does, whatever Eavesy did or didn't keep.
+        let next = s.report(Some(31_000), 1_000, 100);
+        assert_eq!(spans(&next).0, 15_000);
+        apply(&mut stored, &next);
+        assert_eq!(stored, vec![("Ana".into(), 0, 1_000), ("Cy".into(), 15_000, 17_000), ("Dee".into(), 30_000, 31_000)]);
+        // Only Ben, final in the lost report, is missing: nothing is doubled,
+        // as an index into a timeline Eavesy never held would have done.
+        assert_eq!(s.spans.len(), 4);
+    }
+
+    #[test]
+    fn spans_starting_together_travel_together() {
+        let mut s = Speakers::default();
+        let mut stored = Vec::new();
+        s.note(&["Ana".into(), "Ben".into()], 0, 1_000);
+        s.note(&["Ben".into()], 1_000, 1_000);
+        // Ana is done, Ben may go on: both started at 0, so both go again.
+        let first = s.report(Some(3_500), 1_000, 100);
+        assert_eq!(spans(&first).0, 0);
+        apply(&mut stored, &first);
+        s.note(&["Ben".into()], 3_500, 1_000);
+        let second = s.report(Some(9_000), 1_000, 100);
+        assert_eq!(spans(&second).0, 0);
+        assert_eq!(spans(&second).1.len(), 2);
+        apply(&mut stored, &second);
+        assert_eq!(stored, s.spans);
+        assert!(s.all_sent());
+        // A cap that would cut a shared start stretches to cover it.
+        let mut s = Speakers::default();
+        s.note(&["P0".into(), "P1".into(), "P2".into()], 0, 1_000);
+        s.note(&["P3".into()], 5_000, 1_000);
+        let report = s.report(None, 1_000, 2);
+        assert_eq!(spans(&report).1.len(), 3);
+        assert!(!s.all_sent());
     }
 
     #[test]
