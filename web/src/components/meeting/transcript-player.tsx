@@ -6,7 +6,7 @@ import { LanguagePicker } from '@/components/translation/language-picker';
 import { isLanguage, type Language } from '@/lib/translation/languages';
 import { useMe } from '@/lib/api/use-me';
 import { languageName } from '@/lib/transcription/language';
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
 
 export interface TranscriptLine {
@@ -255,7 +255,7 @@ export function TranscriptPlayer({
             </div>
           ) : null}
           {labelled ? (
-            <SpeakerNames meetingId={meetingId} names={names} onSaved={onChanged} />
+            <SpeakerNames meetingId={meetingId} names={names} partialMs={partialAttributionMs(names)} onSaved={onChanged} />
           ) : null}
         </div>
       ) : null}
@@ -446,10 +446,13 @@ function Line({
 function SpeakerNames({
   meetingId,
   names,
+  partialMs,
   onSaved,
 }: {
   meetingId: string;
   names: Record<string, string>;
+  /** Where speaker names stop, for a call too long for the notetaker to name all of. */
+  partialMs: number | null;
   onSaved: () => void;
 }) {
   return (
@@ -460,6 +463,11 @@ function SpeakerNames({
           <SpeakerName key={id} meetingId={meetingId} id={id} name={speakerName(id, names)} onSaved={onSaved} />
         ))}
       </div>
+      {partialMs !== null ? (
+        <p className="mt-1.5 text-xs text-ev-ink-3">
+          Speakers are named up to {clockLabel(partialMs)}; the rest of the call is unattributed.
+        </p>
+      ) : null}
     </div>
   );
 }
