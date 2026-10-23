@@ -298,6 +298,34 @@ describe('stale records', () => {
     expect(await freeCancelledImports(t.env, t.now)).toBe(0);
   });
 
+  test('an import resumed while the sweep runs keeps its uploads', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_back', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_back', 0, t.now - 8 * DAY);
+    // The user resumes between the sweep's read and its write.
+    const prepare = t.env.DB.prepare.bind(t.env.DB);
+    t.env.DB.prepare = ((sql: string) => {
+      if (sql.startsWith('DELETE FROM meeting_segments')) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
+      return prepare(sql);
+    }) as typeof t.env.DB.prepare;
+    expect(await freeCancelledImports(t.env, t.now)).toBe(0);
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_back'))).toHaveLength(2);
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_back'`).get()).toEqual({ n: 1 });
+  });
+
+  test('an import that starts uploading again before the stop lands is left alone', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_live', { status: 'uploading', state: 'uploading', updatedAt: t.now - 2 * DAY });
+    const prepare = t.env.DB.prepare.bind(t.env.DB);
+    t.env.DB.prepare = ((sql: string) => {
+      if (sql.includes('UPDATE meetings AS m')) importSegment(t, 'imp_live', 0, t.now);
+      return prepare(sql);
+    }) as typeof t.env.DB.prepare;
+    expect(await stopStalledImports(t.env, t.now)).toBe(0);
+    expect(t.sqlite.query(`SELECT m.status, r.state FROM meetings m JOIN recording_imports r ON r.meeting_id = m.id WHERE m.id = 'imp_live'`).get())
+      .toEqual({ status: 'uploading', state: 'uploading' });
+  });
+
   test('old OAuth codes, unused clients and webhook ids are pruned', async () => {
     const t = setup();
     const old = t.now - 31 * DAY;
