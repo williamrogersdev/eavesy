@@ -319,12 +319,17 @@ describe('reports from the bot', () => {
     // Nothing new since: an empty report from past the last start keeps everything.
     await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 9_001, speakers: [], participants: [] });
     expect(stored()).toEqual({ speakers: [['Ana', 0, 1_000], ['Ben', 500, 4_000], ['Ana', 5_000, 6_000], ['Cy', 9_000, 9_500]], participants: ['Ana', 'Ben', 'Cy'] });
-    // A malformed time (negative, fractional) is taken for a whole timeline rather than guessed at.
-    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 2.5, speakers: [['Cy', 9_000, 9_500]] });
-    expect(stored().speakers).toHaveLength(1);
-    // A bot from before start-time reports (#210) means an index by `speakersFrom`.
+    // A malformed time (fractional, negative, a string) is ignored rather than guessed at.
+    for (const speakersFrom of [2.5, -1, '500']) {
+      await event(t, id, { code: 'heartbeat', ...ms, speakersFrom, speakers: [['Zed', 0, 100]], participants: ['Zed'] });
+    }
+    expect(stored()).toEqual({ speakers: [['Ana', 0, 1_000], ['Ben', 500, 4_000], ['Ana', 5_000, 6_000], ['Cy', 9_000, 9_500]], participants: ['Ana', 'Ben', 'Cy'] });
+    // A bot from before start-time reports (#210) means an index by `speakersFrom`...
     await event(t, id, { code: 'heartbeat', speakersFrom: 1, speakers: [['Eve', 7_000, 7_500]] });
-    expect(stored().speakers).toEqual([['Cy', 9_000, 9_500], ['Eve', 7_000, 7_500]]);
+    expect(stored().speakers).toEqual([['Ana', 0, 1_000], ['Eve', 7_000, 7_500]]);
+    // ...and a report from the new image goes on top of what it left.
+    await event(t, id, { code: 'heartbeat', ...ms, speakersFrom: 7_000, speakers: [['Eve', 7_000, 8_000]] });
+    expect(stored().speakers).toEqual([['Ana', 0, 1_000], ['Eve', 7_000, 8_000]]);
     // A bot from before incremental reports sends the whole timeline each time.
     await event(t, id, { code: 'heartbeat', speakers: [['Dee', 0, 100]], participants: ['Dee'] });
     expect(stored()).toEqual({ speakers: [['Dee', 0, 100]], participants: ['Dee'] });

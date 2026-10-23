@@ -385,14 +385,20 @@ async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise
  * Images from before that (#210) send `speakersFrom` as an index into the
  * timeline they believe is here and no unit; a report without `speakersFrom`
  * at all is the whole timeline, from before incremental reports (#205). Both
- * can be dropped once no bot from before #210 can still be in a call.
+ * can be dropped once no bot from before #210 can still be in a call. A
+ * `speakersFrom` that is neither is ignored, timeline and all.
  */
 async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }) {
   const spans = parseSpeakerSpans(body.speakers);
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
   let timeline: Timeline = { speakers: spans, participants };
-  if (typeof from === 'number' && Number.isSafeInteger(from) && from >= 0) {
+  if (from !== undefined) {
+    if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) {
+      // Malformed: better to miss this report than to guess what it replaces.
+      console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
+      return;
+    }
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
     const kept = body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
     timeline = {
