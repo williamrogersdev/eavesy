@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { handleEmbedMeeting } from '../../src/server/processing/embed';
-import { REFRESH_DELAY_SECONDS } from '../../src/server/agent-transcript-refresh';
+import { EMBED_REFRESH_DELAY_SECONDS, REFRESH_DELAY_SECONDS } from '../../src/server/agent-transcript-refresh';
 import { Route as LineRoute } from '../../src/routes/api/meetings/$id/lines/$lineId';
 import { Route as MeetingRoute } from '../../src/routes/api/meetings/$id';
 import { handler, insertMeeting, insertUser, resetTables, row, runtimeEnv, testEnv } from './support';
@@ -75,7 +75,7 @@ describe('transcript edits keep the search index current', () => {
     await settled();
     expect(queued.messages).toEqual([
       { message: { kind: 'agent-transcript', meetingId: 'meet_edit', onlyIfMissing: true }, delaySeconds: REFRESH_DELAY_SECONDS },
-      { message: { kind: 'embed', meetingId: 'meet_edit', queuedAt: expect.any(Number) }, delaySeconds: REFRESH_DELAY_SECONDS },
+      { message: { kind: 'embed', meetingId: 'meet_edit', queuedAt: expect.any(Number) }, delaySeconds: EMBED_REFRESH_DELAY_SECONDS },
     ]);
     expect(queued.messages[1].message.queuedAt).toBeGreaterThanOrEqual(before);
   });
@@ -131,5 +131,35 @@ describe('a burst of edits embeds once', () => {
     expect(e.ai.run).toHaveBeenCalledTimes(2);
     expect(e.vectorize.deleteByIds).toHaveBeenCalledTimes(1);
     expect(e.vectorize.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-embeds after an edit that landed while a run was embedding', async () => {
+    await insertMeeting({ id: 'meet_race', userId: USER, status: 'complete' });
+    await addLine('meet_race', 'line_1', 'Some words to embed');
+    const db = drizzle(testEnv.DB, { schema });
+    const e = env();
+    let editAt = 0;
+    const embed = e.ai.run.getMockImplementation()!;
+    e.ai.run.mockImplementationOnce(async (model, input) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      editAt = Date.now(); // read already happened; the edit's re-index is queued now
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return embed(model, input);
+    });
+    await handleEmbedMeeting('meet_race', db, e);
+    await handleEmbedMeeting('meet_race', db, e, { queuedAt: editAt });
+    expect(e.ai.run).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the index when every line is gone', async () => {
+    await insertMeeting({ id: 'meet_empty', userId: USER, status: 'complete' });
+    await addLine('meet_empty', 'line_1', 'Some words to embed');
+    const db = drizzle(testEnv.DB, { schema });
+    const e = env();
+    await handleEmbedMeeting('meet_empty', db, e);
+    await testEnv.DB.prepare("DELETE FROM transcript_segments WHERE meeting_id = 'meet_empty'").run();
+    await handleEmbedMeeting('meet_empty', db, e, { queuedAt: Date.now() + 1 });
+    expect(e.vectorize.deleteByIds).toHaveBeenCalledTimes(1);
+    expect(await row('SELECT count(*) AS n FROM embeddings WHERE source_id = ?', 'meet_empty')).toEqual({ n: 0 });
   });
 });

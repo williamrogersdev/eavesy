@@ -14,9 +14,11 @@ export async function handleEmbedMeeting(
 ) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
-  // A re-index queued by an edit is moot once a later run embedded the meeting:
-  // every edit in a burst queues one, and the first to run covers them all.
+  // A re-index queued by an edit is moot once a run that read the transcript
+  // after the edit has finished: every edit in a burst queues one, and the
+  // first to run covers them all.
   if (opts.queuedAt !== undefined && (await embeddedSince(db, 'meeting', meetingId, opts.queuedAt))) return;
+  const readAt = Date.now();
   const segments = await db
     .select()
     .from(transcriptSegments)
@@ -27,6 +29,7 @@ export async function handleEmbedMeeting(
     sourceType: 'meeting',
     sourceId: meeting.id,
     text: transcriptText(segments, meeting.speakerNamesJson).text,
+    readAt,
   });
 }
 
@@ -43,6 +46,7 @@ export async function handleEmbedDictation(dictationId: string, db: Db, env: Pro
   });
 }
 
+/** Whether a finished run read the source at or after `since` (rows carry their run's read time). */
 async function embeddedSince(db: Db, sourceType: 'meeting' | 'dictation', sourceId: string, since: number) {
   const latest = await db
     .select({ at: max(embeddings.createdAt) })
@@ -54,11 +58,14 @@ async function embeddedSince(db: Db, sourceType: 'meeting' | 'dictation', source
 async function replaceEmbeddings(
   db: Db,
   env: ProcessingEnv,
-  source: { userId: string; sourceType: 'meeting' | 'dictation'; sourceId: string; text: string },
+  source: { userId: string; sourceType: 'meeting' | 'dictation'; sourceId: string; text: string; readAt?: number },
 ) {
+  // Rows are stamped with when the text was read, not written: an edit that
+  // lands while the model runs is newer than this run, so its re-index runs.
+  const readAt = source.readAt ?? Date.now();
   const chunks = chunkText(source.text, 2_000);
-  if (chunks.length === 0) return;
-  const vectors = await embedTexts(createAiRunner(env, 'library-embedding'), chunks);
+  // No text left (every line deleted) still clears what search finds.
+  const vectors = chunks.length ? await embedTexts(createAiRunner(env, 'library-embedding'), chunks) : [];
   const previous = await db
     .select({ id: embeddings.id })
     .from(embeddings)
@@ -67,8 +74,8 @@ async function replaceEmbeddings(
   await db
     .delete(embeddings)
     .where(and(eq(embeddings.sourceType, source.sourceType), eq(embeddings.sourceId, source.sourceId)));
+  if (chunks.length === 0) return;
 
-  const now = Date.now();
   const vectorRows = vectors.map((values, chunkIdx) => ({
     id: `${source.sourceId}__${chunkIdx}`,
     values,
@@ -82,7 +89,7 @@ async function replaceEmbeddings(
       sourceId: source.sourceId,
       chunkIdx,
       contentExcerpt: chunk.slice(0, 280),
-      createdAt: now,
+      createdAt: readAt,
     }),
   ));
   await env.VECTORIZE.upsert(vectorRows);
