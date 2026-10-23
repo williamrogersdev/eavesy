@@ -62,9 +62,7 @@ pub async fn set_root_folder(
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("could not create recordings folder: {error}"))?;
 
-    let mut config = settings::load(&app);
-    config.recordings_root = Some(root.to_string_lossy().into_owned());
-    settings::save(&app, &config)?;
+    settings::update(&app, |config| config.recordings_root = Some(root.to_string_lossy().into_owned()))?;
     watcher
         .replace(app, root.clone())
         .map_err(|error| format!("could not monitor the recordings folder: {error}"))?;

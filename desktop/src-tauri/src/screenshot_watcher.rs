@@ -193,9 +193,7 @@ pub fn set_auto_import_screenshots(app: AppHandle, enabled: bool) -> Result<(), 
     // Start (or stop) first, so the saved setting never claims a watcher that failed.
     let watcher = app.state::<ScreenshotWatcher>();
     watcher.apply(&app, enabled)?;
-    let mut config = crate::settings::load(&app);
-    config.add_screenshots = Some(enabled);
-    if let Err(error) = crate::settings::save(&app, &config) {
+    if let Err(error) = crate::settings::update(&app, |config| config.add_screenshots = Some(enabled)) {
         let _ = watcher.apply(&app, !enabled);
         return Err(error);
     }

@@ -207,12 +207,6 @@ pub fn update(app: &AppHandle, change: impl FnOnce(&mut Settings)) -> Result<Set
     Ok(settings)
 }
 
-pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    let _guard = lock();
-    save_at(&path, settings)
-}
-
 /// Defaults for when the file can't be used, keeping the device id whenever
 /// one can be found: from the damaged text, this run, or the Keychain.
 fn fallback(raw: Option<&str>, keychain: &impl Keychain) -> Settings {

@@ -817,9 +817,9 @@ async fn poll_result<R: Runtime>(
             // Read before `deliver`, which takes the paste target.
             let armed = crate::dictation::is_armed(&session.id);
             crate::dictation::deliver(app, &session.id, &spoken);
-            if let Some(state) = finished_hud(&crate::hud::current(), &session.id, armed, &spoken) {
-                crate::hud::set_state(app, state);
-            }
+            // Check-and-set under the HUD's own lock: a dismissal or a new
+            // recording that lands in between must win.
+            crate::hud::advance_from(app, &session.id, &[crate::hud::Phase::Transcribing], finished_state(&session.id, armed, &spoken));
         }
     }
     if result.status == "complete" {
@@ -846,19 +846,27 @@ async fn poll_result<R: Runtime>(
 /// pill the user put away (Idle), a saved note, a failure or another
 /// recording. A recording armed to paste is pasted; any other one is saved
 /// to History, and the pill says that rather than "Pasted".
-fn finished_hud(current: &crate::hud::HudState, session_id: &str, armed: bool, spoken: &str) -> Option<crate::hud::HudState> {
-    if current.phase != crate::hud::Phase::Transcribing || current.session_id.as_deref() != Some(session_id) {
-        return None;
-    }
+/// The state a pill still "writing it down" moves to once the cloud
+/// transcript is in: Done with the words when a paste was armed, otherwise
+/// Saved with a notice (never a "Pasted" stamp for words nobody pasted).
+fn finished_state(session_id: &str, armed: bool, spoken: &str) -> crate::hud::HudState {
     let words = spoken.trim();
-    Some(crate::hud::HudState {
+    crate::hud::HudState {
         phase: if armed { crate::hud::Phase::Done } else { crate::hud::Phase::Saved },
         session_id: Some(session_id.to_string()),
         mode: Some("audio".to_string()),
         started_at_ms: None,
         message: (armed && !words.is_empty()).then(|| words.to_string()),
         notice: (!armed).then(|| SAVED_NOT_PASTED.to_string()),
-    })
+    }
+}
+
+/// [`finished_state`] gated the way `poll_result` gates it (through
+/// `hud::advance_from`): only a pill still Transcribing this session moves on.
+#[cfg(test)]
+fn finished_hud(current: &crate::hud::HudState, session_id: &str, armed: bool, spoken: &str) -> Option<crate::hud::HudState> {
+    (current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(session_id))
+        .then(|| finished_state(session_id, armed, spoken))
 }
 
 /// The notice of a recording whose words were saved but not pasted.

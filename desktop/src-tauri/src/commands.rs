@@ -34,11 +34,17 @@ pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 /// it calls off a pending restore, so the user's old clipboard never comes
 /// back over words they were just told to ⌘V.
 pub fn copy_to_clipboard(app: &AppHandle, text: &str) -> Result<(), String> {
-    let mut restore = restore();
-    restore.cancel();
+    cancel_clipboard_restore();
     app.clipboard()
         .write_text(text.to_string())
         .map_err(|e| format!("failed to copy to clipboard: {e}"))
+}
+
+/// For the one clipboard write that isn't text (copying a screenshot): the
+/// caller writes the image itself, and this makes sure a pending restore
+/// from a dictation can't put the old clipboard back over it.
+pub fn cancel_clipboard_restore() {
+    restore().cancel();
 }
 
 #[tauri::command]
