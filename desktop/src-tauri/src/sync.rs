@@ -169,9 +169,8 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
     crate::telemetry::capture("recording upload paused", "device credential rejected");
     if let Some(app) = crate::ui::wry(app) {
         let message = "Eavesy is signed out. Recordings are kept on this Mac and will upload after you reconnect your account.";
-        // Only over a control with nothing on it: a recording, or words the
-        // user is still reading or editing, stay put. The notification below
-        // and `sync:status` carry the message either way.
+        // Only over a control with nothing on it (`signed_out_may_replace`).
+        // The notification below and `sync:status` carry the message either way.
         crate::hud::set_state_if(
             app,
             crate::hud::HudState {
@@ -191,10 +190,17 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
     }
 }
 
-/// Whether the signed-out notice may take the control's place: only from rest
-/// or another failure, never over a recording or a result being read.
+/// Whether the signed-out notice may take the control's place: only at rest,
+/// never over a recording, words being read, or another failure's message.
+/// Best effort: a notice that can't show then isn't shown later, as the
+/// system notification and `sync:status` already carry it.
 fn signed_out_may_replace(now: &crate::hud::HudState) -> bool {
-    matches!(now.phase, crate::hud::Phase::Idle | crate::hud::Phase::Failed)
+    use crate::hud::Phase;
+    // Every phase named, so a new one has to decide.
+    match now.phase {
+        Phase::Idle => true,
+        Phase::Saved | Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Failed => false,
+    }
 }
 
 pub(crate) fn is_permanent(error: &anyhow::Error) -> bool {
@@ -1151,7 +1157,7 @@ mod tests {
         use crate::hud::{HudState, Phase};
         for (phase, replaces) in [
             (Phase::Idle, true),
-            (Phase::Failed, true),
+            (Phase::Failed, false),
             (Phase::Recording, false),
             (Phase::Transcribing, false),
             (Phase::Done, false),
