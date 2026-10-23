@@ -15,7 +15,6 @@ export const Route = createFileRoute('/api/meeting-bots/')({ server: { handlers:
   POST: async ({ request }) => {
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
-    if (actor.isAnonymous) return Response.json({ error: 'Sign in to send a notetaker' }, { status: 403 });
     const limited = await guardBurst(actor.userId, 'meeting-bot');
     if (limited) return limited;
     // Each bot is a recorded, transcribed and summarized meeting: it spends the processing budget.

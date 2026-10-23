@@ -18,7 +18,23 @@ export const Route = createFileRoute('/api/captures/$id')({
         }
         const capture = await capturesRepo.get(getDb(), { captureId: id, userId: actor.userId });
         if (!capture) return Response.json({ error: 'not found' }, { status: 404 });
-        return Response.json({ ...capture, url: mediaProxyUrl(capture.r2Key) });
+        // Only what the capture page shows; never the R2 key, device or client ids.
+        return Response.json({
+          id: capture.id,
+          kind: capture.kind,
+          captureMode: capture.captureMode,
+          title: capture.title,
+          url: mediaProxyUrl(capture.r2Key),
+          contentType: capture.contentType,
+          bytes: capture.bytes,
+          durationSec: capture.durationSec,
+          width: capture.width,
+          height: capture.height,
+          transcript: capture.transcript,
+          transcriptStatus: capture.transcriptStatus,
+          transcriptError: capture.transcriptError,
+          createdAt: capture.createdAt,
+        });
       },
 
       DELETE: async ({ params }) => {

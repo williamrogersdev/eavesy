@@ -4,6 +4,7 @@ import { audioBase64 } from './base64';
 import { retryLanguage, whisperLanguage } from './language';
 import { isHallucination } from './two-track';
 import { whisperPrompt } from './vocabulary';
+import { isRecord } from '@/lib/json';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -151,10 +152,6 @@ export function mapWhisperResult(
     languageProbability: finiteNumber(info.language_probability),
     durationSec: finiteNumber(info.duration),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function finiteNumber(value: unknown): number | undefined {

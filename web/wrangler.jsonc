@@ -43,13 +43,5 @@
 
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "eavesy-embeddings" }],
 
-  "ai": { "binding": "AI" },
-
-  "vars": {
-    "NEXT_PUBLIC_APP_URL": "http://localhost:3000"
-  },
-
-  "env": {
-    "preview": { "name": "eavesy-preview" }
-  }
+  "ai": { "binding": "AI" }
 }

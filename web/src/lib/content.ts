@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import { isPublished } from "./publication";
+import type { ResourceFamily } from "./resource-families";
 
 export interface PostFrontmatter {
   title: string;
@@ -134,24 +135,7 @@ export function getAllChangelog(): Entry<ChangelogFrontmatter>[] {
   );
 }
 
-export const RESOURCE_FAMILIES = {
-  guides: {
-    title: "Guides",
-    description:
-      "Practical ways to capture, organize, and hand context to your AI with Eavesy.",
-  },
-  templates: {
-    title: "Templates",
-    description:
-      "Copyable Markdown templates for bug reports, decisions, and meeting action items.",
-  },
-  examples: {
-    title: "Examples",
-    description:
-      "Worked examples with downloadable source material and clear steps you can follow.",
-  },
-} as const;
-export type ResourceFamily = keyof typeof RESOURCE_FAMILIES;
+export { RESOURCE_FAMILIES, type ResourceFamily } from "./resource-families";
 export interface ResourceFrontmatter {
   title: string;
   description: string;

@@ -19,7 +19,6 @@ const schema = z.object({
     )
     .min(1)
     .max(40),
-  anonymousSessionToken: z.string().optional(),
 });
 
 export const Route = createFileRoute('/api/meetings/$id/chat')({
@@ -57,7 +56,7 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
           );
         }
 
-        const planUser = actor.isAnonymous ? null : await usersRepo.getById(db, actor.userId);
+        const planUser = await usersRepo.getById(db, actor.userId);
         const plan = resolveModelPlan(planUser);
 
         let reply: string;

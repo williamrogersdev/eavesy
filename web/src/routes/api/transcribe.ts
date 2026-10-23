@@ -9,6 +9,9 @@ import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardSpend, guardUserQuota } from '@/server/rate-limit';
+import { capBody } from '@/lib/http/cap-body';
+
+export { capBody };
 
 // The desktop app still sends whole clips (clip.mp4, or the m4a fallback)
 // unsplit, so uploads up to 100 MB have to keep working until it splits them.
@@ -19,29 +22,6 @@ const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 const MAX_BODY_BYTES = MAX_AUDIO_BYTES + MULTIPART_OVERHEAD_BYTES;
 
 const tooLarge = () => Response.json({ error: 'audio too large' }, { status: 413 });
-
-/**
- * Passes `body` through until it runs past `limit` bytes, then errors, which
- * cancels the upload. `overflowed()` tells that error apart from a bad body.
- */
-export function capBody(body: ReadableStream<Uint8Array>, limit: number) {
-  let total = 0;
-  let overflow = false;
-  const stream = body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        total += chunk.byteLength;
-        if (total > limit) {
-          overflow = true;
-          controller.error(new Error('body too large'));
-        } else {
-          controller.enqueue(chunk);
-        }
-      },
-    }),
-  );
-  return { stream, overflowed: () => overflow };
-}
 
 async function readAudio(request: Request): Promise<Uint8Array | Response> {
   if (!request.body) return Response.json({ error: 'empty audio' }, { status: 400 });
@@ -116,10 +96,9 @@ export const Route = createFileRoute('/api/transcribe')({
             durationSec: result.durationSec ?? null,
           });
         } catch (err) {
-          return Response.json(
-            { error: err instanceof Error ? err.message : 'transcription failed' },
-            { status: 502 },
-          );
+          // Provider errors can carry internal detail; log it, answer plainly.
+          console.error('[transcribe] failed', err);
+          return Response.json({ error: 'transcription failed' }, { status: 502 });
         }
       },
     },

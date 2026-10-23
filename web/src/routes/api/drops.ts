@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { clampLimit } from '@/lib/http/clamp-limit';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { pid } from '@/db/ids';
@@ -29,7 +30,7 @@ export const Route = createFileRoute('/api/drops')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const limit = Math.min(Math.max(Number(new URL(request.url).searchParams.get('limit') ?? '50') || 50, 1), 100);
+        const limit = clampLimit(new URL(request.url).searchParams.get('limit'), 50, 100);
         const rows = await dropsRepo.listForUser(getDb(), { userId: actor.userId, limit });
         return Response.json({ items: rows.map((row) => toDto(row)) });
       },
@@ -41,7 +42,6 @@ export const Route = createFileRoute('/api/drops')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'sign in to send drops' }, { status: 403 });
 
         const declared = Number(request.headers.get('content-length') ?? '0');
         if (declared > MAX_TEXT_BYTES * 1.1) return Response.json({ error: 'text too large' }, { status: 413 });

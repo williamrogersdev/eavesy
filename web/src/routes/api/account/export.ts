@@ -51,10 +51,9 @@ export const Route = createFileRoute('/api/account/export')({
         zip.file('dictionary.json', json(await dictionaryRepo.list(db, actor.userId)));
         zip.file('prompts.json', json(await promptsRepo.list(db, actor.userId)));
 
-        const meetings = await meetingsRepo.listForUser(db, { userId: actor.userId, limit: 10_000 });
-        for (const meeting of meetings) {
-          const full = await meetingsRepo.getFull(db, { meetingId: meeting.id, userId: actor.userId });
-          if (full) addMeetingFolder(zip, zipInputFor(full), 'meetings/');
+        // Fifty meetings per D1 round trip rather than one batch per meeting.
+        for await (const chunk of meetingsRepo.listFullForUser(db, { userId: actor.userId, limit: 10_000 })) {
+          for (const full of chunk) addMeetingFolder(zip, zipInputFor(full), 'meetings/');
         }
 
         const dictations = await dictationsRepo.listForUser(db, { userId: actor.userId, limit: 10_000 });

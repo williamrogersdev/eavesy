@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { clampLimit } from '@/lib/http/clamp-limit';
 import { z } from 'zod';
 import { and, asc, desc, eq, gt, isNull, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
@@ -51,7 +52,7 @@ export const Route = createFileRoute('/api/sessions/')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const search = new URL(request.url).searchParams;
-        const limit = Math.min(Math.max(Number(search.get('limit')) || 50, 1), 200);
+        const limit = clampLimit(search.get('limit'), 50, 200);
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
         const sinceValue = Math.floor(Number(search.get('changedSince')));
         const since = search.has('changedSince') ? (Number.isFinite(sinceValue) ? Math.max(sinceValue, 0) : 0) : null;

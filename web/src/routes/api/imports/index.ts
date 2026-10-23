@@ -17,7 +17,6 @@ export const Route = createFileRoute('/api/imports/')({ server: { handlers: {
   POST: async ({ request }) => {
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
-    if (actor.isAnonymous) return Response.json({ error: 'Sign in to import recordings' }, { status: 403 });
     const quota = await guardUserQuota(actor.userId, 'process');
     if (quota) return quota;
     const limited = await guardSpend(request, 'process', { perMin: 10, perDay: 2000 });

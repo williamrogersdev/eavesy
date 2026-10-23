@@ -13,7 +13,6 @@ export const Route = createFileRoute('/api/library/ask')({ server: { handlers: {
   POST: async ({ request }) => {
     let actor;
     try { actor = await resolveActor(); } catch { return Response.json({ error: 'unauthenticated' }, { status: 401 }); }
-    if (actor.isAnonymous) return Response.json({ error: 'Sign in to ask your library' }, { status: 403 });
     const limited = await guardUserQuota(actor.userId, 'chat');
     if (limited) return limited;
     const env = getCloudflareContext<ProcessingEnv>().env;
