@@ -26,31 +26,34 @@ export async function handleEmbedMeeting(
   // after the edit has finished: every edit in a burst queues one, and the
   // first to run covers them all.
   if (opts.queuedAt !== undefined && (await embeddedSince(db, 'meeting', meetingId, opts.queuedAt))) return;
-  if (opts.queuedAt !== undefined) {
-    const allowed = await consumeRateLimit(env.DB, {
-      key: `embed-refresh:${meetingId}`,
-      limit: EDIT_REINDEX_RUNS_PER_DAY,
-      windowSec: 24 * 60 * 60,
-      failMode: 'closed',
-    });
-    if (!allowed.allowed) {
-      console.warn(JSON.stringify({ message: 'edit re-index skipped: daily cap reached', meetingId }));
-      return;
-    }
+  const cap = { key: `embed-refresh:${meetingId}`, limit: EDIT_REINDEX_RUNS_PER_DAY, windowSec: 24 * 60 * 60, failMode: 'closed' } as const;
+  if (opts.queuedAt !== undefined && !(await consumeRateLimit(env.DB, cap)).allowed) {
+    console.warn(JSON.stringify({ message: 'edit re-index skipped: daily cap reached', meetingId }));
+    return;
   }
-  const readAt = Date.now();
-  const segments = await db
-    .select()
-    .from(transcriptSegments)
-    .where(eq(transcriptSegments.meetingId, meetingId))
-    .orderBy(transcriptSegments.startMs);
-  await replaceEmbeddings(db, env, {
-    userId: meeting.userId,
-    sourceType: 'meeting',
-    sourceId: meeting.id,
-    text: transcriptText(segments, meeting.speakerNamesJson).text,
-    readAt,
-  });
+  try {
+    const readAt = Date.now();
+    const segments = await db
+      .select()
+      .from(transcriptSegments)
+      .where(eq(transcriptSegments.meetingId, meetingId))
+      .orderBy(transcriptSegments.startMs);
+    await replaceEmbeddings(db, env, {
+      userId: meeting.userId,
+      sourceType: 'meeting',
+      sourceId: meeting.id,
+      text: transcriptText(segments, meeting.speakerNamesJson).text,
+      readAt,
+    });
+  } catch (error) {
+    // A run that failed indexed nothing; its retry shouldn't cost a second slot.
+    if (opts.queuedAt !== undefined) {
+      const day = Math.floor(Date.now() / (cap.windowSec * 1000));
+      await env.DB.prepare('UPDATE rate_limits SET count = count - 1 WHERE key = ? AND count > 0')
+        .bind(`${cap.key}:${day}`).run().catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 export async function handleEmbedDictation(dictationId: string, db: Db, env: ProcessingEnv) {
@@ -95,6 +98,10 @@ async function replaceEmbeddings(
     values,
     metadata: { userId: source.userId, sourceType: source.sourceType, sourceId: source.sourceId, chunkIdx },
   }));
+
+  // A run that read the text after this one has already written it: this
+  // one's text is older, so writing it would put stale words back.
+  if (await embeddedSince(db, source.sourceType, source.sourceId, readAt + 1)) return;
 
   // Vectors first. Their ids are stable per chunk, so an upsert replaces them
   // in place, and only chunks past the new end are deleted. The rows, which

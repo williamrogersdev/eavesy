@@ -146,6 +146,25 @@ describe('a burst of edits embeds once', () => {
     // The queue's retry carries the same queuedAt: it must run, not skip.
     await handleEmbedMeeting('meet_retry', db, e, { queuedAt });
     expect(e.vectorize.upsert).toHaveBeenCalledTimes(3);
+    // The failed attempt gave its daily slot back.
+    expect(await row<{ n: number }>("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key LIKE 'embed-refresh:meet_retry:%'")).toEqual({ n: 1 });
+  });
+
+  it('a run that read older text does not overwrite a newer one', async () => {
+    await insertMeeting({ id: 'meet_overlap', userId: USER, status: 'complete' });
+    await addLine('meet_overlap', 'line_1', 'Some words to embed');
+    const db = drizzle(testEnv.DB, { schema });
+    const e = env();
+    const embed = e.ai.run.getMockImplementation()!;
+    // While the first run waits on the model, a newer run reads and writes.
+    e.ai.run.mockImplementationOnce(async (model, input) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await handleEmbedMeeting('meet_overlap', db, e);
+      return embed(model, input);
+    });
+    await handleEmbedMeeting('meet_overlap', db, e);
+    expect(e.ai.run).toHaveBeenCalledTimes(2);
+    expect(e.vectorize.upsert).toHaveBeenCalledTimes(1);
   });
 
   it('caps edit re-index runs per meeting per day', async () => {
