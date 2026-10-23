@@ -406,7 +406,8 @@ const TIMELINE_WRITE_ATTEMPTS = 5;
  * bot never resends what it has sent. A report that loses every attempt is
  * refused (false), so the bot, which retries a 5xx, sends it again. A timeline
  * past `MAX_SPANS` is cut and marked `truncated`, for collection to pass on.
- * A report without `speakersFrom` replaces the whole timeline, flag included.
+ * A report without `speakersFrom` replaces the spans and participants, but
+ * goes through the same check and keeps the flag.
  */
 async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }): Promise<boolean> {
   const spans = parseSpeakerSpans(body.speakers);
@@ -424,22 +425,18 @@ async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: strin
     if (stored && capped !== timeline) console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
     return stored;
   };
-  if (from === undefined) {
-    // The whole timeline: nothing to merge with, so the latest report wins.
-    await put({ speakers: spans, participants });
-    return true;
-  }
-  if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) {
+  if (from !== undefined && (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0)) {
     // Malformed: better to miss this report than to guess what it replaces.
     console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
     return true;
   }
   for (let attempt = 1; attempt <= TIMELINE_WRITE_ATTEMPTS; attempt += 1) {
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
-    const kept = body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
+    // No `speakersFrom`: the whole timeline, which keeps nothing of what is stored (but a cut it made).
+    const kept = from === undefined ? [] : body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
     const written = await put({
       speakers: [...kept, ...spans],
-      participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
+      participants: from === undefined ? participants : [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
       ...(stored.truncated && { truncated: true }),
     }, stored);
     if (written) return true;

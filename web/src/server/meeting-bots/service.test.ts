@@ -466,6 +466,11 @@ describe('collection', () => {
     await collectBotRecording(t.db, t.env, id);
     const row = t.sqlite.query('SELECT speaker_names_json FROM meetings').get() as { speaker_names_json: string };
     expect(JSON.parse(row.speaker_names_json)).toEqual({ speaker_0: 'A', _partialAttributionMs: '499995' });
+
+    // The flag also survives a whole-timeline report from an image from before incremental ones.
+    await event(t, id, { code: 'heartbeat', speakers: [['A', 0, 5]] });
+    const whole = JSON.parse(new TextDecoder().decode(t.objects.get(key))) as { speakers: unknown[]; truncated?: boolean };
+    expect(whole).toMatchObject({ speakers: [['A', 0, 5]], truncated: true });
   });
 
   test('a timeline within the limit is not flagged', async () => {
