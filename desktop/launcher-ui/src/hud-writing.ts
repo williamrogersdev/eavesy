@@ -37,10 +37,16 @@ export function toneRow(written: WrittenAs | null | undefined, prefs: Writing | 
   return { picked, from };
 }
 
-/** Whether `next` is a change at all, and whether making it needs the server. */
+/**
+ * What making `next` the choice does to the words: nothing, when they are
+ * already in that tone (picked, and the tone they went out in); put back as
+ * pasted, when it is the tone they went out in; otherwise a rewrite, even
+ * of the tone shown as picked when the words aren't in it (words that went
+ * out plain under a saved tone).
+ */
 export function needsRewrite(next: Writing, row: { picked: Writing; from: Writing }): 'none' | 'restore' | 'rewrite' {
-  if (sameWriting(next, row.picked)) return 'none';
-  return sameWriting(next, row.from) ? 'restore' : 'rewrite';
+  if (!sameWriting(next, row.from)) return 'rewrite';
+  return sameWriting(next, row.picked) ? 'none' : 'restore';
 }
 
 /**

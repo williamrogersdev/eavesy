@@ -53,6 +53,13 @@ fn account_call_allowed(method: &str, path: &str) -> bool {
     }
 }
 
+/// Whether a call changed something the HUD shows: the account's settings
+/// or a project (either may carry the dictation tone its tone row shows, and
+/// the HUD reads the account again rather than guess which field changed).
+fn reloads_hud(method: &str, path: &str) -> bool {
+    method == "PATCH" && (path == "/api/me" || path.starts_with("/api/projects/"))
+}
+
 /// Reads or changes an account setting or project on eavesy.com as this Mac,
 /// so the panel's Settings edit the same things the website does. The answer
 /// is the endpoint's JSON; an error says why it failed.
@@ -84,8 +91,7 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     if path == "/api/me" && method == "PATCH" {
         crate::vocabulary::refresh(&app);
     }
-    // The account or a project changed (a dictation tone, maybe): the HUD's tone row reads the account again.
-    if method == "PATCH" && (path == "/api/me" || path.starts_with("/api/projects/")) {
+    if reloads_hud(&method, &path) {
         let _ = app.emit_to("hud", "account:changed", ());
     }
     Ok(value)
@@ -268,6 +274,11 @@ mod tests {
         assert!(account_call_allowed("POST", "/api/projects"));
         assert!(account_call_allowed("PATCH", "/api/projects/abc-123"));
         assert!(!account_call_allowed("DELETE", "/api/me"));
+        assert!(reloads_hud("PATCH", "/api/me"));
+        assert!(reloads_hud("PATCH", "/api/projects/proj_1"));
+        assert!(!reloads_hud("GET", "/api/me"));
+        assert!(!reloads_hud("PATCH", "/api/prompts/prompt_1"));
+        assert!(!reloads_hud("POST", "/api/projects"));
         assert!(!account_call_allowed("GET", "/api/account/export"));
         assert!(!account_call_allowed("PATCH", "/api/projects/../me"));
         assert!(!account_call_allowed("DELETE", "/api/projects/"));

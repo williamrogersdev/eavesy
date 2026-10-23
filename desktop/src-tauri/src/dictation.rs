@@ -22,7 +22,10 @@ const PROJECT_WAIT: Duration = Duration::from_secs(1);
 /// words, project), so a tone change can swap them for its rewrite.
 static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
 /// The tone the last dictation's words were written in, when the server
-/// said: the HUD's tone row shows it as what is picked.
+/// said: the HUD's tone row shows it as what is picked. Keyed by session so
+/// that a late delivery for an older session, which overwrites it, can never
+/// be read as the current one's ([`written_as`] filters by id); it is set
+/// right before the Done state that carries it to the HUD.
 static WRITTEN: Mutex<Option<(String, crate::transcribe::Written)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
@@ -298,7 +301,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
 }
 
 /// The tone a dictation's words were written in, while it is the last one
-/// delivered and the server said which.
+/// delivered and the server said which. None for any other session, however
+/// late its delivery was.
 pub fn written_as(session_id: &str) -> Option<crate::transcribe::Written> {
     WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, _)| id == session_id).map(|(_, written)| written.clone())
 }

@@ -957,9 +957,11 @@ function Hud() {
       await within(released, 500);
       if (!wanted()) return;
       const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
-      // Saved through the same queue as a typed correction, so a failure shows
-      // Retry save, and an older unsaved edit can't land on top of the rewrite.
-      // Saved even if the drawer was put away meanwhile: history keeps what's in the app.
+      // The words are in the app now: what follows is bookkeeping that can't
+      // fail the change (a save failure shows Retry save on its own).
+      // Saved through the same queue as a typed correction, so an older
+      // unsaved edit can't land on top of the rewrite, and even if the drawer
+      // was put away meanwhile: history keeps what's in the app.
       const edit: Edit = { sessionId, text, learn: false };
       latestEdit.current = edit; pendingEdit.current = edit;
       void flushEdit();
@@ -968,6 +970,8 @@ function Hud() {
       setCopied(false);
       setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
     } catch (error) {
+      // Only keeping, the rewrite and putting it in place can throw, so the
+      // words are still as they were.
       if (!wanted()) return;
       const outcome = changeOutcome(kept, false);
       setTone((now) => now?.sessionId === sessionId ? outcome.revert ? toneBefore.current : { ...now, busy: false, landed: null } : now);

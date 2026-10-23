@@ -25,8 +25,15 @@ describe('toneRow', () => {
 
 describe('needsRewrite', () => {
   const row = { picked: { style: 'concise', forAgents: false } as const, from: professionalForAi };
-  test('picking what is picked does nothing', () => {
-    expect(needsRewrite({ style: 'concise', forAgents: false }, row)).toBe('none');
+  test('picking what the words are already in does nothing', () => {
+    expect(needsRewrite(professionalForAi, { picked: professionalForAi, from: professionalForAi })).toBe('none');
+  });
+  test('words that went out plain under a saved tone are rewritten when that tone is picked', () => {
+    // The row shows the saved tone; the words aren't in it (toneRow gives from = PLAIN).
+    const plainWords = toneRow(null, professionalForAi, null);
+    expect(needsRewrite(professionalForAi, plainWords)).toBe('rewrite');
+    expect(needsRewrite(PLAIN, plainWords)).toBe('restore');
+    expect(needsRewrite({ style: 'concise', forAgents: false }, row)).toBe('rewrite');
   });
   test('picking the tone the words started in puts them back without the server', () => {
     expect(needsRewrite(professionalForAi, row)).toBe('restore');
