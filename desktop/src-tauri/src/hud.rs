@@ -71,10 +71,14 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
     }
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
     {
-        // An open drawer belongs to the finished dictation it was opened on:
-        // anything else on screen closes it, so it can't reopen by itself later.
+        // An open drawer belongs to the dictation it was opened on. It may be
+        // opened while the words are still being heard or written down (the
+        // live editor), so it survives Recording and Transcribing for that
+        // session; any other session, or a dismissed/saved/failed control,
+        // closes it, so it can't reopen by itself later.
         let mut peek = PEEK.lock().unwrap_or_else(|error| error.into_inner());
-        if state.phase != Phase::Done || peek.is_some() && *peek != state.session_id {
+        let keeps_peek = matches!(state.phase, Phase::Recording | Phase::Transcribing | Phase::Done);
+        if !keeps_peek || peek.is_some() && *peek != state.session_id {
             *peek = None;
         }
     }

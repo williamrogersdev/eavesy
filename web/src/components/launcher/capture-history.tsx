@@ -40,7 +40,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
 import { fillPrompt, matchPrompts, promptsOnly, type SavedPrompt } from '@/lib/prompts';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
@@ -269,13 +269,9 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
   );
 }
 
-type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
 type Version = { tone: Tone; forAgents: boolean };
 
-const TONES: { id: Tone; label: string; hint: string }[] = [
-  { id: 'original', label: 'Original', hint: 'The words as they were saved.' },
-  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
-];
+const TONES = toneChoices('The words as they were saved.');
 
 /**
  * A capture's words in another tone, or shaped as a prompt for an AI. Each

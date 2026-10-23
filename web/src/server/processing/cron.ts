@@ -3,6 +3,7 @@ import * as schema from '@/db/schema';
 import { reportError } from '@/server/observability';
 import { pruneRateLimits } from '@/server/rate-limit-store';
 import { reconcileRecaps } from '@/server/email/recaps';
+import { requeueStaleCollections } from '@/server/meeting-bots/service';
 import { purgeDeleted } from './cleanup';
 import { chunked, D1_IN_LIST_SIZE, sendAll, sendMessages } from './queue-batch';
 import { recoverStaleSegments, sealLegacyKeys } from './recovery';
@@ -38,10 +39,7 @@ export function hourlySweeps(env: ProcessingEnv, now: number): CronStep[] {
     ['fail recordings that never uploaded', () => failRecordingsWithoutAudio(env, now)],
     ['resume stuck summaries', () => resumeStuckSummaries(env, now)],
     ['recover stale segments', () => recoverStaleSegments(env, now)],
-    // ORCHESTRATOR: wire the notetaker's lost-collection sweep in here once the
-    // meeting-bots change lands:
-    //   ['requeue stale bot collections', () => requeueStaleCollections(env)],
-    // with `import { requeueStaleCollections } from '@/server/meeting-bots/service';`
+    ['requeue stale bot collections', () => requeueStaleCollections(env, now)],
     ['reconcile email recaps', () => reconcileRecaps(drizzle(env.DB, { schema }), env, now)],
     ['purge deleted data', () => purgeDeleted(env, now)],
     ['prune rate limits', () => pruneRateLimits(env.DB, now)],

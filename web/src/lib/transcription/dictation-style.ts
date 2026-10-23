@@ -31,6 +31,19 @@ export type DictationStyle = (typeof DICTATION_STYLES)[number]['id'];
 
 export const DEFAULT_DICTATION_STYLE: DictationStyle = 'natural';
 
+/** A rewrite tone the drawer and the history row offer: the words as saved, or any style but the plain one. */
+export type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
+
+export interface ToneChoice { id: Tone; label: string; hint: string }
+
+/** The tone buttons, with the caller's own wording for what "Original" means there. */
+export function toneChoices(originalHint: string): ToneChoice[] {
+  return [
+    { id: 'original', label: 'Original', hint: originalHint },
+    ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
+  ];
+}
+
 export function isDictationStyle(value: unknown): value is DictationStyle {
   return DICTATION_STYLES.some((style) => style.id === value);
 }

@@ -7,7 +7,7 @@ import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { clicksLabel, invoke, NO_MARKING, tauri, useEvent, useMarking, type MarkingState } from './marking';
 import { HELD_PHASES, holdMs, type Receipt } from './hud-hold';
@@ -70,11 +70,7 @@ const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
 /** The drawer's tone buttons: the words as pasted, then each rewrite tone ("As spoken" is the original's). */
-type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
-const TONES: { id: Tone; label: string; hint: string }[] = [
-  { id: 'original', label: 'Original', hint: 'The words as they were first pasted.' },
-  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
-];
+const TONES = toneChoices('The words as they were first pasted.');
 
 /** A finished dictation's tone change: what it's rewritten from, what's picked, and where the rewrite went. */
 interface ToneChange {

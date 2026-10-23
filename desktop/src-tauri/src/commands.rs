@@ -457,8 +457,14 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
 pub fn set_hotkey(app: AppHandle, action: String, accelerator: String, swap: Option<bool>) -> Result<(), HotkeyError> {
     let action = Action::parse(&action)?;
     let result = hotkeys::set_hotkey(&app, action, &accelerator, swap.unwrap_or(false));
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
+}
+
+/// The tray menu and the HUD both show the current shortcuts; tell them.
+fn hotkeys_changed(app: &AppHandle) {
+    crate::tray::refresh(app);
+    let _ = app.emit_to("hud", "hotkeys:changed", ());
 }
 
 #[tauri::command]
@@ -470,14 +476,14 @@ pub fn get_hotkey_defaults() -> hotkeys::Bindings {
 pub fn reset_hotkey(app: AppHandle, action: String, swap: Option<bool>) -> Result<(), HotkeyError> {
     let action = Action::parse(&action)?;
     let result = hotkeys::set_hotkey(&app, action, action.default_accelerator(), swap.unwrap_or(false));
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
 }
 
 #[tauri::command]
 pub fn reset_all_hotkeys(app: AppHandle) -> Result<(), HotkeyError> {
     let result = hotkeys::reset_all(&app);
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
 }
 

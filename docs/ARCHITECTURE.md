@@ -203,7 +203,10 @@ The flow:
    bot forward only (`BOT_STATUS_ORDER`); `in_call_recording` creates the
    meeting (`source = 'bot'`). Each segment becomes a `meeting_segments` row
    and a `transcribe-segment` job, so the transcript and rolling notes are
-   live, as for the Mac. A heartbeat each minute carries who was speaking.
+   live, as for the Mac. A heartbeat each minute, in every phase from
+   launch on, proves the bot is alive; once in the call it also carries the
+   speaking spans since the last report, which the server appends to the
+   stored timeline.
 4. After the call the bot uploads its last segment and sends `done`, which
    queues `collect-bot-recording`. That job waits for the last segments'
    transcription, names each line's speaker from the speaking timeline
@@ -211,7 +214,9 @@ The flow:
 5. Instead of webhooks and a reconcile cron, the Durable Object checks on its
    bot every two minutes and when its container stops (`watchBot`): a
    container that never reported fails after 5 minutes, and a bot silent for
-   10 minutes or whose container died keeps whatever audio arrived.
+   10 minutes (20 while it waits in the lobby) or whose container died keeps
+   whatever audio arrived. A bot stuck in `collecting` is re-queued by the
+   watchdog after 5 minutes and by the hourly sweep after 10.
    "Make it leave" and account deletion reach the container through the
    same binding. Old `recall` rows are failed as `provider_retired`.
 

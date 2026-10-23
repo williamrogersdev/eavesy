@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { liveTranscript, onLiveCaption, onLiveTranscript } from '@/lib/desktop/bridge';
 import { addCaption, EMPTY_RUNNING, liveView, type RunningTranscript, type LiveLine, type LiveRow } from '@/lib/desktop/live-captions';
 
@@ -27,5 +27,5 @@ export function useLiveLines(sessionId: string | null, keep: number): LiveRow[] 
     ]).then((listeners) => { if (disposed) listeners.forEach((off) => off()); else { offs.push(...listeners); reload(); } });
     return () => { disposed = true; offs.forEach((off) => off()); };
   }, [sessionId]);
-  return liveView(lines, [...running.finals, ...Object.values(running.partials)], keep);
+  return useMemo(() => liveView(lines, [...running.finals, ...Object.values(running.partials)], keep), [lines, running, keep]);
 }
