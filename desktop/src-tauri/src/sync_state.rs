@@ -231,6 +231,17 @@ mod tests {
     }
 
     #[test]
+    fn a_last_page_that_is_exactly_full_wraps_on_the_empty_page_after_it() {
+        // Two full pages, then nothing: the walk can't tell the second page
+        // was the last one until the next read comes back empty.
+        let (read, walk) = walk(ListWalk::new(50, true, 50, 20), &[(50, false, false), (50, false, false), (0, false, false)]);
+        assert_eq!(read, [0, 50, 100]);
+        assert!(walk.wrapped);
+        assert_eq!(walk.next_scan_offset, 0);
+        assert!(walk.next().is_none());
+    }
+
+    #[test]
     fn a_page_left_unfinished_is_read_again() {
         let (_, walk) = walk(ListWalk::new(0, true, 50, 20), &[(50, false, false), (50, true, true)]);
         assert_eq!(walk.next_scan_offset, 50);

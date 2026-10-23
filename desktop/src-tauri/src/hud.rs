@@ -41,6 +41,8 @@ impl HudState {
     }
 }
 static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// What the control shows. Written in exactly one place, [`set_state_if`],
+/// under [`TRANSITION`]: that is what lets a check-then-set there be atomic.
 static CURRENT: std::sync::Mutex<Option<HudState>> = std::sync::Mutex::new(None);
 pub fn current() -> HudState {
     CURRENT.lock().unwrap_or_else(|error| error.into_inner()).clone().unwrap_or_else(HudState::idle)
@@ -78,7 +80,7 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
         // closes it, so it can't reopen by itself later.
         let mut peek = PEEK.lock().unwrap_or_else(|error| error.into_inner());
         let keeps_peek = matches!(state.phase, Phase::Recording | Phase::Transcribing | Phase::Done);
-        if !keeps_peek || peek.is_some() && *peek != state.session_id {
+        if !keeps_peek || (peek.is_some() && *peek != state.session_id) {
             *peek = None;
         }
     }
