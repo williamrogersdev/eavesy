@@ -85,7 +85,10 @@ export const Route = createFileRoute('/api/search')({
         try {
           // Query embeddings never go through the credit pilot: without the binding there is no vector to search with.
           const ai = (env as CreditEnv).AI ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
-          if (!ai) return fallback();
+          if (!ai) {
+            console.warn(JSON.stringify({ message: 'semantic search disabled: AI binding missing; using lexical results' }));
+            return fallback();
+          }
           queryVec = (await embedTexts(ai, [q]))[0];
         } catch { console.warn(JSON.stringify({ message: 'semantic search unavailable; using lexical results' })); return fallback(); }
         if (!queryVec) return fallback();
