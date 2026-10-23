@@ -173,3 +173,56 @@ fn failed_and_complete_sessions_are_never_picked() {
     session(&conn, "b", "complete", 2, 0);
     assert!(next_session_on(&conn, 100).unwrap().is_none());
 }
+
+fn edit_state(conn: &Connection, id: &str) -> (i64, i64, i64) {
+    conn.query_row(
+        "SELECT attempts, next_attempt_at, abandoned FROM pending_operations WHERE id=?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_failing_file_edit_backs_off_and_steps_aside_for_later_edits() {
+    let conn = db();
+    enqueue_file_edit_in(&conn, "a", "notes", "first", "h1").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    enqueue_file_edit_in(&conn, "b", "notes", "second", "h2").unwrap();
+    let first = next_file_edit_on(&conn, i64::MAX / 2).unwrap().unwrap();
+    assert_eq!(first.local_session_id, "a");
+
+    mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", 1_000).unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (1, 6_000, 0));
+    // Waiting out its backoff, it does not hold up the next edit.
+    assert_eq!(next_file_edit_on(&conn, 2_000).unwrap().unwrap().local_session_id, "b");
+    mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", 6_000).unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (2, 16_000, 0), "twice as long each time");
+
+    for attempt in 2..FILE_EDIT_MAX_ATTEMPTS {
+        mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", attempt * 1_000_000).unwrap();
+    }
+    let (attempts, next_attempt_at, abandoned) = edit_state(&conn, &first.operation_id);
+    assert_eq!((attempts, abandoned), (FILE_EDIT_MAX_ATTEMPTS, 1), "given up on after the cap");
+    assert!(next_attempt_at - (FILE_EDIT_MAX_ATTEMPTS - 1) * 1_000_000 <= 3_600_000, "at most an hour apart");
+    assert_eq!(next_file_edit_on(&conn, i64::MAX / 2).unwrap().unwrap().local_session_id, "b");
+
+    // A newer edit to the same file starts afresh.
+    enqueue_file_edit_in(&conn, "a", "notes", "third", "h3").unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (0, 0, 0));
+}
+
+#[test]
+fn file_edit_columns_are_added_to_an_older_queue() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(MIGRATIONS_SQL).unwrap();
+    conn.execute(
+        "INSERT INTO pending_operations (id, operation_type, payload_json, created_at, status)
+         VALUES ('file-edit:x:notes', 'file-edit', '{\"operationId\":\"file-edit:x:notes\",\"localSessionId\":\"x\",\"role\":\"notes\",\"contentMd\":\"\",\"contentHash\":\"h\"}', 1, 'failed')",
+        [],
+    )
+    .unwrap();
+    migrate(&conn).unwrap();
+    assert_eq!(edit_state(&conn, "file-edit:x:notes"), (0, 0, 0));
+    assert!(next_file_edit_on(&conn, 0).unwrap().is_some(), "an older failed edit is tried again");
+}

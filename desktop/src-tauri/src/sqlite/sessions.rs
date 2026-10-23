@@ -182,7 +182,7 @@ pub fn mark_complete<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), Str
     if let Some(capture_dir) = capture_dir {
         if let Err(error) = std::fs::remove_dir_all(capture_dir) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("could not remove capture folder {}: {error}", capture_dir.display());
+                tracing::warn!("could not remove a capture folder: {error}");
             }
         }
     }

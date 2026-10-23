@@ -5,16 +5,16 @@
 //! recordings folder like a local capture, without audio. Its id is the cloud
 //! meeting id, so edits to its files sync back to the same meeting.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::store::StoredRecording;
+use crate::sync::sync_state::{deep_walk_due, ListWalk, RetryGate, StateFile};
 use crate::sync::{Api, ResultResponse};
 use crate::{fs_writer, sqlite, store};
 
@@ -33,19 +33,15 @@ const MAX_RETRIES: u32 = 5;
 /// How long a meeting that could not be downloaded or saved is left alone.
 const FAILED_RETRY: Duration = Duration::from_secs(60 * 60);
 
-static STATE_LOCK: Mutex<()> = Mutex::new(());
-static FAILED: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static STATE: StateFile = StateFile::new("cloud_pull.json");
+static FAILED: RetryGate = RetryGate::new(FAILED_RETRY);
 
 fn failed_recently(id: &str) -> bool {
-    FAILED
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .is_some_and(|at| at.elapsed() < FAILED_RETRY)
+    FAILED.failed_recently(id)
 }
 
 fn mark_failed(id: &str) {
-    FAILED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.to_string(), Instant::now());
+    FAILED.mark(id);
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -60,6 +56,10 @@ struct PullState {
     /// read a few pages per pull instead of the newest pages every time.
     #[serde(default)]
     scan_offset: usize,
+    /// When a pull last read the cloud list to its end: the whole list is
+    /// walked once per launch and once a day, the newest pages every pull.
+    #[serde(default)]
+    walked_at: Option<i64>,
     /// The newest change to a meeting already brought into this Mac; `None`
     /// until the first check for edits made on other devices.
     #[serde(default)]
@@ -114,38 +114,12 @@ struct CloudMeetings {
     items: Vec<CloudMeeting>,
 }
 
-fn state_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|dir| dir.join("cloud_pull.json"))
-        .map_err(|error| format!("could not resolve app data dir: {error}"))
-}
-
-fn read_state(path: &Path) -> Result<PullState, String> {
-    match std::fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|error| format!("decode {}: {error}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PullState::default()),
-        Err(error) => Err(format!("read {}: {error}", path.display())),
-    }
-}
-
 fn update_state<R: Runtime>(app: &AppHandle<R>, change: impl FnOnce(&mut PullState)) -> Result<(), String> {
-    let _guard = STATE_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let path = state_path(app)?;
-    let mut state = read_state(&path)?;
-    change(&mut state);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
-    }
-    let raw = serde_json::to_string(&state).map_err(|error| error.to_string())?;
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, raw).map_err(|error| format!("write {}: {error}", temp.display()))?;
-    std::fs::rename(&temp, &path).map_err(|error| format!("replace {}: {error}", path.display()))
+    STATE.update(app, change)
 }
 
 fn load_state<R: Runtime>(app: &AppHandle<R>) -> Result<PullState, String> {
-    let _guard = STATE_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    read_state(&state_path(app)?)
+    STATE.load(app)
 }
 
 /// Whether this history entry was brought in from the cloud (its id is then the cloud meeting id).
@@ -183,18 +157,18 @@ pub fn undismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String>
 
 /// Downloads a few meetings this Mac does not have yet. Returns how many arrived.
 pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
-    let state = load_state(app).map_err(|error| anyhow!(error))?;
-    let mut known: HashSet<String> = store::ids(app).map_err(|error| anyhow!(error))?.into_iter().collect();
-    known.extend(sqlite::remote_meeting_ids(app).map_err(|error| anyhow!(error))?);
-    known.extend(state.dismissed.iter().cloned());
+    let (state, own) = {
+        let app = app.clone();
+        crate::sync::blocking(move || Ok((load_state(&app)?, sqlite::remote_meeting_ids(&app)?))).await?
+    };
+    let own: HashSet<String> = own.into_iter().collect();
+    let now = chrono::Utc::now().timestamp_millis();
 
-    // The newest page first, for meetings recorded since the last pull, then
-    // onward from where the last pull stopped; the end of the list starts over.
-    let resume = state.scan_offset.max(PAGE);
-    let offsets: Vec<usize> = std::iter::once(0).chain((0..MAX_PAGES - 1).map(|page| resume + page * PAGE)).collect();
+    // The newest pages for meetings recorded since the last pull, and once a
+    // day the rest of the list, onward from where the last walk stopped.
+    let mut walk = ListWalk::new(state.scan_offset, deep_walk_due(state.walked_at, now), PAGE, MAX_PAGES);
     let mut wanted = Vec::new();
-    let mut next_offset = state.scan_offset;
-    for (index, &offset) in offsets.iter().enumerate() {
+    while let Some(offset) = walk.next() {
         let response = api
             .client
             .get(api.url(&format!("/api/sessions?limit={PAGE}&offset={offset}")))
@@ -206,27 +180,24 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
             return Err(crate::sync::http_error("list cloud meetings", response).await);
         }
         let listed: CloudMeetings = response.json().await.context("decode cloud meetings")?;
-        let last_page = listed.items.len() < PAGE;
-        wanted.extend(
-            listed
-                .items
-                .into_iter()
-                .filter(|meeting| !known.contains(&meeting.id) && !failed_recently(&meeting.id)),
-        );
-        let enough = wanted.len() >= PER_PULL;
-        // A page this pull did not take everything from is read again next time.
-        next_offset = match (last_page, offset > 0, enough) {
-            (true, _, _) => 0,
-            (false, true, true) => offset,
-            (false, true, false) => offset + PAGE,
-            (false, false, _) => next_offset,
+        let ids: Vec<String> = listed.items.iter().map(|meeting| meeting.id.clone()).collect();
+        let present = {
+            let app = app.clone();
+            crate::sync::blocking(move || store::existing(&app, &ids)).await?
         };
-        if last_page || enough {
-            break;
+        let len = listed.items.len();
+        let mut any_new = false;
+        for meeting in listed.items {
+            let known = present.contains(&meeting.id) || own.contains(&meeting.id) || state.dismissed.contains(&meeting.id);
+            if !known && !failed_recently(&meeting.id) {
+                any_new = true;
+                wanted.push(meeting);
+            }
         }
-        if index == offsets.len() - 1 {
-            eprintln!("cloud pull: read {MAX_PAGES} pages; continuing from offset {} next time", offset + PAGE);
-        }
+        walk.record(len, any_new, wanted.len() >= PER_PULL);
+    }
+    if walk.ran_out() {
+        tracing::info!("cloud pull: read {MAX_PAGES} pages; continuing from offset {} next time", walk.next_scan_offset);
     }
 
     let mut arrived = 0;
@@ -235,7 +206,7 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
             Ok(result) => result,
             Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
             Err(error) => {
-                eprintln!("cloud pull: skipped {}: {error:#}", meeting.id);
+                tracing::warn!(id = %meeting.id, "cloud pull: skipped: {error:#}");
                 mark_failed(&meeting.id);
                 continue;
             }
@@ -251,18 +222,28 @@ pub(crate) async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str,
             Ok(true) => arrived += 1,
             Ok(false) => {}
             Err(error) => {
-                eprintln!("cloud pull: could not save {}: {error:#}", meeting.id);
+                tracing::warn!(id = %meeting.id, "cloud pull: could not save: {error:#}");
                 mark_failed(&meeting.id);
             }
         }
     }
     // Saved once the downloads are done, so a pull cut short reads the same pages again.
-    if next_offset != state.scan_offset {
-        update_state(app, |state| state.scan_offset = next_offset).map_err(|error| anyhow!(error))?;
+    let (next_offset, wrapped) = (walk.next_scan_offset, walk.wrapped);
+    if next_offset != state.scan_offset || wrapped {
+        let app = app.clone();
+        crate::sync::blocking(move || {
+            update_state(&app, |state| {
+                state.scan_offset = next_offset;
+                if wrapped {
+                    state.walked_at = Some(now);
+                }
+            })
+        })
+        .await?;
     }
     if arrived > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {
-            eprintln!("cloud pull: could not announce new meetings: {error}");
+            tracing::warn!("cloud pull: could not announce new meetings: {error}");
         }
     }
     Ok(arrived)
@@ -339,7 +320,7 @@ fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, mut recording: StoredRecord
                 if let Err(error) = update_state(app, |state| {
                     state.pulled.remove(&id);
                 }) {
-                    eprintln!("cloud pull: could not unmark {id} after a failed save: {error}");
+                    tracing::warn!(%id, "cloud pull: could not unmark after a failed save: {error}");
                 }
             })
         });
@@ -383,7 +364,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             }
             Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
             Err(error) => {
-                eprintln!("cloud pull: could not refresh {remote_id} again: {error:#}");
+                tracing::warn!(id = %remote_id, "cloud pull: could not refresh again: {error:#}");
                 mark_failed(&remote_id);
                 update_state(app, |state| {
                     let give_up = state.retry.get_mut(&remote_id).is_some_and(|retry| {
@@ -437,6 +418,8 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
             if download_after.is_none_or(|after| changed_at > after) && !retried.contains(&meeting.id) {
                 if downloads >= PER_PULL {
                     update_cursor(app, &cursor)?;
+                    // Capped, not finished: what changed so far is shown now.
+                    announce_changes(app, updated);
                     return Ok(updated);
                 }
                 let outcome = if failed_recently(&meeting.id) {
@@ -452,7 +435,7 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
                         return Err(error);
                     }
                     Err(error) => {
-                        eprintln!("cloud pull: could not refresh {}, will retry: {error:#}", meeting.id);
+                        tracing::warn!(id = %meeting.id, "cloud pull: could not refresh, will retry: {error:#}");
                         mark_failed(&meeting.id);
                         update_state(app, |state| {
                             state.retry.entry(meeting.id.clone()).or_insert(Retry { local_id: local_id.clone(), attempts: 0 });
@@ -472,15 +455,19 @@ pub(crate) async fn refresh<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &s
         }
     }
     if !finished {
-        eprintln!("cloud pull: read {MAX_PAGES} pages of changes; continuing next time");
+        tracing::info!("cloud pull: read {MAX_PAGES} pages of changes; continuing next time");
     }
     update_cursor(app, &cursor)?;
+    announce_changes(app, updated);
+    Ok(updated)
+}
+
+fn announce_changes<R: Runtime>(app: &AppHandle<R>, updated: usize) {
     if updated > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {
-            eprintln!("cloud pull: could not announce changed meetings: {error}");
+            tracing::warn!("cloud pull: could not announce changed meetings: {error}");
         }
     }
-    Ok(updated)
 }
 
 async fn fetch_and_apply<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, local_id: &str, remote_id: &str) -> Result<bool> {
@@ -558,6 +545,7 @@ fn notes_body(markdown: &str) -> &str {
 mod tests {
     use super::*;
     use sha2::Digest;
+    use std::path::PathBuf;
     use tauri::test::MockRuntime;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1068,7 +1056,7 @@ mod tests {
         assert_eq!(state.changes_after.as_deref(), Some("flaky"));
         assert!(state.retry.contains_key("flaky"));
 
-        FAILED.lock().unwrap().remove("flaky");
+        FAILED.forget("flaky");
         assert_eq!(refresh(handle, &api, "token").await.unwrap(), 1);
         assert_eq!(store::load_all(handle)[0].title, "Fixed");
         assert!(load_state(handle).unwrap().retry.is_empty());

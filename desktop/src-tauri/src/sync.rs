@@ -11,6 +11,10 @@ use tokio::time::sleep;
 
 use crate::{fs_writer, settings, sqlite};
 
+/// State-file helpers shared by `cloud_pull` and `capture_sync`.
+#[path = "sync_state.rs"]
+pub(crate) mod sync_state;
+
 const PART_SIZE: usize = 8 * 1024 * 1024;
 
 pub(crate) fn api_base() -> String {
@@ -157,7 +161,7 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
         return;
     }
     if let Err(error) = app.emit("sync:status", serde_json::json!({ "signedOut": signed_out })) {
-        eprintln!("desktop ingest: could not announce sign-in state: {error}");
+        tracing::warn!("desktop ingest: could not announce sign-in state: {error}");
     }
     if !signed_out {
         return;
@@ -177,19 +181,46 @@ fn set_signed_out<R: Runtime>(app: &AppHandle<R>, signed_out: bool) {
         }
         use tauri_plugin_notification::NotificationExt;
         if let Err(error) = app.notification().builder().title("Sign in to keep syncing").body(message).show() {
-            eprintln!("desktop ingest: could not show sign-in notice: {error}");
+            tracing::warn!("desktop ingest: could not show sign-in notice: {error}");
         }
     }
 }
 
-fn is_permanent(error: &anyhow::Error) -> bool {
+pub(crate) fn is_permanent(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Permanent>().is_some()
         || error
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
 }
 
+fn build_client() -> Result<Client> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .context("build ingest HTTP client")
+}
+
+/// The app's HTTP client, shared so its connections and TLS sessions are
+/// reused. Requests that need a different limit set their own `timeout`.
+#[cfg(not(test))]
+pub(crate) fn http_client() -> Result<Client> {
+    static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = build_client()?;
+    Ok(CLIENT.get_or_init(|| client).clone())
+}
+
+/// Each test runs its own runtime, which a pooled connection must not outlive.
+#[cfg(test)]
+pub(crate) fn http_client() -> Result<Client> {
+    build_client()
+}
+
 /// Where and how the sync loop talks to the server.
+#[derive(Clone)]
 pub(crate) struct Api {
     pub(crate) client: Client,
     base: String,
@@ -197,12 +228,7 @@ pub(crate) struct Api {
 
 impl Api {
     pub(crate) fn new(base: String) -> Result<Self> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .context("build ingest HTTP client")?;
-        Ok(Self { client, base })
+        Ok(Self { client: http_client()?, base })
     }
 
     /// Keeps `slot` pointing at `base`, rebuilding the client when the server changed.
@@ -216,7 +242,7 @@ impl Api {
     }
 
     pub(crate) fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
+        crate::base_url::join(&self.base, path)
     }
 
     /// Cloud transcript changes since `since`.
@@ -278,11 +304,120 @@ pub(crate) fn report_recovery_wait<R:Runtime>(app:&AppHandle<R>,error:&str) {
     }
 }
 
+/// How long the loop must have run for a restart to count as a fresh start.
+const HEALTHY_RUN: Duration = Duration::from_secs(10 * 60);
+/// The longest one screenshot and image sync may run in the background.
+const CAPTURE_SYNC_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// Runs the sync loop for the life of the app. A loop that fails or panics
+/// is started again after a pause, so uploads never stop until a relaunch.
 pub async fn run(app: AppHandle) -> Result<()> {
-    let mut api = Api::new(api_base())?;
+    let mut restarts = 0_u32;
+    loop {
+        let started = Instant::now();
+        let reason = match tokio::spawn(run_loop(app.clone())).await {
+            Ok(Ok(never)) => match never {},
+            Ok(Err(error)) => format!("{error:#}"),
+            Err(error) if error.is_panic() => panic_message(error.into_panic()),
+            // Cancelled: the runtime is shutting down.
+            Err(_) => return Ok(()),
+        };
+        if started.elapsed() >= HEALTHY_RUN {
+            restarts = 0;
+        }
+        let pause = restart_pause(restarts);
+        restarts = restarts.saturating_add(1);
+        tracing::error!(restarts, pause_s = pause.as_secs(), "desktop ingest: the sync loop stopped ({reason}); starting it again");
+        crate::telemetry::capture("sync loop restarted", &reason);
+        sleep(pause).await;
+    }
+}
+
+/// 5 s after the first stop, doubling, at most 5 minutes.
+fn restart_pause(restarts: u32) -> Duration {
+    Duration::from_secs(5_u64 << restarts.min(6)).min(Duration::from_secs(300))
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .map_or_else(|| "panicked".to_string(), |message| format!("panicked: {message}"))
+}
+
+/// Screenshot and image sync, run beside the loop so a large upload never
+/// holds up meetings or dictation.
+#[derive(Default)]
+struct CaptureTask {
+    running: Option<(String, tokio::task::JoinHandle<Result<usize>>)>,
+    next: Option<(String, Instant)>,
+}
+
+/// A loop that stopped takes its capture pass with it, so a restarted loop
+/// never runs two at once.
+impl Drop for CaptureTask {
+    fn drop(&mut self) {
+        if let Some((_, handle)) = self.running.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl CaptureTask {
+    /// Takes the result of a finished run. Returns the token it ran with
+    /// when the server rejected that credential.
+    async fn collect(&mut self) -> Option<String> {
+        if !self.running.as_ref().is_some_and(|(_, handle)| handle.is_finished()) {
+            return None;
+        }
+        let (token, handle) = self.running.take()?;
+        let mut wait = CLOUD_PULL_INTERVAL;
+        let mut rejected = None;
+        match handle.await {
+            // More may be waiting: come back sooner.
+            Ok(Ok(moved)) if moved > 0 => wait = Duration::from_secs(2),
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) if is_unauthorized(&error) => rejected = Some(token.clone()),
+            Ok(Err(error)) => tracing::warn!("capture sync: {error:#}"),
+            Err(error) => tracing::error!("capture sync stopped: {error}"),
+        }
+        self.next = Some((token, Instant::now() + wait));
+        rejected
+    }
+
+    fn start_if_due(&mut self, app: &AppHandle, api: &Api, token: &str) {
+        if self.running.is_some() {
+            return;
+        }
+        if self.next.as_ref().is_some_and(|(last, at)| last == token && Instant::now() < *at) {
+            return;
+        }
+        let root = match crate::fs_writer::recordings_root(app) {
+            Ok(root) => root,
+            Err(error) => {
+                tracing::warn!("capture sync: {error}");
+                self.next = Some((token.to_string(), Instant::now() + CLOUD_PULL_INTERVAL));
+                return;
+            }
+        };
+        let (app, api, task_token) = (app.clone(), api.clone(), token.to_string());
+        let handle = tokio::spawn(async move {
+            match tokio::time::timeout(CAPTURE_SYNC_LIMIT, crate::capture_sync::run(&app, &api, &task_token, &root)).await {
+                Ok(result) => result,
+                Err(_) => Err(anyhow!("gave up after {}s", CAPTURE_SYNC_LIMIT.as_secs())),
+            }
+        });
+        self.running = Some((token.to_string(), handle));
+    }
+}
+
+async fn run_loop(app: AppHandle) -> Result<std::convert::Infallible> {
+    let mut api_slot: Option<Api> = None;
     let mut rejected: Option<(String, Instant)> = None;
     let mut recovery_retried = Instant::now();
     let mut next_pull: Option<(String, Instant)> = None;
+    let mut capture = CaptureTask::default();
 
     loop {
         if let Err(error)=crate::fs_watcher::wait_until_ready(&app).await {
@@ -294,8 +429,12 @@ pub async fn run(app: AppHandle) -> Result<()> {
             recovery_retried = Instant::now();
             let app = app.clone();
             if let Err(error) = tokio::task::spawn_blocking(move || crate::recovery::retry_deferred(&app)).await {
-                eprintln!("desktop ingest: deferred recovery stopped: {error}");
+                tracing::warn!("desktop ingest: deferred recovery stopped: {error}");
             }
+        }
+        if let Some(rejected_token) = capture.collect().await {
+            set_signed_out(&app, true);
+            rejected = Some((rejected_token, Instant::now()));
         }
         let Some(credential) = settings::device_credential(&app) else {
             idle(Duration::from_secs(5)).await;
@@ -304,9 +443,7 @@ pub async fn run(app: AppHandle) -> Result<()> {
         let token = credential.token;
         // The token only goes to the server that issued it: rebuild the client when
         // the configured server (and with it the credential) changes while running.
-        if api.base != credential.base {
-            api = Api::new(credential.base)?;
-        }
+        let api = Api::ensure(&mut api_slot, &credential.base)?.clone();
         if let Some((rejected_token, since)) = &rejected {
             if *rejected_token == token && since.elapsed() < SIGNED_OUT_RETRY {
                 idle(Duration::from_secs(5)).await;
@@ -332,36 +469,31 @@ pub async fn run(app: AppHandle) -> Result<()> {
                                 Ok(Ok(arrived)) if arrived > 0 => wait = Duration::from_secs(2),
                                 Ok(Ok(_)) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::cloud_pull::refresh(&app, &api, &token)).await {
                                     Ok(Ok(changed)) if changed > 0 => wait = Duration::from_secs(2),
-                                    // Meetings are current: share screenshots and images both ways.
-                                    Ok(Ok(_)) => match tokio::time::timeout(CLOUD_PULL_LIMIT, crate::capture_sync::run(&app, &api, &token, &root)).await {
-                                        Ok(Ok(moved)) if moved > 0 => wait = Duration::from_secs(2),
-                                        Ok(Ok(_)) => {}
-                                        Ok(Err(error)) if is_unauthorized(&error) => {
-                                            set_signed_out(&app, true);
-                                            rejected = Some((token.clone(), Instant::now()));
-                                        }
-                                        Ok(Err(error)) => eprintln!("capture sync: {error:#}"),
-                                        Err(_) => eprintln!("capture sync: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
-                                    },
+                                    Ok(Ok(_)) => {}
                                     Ok(Err(error)) if is_unauthorized(&error) => {
                                         set_signed_out(&app, true);
                                         rejected = Some((token.clone(), Instant::now()));
                                     }
-                                    Ok(Err(error)) => eprintln!("cloud pull: {error:#}"),
-                                    Err(_) => eprintln!("cloud pull: gave up on changes after {}s", CLOUD_PULL_LIMIT.as_secs()),
+                                    Ok(Err(error)) => tracing::warn!("cloud pull: {error:#}"),
+                                    Err(_) => tracing::warn!("cloud pull: gave up on changes after {}s", CLOUD_PULL_LIMIT.as_secs()),
                                 },
                                 Ok(Err(error)) if is_unauthorized(&error) => {
                                     set_signed_out(&app, true);
                                     rejected = Some((token.clone(), Instant::now()));
                                 }
-                                Ok(Err(error)) => eprintln!("cloud pull: {error:#}"),
+                                Ok(Err(error)) => tracing::warn!("cloud pull: {error:#}"),
                                 // Dropping the pull mid-flight can leave a save running on
                                 // the blocking pool; save() is safe alongside the next pull.
-                                Err(_) => eprintln!("cloud pull: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
+                                Err(_) => tracing::warn!("cloud pull: gave up after {}s", CLOUD_PULL_LIMIT.as_secs()),
                             },
-                            Err(error) => eprintln!("cloud pull: {error}"),
+                            Err(error) => tracing::warn!("cloud pull: {error}"),
                         }
                         next_pull = Some((token.clone(), Instant::now() + wait));
+                    }
+                    // Screenshots and images go both ways in their own task, started
+                    // only while nothing more urgent is waiting.
+                    if rejected.is_none() {
+                        capture.start_if_due(&app, &api, &token);
                     }
                     idle(idle_pause()).await;
                 } else {
@@ -379,7 +511,7 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
         Ok(true) => return Pass::Busy,
         Ok(false) => {}
         Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
-        Err(error) => eprintln!("desktop file edit sync: {error:#}"),
+        Err(error) => tracing::warn!("desktop file edit sync: {error:#}"),
     }
     let next = {
         let app = app.clone();
@@ -389,7 +521,7 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
         Ok(Some(session)) => session,
         Ok(None) => return Pass::Idle,
         Err(error) => {
-            eprintln!("desktop ingest: {error}");
+            tracing::warn!("desktop ingest: {error}");
             return Pass::Idle;
         }
     };
@@ -397,6 +529,10 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
     let outcome = sync_session(app, api, token, session.clone()).await;
     let recorded = match outcome {
         Ok(Step::Progressed) => Ok(()),
+        Ok(Step::Soon(delay_ms)) => {
+            FAST_UNTIL_MS.fetch_max(chrono::Utc::now().timestamp_millis() + delay_ms * 2, Ordering::Relaxed);
+            sqlite::defer_session(app, &session.id, delay_ms, None)
+        }
         Ok(Step::Waiting) => {
             let now = chrono::Utc::now().timestamp_millis();
             let interval = poll_interval_ms(&session.status, session.ended_at, now);
@@ -407,59 +543,88 @@ pub(crate) async fn pass<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str)
         }
         Err(error) if is_unauthorized(&error) => return Pass::SignedOut,
         Err(error) if is_permanent(&error) => {
-            eprintln!("desktop ingest: giving up on {}: {error:#}", session.id);
+            tracing::warn!("desktop ingest: giving up on {}: {error:#}", session.id);
             crate::telemetry::capture("recording upload gave up", &format!("{error:#}"));
             sqlite::mark_session_failed(app, &session.id, &format!("{error:#}"))
                 .and_then(|()| crate::store::set_status(app, &session.id, "transcript_failed"))
                 .map(|()| {
                     if let Err(error) = app.emit("recordings:updated", ()) {
-                        eprintln!("desktop ingest: could not announce failed upload: {error}");
+                        tracing::warn!("desktop ingest: could not announce failed upload: {error}");
                     }
                 })
         }
         Err(error) => {
-            eprintln!("desktop ingest paused for {}: {error:#}", session.id);
+            tracing::warn!("desktop ingest paused for {}: {error:#}", session.id);
             sqlite::defer_session(app, &session.id, ERROR_BACKOFF_MS, Some(&format!("{error:#}")))
         }
     };
     if let Err(error) = recorded {
         // The session stays where it was and is retried; say so instead of hiding it.
-        eprintln!("desktop ingest: could not record the outcome for {}: {error}", session.id);
+        tracing::warn!("desktop ingest: could not record the outcome for {}: {error}", session.id);
         crate::telemetry::capture("recording sync state not saved", &error);
         return Pass::Idle;
     }
     Pass::Busy
 }
 
+/// How long an edit waits for its recording's cloud meeting to be created.
+const FILE_EDIT_WAIT_MS: i64 = 30_000;
+
+/// Sends the oldest due edit made to a recording's files. Returns whether
+/// there was one to handle.
 async fn sync_file_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<bool> {
-    if let Some(edit) = sqlite::next_file_edit(app).map_err(|error| anyhow!(error))? {
-        let remote_id = sqlite::remote_meeting_id(app, &edit.local_session_id)
-            .map_err(|error| anyhow!(error))?
-            .or_else(|| crate::cloud_pull::is_pulled(app, &edit.local_session_id).then(|| edit.local_session_id.clone()));
-        if let Some(remote_id) = remote_id {
-            let result = upload_file_edit(api, token, &remote_id, &edit).await;
-            match result {
-                // Adopted before the edit is marked done: if that fails, the
-                // edit is sent again (the upload is idempotent) and retried.
-                Ok(()) => {
-                    sqlite::adopt_uploaded_edit(app, &edit.local_session_id, &edit.role, &edit.content_hash)
-                        .map_err(|error| anyhow!(error))?;
-                    sqlite::mark_operation_done(app, &edit.operation_id).map_err(|error| anyhow!(error))?;
-                }
-                Err(error) => {
-                    sqlite::mark_operation_failed(app, &edit.operation_id, &error.to_string())
-                        .map_err(|db_error| anyhow!(db_error))?;
-                    return Err(error);
-                }
-            }
+    let Some(edit) = sqlite::next_file_edit(app).map_err(|error| anyhow!(error))? else {
+        return Ok(false);
+    };
+    let home = sqlite::session_cloud_home(app, &edit.local_session_id).map_err(|error| anyhow!(error))?;
+    let remote_id = match home {
+        Some((Some(remote_id), _)) => remote_id,
+        // Its cloud meeting is still to be created: ask again in a while.
+        Some((None, status)) if status != "failed" => {
+            sqlite::defer_operation(app, &edit.operation_id, FILE_EDIT_WAIT_MS).map_err(|error| anyhow!(error))?;
             return Ok(true);
         }
+        _ if crate::cloud_pull::is_pulled(app, &edit.local_session_id) => edit.local_session_id.clone(),
+        _ => {
+            tracing::info!(id = %edit.local_session_id, role = %edit.role, "desktop file edit sync: no cloud copy of this recording; keeping the edit on this Mac");
+            sqlite::abandon_operation(app, &edit.operation_id, "this recording has no copy in the cloud")
+                .map_err(|error| anyhow!(error))?;
+            return Ok(true);
+        }
+    };
+    match upload_file_edit(api, token, &remote_id, &edit).await {
+        // Adopted before the edit is marked done: if that fails, the
+        // edit is sent again (the upload is idempotent) and retried.
+        Ok(()) => {
+            sqlite::adopt_uploaded_edit(app, &edit.local_session_id, &edit.role, &edit.content_hash)
+                .map_err(|error| anyhow!(error))?;
+            sqlite::mark_operation_done(app, &edit.operation_id).map_err(|error| anyhow!(error))?;
+        }
+        // Signed out: not counted against the edit.
+        Err(error) if is_unauthorized(&error) => return Err(error),
+        Err(error) if is_permanent(&error) => {
+            tracing::warn!(id = %edit.local_session_id, role = %edit.role, "desktop file edit sync: the cloud will not take this edit: {error:#}");
+            crate::telemetry::capture("file edit sync gave up", &format!("{error:#}"));
+            sqlite::abandon_operation(app, &edit.operation_id, &format!("{error:#}")).map_err(|error| anyhow!(error))?;
+        }
+        Err(error) => {
+            sqlite::mark_operation_failed(app, &edit.operation_id, &format!("{error:#}"))
+                .map_err(|db_error| anyhow!(db_error))?;
+            return Err(error);
+        }
     }
-
-    Ok(false)
+    Ok(true)
 }
 
-enum Step { Progressed, Waiting }
+enum Step {
+    Progressed,
+    Waiting,
+    /// Try again after this many milliseconds.
+    Soon(i64),
+}
+
+/// How long a new cloud session waits, at a time, for its project to be known.
+const PROJECT_WAIT_MS: i64 = 250;
 
 fn session_body(session: &sqlite::PendingSession) -> serde_json::Value {
     let mut body = serde_json::json!({
@@ -480,6 +645,11 @@ async fn sync_session<R: Runtime>(
     mut session: sqlite::PendingSession,
 ) -> Result<Step> {
     if session.remote_meeting_id.is_none() {
+        // A dictation's project is read from the app in front just after it
+        // starts, and a cloud session cannot change project later: wait for it.
+        if session.project_id.is_none() && crate::projects::resolving(&session.id) {
+            return Ok(Step::Soon(PROJECT_WAIT_MS));
+        }
         let response = api
             .client
             .post(api.url("/api/sessions"))
@@ -515,7 +685,7 @@ async fn sync_session<R: Runtime>(
         match upload_segment(api, token, &remote_id, &segment).await {
             Ok(()) => sqlite::mark_segment_uploaded(app, &segment).map_err(|e| anyhow!(e))?,
             Err(error) if is_permanent(&error) => {
-                eprintln!("desktop ingest: skipping segment {}: {error:#}", segment.idx);
+                tracing::warn!("desktop ingest: skipping segment {}: {error:#}", segment.idx);
                 crate::telemetry::capture("segment upload gave up", &format!("{error:#}"));
                 sqlite::give_up_segment(app, &segment, &format!("{error:#}"))
                     .map_err(|e| anyhow!(e))?;
@@ -539,7 +709,7 @@ async fn sync_session<R: Runtime>(
     }
 
     if !session.archive_missing && !crate::recovery::archive_is_playable(&session.archive_path) {
-        eprintln!(
+        tracing::warn!(
             "desktop ingest: archive for {} is missing or unfinished; finishing from segments",
             session.id
         );
@@ -630,7 +800,7 @@ async fn poll_result<R: Runtime>(
     .await?;
     if changed {
         if let Err(error) = app.emit("recordings:updated", ()) {
-            eprintln!("desktop ingest: could not announce refreshed transcript: {error}");
+            tracing::warn!("desktop ingest: could not announce refreshed transcript: {error}");
         }
     }
     if transcript_final {
@@ -644,13 +814,11 @@ async fn poll_result<R: Runtime>(
             };
             // Both are no-ops once done: the paste is taken once, and the HUD
             // only moves on from a stopped recording that is not already Done.
+            // Read before `deliver`, which takes the paste target.
+            let armed = crate::dictation::is_armed(&session.id);
             crate::dictation::deliver(app, &session.id, &spoken);
-            let current = crate::hud::current();
-            if current.session_id.as_deref() == Some(session.id.as_str())
-                && !matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Done)
-            {
-                let message = (!spoken.trim().is_empty()).then(|| spoken.trim().to_string());
-                crate::hud::set_state(app, crate::hud::HudState { phase: crate::hud::Phase::Done, session_id: Some(session.id.clone()), mode: None, started_at_ms: None, message, notice: None });
+            if let Some(state) = finished_hud(&crate::hud::current(), &session.id, armed, &spoken) {
+                crate::hud::set_state(app, state);
             }
         }
     }
@@ -665,13 +833,36 @@ async fn poll_result<R: Runtime>(
             );
         }
         if let Err(error) = sqlite::with_open(app, |conn| crate::live_transcript::forget(conn, &session.id)).and_then(|r| r) {
-            eprintln!("desktop ingest: {error}");
+            tracing::warn!("desktop ingest: {error}");
         }
     } else if result.status == "failed" {
         return Err(anyhow!(Permanent("the cloud could not process this recording".to_string())));
     }
     Ok(())
 }
+
+/// What the HUD says a stopped recording became once its transcript is
+/// final. Only while it is still writing this recording down: never over a
+/// pill the user put away (Idle), a saved note, a failure or another
+/// recording. A recording armed to paste is pasted; any other one is saved
+/// to History, and the pill says that rather than "Pasted".
+fn finished_hud(current: &crate::hud::HudState, session_id: &str, armed: bool, spoken: &str) -> Option<crate::hud::HudState> {
+    if current.phase != crate::hud::Phase::Transcribing || current.session_id.as_deref() != Some(session_id) {
+        return None;
+    }
+    let words = spoken.trim();
+    Some(crate::hud::HudState {
+        phase: if armed { crate::hud::Phase::Done } else { crate::hud::Phase::Saved },
+        session_id: Some(session_id.to_string()),
+        mode: Some("audio".to_string()),
+        started_at_ms: None,
+        message: (armed && !words.is_empty()).then(|| words.to_string()),
+        notice: (!armed).then(|| SAVED_NOT_PASTED.to_string()),
+    })
+}
+
+/// The notice of a recording whose words were saved but not pasted.
+const SAVED_NOT_PASTED: &str = "Saved. The words are in History";
 
 async fn upload_file_edit(
     api: &Api,
@@ -832,7 +1023,7 @@ async fn finalize_from_segments<R: Runtime>(
         // is not this recording's fault: wait for the server to be updated rather
         // than failing it, so the desktop and server can ship in either order.
         let error = http_error("finish recording from its segments", response).await;
-        eprintln!("desktop ingest: server cannot finish {} from segments yet: {error:#}", session.id);
+        tracing::warn!("desktop ingest: server cannot finish {} from segments yet: {error:#}", session.id);
         sqlite::defer_session(app, &session.id, SEGMENTS_ONLY_RETRY_MS, Some(&format!("{error:#}")))
             .map_err(|e| anyhow!(e))?;
         return Ok(());
@@ -1117,6 +1308,22 @@ mod tests {
             async fn pass(&self) -> Pass {
                 pass(self.handle(), &self.api, TOKEN).await
             }
+
+            fn queue_edit(&self, id: &str) {
+                sqlite::with_conn(self.handle(), |conn| sqlite::enqueue_file_edit_in(conn, id, "notes", "Edited", "hash"))
+                    .unwrap();
+            }
+
+            fn edit_row(&self, id: &str) -> (i64, i64) {
+                sqlite::with_conn(self.handle(), |conn| {
+                    conn.query_row(
+                        "SELECT attempts, abandoned FROM pending_operations WHERE id=?1",
+                        [format!("file-edit:{id}:notes")],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap()
+                })
+            }
         }
 
         impl Drop for Harness {
@@ -1343,6 +1550,68 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn an_edit_with_no_cloud_copy_is_given_up_without_holding_up_the_next() {
+            let harness = Harness::new().await;
+            // A screen recording: never an upload session, never pulled.
+            harness.queue_edit("screen");
+            std::thread::sleep(Duration::from_millis(2));
+            harness.session("meeting", "uploading", 0);
+            sqlite::mark_complete(harness.handle(), "meeting").unwrap();
+            harness.queue_edit("meeting");
+            Mock::given(method("PATCH"))
+                .and(path("/api/sessions/remote-meeting/files"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.edit_row("screen"), (0, 1));
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert!(sqlite::next_file_edit(harness.handle()).unwrap().is_none());
+        }
+
+        #[tokio::test]
+        async fn an_edit_the_cloud_refuses_is_given_up_and_a_401_is_not_counted() {
+            let harness = Harness::new().await;
+            harness.session("gone", "uploading", 0);
+            sqlite::mark_complete(harness.handle(), "gone").unwrap();
+            harness.queue_edit("gone");
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(401))
+                .up_to_n_times(1)
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "not_found" })))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::SignedOut);
+            assert_eq!(harness.edit_row("gone"), (0, 0), "signed out: nothing counted");
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.edit_row("gone"), (0, 1), "the meeting was deleted on the web");
+            assert!(sqlite::next_file_edit(harness.handle()).unwrap().is_none());
+        }
+
+        #[tokio::test]
+        async fn a_failing_edit_waits_before_it_is_sent_again() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "uploading", 0);
+            sqlite::mark_complete(harness.handle(), "meeting").unwrap();
+            harness.queue_edit("meeting");
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(503))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            harness.pass().await;
+            assert_eq!(harness.edit_row("meeting"), (1, 0));
+            assert!(sqlite::next_file_edit(harness.handle()).unwrap().is_none(), "backing off");
+        }
+
+        #[tokio::test]
         async fn a_server_error_defers_the_session_and_keeps_the_segment() {
             let harness = Harness::new().await;
             harness.session("meeting", "recording", 1);
@@ -1356,6 +1625,47 @@ mod tests {
             // Deferred: nothing else is due until the backoff passes.
             assert_eq!(harness.pass().await, Pass::Idle);
         }
+    }
+
+    fn hud(phase: crate::hud::Phase, session_id: Option<&str>) -> crate::hud::HudState {
+        crate::hud::HudState {
+            phase,
+            session_id: session_id.map(str::to_string),
+            mode: None,
+            started_at_ms: None,
+            message: None,
+            notice: None,
+        }
+    }
+
+    #[test]
+    fn a_final_transcript_only_finishes_a_pill_still_writing_it_down() {
+        use crate::hud::Phase;
+        // Put away (Idle), saved, failed, done, or another recording: left alone.
+        for phase in [Phase::Idle, Phase::Saved, Phase::Failed, Phase::Done, Phase::Recording] {
+            assert!(finished_hud(&hud(phase, Some("s")), "s", true, "Hello").is_none());
+        }
+        assert!(finished_hud(&hud(Phase::Transcribing, Some("other")), "s", true, "Hello").is_none());
+
+        let pasted = finished_hud(&hud(Phase::Transcribing, Some("s")), "s", true, " Hello ").unwrap();
+        assert!(pasted.phase == Phase::Done);
+        assert_eq!(pasted.mode.as_deref(), Some("audio"));
+        assert_eq!(pasted.message.as_deref(), Some("Hello"));
+        assert!(pasted.notice.is_none());
+
+        // Nothing was going to paste it: it says it is saved, never "Pasted".
+        let saved = finished_hud(&hud(Phase::Transcribing, Some("s")), "s", false, "Hello").unwrap();
+        assert!(saved.phase == Phase::Saved);
+        assert_eq!(saved.mode.as_deref(), Some("audio"));
+        assert_eq!(saved.notice.as_deref(), Some(SAVED_NOT_PASTED));
+    }
+
+    #[test]
+    fn a_stopped_loop_restarts_sooner_then_later() {
+        assert_eq!(restart_pause(0), Duration::from_secs(5));
+        assert_eq!(restart_pause(1), Duration::from_secs(10));
+        assert_eq!(restart_pause(20), Duration::from_secs(300));
+        assert_eq!(panic_message(Box::new("boom")), "panicked: boom");
     }
 
     #[test]

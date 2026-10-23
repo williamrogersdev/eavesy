@@ -88,8 +88,25 @@ pub fn locations<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<(String, Option<S
 pub fn folders<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<(String, String)>, String> {
     history(app)?.folders()
 }
+/// Which of `ids` are in the history.
+#[cfg(test)]
 pub fn ids<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
     history(app)?.ids()
+}
+pub fn existing<R: Runtime>(app: &AppHandle<R>, ids: &[String]) -> Result<std::collections::HashSet<String>, String> {
+    history(app)?.existing(ids)
+}
+/// Screenshots and images added after history row `after`, as (row, id).
+pub fn images_after<R: Runtime>(app: &AppHandle<R>, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
+    history(app)?.images_after(after, limit)
+}
+/// Every screenshot and image at or before history row `upto`.
+pub fn images_upto<R: Runtime>(app: &AppHandle<R>, upto: i64) -> Result<Vec<String>, String> {
+    history(app)?.images_upto(upto)
+}
+/// The newest history row.
+pub fn last_row<R: Runtime>(app: &AppHandle<R>) -> Result<i64, String> {
+    history(app)?.last_row()
 }
 pub fn by_folder<R: Runtime>(
     app: &AppHandle<R>,
@@ -347,9 +364,14 @@ fn save_transcript<R: Runtime>(
     let hash = hex::encode(Sha256::digest(content.as_bytes()));
     let mut recording = previous.clone();
     recording.transcript = Some(content.to_string());
+    // Read before the database lock: an edit only goes to the cloud for a
+    // recording that has a copy there (this Mac uploads it, or it came from there).
+    let pulled = crate::cloud_pull::is_pulled(app, id);
     let saved = crate::sqlite::with_open_mut(app, |conn| -> Result<(), String> {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        crate::sqlite::enqueue_file_edit_in(&tx, id, "transcript", content, &hash)?;
+        if pulled || crate::sqlite::has_session_in(&tx, id)? {
+            crate::sqlite::enqueue_file_edit_in(&tx, id, "transcript", content, &hash)?;
+        }
         crate::sqlite::record_file_observation_in(&tx, &path, id, "transcript", &hash)?;
         tx.execute(
             "UPDATE filesystem_state SET last_written_hash=NULL WHERE file_path=?1",
@@ -553,6 +575,36 @@ mod persistence_tests {
         context.config_mut().identifier = root.to_string_lossy().into_owned();
         tauri::test::mock_builder().build(context).unwrap()
     }
+    /// An upload session for the recording, so its edits go to the cloud.
+    fn uploaded_here<R: Runtime>(app: &AppHandle<R>, id: &str) {
+        crate::sqlite::with_conn(app, |conn| {
+            conn.execute(
+                "INSERT INTO recording_sessions (id, archive_path, source, title, started_at, status, updated_at)
+                 VALUES (?1, '/tmp/a.m4a', 'mixed', 't', 1, 'complete', 0)",
+                [id],
+            )
+            .unwrap()
+        });
+    }
+
+    #[test]
+    fn a_correction_to_a_recording_with_no_cloud_copy_is_not_queued() {
+        let root = std::env::temp_dir().join(format!("eavesy-local-only-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        crate::sqlite::initialize(app.handle()).unwrap();
+        let mut rec = recording("screen".into());
+        rec.transcript = Some("Words.".into());
+        rec.folder_path = Some(root.to_string_lossy().into_owned());
+        append(app.handle(), rec).unwrap();
+        save_preview_transcript(app.handle(), "screen", "Better words.").unwrap();
+        assert_eq!(get(app.handle(), "screen").unwrap().unwrap().transcript.as_deref(), Some("Better words."));
+        assert!(crate::sqlite::next_file_edit(app.handle()).unwrap().is_none(), "a screen recording never reaches the cloud");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn recording(id: String) -> StoredRecording {
         StoredRecording {
             id,
@@ -765,6 +817,7 @@ mod persistence_tests {
         rec.transcript = Some("Open a pool request.".into());
         rec.folder_path = Some(root.to_string_lossy().into_owned());
         append(app.handle(), rec).unwrap();
+        uploaded_here(app.handle(), "correction");
         correct_transcript(app.handle(), "correction", "stale", "wrong").unwrap_err();
         std::fs::write(root.join("transcript.md"), "Open a pool request.").unwrap();
         crate::sqlite::with_open(app.handle(), |conn| conn.execute_batch(
@@ -861,6 +914,7 @@ mod persistence_tests {
         rec.folder_path = Some(folder.to_string_lossy().into_owned());
         rec.transcript = Some("Check the tickets".into());
         append(app, rec.clone()).unwrap();
+        uploaded_here(app, &id);
         crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &rec, None, None).unwrap();
         crate::live_edit::update(&id, "Check the tickets".into(), "Review the tickets".into(), 1).unwrap();
         set_transcript(app, &id, Some("Check the tickets that arrived overnight.".into()), "processing").unwrap();
@@ -894,6 +948,7 @@ mod persistence_tests {
         recording.folder_path = Some(folder.to_string_lossy().into_owned());
         recording.transcript = Some("Original transcript".into());
         append(app, recording.clone()).unwrap();
+        uploaded_here(app, "edited");
         crate::fs_writer::persist_recording_artifacts(Some(app), &folder, &recording, None, None)
             .unwrap();
         let data = app.path().app_data_dir().unwrap();
