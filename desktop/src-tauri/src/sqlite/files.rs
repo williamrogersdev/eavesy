@@ -17,6 +17,13 @@ pub struct PendingFileEdit {
     pub content_hash: String,
 }
 
+/// An edit that keeps failing is retried this many times, five seconds after
+/// the first failure and twice as long after each one (at most an hour).
+pub const FILE_EDIT_MAX_ATTEMPTS: i64 = 20;
+
+/// Queues an edit for the cloud, if the recording has a copy there (or will):
+/// one this Mac uploads, or one brought in from the cloud. An edit to anything
+/// else, such as a screen recording, would never be taken.
 pub fn enqueue_file_edit<R: Runtime>(
     app: &AppHandle<R>,
     local_session_id: &str,
@@ -24,7 +31,20 @@ pub fn enqueue_file_edit<R: Runtime>(
     content_md: &str,
     content_hash: &str,
 ) -> Result<(), String> {
-    enqueue_file_edit_in(&*open(app)?, local_session_id, role, content_md, content_hash)
+    let pulled = crate::cloud_pull::is_pulled(app, local_session_id);
+    let conn = open(app)?;
+    if !pulled && !has_session_in(&conn, local_session_id)? {
+        return Ok(());
+    }
+    enqueue_file_edit_in(&conn, local_session_id, role, content_md, content_hash)
+}
+
+/// Whether this Mac has an upload session for the recording.
+pub(crate) fn has_session_in(conn: &Connection, local_session_id: &str) -> Result<bool, String> {
+    conn.query_row("SELECT 1 FROM recording_sessions WHERE id=?1", params![local_session_id], |_| Ok(()))
+        .optional()
+        .map(|found| found.is_some())
+        .map_err(|error| format!("look up recording session: {error}"))
 }
 
 pub(crate) fn enqueue_file_edit_in(
@@ -51,22 +71,30 @@ pub(crate) fn enqueue_file_edit_in(
                last_attempt_at=NULL,
                last_error=NULL,
                created_at=excluded.created_at,
-               status='pending'",
+               status='pending',
+               next_attempt_at=0,
+               abandoned=0",
             params![operation_id, payload, now],
         )
         .map_err(|error| format!("queue external file edit: {error}"))?;
     Ok(())
 }
 
+/// The oldest edit that is due. One waiting or given up on never holds up the rest.
 pub fn next_file_edit<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<Option<PendingFileEdit>, String> {
-    let raw = open(app)?
+    next_file_edit_on(&*open(app)?, chrono::Utc::now().timestamp_millis())
+}
+
+pub(crate) fn next_file_edit_on(conn: &Connection, now: i64) -> Result<Option<PendingFileEdit>, String> {
+    let raw = conn
         .query_row(
             "SELECT payload_json FROM pending_operations
              WHERE operation_type='file-edit' AND status IN ('pending','failed')
+               AND abandoned=0 AND next_attempt_at <= ?1
              ORDER BY created_at LIMIT 1",
-            [],
+            params![now],
             |row| row.get::<_, String>(0),
         )
         .optional()
@@ -76,6 +104,22 @@ pub fn next_file_edit<R: Runtime>(
             .map_err(|error| format!("decode external file edit queue: {error}"))
     })
     .transpose()
+}
+
+/// The cloud meeting of a recording this Mac uploads, if it has one yet, and
+/// its upload status; `None` when this Mac never had an upload session for it.
+pub fn session_cloud_home<R: Runtime>(
+    app: &AppHandle<R>,
+    local_session_id: &str,
+) -> Result<Option<(Option<String>, String)>, String> {
+    open(app)?
+        .query_row(
+            "SELECT remote_meeting_id, status FROM recording_sessions WHERE id=?1",
+            params![local_session_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("resolve cloud meeting for external edit: {error}"))
 }
 
 pub fn remote_meeting_id<R: Runtime>(app: &AppHandle<R>, local_session_id: &str) -> Result<Option<String>, String> {
@@ -128,7 +172,7 @@ pub fn adopt_uploaded_edit<R: Runtime>(app: &AppHandle<R>, meeting_id: &str, rol
         .map_err(|error| format!("adopt uploaded edit: {error}"))?;
     // None when the file changed again since: that newer edit is queued and adopted in turn.
     if adopted == 0 {
-        eprintln!("desktop ingest: {role} of {meeting_id} changed again after its edit was sent; keeping it as a local edit");
+        tracing::info!(%meeting_id, %role, "desktop ingest: the file changed again after its edit was sent; keeping it as a local edit");
     }
     Ok(())
 }
@@ -147,17 +191,49 @@ pub fn mark_operation_done<R: Runtime>(
     Ok(())
 }
 
+/// A failed attempt: tried again after a backoff, and given up on after
+/// `FILE_EDIT_MAX_ATTEMPTS`.
 pub fn mark_operation_failed<R: Runtime>(app: &AppHandle<R>,
     operation_id: &str,
     error: &str,
 ) -> Result<(), String> {
+    mark_operation_failed_on(&*open(app)?, operation_id, error, chrono::Utc::now().timestamp_millis())
+}
+
+pub(crate) fn mark_operation_failed_on(conn: &Connection, operation_id: &str, error: &str, now: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE pending_operations SET status='failed', attempts=attempts+1,
+         next_attempt_at=?2 + min(3600000, 5000 * (1 << min(attempts, 10))),
+         abandoned=(attempts + 1 >= ?4),
+         last_attempt_at=?2, last_error=?3 WHERE id=?1",
+        params![operation_id, now, error, FILE_EDIT_MAX_ATTEMPTS],
+    )
+    .map_err(|db_error| format!("fail external file edit: {db_error}"))?;
+    Ok(())
+}
+
+/// An edit the cloud will never take (its meeting is gone, or it was refused
+/// outright): kept with the reason, for diagnostics, and never sent again.
+pub fn abandon_operation<R: Runtime>(app: &AppHandle<R>, operation_id: &str, error: &str) -> Result<(), String> {
     open(app)?
         .execute(
-            "UPDATE pending_operations SET status='failed', attempts=attempts+1,
+            "UPDATE pending_operations SET status='failed', abandoned=1,
              last_attempt_at=?2, last_error=?3 WHERE id=?1",
             params![operation_id, chrono::Utc::now().timestamp_millis(), error],
         )
-        .map_err(|db_error| format!("fail external file edit: {db_error}"))?;
+        .map_err(|db_error| format!("give up on external file edit: {db_error}"))?;
+    Ok(())
+}
+
+/// Leaves an edit for later without counting an attempt: its recording's
+/// cloud meeting does not exist yet.
+pub fn defer_operation<R: Runtime>(app: &AppHandle<R>, operation_id: &str, delay_ms: i64) -> Result<(), String> {
+    open(app)?
+        .execute(
+            "UPDATE pending_operations SET next_attempt_at=?2 WHERE id=?1",
+            params![operation_id, chrono::Utc::now().timestamp_millis() + delay_ms],
+        )
+        .map_err(|db_error| format!("defer external file edit: {db_error}"))?;
     Ok(())
 }
 

@@ -46,7 +46,7 @@
 .ev-btn[data-variant='outline'] { box-shadow: inset 0 0 0 1px var(--ev-line-strong); color: var(--ev-ink); }
 .ev-btn[data-variant='outline']:hover:not(:disabled) { background: var(--ev-hover); }
 .ev-btn[data-variant='outline']:focus-visible { box-shadow: inset 0 0 0 1px var(--ev-line-strong), var(--ev-focus); }
-.ev-btn[data-variant='danger-rec'] { background: var(--ev-rec); color: #fff; }
+.ev-btn[data-variant='danger-rec'] { background: var(--ev-rec); color: var(--ev-on-coat); }
 .ev-btn[data-variant='danger-rec']:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 88%, #000); }
 .ev-btn > svg { flex: none; }
 .ev-btn .ev-kbd { margin-left: 2px; }
@@ -138,7 +138,7 @@
   height: 14px;
   border-radius: 50%;
   background: var(--ev-raised);
-  box-shadow: 0 1px 2px rgb(42 34 51 / 0.25);
+  box-shadow: 0 1px 2px rgb(33 28 26 / 0.25);
   transition: transform var(--ev-d-state) var(--ev-ease-spring);
 }
 .ev-switch[aria-checked='true']::after { transform: translateX(12px); }
@@ -160,7 +160,7 @@
   left: 2px;
   border-radius: 7px;
   background: var(--ev-raised);
-  box-shadow: 0 0 0 0.5px var(--ev-line), 0 1px 2px rgb(42 34 51 / 0.1);
+  box-shadow: 0 0 0 0.5px var(--ev-line), 0 1px 2px rgb(33 28 26 / 0.1);
   transition: transform var(--ev-d-enter) var(--ev-ease-out);
 }
 .ev-segmented-opt {
@@ -217,11 +217,6 @@
 .ev-seg > svg { flex: none; }
 .ev-seg-label { overflow: hidden; text-overflow: ellipsis; }
 .ev-seg .ev-kbd kbd { min-width: 0; padding: 2px 4px 1px; font-size: 9.5px; }
-.ev-seg[data-active='true'] { color: var(--ev-rec); background: var(--ev-raised); box-shadow: 0 0 0 0.5px var(--ev-line); }
-.ev-seg[data-active='true']:hover { background: var(--ev-raised); color: var(--ev-rec); }
-.ev-seg[data-active='true']:focus-visible { box-shadow: var(--ev-focus); }
-.ev-seg-time { font: 600 11px/1 var(--ev-font-round); color: var(--ev-ink-3); font-variant-numeric: tabular-nums; }
-.ev-seg[data-dimmed='true'] { opacity: 0.4; }
 .ev-seg:disabled { cursor: default; }
 
 /* ---------- Menu ---------- */

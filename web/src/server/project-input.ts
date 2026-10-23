@@ -13,9 +13,7 @@ export const projectFieldsSchema = z.object({
   dictationForAgents: z.boolean().nullable().optional(),
 });
 
-/** Signed-in web user or paired desktop; projects make no sense anonymously. */
+/** Signed-in web user or paired desktop. */
 export async function projectActor(request: Request) {
-  const actor = await resolveIngestActor(request);
-  if (actor.isAnonymous) throw new Error('anonymous');
-  return actor;
+  return await resolveIngestActor(request);
 }

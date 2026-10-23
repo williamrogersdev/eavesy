@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, ne, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, devices } from '../schema';
@@ -11,6 +11,8 @@ export type TranscriptStatus = Capture['transcriptStatus'];
 export async function create(
   db: AppDb,
   args: {
+    /** Given when the caller already named the R2 object after it. */
+    id?: string;
     userId: string;
     kind: CaptureKind;
     captureMode: CaptureMode;
@@ -31,7 +33,7 @@ export async function create(
     createdAt?: number;
   },
 ): Promise<string> {
-  const id = pid('cap');
+  const id = args.id ?? pid('cap');
   const now = Date.now();
   await db.insert(captures).values({
     id,
@@ -125,6 +127,29 @@ export async function setTranscript(
     .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId)));
 }
 
+/**
+ * Moves a capture's transcript from `from` to `to` only if it is still at
+ * `from`, so a transcript is worked on (and paid for) once. False otherwise.
+ */
+export async function claimTranscript(
+  db: AppDb,
+  args: { captureId: string; userId: string; from: TranscriptStatus; to: TranscriptStatus },
+): Promise<boolean> {
+  const rows = await db
+    .update(captures)
+    .set({ transcriptStatus: args.to, transcriptError: null, updatedAt: Date.now() })
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        eq(captures.transcriptStatus, args.from),
+        isNull(captures.deletedAt),
+      ),
+    )
+    .returning({ id: captures.id });
+  return rows.length > 0;
+}
+
 export async function listForUser(
   db: AppDb,
   args: { userId: string; limit?: number },
@@ -137,7 +162,8 @@ export async function listForUser(
     .limit(args.limit ?? 100);
 }
 
-export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number }) {
+/** Newest first; `before` (a `createdAt`) pages back through older captures. */
+export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number; before?: number }) {
   return await db
     .select({
       id: captures.id,
@@ -154,7 +180,13 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
       createdAt: captures.createdAt,
     })
     .from(captures)
-    .where(and(eq(captures.userId, args.userId), isNull(captures.deletedAt)))
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        isNull(captures.deletedAt),
+        args.before === undefined ? undefined : lt(captures.createdAt, args.before),
+      ),
+    )
     .orderBy(desc(captures.createdAt))
     .limit(args.limit ?? 100);
 }

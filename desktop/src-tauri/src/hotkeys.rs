@@ -353,14 +353,23 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
         let _ = register_bindings(app, current);
         return Err(error);
     }
-    settings.toggle_hotkey = next.toggle.clone();
-    settings.dictation_hotkey = next.dictation.clone();
-    if let Err(error) = settings::save(app, settings) {
-        unregister_everything(app);
-        let _ = register_bindings(app, current);
-        return Err(HotkeyError::invalid(error));
+    // Only the shortcuts are written, onto the file as it is now, so a
+    // setting saved elsewhere since `settings` was read is kept.
+    let saved = settings::update(app, |config| {
+        config.toggle_hotkey = next.toggle.clone();
+        config.dictation_hotkey = next.dictation.clone();
+    });
+    match saved {
+        Ok(config) => {
+            *settings = config;
+            Ok(())
+        }
+        Err(error) => {
+            unregister_everything(app);
+            let _ = register_bindings(app, current);
+            Err(HotkeyError::invalid(error))
+        }
     }
-    Ok(())
 }
 
 /// The startup notification body for shortcuts that failed to register.

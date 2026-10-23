@@ -30,7 +30,9 @@ entrypoint = "BotControl"
 queue = "eavesy-processing"
 max_batch_size = 1
 max_batch_timeout = 5
-max_retries = 8
+# MAX_ATTEMPTS - 1 (web/src/server/processing/shared.ts): the consumer records
+# the failure on the last delivery itself; the DLQ catches deliveries that crashed.
+max_retries = 4
 dead_letter_queue = "eavesy-processing-dlq"
 
 [[queues.consumers]]

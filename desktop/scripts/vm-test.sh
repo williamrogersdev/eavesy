@@ -8,7 +8,8 @@
 #   vm-test.sh up [--granted] fresh VM from eavesy-base, install + launch the app.
 #                             Real first run by default: click through macOS's
 #                             own prompts. --granted pre-grants them instead.
-#   vm-test.sh smoke          build if needed, up, check it runs, screenshot, logs, down
+#   vm-test.sh smoke          build, up, check it runs, screenshot, logs, down
+#                             (EAVESY_VM_KEEP=1 leaves the VM running after)
 #   vm-test.sh shot [name]    screenshot the VM; prints the PNG path
 #   vm-test.sh click X Y      click at screen points (from a shot; 1024x768)
 #   vm-test.sh type TEXT      type into the focused app
@@ -174,7 +175,15 @@ cmd_logs() {
 }
 
 cmd_smoke() {
-  [[ -n "${EAVESY_APP:-}" || -d "$DEBUG_APP" ]] || cmd_build
+  # Always build (it is incremental): a debug app left from an older checkout
+  # would test old code.
+  [[ -n "${EAVESY_APP:-}" ]] || cmd_build
+  # The run VM is deleted however this ends (a failed step, ^C) unless kept.
+  if [[ "${EAVESY_VM_KEEP:-0}" != 1 ]]; then
+    trap 'cmd_down >/dev/null 2>&1 || true' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+  fi
   cmd_up
   sleep 15
   local ok=0
@@ -182,7 +191,6 @@ cmd_smoke() {
   cmd_shot smoke
   cmd_logs
   if [[ -s "$OUT/logs/crashes.txt" ]]; then ok=0; echo "crash reports:"; cat "$OUT/logs/crashes.txt"; fi
-  [[ "${EAVESY_VM_KEEP:-0}" == 1 ]] || cmd_down
   [[ $ok == 1 ]] || die "Eavesy isn't running after launch; see $OUT/logs"
   echo "▸ smoke ok"
 }
@@ -207,5 +215,5 @@ case "$sub" in
   key) g /opt/homebrew/bin/cliclick "$@" ;;
   say) g say "$*" ;;
   exec) g "$@" ;;
-  *) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; [[ -z "$sub" ]] || exit 2 ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; [[ -z "$sub" ]] || exit 2 ;;
 esac

@@ -23,6 +23,7 @@ import {
 import { formatDuration } from '@/lib/utils';
 import { isRecord, optionalString } from '@/lib/json';
 import { refreshLibrary } from '@/lib/api/use-library';
+import { captureTitle, MAX_CAPTURE_BYTES, MAX_CAPTURE_IMAGE_BYTES } from '@/lib/capture/limits';
 
 type Phase = 'idle' | 'recording' | 'review' | 'saving';
 type Mode = 'audio' | 'webcam' | 'screen';
@@ -221,21 +222,33 @@ export function CaptureBar() {
       }
 
       if (!captured.blob) throw new Error('nothing to save');
-      const ext = captured.kind === 'image' ? 'png' : 'webm';
-      const fd = new FormData();
-      fd.append('file', captured.blob, `capture.${ext}`);
-      fd.append('kind', captured.kind);
-      fd.append('captureMode', captured.mode);
-      fd.append('contentType', captured.blob.type || (captured.kind === 'image' ? 'image/png' : 'video/webm'));
-      fd.append('durationMs', String(captured.durationMs));
-      if (captured.width) fd.append('width', String(captured.width));
-      if (captured.height) fd.append('height', String(captured.height));
-      if (captured.audioBlob) fd.append('audioFile', captured.audioBlob, 'audio.webm');
-      const res = await fetch('/api/captures', { method: 'POST', body: fd });
+      const contentType = captured.blob.type || (captured.kind === 'image' ? 'image/png' : 'video/webm');
+      const maxBytes = captured.kind === 'image' ? MAX_CAPTURE_IMAGE_BYTES : MAX_CAPTURE_BYTES;
+      if (captured.blob.size > maxBytes) {
+        throw new Error(`This is over the ${maxBytes / (1024 * 1024)} MB upload limit. Download it instead.`);
+      }
+      // A raw body, so the server streams it into storage without holding it.
+      const headers: Record<string, string> = {
+        'content-type': contentType,
+        'x-capture-mode': captured.mode,
+        'x-duration-ms': String(captured.durationMs),
+        'x-title': encodeURIComponent(captureTitle(captured.mode, new Date())),
+      };
+      if (captured.width) headers['x-width'] = String(captured.width);
+      if (captured.height) headers['x-height'] = String(captured.height);
+      const res = await fetch('/api/captures', { method: 'POST', body: captured.blob, headers });
       if (!res.ok) throw await errorFrom(res);
       const body: unknown = await res.json();
       const id = isRecord(body) ? optionalString(body.id) : undefined;
       if (!id) throw new Error('Server returned an invalid capture');
+      if (captured.audioBlob && captured.audioBlob.size > 0) {
+        // The video is saved either way; a failed transcript shows on its page.
+        await fetch(`/api/captures/${id}/audio`, {
+          method: 'POST',
+          body: captured.audioBlob,
+          headers: { 'content-type': captured.audioBlob.type || 'audio/webm' },
+        }).catch(() => undefined);
+      }
       refreshLibrary();
       reset();
       await router.push(`/app/captures/${id}`);

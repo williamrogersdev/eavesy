@@ -1,9 +1,11 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ResourceArticle } from "@/components/marketing/resource-pages";
-import { getResource } from "@/lib/content";
 import { seoHead } from "@/lib/seo-head";
 export const Route = createFileRoute("/(marketing)/templates/$slug")({
-  loader: ({ params }) => {
+  // Imported on demand: loaders stay in the entry bundle, and the content
+  // module carries every compiled MDX page.
+  loader: async ({ params }) => {
+    const { getResource } = await import("@/lib/content");
     const entry = getResource("templates", params.slug);
     if (!entry) throw notFound();
     return { slug: entry.slug, metadata: entry.frontmatter };

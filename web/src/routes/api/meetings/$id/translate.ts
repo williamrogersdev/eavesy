@@ -47,7 +47,7 @@ export const Route = createFileRoute('/api/meetings/$id/translate')({
         if (missing.length > 0) {
           const overQuota = await guardUserQuota(actor.userId, 'translate');
           if (overQuota) return overQuota;
-          const plan = resolveModelPlan(actor.isAnonymous ? null : await usersRepo.getById(db, actor.userId));
+          const plan = resolveModelPlan(await usersRepo.getById(db, actor.userId));
           let fresh: Map<string, string>;
           try {
             fresh = await translateLines({

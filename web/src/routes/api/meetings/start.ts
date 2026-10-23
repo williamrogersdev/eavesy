@@ -16,7 +16,6 @@ const schema = z.object({
     .optional()
     .transform((language) => (language && isTranscriptionLanguage(language) ? language : undefined)),
   localFolderSlug: z.string().max(200).optional(),
-  anonymousSessionToken: z.string().optional(),
 });
 
 export const Route = createFileRoute('/api/meetings/start')({

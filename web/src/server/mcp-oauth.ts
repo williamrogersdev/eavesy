@@ -17,6 +17,7 @@ import { pid } from '../db/ids';
 import * as schema from '../db/schema';
 import { type McpScope, MCP_SCOPES, parseMcpScopes } from './mcp-scopes';
 import { MCP_TOKEN_TTL_MS } from './mcp-token-policy';
+import { sha256Hex } from '../lib/sha256';
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -41,10 +42,7 @@ function randomHex(bytes: number): string {
   return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
-}
+export { sha256Hex };
 
 /** `BASE64URL(SHA256(verifier))`, the PKCE S256 challenge. */
 export async function pkceChallenge(verifier: string): Promise<string> {

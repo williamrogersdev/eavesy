@@ -660,7 +660,7 @@ fn spawn_capture(
         }
     }
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
-    state.0.lock().unwrap().insert(
+    state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
         id.clone(),
         Session {
             child,
@@ -878,7 +878,10 @@ fn stream_events(
                     if ev.event == "level" {
                         let rms = ev.rms.unwrap_or(0.0);
                         captions.lock().unwrap_or_else(|e| e.into_inner()).note_level(rms);
-                        let _ = app.emit(
+                        // Only the control draws the level: ten a second
+                        // is not worth waking every other window for.
+                        let _ = app.emit_to(
+                            "hud",
                             "recording:level",
                             serde_json::json!({"sessionId":session_id,"rms":rms}),
                         );
@@ -1057,7 +1060,7 @@ fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
 
 fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>) {
     let captures = app.state::<Captures>();
-    if !captures.0.lock().unwrap().contains_key(session_id) {
+    if !captures.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(session_id) {
         return;
     }
     let reason = warning.unwrap_or_else(|| "the capture engine stopped unexpectedly".to_string());
@@ -1101,29 +1104,56 @@ pub fn stop_capture(
     if let Err(error) = &result {
         crate::telemetry::capture("capture.stop", error);
         if error != NO_ACTIVE_CAPTURE {
-            show_stop_failed(&app, &session_id, error);
-        } else {
-            // Shown as stopping by the key press, but something else stopped it first.
-            let hud = crate::hud::current();
-            if hud.phase == crate::hud::Phase::Transcribing
-                && hud.session_id.as_deref() == Some(session_id.as_str())
-            {
-                crate::hud::set_state(
-                    &app,
-                    crate::hud::HudState {
-                        session_id: hud.session_id,
-                        ..crate::hud::HudState::idle()
-                    },
-                );
+            if !show_stop_failed(&app, &session_id, error) {
+                // The words were already pasted (Done), or the user moved on:
+                // say what went wrong without taking that back.
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app.notification().builder().title("Recording not fully saved").body(error).show();
             }
+        } else if !Stopping::in_flight(&session_id) {
+            // Shown as stopping by the key press, but something else stopped
+            // it first, and nothing is still finishing it.
+            let idle = crate::hud::HudState { session_id: Some(session_id.clone()), ..crate::hud::HudState::idle() };
+            crate::hud::advance_from(&app, &session_id, &[crate::hud::Phase::Transcribing], idle);
         }
     }
     result
 }
 
-fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) {
-    crate::hud::set_state(
+/// The sessions some stop is finishing right now, so a second stop racing it
+/// (and finding no capture) leaves the HUD to the first.
+static STOPPING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct Stopping(String);
+
+impl Stopping {
+    fn start(session_id: &str) -> Self {
+        STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(session_id.to_string());
+        Stopping(session_id.to_string())
+    }
+
+    fn in_flight(session_id: &str) -> bool {
+        STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|id| id == session_id)
+    }
+}
+
+impl Drop for Stopping {
+    fn drop(&mut self) {
+        let mut stopping = STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(index) = stopping.iter().position(|id| *id == self.0) {
+            stopping.remove(index);
+        }
+    }
+}
+
+/// Shows a failed stop, but only over the recording itself or its "Writing
+/// it down…": never over words already pasted (Done), a result the user
+/// dismissed, or another capture. Returns whether it showed.
+fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) -> bool {
+    crate::hud::advance_from(
         app,
+        session_id,
+        &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing],
         crate::hud::HudState {
             phase: crate::hud::Phase::Failed,
             session_id: Some(session_id.to_string()),
@@ -1132,7 +1162,7 @@ fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) {
             message: Some(error.to_string()),
             notice: None,
         },
-    );
+    )
 }
 
 fn stop_capture_inner(
@@ -1140,12 +1170,13 @@ fn stop_capture_inner(
     state: State<'_, Captures>,
     session_id: String,
 ) -> Result<StoredRecording, String> {
-    let session = state
-        .0
-        .lock()
-        .unwrap()
-        .remove(&session_id)
-        .ok_or(NO_ACTIVE_CAPTURE)?;
+    let (session, _stopping) = {
+        let mut captures = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let session = captures.remove(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
+        // Marked while the capture lock is still held, so a second stop that
+        // finds no capture always sees this one in flight.
+        (session, Stopping::start(&session_id))
+    };
     let Session {
         mut child,
         mut stdin,
@@ -1448,13 +1479,18 @@ fn paste_dictation_now(
 
 /// A dictation of silence: paste nothing, and say so instead of "Writing it
 /// down…". The clip is still saved; its cloud transcript must not paste later.
-fn paste_nothing(app: &AppHandle, session_id: &str, reason: &str) {
+pub(crate) fn paste_nothing(app: &AppHandle, session_id: &str, reason: &str) {
     eprintln!("dictation: nothing to paste ({reason})");
     crate::dictation::disarm(session_id);
-    let current = crate::hud::current();
-    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(session_id) {
-        show_stop_failed(app, session_id, "Didn't hear anything, so nothing was pasted.");
-    }
+    let failed = crate::hud::HudState {
+        phase: crate::hud::Phase::Failed,
+        session_id: Some(session_id.to_string()),
+        mode: None,
+        started_at_ms: None,
+        message: Some("Didn't hear anything, so nothing was pasted.".to_string()),
+        notice: None,
+    };
+    crate::hud::advance_from(app, session_id, &[crate::hud::Phase::Transcribing], failed);
 }
 
 /// Pastes a dictation the moment it stops: the on-device text when it can be
@@ -1595,7 +1631,7 @@ fn sync_parent_directory(parent: &std::path::Path) {
 
 #[tauri::command]
 pub fn capture_state(state: State<'_, Captures>) -> CaptureState {
-    let count = state.0.lock().unwrap().len();
+    let count = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len();
     if count == 0 {
         CaptureState::Idle
     } else {

@@ -31,7 +31,7 @@ import {
   SegmentBusyError,
   runBatched,
 } from './shared';
-import { logMeetingComplete } from './summarize';
+import { logMeetingComplete, resendFollowUps } from './summarize';
 import { queueRecap } from '@/server/email/recaps';
 
 /** Rolling notes refresh each time the transcribed audio crosses another interval. */
@@ -55,9 +55,10 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const user = userRow ? await openUserKeys(userRow) : undefined;
   if (meeting.status === 'complete') {
-    if (!user?.isAnonymous) await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    await resendFollowUps(db, env, meetingId, userRow, { anonymous: Boolean(user?.isAnonymous) });
     return;
   }
+  if (meeting.deletedAt) return;
   if (!meeting.audioR2Key) throw new Error('recording has no audio object');
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
@@ -236,7 +237,18 @@ export async function handleTranscribeSegment(
     eq(meetingSegments.id, segment.id),
     eq(meetingSegments.transcribeClaimedAt, claimedAt),
   );
+  // Settled under this claim, so neither a redelivery nor the recovery sweep
+  // pays for Whisper on audio nobody will read.
+  const abandon = () =>
+    db
+      .update(meetingSegments)
+      .set({ transcribeStatus: 'failed', transcribeClaimedAt: null })
+      .where(ownClaim);
   try {
+    if (transcriptionAbandoned(meeting)) {
+      await abandon();
+      return;
+    }
     const micOnly = track === 'mic' && !(await hasSystemTrack(db, meetingId));
     if (!isSilentTrack(track, segment.activeMs, { micOnly })) {
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
@@ -289,8 +301,12 @@ export async function handleTranscribeSegment(
         lines = retry.segments.filter((relative) => !isHallucination(relative, { quiet, glossary }));
       }
 
-      const current = await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1);
-      if (!current[0] || current[0].deletedAt || (meeting.source === 'import' && current[0].status === 'failed')) return;
+      // Deleted or cancelled while Whisper ran.
+      const current = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+      if (!current || transcriptionAbandoned(current)) {
+        await abandon();
+        return;
+      }
       const repaired = await repairTranscriptSegments(lines, { dictionary: entries, ai: repairAi(env) });
       const writes = repaired.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
@@ -387,6 +403,11 @@ export async function handleTranscribeSegment(
       .where(ownClaim);
     throw error;
   }
+}
+
+/** A meeting whose audio no longer needs transcribing: deleted, or an import that failed. */
+function transcriptionAbandoned(meeting: { deletedAt: number | null; source: string; status: string }) {
+  return meeting.deletedAt !== null || (meeting.source === 'import' && meeting.status === 'failed');
 }
 
 async function userPrefs(db: Db, userId: string): Promise<{ vocabulary: string[]; spoken: string[] }> {

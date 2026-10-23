@@ -1,6 +1,7 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
 import { notesLanguageRule } from '@/lib/transcription/language';
 import { anthropic, anthropicForUser, MODELS } from './client';
+import { isRecord } from '@/lib/json';
 
 export interface SummaryDecision {
   text: string;
@@ -111,10 +112,6 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
 
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function asString(value: unknown, fallback = ''): string {

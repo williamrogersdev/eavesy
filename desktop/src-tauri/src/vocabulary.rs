@@ -88,11 +88,12 @@ pub fn refresh(app: &AppHandle) {
     let Some(credential) = settings::device_credential(app) else { return };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build() else {
+        let Ok(client) = crate::sync::http_client() else {
             return;
         };
         let response = client
-            .get(format!("{}/api/devices/me", credential.base))
+            .get(crate::base_url::join(&credential.base, "/api/devices/me"))
+            .timeout(std::time::Duration::from_secs(8))
             .bearer_auth(credential.token)
             .send()
             .await;

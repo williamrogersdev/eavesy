@@ -56,16 +56,25 @@ export interface AccountPrefs {
   forAgents: boolean;
 }
 
-/** Loads the account's settings once and saves changes in order, putting a field back when its save fails. */
-export function useAccountPrefs() {
+/**
+ * Loads the settings of the account named by `accountKey` (null when signed out),
+ * again whenever it changes, and saves changes in order, putting a field back
+ * when its save fails.
+ */
+export function useAccountPrefs(accountKey: string | null) {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [prefs, setPrefs] = useState<AccountPrefs | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Signed out: nothing to show, and nothing from the last account.
+    setPrefs(null);
+    setError(null);
+    if (accountKey === null) return;
+    let live = true;
     void accountCall('GET', '/api/me')
       .then((me) => {
-        if (!isRecord(me)) return;
+        if (!live || !isRecord(me)) return;
         setPrefs({
           languages: strings(me.spokenLanguages),
           words: strings(me.customVocabulary),
@@ -73,8 +82,9 @@ export function useAccountPrefs() {
           forAgents: me.dictationForAgents === true,
         });
       })
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your settings.')));
-  }, [loadAttempt]);
+      .catch((e: unknown) => { if (live) setError(errMsg(e, 'Couldn’t load your settings.')); });
+    return () => { live = false; };
+  }, [accountKey, loadAttempt]);
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -258,17 +268,31 @@ function agentsChoice(value: boolean | null | undefined): AgentsChoice {
   return value === true ? 'on' : value === false ? 'off' : 'default';
 }
 
-/** The projects list, loaded once and saved a moment after each change. */
+/** The projects list, loaded while signed in (and again on retry) and saved a moment after each change. */
 export function useProjects(enabled: boolean, onChanged?: () => void) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set when the list itself couldn't be loaded, so the page can offer Try again.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) { setProjects(null); setLoadFailed(false); return; }
+    let live = true;
     void accountCall<{ items?: unknown[] }>('GET', '/api/projects')
-      .then((body) => setProjects((body?.items ?? []).map(parseProject).filter((p): p is ProjectSummary => !!p)))
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your projects.')));
-  }, [enabled]);
+      .then((body) => {
+        if (!live) return;
+        setProjects((body?.items ?? []).map(parseProject).filter((p): p is ProjectSummary => !!p));
+        setLoadFailed(false);
+      })
+      .catch((e: unknown) => {
+        if (!live) return;
+        setLoadFailed(true);
+        setError(errMsg(e, 'Couldn’t load your projects.'));
+      });
+    return () => { live = false; };
+  }, [enabled, attempt]);
+  const reload = useCallback(() => { setError(null); setAttempt((n) => n + 1); }, []);
 
   const pendingFields = useRef(new Map<string, ProjectFields>());
   const mounted = useRef(true);
@@ -305,13 +329,26 @@ export function useProjects(enabled: boolean, onChanged?: () => void) {
 
   const remove = (id: string) => {
     pendingFields.current.delete(id);
+    const index = projects?.findIndex((p) => p.id === id) ?? -1;
+    const removed = index >= 0 ? projects?.[index] : undefined;
     setProjects((list) => list?.filter((p) => p.id !== id) ?? list);
     void accountCall('DELETE', `/api/projects/${id}`)
       .then(() => onChanged?.())
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t delete the project.')));
+      .catch((e: unknown) => {
+        // Put it back where it was, keeping any changes that landed meanwhile.
+        if (removed && mounted.current) {
+          setProjects((list) => {
+            if (!list || list.some((p) => p.id === id)) return list;
+            const next = [...list];
+            next.splice(Math.min(index, next.length), 0, removed);
+            return next;
+          });
+        }
+        if (mounted.current) setError(errMsg(e, 'Couldn’t delete the project.'));
+      });
   };
 
-  return { projects, error, change, create, remove };
+  return { projects, error, loadFailed, reload, change, create, remove };
 }
 
 export type ProjectsState = ReturnType<typeof useProjects>;
@@ -457,7 +494,7 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
   onOpen: (id: string | null) => void;
   onOpenDictation: () => void;
 }) {
-  const { projects, error, change, create, remove } = state;
+  const { projects, error, loadFailed, reload, change, create, remove } = state;
   const [draft, setDraft] = useState<string | null>(null);
 
   const submit = () => {
@@ -513,6 +550,12 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
             </button>
           </div>
         ))}
+        {projects === null && loadFailed && (
+          <div role="alert" className="ev-settings-feedback">
+            <p>{error ?? 'Couldn’t load your projects.'}</p>
+            <Button variant="outline" size="sm" onClick={reload}>Try again</Button>
+          </div>
+        )}
         <div className="ev-set-row">
           {draft === null ? (
             <Button variant="outline" size="sm" icon={Plus} disabled={projects === null} onClick={() => setDraft('')}>New project</Button>
@@ -533,7 +576,7 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
             </>
           )}
         </div>
-        <Status error={error} />
+        {!(projects === null && loadFailed) && <Status error={error} />}
       </Card>
     </>
   );

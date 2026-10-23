@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { z } from 'zod';
 import * as schema from '@/db/schema';
 import { meetingBots, meetingSegments, meetings, transcriptSegments, users } from '@/db/schema';
@@ -8,7 +8,9 @@ import { pid } from '@/db/ids';
 import * as projectsRepo from '@/db/repo/projects';
 import type { AppDb } from '@/db/client';
 import { type ProcessingEnv, runBatched } from '@/server/processing/shared';
-import { type MeetingBotsEnv, attributeSpeakers, parseSpeakerSpans } from './control';
+import { AUTO_LANGUAGE } from '@/lib/transcription/language';
+import { parseSpeakerNames } from '@/lib/transcription/two-track';
+import { type MeetingBotsEnv, type SpeakerSpan, attributeSpeakers, parseSpeakerSpans } from './control';
 
 /**
  * Notetaker bots: Eavesy's own bot (workers/meeting-bot) joins a Meet or
@@ -49,8 +51,25 @@ export const ACTIVE_BOT_LIMIT = 10;
 /** Collection checks back this often while the last segments are transcribed, for up to an hour. */
 export const COLLECT_RETRY_SECONDS = 60;
 export const MAX_COLLECT_ATTEMPTS = 60;
-/** The bot reports at least once a minute in a call; this long without a word, it is gone. */
+/**
+ * How long collection waits for transcription after the last segment came
+ * in. Counted in time, not attempts: a second collect job for the bot (from
+ * a repeated `done` or a re-send) must not cut the wait short.
+ */
+export const COLLECT_WAIT_MS = MAX_COLLECT_ATTEMPTS * COLLECT_RETRY_SECONDS * 1_000;
+/** The bot reports at least once a minute once started; this long without a word, it is gone. */
 export const BOT_SILENT_AFTER_MS = 10 * 60 * 1_000;
+/**
+ * In the lobby the bot waits up to 15 minutes to be admitted (`rules.rs`),
+ * and images from before lobby heartbeats say nothing while it waits.
+ */
+export const BOT_LOBBY_SILENT_AFTER_MS = 20 * 60 * 1_000;
+/** A container still up this long after its bot finished is stopped (SIGTERM). */
+export const BOT_EXIT_GRACE_MS = 60 * 1_000;
+/** A bot `collecting` untouched this long has lost its collect job (each attempt touches it every minute). */
+export const COLLECT_STALE_MS = 5 * COLLECT_RETRY_SECONDS * 1_000;
+/** The hourly sweep re-queues collections untouched this long. */
+export const STALE_COLLECTION_MS = 10 * 60 * 1_000;
 /** A container that hasn't reported this long after starting never got going. */
 export const BOT_START_TIMEOUT_MS = 5 * 60 * 1_000;
 /** A canary bot leaves once it has been in the call this long (checked on its next watch). */
@@ -58,6 +77,9 @@ export const CANARY_STAY_MS = 2 * 60 * 1_000;
 export const BOT_NAME = 'Eavesy Notetaker';
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 512 * 1024;
+/** Spans kept per meeting, as `parseSpeakerSpans` reads them. */
+const MAX_SPANS = 50_000;
+const MAX_PARTICIPANTS = 500;
 
 const PLATFORM_LABEL: Record<BotPlatform, string> = { zoom: 'Zoom', meet: 'Google Meet', teams: 'Teams' };
 /** Platforms the bot can join today. Zoom needs its Meeting SDK, which is next. */
@@ -93,7 +115,9 @@ const scheduleSchema = z.object({
   folderId: z.string().max(100).optional().nullable(),
 });
 
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, { status, headers });
+/** Two requests for one link this close together are the same bot. */
+const DUPLICATE_WINDOW_MS = 30 * 60 * 1_000;
 
 /** The database as the meeting-bot Worker opens it. */
 export function botDatabase(d1: D1Database): AppDb {
@@ -144,35 +168,37 @@ export async function scheduleBot(db: AppDb, env: MeetingBotsEnv, userId: string
   const folderId = parsed.data.folderId || null;
   if (folderId && !(await projectsRepo.ownsProject(db, userId, folderId))) return json({ error: 'Project not found' }, 404);
 
-  const active = await db.select().from(meetingBots)
-    .where(and(eq(meetingBots.userId, userId), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)));
-  // A second click, or the same invite pasted twice, gets the bot already on its way.
-  const same = active.find((bot) => bot.meetingUrl === target.url && Math.abs((bot.joinAt ?? bot.createdAt) - (joinAt ?? now)) < 30 * 60 * 1_000);
-  if (same) return json({ bot: publicBot(same), duplicate: true });
-  if (active.length >= ACTIVE_BOT_LIMIT) {
-    return json({ error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.` }, 429);
-  }
-
   const id = pid('bot', now);
-  await db.insert(meetingBots).values({
-    id,
-    userId,
-    provider: 'eavesy',
-    providerBotId: id,
-    meetingUrl: target.url,
-    platform: target.platform,
-    title: parsed.data.title || null,
-    folderId,
-    joinAt,
-    status: 'scheduling',
-    createdAt: now,
-    updatedAt: now,
-  });
+  const at = joinAt ?? now;
+  // One statement, so two clicks at once can't both get past the checks: a
+  // bot for the same link around the same time is the one already on its way,
+  // and an account has at most ACTIVE_BOT_LIMIT out at once.
+  const active = sql`${meetingBots.userId} = ${userId} AND ${meetingBots.status} NOT IN ('done', 'failed', 'cancelled')`;
+  const inserted = await db.run(sql`
+    INSERT INTO ${meetingBots} (id, user_id, provider, provider_bot_id, meeting_url, platform, title, folder_id, join_at, status, created_at, updated_at)
+    SELECT ${id}, ${userId}, 'eavesy', ${id}, ${target.url}, ${target.platform}, ${parsed.data.title || null}, ${folderId}, ${joinAt}, 'scheduling', ${now}, ${now}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ${meetingBots} WHERE ${active} AND ${meetingBots.meetingUrl} = ${target.url}
+        AND abs(coalesce(${meetingBots.joinAt}, ${meetingBots.createdAt}) - ${at}) < ${DUPLICATE_WINDOW_MS}
+    )
+    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${ACTIVE_BOT_LIMIT}`);
+  if (!inserted.meta.changes) {
+    const others = await db.select().from(meetingBots)
+      .where(and(eq(meetingBots.userId, userId), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)));
+    // A second click, or the same invite pasted twice, gets the bot already on its way.
+    const same = others.find((bot) => bot.meetingUrl === target.url && Math.abs((bot.joinAt ?? bot.createdAt) - at) < DUPLICATE_WINDOW_MS);
+    if (same) return json({ bot: publicBot(same), duplicate: true });
+    if (others.length >= ACTIVE_BOT_LIMIT) {
+      return json({ error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.` }, 429);
+    }
+    // The bot in the way finished between the insert and the look.
+    return json({ error: 'The notetaker could not be scheduled. Please retry.' }, 503);
+  }
   try {
     await control.schedule(id, joinAt);
   } catch (error) {
     console.error(JSON.stringify({ message: 'notetaker schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
-    await finishBot(db, id, 'failed', 'provider_unavailable');
+    await finishBot(db, id, 'failed', 'provider_unavailable', 'scheduling');
     return json({ error: 'The notetaker service is unavailable. Please retry.' }, 503);
   }
   await db.update(meetingBots).set({ status: 'scheduled', updatedAt: Date.now() })
@@ -241,6 +267,9 @@ export function failureText(detail: string | null) {
 async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Promise<string> {
   if (bot.meetingId) return bot.meetingId;
   const owner = (await db.select({ language: users.defaultLanguage }).from(users).where(eq(users.id, bot.userId)).limit(1))[0];
+  // The owner's language, `auto` included, as for the Mac's recordings
+  // (`transcriptionPrefs`, not imported: it would pull secrets code into the bot Worker).
+  const language = owner?.language || AUTO_LANGUAGE;
   const now = Date.now();
   const clientSessionId = `bot:${bot.id}`;
   await db.insert(meetings).values({
@@ -249,7 +278,7 @@ async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Pro
     title: bot.title || `${PLATFORM_LABEL[bot.platform]} meeting`,
     source: 'bot',
     platform: bot.platform,
-    language: owner?.language && owner.language !== 'auto' ? owner.language : 'en',
+    language,
     folderId: bot.folderId,
     status: 'recording',
     startedAt,
@@ -268,6 +297,13 @@ async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Pro
  * are ignored, so a retried delivery and the watchdog can both call it.
  */
 export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING_QUEUE'>, bot: MeetingBot, code: string, subCode: string | null, at: number) {
+  if (bot.status === 'collecting' && code === 'done') {
+    // The bot retries `done` when its first delivery failed, which may have
+    // been the queue send after the move to `collecting`: send it again.
+    // The collect job does nothing once the bot is past `collecting`.
+    await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id });
+    return bot.status;
+  }
   if (TERMINAL_BOT_STATUSES.includes(bot.status) || bot.status === 'collecting') return bot.status;
   const next = statusForCode(code);
   if (!next) return bot.status;
@@ -316,39 +352,81 @@ async function noteCanaryNames(db: AppDb, bot: MeetingBot, speakers: unknown, pa
 
 const speakersKey = (bot: MeetingBot, meetingId: string) => `users/${bot.userId}/meetings/${meetingId}/bot/speakers.json`;
 
-/** A status report from the bot: `{ code, subCode, at, speakers?, participants? }`. */
+interface Timeline { speakers: SpeakerSpan[]; participants: string[] }
+
+const participantList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string').slice(0, MAX_PARTICIPANTS) : [];
+
+/** The speaking timeline stored so far; one that can't be read counts as empty. */
+async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise<Timeline> {
+  const object = await bucket.get(key);
+  if (!object) return { speakers: [], participants: [] };
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(await object.arrayBuffer())) as { speakers?: unknown; participants?: unknown } | null;
+    return { speakers: parseSpeakerSpans(parsed?.speakers), participants: participantList(parsed?.participants) };
+  } catch {
+    return { speakers: [], participants: [] };
+  }
+}
+
+/**
+ * Keeps the timeline a report carries. Bots send the spans from
+ * `speakersFrom` on (the ones before it are already here and final), so a
+ * report replaces everything from that index. A report without it is the
+ * whole timeline, as images from before incremental reports send it.
+ */
+async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; participants?: unknown }) {
+  const spans = parseSpeakerSpans(body.speakers);
+  const participants = participantList(body.participants);
+  const from = body.speakersFrom;
+  let timeline: Timeline = { speakers: spans, participants };
+  if (typeof from === 'number' && Number.isSafeInteger(from) && from > 0) {
+    const stored = await readTimeline(env.AUDIO_BUCKET, key);
+    // A report that never arrived leaves a gap: the later spans still go on the end.
+    timeline = {
+      speakers: [...stored.speakers.slice(0, from), ...spans].slice(0, MAX_SPANS),
+      participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
+    };
+  }
+  await env.AUDIO_BUCKET.put(key, JSON.stringify(timeline), { httpMetadata: { contentType: 'application/json' } });
+}
+
+/** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, participants? }`. */
 export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string, request: Request): Promise<Response> {
   const bot = await botById(db, botId);
   if (!bot) return json({ error: 'not_found' }, 404);
+  // Any report, even one refused below, means the bot is alive. Only a bot
+  // on its way into or in a call counts: a finished bot's lingering container
+  // mustn't put off being stopped, or hide a stalled collection.
+  if (IN_CALL_STATUSES.includes(bot.status)) {
+    await db.update(meetingBots).set({ updatedAt: Date.now() })
+      .where(and(eq(meetingBots.id, bot.id), inArray(meetingBots.status, IN_CALL_STATUSES)));
+  }
   const text = await request.text();
   if (text.length > MAX_EVENT_BYTES) return json({ error: 'too_large' }, 413);
-  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; participants?: unknown; lostSegments?: unknown };
+  let body: { code?: unknown; subCode?: unknown; at?: unknown; speakers?: unknown; speakersFrom?: unknown; participants?: unknown; lostSegments?: unknown } | null;
   try {
     body = JSON.parse(text) as typeof body;
   } catch {
     return json({ error: 'invalid_json' }, 400);
   }
+  if (!body || typeof body !== 'object') return json({ error: 'invalid_json' }, 400);
   const code = typeof body.code === 'string' ? body.code : '';
   const subCode = typeof body.subCode === 'string' ? body.subCode.slice(0, 100) : null;
   const at = typeof body.at === 'number' && Number.isFinite(body.at) ? body.at : Date.now();
 
-  if (bot.canary && (Array.isArray(body.speakers) || Array.isArray(body.participants))) {
-    await noteCanaryNames(db, bot, body.speakers, body.participants);
-  } else if (Array.isArray(body.speakers) && bot.meetingId) {
-    const participants = Array.isArray(body.participants) ? body.participants.filter((p): p is string => typeof p === 'string').slice(0, 500) : [];
-    await env.AUDIO_BUCKET.put(speakersKey(bot, bot.meetingId), JSON.stringify({ speakers: parseSpeakerSpans(body.speakers), participants }), {
-      httpMetadata: { contentType: 'application/json' },
-    });
+  if (bot.canary) {
+    if (Array.isArray(body.speakers) || Array.isArray(body.participants)) await noteCanaryNames(db, bot, body.speakers, body.participants);
+  } else if (Array.isArray(body.speakers)) {
+    const meetingId = bot.meetingId ?? (SEGMENT_STATUSES.includes(bot.status) ? await ensureMeeting(db, bot, bot.statusAt ?? Date.now()) : null);
+    if (meetingId) await storeTimeline(env, speakersKey(bot, meetingId), body);
   }
   if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
     // Segments the bot gave up delivering; the meeting has a gap there.
     console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: body.lostSegments.slice(0, 100) }));
   }
-  if (code === 'heartbeat' || code === 'speakers') {
-    // The watchdog reads this as the bot being alive.
-    await db.update(meetingBots).set({ updatedAt: Date.now() }).where(eq(meetingBots.id, bot.id));
-    return json({ ok: true });
-  }
+  // The watchdog reads either as the bot being alive (noted above).
+  if (code === 'heartbeat' || code === 'speakers') return json({ ok: true });
   return json({ ok: true, status: await applyStatus(db, env, bot, code, subCode, at) });
 }
 
@@ -366,14 +444,25 @@ export async function handleBotSegment(db: AppDb, env: BotIngestEnv, botId: stri
   const activeMs = int(request.headers.get('x-segment-active-ms'), 10 * 60 * 1_000);
   if (idx === null || startMs === null || !durationMs) return json({ error: 'invalid_segment_metadata' }, 400);
   if (Number(request.headers.get('content-length') ?? '0') > MAX_SEGMENT_BYTES) return json({ error: 'segment_too_large' }, 413);
+  if (BOT_STATUS_ORDER[bot.status] < BOT_STATUS_ORDER.in_call) {
+    // The report saying it got in is still on its way (it travels on its own
+    // queue). Every bot image retries a 5xx; a 4xx would drop the segment.
+    return json({ error: 'bot_not_recording_yet' }, 503, { 'retry-after': '5' });
+  }
   if (!SEGMENT_STATUSES.includes(bot.status)) return json({ error: 'bot_not_recording' }, 409);
   // A canary's audio is taken, so the bot carries on as usual, and dropped.
   if (bot.canary) return json({ ok: true, discarded: true }, 202);
 
   const meetingId = await ensureMeeting(db, bot, bot.statusAt ?? Date.now());
-  const existing = await db.select({ id: meetingSegments.id }).from(meetingSegments)
-    .where(and(eq(meetingSegments.meetingId, meetingId), eq(meetingSegments.idx, idx), eq(meetingSegments.track, 'mixed'))).limit(1);
-  if (existing.length) return json({ ok: true, idempotent: true });
+  const existing = (await db.select({ status: meetingSegments.transcribeStatus }).from(meetingSegments)
+    .where(and(eq(meetingSegments.meetingId, meetingId), eq(meetingSegments.idx, idx), eq(meetingSegments.track, 'mixed'))).limit(1))[0];
+  if (existing) {
+    // A retry after the queue send failed: send it again, as the Mac's
+    // segment route does. The segment's claim keeps a job already running
+    // from being doubled.
+    if (existing.status !== 'complete') await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', meetingId, idx, track: 'mixed' });
+    return json({ ok: true, idempotent: true });
+  }
 
   const audio = new Uint8Array(await request.arrayBuffer());
   if (audio.byteLength === 0) return json({ error: 'empty_segment' }, 400);
@@ -407,82 +496,147 @@ export class BotMediaNotReady extends Error {}
 /**
  * Queue job once the bot has delivered everything: waits for the last
  * segments' transcription, names the speakers from the timeline the bot read
- * off the meeting page, and hands the meeting to the summary.
+ * off the meeting page, and hands the meeting to the summary. More than one
+ * can run for a bot (a repeated `done`, the watchdog, the hourly sweep);
+ * only one waits on and only one hands the meeting on.
  */
-export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string) {
+export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string, now = Date.now()) {
   const bot = await botById(db, botId);
   if (!bot || bot.status !== 'collecting') return;
   if (bot.provider !== 'eavesy') {
     // A Recall.ai bot from before Eavesy ran its own; that service is gone.
-    await finishBot(db, bot.id, 'failed', 'provider_retired');
-    if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText(null));
+    if (await finishBot(db, bot.id, 'failed', 'provider_retired', 'collecting') && bot.meetingId) await failMeeting(db, bot.meetingId, failureText(null));
     return;
   }
   const meeting = bot.meetingId ? (await db.select().from(meetings).where(eq(meetings.id, bot.meetingId)).limit(1))[0] : null;
   if (!meeting) {
-    await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording');
+    await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording', 'collecting');
     return;
   }
   if (meeting.deletedAt) {
-    await finishBot(db, bot.id, 'done', 'meeting_deleted');
+    await finishBot(db, bot.id, 'done', 'meeting_deleted', 'collecting');
     return;
   }
-  const segments = await db.select({ status: meetingSegments.transcribeStatus, end: sql<number>`${meetingSegments.offsetMs} + ${meetingSegments.durationMs}` })
-    .from(meetingSegments).where(eq(meetingSegments.meetingId, meeting.id));
+  const segments = await db.select({
+    status: meetingSegments.transcribeStatus,
+    end: sql<number>`${meetingSegments.offsetMs} + ${meetingSegments.durationMs}`,
+    createdAt: meetingSegments.createdAt,
+  }).from(meetingSegments).where(eq(meetingSegments.meetingId, meeting.id));
   if (!segments.length) {
-    await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording');
-    await failMeeting(db, meeting.id, failureText(bot.statusDetail));
+    if (await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording', 'collecting')) await failMeeting(db, meeting.id, failureText(bot.statusDetail));
     return;
   }
   const waiting = segments.some((s) => s.status === 'pending' || s.status === 'processing');
-  if (waiting && bot.collectAttempts + 1 < MAX_COLLECT_ATTEMPTS) {
-    await db.update(meetingBots).set({ collectAttempts: bot.collectAttempts + 1, updatedAt: Date.now() }).where(eq(meetingBots.id, bot.id));
-    await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id }, { delaySeconds: COLLECT_RETRY_SECONDS });
+  const lastArrived = Math.max(...segments.map((s) => s.createdAt));
+  if (waiting && now - lastArrived < COLLECT_WAIT_MS) {
+    // Of two jobs that read the same attempt, only one carries on waiting;
+    // one that runs out of step costs only a job that finds nothing to do.
+    const next = await db.update(meetingBots).set({ collectAttempts: bot.collectAttempts + 1, updatedAt: Date.now() })
+      .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, 'collecting'), eq(meetingBots.collectAttempts, bot.collectAttempts)))
+      .returning({ id: meetingBots.id });
+    if (next.length) await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id }, { delaySeconds: COLLECT_RETRY_SECONDS });
     return;
   }
 
-  const timeline = await env.AUDIO_BUCKET.get(speakersKey(bot, meeting.id));
-  const spans = timeline ? parseSpeakerSpans((JSON.parse(new TextDecoder().decode(await timeline.arrayBuffer())) as { speakers?: unknown }).speakers) : [];
-  const lines = await db.select({ id: transcriptSegments.id, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs })
-    .from(transcriptSegments)
-    .where(and(eq(transcriptSegments.meetingId, meeting.id), eq(transcriptSegments.isEdited, false)));
-  const { assignments, speakerNames } = attributeSpeakers(lines, spans);
-  await runBatched(db, [...assignments].map(([id, speakerId]) =>
-    db.update(transcriptSegments).set({ speakerId }).where(and(eq(transcriptSegments.id, id), eq(transcriptSegments.isEdited, false)))));
-
-  const now = Date.now();
-  await db.update(meetings).set({
+  const speakerNames = await nameSpeakers(db, env, bot, meeting.id);
+  // `processing` too: a retry after the summary send failed carries on.
+  const opened = await db.update(meetings).set({
     status: 'processing',
     statusError: null,
     endedAt: now,
     durationSec: Math.round(Math.max(...segments.map((s) => s.end)) / 1_000),
     // Names people already gave a speaker win over the meeting's display names.
-    speakerNamesJson: JSON.stringify({ ...speakerNames, ...parseNames(meeting.speakerNamesJson) }),
+    speakerNamesJson: JSON.stringify({ ...speakerNames, ...parseSpeakerNames(meeting.speakerNamesJson) }),
     updatedAt: now,
-  }).where(eq(meetings.id, meeting.id));
-  await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id });
-  await finishBot(db, bot.id, 'done', bot.statusDetail);
+  }).where(and(eq(meetings.id, meeting.id), inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing'])))
+    .returning({ id: meetings.id });
+  if (!opened.length) {
+    // Already complete, or failed: nothing to hand on.
+    await finishBot(db, bot.id, meeting.status === 'failed' ? 'failed' : 'done', bot.statusDetail, 'collecting');
+    return;
+  }
+  // Of two jobs that got this far, the one that ends the bot sends the summary.
+  if (!(await finishBot(db, bot.id, 'done', bot.statusDetail, 'collecting'))) return;
+  try {
+    await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: meeting.id });
+  } catch (error) {
+    // Back to `collecting`, so the queue's retry of this job sends it again.
+    // Should this write fail too, the hourly sweep of meetings stuck in
+    // `processing` queues the summary.
+    await db.update(meetingBots).set({ status: 'collecting', updatedAt: Date.now() })
+      .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, 'done')));
+    throw error;
+  }
 }
 
-function parseNames(value: string | null): Record<string, string> {
+/**
+ * Names each transcript line after who the meeting page showed speaking.
+ * Best effort: a timeline that can't be read or matched leaves the lines
+ * unnamed rather than failing a meeting whose transcript is fine.
+ */
+async function nameSpeakers(db: AppDb, env: Pick<BotEnv, 'AUDIO_BUCKET'>, bot: MeetingBot, meetingId: string): Promise<Record<string, string>> {
   try {
-    const parsed: unknown = value ? JSON.parse(value) : {};
-    return typeof parsed === 'object' && parsed && !Array.isArray(parsed) ? (parsed as Record<string, string>) : {};
-  } catch {
+    const { speakers } = await readTimeline(env.AUDIO_BUCKET, speakersKey(bot, meetingId));
+    if (!speakers.length) return {};
+    const lines = await db.select({ id: transcriptSegments.id, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs })
+      .from(transcriptSegments)
+      .where(and(eq(transcriptSegments.meetingId, meetingId), eq(transcriptSegments.isEdited, false)));
+    const { assignments, speakerNames } = attributeSpeakers(lines, speakers);
+    await runBatched(db, [...assignments].map(([id, speakerId]) =>
+      db.update(transcriptSegments).set({ speakerId }).where(and(eq(transcriptSegments.id, id), eq(transcriptSegments.isEdited, false)))));
+    return speakerNames;
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'notetaker speaker names failed', botId: bot.id, error: error instanceof Error ? error.message : String(error) }));
     return {};
   }
 }
 
-export async function finishBot(db: AppDb, botId: string, status: 'done' | 'failed', detail: string | null) {
-  await db.update(meetingBots).set({ status, statusDetail: detail, updatedAt: Date.now() }).where(eq(meetingBots.id, botId));
+/**
+ * Ends a bot, but only from the status it was read in, so a move made
+ * meanwhile (a cancel, another job) wins. True when this call ended it.
+ */
+export async function finishBot(db: AppDb, botId: string, status: 'done' | 'failed', detail: string | null, from: BotStatus | BotStatus[]) {
+  const changed = await db.update(meetingBots).set({ status, statusDetail: detail, updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, botId), inArray(meetingBots.status, Array.isArray(from) ? from : [from])))
+    .returning({ id: meetingBots.id });
+  return changed.length > 0;
 }
 
 /** Called when the collect job runs out of queue retries. */
 export async function failCollection(db: AppDb, botId: string, reason: string) {
   const bot = await botById(db, botId);
   if (!bot || TERMINAL_BOT_STATUSES.includes(bot.status)) return;
-  await finishBot(db, bot.id, 'failed', 'collect_failed');
+  if (!(await finishBot(db, bot.id, 'failed', 'collect_failed', bot.status))) return;
   if (bot.meetingId) await failMeeting(db, bot.meetingId, `The notetaker's recording could not be collected: ${reason.slice(0, 300)}`);
+}
+
+/**
+ * Queues collection again for a bot whose collect job was lost (its queue
+ * send failed after the move to `collecting`): untouched since
+ * `staleBefore`. Touching the row first keeps two callers from both sending.
+ */
+async function requeueCollection(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING_QUEUE'>, botId: string, staleBefore: number) {
+  const claimed = await db.update(meetingBots).set({ updatedAt: Date.now() })
+    .where(and(eq(meetingBots.id, botId), eq(meetingBots.status, 'collecting'), lt(meetingBots.updatedAt, staleBefore)))
+    .returning({ id: meetingBots.id });
+  if (!claimed.length) return false;
+  await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId });
+  return true;
+}
+
+/**
+ * For the processing Worker's hourly cron: re-queues collection for bots
+ * stuck in `collecting`, whose collect job was lost. Returns how many.
+ */
+export async function requeueStaleCollections(env: Pick<ProcessingEnv, 'DB' | 'PROCESSING_QUEUE'>, now = Date.now()) {
+  const db = botDatabase(env.DB);
+  const staleBefore = now - STALE_COLLECTION_MS;
+  const stale = await db.select({ id: meetingBots.id }).from(meetingBots)
+    .where(and(eq(meetingBots.status, 'collecting'), lt(meetingBots.updatedAt, staleBefore)))
+    .limit(200);
+  let requeued = 0;
+  for (const bot of stale) if (await requeueCollection(db, env, bot.id, staleBefore)) requeued += 1;
+  return requeued;
 }
 
 /**
@@ -528,6 +682,16 @@ export async function launchingBot(db: AppDb, botId: string) {
     : null;
 }
 
+/**
+ * Whether a container that just started should be stopped: its bot was
+ * cancelled (or ended) while it started, when there was nothing to stop yet.
+ * A bot that has already reported in (`joining`) is fine.
+ */
+export async function startWasCancelled(db: AppDb, botId: string) {
+  const bot = await botById(db, botId);
+  return !bot || TERMINAL_BOT_STATUSES.includes(bot.status);
+}
+
 /** The container could not be started. */
 export async function failBotStart(db: AppDb, botId: string) {
   await db.update(meetingBots)
@@ -545,11 +709,12 @@ async function loseBot(db: AppDb, env: BotIngestEnv, bot: MeetingBot, reason: st
       .set({ status: 'collecting', statusDetail: reason, updatedAt: Date.now() })
       .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, bot.status)))
       .returning({ id: meetingBots.id });
+    // Should this send fail, the watchdog sends it again once the bot has
+    // sat in `collecting` untouched (`COLLECT_STALE_MS`).
     if (moved.length) await env.PROCESSING_QUEUE.send({ kind: 'collect-bot-recording', botId: bot.id });
     return;
   }
-  await finishBot(db, bot.id, 'failed', reason);
-  if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText(reason));
+  if (await finishBot(db, bot.id, 'failed', reason, bot.status) && bot.meetingId) await failMeeting(db, bot.meetingId, failureText(reason));
 }
 
 export type WatchVerdict = 'watch' | 'stop' | 'done';
@@ -558,18 +723,30 @@ export type WatchVerdict = 'watch' | 'stop' | 'done';
  * The bot's Durable Object asks this every few minutes while a bot is out,
  * and when its container stops. It replaces provider webhooks being lost:
  * the answer says whether to keep watching, stop the container, or let go.
+ * It only lets go once no container is running.
  */
 export async function watchBot(db: AppDb, env: BotIngestEnv, botId: string, running: boolean, now = Date.now()): Promise<WatchVerdict> {
   const bot = await botById(db, botId);
   if (!bot) return running ? 'stop' : 'done';
+  if (bot.status === 'collecting') {
+    // Each collect attempt touches the row; untouched this long, its job was lost.
+    if (now - bot.updatedAt > COLLECT_STALE_MS) await requeueCollection(db, env, bot.id, now - COLLECT_STALE_MS);
+    // Keep watching until collection ends the bot, so a lost job is noticed.
+    if (!running) return 'watch';
+  }
   if (TERMINAL_BOT_STATUSES.includes(bot.status) || bot.status === 'collecting') {
-    // Everything is delivered; a container still up is only shutting down.
-    return running && now - bot.updatedAt > 60_000 ? 'stop' : 'done';
+    if (!running) return 'done';
+    // A finished bot's container is only shutting down: give it a moment from
+    // when it finished (not from `updatedAt`, which collection keeps moving).
+    // A cancelled or failed bot's container has no business running at all.
+    const finished = bot.status === 'done' || bot.status === 'collecting';
+    return finished && now - (bot.statusAt ?? bot.updatedAt) <= BOT_EXIT_GRACE_MS ? 'watch' : 'stop';
   }
   if (bot.status === 'scheduled' || bot.status === 'scheduling') {
-    if (bot.statusDetail !== 'launching') return 'done'; // not started yet: its alarm is still set
+    if (bot.statusDetail !== 'launching') return running ? 'stop' : 'done'; // not started yet: its alarm is still set
     if (now - bot.updatedAt < BOT_START_TIMEOUT_MS) return 'watch';
-    await finishBot(db, bot.id, 'failed', 'bot_never_reported');
+    // The bot may have reported in meanwhile: then it is watched as usual.
+    if (!(await finishBot(db, bot.id, 'failed', 'bot_never_reported', bot.status))) return 'watch';
     return running ? 'stop' : 'done';
   }
   // In a call (or on the way in).
@@ -577,7 +754,8 @@ export async function watchBot(db: AppDb, env: BotIngestEnv, botId: string, runn
     await loseBot(db, env, bot, 'bot_error');
     return 'done';
   }
-  if (now - bot.updatedAt > BOT_SILENT_AFTER_MS) {
+  const silentAfter = bot.status === 'waiting_room' ? BOT_LOBBY_SILENT_AFTER_MS : BOT_SILENT_AFTER_MS;
+  if (now - bot.updatedAt > silentAfter) {
     await loseBot(db, env, bot, 'lost_track');
     return 'stop';
   }

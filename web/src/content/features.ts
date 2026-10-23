@@ -53,7 +53,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     description:
       'In the Mac app, press ⌘V to save clipboard text or an image, or take a screenshot. Each one is stored as a Markdown or image file you can copy into any AI agent.',
     intro:
-      'Not everything your AI needs is a recording. Open the Eavesy launcher with ⌘⇧Space and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window, or drop a file in. Everything lands in a normal folder on your disk, next to your recordings, and stays on your Mac.',
+      'Not everything your AI needs is a recording. Open the Eavesy launcher with ⌘⇧Space and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window, or drop a file in. Everything lands in a normal folder on your disk, next to your recordings. When you are signed in, screenshots and images also sync to your other Macs; signed out, they stay on this one.',
     highlights: [
       { title: 'Clipboard text and images', body: 'Press ⌘V in the launcher to save whatever you copied last, a message, an order, a snippet of code, or an image, as a capture.' },
       { title: 'Screenshots', body: 'Take a screenshot of your display from the launcher (macOS 14 or later). Eavesy’s own window is left out of the image.' },

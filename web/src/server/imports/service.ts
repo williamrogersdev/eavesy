@@ -5,12 +5,15 @@ import { meetings, meetingSegments, recordingImports } from '@/db/schema';
 import { pid } from '@/db/ids';
 import { MAX_IMPORT_BYTES, MAX_IMPORT_SECONDS, SAMPLE_RATE, SEGMENT_SECONDS, wavDurationMs } from '@/lib/imports/wav';
 import type { ProcessingEnv } from '@/server/processing-worker';
+import type { QueueMessage } from '@/server/queue';
 
 const createSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/), title: z.string().trim().min(1).max(200),
   durationMs: z.number().int().min(1).max(MAX_IMPORT_SECONDS * 1000), language: z.string().regex(/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/).default('en'),
 });
 const json = (error: string, status = 400) => Response.json({ error }, { status });
+/** A body past its limit: the client's mistake (413), not a transient failure to retry. */
+class UploadTooLarge extends Error {}
 
 export async function createImport(db: AppDb, userId: string, input: unknown) {
   const parsed = createSchema.safeParse(input);
@@ -73,7 +76,9 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
     const idx = Number(indexText);
     if (!Number.isInteger(idx) || idx < 0 || idx >= job.segmentCount) return json('Invalid segment index');
     if (segments.some(s => s.idx === idx)) return Response.json({ ok: true, duplicate: true });
-    const audio = await boundedBody(request, 44 + SAMPLE_RATE * SEGMENT_SECONDS * 2);
+    let audio: Uint8Array;
+    try { audio = await boundedBody(request, 44 + SAMPLE_RATE * SEGMENT_SECONDS * 2); }
+    catch (error) { if (error instanceof UploadTooLarge) return json('Segment too large', 413); throw error; }
     let durationMs: number;
     try { durationMs = wavDurationMs(audio); } catch { return json('Invalid audio segment'); }
     const expectedMs = Math.min(SEGMENT_SECONDS * 1000, job.durationMs - idx * SEGMENT_SECONDS * 1000);
@@ -112,8 +117,12 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
     const activeMeeting = (await db.select().from(meetings).where(eq(meetings.id, id)).limit(1))[0];
     if (active?.state !== 'processing' || activeMeeting?.status !== 'processing' || activeMeeting.deletedAt) return json('Import is no longer active', 409);
     // Re-publishing restores handoff after a partial Queue failure. Consumers are idempotent.
-    for (const segment of segments) if (segment.transcribeStatus !== 'complete') await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', meetingId: id, idx: segment.idx });
-    await env.PROCESSING_QUEUE.send({ kind: 'summarize', meetingId: id });
+    const messages: { body: QueueMessage }[] = segments
+      .filter(segment => segment.transcribeStatus !== 'complete')
+      .map(segment => ({ body: { kind: 'transcribe-segment', meetingId: id, idx: segment.idx } }));
+    messages.push({ body: { kind: 'summarize', meetingId: id } });
+    // sendBatch takes at most 100 messages per call.
+    for (let i = 0; i < messages.length; i += 100) await env.PROCESSING_QUEUE.sendBatch(messages.slice(i, i + 100));
     return Response.json({ ok: true, status: 'processing' }, { status: 202 });
   }
   return json('Unknown import operation', 404);
@@ -124,7 +133,7 @@ async function boundedBody(request: Request, max: number): Promise<Uint8Array> {
   if (!reader) throw new Error('Missing upload body');
   const chunks: Uint8Array[] = []; let length = 0;
   try {
-    while (true) { const chunk = await reader.read(); if (chunk.done) break; length += chunk.value.length; if (length > max) throw new Error('Upload too large'); chunks.push(chunk.value); }
+    while (true) { const chunk = await reader.read(); if (chunk.done) break; length += chunk.value.length; if (length > max) throw new UploadTooLarge('Upload too large'); chunks.push(chunk.value); }
   } finally { await reader.cancel(); }
   const out = new Uint8Array(length); let at = 0;
   for (const c of chunks) { out.set(c, at); at += c.length; }

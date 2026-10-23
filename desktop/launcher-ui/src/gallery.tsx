@@ -30,7 +30,6 @@ function Gallery() {
   const [on, setOn] = useState(true);
   const [pos, setPos] = useState<'top' | 'bottom'>('top');
   const [level, setLevel] = useState(0.4);
-  const [live, setLive] = useState(false);
   const [drag, setDrag] = useState(false);
   return (
     <div className="ev" style={{ background: 'var(--ev-paper)', color: 'var(--ev-ink)', minHeight: '100vh', padding: 24, fontFamily: 'var(--ev-font-text)' }}>
@@ -48,10 +47,10 @@ function Gallery() {
           <input aria-label="Mic level" type="range" min={0} max={1} step={0.01} value={level} onChange={(e) => setLevel(+e.target.value)} />
         </section>
         <ToolbarShelf>
-          <ToolbarSegment icon={AudioLines} label="Talk" kbd="fn" hint="Tap fn and talk. Tap it again to paste where your cursor is." dimmed={live} />
-          <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" active={live} elapsed="12:40" onClick={() => setLive(!live)} />
-          <ToolbarSegment icon={Camera} label="Screenshot" dimmed={live} />
-          <ToolbarSegment icon={Clapperboard} label="Video" dimmed={live} />
+          <ToolbarSegment icon={AudioLines} label="Talk" kbd="fn" hint="Tap fn and talk. Tap it again to paste where your cursor is." />
+          <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" />
+          <ToolbarSegment icon={Camera} label="Screenshot" />
+          <ToolbarSegment icon={Clapperboard} label="Video" />
         </ToolbarShelf>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {['All', 'Voice', 'Meetings', 'Screens', 'Notes'].map((c) => (

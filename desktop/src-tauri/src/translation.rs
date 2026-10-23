@@ -25,9 +25,9 @@ impl TranslationInput {
 pub async fn translation_request(app: AppHandle, body: TranslationInput) -> Result<serde_json::Value, String> {
     body.validate()?;
     let credential = crate::settings::device_credential(&app).ok_or("Sign in to translate.")?;
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120))
-        .build().map_err(|_| "Could not connect to translation service")?;
-    let response = client.post(format!("{}/api/translation", credential.base.trim_end_matches('/')))
+    let client = crate::sync::http_client().map_err(|_| "Could not connect to translation service")?;
+    let response = client.post(crate::base_url::join(&credential.base, "/api/translation"))
+        .timeout(std::time::Duration::from_secs(120))
         .bearer_auth(credential.token).json(&body).send().await.map_err(|_| "Could not connect. Your text is still here; try again.")?;
     let status = response.status();
     if status.is_success() || matches!(status.as_u16(), 400 | 422 | 502) {

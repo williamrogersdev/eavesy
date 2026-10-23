@@ -24,7 +24,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import {
   captureMediaUrl,
@@ -32,6 +32,7 @@ import {
   copyText,
   pasteToFrontmost,
   deleteCapture,
+  errMsg,
   fetchAgentTranscript,
   recordingMoments,
   revealInFinder,
@@ -39,46 +40,40 @@ import {
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
 import { fillPrompt, matchPrompts, promptsOnly, type SavedPrompt } from '@/lib/prompts';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
 import {
   clock,
-  countByFilter,
   FILTERS,
   groupByDay,
   highlightParts,
+  historyView,
+  kindLabel,
   plainTranscript,
   timeOfDay,
-  visibleRecordings,
   type HistoryFilter,
 } from './history-model';
-import type { LiveCapture } from './capture-toolbar';
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
 import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu, Select } from './ui';
 
-export { plainTranscript };
-export type { LiveCapture };
-
-/** A capture running now, shown as one height-locked row at the top of Today. */
-
-const KIND: Record<Recording['source'], { label: string; icon: LucideIcon }> = {
-  mic: { label: 'Voice note', icon: AudioLines },
-  dictation: { label: 'Voice note', icon: AudioLines },
-  both: { label: 'Meeting', icon: Users },
-  system: { label: 'Meeting', icon: Users },
-  screen: { label: 'Video', icon: Clapperboard },
-  screenshot: { label: 'Screenshot', icon: Camera },
-  image: { label: 'Image', icon: ImageIcon },
-  note: { label: 'Note', icon: StickyNote },
-  upload: { label: 'Upload', icon: AudioLines },
+const ICON: Record<Recording['source'], LucideIcon> = {
+  mic: AudioLines,
+  dictation: AudioLines,
+  both: Users,
+  system: Users,
+  screen: Clapperboard,
+  screenshot: Camera,
+  image: ImageIcon,
+  note: StickyNote,
+  upload: AudioLines,
 };
 
 function kindOf(rec: Recording): { label: string; icon: LucideIcon } {
-  if (rec.source === 'upload') return { label: rec.title || 'Upload', icon: rec.hasVideo ? Clapperboard : AudioLines };
-  return KIND[rec.source] ?? KIND.mic;
+  const icon = rec.source === 'upload' && rec.hasVideo ? Clapperboard : ICON[rec.source] ?? AudioLines;
+  return { label: kindLabel(rec), icon };
 }
 
 function useMediaUrl(id: string) {
@@ -156,19 +151,22 @@ function Thumb({ id, video, durationSec, label }: { id: string; video: boolean; 
   const { url, error } = useMediaUrl(id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [viewerHost, setViewerHost] = useState<Element | null>(null);
+  // The frame keeps its loading height until the image has decoded, so the row resizes once.
+  const [decoded, setDecoded] = useState(false);
   if (error) return <p className="ev-sub">Preview unavailable. The file may have been moved.</p>;
-  if (!url) return <div className="ev-thumb" data-loading="true" />;
+  if (!url) return <div className="ev-thumb" data-kind={video ? undefined : 'image'} data-loading="true" />;
   if (!video) return (
     <>
       <button
         type="button"
         className="ev-thumb"
         data-kind="image"
+        data-loading={!decoded}
         aria-label={`View ${label.toLowerCase()}`}
         title="Click to view"
         onClick={(e) => setViewerHost(e.currentTarget.closest('.ev-panel') ?? document.body)}
       >
-        <img src={url} alt={label} />
+        <img src={url} alt={label} loading="lazy" decoding="async" onLoad={() => setDecoded(true)} onError={() => setDecoded(true)} />
       </button>
       {viewerHost && <ImageViewer url={url} label={label} host={viewerHost} onClose={() => setViewerHost(null)} />}
     </>
@@ -271,13 +269,9 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
   );
 }
 
-type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
 type Version = { tone: Tone; forAgents: boolean };
 
-const TONES: { id: Tone; label: string; hint: string }[] = [
-  { id: 'original', label: 'Original', hint: 'The words as they were saved.' },
-  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
-];
+const TONES = toneChoices('The words as they were saved.');
 
 /**
  * A capture's words in another tone, or shaped as a prompt for an AI. Each
@@ -329,16 +323,21 @@ function useRewrite(id: string, loadText: () => Promise<string>, resetKey: strin
       cache.current.set(key, output);
       setShown(next); setText(output);
     } catch (cause) {
-      if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Couldn’t rewrite it. Try again');
+      if (request === requestId.current) setError(errMsg(cause, 'Couldn’t rewrite it. Try again'));
     } finally {
       if (request === requestId.current) setPending(null);
     }
   }
 
-  return { version: pending ?? shown, text, busy: pending !== null, error, select };
+  const clearError = useCallback(() => setError(''), []);
+  return { version: pending ?? shown, text, busy: pending !== null, error, select, clearError };
 }
 
-function CaptureRow({
+/**
+ * One capture in the history. Memoized: a row re-renders only when its own data
+ * (kept as the same object across refreshes when unchanged) or the query changes.
+ */
+const CaptureRow = memo(function CaptureRow({
   rec,
   query,
   signedIn,
@@ -348,7 +347,8 @@ function CaptureRow({
 }: {
   rec: Recording;
   query: string;
-  signedIn: boolean;
+  /** Undefined while the account is still being looked up. */
+  signedIn: boolean | undefined;
   onSignIn: () => void;
   flash: Flash;
   runTask: RunTask;
@@ -360,15 +360,29 @@ function CaptureRow({
   const [rewriting, setRewriting] = useState(false);
   const kind = kindOf(rec);
   const Icon = kind.icon;
+  // The complete record, once expanded (or once the tray needed its full length).
   const [detail, setDetail] = useState<Recording | null>(null);
-  const current = detail?.id === rec.id && detail.revision !== undefined && rec.revision !== undefined && detail.revision >= rec.revision ? detail : rec;
-  const text = plainTranscript(current.transcript ?? '');
+  const [fetchingFull, setFetchingFull] = useState(false);
+  const versioned = !!detail && detail.id === rec.id && detail.revision !== undefined && rec.revision !== undefined;
+  const current = versioned && detail ? detail : rec;
+  // A sync or cloud refine moved the record on while it was expanded: fetch it again,
+  // keeping the words on screen meanwhile, instead of snapping back to the preview.
+  const behind = versioned && (detail?.revision ?? 0) < (rec.revision ?? 0);
+  useEffect(() => {
+    if (!behind) return;
+    let cancelled = false;
+    void loadRecordingDetails(rec)
+      .then((next) => { if (!cancelled) setDetail(next); })
+      .catch(() => { if (!cancelled) setDetail(null); });
+    return () => { cancelled = true; };
+  }, [behind, rec]);
+  const text = useMemo(() => plainTranscript(current.transcript ?? ''), [current.transcript]);
   const translation = useInlineTranslation(text, async () => plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''), rec.revision);
   const fullText = async () => current.transcriptTruncated ? plainTranscript((await loadRecordingDetails(rec)).transcript ?? '') : text;
   const rewrite = useRewrite(rec.id, fullText, `${rec.revision}:${text}`);
   const expand = async () => {
     try { setDetail(await loadRecordingDetails(rec)); }
-    catch (error) { flash(error instanceof Error ? error.message : 'Couldn’t load that capture', 5000, 'warn'); throw error; }
+    catch (error) { flash(errMsg(error, 'Couldn’t load that capture'), 5000, 'warn'); throw error; }
   };
   const image = rec.source === 'screenshot' || rec.source === 'image';
   const video = !!rec.hasVideo;
@@ -377,7 +391,10 @@ function CaptureRow({
   const player = usePlayer(rec.id);
   const spoken = rec.source !== 'note' && !image && rec.source !== 'upload';
   const rewritable = !!text && !image && !video;
-  const tones = rewritable && signedIn && rec.status !== 'processing';
+  const tones = rewritable && signedIn === true && rec.status !== 'processing';
+  // Past the limit only For AI works here (from the cloud's agent transcript). A preview's
+  // length isn't the real one, so this is decided once the tray has the whole text.
+  const tooLong = !current.transcriptTruncated && text.length > MAX_RESTYLE_CHARS;
   const changed = rewrite.text !== null || !!translation.language;
   const shownText = rewrite.text ?? translation.text;
   const trayOpen = rewritable && (rewriting || changed || rewrite.busy || translation.busy || languageOpen);
@@ -390,8 +407,17 @@ function CaptureRow({
     void translation.select(language);
   };
   const toggleTray = () => {
-    if (!trayOpen) { setRewriting(true); return; }
+    if (!trayOpen) {
+      setRewriting(true);
+      if (current.transcriptTruncated && !fetchingFull) {
+        setFetchingFull(true);
+        void loadRecordingDetails(rec).then(setDetail, () => undefined).finally(() => setFetchingFull(false));
+      }
+      return;
+    }
     setRewriting(false);
+    rewrite.clearError();
+    translation.clearError();
     if (rewrite.text !== null || rewrite.busy) void rewrite.select({ tone: 'original', forAgents: false });
     if (translation.language || translation.busy) void translation.select(null);
   };
@@ -409,19 +435,19 @@ function CaptureRow({
   else if (video) body = <>
     <Thumb id={rec.id} video durationSec={rec.durationSec} label={kind.label} />
     <Evidence id={rec.id} revision={rec.revision} />
-    {text && <div style={{ marginTop: 6 }}><Body key={`${rec.revision}-${translation.language}`} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
+    {text && <div style={{ marginTop: 6 }}><Body key={translation.language ?? ''} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
     <Body
-      key={`${rec.revision}-${translation.language}-${rewrite.text === null ? '' : `${rewrite.version.tone}:${rewrite.version.forAgents}`}`}
+      key={`${translation.language ?? ''}-${rewrite.text === null ? '' : `${rewrite.version.tone}:${rewrite.version.forAgents}`}`}
       text={shownText}
       query={query}
       muted={rewrite.busy || translation.busy}
       onExpand={!changed && current.transcriptTruncated ? expand : undefined}
     />
-    {signedIn && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
+    {signedIn === true && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
-  else if (!signedIn && spoken && rec.status !== 'complete') body = (
+  else if (signedIn === false && spoken && rec.status !== 'complete') body = (
     <div className="ev-body" data-muted="true">
       Saved on this Mac. <button type="button" className="ev-link" onClick={onSignIn}>Sign in</button> to get a transcript.
     </div>
@@ -447,20 +473,28 @@ function CaptureRow({
         <div className="ev-tones" role="group" aria-label="Rewrite">
           {tones && <>
             {TONES.map((tone) => (
-              <Chip key={tone.id} title={tone.hint} selected={rewrite.version.tone === tone.id && !translation.language} disabled={rewrite.busy} onClick={() => pickVersion({ tone: tone.id, forAgents: rewrite.version.forAgents })}>
+              <Chip
+                key={tone.id}
+                title={tooLong && tone.id !== 'original' ? 'Too long to rewrite here' : tone.hint}
+                selected={rewrite.version.tone === tone.id && !translation.language}
+                disabled={rewrite.busy || fetchingFull || (tooLong && tone.id !== 'original')}
+                onClick={() => pickVersion({ tone: tone.id, forAgents: rewrite.version.forAgents })}
+              >
                 {tone.label}
               </Chip>
             ))}
             <span className="ev-tones-sep" aria-hidden />
-            <Chip title={FOR_AGENTS_HINT} selected={rewrite.version.forAgents && !translation.language} disabled={rewrite.busy} onClick={() => pickVersion({ tone: rewrite.version.tone, forAgents: !rewrite.version.forAgents })}>
+            <Chip title={FOR_AGENTS_HINT} selected={rewrite.version.forAgents && !translation.language} disabled={rewrite.busy || fetchingFull} onClick={() => pickVersion({ tone: tooLong ? 'original' : rewrite.version.tone, forAgents: !rewrite.version.forAgents })}>
               For AI
             </Chip>
           </>}
-          <LanguagePicker value={translation.language} pending={translation.busy} onChange={pickLanguage} onOpenChange={setLanguageOpen} />
-          {rewrite.busy && <span className="ev-tones-state" role="status">Rewriting…</span>}
+          <LanguagePicker value={translation.language} pending={translation.busy} disabled={fetchingFull} onChange={pickLanguage} onOpenChange={setLanguageOpen} />
+          {rewrite.busy
+            ? <span className="ev-tones-state" role="status">Rewriting…</span>
+            : tones && tooLong && <span className="ev-tones-state">Too long to rewrite here</span>}
         </div>
       )}
-      {rewrite.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{rewrite.error}</p>}
+      {trayOpen && rewrite.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{rewrite.error}</p>}
       {editing && <CorrectionEditor
         id={rec.id}
         original={current.transcript ?? ''}
@@ -473,7 +507,7 @@ function CaptureRow({
           flash('Corrections saved');
         }}
       />}
-      {translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
+      {trayOpen && translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
         {changed && <IconButton label="Paste this version at cursor" icon={ClipboardPaste} disabled={translation.busy || rewrite.busy} onClick={() => runTask(() => pasteToFrontmost(shownText, false), 'Couldn’t paste that')} />}
         <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || rewrite.busy || (!image && !video && !text)} onClick={copy} />
@@ -511,7 +545,7 @@ function CaptureRow({
       </div>
     </article>
   );
-}
+});
 
 /** How many saved prompts a search shows above the captures. */
 const PROMPT_HITS = 5;
@@ -545,19 +579,18 @@ function PromptRow({ prompt, query, first, onPaste, flash, runTask }: {
   );
 }
 
-/**
- * The transcript cleaned up for an AI agent (filler gone, code in backticks,
- * speakers merged), or the plain transcript while the cloud is still on it.
- */
-export async function agentText(rec: Recording): Promise<{ text: string; cleaned: boolean }> {
-  const cleaned = await fetchAgentTranscript(rec.id).catch(() => null);
-  return cleaned ? { text: cleaned, cleaned: true } : { text: plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''), cleaned: false };
-}
+const NO_ROWS: Recording[] = [];
+const NO_COUNTS: Record<HistoryFilter, number> = { all: 0, voice: 0, meetings: 0, screens: 0, notes: 0 };
 
-export function CaptureHistory({
-  recordings,
+/**
+ * Search, the day-grouped captures and the empty state. Memoized and fed only
+ * stable props, so a capture running in the toolbar doesn't re-render it.
+ */
+export const CaptureHistory = memo(function CaptureHistory({
   refreshRevision,
-  live,
+  openKey,
+  liveId,
+  hasLive,
   dictationHotkey,
   signedIn,
   onSignIn,
@@ -565,28 +598,35 @@ export function CaptureHistory({
   runTask,
   searchRef,
   scrollRef,
-  loadError,
-  onRetry,
   prompts = null,
+  promptsError = null,
+  onRetryPrompts,
   onPromptUsed,
 }: {
-  recordings: Recording[];
+  /** Bumped by every native "recordings changed" event. */
   refreshRevision: number;
+  /** Bumped each time the panel opens: search and filter start fresh. */
+  openKey: number;
   /** Saved prompts the search can find; null when signed out or still loading. */
   prompts?: SavedPrompt[] | null;
+  /** Why the saved prompts couldn't be loaded. */
+  promptsError?: string | null;
+  onRetryPrompts?: () => void;
   /** Counts a pasted prompt. */
   onPromptUsed?: (id: string) => void;
-  live: LiveCapture | null;
+  /** The capture the toolbar shows while it runs; it joins the list once written down. */
+  liveId: string | null;
+  /** A capture is starting, running or being written down. */
+  hasLive: boolean;
   /** The Talk shortcut as shown ("Fn", "⌘⇧D"), for the empty state's hint. */
   dictationHotkey: string;
-  signedIn: boolean;
+  /** Undefined while the account is still being looked up. */
+  signedIn: boolean | undefined;
   onSignIn: () => void;
   flash: Flash;
   runTask: RunTask;
   searchRef: RefObject<HTMLInputElement | null>;
   scrollRef: RefObject<HTMLDivElement | null>;
-  loadError: string | null;
-  onRetry: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<HistoryFilter>('all');
@@ -596,85 +636,94 @@ export function CaptureHistory({
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  // Each opening starts from everything, so a capture made meanwhile is never filtered out.
+  useEffect(() => {
+    setQuery('');
+    setFilter('all');
+  }, [openKey]);
 
   // A search starting with "/" looks only for saved prompts, and only then does Return paste
   // one: Return in an ordinary search must never type into another app.
   const onlyPrompts = promptsOnly(query);
   const captureQuery = onlyPrompts ? '' : query;
   const promptHits = useMemo(() => matchPrompts(prompts ?? [], query).slice(0, PROMPT_HITS), [prompts, query]);
-  const pastePrompt = (prompt: SavedPrompt) => runTask(async () => {
-    await pasteToFrontmost(fillPrompt(prompt.body), false);
-    setQuery('');
-    onPromptUsed?.(prompt.id);
-  }, 'Couldn’t paste that');
+  // One paste per Return, however fast it is pressed again.
+  const pasting = useRef(false);
+  const pastePrompt = useCallback((prompt: SavedPrompt) => {
+    if (pasting.current) return;
+    pasting.current = true;
+    runTask(async () => {
+      try {
+        await pasteToFrontmost(fillPrompt(prompt.body), false);
+        setQuery('');
+        onPromptUsed?.(prompt.id);
+      } finally {
+        pasting.current = false;
+      }
+    }, 'Couldn’t paste that');
+  }, [onPromptUsed, runTask]);
 
-  const history = useHistoryPage(refreshRevision, captureQuery, filter);
-  const rows = history.page?.items ?? recordings;
-  const liveId = live?.sessionId ?? null;
+  const history = useHistoryPage(refreshRevision, captureQuery, filter, openKey);
+  const rows = history.page?.items ?? NO_ROWS;
   const visible = useMemo(
-    () => onlyPrompts ? [] : (history.page ? rows : visibleRecordings(rows, filter, captureQuery)).filter((rec) => rec.id !== liveId),
-    [onlyPrompts, history.page, rows, filter, captureQuery, liveId],
+    () => (onlyPrompts ? NO_ROWS : rows.filter((rec) => rec.id !== liveId)),
+    [onlyPrompts, rows, liveId],
   );
-  const counts = history.page?.counts ?? countByFilter(recordings);
+  const counts = history.page?.counts ?? NO_COUNTS;
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
 
-  const empty = counts.all === 0 && !live;
-  const historyError = loadError ?? history.error;
+  const view = historyView(history.page, history.error, hasLive);
   const searching = query.trim() !== '' || filter !== 'all';
 
   return (
     <>
-      {historyError && (
+      {history.error && (
         <div role="alert" className="ev-banner">
-          <span>Couldn’t load your captures: {historyError}</span>
-          <button type="button" className="ev-link" onClick={onRetry}>Try again</button>
+          <span>Couldn’t load your captures: {history.error}</span>
+          <button type="button" className="ev-link" onClick={history.retry}>Try again</button>
         </div>
       )}
-      {!empty && (
-        <>
-          <label className="ev-search">
-            <Search size={15} strokeWidth={1.75} aria-hidden />
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              placeholder={prompts?.length ? 'Search captures, or / for prompts' : 'Search captures'}
-              aria-label="Search captures"
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && onlyPrompts && promptHits[0] && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  pastePrompt(promptHits[0]);
-                } else if (e.key === 'Escape' && query) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setQuery('');
-                }
-              }}
-            />
-            {!query && filter === 'all' && <Kbd keys="/" />}
-            <Select
-              className="ev-search-filter"
-              label="Show"
-              value={filter}
-              onChange={setFilter}
-              options={FILTERS.map((f) => ({ value: f.value, label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label }))}
-            />
-          </label>
-        </>
+      {view !== 'empty' && (
+        <label className="ev-search">
+          <Search size={15} strokeWidth={1.75} aria-hidden />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            placeholder={prompts?.length ? 'Search captures, or / for prompts' : 'Search captures'}
+            aria-label="Search captures"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && onlyPrompts && promptHits[0] && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                if (!e.repeat) pastePrompt(promptHits[0]);
+              } else if (e.key === 'Escape' && query) {
+                e.preventDefault();
+                e.stopPropagation();
+                setQuery('');
+              }
+            }}
+          />
+          {!query && filter === 'all' && <Kbd keys="/" />}
+          <Select
+            className="ev-search-filter"
+            label="Show"
+            value={filter}
+            onChange={setFilter}
+            options={FILTERS.map((f) => ({ value: f.value, label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label }))}
+          />
+        </label>
       )}
-      {empty ? (
+      {view === 'empty' ? (
         <div className="ev-empty">
           <Mascot size={72} state="idle" />
           <Bubble tail="bottom">
-            It’s quiet up here. {dictationHotkey === FN || !dictationHotkey
-              ? <>Tap <Kbd keys="fn" /> and talk,</>
-              : <>Hold <Kbd keys={dictationHotkey} /> and talk,</>} or drop something in below.
+            It’s quiet up here. Hold <Kbd keys={dictationHotkey === FN || !dictationHotkey ? 'fn' : dictationHotkey} /> and talk, or drop something in below.
           </Bubble>
           <span className="ev-empty-pointer" aria-hidden />
         </div>
       ) : (
-        <div ref={scrollRef} data-capture-history className="ev-scroll">
+        <div ref={scrollRef} data-capture-history className="ev-scroll" aria-busy={view === 'loading' || undefined}>
           {promptHits.length > 0 && (
             <section className="ev-group" aria-label="Prompts">
               <h2 className="ev-gh">Prompts</h2>
@@ -686,7 +735,6 @@ export function CaptureHistory({
           {groups.map((group) => (
             <section key={group.label} className="ev-group" aria-label={group.label}>
               <h2 className="ev-gh">{group.label}</h2>
-              {/* The toolbar shows a capture while it runs; it joins the list once it is written down. */}
               {group.items.map((rec) => (
                 <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
                   <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
@@ -700,11 +748,17 @@ export function CaptureHistory({
             </button>
           )}
           {onlyPrompts && promptHits.length === 0 && (
-            <p className="ev-empty-search">
-              {!prompts?.length
-                ? 'No saved prompts yet. Add one in Settings → Prompts.'
-                : query.trim().length > 1 ? `No prompts match “${query.trim().slice(1).trim()}”.` : 'No saved prompts yet.'}
-            </p>
+            prompts === null && promptsError ? (
+              <p className="ev-empty-search">
+                Couldn’t load your prompts. <button type="button" className="ev-link" onClick={onRetryPrompts}>Try again</button>
+              </p>
+            ) : (
+              <p className="ev-empty-search">
+                {!prompts?.length
+                  ? 'No saved prompts yet. Add one in Settings → Prompts.'
+                  : query.trim().length > 1 ? `No prompts match “${query.trim().slice(1).trim()}”.` : 'No saved prompts yet.'}
+              </p>
+            )
           )}
           {!onlyPrompts && searching && visible.length === 0 && promptHits.length === 0 && !history.loading && (
             <p className="ev-empty-search">
@@ -715,4 +769,4 @@ export function CaptureHistory({
       )}
     </>
   );
-}
+});

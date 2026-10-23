@@ -13,7 +13,10 @@ static PRESSED: Mutex<Option<(Instant, Target)>> = Mutex::new(None);
 static PENDING: Mutex<Option<(String, Instant, Target)>> = Mutex::new(None);
 /// The project a recording belongs to, read as it stops: the window the user
 /// was dictating into, not whichever is in front once the words are back.
-static PROJECT_AT_STOP: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
+/// The lookup runs on its own thread; its answer arrives on the receiver.
+static PROJECT_AT_STOP: Mutex<Option<(String, std::sync::mpsc::Receiver<Option<String>>)>> = Mutex::new(None);
+/// How long a delivery waits for the project lookup started at stop.
+const PROJECT_WAIT: Duration = Duration::from_secs(1);
 
 /// The last dictation's words as they went into the user's app (session,
 /// words, project), so a tone change can swap them for its rewrite.
@@ -50,24 +53,31 @@ pub fn rearm_at_stop(session_id: &str) {
     drop(pending);
     if armed {
         // Reading the front window can take a moment: keep it off the stop path.
-        let session_id = session_id.to_string();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        *PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.to_string(), receiver));
         std::thread::spawn(move || {
-            let project = crate::projects::current_project();
-            *PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id, project));
+            let _ = sender.send(crate::projects::current_project());
         });
     }
 }
 
+/// The project read at stop, waiting briefly if that lookup is still going
+/// rather than doing it a second time. Never on the stop path.
 fn project_for(session_id: &str) -> Option<String> {
-    let mut stopped = PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner());
-    match stopped.take() {
-        Some((id, project)) if id == session_id => project,
-        // Not read at stop (or not finished yet): the window in front now is the best guess.
-        other => {
-            *stopped = other;
-            drop(stopped);
-            crate::projects::current_project()
+    let pending = {
+        let mut stopped = PROJECT_AT_STOP.lock().unwrap_or_else(|e| e.into_inner());
+        match stopped.take() {
+            Some((id, receiver)) if id == session_id => Some(receiver),
+            other => {
+                *stopped = other;
+                None
+            }
         }
+    };
+    match pending {
+        Some(receiver) => receiver.recv_timeout(PROJECT_WAIT).unwrap_or_default(),
+        // Not read at stop: the window in front now is the best guess.
+        None => crate::projects::current_project(),
     }
 }
 
@@ -192,7 +202,6 @@ fn delivery(trusted: bool, target: Option<Target>, front: Option<Target>) -> Del
 /// cloud transcript that follows does not paste a second time.
 pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
-    let project = project_for(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
@@ -201,6 +210,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
         let started = Instant::now();
+        let project = project_for(&session_id);
         // Should the transcript box still have the keyboard, the paste (and
         // the focus check before it) must see the user's app, not Eavesy.
         crate::hud::release_editor_and_wait(&app);
@@ -214,6 +224,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Some(corrected) => crate::transcribe::drop_fillers(&corrected),
             None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
         };
+        // Nothing but "um"s: nothing to paste, and Done with no words would
+        // say otherwise.
+        if text.trim().is_empty() {
+            crate::audio::paste_nothing(&app, &session_id, "only fillers were heard");
+            return;
+        }
         let in_eavesy = panel_wants_it(&app);
         // The launcher goes first, so the front app read here is the one
         // the ⌘V below reaches.
@@ -240,9 +256,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         }
         if matches!(how, Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox) {
             // A failed paste may have left the text on the clipboard already;
-            // writing it again makes sure it is there whatever step failed.
-            use tauri_plugin_clipboard_manager::ClipboardExt;
-            if let Err(error) = app.clipboard().write_text(text.clone()) {
+            // writing it again makes sure it is there whatever step failed,
+            // and that no pending restore takes it away again.
+            if let Err(error) = crate::commands::copy_to_clipboard(&app, &text) {
                 eprintln!("dictation: could not copy the text: {error}");
             }
         }
@@ -295,8 +311,7 @@ pub fn deliver_rewrite(app: &AppHandle, session_id: &str, text: &str) -> Result<
             Err(why) => tracing::info!(session_id, "rewrite copied instead of replaced: {why}"),
         }
     }
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    app.clipboard().write_text(text.to_string()).map_err(|e| format!("could not copy the rewrite: {e}"))?;
+    crate::commands::copy_to_clipboard(app, text).map_err(|e| format!("could not copy the rewrite: {e}"))?;
     Ok("copied")
 }
 
@@ -376,8 +391,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
         if front_app() == Some(target) && crate::commands::paste_text(&app, &text).is_ok() {
             return;
         }
-        use tauri_plugin_clipboard_manager::ClipboardExt;
-        if app.clipboard().write_text(text).is_ok() {
+        if crate::commands::copy_to_clipboard(&app, &text).is_ok() {
             let _ = app
                 .notification()
                 .builder()

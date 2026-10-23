@@ -17,7 +17,6 @@ export const Route = createFileRoute('/api/devices/me')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'unauthenticated' }, { status: 401 });
         const user = (
           await getDb()
             .select({

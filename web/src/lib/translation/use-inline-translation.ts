@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { errMsg } from '@/lib/desktop/errors';
 import { requestTranslation } from './client';
 import { type Language } from './languages';
 
@@ -66,7 +67,7 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
         const full = await loadSource.current();
         if (request === requestId.current) { original.current = full; setDisplayed(full); }
       } catch (cause) {
-        if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Could not load the original. Try again.');
+        if (request === requestId.current) setError(errMsg(cause, 'Couldn’t load the original. Try again.'));
       } finally { if (request === requestId.current) setBusy(false); }
       return;
     }
@@ -98,8 +99,9 @@ export function useInlineTranslation(text: string, loadText?: () => Promise<stri
       activeLanguage.current = next;
       setLanguage(next); setDisplayed(output);
     } catch (cause) {
-      if (request === requestId.current) setError(cause instanceof Error ? cause.message : 'Could not translate. Try again.');
+      if (request === requestId.current) setError(errMsg(cause, 'Couldn’t translate. Try again.'));
     } finally { if (request === requestId.current) setBusy(false); }
   }
-  return { language, text: displayed, busy, error, select };
+  const clearError = useCallback(() => setError(''), []);
+  return { language, text: displayed, busy, error, select, clearError };
 }

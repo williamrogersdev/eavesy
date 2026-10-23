@@ -6,7 +6,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
-use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::telemetry::{self, scrub_text, LOG_FILE_PREFIX};
@@ -17,7 +16,7 @@ const TAIL_BYTES: u64 = 256 * 1024;
 
 pub fn copy(app: &AppHandle) {
     let report = collect(app);
-    let (title, body) = match app.clipboard().write_text(report) {
+    let (title, body) = match crate::commands::copy_to_clipboard(app, &report) {
         Ok(()) => (
             "Diagnostics copied",
             "Paste them into your support email or issue. Paths, tokens and emails are removed.",

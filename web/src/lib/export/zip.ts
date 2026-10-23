@@ -64,7 +64,10 @@ export function meetingFolderFiles(
   return files;
 }
 
-type FullMeeting = NonNullable<Awaited<ReturnType<typeof getFull>>>;
+type FullMeeting = Omit<NonNullable<Awaited<ReturnType<typeof getFull>>>, 'notes'> & {
+  // A meeting may have no notes row (getFull's row type doesn't say so).
+  notes: NonNullable<Awaited<ReturnType<typeof getFull>>>['notes'] | null;
+};
 
 export function zipInputFor(
   { meeting, summary, segments, notes }: FullMeeting,

@@ -26,9 +26,25 @@ pub struct RecordingDto {
 
 #[tauri::command]
 pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    copy_to_clipboard(&app, &text)
+}
+
+/// Puts Eavesy's words on the clipboard for the user to paste themselves.
+/// Every clipboard write Eavesy makes goes through here or the paste below:
+/// it calls off a pending restore, so the user's old clipboard never comes
+/// back over words they were just told to ⌘V.
+pub fn copy_to_clipboard(app: &AppHandle, text: &str) -> Result<(), String> {
+    cancel_clipboard_restore();
     app.clipboard()
-        .write_text(text)
+        .write_text(text.to_string())
         .map_err(|e| format!("failed to copy to clipboard: {e}"))
+}
+
+/// For the one clipboard write that isn't text (copying a screenshot): the
+/// caller writes the image itself, and this makes sure a pending restore
+/// from a dictation can't put the old clipboard back over it.
+pub fn cancel_clipboard_restore() {
+    restore().cancel();
 }
 
 #[tauri::command]
@@ -48,37 +64,88 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String, learn: Option<bool
     paste_text_with_learning(&app, &text, learn.unwrap_or(true))
 }
 
-/// A paste's pending restore of the user's own clipboard: its generation, and
-/// while one is pending, what to put back (nothing, when the clipboard held
-/// no text). A newer paste takes the restore over, so Eavesy's own words on
-/// the clipboard are never mistaken for the user's.
-struct Restore {
+/// A paste's pending restore of the user's own clipboard. A newer paste
+/// takes the restore over, so Eavesy's own words on the clipboard are never
+/// mistaken for the user's, and any other change to the clipboard since
+/// Eavesy wrote it (the user copying something) calls the restore off.
+struct Restore<T> {
     generation: u64,
-    pending: Option<Option<String>>,
+    /// While a restore is pending: what to put back, or None when the
+    /// clipboard held nothing that can be put back.
+    pending: Option<Option<T>>,
+    /// The pasteboard's change count just after Eavesy wrote its words.
+    written: Option<isize>,
 }
 
-static RESTORE: std::sync::Mutex<Restore> = std::sync::Mutex::new(Restore { generation: 0, pending: None });
+impl<T> Restore<T> {
+    const fn new() -> Self {
+        Self { generation: 0, pending: None, written: None }
+    }
 
-fn restore() -> std::sync::MutexGuard<'static, Restore> {
+    /// A paste is about to write its words: what the clipboard holds is kept
+    /// to put back. A restore still pending already holds the user's own
+    /// clipboard, unless something else was copied since Eavesy's write.
+    fn begin(&mut self, count_now: Option<isize>, snapshot: impl FnOnce() -> Option<T>) -> u64 {
+        let untouched = self.written.is_some() && self.written == count_now;
+        self.pending = match self.pending.take() {
+            Some(previous) if untouched => Some(previous),
+            _ => Some(snapshot()),
+        };
+        self.generation += 1;
+        self.written = None;
+        self.generation
+    }
+
+    fn wrote(&mut self, generation: u64, count: Option<isize>) {
+        if self.generation == generation {
+            self.written = count;
+        }
+    }
+
+    /// Eavesy's words stay on the clipboard: nothing is put back.
+    fn cancel(&mut self) {
+        self.generation += 1;
+        self.pending = None;
+        self.written = None;
+    }
+
+    /// What to put back once `generation`'s paste has been read: only for the
+    /// newest paste, and only while the clipboard still holds Eavesy's write.
+    fn finish(&mut self, generation: u64, count_now: Option<isize>) -> Option<T> {
+        if self.generation != generation {
+            return None;
+        }
+        let untouched = self.written.is_some() && self.written == count_now;
+        self.written = None;
+        self.pending.take().flatten().filter(|_| untouched)
+    }
+}
+
+static RESTORE: std::sync::Mutex<Restore<clip::Snapshot>> = std::sync::Mutex::new(Restore::new());
+
+fn restore() -> std::sync::MutexGuard<'static, Restore<clip::Snapshot>> {
     RESTORE.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// How long a pasting app gets to read the pasteboard before the user's own
+/// clipboard comes back. Slow web-view apps need a while; the change-count
+/// check keeps a late restore from undoing anything the user copied.
+const RESTORE_AFTER: std::time::Duration = std::time::Duration::from_millis(800);
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     paste_text_with_learning(app, text, true)
 }
 fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<(), String> {
-    let on_clipboard = app.clipboard().read_text().ok();
-    let (generation, previous) = {
+    let generation = {
         let mut restore = restore();
-        let previous = restore.pending.take().unwrap_or(on_clipboard);
-        restore.generation += 1;
-        restore.pending = Some(previous.clone());
-        (restore.generation, previous)
+        let generation = restore.begin(clip::change_count(), clip::snapshot);
+        if let Err(error) = app.clipboard().write_text(text.to_string()) {
+            restore.cancel();
+            return Err(format!("failed to copy to clipboard: {error}"));
+        }
+        restore.wrote(generation, clip::change_count());
+        generation
     };
-
-    app.clipboard()
-        .write_text(text.to_string())
-        .map_err(|e| format!("failed to copy to clipboard: {e}"))?;
 
     #[cfg(target_os = "macos")]
     {
@@ -86,7 +153,7 @@ fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.
-            restore().pending = None;
+            restore().cancel();
             let message = "Couldn't paste automatically. Grant Accessibility to Eavesy in System \
                  Settings → Privacy & Security → Accessibility. The text is on your \
                  clipboard — press ⌘V to paste it now."
@@ -104,20 +171,159 @@ fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<
 
     // The key press is posted, not awaited: give the app time to read the
     // pasteboard before the user's own clipboard comes back. Off this
-    // thread, so whoever pasted can say so at once.
-    let app = app.clone();
+    // thread, so whoever pasted can say so at once. Put back under the lock,
+    // so a paste starting meanwhile can't snapshot Eavesy's own words.
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        std::thread::sleep(RESTORE_AFTER);
         let mut restore = restore();
-        if restore.generation == generation {
-            restore.pending = None;
-            if let Some(previous) = previous {
-                let _ = app.clipboard().write_text(previous);
-            }
+        if let Some(previous) = restore.finish(generation, clip::change_count()) {
+            clip::put_back(&previous);
         }
     });
 
     Ok(())
+}
+
+/// The whole general pasteboard, every item and type, so a paste can put back
+/// an image or a copied file as well as text.
+#[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
+mod clip {
+    use tauri_nspanel::cocoa::base::{id, nil};
+    use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+
+    /// Each pasteboard item's types and their raw data.
+    pub struct Snapshot(Vec<Vec<(String, Vec<u8>)>>);
+
+    /// Past this, a clipboard is too big to hold on to: it isn't put back.
+    const LIMIT: usize = 32 << 20;
+    /// Marked by password managers and the like (nspasteboard.org): never
+    /// kept or put back, or their own clearing of it would stop working.
+    const PRIVATE: [&str; 3] =
+        ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType"];
+
+    struct Pool(id);
+    impl Pool {
+        unsafe fn new() -> Self {
+            Pool(msg_send![class!(NSAutoreleasePool), new])
+        }
+    }
+    impl Drop for Pool {
+        fn drop(&mut self) {
+            unsafe {
+                let _: () = msg_send![self.0, drain];
+            }
+        }
+    }
+
+    unsafe fn general() -> id {
+        msg_send![class!(NSPasteboard), generalPasteboard]
+    }
+
+    unsafe fn rust_string(string: id) -> Option<String> {
+        if string == nil {
+            return None;
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![string, UTF8String];
+        (!utf8.is_null()).then(|| std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned())
+    }
+
+    pub fn change_count() -> Option<isize> {
+        unsafe {
+            let _pool = Pool::new();
+            let pasteboard = general();
+            if pasteboard == nil {
+                return None;
+            }
+            let count: isize = msg_send![pasteboard, changeCount];
+            Some(count)
+        }
+    }
+
+    /// None when the clipboard can't be kept: private, too big, or unreadable.
+    pub fn snapshot() -> Option<Snapshot> {
+        unsafe {
+            let _pool = Pool::new();
+            let pasteboard = general();
+            if pasteboard == nil {
+                return None;
+            }
+            let items: id = msg_send![pasteboard, pasteboardItems];
+            let mut saved = Vec::new();
+            let mut total = 0usize;
+            let item_count: usize = if items == nil { 0 } else { msg_send![items, count] };
+            for index in 0..item_count {
+                let item: id = msg_send![items, objectAtIndex: index];
+                let types: id = msg_send![item, types];
+                let type_count: usize = if types == nil { 0 } else { msg_send![types, count] };
+                let mut kept = Vec::new();
+                for type_index in 0..type_count {
+                    let kind: id = msg_send![types, objectAtIndex: type_index];
+                    let Some(name) = rust_string(kind) else { continue };
+                    if PRIVATE.contains(&name.as_str()) {
+                        return None;
+                    }
+                    let data: id = msg_send![item, dataForType: kind];
+                    if data == nil {
+                        continue;
+                    }
+                    let length: usize = msg_send![data, length];
+                    total += length;
+                    if total > LIMIT {
+                        return None;
+                    }
+                    let bytes: *const u8 = msg_send![data, bytes];
+                    let bytes = if length == 0 || bytes.is_null() {
+                        Vec::new()
+                    } else {
+                        std::slice::from_raw_parts(bytes, length).to_vec()
+                    };
+                    kept.push((name, bytes));
+                }
+                saved.push(kept);
+            }
+            Some(Snapshot(saved))
+        }
+    }
+
+    pub fn put_back(snapshot: &Snapshot) {
+        unsafe {
+            let _pool = Pool::new();
+            let pasteboard = general();
+            if pasteboard == nil {
+                return;
+            }
+            let _: isize = msg_send![pasteboard, clearContents];
+            let objects: id = msg_send![class!(NSMutableArray), array];
+            for item in snapshot.0.iter().filter(|item| !item.is_empty()) {
+                let pasteboard_item: id = msg_send![class!(NSPasteboardItem), new];
+                for (name, bytes) in item {
+                    let Ok(name) = std::ffi::CString::new(name.as_str()) else { continue };
+                    let kind: id = msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()];
+                    let data: id = msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
+                    let _: bool = msg_send![pasteboard_item, setData: data forType: kind];
+                }
+                let _: () = msg_send![objects, addObject: pasteboard_item];
+                let _: () = msg_send![pasteboard_item, release];
+            }
+            let count: usize = msg_send![objects, count];
+            if count > 0 {
+                let _: bool = msg_send![pasteboard, writeObjects: objects];
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod clip {
+    pub struct Snapshot;
+    pub fn change_count() -> Option<isize> {
+        None
+    }
+    pub fn snapshot() -> Option<Snapshot> {
+        None
+    }
+    pub fn put_back(_: &Snapshot) {}
 }
 
 #[tauri::command]
@@ -138,16 +344,16 @@ async fn hide_panel_on_main_thread(app: &AppHandle) -> Result<(), String> {
         .map_err(|_| "launcher hide task ended before returning a result".to_string())?
 }
 
-#[tauri::command]
+// Reads settings.json (and can rewrite it): off the main thread, so hovering
+// the control never waits on the disk.
+#[tauri::command(async)]
 pub fn get_settings(app: AppHandle) -> Settings {
     settings::load(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPosition) -> Result<(), String> {
-    let mut config = settings::load(&app);
-    config.launcher_position = position;
-    settings::save(&app, &config)?;
+    settings::update(&app, |config| config.launcher_position = position)?;
     crate::hud::reset_frame(&app);
     let handle = app.clone();
     app.run_on_main_thread(move || crate::placement::place(&handle))
@@ -156,11 +362,9 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
 
 /// Turns live captions on or off. Speech Recognition permission is asked for
 /// by the launcher when they are turned on, never by a recording.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_live_captions(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut config = settings::load(&app);
-    config.live_captions = Some(enabled);
-    settings::save(&app, &config)
+    settings::update(&app, |config| config.live_captions = Some(enabled)).map(drop)
 }
 
 /// Setup's practice box is open in the panel and wants the next dictation.
@@ -176,17 +380,15 @@ pub fn ack_dictation_text(session_id: String) {
 }
 
 /// Turns the start and stop sounds on or off.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut config = settings::load(&app);
-    config.capture_sounds = Some(enabled);
-    settings::save(&app, &config)
+    settings::update(&app, |config| config.capture_sounds = Some(enabled)).map(drop)
 }
 
 /// How many lines of live words the control shows while recording, whether
 /// it is see-through, and (when given) whether faster live words are on and
 /// whether a finished dictation opens with its words.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>, result_preview: Option<bool>) -> Result<(), String> {
     if !matches!(lines, 0 | 1 | 2 | 4) {
         return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
@@ -201,7 +403,8 @@ pub struct SetupStatus {
     pub completed: bool,
 }
 
-#[tauri::command]
+// Reads settings.json and the Keychain: off the main thread, so Talk never waits on them.
+#[tauri::command(async)]
 pub fn get_setup_status(app: AppHandle) -> SetupStatus {
     let config = settings::load(&app);
     SetupStatus {
@@ -249,11 +452,9 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
     settings::delete_device_token(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn complete_setup(app: AppHandle) -> Result<(), String> {
-    let mut config = settings::load(&app);
-    config.setup_completed = true;
-    settings::save(&app, &config)
+    settings::update(&app, |config| config.setup_completed = true).map(drop)
 }
 
 /// Gives `action` ("toggle" or "dictation") a shortcut; "" leaves it unbound.
@@ -262,8 +463,14 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
 pub fn set_hotkey(app: AppHandle, action: String, accelerator: String, swap: Option<bool>) -> Result<(), HotkeyError> {
     let action = Action::parse(&action)?;
     let result = hotkeys::set_hotkey(&app, action, &accelerator, swap.unwrap_or(false));
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
+}
+
+/// The tray menu and the HUD both show the current shortcuts; tell them.
+fn hotkeys_changed(app: &AppHandle) {
+    crate::tray::refresh(app);
+    let _ = app.emit_to("hud", "hotkeys:changed", ());
 }
 
 #[tauri::command]
@@ -275,14 +482,14 @@ pub fn get_hotkey_defaults() -> hotkeys::Bindings {
 pub fn reset_hotkey(app: AppHandle, action: String, swap: Option<bool>) -> Result<(), HotkeyError> {
     let action = Action::parse(&action)?;
     let result = hotkeys::set_hotkey(&app, action, action.default_accelerator(), swap.unwrap_or(false));
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
 }
 
 #[tauri::command]
 pub fn reset_all_hotkeys(app: AppHandle) -> Result<(), HotkeyError> {
     let result = hotkeys::reset_all(&app);
-    crate::tray::refresh(&app);
+    hotkeys_changed(&app);
     result
 }
 
@@ -328,6 +535,25 @@ pub fn focus_preview_editor(app: AppHandle, session_id: String) -> Result<u64, S
         }
     }).map_err(|error| format!("Could not focus transcript editor: {error}"))?;
     Ok(revision)
+}
+
+/// The transcript box let go of the keyboard (blur, Esc, a tone button or
+/// Copy): hand it back to the app the user was in, so their next keystroke
+/// lands there and not in Eavesy. With `session_id`, only while that capture
+/// is still the one on screen. Does nothing when the box never took it.
+#[tauri::command]
+pub async fn release_preview_editor(app: AppHandle, session_id: Option<String>) -> Result<(), String> {
+    if session_id.is_some() && crate::hud::current().session_id != session_id {
+        return Ok(());
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        crate::hud::release_preview_editor_on_main(&handle);
+        let _ = sender.send(());
+    })
+    .map_err(|error| format!("Could not hand the keyboard back: {error}"))?;
+    receiver.await.map_err(|_| "Could not hand the keyboard back".to_string())
 }
 
 fn validate_live_preview_session(state: &crate::hud::HudState, session_id: &str) -> Result<(), String> {
@@ -747,6 +973,62 @@ pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyEr
 
 #[cfg(test)]
 mod tests {
+    use super::Restore;
+
+    #[test]
+    fn the_users_clipboard_comes_back_after_a_paste() {
+        let mut restore = Restore::new();
+        let paste = restore.begin(Some(1), || Some("theirs"));
+        restore.wrote(paste, Some(2));
+        assert_eq!(restore.finish(paste, Some(2)), Some("theirs"));
+        assert_eq!(restore.finish(paste, Some(2)), None, "only once");
+    }
+
+    #[test]
+    fn nothing_comes_back_over_something_copied_since() {
+        let mut restore = Restore::new();
+        let paste = restore.begin(Some(1), || Some("theirs"));
+        restore.wrote(paste, Some(2));
+        // The user pressed ⌘C before the restore ran.
+        assert_eq!(restore.finish(paste, Some(3)), None);
+    }
+
+    #[test]
+    fn eavesys_own_copy_calls_a_pending_restore_off() {
+        let mut restore = Restore::new();
+        let paste = restore.begin(Some(1), || Some("theirs"));
+        restore.wrote(paste, Some(2));
+        // "Copied — press ⌘V": those words must stay.
+        restore.cancel();
+        assert_eq!(restore.finish(paste, Some(2)), None);
+    }
+
+    #[test]
+    fn back_to_back_pastes_restore_the_users_clipboard_not_eavesys() {
+        let mut restore = Restore::new();
+        let first = restore.begin(Some(1), || Some("theirs"));
+        restore.wrote(first, Some(2));
+        let second = restore.begin(Some(2), || Some("eavesy's first paste"));
+        restore.wrote(second, Some(3));
+        assert_eq!(restore.finish(first, Some(3)), None);
+        assert_eq!(restore.finish(second, Some(3)), Some("theirs"));
+        // Copied in between: what they copied is what comes back.
+        let mut restore = Restore::new();
+        let first = restore.begin(Some(1), || Some("theirs"));
+        restore.wrote(first, Some(2));
+        let second = restore.begin(Some(5), || Some("copied since"));
+        restore.wrote(second, Some(6));
+        assert_eq!(restore.finish(second, Some(6)), Some("copied since"));
+    }
+
+    #[test]
+    fn a_clipboard_that_cannot_be_kept_is_left_alone() {
+        let mut restore = Restore::<&str>::new();
+        let paste = restore.begin(Some(1), || None);
+        restore.wrote(paste, Some(2));
+        assert_eq!(restore.finish(paste, Some(2)), None);
+    }
+
     #[test]
     fn live_corrections_only_target_the_current_capture() {
         use crate::hud::{HudState, Phase};

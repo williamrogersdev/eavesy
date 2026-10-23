@@ -1,8 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { and, desc, eq, inArray, isNull, like, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql, type SQLWrapper } from 'drizzle-orm';
 import type { VectorizeIndex } from '@cloudflare/workers-types';
 import { getDb } from '@/db/client';
+import { clampLimit } from '@/lib/http/clamp-limit';
 import { embeddings, meetings, dictations } from '@/db/schema';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
@@ -36,11 +37,13 @@ export const Route = createFileRoute('/api/search')({
 
         const url = new URL(request.url);
         const q = url.searchParams.get('q')?.trim();
-        const limit = Math.min(Number(url.searchParams.get('limit') ?? '10'), 25);
+        const limit = clampLimit(url.searchParams.get('limit'), 10, 25);
         if (!q) return Response.json({ items: [] });
 
         const db = getDb();
-        const pattern = `%${q.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+        // `\` escapes LIKE's wildcards; SQLite needs ESCAPE to honour it.
+        const pattern = `%${q.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+        const contains = (column: SQLWrapper) => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
         const lexicalRows = await db
           .select()
           .from(meetings)
@@ -50,10 +53,10 @@ export const Route = createFileRoute('/api/search')({
               isNull(meetings.deletedAt),
               or(ne(meetings.source, 'import'), eq(meetings.status, 'complete')),
               or(
-                like(meetings.title, pattern),
-                like(meetings.description, pattern),
-                like(meetings.summaryOverrideMd, pattern),
-                like(meetings.transcriptOverrideMd, pattern),
+                contains(meetings.title),
+                contains(meetings.description),
+                contains(meetings.summaryOverrideMd),
+                contains(meetings.transcriptOverrideMd),
               ),
             ),
           )
@@ -77,7 +80,7 @@ export const Route = createFileRoute('/api/search')({
         const { env } = getCloudflareContext();
         const vectorize = (env as { VECTORIZE?: VectorizeIndex }).VECTORIZE;
         const fallback = () => Response.json({ items: lexicalItems, note: 'semantic search is unavailable; showing text matches' });
-        if (!vectorize || actor.isAnonymous || (await guardUserQuota(actor.userId, 'search'))) return fallback();
+        if (!vectorize || (await guardUserQuota(actor.userId, 'search'))) return fallback();
         let queryVec: number[] | undefined;
         try {
           const ai = ((env as CreditEnv).AI || creditsConfigured(env as CreditEnv)) ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;

@@ -71,29 +71,14 @@ function SettingsPage() {
   const savedVocabulary = useRef<{ attempt: number; words: string[] }>({ attempt: 0, words: [] });
   const navigate = useNavigate();
   const toast = useSaveToast();
-  const [pairing, setPairing] = useState(false);
-  const [pairResult, setPairResult] = useState<string | null>(null);
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
   const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
   const [mcpAllowWrite, setMcpAllowWrite] = useState(false);
-  const [pairCode] = useState(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('pair');
-  });
   const [error, setError] = useState<string | null>(null);
-  const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'openrouter') {
-      return { kind: 'ok', text: 'OpenRouter connected — AI usage now bills to your account.' };
-    }
-    if (params.get('error')?.startsWith('openrouter')) {
-      return { kind: 'error', text: 'Could not connect OpenRouter. Please try again.' };
-    }
-    return null;
-  });
+  // Read from the URL after hydration, so the server and first client render agree.
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     if (window.location.hash === '#projects') void navigate({ to: '/app/projects', replace: true });
@@ -101,6 +86,17 @@ function SettingsPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Old Mac builds opened /app/settings?pair=CODE; /connect/mac approves codes now.
+    const pairCode = params.get('pair');
+    if (pairCode) {
+      window.location.replace(`/connect/mac?code=${encodeURIComponent(pairCode)}`);
+      return;
+    }
+    if (params.get('connected') === 'openrouter') {
+      setNotice({ kind: 'ok', text: 'OpenRouter connected — AI usage now bills to your account.' });
+    } else if (params.get('error')?.startsWith('openrouter')) {
+      setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Please try again.' });
+    }
     if (params.has('connected') || params.has('error')) {
       window.history.replaceState({}, '', '/app/settings');
     }
@@ -219,24 +215,6 @@ function SettingsPage() {
     }
   };
 
-  const approvePairing = async () => {
-    if (!pairCode) return;
-    setPairing(true);
-    setPairResult(null);
-    try {
-      const response = await fetch('/api/devices/pair', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: pairCode }),
-      });
-      if (!response.ok) throw new Error('This pairing code is invalid or expired.');
-      setPairResult('This Mac is connected. You can return to Eavesy.');
-    } catch (error) {
-      setPairResult(error instanceof Error ? error.message : 'Could not pair this Mac.');
-    } finally {
-      setPairing(false);
-    }
-  };
 
   const createMcpToken = async () => {
     setMcpBusy(true);
@@ -315,24 +293,6 @@ function SettingsPage() {
       {error ? <AppAlert>{error}</AppAlert> : null}
       {notice ? <AppAlert tone={notice.kind === 'ok' ? 'success' : 'danger'}>{notice.text}</AppAlert> : null}
 
-      {pairCode ? (
-        <AppAlert tone="info">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Approve code <span className="font-round font-semibold">{pairCode}</span> to connect this Mac.
-              {pairResult ? <span className="block text-xs text-ev-ink-2">{pairResult}</span> : null}
-            </span>
-            <button
-              type="button"
-              onClick={() => void approvePairing()}
-              disabled={pairing || pairResult?.startsWith('This Mac')}
-              className={appButton('primary', 'sm')}
-            >
-              {pairing ? 'Connecting…' : 'Approve this Mac'}
-            </button>
-          </div>
-        </AppAlert>
-      ) : null}
 
       <AppSection title="Account">
         <Row label="Email">

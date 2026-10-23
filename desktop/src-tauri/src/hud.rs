@@ -47,11 +47,41 @@ pub fn current() -> HudState {
 }
 
 pub fn set_state(app: &AppHandle, state: HudState) {
+    set_state_if(app, state, |_| true);
+}
+
+/// Moves `session_id` on to `state`, but only while it is still the session
+/// on screen and in one of the phases `from` (say, still Transcribing), so a
+/// late result never reopens a capture the user dismissed or has moved past.
+/// Returns whether it did.
+pub fn advance_from(app: &AppHandle, session_id: &str, from: &[Phase], state: HudState) -> bool {
+    set_state_if(app, state, |now| now.session_id.as_deref() == Some(session_id) && from.contains(&now.phase))
+}
+
+/// [`set_state`], only when `allowed` says yes to the state on screen now.
+/// The check and the change happen in one step: no other state can come in
+/// between. `allowed` gets the current state; it must not call [`current`].
+pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudState) -> bool) -> bool {
     // Stop, completion and dismissal can arrive on different threads. Keep
     // their renderer events in the same order as CURRENT, which sizes the
     // native window. Otherwise a result can render inside an idle-sized pill.
     let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+    if !allowed(&current()) {
+        return false;
+    }
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
+    {
+        // An open drawer belongs to the dictation it was opened on. It may be
+        // opened while the words are still being heard or written down (the
+        // live editor), so it survives Recording and Transcribing for that
+        // session; any other session, or a dismissed/saved/failed control,
+        // closes it, so it can't reopen by itself later.
+        let mut peek = PEEK.lock().unwrap_or_else(|error| error.into_inner());
+        let keeps_peek = matches!(state.phase, Phase::Recording | Phase::Transcribing | Phase::Done);
+        if !keeps_peek || peek.is_some() && *peek != state.session_id {
+            *peek = None;
+        }
+    }
     // The sound and the red tray glyph mean the mic is live, not that a key
     // was pressed: a recording still starting has no session yet.
     let was_live = previous.is_some_and(|previous| previous.is_live());
@@ -61,7 +91,7 @@ pub fn set_state(app: &AppHandle, state: HudState) {
     crate::tray::set_recording(app, state.is_live());
     let _ = app.emit_to("main", "capture:state", state.clone());
     if app.get_webview_window("hud").is_none() {
-        return;
+        return true;
     }
 
     // Size the window first, then tell the renderer. The other way round, a
@@ -77,8 +107,10 @@ pub fn set_state(app: &AppHandle, state: HudState) {
         if !matches!(current().phase, Phase::Recording | Phase::Transcribing | Phase::Done) {
             release_editor_on_main(&handle);
         }
-        show_on_main(&handle);
-        fit_on_main(&handle);
+        // Sized for the state this task draws, not the newest: when two are
+        // queued, each is drawn in its own size, and the last one wins.
+        show_on_main_for(&handle, &emitted);
+        fit_for_on_main(&handle, &emitted);
         let _ = handle.emit_to("hud", "hud:state", shown(&handle, &emitted));
     });
     if let Err(error) = dispatched {
@@ -86,6 +118,7 @@ pub fn set_state(app: &AppHandle, state: HudState) {
         tracing::warn!("capture control: could not reach the main thread: {error}");
         let _ = app.emit_to("hud", "hud:state", shown(app, &state));
     }
+    true
 }
 
 /// The renderer has painted the new phase. The native shadow follows the
@@ -117,10 +150,8 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
     let session_id = session_id.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(STOPPING_TIMEOUT);
-        let now = current();
-        if now.phase == Phase::Transcribing && now.session_id.as_deref() == Some(session_id.as_str()) {
-            set_state(&app, HudState { session_id: Some(session_id), ..HudState::idle() });
-        }
+        let idle = HudState { session_id: Some(session_id.clone()), ..HudState::idle() };
+        advance_from(&app, &session_id, &[Phase::Transcribing], idle);
     });
 }
 
@@ -155,6 +186,9 @@ const SHOT: (f64, f64) = (360.0, 172.0);
 pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     match state.phase {
+        // Saved with a notice says why nothing was typed ("Saved. Sign in to
+        // have it typed for you"): room for it, like Failed.
+        Phase::Saved if state.notice.is_some() => WIDE,
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
         Phase::Recording if video => VIDEO_LIVE,
         Phase::Transcribing if video => DEFAULT_SIZE,
@@ -205,13 +239,53 @@ fn frame_of(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
     Some((position.x, position.y, size.width, size.height))
 }
 
+type Frame = (f64, f64, f64, f64);
+
+fn near(a: Frame, b: Frame) -> bool {
+    (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0 && (a.2 - b.2).abs() < 1.0 && (a.3 - b.3).abs() < 1.0
+}
+
+/// The control's resting pill, which it grows from and shrinks back to, and
+/// the frame Eavesy last gave the window (both in one coordinate space).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Placement {
+    anchor: Frame,
+    set: Frame,
+}
+
+/// Where the window goes to become `size`, and the resting anchor it went
+/// from. While the window is still where Eavesy last put it, that is the
+/// anchor kept from before: a grow pushed in from a screen edge then shrinks
+/// back to exactly where the user left the pill. Once anything else moved it
+/// (a drag, a restore), its own frame is the new anchor.
+fn anchored(current: Frame, last: Option<Placement>, size: (f64, f64), keep_bottom: bool, refit: fn(Frame, (f64, f64), bool) -> Frame) -> (Frame, Frame) {
+    let anchor = match last {
+        Some(placement) if near(placement.set, current) => placement.anchor,
+        _ => refit(current, DEFAULT_SIZE, keep_bottom),
+    };
+    (refit(anchor, size, keep_bottom), anchor)
+}
+
+/// The window frame (logical, as `frame_of` reads it) Eavesy set last. A
+/// move or resize event that leaves the window there was Eavesy's own, and
+/// is not saved as where the user wants the pill.
+static PLACED: std::sync::Mutex<Option<Frame>> = std::sync::Mutex::new(None);
+
+fn note_placed(window: &tauri::WebviewWindow) {
+    *PLACED.lock().unwrap_or_else(|error| error.into_inner()) = frame_of(window);
+}
+
 /// Gives the control the size of the phase it is in.
 pub fn fit_on_main(app: &AppHandle) {
+    fit_for_on_main(app, &current());
+}
+
+/// Gives the control the size of `state`.
+fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
-    let state = current();
     let prefs = prefs(app);
-    let size = size_for(&state, prefs.lines, peeking(&state) || opens_by_itself(&state, prefs.preview));
+    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview));
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -221,8 +295,8 @@ pub fn fit_on_main(app: &AppHandle) {
         return;
     }
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
-    let visible = window.is_visible().unwrap_or(false);
-    imp::resize(&window, from, size, low, visible);
+    imp::resize(&window, size, low);
+    note_placed(&window);
 }
 
 /// The finished dictation whose transcript drawer is open under the pointer.
@@ -324,9 +398,13 @@ fn prefs(app: &AppHandle) -> Prefs {
 }
 
 fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
-    let mut config = settings::load(app);
-    change(&mut config);
-    let _ = settings::save(app, &config);
+    let config = settings::update(app, &change).unwrap_or_else(|error| {
+        // Not saved, but it still applies for as long as Eavesy runs.
+        tracing::warn!("capture control: could not save its settings: {error}");
+        let mut config = settings::load(app);
+        change(&mut config);
+        config
+    });
     *PREFS.lock().unwrap_or_else(|error| error.into_inner()) =
         Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() });
 }
@@ -349,13 +427,21 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: 
     let look = serde_json::json!({ "lines": lines, "translucent": translucent, "preview": prefs(app).preview });
     let handle = app.clone();
     let emitted = look.clone();
+    // In line with set_state's tasks, so the state sent below is never
+    // followed by an older one still queued.
+    let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
     let dispatched = app.run_on_main_thread(move || {
         fit_on_main(&handle);
         let _ = handle.emit_to("hud", "hud:look", emitted);
+        // The window was just resized for the new look, and whether a result
+        // opens by itself may have changed with it: the renderer must read
+        // that from the state, or it draws a drawer in a receipt-sized pill.
+        let _ = handle.emit_to("hud", "hud:state", shown(&handle, &current()));
     });
     if let Err(error) = dispatched {
         tracing::warn!("capture control: could not reach the main thread: {error}");
         let _ = app.emit_to("hud", "hud:look", look);
+        let _ = app.emit_to("hud", "hud:state", shown(app, &current()));
     }
 }
 
@@ -381,8 +467,12 @@ fn on_screen(app: &AppHandle, frame: &HudFrame) -> bool {
 }
 
 pub fn show_on_main(app: &AppHandle) {
+    show_on_main_for(app, &current());
+}
+
+fn show_on_main_for(app: &AppHandle, state: &HudState) {
     if crate::panel::is_visible(app) { return; }
-    show_unchecked(app);
+    show_unchecked(app, state);
 }
 
 /// The panel folds back into the pill, even one the user closed earlier: the
@@ -392,15 +482,15 @@ pub fn collapse_from_panel_on_main(app: &AppHandle) {
         update_prefs(app, |config| config.hud_hidden = false);
     }
     follow_panel(app);
-    show_unchecked(app);
+    show_unchecked(app, &current());
 }
 
-fn show_unchecked(app: &AppHandle) {
+fn show_unchecked(app: &AppHandle, state: &HudState) {
     let Some(window) = app.get_webview_window("hud") else {
         return;
     };
     let prefs = prefs(app);
-    if prefs.hidden && !is_active(&current().phase) {
+    if prefs.hidden && !is_active(&state.phase) {
         imp::hide(app);
         return;
     }
@@ -417,8 +507,9 @@ fn show_unchecked(app: &AppHandle) {
                 crate::placement::place(app);
             }
         }
+        note_placed(&window);
     }
-    fit_on_main(app);
+    fit_for_on_main(app, state);
     imp::show(app, &window);
 }
 
@@ -474,6 +565,12 @@ fn save_frame(app: &AppHandle) {
     let Some(window) = app.get_webview_window("hud") else { return };
     if !window.is_visible().unwrap_or(false) { return; }
     let Some(current) = frame_of(&window) else { return };
+    // Still where Eavesy put it: the events were a resize for a phase, or a
+    // restore, not the user moving the pill. Saving those would let a grow
+    // pushed in from a screen edge creep into where the pill rests.
+    if PLACED.lock().unwrap_or_else(|error| error.into_inner()).is_some_and(|placed| near(placed, current)) {
+        return;
+    }
     let low = crate::placement::in_lower_half(app, current.0 + current.2 / 2.0, current.1, current.3);
     let frame = resting(current, low);
     if prefs(app).frame != Some(frame) {
@@ -498,6 +595,12 @@ pub fn focus_editor_on_main(app: &AppHandle) {
     EDITOR_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
     crate::app_menu::activate();
     imp::focus_editor(app);
+}
+
+/// The transcript box let go of the keyboard (blur, Esc, a tone or Copy):
+/// hand it back to the app the user was in. Nothing to do if it never took it.
+pub fn release_preview_editor_on_main(app: &AppHandle) {
+    release_editor_on_main(app);
 }
 
 fn release_editor_on_main(app: &AppHandle) {
@@ -589,24 +692,24 @@ mod imp {
         }
     }
 
-    /// Gives the window `size` in one step, animated when it is on screen,
-    /// keeping its centre and its top edge (or bottom edge when `keep_bottom`).
-    /// Snap to the live Cocoa frame without animation, so repeated state
-    /// changes cannot leave the renderer inside a partially resized window.
-    /// The cross-platform signature retains `_from` and `_animate`; macOS
-    /// ignores both and reads the current Cocoa frame directly.
-    pub fn resize(window: &WebviewWindow, _from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, _animate: bool) {
+    /// Where the pill rests and where it was last put, in Cocoa coordinates.
+    static PLACEMENT: std::sync::Mutex<Option<super::Placement>> = std::sync::Mutex::new(None);
+
+    /// Gives the window `size` in one step, without animation, keeping the
+    /// resting pill's centre and its top edge (or bottom edge when
+    /// `keep_bottom`). Reads the live Cocoa frame, so repeated state changes
+    /// cannot leave the renderer inside a partially resized window.
+    pub fn resize(window: &WebviewWindow, size: (f64, f64), keep_bottom: bool) {
         use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
         use tauri_nspanel::objc::{msg_send, sel, sel_impl};
         let Ok(ns_window) = window.ns_window() else { return };
         let ns_window = ns_window as id;
+        let mut placement = PLACEMENT.lock().unwrap_or_else(|error| error.into_inner());
         unsafe {
             let rect: NSRect = msg_send![ns_window, frame];
-            let (mut x, mut y, width, height) = super::refit_cocoa(
-                (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
-                size,
-                keep_bottom,
-            );
+            let current = (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+            let ((mut x, mut y, width, height), anchor) =
+                super::anchored(current, *placement, size, keep_bottom, super::refit_cocoa);
             let screen: id = msg_send![ns_window, screen];
             if !screen.is_null() {
                 let area: NSRect = msg_send![screen, visibleFrame];
@@ -620,6 +723,11 @@ mod imp {
             target.size.height = height;
             let _: () = msg_send![ns_window, setFrame: target display: true animate: false];
             let _: () = msg_send![ns_window, invalidateShadow];
+            let set: NSRect = msg_send![ns_window, frame];
+            *placement = Some(super::Placement {
+                anchor,
+                set: (set.origin.x, set.origin.y, set.size.width, set.size.height),
+            });
         }
     }
 
@@ -661,16 +769,53 @@ mod imp {
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
     }
-    pub fn resize(window: &WebviewWindow, from: (f64, f64, f64, f64), size: (f64, f64), keep_bottom: bool, _animate: bool) {
-        let (x, y, width, height) = super::refit(from, size, keep_bottom);
+    static PLACEMENT: std::sync::Mutex<Option<super::Placement>> = std::sync::Mutex::new(None);
+
+    pub fn resize(window: &WebviewWindow, size: (f64, f64), keep_bottom: bool) {
+        let Some(current) = super::frame_of(window) else { return };
+        let mut placement = PLACEMENT.lock().unwrap_or_else(|error| error.into_inner());
+        let ((x, y, width, height), anchor) = super::anchored(current, *placement, size, keep_bottom, super::refit);
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        *placement = super::frame_of(window).map(|set| super::Placement { anchor, set });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{anchored, is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+
+    #[test]
+    fn saved_without_typing_has_room_to_say_why() {
+        let saved = HudState { notice: Some("Saved. Sign in to have it typed for you".into()), ..state(Phase::Saved, Some("audio"), None) };
+        assert_eq!(size_for(&saved, 4, false), WIDE);
+        assert_eq!(size_for(&saved, 0, false), WIDE);
+        let failed = HudState { notice: Some("x".into()), ..state(Phase::Failed, Some("audio"), Some("no mic")) };
+        assert_eq!(size_for(&saved, 4, false), size_for(&failed, 4, false));
+    }
+
+    #[test]
+    fn a_grow_pushed_in_from_the_edge_shrinks_back_to_where_the_pill_rests() {
+        // Resting near the right edge; growing gets clamped 50pt to the left.
+        let rest = (900.0, 40.0, 216.0, 36.0);
+        let (wide, anchor) = anchored(rest, None, WIDE, false, refit);
+        assert_eq!(anchor, rest);
+        assert_eq!(wide, (808.0, 40.0, 400.0, 142.0));
+        let clamped = (758.0, 40.0, 400.0, 142.0);
+        let placed = Some(Placement { anchor, set: clamped });
+        let (back, anchor) = anchored(clamped, placed, DEFAULT_SIZE, false, refit);
+        assert_eq!(back, rest, "not re-centred on the clamped frame");
+        assert_eq!(anchor, rest);
+    }
+
+    #[test]
+    fn a_pill_moved_since_its_last_resize_rests_where_it_was_moved() {
+        let placed = Some(Placement { anchor: (900.0, 40.0, 216.0, 36.0), set: (758.0, 40.0, 400.0, 142.0) });
+        let dragged = (300.0, 200.0, 400.0, 142.0);
+        let (back, anchor) = anchored(dragged, placed, DEFAULT_SIZE, false, refit);
+        assert_eq!(anchor, (392.0, 200.0, 216.0, 36.0));
+        assert_eq!(back, anchor);
+    }
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }

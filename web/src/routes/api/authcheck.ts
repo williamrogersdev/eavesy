@@ -35,8 +35,8 @@ export const Route = createFileRoute('/api/authcheck')({
 
         const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
           .process?.env ?? {};
-        const pk =
-          env.CLERK_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? undefined;
+        const builtInKey = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined) || undefined;
+        const pk = env.CLERK_PUBLISHABLE_KEY ?? builtInKey;
 
         return Response.json({
           serverSeesSession: Boolean(userId),
@@ -52,7 +52,7 @@ export const Route = createFileRoute('/api/authcheck')({
           cookieNames,
           hasSecretKey: Boolean(env.CLERK_SECRET_KEY),
           hasPublishableKey_CLERK_PUBLISHABLE_KEY: Boolean(env.CLERK_PUBLISHABLE_KEY),
-          hasPublishableKey_NEXT_PUBLIC: Boolean(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
+          hasPublishableKey_VITE: Boolean(builtInKey),
           publishableInstanceDomain: pkInstanceDomain(pk),
           host: new URL(request.url).host,
         });

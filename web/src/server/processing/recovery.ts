@@ -1,64 +1,98 @@
-import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '@/db/schema';
-import { meetingSegments, users } from '@/db/schema';
+import { meetings, meetingSegments, users } from '@/db/schema';
 import { reportError } from '@/server/observability';
 import { isSealed, sealSecret } from '@/server/secret-box';
+import { chunked, D1_IN_LIST_SIZE, sendAll } from './queue-batch';
 import { type ProcessingEnv, SEGMENT_CLAIM_TTL_MS } from './shared';
 
 const STALE_SEGMENT_SWEEP_LIMIT = 100;
+/**
+ * A segment still `pending` this long after it was stored lost its queue
+ * message (a failed send after the row was written). Normal queue latency is
+ * seconds, so this only catches the lost ones.
+ */
+export const PENDING_SEGMENT_GRACE_MS = 15 * 60 * 1_000;
 
 /**
- * Queue segments whose transcription claim outlived any possible consumer.
- * Without this, a segment whose worker died after its queue message gave up
- * would stay 'processing' and leave a gap in the transcript.
+ * Queue segments whose transcription job is gone: a claim that outlived any
+ * possible consumer (the worker died after its message gave up), or a row
+ * that never got a message at all. Without this either one leaves a gap in
+ * the transcript, and the final summary waits on it for hours.
  *
- * Each row is sent first and reset to 'pending' only after its send succeeds,
- * so a failed send leaves the row stale for the next sweep. Failures are
- * reported, never thrown: the rest of the cron must still run.
+ * Deleted meetings and failed meetings are skipped: their audio never needs
+ * transcribing again. So are imports still uploading or cancelled, whose
+ * segments are queued by finalize, or never.
+ *
+ * Rows are sent first and a stale claim is reset to 'pending' only after its
+ * send succeeds, so a failed send leaves the row for the next sweep. Failures
+ * are reported, never thrown: the rest of the cron must still run.
  */
 export async function recoverStaleSegments(env: ProcessingEnv, now = Date.now()) {
   const db = drizzle(env.DB, { schema });
-  const stale = and(
+  const staleClaim = and(
     eq(meetingSegments.transcribeStatus, 'processing'),
     or(isNull(meetingSegments.transcribeClaimedAt), lt(meetingSegments.transcribeClaimedAt, now - SEGMENT_CLAIM_TTL_MS)),
   );
-  let candidates;
-  try {
-    candidates = await db
+  const neverQueued = and(
+    eq(meetingSegments.transcribeStatus, 'pending'),
+    lt(meetingSegments.createdAt, now - PENDING_SEGMENT_GRACE_MS),
+  );
+  const stillWanted = and(
+    isNull(meetings.deletedAt),
+    ne(meetings.status, 'failed'),
+    sql`NOT EXISTS (
+      SELECT 1 FROM recording_imports i
+       WHERE i.meeting_id = ${meetingSegments.meetingId} AND i.state IN ('uploading', 'cancelled')
+    )`,
+  );
+  const lookup = (which: typeof staleClaim) =>
+    db
       .select({
         id: meetingSegments.id,
+        status: meetingSegments.transcribeStatus,
         meetingId: meetingSegments.meetingId,
         idx: meetingSegments.idx,
         track: meetingSegments.track,
       })
       .from(meetingSegments)
-      .where(stale)
+      .innerJoin(meetings, eq(meetings.id, meetingSegments.meetingId))
+      .where(and(which, stillWanted))
       .limit(STALE_SEGMENT_SWEEP_LIMIT);
+  let candidates;
+  try {
+    candidates = [...(await lookup(staleClaim)), ...(await lookup(neverQueued))];
   } catch (error) {
-    reportError('could not look up stale segment claims', error);
+    reportError('could not look up stale segments', error);
     return;
   }
-  let requeued = 0;
-  for (const { id, ...segment } of candidates) {
-    try {
-      await env.PROCESSING_QUEUE.send({ kind: 'transcribe-segment', ...segment });
-      // Conditional on still being stale: if the message was already picked up
-      // and claimed, the fresh claim is left alone.
+  if (candidates.length === 0) return;
+
+  const sent = await sendAll(
+    env.PROCESSING_QUEUE,
+    candidates.map((segment) => ({
+      item: segment,
+      body: { kind: 'transcribe-segment', meetingId: segment.meetingId, idx: segment.idx, track: segment.track },
+    })),
+    'stale segment',
+  );
+  // Conditional on still being stale: if the message was already picked up
+  // and claimed, the fresh claim is left alone.
+  const claimed = sent.filter((segment) => segment.status === 'processing').map((segment) => segment.id);
+  try {
+    for (const ids of chunked(claimed, D1_IN_LIST_SIZE)) {
       await db
         .update(meetingSegments)
         .set({ transcribeStatus: 'pending', transcribeClaimedAt: null })
-        .where(and(eq(meetingSegments.id, id), stale));
-      requeued += 1;
-    } catch (error) {
-      reportError('could not requeue stale segment claim', error, { segment });
+        .where(and(inArray(meetingSegments.id, ids), staleClaim));
     }
+  } catch (error) {
+    reportError('could not reset stale segment claims', error, { count: claimed.length });
   }
-  if (candidates.length > 0) {
-    console.warn(
-      JSON.stringify({ message: 'requeued stale segment claims', count: requeued, failed: candidates.length - requeued }),
-    );
-  }
+  console.warn(
+    JSON.stringify({ message: 'requeued stale segments', count: sent.length, failed: candidates.length - sent.length }),
+  );
 }
 
 export async function sealLegacyKeys(env: ProcessingEnv) {

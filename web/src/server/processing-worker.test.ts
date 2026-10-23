@@ -427,16 +427,54 @@ describe('rolling summary', () => {
 });
 
 describe('dead-letter queue', () => {
-  test('messages are reported and acknowledged, never re-run', async () => {
-    const t = setup();
-    t.addSegment(0, 'pending');
-    const d = delivery({ kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+  const deadLetter = async (env: Parameters<typeof queue>[1], body: ProcessingMessage) => {
+    const d = delivery(body);
     await queue(
       { queue: 'eavesy-processing-dlq', messages: [d.message] } as unknown as MessageBatch<ProcessingMessage>,
-      t.env,
+      env,
     );
-    expect(d.outcome.acked).toBe(true);
-    expect(t.segmentStatus(0)).toBe('pending');
+    return d.outcome;
+  };
+
+  test('a lost segment is marked failed without failing the meeting, and never re-run', async () => {
+    const t = setup();
+    t.addSegment(0, 'pending');
+    const outcome = await deadLetter(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(outcome).toMatchObject({ acked: true, retried: false });
+    expect(t.segmentStatus(0)).toBe('failed');
+    expect(t.meeting().status).toBe('processing');
+    expect(t.sent).toEqual([]);
+  });
+
+  test('a segment another job finished stays complete', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    await deadLetter(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(t.segmentStatus(0)).toBe('complete');
+  });
+
+  test('a rolling note leaves the meeting alone; a final summary fails it', async () => {
+    const t = setup();
+    await deadLetter(t.env, { kind: 'rolling-summarize', meetingId: 'm1', throughIdx: 0 });
+    expect(t.meeting().status).toBe('processing');
+    await deadLetter(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(t.meeting().status).toBe('failed');
+  });
+});
+
+describe('terminal failures', () => {
+  test('a summary that runs out of retries does not undo a meeting completed meanwhile', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday and the launch plan is set, everyone agreed on the owners.');
+    const failing = stubAnthropic(() => {
+      // Another chain finishes the meeting while this one's model call fails.
+      t.sqlite.run(`UPDATE meetings SET status = 'complete' WHERE id = 'm1'`);
+      return { status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: 'bad' } } };
+    });
+    restoreFetch = failing.restore;
+    expect(await deliver(t.env, { kind: 'summarize', meetingId: 'm1' }, MAX_ATTEMPTS)).toMatchObject({ acked: true });
+    expect(t.meeting().status).toBe('complete');
   });
 });
 

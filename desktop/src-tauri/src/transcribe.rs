@@ -1,104 +1,34 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
-use tauri_plugin_notification::NotificationExt;
+use tauri::AppHandle;
 
-use crate::{fs_writer, settings, store};
+use crate::settings;
 
-#[allow(dead_code)] // Legacy audio retry path retained for recovery.
-pub fn spawn(
-    app: AppHandle,
-    id: String,
-    media_path: PathBuf,
-    folder: Option<PathBuf>,
-    is_video: bool,
-) {
-    std::thread::spawn(move || {
-        let result = crate::fs_watcher::wait_for_recovery_on_worker(&app).and_then(|()| settings::device_credential(&app)
-            .ok_or_else(|| {
-                "Pair this Mac with your Eavesy account before transcribing recordings.".to_string()
-            })
-            .and_then(|credential| run(&media_path, is_video, "", &credential, &RETRY_DELAYS)));
-        match result {
-            Ok(text) => {
-                let _ = store::set_transcript(&app, &id, Some(text.clone()), "complete");
-                crate::dictation::deliver(&app, &id, &text);
-                if let Some(dir) = &folder {
-                    if let Some(recording) = store::get(&app, &id).ok().flatten() {
-                        let _ = fs_writer::persist_recording_artifacts(
-                            Some(&app),
-                            dir,
-                            &recording,
-                            None,
-                            None,
-                        );
-                    }
-                }
-                let current = crate::hud::current();
-                if current.session_id.as_deref() == Some(id.as_str())
-                    && current.phase != crate::hud::Phase::Recording
-                    && !store::get(&app, &id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|rec| rec.has_video)
-                {
-                    crate::hud::set_state(
-                        &app,
-                        crate::hud::HudState {
-                            phase: crate::hud::Phase::Done,
-                            session_id: Some(id.clone()),
-                            mode: None,
-                            started_at_ms: None,
-                            message: Some(text),
-                            notice: None,
-                        },
-                    );
-                }
-            }
-            Err(e) => {
-                crate::telemetry::capture("transcription.run", &e);
-                let current = crate::hud::current();
-                if current.session_id.as_deref() == Some(id.as_str())
-                    && current.phase != crate::hud::Phase::Recording
-                    && !store::get(&app, &id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|rec| rec.has_video)
-                {
-                    crate::hud::set_state(
-                        &app,
-                        crate::hud::HudState {
-                            phase: crate::hud::Phase::Failed,
-                            session_id: Some(id.clone()),
-                            mode: None,
-                            started_at_ms: None,
-                            message: Some(e.clone()),
-                            notice: None,
-                        },
-                    );
-                }
-                // Keep any on-device transcript stored at stop: it beats none.
-                let _ = store::set_status(&app, &id, "transcript_failed");
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("Couldn't transcribe your recording")
-                    .body(format!(
-                        "Your recording is saved in your Eavesy folder and is safe. \
-                         Transcription failed: {e}"
-                    ))
-                    .show();
-            }
-        }
-        let _ = app.emit("recordings:updated", ());
-    });
-}
+/// One client for every dictation request, so each one reuses a warm
+/// connection instead of paying for a TLS handshake inside its time budget.
+/// No client-wide timeout: every request sets its own. Only ever used from
+/// plain threads or `spawn_blocking`.
+static HTTP: std::sync::LazyLock<reqwest::blocking::Client> = std::sync::LazyLock::new(|| {
+    reqwest::blocking::Client::builder()
+        .timeout(None)
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+});
+
+/// The longest a dictation waits for Whisper's words once its clip is saved.
+/// Sealing the clip can take up to 30s of the HUD's 60s before it gives up
+/// on "Writing it down…": words that came later would paste into whatever
+/// has the keyboard by then, with nothing on screen to say why.
+const PASTE_BUDGET: Duration = Duration::from_secs(20);
 
 /// Transcribes a dictation clip for its paste only. The recording uploads
-/// separately and its cloud transcript is what gets stored; if this fails,
-/// that transcript is pasted once it is ready instead. `heard_on_device` is
-/// false when the Mac's recognizer ran over the whole clip and heard no words,
-/// so the server keeps out the stock phrases Whisper invents for silence.
+/// separately and its cloud transcript is what gets stored (and shown in
+/// History). The paste waits at most `PASTE_BUDGET`; if it fails or runs out
+/// of time the dictation is disarmed, so nothing pastes later, and the HUD
+/// says it was saved instead. `heard_on_device` is false when the Mac's
+/// recognizer ran over the whole clip and heard no words, so the server
+/// keeps out the stock phrases Whisper invents for silence.
 pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf, heard_on_device: bool) {
     std::thread::spawn(move || {
         let Some(credential) = settings::device_credential(&app) else {
@@ -106,11 +36,23 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf, heard_on_d
             return;
         };
         let query = if heard_on_device { VOICE } else { VOICE_UNHEARD };
-        match run(&audio, false, query, &credential, &PASTE_RETRY_DELAYS) {
-            Ok(text) => crate::dictation::deliver_dictation(&app, &id, &text),
-            Err(error) => {
+        let deadline = Instant::now() + PASTE_BUDGET;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        // On its own thread, so a result that comes too late has nowhere to go.
+        std::thread::spawn(move || {
+            let _ = sender.send(run(&audio, false, query, &credential, &PASTE_RETRY_DELAYS, deadline));
+        });
+        match receiver.recv_timeout(PASTE_BUDGET) {
+            Ok(Ok(text)) => crate::dictation::deliver_dictation(&app, &id, &text),
+            Ok(Err(error)) => {
                 crate::telemetry::capture("dictation.whisper_paste", &error);
+                crate::dictation::disarm(&id);
                 no_paste(&app, &id, "Saved. The words will be in History");
+            }
+            Err(_) => {
+                crate::telemetry::capture("dictation.whisper_paste", "timed out");
+                crate::dictation::disarm(&id);
+                no_paste(&app, &id, "Saved, not typed: it took too long. The words will be in History");
             }
         }
     });
@@ -245,15 +187,12 @@ fn yes() -> bool {
 }
 
 fn post_polish(credential: &settings::Credential, body: &serde_json::Value, timeout: std::time::Duration) -> Result<PolishReply, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = HTTP
         .post(format!(
             "{}/api/dictations/polish",
             credential.base.trim_end_matches('/')
         ))
+        .timeout(timeout)
         .bearer_auth(&credential.token)
         .json(body)
         .send()
@@ -271,26 +210,22 @@ fn post_polish(credential: &settings::Credential, body: &serde_json::Value, time
 /// A dictation whose words could not be had in time: say it is saved, so
 /// "Writing it down…" doesn't hang.
 fn no_paste(app: &AppHandle, id: &str, notice: &str) {
-    let current = crate::hud::current();
-    if current.phase == crate::hud::Phase::Transcribing && current.session_id.as_deref() == Some(id)
-    {
-        crate::hud::set_state(
-            app,
-            crate::hud::HudState {
-                phase: crate::hud::Phase::Saved,
-                session_id: Some(id.to_string()),
-                mode: Some("audio".to_string()),
-                started_at_ms: None,
-                message: None,
-                notice: Some(notice.to_string()),
-            },
-        );
-    }
+    crate::hud::advance_from(
+        app,
+        id,
+        &[crate::hud::Phase::Transcribing],
+        crate::hud::HudState {
+            phase: crate::hud::Phase::Saved,
+            session_id: Some(id.to_string()),
+            mode: Some("audio".to_string()),
+            started_at_ms: None,
+            message: None,
+            notice: Some(notice.to_string()),
+        },
+    );
 }
 
 const CHUNK_SECS: usize = 4 * 60;
-#[allow(dead_code)] // Used by the legacy recovery retry path.
-const RETRY_DELAYS: [u64; 3] = [5, 20, 60];
 /// A paste is only worth waiting a moment for: after that the user has moved
 /// on, and the stored recording is transcribed with full retries anyway.
 const PASTE_RETRY_DELAYS: [u64; 1] = [2];
@@ -304,20 +239,18 @@ const VOICE: &str = "?voice=1";
 const VOICE_UNHEARD: &str = "?voice=1&heard_on_device=0";
 
 /// `query` is what the server is told about the clip: "", `VOICE` or `VOICE_UNHEARD`.
+/// Every request, and every retry, ends by `deadline`.
 fn run(
     media_path: &Path,
     is_video: bool,
     query: &str,
     credential: &settings::Credential,
     delays: &[u64],
+    deadline: Instant,
 ) -> Result<String, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|e| e.to_string())?;
     let pieces = prepare(media_path, is_video)?;
     let texts = crate::work_queue::run(&pieces.pieces, PIECES_AT_ONCE, |piece| {
-        with_retry(delays, || transcribe_piece(&client, piece, query, credential))
+        with_retry(delays, deadline, || transcribe_piece(&HTTP, piece, query, credential, deadline))
     })?;
     let texts: Vec<&str> = texts
         .iter()
@@ -336,17 +269,20 @@ enum PieceError {
     Fatal(String),
 }
 
+/// Tries `attempt`, again after each of `delays` while it fails in a way
+/// worth retrying, but never retries past `deadline`.
 fn with_retry(
     delays: &[u64],
+    deadline: Instant,
     mut attempt: impl FnMut() -> Result<String, PieceError>,
 ) -> Result<String, String> {
     for delay in delays.iter().map(Some).chain(std::iter::once(None)) {
         match attempt() {
             Ok(text) => return Ok(text),
             Err(PieceError::Fatal(e)) => return Err(e),
-            Err(PieceError::Retry(e)) => match delay {
-                Some(secs) => std::thread::sleep(std::time::Duration::from_secs(*secs)),
-                None => return Err(e),
+            Err(PieceError::Retry(e)) => match delay.map(|secs| Duration::from_secs(*secs)) {
+                Some(wait) if Instant::now() + wait < deadline => std::thread::sleep(wait),
+                _ => return Err(e),
             },
         }
     }
@@ -358,7 +294,12 @@ fn transcribe_piece(
     piece: &crate::audio_upload::AudioPiece,
     query: &str,
     credential: &settings::Credential,
+    deadline: Instant,
 ) -> Result<String, PieceError> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(PieceError::Fatal("out of time".to_string()));
+    }
     let part =
         reqwest::blocking::multipart::Part::reader_with_length(piece.reader(), piece.body_len())
             .file_name(piece.filename.clone())
@@ -372,6 +313,7 @@ fn transcribe_piece(
 
     let resp = client
         .post(&url)
+        .timeout(left)
         .multipart(form)
         .bearer_auth(&credential.token)
         .send()
@@ -602,8 +544,9 @@ mod tests {
         );
         let client = reqwest::blocking::Client::new();
         let credential = credential(&server);
-        let result = with_retry(&[0], || {
-            transcribe_piece(&client, piece, VOICE_UNHEARD, &credential)
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let result = with_retry(&[0], deadline, || {
+            transcribe_piece(&client, piece, VOICE_UNHEARD, &credential, deadline)
         });
         assert_eq!(result.unwrap(), "replayed");
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
@@ -682,12 +625,32 @@ mod tests {
     #[test]
     fn retries_transient_failures_but_not_fatal_ones() {
         let mut calls = 0;
-        let fatal = with_retry(&RETRY_DELAYS, || {
+        let later = Instant::now() + Duration::from_secs(60);
+        let fatal = with_retry(&PASTE_RETRY_DELAYS, later, || {
             calls += 1;
             Err(PieceError::Fatal("401".into()))
         });
         assert_eq!(fatal, Err("401".to_string()));
         assert_eq!(calls, 1);
+        let mut calls = 0;
+        let transient = with_retry(&[0], later, || {
+            calls += 1;
+            if calls == 1 { Err(PieceError::Retry("503".into())) } else { Ok("words".into()) }
+        });
+        assert_eq!(transient, Ok("words".to_string()));
+    }
+
+    #[test]
+    fn a_paste_never_retries_past_its_deadline() {
+        let mut calls = 0;
+        let started = Instant::now();
+        let result = with_retry(&PASTE_RETRY_DELAYS, started + Duration::from_millis(500), || {
+            calls += 1;
+            Err(PieceError::Retry("503".into()))
+        });
+        assert_eq!(result, Err("503".to_string()));
+        assert_eq!(calls, 1, "a 2s wait does not fit in what is left");
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     fn mock_server() -> (tokio::runtime::Runtime, wiremock::MockServer) {

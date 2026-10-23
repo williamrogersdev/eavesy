@@ -1,14 +1,17 @@
 import { createAiRunner, creditsConfigured, type CreditEnv } from '../../../web/src/lib/ai/credit-runner';
 import { librarySources, askLibrary } from '../../../web/src/server/library-memory';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq, inArray, isNull, like, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
+import { clock } from '../../../web/src/lib/ai/chapters';
+import { sha256Hex } from '../../../web/src/lib/sha256';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
-import { captureMessage, withErrorReporting } from '../../../web/src/server/observability';
+import { reportError, withErrorReporting } from '../../../web/src/server/observability';
 import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
 import {
   mcpTokenExpiresAt,
@@ -42,13 +45,6 @@ interface Env extends CreditEnv {
 }
 
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
-
-async function sha256Hex(input: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 const MCP_REQUESTS_PER_MINUTE = 120;
@@ -275,16 +271,19 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
     return new Response('method not allowed', { status: 405 });
   }
 
-  let body: any;
+  let parsed: unknown;
   try {
-    body = await request.json();
+    parsed = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'invalid json' }), { status: 400 });
   }
+  // Valid JSON can still be `null`, a number or a batch array.
+  if (!isRecord(parsed)) return jsonRpc(null, undefined, { code: -32600, message: 'expected a JSON-RPC request object' });
+  const body: RpcRequest = { id: parsed.id, method: parsed.method, params: isRecord(parsed.params) ? parsed.params : {} };
 
   if (body.method === 'initialize') {
-    const requested = body.params?.protocolVersion;
-    const protocolVersion = MCP_VERSIONS.includes(requested) ? requested : MCP_VERSIONS[0];
+    const requested = body.params.protocolVersion;
+    const protocolVersion = MCP_VERSIONS.find((version) => version === requested) ?? MCP_VERSIONS[0];
     return jsonRpc(body.id, {
       protocolVersion,
       capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
@@ -315,10 +314,10 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
       const items = await savedPrompts.list(db, userId);
       return jsonRpc(body.id, { prompts: items.map(promptListing) });
     }
-    const name = body.params?.name;
+    const name = body.params.name;
     const prompt = typeof name === 'string' ? await savedPrompts.getBySlug(db, userId, name) : null;
     if (!prompt) return jsonRpc(body.id, undefined, { code: -32602, message: `No saved prompt is called ${String(name)}.` });
-    const details = body.params?.arguments?.details;
+    const details = isRecord(body.params.arguments) ? body.params.arguments.details : undefined;
     // Best effort: a failed count must not fail the prompt.
     await savedPrompts.markUsed(db, userId, prompt.id).catch(() => undefined);
     return jsonRpc(body.id, {
@@ -327,7 +326,8 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
     });
   }
   if (body.method === 'tools/call') {
-    const { name, arguments: args } = body.params ?? {};
+    const name = typeof body.params.name === 'string' ? body.params.name : '';
+    const args = isRecord(body.params.arguments) ? body.params.arguments : {};
     const def = TOOL_DEFS.find((tool) => tool.name === name);
     if (def && !scopes.includes(def.scope)) {
       return jsonRpc(body.id, {
@@ -340,26 +340,57 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
       });
     }
     try {
-      const result = await callTool(env, userId, name, args ?? {});
+      const result = await callTool(env, userId, name, args);
       return jsonRpc(body.id, {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       });
     } catch (err) {
-      captureMessage('MCP tool call failed', {
-        tags: { mcp_tool: typeof name === 'string' ? name : 'unknown' },
-      });
-      return jsonRpc(body.id, undefined, {
-        code: -32000,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      // Only our own messages reach the client; anything else may carry SQL or internals.
+      if (err instanceof UserFacingError) return jsonRpc(body.id, undefined, { code: -32602, message: err.message });
+      reportError('MCP tool call failed', err, { mcp_tool: name || 'unknown' });
+      return jsonRpc(body.id, undefined, { code: -32000, message: 'The tool call failed. Please try again.' });
     }
   }
 
   return jsonRpc(body.id, undefined, {
     code: -32601,
-    message: `method not supported: ${body.method}`,
+    message: `method not supported: ${String(body.method)}`,
   });
 }
+
+interface RpcRequest {
+  id: unknown;
+  method: unknown;
+  params: Record<string, unknown>;
+}
+
+/** An error whose message is written for the person calling the tool. */
+class UserFacingError extends Error {}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A list tool's `limit`: a whole number from 1 to `max`, else the default. */
+function clampLimit(value: unknown, fallback = 10, max = 50): number {
+  return Math.max(1, Math.min(Math.trunc(Number(value)) || fallback, max));
+}
+
+function stringArg(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** `%text%` for LIKE, with the wildcards and the escape character itself escaped. */
+function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+function contains(column: SQLiteColumn, pattern: string): SQL {
+  return sql`${column} LIKE ${pattern} ESCAPE '\\'`;
+}
+
+/** Imports are hidden until they finish, as search hides them. */
+const visibleMeeting = () => or(ne(schema.meetings.source, 'import'), eq(schema.meetings.status, 'complete'));
 
 
 export default withErrorReporting<Env>({ service: 'mcp', redactPath: true }, worker);
@@ -403,7 +434,7 @@ const TOOL_DEFS: ToolDef[] = [
       type: 'object',
       properties: {
         query: { type: 'string' },
-        limit: { type: 'number', default: 10 },
+        limit: { type: 'number', minimum: 1, maximum: 50, default: 10 },
       },
       required: ['query'],
     },
@@ -428,7 +459,7 @@ const TOOL_DEFS: ToolDef[] = [
     description: 'List the most recent meetings, optionally only those in one project (by name, see list_projects).',
     inputSchema: {
       type: 'object',
-      properties: { limit: { type: 'number', default: 10 }, project: { type: 'string' } },
+      properties: { limit: { type: 'number', minimum: 1, maximum: 50, default: 10 }, project: { type: 'string' } },
     },
     scope: 'read',
   },
@@ -446,7 +477,7 @@ const TOOL_DEFS: ToolDef[] = [
       type: 'object',
       properties: {
         query: { type: 'string' },
-        limit: { type: 'number', default: 10 },
+        limit: { type: 'number', minimum: 1, maximum: 50, default: 10 },
       },
       required: ['query'],
     },
@@ -466,35 +497,49 @@ const TOOL_DEFS: ToolDef[] = [
   },
 ];
 
-async function callTool(env: Env, userId: string, name: string, args: Record<string, any>) {
+/** The columns a meeting search result shows. */
+const MEETING_LISTING = {
+  id: schema.meetings.id,
+  title: schema.meetings.title,
+  description: schema.meetings.description,
+  startedAt: schema.meetings.startedAt,
+  durationSec: schema.meetings.durationSec,
+};
+/** Vectorize returns at most 50 matches when metadata is asked for. */
+const VECTOR_TOP_K_MAX = 50;
+/** get_action_items reads this many of the newest summarized meetings, and returns at most this many items. */
+const ACTION_ITEM_MEETINGS = 200;
+const ACTION_ITEMS_MAX = 200;
+
+async function callTool(env: Env, userId: string, name: string, args: Record<string, unknown>) {
   const db = drizzle(env.DB, { schema });
   switch (name) {
     case 'search_library':
     case 'ask_library': {
-      const question = String(name === 'ask_library' ? args.question ?? '' : args.query ?? '').trim();
-      if (question.length < 3 || question.length > 1000) throw new Error('Question must be between 3 and 1000 characters');
-      if (name === 'ask_library' && !creditsConfigured(env)) throw new Error('Library answers are not enabled');
+      const question = stringArg(name === 'ask_library' ? args.question : args.query);
+      if (question.length < 3 || question.length > 1000) throw new UserFacingError('Question must be between 3 and 1000 characters');
+      if (name === 'ask_library' && !creditsConfigured(env)) throw new UserFacingError('Library answers are not enabled');
       const opts = { ai: createAiRunner(env, 'mcp-library'), vectorize: env.VECTORIZE };
       return name === 'ask_library' ? askLibrary(db, userId, question, opts) : librarySources(db, userId, question, opts);
     }
     case 'search_meetings': {
-      const query = String(args.query ?? '').trim();
+      const query = stringArg(args.query);
       if (!query) return [];
-      const q = `%${query.replace(/%/g, '\\%')}%`;
-      const limit = Math.min(args.limit ?? 10, 50);
+      const q = containsPattern(query);
+      const limit = clampLimit(args.limit);
       const titleRows = await db
-        .select()
+        .select(MEETING_LISTING)
         .from(schema.meetings)
         .where(
           and(
             eq(schema.meetings.userId, userId),
             isNull(schema.meetings.deletedAt),
-              or(ne(schema.meetings.source, 'import'), eq(schema.meetings.status, 'complete')),
+            visibleMeeting(),
             or(
-              like(schema.meetings.title, q),
-              like(schema.meetings.description, q),
-              like(schema.meetings.summaryOverrideMd, q),
-              like(schema.meetings.transcriptOverrideMd, q),
+              contains(schema.meetings.title, q),
+              contains(schema.meetings.description, q),
+              contains(schema.meetings.summaryOverrideMd, q),
+              contains(schema.meetings.transcriptOverrideMd, q),
             ),
           ),
         )
@@ -503,7 +548,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
 
       const queryVector = (await embedTexts(createAiRunner(env, 'mcp-search'), [query]))[0];
       const matches = await env.VECTORIZE.query(queryVector, {
-        topK: limit * 3,
+        topK: Math.min(limit * 3, VECTOR_TOP_K_MAX),
         filter: { userId },
         returnMetadata: 'all',
       });
@@ -519,20 +564,20 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       const [semanticRows, excerptRows] = await Promise.all([
         semanticIds.length
           ? db
-              .select()
+              .select(MEETING_LISTING)
               .from(schema.meetings)
               .where(
                 and(
                   eq(schema.meetings.userId, userId),
                   isNull(schema.meetings.deletedAt),
-              or(ne(schema.meetings.source, 'import'), eq(schema.meetings.status, 'complete')),
+                  visibleMeeting(),
                   inArray(schema.meetings.id, semanticIds),
                 ),
               )
           : Promise.resolve([]),
         semantic.length
           ? db
-              .select()
+              .select({ id: schema.embeddings.id, contentExcerpt: schema.embeddings.contentExcerpt })
               .from(schema.embeddings)
               .where(
                 and(
@@ -573,7 +618,8 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       }));
     }
     case 'get_meeting': {
-      const id = String(args.id ?? '');
+      const id = stringArg(args.id);
+      if (!id) throw new UserFacingError('id is required');
       const m = (
         await db
           .select()
@@ -583,11 +629,12 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
               eq(schema.meetings.id, id),
               eq(schema.meetings.userId, userId),
               isNull(schema.meetings.deletedAt),
+              visibleMeeting(),
             ),
           )
           .limit(1)
       )[0];
-      if (!m) throw new Error('not found');
+      if (!m) throw new UserFacingError('not found');
       const summary = (
         await db.select().from(schema.summaries).where(eq(schema.summaries.meetingId, id)).limit(1)
       )[0];
@@ -629,27 +676,29 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           m.transcriptOverrideMd ??
           (args.transcript_format !== 'raw' && m.agentTranscriptMd ? m.agentTranscriptMd : null) ??
           segments
-            .map((s) => `[${formatMs(s.startMs)}] ${s.speakerId ? speakerName(s.speakerId, names) : 'Speaker'}: ${s.text}`)
+            .map((s) => `[${clock(s.startMs)}] ${s.speakerId ? speakerName(s.speakerId, names) : 'Speaker'}: ${s.text}`)
             .join('\n'),
         url: `https://eavesy.com/app/meetings/${m.id}`,
       };
     }
     case 'recent_meetings': {
-      const limit = Math.min(args.limit ?? 10, 50);
+      const limit = clampLimit(args.limit);
       const projects = await db
         .select({ id: schema.folders.id, name: schema.folders.name })
         .from(schema.folders)
         .where(eq(schema.folders.userId, userId));
-      const projectName = typeof args.project === 'string' ? args.project.trim().toLowerCase() : '';
+      const projectArg = stringArg(args.project);
+      const projectName = projectArg.toLowerCase();
       const only = projectName ? projects.find((p) => p.name.toLowerCase() === projectName) : undefined;
-      if (projectName && !only) throw new Error(`no project named "${args.project}"`);
+      if (projectName && !only) throw new UserFacingError(`no project named "${projectArg}"`);
       const rows = await db
-        .select()
+        .select({ ...MEETING_LISTING, folderId: schema.meetings.folderId })
         .from(schema.meetings)
         .where(
           and(
             eq(schema.meetings.userId, userId),
             isNull(schema.meetings.deletedAt),
+            visibleMeeting(),
             only ? eq(schema.meetings.folderId, only.id) : undefined,
           ),
         )
@@ -681,16 +730,23 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       }));
     }
     case 'search_dictations': {
-      const q = `%${(args.query ?? '').replace(/%/g, '\\%')}%`;
-      const limit = Math.min(args.limit ?? 10, 50);
+      const query = stringArg(args.query);
+      if (!query) return [];
+      const q = containsPattern(query);
+      const limit = clampLimit(args.limit);
       const rows = await db
-        .select()
+        .select({
+          id: schema.dictations.id,
+          transcript: schema.dictations.transcript,
+          cleanedText: schema.dictations.cleanedText,
+          createdAt: schema.dictations.createdAt,
+        })
         .from(schema.dictations)
         .where(
           and(
             eq(schema.dictations.userId, userId),
             isNull(schema.dictations.deletedAt),
-            or(like(schema.dictations.transcript, q), like(schema.dictations.title, q)),
+            or(contains(schema.dictations.transcript, q), contains(schema.dictations.title, q)),
           ),
         )
         .orderBy(desc(schema.dictations.createdAt))
@@ -703,42 +759,66 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       }));
     }
     case 'get_action_items': {
-      const status = (args.status ?? 'open') as 'open' | 'completed' | 'all';
-      const summaries = await db
+      const status = args.status === 'completed' || args.status === 'all' ? args.status : 'open';
+      const owner = stringArg(args.owner);
+      const rows = await db
         .select({
-          summary: schema.summaries,
-          meeting: schema.meetings,
+          actionItemsJson: schema.summaries.actionItemsJson,
+          meetingId: schema.meetings.id,
+          meetingTitle: schema.meetings.title,
         })
         .from(schema.summaries)
         .innerJoin(schema.meetings, eq(schema.meetings.id, schema.summaries.meetingId))
-        .where(and(eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt)));
-      const out: any[] = [];
-      for (const row of summaries) {
-        const items = JSON.parse(row.summary.actionItemsJson) as {
-          text: string;
-          owner?: string;
-          due?: string;
-          completed: boolean;
-        }[];
-        for (const a of items) {
+        .where(and(eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
+        .orderBy(desc(schema.meetings.startedAt))
+        .limit(ACTION_ITEM_MEETINGS);
+      const out: ActionItemResult[] = [];
+      for (const row of rows) {
+        for (const a of parseActionItems(row.actionItemsJson)) {
           if (status === 'open' && a.completed) continue;
           if (status === 'completed' && !a.completed) continue;
-          if (args.owner && a.owner !== args.owner) continue;
+          if (owner && a.owner !== owner) continue;
           out.push({
             text: a.text,
             owner: a.owner,
             due: a.due,
             completed: a.completed,
-            meeting_id: row.meeting.id,
-            meeting_title: row.meeting.title,
+            meeting_id: row.meetingId,
+            meeting_title: row.meetingTitle,
           });
+          if (out.length >= ACTION_ITEMS_MAX) return out;
         }
       }
       return out;
     }
     default:
-      throw new Error(`unknown tool: ${name}`);
+      throw new UserFacingError(`unknown tool: ${name}`);
   }
+}
+
+interface ActionItemResult {
+  text: string;
+  owner?: string;
+  due?: string;
+  completed: boolean;
+  meeting_id: string;
+  meeting_title: string;
+}
+
+function parseActionItems(json: string): { text: string; owner?: string; due?: string; completed: boolean }[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((item) => ({
+    text: typeof item.text === 'string' ? item.text : '',
+    owner: typeof item.owner === 'string' ? item.owner : undefined,
+    due: typeof item.due === 'string' ? item.due : undefined,
+    completed: item.completed === true,
+  }));
 }
 
 function asMetadata(value: unknown): { sourceType?: string; sourceId?: string } {
@@ -748,11 +828,4 @@ function asMetadata(value: unknown): { sourceType?: string; sourceId?: string } 
     sourceType: typeof record.sourceType === 'string' ? record.sourceType : undefined,
     sourceId: typeof record.sourceId === 'string' ? record.sourceId : undefined,
   };
-}
-
-function formatMs(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60).toString().padStart(2, '0');
-  const s = (total % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
 }

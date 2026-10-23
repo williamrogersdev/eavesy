@@ -148,7 +148,7 @@ pub fn capture_media(app: AppHandle, id: String) -> Result<String, String> {
 pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String> {
     if store::get(&app, &id)?.is_some_and(|r| r.has_video && r.source == "screen") {
         let text = crate::walkthrough::recording_context(app.clone(), id)?;
-        return app.clipboard().write_text(text).map_err(|e| e.to_string());
+        return crate::commands::copy_to_clipboard(&app, &text);
     }
     let (path, image) = media_path(&app, &id)?;
     let png = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
@@ -156,6 +156,7 @@ pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String
         if std::fs::metadata(&path).map_err(|error| error.to_string())?.len() > 32 * 1024 * 1024 { return Err("Screenshot is too large to copy.".into()); }
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let image = tauri::image::Image::from_bytes(&bytes).map_err(|error| error.to_string())?;
+        crate::commands::cancel_clipboard_restore();
         return app.clipboard().write_image(&image).map_err(|error| error.to_string());
     }
     let (sender, receiver) = tokio::sync::oneshot::channel();

@@ -4,19 +4,13 @@ import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
 import { errMsg } from '@/lib/desktop/errors';
-import {
-  addCaption,
-  EMPTY_RUNNING,
-  runningText,
-  type LiveCaption,
-  type RunningTranscript,
-} from '@/lib/desktop/live-captions';
+import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
-import { clicksLabel, NO_MARKING, useMarking, type MarkingState } from './marking';
-import { holdMs, type Receipt } from './hud-hold';
+import { clicksLabel, invoke, NO_MARKING, tauri, useEvent, useMarking, type MarkingState } from './marking';
+import { HELD_PHASES, holdMs, type Receipt } from './hud-hold';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -36,23 +30,25 @@ interface HudState {
   opensItself?: boolean;
 }
 
-interface TauriGlobal {
-  core?: { convertFileSrc?(path: string): string; invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> };
-  event?: {
-    listen(
-      event: string,
-      handler: (e: { payload: unknown }) => void,
-    ): Promise<() => void>;
-  };
-}
+/**
+ * Raw errors from Rust that are written for logs, not people, and what the
+ * control says instead. Anything else lower-case (Rust's own convention for
+ * internal errors) or naming a missing command falls back to the action's copy.
+ */
+const ERROR_COPY: [RegExp, string][] = [
+  [/no active capture with that id/i, 'That recording has already stopped'],
+  [/could not create the paste key press/i, 'Couldn’t paste automatically'],
+  [/pasting is only supported on macOS/i, 'Couldn’t paste here'],
+  [/^Could not change the tone:/, 'Couldn’t change the tone. Try again?'],
+  [/^Could not put the rewrite in place:/, 'Couldn’t put the rewrite in place'],
+];
 
-function tauri(): TauriGlobal | null {
-  if (typeof window === 'undefined') return null;
-  return (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__ ?? null;
-}
-
-async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
-  return tauri()?.core?.invoke(cmd, args);
+/** What the control says when an action fails: `errMsg`'s text, mapped to user copy. */
+function hudError(error: unknown, fallback: string): string {
+  const raw = errMsg(error, fallback).trim();
+  for (const [pattern, copy] of ERROR_COPY) if (pattern.test(raw)) return copy;
+  if (/^[a-z]/.test(raw) || /\bcommand\b.*\bnot found\b|::|os error|panicked/i.test(raw)) return fallback;
+  return raw;
 }
 
 document.documentElement.style.background = 'transparent';
@@ -74,11 +70,7 @@ const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
 const LEARNED_MS = 4000;
 /** The drawer's tone buttons: the words as pasted, then each rewrite tone ("As spoken" is the original's). */
-type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
-const TONES: { id: Tone; label: string; hint: string }[] = [
-  { id: 'original', label: 'Original', hint: 'The words as they were first pasted.' },
-  ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
-];
+const TONES = toneChoices('The words as they were first pasted.');
 
 /** A finished dictation's tone change: what it's rewritten from, what's picked, and where the rewrite went. */
 interface ToneChange {
@@ -136,8 +128,10 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   const video = state.mode === 'video';
   switch (state.phase) {
     case 'idle':
-    case 'saved':
       return 'pill';
+    case 'saved':
+      // A save that says why the words weren't typed has a line to read, as a failure does.
+      return state.notice ? 'wide' : 'pill';
     case 'recording':
       if (video) return 'video';
       return lines === 0 ? 'bar' : 'wide';
@@ -200,16 +194,96 @@ function browserPreviewMarking(): MarkingState {
   };
 }
 
-function browserPreviewWords(): RunningTranscript {
-  if (tauri() || !new URLSearchParams(window.location.search).has('words')) return EMPTY_RUNNING;
-  return addCaption(EMPTY_RUNNING, {
+/** In the browser preview (`?words`), words heard so far; the app hears them through `useLiveLines`. */
+function browserPreviewWords(): string {
+  if (tauri() || !new URLSearchParams(window.location.search).has('words')) return '';
+  return runningText(addCaption(EMPTY_RUNNING, {
     sessionId: 'preview',
     track: 'mic',
     text: 'so the plan is we ship on Thursday and ask Sam for the deck before the call',
     isFinal: false,
     startMs: 0,
     endMs: 4_000,
+  }));
+}
+const PREVIEW_WORDS = browserPreviewWords();
+
+/** How long an error on the idle pill stays before Talk comes back. */
+const IDLE_ERROR_MS = 6000;
+
+/**
+ * Whether the mic is being heard during a screen recording, from
+ * `recording:level` (every 100ms). The level lives in a ref and the flags are
+ * read on the recording's 1s tick, so the level never re-renders the HUD.
+ */
+function useMicSignal(sessionId: string | null, active: boolean, now: number): { heard: boolean; silent: boolean } {
+  const signal = useRef({ sessionId: null as string | null, rms: 0, at: 0 });
+  useEvent('recording:level', (payload) => {
+    if (!active) return;
+    const value = payload as { sessionId: string; rms: number };
+    if (value.sessionId === sessionId) signal.current = { sessionId, rms: value.rms, at: Date.now() };
   });
+  const own = active && signal.current.sessionId === sessionId ? signal.current : { rms: 0, at: 0 };
+  return { heard: now - own.at < 2000 && own.rms >= 0.002, silent: own.at > 0 && now - own.at > 5000 };
+}
+
+/**
+ * The dictation shortcut and how the control looks. Both come from one
+ * `get_settings` at start (retried while the app is still starting); after
+ * that only `hud:look` changes the look, so a slow first read can't undo a
+ * change made in Settings meanwhile. The shortcut is read again when the look
+ * or the hotkeys change, never on hover.
+ */
+function useHudSettings(): { shortcut: string; look: Look } {
+  const [shortcut, setShortcut] = useState('');
+  const [look, setLook] = useState<Look>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
+  });
+  const lookChanged = useRef(false);
+  const shortcutFrom = (settings: unknown) => {
+    const accel = (settings as { dictation_hotkey?: string } | null)?.dictation_hotkey;
+    setShortcut(accel ? prettyAccel(accel) : '');
+  };
+  const reloadShortcut = () => { void invoke('get_settings').then(shortcutFrom).catch(() => {}); };
+  useEvent('hud:look', (payload) => { lookChanged.current = true; setLook(lookFrom(payload)); reloadShortcut(); });
+  useEvent('hotkeys:changed', reloadShortcut);
+  useEffect(() => {
+    let disposed = false;
+    const load = (attempt: number) => {
+      void invoke('get_settings')
+        .then((settings) => {
+          if (disposed || !settings) return;
+          shortcutFrom(settings);
+          if (!lookChanged.current) setLook(lookFrom(settings));
+        })
+        .catch(() => { if (attempt < 4 && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
+    };
+    if (tauri()) load(0);
+    return () => { disposed = true; };
+  }, []);
+  return { shortcut, look };
+}
+
+/**
+ * A correction typed here or in the app the words went to reaches the
+ * dictionary in the background: the control says so for a few seconds, in
+ * leaf (or warn when it couldn't be saved).
+ */
+function useLearned(): { text: string; title?: string; tone: 'leaf' | 'warn' } | null {
+  const [learned, setLearned] = useState<{ text: string; title?: string; tone: 'leaf' | 'warn' } | null>(browserPreviewLearned);
+  useEvent('dictionary:learning', (payload) => {
+    const event = payload as LearningEvent;
+    const text = learnedLabel(event);
+    if (text) setLearned({ text, title: 'Saved to your dictionary', tone: 'leaf' });
+    else if (event.status === 'failed') setLearned({ text: 'Not saved to dictionary', title: event.message, tone: 'warn' });
+  });
+  useEffect(() => {
+    if (!learned) return;
+    const timer = window.setTimeout(() => setLearned(null), LEARNED_MS);
+    return () => window.clearTimeout(timer);
+  }, [learned]);
+  return learned;
 }
 
 function Hud() {
@@ -217,12 +291,9 @@ function Hud() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const [shortcut, setShortcut] = useState('');
-  // Everything heard in the current recording, for the line under the bar.
-  const [running, setRunning] = useState<RunningTranscript>(browserPreviewWords);
+  const { shortcut, look } = useHudSettings();
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
-  const [micSignal, setMicSignal] = useState({rms: 0, at: 0});
   const [copied, setCopied] = useState(false);
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
@@ -236,14 +307,16 @@ function Hud() {
   const lastPointerMove = useRef(0);
   // When the pointer came over the control, so moving it can't hold a result forever.
   const overSince = useRef(0);
-  const [learned, setLearned] = useState<{ text: string; title?: string; tone: 'leaf' | 'warn' } | null>(browserPreviewLearned);
+  const learned = useLearned();
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const pendingEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
-  const latestEdit = useRef<{ sessionId: string; text: string; live?: boolean } | null>(null);
+  // `learn: false` is a tone rewrite: saved as the transcript, never taught to the dictionary.
+  type Edit = { sessionId: string; text: string; live?: boolean; learn?: boolean };
+  const pendingEdit = useRef<Edit | null>(null);
+  const latestEdit = useRef<Edit | null>(null);
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const flushEdit = (): Promise<boolean> => {
     const edit = pendingEdit.current;
@@ -277,7 +350,6 @@ function Hud() {
   // The Mac's own recognizer could not run for this recording: no live words.
   const [captionsOff, setCaptionsOff] = useState<string | null>(null);
   const retrySaveButton = useRef<HTMLButtonElement>(null);
-  const transcriptBox = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const selection = useRef({ start: 0, end: 0, direction: 'none' as 'forward' | 'backward' | 'none', scroll: 0 });
   type Selection = typeof selection.current;
@@ -293,36 +365,10 @@ function Hud() {
   const lines = useLiveLines(state?.sessionId ?? null, Number.MAX_SAFE_INTEGER);
   const currentSession = useRef(state?.sessionId);
   currentSession.current = state?.sessionId;
-  const [look, setLook] = useState<Look>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
-  });
-  const loadShortcut = () => {
-    void invoke('get_settings')
-      .then((settings) => {
-        const accel = (settings as { dictation_hotkey?: string } | null)?.dictation_hotkey;
-        setShortcut(accel ? prettyAccel(accel) : '');
-      })
-      .catch(() => {});
-  };
-  useEffect(loadShortcut, []);
-  // The saved look once at start; after that only `hud:look` changes it, so a
-  // slow first read can't undo a change made in Settings meanwhile.
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    let disposed = false;
-    let changed = false;
-    void tauri()?.event?.listen('hud:look', (event) => { changed = true; setLook(lookFrom(event.payload)); })
-      .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
-    const load = (attempt: number) => {
-      void invoke('get_settings')
-        .then((settings) => { if (settings && !changed && !disposed) setLook(lookFrom(settings)); })
-        .catch(() => { if (attempt < 4 && !changed && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
-    };
-    if (tauri()) load(0);
-    return () => { disposed = true; off?.(); };
-  }, []);
 
+  // hud:state subscribes before asking for the current state, so nothing
+  // emitted in between is lost: it can't use `useEvent`, which hides when it
+  // has registered.
   useEffect(() => {
     let disposed = false;
     let received = false;
@@ -339,46 +385,42 @@ function Hud() {
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void (async () => {
-      const off = await tauri()?.event?.listen('recording:caption', (e) => {
-        const caption = e.payload as LiveCaption;
-        if (caption.sessionId !== currentSession.current) return;
-        setRunning((current) => addCaption(current, caption));
-        if (caption.text.trim()) setVoice(1);
-      });
-      const offStatus = await tauri()?.event?.listen('recording:captions_status', (e) => {
-        const status = e.payload as { sessionId: string; live: boolean };
-        setCaptionsOff(status.live ? null : status.sessionId);
-      });
-      if (disposed) { off?.(); offStatus?.(); } else unlisten = () => { off?.(); offStatus?.(); };
-    })().catch(() => {});
-    return () => { disposed = true; unlisten?.(); };
-  }, []);
+  // The words themselves come through `useLiveLines`; a caption only lifts the voice bars here.
+  useEvent('recording:caption', (payload) => {
+    const caption = payload as LiveCaption;
+    if (caption.sessionId === currentSession.current && caption.text.trim()) setVoice(1);
+  });
+  useEvent('recording:captions_status', (payload) => {
+    const status = payload as { sessionId: string; live: boolean };
+    setCaptionsOff(status.live ? null : status.sessionId);
+  });
 
   // A stop hands the keyboard back to the user's app, so the paste lands
   // there; leaving the app does too. Either way this box is no longer typed in.
+  // Rust already gave the keyboard back, so the blur this causes must not ask again.
+  const releasedByRust = useRef(false);
+  const releaseFromRust = () => {
+    releasedByRust.current = true;
+    try { editorRef.current?.blur(); } finally { releasedByRust.current = false; }
+    setEditing(false);
+  };
+  useEvent('hud:release-editor', releaseFromRust);
   useEffect(() => {
-    let disposed = false;
-    let off: (() => void) | undefined;
     const release = () => { editorRef.current?.blur(); setEditing(false); };
     window.addEventListener('blur', release);
-    void tauri()?.event?.listen('hud:release-editor', release)
-      .then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
-    return () => { disposed = true; off?.(); window.removeEventListener('blur', release); };
+    return () => window.removeEventListener('blur', release);
   }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let off: (() => void) | undefined;
-    void tauri()?.event?.listen('recording:level', (event) => {
-      const value = event.payload as {sessionId: string; rms: number};
-      if (value.sessionId === currentSession.current) setMicSignal({rms:value.rms, at:Date.now()});
-    }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
-    return () => { disposed = true; off?.(); };
-  }, []);
+  // Done editing in a finished dictation's drawer (blur, Esc, a tone, Copy):
+  // hand the keyboard back to the app the words went to. An older app without
+  // the command just keeps it, as before.
+  const releaseEditor = (sessionId: string | null | undefined): Promise<void> => {
+    if (!tauri() || !sessionId) return Promise.resolve();
+    try {
+      return invoke('release_preview_editor', { sessionId }).then(() => {}, () => {});
+    } catch {
+      return Promise.resolve();
+    }
+  };
 
   const live = state?.phase === 'recording' && !!state.sessionId;
 
@@ -393,14 +435,24 @@ function Hud() {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [state?.phase]);
+  const mic = useMicSignal(state?.sessionId ?? null, live && state?.mode === 'video', now);
 
+  // Errors show in the phase's own status slot, never in place of its controls.
+  // The idle pill has no slot to spare, so there it stands in for the capture
+  // buttons for a moment and Talk comes back.
   const act = (cmd: string, args?: Record<string, unknown>): Promise<boolean> => {
     setActionError(null);
     return invoke(cmd, args).then(() => true, (error: unknown) => {
-      setActionError(errMsg(error, 'Could not complete action'));
+      setActionError(hudError(error, 'Couldn’t do that. Try again?'));
       return false;
     });
   };
+  const idleError = !!actionError && (!state || state.phase === 'idle');
+  useEffect(() => {
+    if (!idleError) return;
+    const timer = window.setTimeout(() => setActionError(null), IDLE_ERROR_MS);
+    return () => window.clearTimeout(timer);
+  }, [idleError, actionError]);
 
   // One stop per recording, even if Stop is clicked again while it waits. The
   // ref answers at once; the state only greys the button. A stop that worked
@@ -433,7 +485,7 @@ function Hud() {
     setActionError(null);
     void invoke(cmd, args)
       .then(() => setCopied(true))
-      .catch((error: unknown) => setActionError(errMsg(error, 'Could not copy')));
+      .catch((error: unknown) => setActionError(hudError(error, 'Couldn’t copy it')));
   };
 
   const readyToCapture = async (mode: 'audio' | 'video' | 'image'): Promise<boolean> => {
@@ -467,7 +519,7 @@ function Hud() {
       else await invoke('start_capture', { source: 'mic', dictation: true });
     }
     catch (error) {
-      const message = errMsg(error, mode === 'image' ? 'Could not take the screenshot' : 'Could not start recording');
+      const message = hudError(error, mode === 'image' ? 'Could not take the screenshot' : 'Could not start recording');
       setActionError(message);
       void invoke('show_notice', { title: mode === 'image' ? "Eavesy couldn't take the screenshot" : "Eavesy couldn't start recording", body: message }).catch(() => {});
     }
@@ -476,7 +528,20 @@ function Hud() {
 
   const screenshot = state?.phase === 'done' && state.mode === 'image' && !!state.sessionId;
 
-  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); setTone(null); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  // One rewrite at a time, and only while its drawer is up. The ref is both
+  // the busy guard (it answers at once, unlike the state) and the request's
+  // token: dropping it (collapse, ×, Esc, a new recording) makes a rewrite
+  // that comes back later change nothing in the user's app.
+  const toneRequest = useRef<number | null>(null);
+  const toneSeq = useRef(0);
+  const toneBefore = useRef<ToneChange | null>(null);
+  const cancelRestyle = () => {
+    if (toneRequest.current === null) return;
+    toneRequest.current = null;
+    setTone((now) => now?.busy ? toneBefore.current : now);
+  };
+
+  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); toneRequest.current = null; setTone(null); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -505,8 +570,8 @@ function Hud() {
   const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
 
   useEffect(() => {
-    if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !['saved', 'done'].includes(state.phase)) return;
-    const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt);
+    if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
+    const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
@@ -530,9 +595,15 @@ function Hud() {
     if (!sessionId || peekDwell.current !== null) return;
     peekDwell.current = window.setTimeout(() => { peekDwell.current = null; void showDrawer(sessionId); }, PEEK_DWELL_MS);
   };
+  // Words being edited keep their drawer, and Rust has to know that before it
+  // sizes the next phase: tell it as soon as they are (even live, while
+  // recording), so Done arrives already sized as the drawer.
+  const editingLiveWords = !!state?.sessionId && state.mode !== 'video' && (state.phase === 'recording' || state.phase === 'transcribing')
+    && editing && draft?.sessionId === state.sessionId;
+  const pinDrawer = editingLiveWords || (keepDrawer && state?.phase === 'done' && !!receiptFor(state));
   useEffect(() => {
-    if (keepDrawer && !peeking && state?.sessionId && state.phase === 'done' && receiptFor(state)) void showDrawer(state.sessionId);
-  }, [keepDrawer, peeking, state?.phase, state?.sessionId]);
+    if (pinDrawer && !peeking && state?.sessionId) void showDrawer(state.sessionId);
+  }, [pinDrawer, peeking, state?.sessionId]);
 
   // Once the new shape is on screen, let the native shadow take it: at the
   // second frame (the first lays it out, the second has painted it), and
@@ -566,7 +637,7 @@ function Hud() {
   }, [size, look.lines, state?.phase]);
 
   const snapshotWords = lines.map((line) => line.text).join(' ');
-  const heard = snapshotWords || (state?.sessionId && running.sessionId === state.sessionId ? runningText(running) : '');
+  const heard = snapshotWords || PREVIEW_WORDS;
   const source = state?.phase === 'done' ? state.message?.trim() || heard : heard;
   const ownDraft = draft?.sessionId === state?.sessionId ? draft : null;
   const words = useMemo(() => ownDraft ? ownDraft.source === null ? ownDraft.text : mergeTranscript({ source: ownDraft.source, text: ownDraft.text }, source) : source, [ownDraft, source]);
@@ -601,25 +672,6 @@ function Hud() {
     latestEdit.current = edit; pendingEdit.current = edit;
     setDraft({ ...edit, source: null });
   }, [state?.phase, state?.sessionId, ownDraft, words, composition]);
-
-  // A correction typed here or in the app the words went to reaches the
-  // dictionary in the background: say so on the control, in leaf.
-  useEffect(() => {
-    let disposed = false;
-    let off: (() => void) | undefined;
-    void tauri()?.event?.listen('dictionary:learning', (e) => {
-      const event = e.payload as LearningEvent;
-      const text = learnedLabel(event);
-      if (text) setLearned({ text, title: 'Saved to your dictionary', tone: 'leaf' });
-      else if (event.status === 'failed') setLearned({ text: 'Not saved to dictionary', title: event.message, tone: 'warn' });
-    }).then((stop) => { if (disposed) stop?.(); else off = stop; });
-    return () => { disposed = true; off?.(); };
-  }, []);
-  useEffect(() => {
-    if (!learned) return;
-    const timer = window.setTimeout(() => setLearned(null), LEARNED_MS);
-    return () => window.clearTimeout(timer);
-  }, [learned]);
 
   // Esc collapses a finished result to the pill; inside the editor it only leaves the editor.
   useEffect(() => {
@@ -667,17 +719,24 @@ function Hud() {
       <Mascot size={20} detail="medium" state={opening ? 'idle' : mascotState(state.phase)} level={voice} recording={live} />
     </button>
   );
+  const hide = () => {
+    cancelRestyle();
+    void flushEdit()
+      .then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : window.requestAnimationFrame(() => retrySaveButton.current?.focus()))
+      .catch((error) => setActionError(hudError(error, 'Couldn’t hide it')));
+  };
   const close = (
-    <button type="button" onClick={() => { void flushEdit().then((saved) => saved ? invoke('dismiss_hud', { sessionId: state.sessionId }).then(() => invoke('close_hud')) : window.requestAnimationFrame(() => retrySaveButton.current?.focus())).catch((error) => setActionError(errMsg(error, 'Could not close'))); }} aria-label="Hide Eavesy" title="Hide Eavesy (reopen it from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+    <button type="button" onClick={hide} aria-label="Hide Eavesy" title="Hide Eavesy (reopen it from the menu bar)" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
   );
   const collapse = () => {
+    cancelRestyle();
     void flushEdit()
       .then((saved) => {
         if (!saved) return window.requestAnimationFrame(() => retrySaveButton.current?.focus());
         if (tauri()) return invoke('dismiss_hud', { sessionId: state.sessionId });
         setState({ ...state, phase: 'idle', message: null, notice: null });
       })
-      .catch((error) => setActionError(errMsg(error, 'Could not close')));
+      .catch((error) => setActionError(hudError(error, 'Couldn’t put it away')));
   };
   collapseRef.current = ['done', 'saved', 'failed'].includes(state.phase) ? collapse : null;
   const minimize = (
@@ -687,7 +746,7 @@ function Hud() {
     <button type="button" onClick={() => act('show_launcher')} aria-label="Open capture history" title="Capture history" className="ctl-btn ctl-icon"><History className="h-3.5 w-3.5" /></button>
   );
   const copyWords = (
-    <button type="button" className="ctl-btn" onClick={() => copy('copy_text', { text: words })}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
+    <button type="button" className="ctl-btn" onClick={() => { copy('copy_text', { text: words }); if (state.phase === 'done') void releaseEditor(state.sessionId); }}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy'}</button>
   );
 
   const prepareNativeEditor = (sessionId: string) => {
@@ -758,7 +817,10 @@ function Hud() {
   const rememberSelection = (editor: HTMLTextAreaElement) => {
     selection.current = { start: editor.selectionStart, end: editor.selectionEnd, direction: editor.selectionDirection, scroll: editor.scrollTop };
   };
-  const transcriptEditor = (hint?: string) => <textarea
+  // The editor only draws where the window was sized for words (never into a
+  // 36–40px pill, bar or receipt).
+  const roomForWords = size === 'wide' || size === 'result';
+  const transcriptEditor = (hint?: string) => roomForWords && <textarea
     onScrollCapture={(event) => markMore(event.currentTarget)}
     ref={editorRef}
     aria-label="Edit transcript preview"
@@ -772,7 +834,17 @@ function Hud() {
       setEditing(true);
       void prepareNativeEditor(state.sessionId);
     }}
-    onBlur={() => { setEditing(false); if (state.phase === 'done') void flushEdit(); }}
+    onBlur={() => {
+      setEditing(false);
+      if (state.phase !== 'done') return;
+      void flushEdit();
+      // Esc, or a click elsewhere in the control, hands the keyboard back to
+      // the app. Not when another app took it (the window lost focus) or when
+      // Rust released the editor itself: that would pull the user back.
+      if (releasedByRust.current) return;
+      const sessionId = state.sessionId;
+      window.setTimeout(() => { if (document.hasFocus() && editorRef.current !== document.activeElement) void releaseEditor(sessionId); }, 0);
+    }}
     onSelect={event => rememberSelection(event.currentTarget)}
     onScroll={event => { selection.current.scroll = event.currentTarget.scrollTop; }}
     onChange={event => {
@@ -799,24 +871,39 @@ function Hud() {
   // transcript without teaching the dictionary: a rewrite isn't a correction.
   const restyle = async (pick: Tone, forAgents: boolean) => {
     const sessionId = state.sessionId;
-    if (!sessionId || ownTone?.busy) return;
+    if (!sessionId || toneRequest.current !== null) return;
+    const token = ++toneSeq.current;
+    toneRequest.current = token;
+    const wanted = () => toneRequest.current === token && currentSession.current === sessionId;
     const base = ownTone?.base ?? words;
-    const before = ownTone;
+    toneBefore.current = ownTone;
     setActionError(null);
+    // The rewrite goes where the words went, so that app needs the keyboard back first.
+    const released = releaseEditor(sessionId);
     setTone({ sessionId, base, pick, forAgents, busy: true, landed: null });
     try {
       const text = pick === 'original' && !forAgents ? base
         : !tauri() ? (pick === 'original' ? base : PREVIEW_REWRITES[pick])
         : String(await invoke('restyle_dictation', { sessionId, text: base, style: pick === 'original' ? 'natural' : pick, forAgents }));
-      if (currentSession.current !== sessionId) return;
+      await within(released, 500);
+      if (!wanted()) return;
       const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
+      // Saved through the same queue as a typed correction, so a failure shows
+      // Retry save, and an older unsaved edit can't land on top of the rewrite.
+      // Saved even if the drawer was put away meanwhile: history keeps what's in the app.
+      const edit: Edit = { sessionId, text, learn: false };
+      latestEdit.current = edit; pendingEdit.current = edit;
+      void flushEdit();
+      if (!wanted()) return;
       setDraft({ sessionId, source: null, text });
-      void invoke('save_preview_transcript', { sessionId, text, learn: false }).catch(() => {});
       setCopied(false);
       setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
     } catch (error) {
-      setTone((now) => now?.sessionId === sessionId ? before : now);
-      setActionError(errMsg(error, 'Could not change the tone'));
+      if (!wanted()) return;
+      setTone((now) => now?.sessionId === sessionId ? toneBefore.current : now);
+      setActionError(hudError(error, 'Couldn’t change the tone. Try again?'));
+    } finally {
+      if (toneRequest.current === token) toneRequest.current = null;
     }
   };
   const tonePick = ownTone?.pick ?? 'original';
@@ -832,7 +919,7 @@ function Hud() {
     <div className="ctl-tones" role="group" aria-label="Rewrite in another tone">
       {TONES.map((choice) => (
         <button key={choice.id} type="button" className="ctl-tone" aria-pressed={tonePick === choice.id} disabled={!!ownTone?.busy} title={choice.hint}
-          onClick={() => { if (choice.id !== tonePick) void restyle(choice.id, forAgents); }}>
+          onClick={() => { setActionError(null); if (choice.id !== tonePick) void restyle(choice.id, forAgents); }}>
           {choice.label}
         </button>
       ))}
@@ -852,19 +939,19 @@ function Hud() {
   let top: ReactNode;
   let below: ReactNode = null;
   let foot: ReactNode = null;
+  // A failed action says so where the phase says how it's going (the voice
+  // bars, "Writing it down", the stamp), and every control stays.
+  const errorSay = actionError ? <span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span> : null;
 
-  if (actionError && !(video && state.phase === 'recording')) {
-    top = <>{mark}<span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span><span className="ctl-fill" />{close}</>;
-    if (!video && state.sessionId) below = transcriptEditor();
-  } else if (state.phase === 'recording') {
+  if (state.phase === 'recording') {
     top = (
       <>
         {mark}
-        {opening ? <span className="ctl-say ctl-quiet ctl-breathe">Starting…</span> : (
+        {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe">Starting…</span> : (
           <>
             <span className="ctl-rec" aria-hidden />
             <span className="ctl-timer">{clock(Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000)))}</span>
-            {video && marking.tool ? null : video ? <MicState heard={now - micSignal.at < 2000 && micSignal.rms >= 0.002} silent={micSignal.at > 0 && now - micSignal.at > 5000} /> : <VoiceBars level={voice} />}
+            {video && marking.tool ? null : video ? <MicState heard={mic.heard} silent={mic.silent} /> : errorSay ?? <VoiceBars level={voice} />}
           </>
         )}
         {video && !opening && <Marking state={marking} act={act} />}
@@ -883,10 +970,10 @@ function Hud() {
     </div>;
     if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
-    top = <>{mark}<span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span><span className="ctl-fill" /></>;
+    top = <>{mark}{errorSay ?? <span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor('Turning your words into text…');
   } else if (state.phase === 'done' && video) {
-    top = <>{mark}<span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>
+    top = <>{mark}{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
       <span className="ctl-fill" />
       <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
       <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
@@ -894,7 +981,7 @@ function Hud() {
     top = (
       <>
         {mark}
-        <Stamp tone="manila">{copied ? 'Copied' : 'Snapped'}</Stamp>
+        {errorSay ?? <Stamp tone="manila">{copied ? 'Copied' : 'Snapped'}</Stamp>}
         <span className="ctl-fill" />
         <button type="button" className="ctl-btn" onClick={() => act('show_launcher')}><Maximize2 className="h-3.5 w-3.5" />Open</button>
         <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>
@@ -915,19 +1002,22 @@ function Hud() {
     top = (
       <>
         {mark}
-        {learnedStamp ?? stamp}
+        {errorSay ?? learnedStamp ?? stamp}
         <span className="ctl-fill" />
         {receipt === 'blocked' && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {receipt === 'blocked' && minimize}
       </>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = toneStamp ?? learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>);
+    const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>);
+    // A rewrite's own stamp outranks the save it starts, so "Updated" doesn't flicker through "Saving…".
+    const status = saveError ? <span role="alert"><span className="ctl-say ctl-warn">Save failed </span><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span>
+      : errorSay ?? toneStamp ?? (saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp);
     top = (
       <>
         {mark}
-        {saveError ? <span role="alert"><span className="ctl-say ctl-warn">Save failed </span><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span> : saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp}
-        {notice && !notPasted && !learnedStamp && !toneStamp && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
+        {status}
+        {notice && !notPasted && !learnedStamp && !toneStamp && !errorSay && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {size === 'result' && <button type="button" className="ctl-btn ctl-icon" onClick={() => act('show_launcher')} aria-label="Open in Eavesy" title="Open in Eavesy, with the whole transcript"><Maximize2 className="h-3.5 w-3.5" /></button>}
@@ -938,14 +1028,23 @@ function Hud() {
     );
     below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
     if (size === 'result' && editable) foot = toneRow;
-  } else if (learnedStamp && ['idle', 'saved', 'done'].includes(state.phase)) {
+  } else if (state.phase === 'saved' && notice) {
+    // Saved, but not typed where the cursor was: say so, and why, never a plain "Saved".
+    top = <>{mark}{errorSay ?? learnedStamp ?? <Stamp tone="warn" title={notice}>Not typed</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
+    below = <p className="ctl-line" title={notice}>{notice}</p>;
+  } else if (learnedStamp && !errorSay && ['idle', 'saved', 'done'].includes(state.phase)) {
     // Briefly, the whole pill is the confirmation: a word fits where Close was.
     top = <>{mark}{learnedStamp}<span className="ctl-fill" /></>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
-    top = <>{mark}<Stamp tone="manila">Saved</Stamp><span className="ctl-fill" />{history}{minimize}{close}</>;
+    top = <>{mark}{errorSay ?? <Stamp tone="manila">Saved</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
   } else if (state.phase === 'failed') {
+    // A raw error isn't proof nothing was saved (the words may already be pasted): stay neutral.
+    const why = state.message ? hudError(state.message, 'Something went wrong. Try again?') : 'Nothing was saved. Try again?';
     top = <>{mark}<span className="ctl-say ctl-warn">Didn’t catch that</span><span className="ctl-fill" />{history}{minimize}{close}</>;
-    below = <p className="ctl-line ctl-quiet" title={state.message ?? undefined}>{state.message || 'Nothing was saved. Try again?'}</p>;
+    below = errorSay ? <p role="alert" className="ctl-line ctl-warn" title={actionError ?? undefined}>{actionError}</p> : <p className="ctl-line ctl-quiet" title={why}>{why}</p>;
+  } else if (errorSay) {
+    // Idle has no status slot: the error stands in for the capture buttons until it clears.
+    top = <>{mark}{errorSay}<span className="ctl-fill" />{close}</>;
   } else {
     top = (
       <>
@@ -975,7 +1074,7 @@ function Hud() {
       data-translucent={(look.translucent && !video) || undefined}
       style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
       onMouseDown={pressSurface}
-      onMouseEnter={(event) => { loadShortcut(); if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); if (receipt && !(event.target as HTMLElement).closest('button')) openPeek(); }}
+      onMouseEnter={(event) => { if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); if (receipt && !(event.target as HTMLElement).closest('button')) openPeek(); }}
       onMouseMove={(event) => {
         // Resting on a button (Allow, collapse) is aiming at it, not asking for the words.
         if (receipt) { if ((event.target as HTMLElement).closest('button')) cancelPeekDwell(); else openPeek(); }
@@ -989,7 +1088,7 @@ function Hud() {
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>
-      {below && <div ref={transcriptBox} className="ctl-below" data-busy={ownTone?.busy || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
+      {below && <div className="ctl-below" data-busy={ownTone?.busy || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
   );

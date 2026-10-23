@@ -1,7 +1,7 @@
 import { guardedImportWrite } from './import-guard';
 import { createAiRunner, LIBRARY_MODEL } from '@/lib/ai/credit-runner';
 import { creditSummary } from '@/lib/ai/credit-summary';
-import { and, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import {
   activityLog,
   meetings,
@@ -24,7 +24,9 @@ import { queueRecap } from '@/server/email/recaps';
 import {
   type Db,
   type ProcessingEnv,
+  SUMMARY_CLAIM_TTL_MS,
   SUMMARY_WAIT_LIMIT_MS,
+  SummaryBusyError,
   optionalString,
   records,
   stringValue,
@@ -70,9 +72,12 @@ export async function handleSummarize(
   mode: { final: boolean; throughIdx?: number; throughMs?: number; waitingSince?: number },
 ) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
-  if (!meeting) return;
+  if (!meeting || meeting.deletedAt) return;
   if (meeting.status === 'complete') {
-    if (mode.final) await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    if (mode.final) {
+      const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
+      await resendFollowUps(db, env, meetingId, userRow);
+    }
     return;
   }
 
@@ -161,6 +166,65 @@ export async function handleSummarize(
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     return;
   }
+  // Two chains can get here together (a redelivery, or the stuck-meeting
+  // sweep's fresh job): only the one whose conditional update lands calls the model.
+  const claimedAt = mode.final ? await claimFinalSummary(db, meetingId) : undefined;
+  if (claimedAt === null) return;
+  try {
+    await writeSummary(db, env, meeting, mode, { segments, prior, meetingMs, partial });
+  } finally {
+    // A no-op once the completion update has cleared it.
+    if (claimedAt !== undefined) await releaseFinalSummary(db, meetingId, claimedAt);
+  }
+}
+
+/**
+ * Claims the final summary for this job. Null when another job finished it
+ * meanwhile; throws `SummaryBusyError` while another job holds a live claim,
+ * so this one checks back later (a claim outlives its job by at most the TTL).
+ */
+async function claimFinalSummary(db: Db, meetingId: string): Promise<number | null> {
+  const claimedAt = Date.now();
+  const claimed = await db
+    .update(meetings)
+    .set({ summaryClaimedAt: claimedAt })
+    .where(
+      and(
+        eq(meetings.id, meetingId),
+        ne(meetings.status, 'complete'),
+        or(isNull(meetings.summaryClaimedAt), lt(meetings.summaryClaimedAt, claimedAt - SUMMARY_CLAIM_TTL_MS)),
+      ),
+    )
+    .returning({ id: meetings.id });
+  if (claimed.length) return claimedAt;
+  const current = (await db.select({ status: meetings.status }).from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+  // The other job completed it and queued what follows.
+  if (!current || current.status === 'complete') return null;
+  throw new SummaryBusyError();
+}
+
+async function releaseFinalSummary(db: Db, meetingId: string, claimedAt: number) {
+  await db
+    .update(meetings)
+    .set({ summaryClaimedAt: null })
+    .where(and(eq(meetings.id, meetingId), eq(meetings.summaryClaimedAt, claimedAt)))
+    .catch(() => undefined); // the TTL is the backstop
+}
+
+async function writeSummary(
+  db: Db,
+  env: ProcessingEnv,
+  meeting: typeof meetings.$inferSelect,
+  mode: { final: boolean; throughIdx?: number },
+  data: {
+    segments: (typeof transcriptSegments.$inferSelect)[];
+    prior: typeof summaries.$inferSelect | undefined;
+    meetingMs: number;
+    partial: string | null;
+  },
+) {
+  const meetingId = meeting.id;
+  const { segments, prior, meetingMs, partial } = data;
   const wantChapters = mode.final && meetingMs >= MIN_CHAPTER_MEETING_MS;
   const rendered = transcriptText(segments, meeting.speakerNamesJson, { timestamps: wantChapters });
   let transcript = rendered.text;
@@ -227,8 +291,16 @@ export async function handleSummarize(
   if (mode.final) {
     const completed = await db
       .update(meetings)
-      .set({ title, description, status: 'complete', statusError: partial, updatedAt: now })
-      .where(and(eq(meetings.id, meetingId), sql`${meetings.deletedAt} IS NULL`, useCredits ? sql`${meetings.status} != 'failed' AND EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${meetingId} AND state = 'processing')` : undefined))
+      .set({ title, description, status: 'complete', statusError: partial, summaryClaimedAt: null, updatedAt: now })
+      .where(
+        and(
+          eq(meetings.id, meetingId),
+          sql`${meetings.deletedAt} IS NULL`,
+          // Completed by another path meanwhile: it queued the follow-ups.
+          ne(meetings.status, 'complete'),
+          useCredits ? sql`${meetings.status} != 'failed' AND EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${meetingId} AND state = 'processing')` : undefined,
+        ),
+      )
       .returning({ id: meetings.id });
     if (!completed.length) return;
     await logMeetingComplete(db, meeting.userId, meetingId, now);
@@ -246,6 +318,33 @@ export async function handleSummarize(
       })
       .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'uploading'])));
   }
+}
+
+/**
+ * Queues what follows a completed meeting: its embedding, the agent-ready
+ * transcript and the recap email. A job that finds the meeting already
+ * complete calls this, because the run that completed it may have died
+ * between marking it complete and queueing these. Each is idempotent: the
+ * agent transcript is rebuilt only if missing, and a recap already sent is
+ * never sent twice. Only meetings with a summary get a recap.
+ */
+export async function resendFollowUps(
+  db: Db,
+  env: ProcessingEnv,
+  meetingId: string,
+  user: typeof users.$inferSelect | undefined,
+  opts: { anonymous?: boolean } = {},
+) {
+  if (!opts.anonymous) {
+    await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId, onlyIfMissing: true });
+  }
+  const summarized = await db
+    .select({ id: summaries.id })
+    .from(summaries)
+    .where(eq(summaries.meetingId, meetingId))
+    .limit(1);
+  if (summarized.length) await queueRecap(env, user, meetingId);
 }
 
 /** A recording this short, from the mic alone, is a note: no summary. */

@@ -16,11 +16,18 @@ use crate::{fs_writer, sqlite, store};
 
 const MAX_EDIT_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-const MAX_SCANNED_FOLDERS: usize = 10_000;
+/// A full scan of the recordings folder stops after this many folders and
+/// relocates what it found; recordings sit one level down, so it also stays
+/// within `MAX_SCAN_DEPTH` levels.
+const MAX_SCANNED_FOLDERS: usize = 50_000;
+const MAX_SCAN_DEPTH: usize = 4;
 const SETTLE_TIME: Duration = Duration::from_millis(180);
 
 enum WatchMessage {
     Path(PathBuf),
+    /// A folder appeared, or its `meeting.json` was written: look at it alone.
+    InspectFolder(PathBuf),
+    /// A folder was renamed, moved or removed: look at the whole tree.
     RescanFolders,
     StartupBarrier,
 }
@@ -82,14 +89,10 @@ fn start<R: Runtime>(app: AppHandle<R>, root: PathBuf) -> Result<WatcherHandle> 
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
             Ok(event) if is_content_event(&event.kind) => {
-                if is_folder_structure_event(&event.kind)
-                    && event.paths.iter().any(|path| {
-                        path.is_dir()
-                            || path.file_name().and_then(|name| name.to_str())
-                                == Some("meeting.json")
-                    })
-                {
-                    let _ = sender.send(WatchMessage::RescanFolders);
+                if is_folder_structure_event(&event.kind) {
+                    for message in folder_messages(&event.kind, &event.paths) {
+                        let _ = sender.send(message);
+                    }
                 }
                 for path in event.paths {
                     if file_role(&path).is_some() {
@@ -206,6 +209,7 @@ fn reconcile_queued_startup<R: Runtime>(
     stopped: &AtomicBool,
 ) {
     let mut paths = HashSet::new();
+    let mut folders = HashSet::new();
     let mut rescan = false;
     // A marker after the scan defines a finite queue prefix even if new events
     // keep arriving. Every already-queued move is recovered before sync resumes.
@@ -213,7 +217,7 @@ fn reconcile_queued_startup<R: Runtime>(
         if matches!(message, WatchMessage::StartupBarrier) {
             break;
         }
-        collect_message(message, &mut paths, &mut rescan);
+        collect_message(message, &mut paths, &mut folders, &mut rescan);
         if stopped.load(Ordering::Acquire) {
             break;
         }
@@ -221,10 +225,8 @@ fn reconcile_queued_startup<R: Runtime>(
     if stopped.load(Ordering::Acquire) {
         return;
     }
-    if rescan {
-        if let Err(error) = reconcile_folder_locations(app, root) {
-            crate::telemetry::capture("filesystem.startup-folder-replay", &error.to_string());
-        }
+    if let Err(error) = reconcile_folders(app, root, rescan, &folders) {
+        crate::telemetry::capture("filesystem.startup-folder-replay", &error.to_string());
     }
     for path in paths {
         if stopped.load(Ordering::Acquire) {
@@ -349,22 +351,21 @@ fn reconcile_loop<R: Runtime>(
             break;
         }
         let mut paths = HashSet::new();
+        let mut folders = HashSet::new();
         let mut rescan_folders = false;
-        collect_message(first, &mut paths, &mut rescan_folders);
+        collect_message(first, &mut paths, &mut folders, &mut rescan_folders);
         let deadline = std::time::Instant::now() + SETTLE_TIME;
         while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
             let Ok(message) = receiver.recv_timeout(remaining) else {
                 break;
             };
-            collect_message(message, &mut paths, &mut rescan_folders);
+            collect_message(message, &mut paths, &mut folders, &mut rescan_folders);
         }
         if stopped.load(Ordering::Acquire) {
             break;
         }
-        if rescan_folders {
-            if let Err(error) = reconcile_folder_locations(&app, &root) {
-                crate::telemetry::capture("filesystem.folder-scan", &error.to_string());
-            }
+        if let Err(error) = reconcile_folders(&app, &root, rescan_folders, &folders) {
+            crate::telemetry::capture("filesystem.folder-scan", &error.to_string());
         }
         for path in paths {
             if let Err(error) = reconcile_path(&app, &path) {
@@ -374,14 +375,94 @@ fn reconcile_loop<R: Runtime>(
     }
 }
 
-fn collect_message(message: WatchMessage, paths: &mut HashSet<PathBuf>, rescan_folders: &mut bool) {
+fn collect_message(
+    message: WatchMessage,
+    paths: &mut HashSet<PathBuf>,
+    folders: &mut HashSet<PathBuf>,
+    rescan_folders: &mut bool,
+) {
     match message {
         WatchMessage::Path(path) => {
             paths.insert(path);
         }
+        WatchMessage::InspectFolder(folder) => {
+            folders.insert(folder);
+        }
         WatchMessage::RescanFolders => *rescan_folders = true,
         WatchMessage::StartupBarrier => {}
     }
+}
+
+/// What a folder event asks of the reconciler. A new folder (capture sync
+/// makes several per pass) or a rewritten `meeting.json` is looked at alone;
+/// only a rename, move or removal needs the whole tree.
+fn folder_messages(kind: &EventKind, paths: &[PathBuf]) -> Vec<WatchMessage> {
+    use notify::event::ModifyKind;
+    let is_manifest = |path: &Path| path.file_name().and_then(|name| name.to_str()) == Some("meeting.json");
+    let created = matches!(kind, EventKind::Create(_));
+    let renamed = matches!(kind, EventKind::Modify(ModifyKind::Name(_)));
+    let manifests: Vec<&PathBuf> = paths.iter().filter(|path| is_manifest(path)).collect();
+    let folders = paths.iter().any(|path| path.is_dir());
+    if (created || renamed) && !manifests.is_empty() && !folders {
+        // A manifest written in place by a rename: its folder only.
+        manifests.iter().filter_map(|path| path.parent()).map(|folder| WatchMessage::InspectFolder(folder.to_path_buf())).collect()
+    } else if created {
+        paths.iter().filter(|path| path.is_dir()).map(|path| WatchMessage::InspectFolder(path.clone())).collect()
+    } else if folders || !manifests.is_empty() {
+        vec![WatchMessage::RescanFolders]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The whole tree when asked to, otherwise only the folders that changed.
+fn reconcile_folders<R: Runtime>(app: &AppHandle<R>, root: &Path, rescan: bool, folders: &HashSet<PathBuf>) -> Result<()> {
+    if rescan {
+        return reconcile_folder_locations(app, root);
+    }
+    let mut moved = Vec::new();
+    for folder in folders {
+        if !folder.starts_with(root) || folder == root {
+            continue;
+        }
+        let Some(id) = manifest_id(folder) else { continue };
+        let Some(recording) = store::get(app, &id).map_err(anyhow::Error::msg)? else { continue };
+        let candidates = [folder.clone()];
+        let current = recording.folder_path.as_deref().map(Path::new);
+        if let Some(target) = unique_relocation_target(current, &candidates) {
+            relocate(app, &id, target)?;
+            moved.push(target.to_path_buf());
+        }
+    }
+    finish_relocations(app, moved)
+}
+
+fn manifest_id(folder: &Path) -> Option<String> {
+    let manifest = folder.join("meeting.json");
+    let metadata = std::fs::metadata(&manifest).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&manifest).ok()?;
+    let identity = serde_json::from_str::<ManifestIdentity>(&raw).ok()?;
+    (!identity.id.trim().is_empty()).then_some(identity.id)
+}
+
+fn relocate<R: Runtime>(app: &AppHandle<R>, id: &str, target: &Path) -> Result<()> {
+    sqlite::relocate_recording_folder(app, id, target).map_err(anyhow::Error::msg)?;
+    store::set_folder_path(app, id, target).map_err(anyhow::Error::msg)
+}
+
+fn finish_relocations<R: Runtime>(app: &AppHandle<R>, moved: Vec<PathBuf>) -> Result<()> {
+    if !moved.is_empty() {
+        let _ = app.emit("recordings:updated", ());
+    }
+    for folder in moved {
+        for filename in ["summary.md", "transcript.md", "notes.md"] {
+            reconcile_path(app, &folder.join(filename))?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -402,20 +483,10 @@ fn reconcile_folder_locations<R: Runtime>(app: &AppHandle<R>, root: &Path) -> Re
         let Some(target) = unique_relocation_target(current, candidates) else {
             continue;
         };
-        sqlite::relocate_recording_folder(app, &id, target).map_err(anyhow::Error::msg)?;
-        store::set_folder_path(app, &id, target).map_err(anyhow::Error::msg)?;
+        relocate(app, &id, target)?;
         moved.push(target.to_path_buf());
     }
-
-    if !moved.is_empty() {
-        let _ = app.emit("recordings:updated", ());
-    }
-    for folder in moved {
-        for filename in ["summary.md", "transcript.md", "notes.md"] {
-            reconcile_path(app, &folder.join(filename))?;
-        }
-    }
-    Ok(())
+    finish_relocations(app, moved)
 }
 
 fn unique_relocation_target<'a>(
@@ -433,29 +504,26 @@ fn unique_relocation_target<'a>(
 
 fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>>> {
     let mut discovered: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    let mut stack = vec![root.to_path_buf()];
+    let mut stack = vec![(root.to_path_buf(), 0_usize)];
     let mut scanned = 0_usize;
 
-    while let Some(folder) = stack.pop() {
+    while let Some((folder, depth)) = stack.pop() {
         scanned += 1;
         if scanned > MAX_SCANNED_FOLDERS {
-            anyhow::bail!("recordings root contains more than {MAX_SCANNED_FOLDERS} folders");
+            // What was found is still relocated; say once that the rest was not looked at.
+            static REPORTED: AtomicBool = AtomicBool::new(false);
+            tracing::warn!("recordings folder holds more than {MAX_SCANNED_FOLDERS} folders; scanned the first ones only");
+            if !REPORTED.swap(true, Ordering::Relaxed) {
+                crate::telemetry::capture("filesystem.folder-scan-capped", &format!("more than {MAX_SCANNED_FOLDERS} folders"));
+            }
+            break;
         }
 
-        let manifest = folder.join("meeting.json");
-        if let Ok(metadata) = std::fs::metadata(&manifest) {
-            if metadata.is_file() && metadata.len() <= MAX_MANIFEST_BYTES {
-                if let Ok(raw) = std::fs::read_to_string(&manifest) {
-                    if let Ok(identity) = serde_json::from_str::<ManifestIdentity>(&raw) {
-                        if !identity.id.trim().is_empty() {
-                            discovered
-                                .entry(identity.id)
-                                .or_default()
-                                .push(folder.clone());
-                        }
-                    }
-                }
-            }
+        if let Some(id) = manifest_id(&folder) {
+            discovered.entry(id).or_default().push(folder.clone());
+        }
+        if depth >= MAX_SCAN_DEPTH {
+            continue;
         }
 
         let entries = match std::fs::read_dir(&folder) {
@@ -471,7 +539,7 @@ fn discover_manifest_folders(root: &Path) -> Result<HashMap<String, Vec<PathBuf>
                 continue;
             };
             if file_type.is_dir() && !file_type.is_symlink() {
-                stack.push(entry.path());
+                stack.push((entry.path(), depth + 1));
             }
         }
     }
@@ -619,6 +687,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    /// An upload session for the recording, so its edits go to the cloud.
+    fn uploaded_here<R: Runtime>(app: &AppHandle<R>, id: &str) {
+        sqlite::with_conn(app, |conn| {
+            conn.execute(
+                "INSERT INTO recording_sessions (id, archive_path, source, title, started_at, status, updated_at)
+                 VALUES (?1, '/tmp/a.m4a', 'mixed', 't', 1, 'complete', 0)",
+                [id],
+            )
+            .unwrap()
+        });
+    }
+
     fn isolated_mock_app(root: &Path) -> tauri::App<tauri::test::MockRuntime> {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = root.to_string_lossy().into_owned();
@@ -658,6 +738,7 @@ mod tests {
         fs_writer::persist_recording_artifacts(Some(app.handle()), &folder, &recording, None, None)
             .unwrap();
         store::append(app.handle(), recording).unwrap();
+        uploaded_here(app.handle(), "meeting-1");
         let generated_notes = std::fs::read(&notes_path).unwrap();
         drop(app);
 
@@ -739,6 +820,7 @@ mod tests {
         )
         .unwrap();
         store::append(app.handle(), recording).unwrap();
+        uploaded_here(app.handle(), "meeting-1");
 
         let edited = "# Brief\n\nEdited while Eavesy was running.\n";
         std::fs::write(on_disk.join("summary.md"), edited).unwrap();
@@ -866,6 +948,47 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_folder_is_found_by_looking_at_it_alone() {
+        let root = std::env::temp_dir().join(format!("eavesy-inspect-{}", uuid::Uuid::new_v4()));
+        let old = root.join("old");
+        let moved = root.join("moved");
+        std::fs::create_dir_all(&moved).unwrap();
+        let app = isolated_mock_app(&root);
+        sqlite::initialize(app.handle()).unwrap();
+        store::append(app.handle(), sample_recording(&old)).unwrap();
+        std::fs::write(moved.join("meeting.json"), r#"{"id":"meeting-1"}"#).unwrap();
+        // An unrelated folder is never read: only the one that changed.
+        let folders = HashSet::from([moved.clone()]);
+        reconcile_folders(app.handle(), &root, false, &folders).unwrap();
+        assert_eq!(store::get(app.handle(), "meeting-1").unwrap().unwrap().folder_path.as_deref(), moved.to_str());
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_folders_and_manifests_are_inspected_alone_and_renames_rescan() {
+        use notify::event::{CreateKind, ModifyKind, RenameMode};
+        let root = std::env::temp_dir().join(format!("eavesy-events-{}", uuid::Uuid::new_v4()));
+        let folder = root.join("A");
+        std::fs::create_dir_all(&folder).unwrap();
+        let inspects = |messages: Vec<WatchMessage>| -> Vec<PathBuf> {
+            messages
+                .into_iter()
+                .map(|message| match message {
+                    WatchMessage::InspectFolder(folder) => folder,
+                    _ => PathBuf::from("<rescan>"),
+                })
+                .collect()
+        };
+        assert_eq!(inspects(folder_messages(&EventKind::Create(CreateKind::Folder), std::slice::from_ref(&folder))), std::slice::from_ref(&folder));
+        let renamed = EventKind::Modify(ModifyKind::Name(RenameMode::Any));
+        assert_eq!(inspects(folder_messages(&renamed, &[folder.join("meeting.json")])), std::slice::from_ref(&folder));
+        assert_eq!(inspects(folder_messages(&renamed, std::slice::from_ref(&folder))), [PathBuf::from("<rescan>")]);
+        assert!(folder_messages(&renamed, &[folder.join("notes.md")]).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn only_canonical_editable_files_are_watched() {
         assert_eq!(file_role(Path::new("summary.md")), Some("summary"));
         assert_eq!(file_role(Path::new("transcript.md")), Some("transcript"));
@@ -943,6 +1066,7 @@ mod tests {
         fs_writer::persist_recording_artifacts(Some(app.handle()), &folder, &r, None, None)
             .unwrap();
         store::append(app.handle(), r).unwrap();
+        uploaded_here(app.handle(), "meeting-1");
         // Legacy installs may have no observation rows yet; sync must not race
         // this classification and overwrite a genuine offline edit.
         sqlite::with_conn(app.handle(), |conn| {

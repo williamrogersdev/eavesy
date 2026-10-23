@@ -2,7 +2,7 @@
 //! from the cloud when the launcher asks for them.
 
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,8 +12,12 @@ use crate::front_window::FrontWindow;
 
 use crate::settings;
 
+/// How long the launcher waits for an answer from the account.
+const ACCOUNT_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// The app's shared HTTP client, with the launcher's shorter wait.
 fn client() -> Option<reqwest::Client> {
-    reqwest::Client::builder().timeout(Duration::from_secs(8)).build().ok()
+    crate::sync::http_client().ok()
 }
 
 /// The projects to pick from, or `None` when the Mac is not paired or offline.
@@ -21,8 +25,9 @@ fn client() -> Option<reqwest::Client> {
 pub async fn list_projects(app: AppHandle) -> Option<Vec<Value>> {
     let credential = settings::device_credential(&app)?;
     let response = client()?
-        .get(format!("{}/api/projects", credential.base))
+        .get(crate::base_url::join(&credential.base, "/api/projects"))
         .bearer_auth(credential.token)
+        .timeout(ACCOUNT_TIMEOUT)
         .send()
         .await
         .ok()?;
@@ -59,9 +64,9 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     }
     let credential = settings::device_credential(&app).ok_or("Sign in to change this")?;
     let client = client().ok_or("Could not reach eavesy.com")?;
-    let url = format!("{}{path}", credential.base.trim_end_matches('/'));
+    let url = crate::base_url::join(&credential.base, &path);
     let verb = reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-    let mut request = client.request(verb, url).bearer_auth(credential.token);
+    let mut request = client.request(verb, url).bearer_auth(credential.token).timeout(ACCOUNT_TIMEOUT);
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -96,8 +101,9 @@ pub async fn agent_transcript(app: AppHandle, recording_id: String) -> Option<St
         return None;
     }
     let response = client()?
-        .get(format!("{}/api/sessions/{remote_id}/result", credential.base))
+        .get(crate::base_url::join(&credential.base, &format!("/api/sessions/{remote_id}/result")))
         .bearer_auth(credential.token)
+        .timeout(ACCOUNT_TIMEOUT)
         .send()
         .await
         .ok()?;
@@ -127,6 +133,23 @@ pub struct ProjectChoice {
 
 static CHOICE: Mutex<Option<ProjectChoice>> = Mutex::new(None);
 
+/// Sessions whose project is being read from the app in front, since when.
+static RESOLVING: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// The longest the cloud session waits for that.
+const RESOLVE_WAIT: Duration = Duration::from_millis(1_500);
+
+/// Whether this session's project is still being worked out: the cloud
+/// session waits a moment for it, since there is no changing it afterwards.
+pub fn resolving(session_id: &str) -> bool {
+    let mut resolving = RESOLVING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    resolving.retain(|(_, since)| since.elapsed() < RESOLVE_WAIT);
+    resolving.iter().any(|(id, _)| id == session_id)
+}
+
+fn finish_resolving(session_id: &str) {
+    RESOLVING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|(id, _)| id != session_id);
+}
+
 #[tauri::command]
 pub fn set_project_choice(choice: ProjectChoice) {
     *CHOICE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(choice);
@@ -141,13 +164,21 @@ pub fn assign_in_background(app: &AppHandle, session_id: &str) {
     if choice.projects.is_empty() || (!choice.follow && choice.pinned.is_none()) {
         return;
     }
+    RESOLVING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push((session_id.to_string(), Instant::now()));
     let front = crate::app_menu::frontmost();
     let (app, session_id) = (app.clone(), session_id.to_string());
     std::thread::spawn(move || {
         let front = front.map(|(pid, name)| crate::front_window::read(pid, name));
         if let Some(project_id) = resolve(&choice, front.as_ref()) {
-            let _ = crate::sqlite::set_session_project(&app, &session_id, &project_id);
+            if let Err(error) = crate::sqlite::set_session_project(&app, &session_id, &project_id) {
+                tracing::warn!("could not file the recording under its project: {error}");
+            }
         }
+        finish_resolving(&session_id);
+        crate::sync::wake();
     });
 }
 

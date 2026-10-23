@@ -83,10 +83,8 @@ fn remember_size(app: &tauri::AppHandle) {
     let (Ok(scale), Ok(size)) = (main.scale_factor(), main.inner_size()) else { return };
     let size = size.to_logical::<f64>(scale);
     let size = crate::settings::PanelSize { width: size.width.round(), height: size.height.round() };
-    let mut config = crate::settings::load(app);
-    if config.panel_size != Some(size) {
-        config.panel_size = Some(size);
-        let _ = crate::settings::save(app, &config);
+    if crate::settings::load(app).panel_size != Some(size) {
+        let _ = crate::settings::update(app, |config| config.panel_size = Some(size));
     }
 }
 

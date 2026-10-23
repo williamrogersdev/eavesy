@@ -33,14 +33,21 @@ try {
           localStorage.setItem('qa-transcript',args.text);
           state={...state,message:args.text};
         }
-        if(cmd==='restyle_dictation') { (window.__qaRestyles ??= []).push(args); return `${args.forAgents ? 'Prompt' : args.style}: ${args.text}`; }
+        if(cmd==='restyle_dictation') {
+          (window.__qaRestyles ??= []).push(args);
+          if(window.__qaBlockRestyle) { window.__qaBlockRestyle=false; await new Promise(resolve=>{window.__qaResolveRestyle=resolve;}); }
+          if(window.__qaFailRestyle) throw "Couldn't rewrite it in that tone";
+          return `${args.forAgents ? 'Prompt' : args.style}: ${args.text}`;
+        }
         if(cmd==='replace_dictation') { (window.__qaReplaced ??= []).push(args); return window.__qaReplaceAs ?? 'replaced'; }
+        if(cmd==='release_preview_editor') (window.__qaReleases ??= []).push(args.sessionId);
         if(cmd==='update_live_preview_edit') { window.__qaLiveEdits.push(args); if(window.__qaFailLiveEdit) throw new Error('Test live edit failed'); }
-        if(cmd==='stop_capture') window.__qaEmit({...state,phase:'transcribing'});
+        // Rust's raw text when something else already stopped the capture.
+        if(cmd==='stop_capture') { if(window.__qaFailStop) throw window.__qaFailStop; window.__qaEmit({...state,phase:'transcribing'}); }
         if(cmd==='focus_preview_editor') { window.__qaFocusRequests.push(args.sessionId); if(window.__qaFailFocusCount>0) { window.__qaFailFocusCount--; throw new Error('Test focus unavailable'); } if(window.__qaBlockFocus) { window.__qaBlockFocus=false; await new Promise(resolve=>{window.__qaResolveFocus=resolve;}); } return window.__qaFocusRevision ?? 0; }
         if(cmd==='get_hud_state') return shown(state);
         // Four lines (not the shipped Off) so the live-word checks have a transcript box to drive.
-        if(cmd==='get_settings') return {dictation_hotkey:'Fn',hud_preview_lines:4};
+        if(cmd==='get_settings') { window.__qaSettingsReads=(window.__qaSettingsReads??0)+1; return {dictation_hotkey:'Fn',hud_preview_lines:4}; }
         if(cmd==='live_transcript') return [];
         if(cmd==='copy_text') window.__qaCopies.push(args.text);
         if(cmd==='dismiss_hud') window.__qaEmit({...state,phase:'idle',message:null});
@@ -104,6 +111,49 @@ try {
   assert.equal(await page.evaluate(() => window.__qaRestyles.length), 4);
   assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).text), original);
   console.log('PASS: tone buttons rewrite from the pasted words, put the rewrite in place or copy it, and never teach the dictionary');
+  assert.ok((await page.evaluate(() => window.__qaReleases ?? [])).includes('qa-1'));
+  console.log('PASS: a tone click hands the keyboard back to the app before the rewrite goes in');
+  await page.reload();
+  await openDrawer();
+  // Hovering doesn't read the settings file: it's read once at start (twice
+  // here, as StrictMode mounts effects twice in the dev server).
+  assert.ok(await page.evaluate(() => window.__qaSettingsReads) <= 2);
+  console.log('PASS: hovering the control does not read settings');
+  await page.evaluate(() => { window.__qaFailRestyle = true; });
+  await tone('Professional').click();
+  await page.getByRole('alert').filter({ hasText: "Couldn't rewrite it in that tone" }).waitFor();
+  // The error sits in the stamp slot: the words, Copy, – and the tones all stay.
+  await page.getByRole('button', { name: 'Copy', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Collapse to the pill' }).waitFor();
+  assert.equal(await page.locator('.ctl-tone').count(), 5);
+  assert.equal(await tone('Original').getAttribute('aria-pressed'), 'true');
+  assert.equal(await editor.inputValue(), original);
+  await page.evaluate(() => { window.__qaFailRestyle = false; });
+  await tone('Concise').click();
+  await page.getByText('Updated').waitFor();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  console.log('PASS: a failed rewrite keeps the drawer and its controls, and the next tone click clears the error');
+  await page.evaluate(() => { window.__qaBlockRestyle = true; window.__qaReplaced = []; });
+  await tone('Friendly').click();
+  await page.waitForFunction(() => !!window.__qaResolveRestyle);
+  await page.getByText('Rewriting').waitFor();
+  await page.getByRole('button', { name: 'Collapse to the pill' }).click();
+  await page.locator('[data-phase="idle"]').waitFor();
+  await page.evaluate(() => window.__qaResolveRestyle());
+  await page.clock.runFor(1_000);
+  assert.equal(await page.evaluate(() => window.__qaReplaced.length), 0);
+  console.log('PASS: collapsing while it rewrites drops the rewrite: nothing is replaced in the app');
+  await page.reload();
+  await openDrawer();
+  await editor.click();
+  await page.evaluate(() => { window.__qaReleases = []; });
+  await editor.press('Escape');
+  await page.clock.runFor(50);
+  assert.deepEqual(await page.evaluate(() => window.__qaReleases), ['qa-1']);
+  await editor.waitFor();
+  console.log('PASS: Esc in the drawer leaves the editor and hands the keyboard back');
+  // The rewrites above were saved as the transcript: start the next checks from the original.
+  await page.evaluate(() => localStorage.removeItem('qa-transcript'));
   await page.reload();
   await openDrawer();
   const unfocusedBox = await editor.boundingBox();
@@ -267,6 +317,33 @@ try {
   await page.locator('[data-size="receipt"]').waitFor();
   assert.equal(await editor.count(),0);
   console.log('PASS: a result without a recording ID shows only its receipt, with nothing to edit');
+  await page.evaluate(() => window.__qaEmit({phase:'failed',sessionId:'qa-failed',mode:'audio',message:"Didn't hear anything",notice:null,startedAtMs:null}));
+  await page.locator('[data-phase="failed"][data-size="wide"]').waitFor();
+  await page.clock.runFor(5_000);
+  assert.equal(await page.locator('[data-phase="failed"]').count(), 1);
+  // 6s away, or the hover hold if the pointer is still on it: either way it goes.
+  await page.clock.runFor(26_000);
+  await page.locator('[data-phase="idle"]').waitFor();
+  console.log('PASS: a failure goes back to the pill by itself');
+  await page.evaluate(() => window.__qaEmit({phase:'saved',sessionId:'qa-saved',mode:'audio',message:null,notice:'Saved. Sign in to have it typed for you',startedAtMs:null}));
+  await page.locator('[data-phase="saved"][data-size="wide"]').waitFor();
+  await page.getByText('Not typed').waitFor();
+  await page.getByText('Saved. Sign in to have it typed for you').waitFor();
+  console.log('PASS: a save that was not typed says so, and why, in the wide size');
+  await page.evaluate(() => window.__qaEmit({phase:'recording',sessionId:'qa-stop',mode:'audio',message:null,notice:null,startedAtMs:Date.now()}));
+  await page.locator('[data-phase="recording"]').waitFor();
+  await page.evaluate(() => { window.__qaFailStop = 'no active capture with that id'; });
+  await page.getByRole('button',{name:/^Stop/}).click();
+  await page.getByRole('alert').filter({ hasText: 'That recording has already stopped' }).waitFor();
+  assert.equal(await page.getByText('no active capture').count(), 0);
+  assert.equal(await page.getByRole('button',{name:/^Stop/}).isEnabled(), true);
+  assert.equal(await page.locator('.ctl-timer').count(), 1);
+  await editor.waitFor();
+  await page.evaluate(() => { window.__qaFailStop = null; });
+  // Leave the recording, so the next check's "recording" wait sees its own session.
+  await page.evaluate(() => window.__qaEmit({phase:'idle',sessionId:null,mode:null,message:null,notice:null,startedAtMs:null}));
+  await page.locator('[data-phase="idle"]').waitFor();
+  console.log('PASS: a failed stop says so in user words, and Stop, the timer and the words stay');
   await page.evaluate(() => {
     window.__qaEmit({phase:'recording',sessionId:'qa-live',mode:'audio',message:null,notice:null,startedAtMs:Date.now()});
   });

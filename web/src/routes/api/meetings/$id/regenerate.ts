@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { encode } from '@/db/codec';
@@ -14,6 +14,9 @@ import { briefFormatPrompt, isBriefFormatId, type BriefFormatId } from '@/lib/br
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { resolveActor } from '@/server/auth';
+
+/** Statuses whose brief the pipeline is done with, so a regenerate can't race it. */
+const REGENERABLE_STATUSES: meetingsRepo.MeetingStatus[] = ['complete', 'failed'];
 
 const schema = z.object({
   format: z.custom<BriefFormatId>(isBriefFormatId).default('standard'),
@@ -30,8 +33,6 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const overQuota = await guardUserQuota(actor.userId, 'regenerate');
-        if (overQuota) return overQuota;
         const parsed = schema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request' }, { status: 400 });
@@ -43,6 +44,15 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
           userId: actor.userId,
         });
         if (!data) return Response.json({ error: 'not_found' }, { status: 404 });
+        // While the meeting is still recording or processing, the pipeline will
+        // write the real brief; a brief from the partial transcript would be
+        // overwritten at best, or (by marking it complete) stop the final one.
+        if (!REGENERABLE_STATUSES.includes(data.meeting.status)) {
+          return Response.json(
+            { error: 'meeting_in_progress', message: 'Wait for the recording to finish processing before regenerating.' },
+            { status: 409 },
+          );
+        }
 
         const transcript = data.meeting.transcriptOverrideMd?.trim()
           || data.segments.map((segment) => segment.text).join('\n').trim();
@@ -64,6 +74,10 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
           }
           templatePrompt = template.systemPrompt;
         }
+
+        // Spend the quota only on a request that will actually generate.
+        const overQuota = await guardUserQuota(actor.userId, 'regenerate');
+        if (overQuota) return overQuota;
 
         const user = await usersRepo.getById(db, actor.userId);
         const plan = resolveModelPlan(user);
@@ -115,11 +129,20 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
             title: generated.title,
             description: generated.description,
             summaryOverrideMd: null,
+            // A failed meeting now has a brief; a complete one stays complete.
+            // Only those two are touched, so a meeting that went back into
+            // processing meanwhile keeps its pipeline status.
             status: 'complete',
             statusError: null,
             updatedAt: now,
           })
-          .where(and(eq(meetings.id, params.id), eq(meetings.userId, actor.userId)));
+          .where(
+            and(
+              eq(meetings.id, params.id),
+              eq(meetings.userId, actor.userId),
+              inArray(meetings.status, REGENERABLE_STATUSES),
+            ),
+          );
         await activityRepo.log(db, {
           userId: actor.userId,
           eventType: 'meeting.regenerate',
