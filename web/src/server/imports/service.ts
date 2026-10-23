@@ -65,10 +65,13 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
   });
   if (request.method === 'DELETE' && !action) {
     if (meeting.status === 'complete') return json('Import already completed', 409);
+    // Already cancelled: touch nothing, so the sweep's claim and its week's
+    // clock (meetings.updated_at) stay as they are.
+    if (CANCELLED.includes(job.state)) return Response.json({ ok: true });
     await db.batch([
-      // A freeing import is cancelled already; leave the sweep's claim alone.
       db.update(recordingImports).set({ state: 'cancelled' }).where(and(eq(recordingImports.meetingId, id), notInArray(recordingImports.state, CANCELLED))),
-      db.update(meetings).set({ status: 'failed', statusError: 'Import cancelled', updatedAt: Date.now() }).where(eq(meetings.id, id)),
+      db.update(meetings).set({ status: 'failed', statusError: 'Import cancelled', updatedAt: Date.now() })
+        .where(and(eq(meetings.id, id), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'cancelled')`)),
     ]);
     return Response.json({ ok: true });
   }
@@ -82,7 +85,7 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
       db.update(meetings).set({ status: 'uploading', statusError: null, updatedAt: Date.now() })
         .where(and(eq(meetings.id, id), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'uploading')`)),
     ]);
-    if (!resumed.length) return json('This import’s old upload is being cleared. Try again in a minute.', 409);
+    if (!resumed.length) return json('This import’s old upload is still being cleared. Try again later.', 409);
     return Response.json({ ok: true });
   }
   if (CANCELLED.includes(job.state)) return json('Import cancelled. Select the file again to resume.', 409);

@@ -324,18 +324,22 @@ describe('stale records', () => {
     const db = drizzle(t.env.DB as unknown as D1Database, { schema });
     const send = (path: string, method: string) =>
       importRequest(db, t.env as never, 'u1', path, new Request(`https://eavesy.test/api/imports/${path}`, { method }));
-    const seen: { resume: number; state: string; finalize: number }[] = [];
+    const seen: { resume: number; state: string; finalize: number; cancel: number }[] = [];
     const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
     t.env.AUDIO_BUCKET.delete = (async (keys: string | string[]) => {
       // The user comes back mid-sweep: every piece still looks uploaded.
       const resume = await send('imp_mid/resume', 'POST');
       const state = (await (await send('imp_mid', 'GET')).json()) as { state: string };
       const finalize = await send('imp_mid/finalize', 'POST');
-      seen.push({ resume: resume.status, state: state.state, finalize: finalize.status });
+      const cancel = await send('imp_mid', 'DELETE');
+      seen.push({ resume: resume.status, state: state.state, finalize: finalize.status, cancel: cancel.status });
+      // Cancelling again leaves the claim and the meeting's clock alone.
+      expect(t.status(`SELECT state s FROM recording_imports WHERE meeting_id = 'imp_mid'`)).toBe('freeing');
+      expect(t.status(`SELECT updated_at s FROM meetings WHERE id = 'imp_mid'`)).toBe(t.now - 8 * DAY);
       return remove(keys);
     }) as typeof t.env.AUDIO_BUCKET.delete;
     expect(await freeCancelledImports(t.env, t.now)).toBe(1);
-    expect(seen).toEqual([{ resume: 409, state: 'cancelled', finalize: 409 }]);
+    expect(seen).toEqual([{ resume: 409, state: 'cancelled', finalize: 409, cancel: 200 }]);
     expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_mid'`).get()).toEqual({ n: 0 });
     expect(t.status(`SELECT audio_r2_key s FROM meetings WHERE id = 'imp_mid'`)).toBeNull();
     // Once freed it resumes from scratch.
