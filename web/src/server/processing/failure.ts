@@ -18,6 +18,13 @@ export interface TerminalProcessingFailure {
 
 type TerminalFailureReporter = (failure: TerminalProcessingFailure) => void;
 
+/**
+ * Between attempts to record a dead letter. With the DLQ consumer's
+ * `max_retries` (workers/processing/wrangler.toml) this bounds how long D1
+ * can be down before a failure is dropped unrecorded.
+ */
+export const DEAD_LETTER_RETRY_SECONDS = 300;
+
 /** A meeting in one of these can still be failed; a finished one is left alone. */
 const IN_PROGRESS = ['recording', 'queued', 'uploading', 'processing'] as const;
 
@@ -128,7 +135,7 @@ export async function deadLetterQueue(
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-      message.retry({ delaySeconds: 60 });
+      message.retry({ delaySeconds: DEAD_LETTER_RETRY_SECONDS });
     }
   }
 }
