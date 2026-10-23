@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-10-23 - desktop
+
 ### Fixed
 
 - Mac app: a dictation you dismissed no longer pops back open stamped "Pasted" when its cloud transcript arrives; only a dictation still writing its words down moves on, and one with nothing to paste into says "Saved. The words are in History" ([#205](https://github.com/williamrogersdev/eavesy/pull/205))
