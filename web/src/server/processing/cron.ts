@@ -3,7 +3,7 @@ import * as schema from '@/db/schema';
 import { reportError } from '@/server/observability';
 import { pruneRateLimits } from '@/server/rate-limit-store';
 import { reconcileRecaps } from '@/server/email/recaps';
-import { requeueStaleCollections } from '@/server/meeting-bots/service';
+import { requeueStaleCollections, retireRecallBots } from '@/server/meeting-bots/service';
 import { purgeDeleted } from './cleanup';
 import { chunked, D1_IN_LIST_SIZE, sendAll, sendMessages } from './queue-batch';
 import { recoverStaleSegments, sealLegacyKeys } from './recovery';
@@ -40,6 +40,7 @@ export function hourlySweeps(env: ProcessingEnv, now: number): CronStep[] {
     ['resume stuck summaries', () => resumeStuckSummaries(env, now)],
     ['recover stale segments', () => recoverStaleSegments(env, now)],
     ['requeue stale bot collections', () => requeueStaleCollections(env, now)],
+    ['retire Recall.ai bots', () => retireRecallBots(env)],
     ['reconcile email recaps', () => reconcileRecaps(drizzle(env.DB, { schema }), env, now)],
     ['purge deleted data', () => purgeDeleted(env, now)],
     ['prune rate limits', () => pruneRateLimits(env.DB, now)],

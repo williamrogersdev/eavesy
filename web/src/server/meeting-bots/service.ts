@@ -24,6 +24,7 @@ export type BotEnv = ProcessingEnv & MeetingBotsEnv;
 /** What the meeting-bot Worker needs to take a bot's reports. */
 export type BotIngestEnv = Pick<ProcessingEnv, 'AUDIO_BUCKET' | 'PROCESSING_QUEUE'>;
 export type MeetingBot = typeof meetingBots.$inferSelect;
+type MeetingStatus = (typeof meetings.$inferSelect)['status'];
 export type BotStatus = MeetingBot['status'];
 export type BotPlatform = MeetingBot['platform'];
 
@@ -42,9 +43,14 @@ export const BOT_STATUS_ORDER: Record<BotStatus, number> = {
   cancelled: 8,
 };
 export const TERMINAL_BOT_STATUSES: BotStatus[] = ['done', 'failed', 'cancelled'];
-const IN_CALL_STATUSES: BotStatus[] = ['joining', 'waiting_room', 'in_call', 'recording', 'call_ended'];
+/**
+ * `in_call` is in the enum for rows from the Recall.ai days; Eavesy's bot goes
+ * straight from the waiting room to `recording` (`statusForCode`), so no live
+ * list names it.
+ */
+const IN_CALL_STATUSES: BotStatus[] = ['joining', 'waiting_room', 'recording', 'call_ended'];
 /** The bot only sends audio once it is in the call; `call_ended` covers its last segments. */
-const SEGMENT_STATUSES: BotStatus[] = ['in_call', 'recording', 'call_ended'];
+const SEGMENT_STATUSES: BotStatus[] = ['recording', 'call_ended'];
 
 /** Bots one account may have scheduled or in calls at once. */
 export const ACTIVE_BOT_LIMIT = 10;
@@ -263,6 +269,7 @@ const FAILURE_TEXT: Record<string, string> = {
   bot_never_reported: 'The notetaker did not start.',
   start_failed: 'The notetaker could not be started. Please try again.',
   lost_track: 'The notetaker stopped reporting before the meeting finished.',
+  provider_retired: 'The notetaker was sent through a service Eavesy no longer uses.',
 };
 
 export function failureText(detail: string | null) {
@@ -337,10 +344,10 @@ export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING
   return status;
 }
 
-async function failMeeting(db: AppDb, meetingId: string, message: string) {
+async function failMeeting(db: AppDb, meetingId: string, message: string, from: MeetingStatus[] = ['recording', 'queued', 'uploading', 'processing']) {
   await db.update(meetings)
     .set({ status: 'failed', statusError: message, updatedAt: Date.now() })
-    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing'])));
+    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, from)));
 }
 
 /** Keeps how many names a canary read, never the names: the test meeting's people aren't Eavesy's to store. */
@@ -485,11 +492,45 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
   }
   if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
     // Segments the bot gave up delivering; the meeting has a gap there.
-    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: body.lostSegments.slice(0, 100) }));
+    const valid = body.lostSegments.filter((idx): idx is number => Number.isSafeInteger(idx) && idx >= 0 && idx <= 100_000);
+    const lost = valid.slice(0, MAX_LOST_SEGMENTS);
+    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, total: body.lostSegments.length, recorded: lost.length, lostSegments: lost }));
+    // Only on the `done` that ends the call, before the move to `collecting`,
+    // so collection finds them; a late or replayed one changes nothing. Past
+    // the cap the brief still says it has gaps, from the rows recorded.
+    if (!bot.canary && bot.meetingId && SEGMENT_STATUSES.includes(bot.status) && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
   }
   // The watchdog reads either as the bot being alive (noted above).
   if (code === 'heartbeat' || code === 'speakers') return json({ ok: true });
   return json({ ok: true, status: await applyStatus(db, env, bot, code, subCode, at) });
+}
+
+/** Lost segments noted per `done` report; a bot that lost more than this has lost the call. */
+const MAX_LOST_SEGMENTS = 100;
+
+/**
+ * A segment the bot could not deliver is a failed segment of the meeting: a
+ * row that was never transcribed, so the final brief says the transcript has
+ * gaps (the `partial` note in processing/summarize.ts) instead of reading as
+ * complete. Nothing retries a failed segment, and no object is stored under
+ * its key. A segment that did arrive keeps its row.
+ */
+async function recordLostSegments(db: AppDb, bot: MeetingBot, meetingId: string, lost: number[]) {
+  const now = Date.now();
+  await runBatched(db, lost.map((idx) =>
+    db.insert(meetingSegments).values({
+      id: pid('mseg'),
+      meetingId,
+      idx,
+      track: 'mixed',
+      r2Key: `users/${bot.userId}/meetings/${meetingId}/segments/${String(idx).padStart(5, '0')}.wav`,
+      bytes: 0,
+      offsetMs: 0,
+      durationMs: 0,
+      transcribeStatus: 'failed',
+      createdAt: now,
+    }).onConflictDoNothing(),
+  ));
 }
 
 /** One segment of the call from the bot: 16 kHz mono WAV, about a minute. */
@@ -506,7 +547,7 @@ export async function handleBotSegment(db: AppDb, env: BotIngestEnv, botId: stri
   const activeMs = int(request.headers.get('x-segment-active-ms'), 10 * 60 * 1_000);
   if (idx === null || startMs === null || !durationMs) return json({ error: 'invalid_segment_metadata' }, 400);
   if (Number(request.headers.get('content-length') ?? '0') > MAX_SEGMENT_BYTES) return json({ error: 'segment_too_large' }, 413);
-  if (BOT_STATUS_ORDER[bot.status] < BOT_STATUS_ORDER.in_call) {
+  if (BOT_STATUS_ORDER[bot.status] < BOT_STATUS_ORDER.recording) {
     // The report saying it got in is still on its way (it travels on its own
     // queue). Every bot image retries a 5xx; a 4xx would drop the segment.
     return json({ error: 'bot_not_recording_yet' }, 503, { 'retry-after': '5' });
@@ -582,9 +623,12 @@ export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string,
   const segments = await db.select({
     status: meetingSegments.transcribeStatus,
     end: sql<number>`${meetingSegments.offsetMs} + ${meetingSegments.durationMs}`,
+    bytes: meetingSegments.bytes,
     createdAt: meetingSegments.createdAt,
   }).from(meetingSegments).where(eq(meetingSegments.meetingId, meeting.id));
-  if (!segments.length) {
+  // Rows for lost segments (`recordLostSegments`) hold no audio; a delivered
+  // one always does, as `handleBotSegment` refuses an empty segment.
+  if (!segments.some((s) => s.bytes > 0)) {
     if (await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording', 'collecting')) await failMeeting(db, meeting.id, failureText(bot.statusDetail));
     return;
   }
@@ -701,6 +745,30 @@ export async function requeueStaleCollections(env: Pick<ProcessingEnv, 'DB' | 'P
   let requeued = 0;
   for (const bot of stale) if (await requeueCollection(db, env, bot.id, staleBefore)) requeued += 1;
   return requeued;
+}
+
+/**
+ * For the processing Worker's hourly cron: fails every Recall.ai bot still
+ * on its way. That service is gone, so such a bot (from before Eavesy ran its
+ * own) can never report, be collected, or leave; left alone it would count
+ * toward ACTIVE_BOT_LIMIT and show as live forever. Returns how many.
+ */
+export async function retireRecallBots(env: Pick<ProcessingEnv, 'DB'>) {
+  const db = botDatabase(env.DB);
+  // A handful of old rows at most; any past the batch go on the next run. A
+  // collecting one is left to collection, which retires it the same way
+  // (`collectBotRecording`), and the stale-collection sweep re-sends it.
+  const stuck = await db.select({ id: meetingBots.id, status: meetingBots.status, meetingId: meetingBots.meetingId }).from(meetingBots)
+    .where(and(eq(meetingBots.provider, 'recall'), notInArray(meetingBots.status, [...TERMINAL_BOT_STATUSES, 'collecting'])))
+    .limit(200);
+  let retired = 0;
+  for (const bot of stuck) {
+    if (!(await finishBot(db, bot.id, 'failed', 'provider_retired', bot.status))) continue;
+    retired += 1;
+    // A meeting already being summarized has its audio; the pipeline finishes it.
+    if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText('provider_retired'), ['recording', 'queued', 'uploading']);
+  }
+  return retired;
 }
 
 /**
