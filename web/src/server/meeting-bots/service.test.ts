@@ -596,6 +596,9 @@ describe('collection', () => {
     await segment(t, id, 2, 120_000);
     await event(t, id, { code: 'call_ended', subCode: 'call_ended_by_host' });
     await event(t, id, { code: 'done', lostSegments: [1, 2, 3, -1, 1.5, 'x'] });
+    // A `done` retried while the bot is collecting adds nothing either.
+    await event(t, id, { code: 'done', lostSegments: [9] });
+    expect(t.sqlite.query('SELECT count(*) AS n FROM meeting_segments WHERE idx = 9').get()).toEqual({ n: 0 });
     const rows = t.sqlite.query('SELECT idx, bytes, transcribe_status FROM meeting_segments ORDER BY idx').all();
     expect(rows).toEqual([
       { idx: 0, bytes: 8, transcribe_status: 'pending' },
@@ -634,12 +637,13 @@ describe('collection', () => {
       ('bot_r3','u1','recall','https://meet.google.com/abc-defg-hij','meet','done',NULL,1,1),
       ('bot_r4','u1','recall','https://meet.google.com/abc-defg-hij','meet','collecting','m_p',1,1)`);
     const live = await recordingBot(t);
-    expect(await retireRecallBots(t.env)).toBe(3);
+    expect(await retireRecallBots(t.env)).toBe(2);
     expect(t.bot('bot_r1')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
     expect(t.bot('bot_r2')).toMatchObject({ status: 'failed', status_detail: 'provider_retired' });
     expect(t.bot('bot_r3')).toMatchObject({ status: 'done' });
     expect(t.bot(live)).toMatchObject({ status: 'recording' });
-    // Its audio is already with the summary: the pipeline finishes it.
+    // Collecting: left to collection, which retires it itself.
+    expect(t.bot('bot_r4')).toMatchObject({ status: 'collecting' });
     expect(t.sqlite.query("SELECT status FROM meetings WHERE id = 'm_p'").get()).toEqual({ status: 'processing' });
     expect(t.sqlite.query("SELECT status, status_error FROM meetings WHERE id = 'm_r'").get())
       .toEqual({ status: 'failed', status_error: 'The notetaker was sent through a service Eavesy no longer uses.' });

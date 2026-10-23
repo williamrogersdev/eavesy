@@ -492,12 +492,13 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
   }
   if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
     // Segments the bot gave up delivering; the meeting has a gap there.
-    const lost = body.lostSegments.filter((idx): idx is number => Number.isSafeInteger(idx) && idx >= 0 && idx <= 100_000).slice(0, MAX_LOST_SEGMENTS);
-    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: lost }));
-    // Before the move to `collecting`, so collection finds them; a late or
-    // replayed `done` for a bot already finished changes nothing.
-    const collectable = SEGMENT_STATUSES.includes(bot.status) || bot.status === 'collecting';
-    if (!bot.canary && bot.meetingId && collectable && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
+    const valid = body.lostSegments.filter((idx): idx is number => Number.isSafeInteger(idx) && idx >= 0 && idx <= 100_000);
+    const lost = valid.slice(0, MAX_LOST_SEGMENTS);
+    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, total: body.lostSegments.length, recorded: lost.length, lostSegments: lost }));
+    // Only on the `done` that ends the call, before the move to `collecting`,
+    // so collection finds them; a late or replayed one changes nothing. Past
+    // the cap the brief still says it has gaps, from the rows recorded.
+    if (!bot.canary && bot.meetingId && SEGMENT_STATUSES.includes(bot.status) && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
   }
   // The watchdog reads either as the bot being alive (noted above).
   if (code === 'heartbeat' || code === 'speakers') return json({ ok: true });
@@ -625,7 +626,8 @@ export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string,
     bytes: meetingSegments.bytes,
     createdAt: meetingSegments.createdAt,
   }).from(meetingSegments).where(eq(meetingSegments.meetingId, meeting.id));
-  // Rows for lost segments (`recordLostSegments`) hold no audio.
+  // Rows for lost segments (`recordLostSegments`) hold no audio; a delivered
+  // one always does, as `handleBotSegment` refuses an empty segment.
   if (!segments.some((s) => s.bytes > 0)) {
     if (await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording', 'collecting')) await failMeeting(db, meeting.id, failureText(bot.statusDetail));
     return;
@@ -753,9 +755,11 @@ export async function requeueStaleCollections(env: Pick<ProcessingEnv, 'DB' | 'P
  */
 export async function retireRecallBots(env: Pick<ProcessingEnv, 'DB'>) {
   const db = botDatabase(env.DB);
-  // A handful of old rows at most; any past the batch go on the next run.
+  // A handful of old rows at most; any past the batch go on the next run. A
+  // collecting one is left to collection, which retires it the same way
+  // (`collectBotRecording`), and the stale-collection sweep re-sends it.
   const stuck = await db.select({ id: meetingBots.id, status: meetingBots.status, meetingId: meetingBots.meetingId }).from(meetingBots)
-    .where(and(eq(meetingBots.provider, 'recall'), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)))
+    .where(and(eq(meetingBots.provider, 'recall'), notInArray(meetingBots.status, [...TERMINAL_BOT_STATUSES, 'collecting'])))
     .limit(200);
   let retired = 0;
   for (const bot of stuck) {
