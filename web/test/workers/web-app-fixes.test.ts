@@ -13,6 +13,19 @@ import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
 import { TEMPLATE_LIMIT } from '../../src/db/repo/templates';
 
 const actor = vi.hoisted(() => ({ userId: null as string | null }));
+const summarizer = vi.hoisted(() => ({
+  inputs: [] as { transcript: string; speakers?: string; contextBlurb?: string }[],
+  /** Runs while the model is "generating", to change the world under the request. */
+  during: null as (() => Promise<void>) | null,
+}));
+const queued = vi.hoisted(() => ({ messages: [] as { kind: string; meetingId?: string }[], fail: false }));
+vi.mock('../../src/server/queue', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  enqueue: async (message: { kind: string; meetingId?: string }) => {
+    if (queued.fail) throw new Error('queue unavailable');
+    queued.messages.push(message);
+  },
+}));
 vi.mock('../../src/server/auth', () => ({
   resolveActor: async () => {
     if (!actor.userId) throw new Error('not_authenticated');
@@ -22,7 +35,10 @@ vi.mock('../../src/server/auth', () => ({
 }));
 vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  summarizeMeeting: async () => ({
+  summarizeMeeting: async (input: { transcript: string; speakers?: string; contextBlurb?: string }) => {
+    summarizer.inputs.push(input);
+    await summarizer.during?.();
+    return {
     title: 'Regenerated',
     description: '',
     tldr: 'Regenerated brief',
@@ -32,7 +48,8 @@ vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
     openQuestions: [],
     topics: [],
     mentions: [],
-  }),
+    };
+  },
 }));
 vi.mock('../../src/lib/vision', () => ({
   isSupportedImageType: () => true,
@@ -76,6 +93,10 @@ beforeEach(async () => {
   await insertUser(USER);
   await insertUser(OTHER);
   actor.userId = USER;
+  summarizer.inputs.length = 0;
+  summarizer.during = null;
+  queued.messages.length = 0;
+  queued.fail = false;
 });
 
 async function addSegment(meetingId: string, text: string) {
@@ -97,7 +118,7 @@ describe('regenerate', () => {
     expect(await row("SELECT count(*) AS n FROM rate_limits WHERE key LIKE '%regenerate%'")).toMatchObject({ n: 0 });
   });
 
-  it('rewrites a complete meeting and brings a failed one back to complete', async () => {
+  it('rewrites a complete meeting and brings a failed one back to complete, then queues what follows a brief', async () => {
     await insertMeeting({ id: 'meet_done', userId: USER, status: 'complete' });
     await insertMeeting({ id: 'meet_failed', userId: USER, status: 'failed' });
     await addSegment('meet_done', 'Final words');
@@ -106,7 +127,60 @@ describe('regenerate', () => {
       const response = await call(RegenerateRoute, 'POST', `/api/meetings/${id}/regenerate`, jsonInit({}), { id });
       expect(response.status).toBe(200);
       expect(await row('SELECT status, title FROM meetings WHERE id = ?', id)).toEqual({ status: 'complete', title: 'Regenerated' });
+      // A failed meeting never had an embedding; a rewritten brief changes the
+      // one a complete meeting has. Both get re-indexed and their agent
+      // transcript rebuilt, as after the pipeline's own brief.
+      expect(queued.messages.filter((m) => m.meetingId === id).map((m) => m.kind)).toEqual(['embed', 'agent-transcript']);
+      expect(await row('SELECT generated_by_model, template_id FROM summaries WHERE meeting_id = ?', id)).toEqual({
+        generated_by_model: 'claude-sonnet-4-6',
+        template_id: 'standard',
+      });
     }
+    // One row per meeting however many times it is regenerated.
+    expect(await row("SELECT count(*) AS n FROM summaries WHERE meeting_id = 'meet_done'")).toEqual({ n: 1 });
+    await call(RegenerateRoute, 'POST', '/api/meetings/meet_done/regenerate', jsonInit({ format: 'standard' }), { id: 'meet_done' });
+    expect(await row("SELECT count(*) AS n FROM summaries WHERE meeting_id = 'meet_done'")).toEqual({ n: 1 });
+  });
+
+  it('leaves a meeting that went back into processing to the pipeline', async () => {
+    await insertMeeting({ id: 'meet_back', userId: USER, status: 'complete' });
+    await addSegment('meet_back', 'Final words');
+    summarizer.during = async () => {
+      await testEnv.DB.prepare("UPDATE meetings SET status = 'processing' WHERE id = 'meet_back'").run();
+    };
+    const response = await call(RegenerateRoute, 'POST', '/api/meetings/meet_back/regenerate', jsonInit({}), { id: 'meet_back' });
+    expect(response.status).toBe(409);
+    expect(await row('SELECT status, title FROM meetings WHERE id = ?', 'meet_back')).toMatchObject({ status: 'processing' });
+    expect(await row('SELECT id FROM summaries WHERE meeting_id = ?', 'meet_back')).toBeNull();
+    expect(queued.messages).toEqual([]);
+  });
+
+  it('keeps the new brief when the follow-up jobs cannot be queued', async () => {
+    await insertMeeting({ id: 'meet_q', userId: USER, status: 'complete' });
+    await addSegment('meet_q', 'Final words');
+    queued.fail = true;
+    const response = await call(RegenerateRoute, 'POST', '/api/meetings/meet_q/regenerate', jsonInit({}), { id: 'meet_q' });
+    expect(response.status).toBe(200);
+    expect(await row('SELECT tldr FROM summaries WHERE meeting_id = ?', 'meet_q')).toEqual({ tldr: 'Regenerated brief' });
+  });
+
+  it('summarizes the transcript the pipeline would, with its speakers named', async () => {
+    await insertMeeting({ id: 'meet_two', userId: USER, status: 'complete' });
+    await testEnv.DB.prepare("UPDATE meetings SET speaker_names_json = ? WHERE id = 'meet_two'").bind(JSON.stringify({ you: 'Ada', them: 'Grace' })).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, speaker_id, is_final, is_edited)
+       VALUES ('l1', 'meet_two', 0, 1000, 'Shall we ship it', 'you', 1, 0), ('l2', 'meet_two', 1000, 2000, 'Yes, on Friday', 'them', 1, 0)`,
+    ).run();
+    const response = await call(RegenerateRoute, 'POST', '/api/meetings/meet_two/regenerate', jsonInit({}), { id: 'meet_two' });
+    expect(response.status).toBe(200);
+    const input = summarizer.inputs.at(-1)!;
+    expect(input.transcript).toBe('Ada: Shall we ship it\nGrace: Yes, on Friday');
+    expect(input.speakers).toContain('"Ada" is the person who recorded the meeting');
+
+    // A transcript the user rewrote by hand is sent as is, with no speaker claim.
+    await testEnv.DB.prepare("UPDATE meetings SET transcript_override_md = 'My own words' WHERE id = 'meet_two'").run();
+    await call(RegenerateRoute, 'POST', '/api/meetings/meet_two/regenerate', jsonInit({}), { id: 'meet_two' });
+    expect(summarizer.inputs.at(-1)).toMatchObject({ transcript: 'My own words', speakers: undefined });
   });
 });
 
