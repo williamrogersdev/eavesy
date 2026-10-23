@@ -12,7 +12,7 @@ import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
 import { reportError, withErrorReporting } from '../../../web/src/server/observability';
-import { consumeRateLimit } from '../../../web/src/server/rate-limit-store';
+import { type QuotaScope, consumeRateLimit, userQuotaPolicy } from '../../../web/src/server/rate-limit-store';
 import {
   mcpTokenExpiresAt,
   pathTokensAllowed,
@@ -511,6 +511,18 @@ const VECTOR_TOP_K_MAX = 50;
 const ACTION_ITEM_MEETINGS = 200;
 const ACTION_ITEMS_MAX = 200;
 
+/**
+ * Tools that call a model count against the same daily quotas as the web app
+ * (an answer is a chat, a semantic search a search), so a connection can't
+ * spend more than the user could from the browser. Fails closed, as there.
+ */
+async function chargeQuota(env: Env, userId: string, scope: QuotaScope) {
+  const result = await consumeRateLimit(env.DB, userQuotaPolicy(scope, userId));
+  if (!result.allowed) {
+    throw new UserFacingError('You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.');
+  }
+}
+
 async function callTool(env: Env, userId: string, name: string, args: Record<string, unknown>) {
   const db = drizzle(env.DB, { schema });
   switch (name) {
@@ -519,6 +531,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       const question = stringArg(name === 'ask_library' ? args.question : args.query);
       if (question.length < 3 || question.length > 1000) throw new UserFacingError('Question must be between 3 and 1000 characters');
       if (name === 'ask_library' && !creditsConfigured(env)) throw new UserFacingError('Library answers are not enabled');
+      await chargeQuota(env, userId, name === 'ask_library' ? 'chat' : 'search');
       const opts = { ai: createAiRunner(env, 'mcp-library'), vectorize: env.VECTORIZE };
       return name === 'ask_library' ? askLibrary(db, userId, question, opts) : librarySources(db, userId, question, opts);
     }
@@ -546,6 +559,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         .orderBy(desc(schema.meetings.startedAt))
         .limit(limit);
 
+      await chargeQuota(env, userId, 'search');
       const queryVector = (await embedTexts(createAiRunner(env, 'mcp-search'), [query]))[0];
       const matches = await env.VECTORIZE.query(queryVector, {
         topK: Math.min(limit * 3, VECTOR_TOP_K_MAX),

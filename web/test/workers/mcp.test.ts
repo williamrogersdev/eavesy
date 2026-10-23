@@ -343,6 +343,23 @@ Will: Bump it.
     }
   });
 
+  it('count model-backed tools against the user’s daily quotas, as the web app does', async () => {
+    const { token } = await mint();
+    const day = Math.floor(Date.now() / 86_400_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1000, ?)')
+      .bind(`budget:user:search:user_mcp:${day}`, (day + 1) * 86_400_000).run();
+    try {
+      const refused = await tool(token, 'search_meetings', { query: 'cask' });
+      expect(refused.error).toEqual({ code: -32602, message: expect.stringContaining('today’s limit') });
+      const library = await tool(token, 'search_library', { query: 'cask fix' });
+      expect(library.error?.message).toContain('today’s limit');
+      // Tools that don't call a model are not counted.
+      expect((await tool(token, 'recent_meetings', {})).error).toBeUndefined();
+    } finally {
+      await testEnv.DB.prepare('DELETE FROM rate_limits').run();
+    }
+  });
+
   it('answer a request that is not an object, and keep internal errors to themselves', async () => {
     const { token } = await mint();
     expect((await raw(token, null)).error?.code).toBe(-32600);

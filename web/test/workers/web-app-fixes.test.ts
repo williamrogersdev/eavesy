@@ -235,6 +235,25 @@ describe('captures', () => {
     const { id } = (await response.json()) as { id: string };
     expect(await row('SELECT r2_key FROM captures WHERE id = ?', id)).toEqual({ r2_key: `users/user_mac/captures/${id}.png` });
   });
+
+  it('counts only Mac uploads that stored a capture against the daily quota', async () => {
+    const token = await insertDeviceActor('user_quota', 'device_quota');
+    const upload = (length: number) => call(DeviceCapturesRoute, 'POST', '/api/devices/captures', {
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'image/png',
+        'content-length': String(length),
+        'x-client-capture-id': crypto.randomUUID(),
+      },
+      body: requestBody(PNG),
+    });
+    const used = async () => (await row<{ n: number }>("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture-sync:user_quota:%'"))!.n;
+    // Cut short: the body is shorter than it said, so nothing is stored.
+    expect((await upload(PNG.byteLength + 10)).status).toBe(400);
+    expect(await used()).toBe(0);
+    expect((await upload(PNG.byteLength)).status).toBe(201);
+    expect(await used()).toBe(1);
+  });
 });
 
 describe('templates', () => {
