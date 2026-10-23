@@ -1,6 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { consumeRateLimit, type FailMode, type RateLimitResult } from '@/server/rate-limit-store';
+import {
+  type FailMode,
+  type QuotaScope,
+  type RateLimitResult,
+  consumeRateLimit,
+  refundRateLimit,
+  userQuotaPolicy,
+} from '@/server/rate-limit-store';
 
 export type { FailMode, RateLimitResult } from '@/server/rate-limit-store';
 
@@ -92,46 +99,29 @@ function warnAtSpendThresholds(scope: string, used: number, limit: number) {
   console.warn(JSON.stringify({ message: 'spend budget threshold reached', scope, percent, used, limit }));
 }
 
-/**
- * Daily per-user quotas. `failMode` is per scope: segment uploads carry a
- * user's live recording, so they stay up if the counter is unavailable; every
- * other scope spends AI capacity or produces large downloads and fails closed.
- */
-export const USER_DAILY_QUOTAS = {
-  // One-minute segments, two tracks: 2,400 is 20 hours of recording a day.
-  segment: { limit: 2_400, failMode: 'open' },
-  transcribe: { limit: 300, failMode: 'closed' },
-  process: { limit: 100, failMode: 'closed' },
-  dictation: { limit: 500, failMode: 'closed' },
-  capture: { limit: 300, failMode: 'closed' },
-  // Mac screenshots synced to the user's other Macs: storage only, no AI.
-  'capture-sync': { limit: 2_000, failMode: 'closed' },
-  drop: { limit: 500, failMode: 'closed' },
-  chat: { limit: 300, failMode: 'closed' },
-  regenerate: { limit: 60, failMode: 'closed' },
-  translate: { limit: 600, failMode: 'closed' },
-  'library-reindex': { limit: 20, failMode: 'closed' },
-  search: { limit: 1_000, failMode: 'closed' },
-  export: { limit: 10, failMode: 'closed' },
-  'meeting-export': { limit: 200, failMode: 'closed' },
-} as const satisfies Record<string, { limit: number; failMode: FailMode }>;
-
-export type QuotaScope = keyof typeof USER_DAILY_QUOTAS;
+export { USER_DAILY_QUOTAS, type QuotaScope } from '@/server/rate-limit-store';
 
 function envName(scope: string): string {
   return scope.toUpperCase().replaceAll('-', '_');
 }
 
-export async function guardUserQuota(userId: string, scope: QuotaScope): Promise<Response | null> {
-  const quota = USER_DAILY_QUOTAS[scope];
-  const limit = intEnv(`QUOTA_${envName(scope)}_PER_DAY`, quota.limit);
-  const result = await consumeDailyBudget({ name: `user:${scope}:${userId}`, limit, failMode: quota.failMode });
+function quotaPolicy(userId: string, scope: QuotaScope) {
+  return userQuotaPolicy(scope, userId, process.env);
+}
+
+export async function guardUserQuota(userId: string, scope: QuotaScope, now = Date.now()): Promise<Response | null> {
+  const result = await consumeRateLimit(db(), quotaPolicy(userId, scope), now);
   if (result.allowed) return null;
   return tooMany(
     'You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.',
     3600,
     'daily_quota',
   );
+}
+
+/** Gives back one use of a quota the request turned out not to need; `chargedAt` is the `now` it was charged at. */
+export async function refundUserQuota(userId: string, scope: QuotaScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), quotaPolicy(userId, scope), chargedAt);
 }
 
 /**
