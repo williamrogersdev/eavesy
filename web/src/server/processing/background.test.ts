@@ -10,6 +10,8 @@ const { DEAD_LETTER_QUEUE, deadLetterQueue, MAX_ATTEMPTS, queue, recoverStaleSeg
 const { ACCOUNT_TABLES } = await import('./cleanup');
 const { PENDING_SEGMENT_GRACE_MS } = await import('./recovery');
 const { SUMMARY_CLAIM_TTL_MS } = await import('./shared');
+const { DEAD_LETTER_RETRY_SECONDS } = await import('./failure');
+const { freeCancelledImports, pruneAuthRecords, stopStalledImports } = await import('./stale-records');
 import { createFakeEnv, delivery, stubAnthropic, summaryReply } from '@/server/testing/fake-env';
 
 const SUMMARY = {
@@ -238,6 +240,139 @@ describe('the hourly cron', () => {
     const main = /queue = "eavesy-processing"\n[^[]*?max_retries = (\d+)/.exec(toml);
     expect(Number(main?.[1]) + 1).toBe(MAX_ATTEMPTS);
     expect(SUMMARY_WAIT_LIMIT_MS).toBeGreaterThan(0);
+    // The DLQ waits out a D1 outage as long as docs/OPERATIONS.md says.
+    const dlq = /queue = "eavesy-processing-dlq"\n[^[]*?max_retries = (\d+)\nretry_delay = (\d+)/.exec(toml);
+    expect([Number(dlq?.[1]), Number(dlq?.[2])]).toEqual([10, DEAD_LETTER_RETRY_SECONDS]);
+  });
+});
+
+describe('stale records', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  function importMeeting(t: ReturnType<typeof setup>, id: string, opts: { status: string; state: string; updatedAt: number; audio?: boolean }) {
+    t.sqlite.run(
+      `INSERT INTO meetings (id, user_id, title, started_at, source, status, audio_r2_key, created_at, updated_at)
+       VALUES (?, 'u1', 'Import', ?, 'import', ?, ?, ?, ?)`,
+      [id, opts.updatedAt, opts.status, opts.audio ? `users/u1/meetings/${id}/import/original.m4a` : null, opts.updatedAt, opts.updatedAt],
+    );
+    t.sqlite.run(
+      `INSERT INTO recording_imports (meeting_id, user_id, fingerprint, segment_count, duration_ms, state, created_at)
+       VALUES (?, 'u1', ?, 2, 600000, ?, ?)`,
+      [id, id.padEnd(64, '0'), opts.state, opts.updatedAt],
+    );
+    if (opts.audio) t.objects.set(`users/u1/meetings/${id}/import/original.m4a`, new Uint8Array([1]));
+  }
+  function importSegment(t: ReturnType<typeof setup>, id: string, idx: number, createdAt: number) {
+    const key = `users/u1/meetings/${id}/import/${idx}.wav`;
+    t.sqlite.run(
+      `INSERT INTO meeting_segments (id, meeting_id, idx, track, r2_key, bytes, offset_ms, duration_ms, transcribe_status, created_at)
+       VALUES (?, ?, ?, 'mixed', ?, 1, 0, 300000, 'pending', ?)`,
+      [`import_${id}_${idx}`, id, idx, key, createdAt],
+    );
+    t.objects.set(key, new Uint8Array([1]));
+  }
+
+  test('an import idle for a day is cancelled, one still uploading is not', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_old', { status: 'uploading', state: 'uploading', updatedAt: t.now - 2 * DAY });
+    importSegment(t, 'imp_old', 0, t.now - 2 * DAY);
+    importMeeting(t, 'imp_busy', { status: 'uploading', state: 'uploading', updatedAt: t.now - 2 * DAY });
+    importSegment(t, 'imp_busy', 0, t.now - 60_000);
+    expect(await stopStalledImports(t.env, t.now)).toBe(1);
+    expect(t.sqlite.query(`SELECT m.status, r.state FROM meetings m JOIN recording_imports r ON r.meeting_id = m.id WHERE m.id = 'imp_old'`).get())
+      .toEqual({ status: 'failed', state: 'cancelled' });
+    expect(t.status(`SELECT status s FROM meetings WHERE id = 'imp_busy'`)).toBe('uploading');
+  });
+
+  test('a cancelled import keeps its audio a week, then frees it and can be resumed from scratch', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_week', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_week', 0, t.now - 8 * DAY);
+    importMeeting(t, 'imp_new', { status: 'failed', state: 'cancelled', updatedAt: t.now - DAY, audio: true });
+    importSegment(t, 'imp_new', 0, t.now - DAY);
+    expect(await freeCancelledImports(t.env, t.now)).toBe(1);
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_week'))).toEqual([]);
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_week'`).get()).toEqual({ n: 0 });
+    expect(t.status(`SELECT audio_r2_key s FROM meetings WHERE id = 'imp_week'`)).toBeNull();
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_new'))).toHaveLength(2);
+    // Nothing left to free: the next run finds nothing.
+    expect(await freeCancelledImports(t.env, t.now)).toBe(0);
+  });
+
+  test('an import resumed before its audio is freed keeps it', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_back', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_back', 0, t.now - 8 * DAY);
+    // The user resumes between the sweep's read and its fresh check.
+    const prepare = t.env.DB.prepare.bind(t.env.DB);
+    t.env.DB.prepare = ((sql: string) => {
+      if (sql.startsWith('SELECT state FROM recording_imports')) t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_back'");
+      return prepare(sql);
+    }) as typeof t.env.DB.prepare;
+    expect(await freeCancelledImports(t.env, t.now)).toBe(0);
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_back'))).toHaveLength(2);
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_back'`).get()).toEqual({ n: 1 });
+  });
+
+  test('an import resumed while its audio is deleted has no rows left pointing at it', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_mid', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_mid', 0, t.now - 8 * DAY);
+    const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
+    t.env.AUDIO_BUCKET.delete = (async (keys: string | string[]) => {
+      t.sqlite.run("UPDATE recording_imports SET state = 'uploading' WHERE meeting_id = 'imp_mid'");
+      return remove(keys);
+    }) as typeof t.env.AUDIO_BUCKET.delete;
+    await freeCancelledImports(t.env, t.now);
+    // Every row and the audio key went with their objects: the resumed import uploads them again.
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_mid'`).get()).toEqual({ n: 0 });
+    expect(t.status(`SELECT audio_r2_key s FROM meetings WHERE id = 'imp_mid'`)).toBeNull();
+  });
+
+  test('a failed object delete keeps the rows for the next run', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_err', { status: 'failed', state: 'cancelled', updatedAt: t.now - 8 * DAY, audio: true });
+    importSegment(t, 'imp_err', 0, t.now - 8 * DAY);
+    const remove = t.env.AUDIO_BUCKET.delete.bind(t.env.AUDIO_BUCKET);
+    t.env.AUDIO_BUCKET.delete = (async () => { throw new Error('r2 down'); }) as typeof t.env.AUDIO_BUCKET.delete;
+    await expect(freeCancelledImports(t.env, t.now)).rejects.toThrow('r2 down');
+    expect(t.sqlite.query(`SELECT count(*) AS n FROM meeting_segments WHERE meeting_id = 'imp_err'`).get()).toEqual({ n: 1 });
+    t.env.AUDIO_BUCKET.delete = remove;
+    expect(await freeCancelledImports(t.env, t.now)).toBe(1);
+    expect([...t.objects.keys()].filter((key) => key.includes('imp_err'))).toEqual([]);
+  });
+
+  test('an import that starts uploading again before the stop lands is left alone', async () => {
+    const t = setup();
+    importMeeting(t, 'imp_live', { status: 'uploading', state: 'uploading', updatedAt: t.now - 2 * DAY });
+    const prepare = t.env.DB.prepare.bind(t.env.DB);
+    t.env.DB.prepare = ((sql: string) => {
+      if (sql.startsWith('UPDATE recording_imports')) importSegment(t, 'imp_live', 0, t.now);
+      return prepare(sql);
+    }) as typeof t.env.DB.prepare;
+    expect(await stopStalledImports(t.env, t.now)).toBe(0);
+    expect(t.sqlite.query(`SELECT m.status, r.state FROM meetings m JOIN recording_imports r ON r.meeting_id = m.id WHERE m.id = 'imp_live'`).get())
+      .toEqual({ status: 'uploading', state: 'uploading' });
+  });
+
+  test('old OAuth codes, unused clients and webhook ids are pruned', async () => {
+    const t = setup();
+    const old = t.now - 31 * DAY;
+    t.sqlite.run(`INSERT INTO oauth_clients (id, name, redirect_uris_json, created_at) VALUES ('c_unused', 'a', '[]', ?), ('c_used', 'b', '[]', ?), ('c_new', 'c', '[]', ?)`, [old, old, t.now]);
+    t.sqlite.run(
+      `INSERT INTO mcp_tokens (id, user_id, name, token_hash, client_id, created_at) VALUES ('tok', 'u1', 'Claude', 'hash', 'c_used', ?)`,
+      [old],
+    );
+    t.sqlite.run(
+      `INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scopes_json, created_at, expires_at)
+       VALUES ('spent', 'c_new', 'u1', 'x', 'y', '[]', ?, ?), ('live', 'c_new', 'u1', 'x', 'y', '[]', ?, ?)`,
+      [old, old + 60_000, t.now, t.now + 60_000],
+    );
+    t.sqlite.run(`INSERT INTO provider_webhook_events (id, provider, received_at) VALUES ('old', 'resend', ?), ('new', 'resend', ?)`, [old, t.now]);
+    await pruneAuthRecords(t.env, t.now);
+    const ids = (sql: string) => (t.sqlite.query(sql).all() as { id: string }[]).map((row) => row.id).sort();
+    expect(ids('SELECT id FROM oauth_clients')).toEqual(['c_new', 'c_used']);
+    expect(ids('SELECT code_hash AS id FROM oauth_codes')).toEqual(['live']);
+    expect(ids('SELECT id FROM provider_webhook_events')).toEqual(['new']);
   });
 });
 

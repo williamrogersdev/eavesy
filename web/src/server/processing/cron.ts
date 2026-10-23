@@ -7,6 +7,7 @@ import { requeueStaleCollections, retireRecallBots } from '@/server/meeting-bots
 import { purgeDeleted } from './cleanup';
 import { chunked, D1_IN_LIST_SIZE, sendAll, sendMessages } from './queue-batch';
 import { recoverStaleSegments, sealLegacyKeys } from './recovery';
+import { freeCancelledImports, pruneAuthRecords, stopStalledImports } from './stale-records';
 import { type ProcessingEnv, SUMMARY_WAIT_LIMIT_MS } from './shared';
 
 export type CronStep = readonly [name: string, run: () => Promise<unknown>];
@@ -44,6 +45,9 @@ export function hourlySweeps(env: ProcessingEnv, now: number): CronStep[] {
     ['reconcile email recaps', () => reconcileRecaps(drizzle(env.DB, { schema }), env, now)],
     ['purge deleted data', () => purgeDeleted(env, now)],
     ['prune rate limits', () => pruneRateLimits(env.DB, now)],
+    ['stop stalled imports', () => stopStalledImports(env, now)],
+    ['free cancelled import audio', () => freeCancelledImports(env, now)],
+    ['prune oauth and webhook records', () => pruneAuthRecords(env, now)],
     ['seal legacy keys', () => sealLegacyKeys(env)],
   ];
 }

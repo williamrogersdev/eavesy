@@ -26,7 +26,12 @@ notifications for:
 
 The processing DLQ consumer persists a generic user-visible failure on the
 meeting before acknowledging the message. Uploaded audio remains in R2. If D1
-is unavailable, the DLQ message is retried instead of being acknowledged.
+is unavailable, the DLQ message is retried instead of being acknowledged:
+up to ten more times, five minutes apart (`max_retries` and `retry_delay` on
+the DLQ consumer in `workers/processing/wrangler.toml`). The DLQ has no queue
+behind it, so a D1 outage longer than about 50 minutes drops the message
+without recording the failure. The meeting then stays in its last status, and
+the hourly sweeps finish or fail it from there.
 
 ## Daily funnel, outcomes, and spend
 
