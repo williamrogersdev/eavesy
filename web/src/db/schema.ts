@@ -705,7 +705,8 @@ export const recordingImports = sqliteTable('recording_imports', {
   fingerprint: text('fingerprint').notNull(),
   segmentCount: integer('segment_count').notNull(),
   durationMs: integer('duration_ms').notNull(),
-  state: text('state', { enum: ['uploading', 'processing', 'cancelled'] }).notNull().default('uploading'),
+  // 'freeing': a cancelled import whose audio the hourly sweep is deleting; nothing may resume or finalize it until it is 'cancelled' again.
+  state: text('state', { enum: ['uploading', 'processing', 'cancelled', 'freeing'] }).notNull().default('uploading'),
   createdAt: integer('created_at').notNull(),
 }, (t) => [uniqueIndex('recording_imports_owner_fingerprint_uq').on(t.userId, t.fingerprint)]);
 
