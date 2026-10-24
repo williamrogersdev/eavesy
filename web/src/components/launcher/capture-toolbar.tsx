@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AudioLines, Camera, Clapperboard, Square, Users } from 'lucide-react';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
-import { Kbd, Mascot, ToolbarSegment, ToolbarShelf } from './ui';
+import { ToolbarSegment, ToolbarShelf } from './ui';
 import { useLiveLines } from './use-live-lines';
 
 export type CaptureKind = 'talk' | 'meeting' | 'video';
@@ -85,30 +85,41 @@ export function CaptureToolbar({
 
 const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
 
-/** Replaces the capture shelf in place, without adding a row above search. */
+/** Lines the live card keeps, the same count the pill shows, so nothing you were reading moves. */
+export const LIVE_CARD_LINES = 4;
+
+/**
+ * The pill, carried into the panel: the same charcoal card, coral light and
+ * newest lines, in place of the capture shelf. The title bar's mascot is the
+ * only mascot while it runs.
+ */
 function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
-  const lines = useLiveLines(live.sessionId, 1);
+  const lines = useLiveLines(live.sessionId, LIVE_CARD_LINES);
   const elapsed = useElapsed(live.sessionId !== null ? live.startedAtMs : null);
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
-  const text = lines.map((line) => line.text).join(' ');
-  const ticker = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (ticker.current) ticker.current.scrollLeft = ticker.current.scrollWidth;
-  }, [text]);
   const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
+  const stopTitle = `Stop and save${stopKey ? ` (${stopKey})` : ''}`;
   return (
     <div className="ev-livebar" data-phase={live.phase}>
-      <Mascot size={18} state={thinking ? 'thinking' : started ? 'listening' : 'idle'} recording={!thinking && started} />
-      <span className="ev-livebar-label" role="status">{label}</span>
-      {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
-      <span ref={ticker} className="ev-livebar-ticker" title={text}>{text}</span>
-      {!thinking && started && (
-        <button type="button" className="ev-livebar-stop" onClick={onStop} title={`Stop and save${stopKey ? ` (${stopKey})` : ''}`} aria-label={`Stop and save${stopKey ? ` (${stopKey})` : ''}`}>
-          <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden />
-          Stop
-          {stopKey && <Kbd keys={stopKey} />}
-        </button>
+      <div className="ev-livebar-head">
+        {!thinking && started && <span className="ev-livebar-dot" aria-hidden />}
+        <span className="ev-livebar-label" role="status">{label}</span>
+        {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
+        <span className="ev-livebar-spacer" />
+        {!thinking && started && (
+          <button type="button" className="ev-livebar-stop" onClick={onStop} title={stopTitle} aria-label={stopTitle}>
+            <Square size={9} strokeWidth={0} fill="currentColor" aria-hidden />
+            Stop
+          </button>
+        )}
+      </div>
+      {lines.length > 0 && (
+        <div className="ev-livebar-lines" aria-live="off">
+          {lines.map((line, i) => (
+            <p key={i} data-latest={i === lines.length - 1 || undefined}>{line.text}</p>
+          ))}
+        </div>
       )}
     </div>
   );

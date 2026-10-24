@@ -684,13 +684,14 @@ export const CaptureHistory = memo(function CaptureHistory({
         </div>
       )}
       {view !== 'empty' && (
-        <label className="ev-search">
+        <label className="ev-search" data-active={searching}>
           <Search size={15} strokeWidth={1.75} aria-hidden />
           <input
             ref={searchRef}
             type="search"
             value={query}
-            placeholder={prompts?.length ? 'Search captures, or / for prompts' : 'Search captures'}
+            placeholder="Search"
+            title={prompts?.length ? 'Search captures (/), or start with / for prompts' : 'Search captures (/)'}
             aria-label="Search captures"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -704,7 +705,6 @@ export const CaptureHistory = memo(function CaptureHistory({
               }
             }}
           />
-          {!query && filter === 'all' && <Kbd keys="/" />}
           <Select
             className="ev-search-filter"
             label="Show"

@@ -12,7 +12,6 @@ import {
 import { Paperclip, Plus, X } from 'lucide-react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
-import { Kbd } from './kbd';
 import { Mascot } from './mascot';
 
 export type ComposerHandle = {
@@ -243,9 +242,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Button size="sm" variant="quiet" onClick={() => void save()} title={multiline ? 'Save (⌘↩)' : 'Save (↩)'}>
               Save
             </Button>
-          ) : (
-            <Kbd keys="⌘V" />
-          )}
+          ) : null}
         </div>
         <div className="ev-composer-drop" aria-hidden={!dragActive}>
           <Mascot state="listening" size={28} />

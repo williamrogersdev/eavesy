@@ -210,9 +210,11 @@ mod imp {
             .get_webview_window("main")
             .ok_or_else(|| "main window not found".to_string())?;
 
+        // Popover follows the system appearance; the always-dark HudWindow material is the
+        // pill's, and under the panel's paper it read as a black slab (DESIGN.md §4).
         apply_vibrancy(
             &window,
-            NSVisualEffectMaterial::HudWindow,
+            NSVisualEffectMaterial::Popover,
             Some(NSVisualEffectState::Active),
             Some(12.0),
         )
@@ -248,16 +250,50 @@ mod imp {
         Ok(())
     }
 
-    pub fn show(app: &AppHandle, _window: &WebviewWindow) -> Result<(), String> {
+    /// How long the pill stays under the panel while the panel fades in over it.
+    const PILL_HANDOFF: std::time::Duration = std::time::Duration::from_millis(220);
+
+    pub fn show(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
         crate::placement::place(app);
         let panel = app
             .get_webview_panel("main")
             .map_err(|e| format!("panel not found: {e:?}"))?;
+        let was_visible = panel.is_visible();
+        if !was_visible { set_alpha(window, 0.0, false); }
         panel.show();
         panel.make_key_window();
         crate::app_menu::activate();
-        crate::hud::hide_on_main(app);
+        if was_visible {
+            crate::hud::hide_on_main(app);
+            return Ok(());
+        }
+        // Fade in over the pill, then put the pill away once it's covered: a hand-off, not a cut.
+        set_alpha(window, 1.0, true);
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(PILL_HANDOFF);
+            let main = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                if is_visible(&main) { crate::hud::hide_on_main(&main); }
+            });
+        });
         Ok(())
+    }
+
+    /// Sets the window's alpha, through the animator (AppKit's default 0.25 s) when `animate`.
+    fn set_alpha(window: &WebviewWindow, alpha: f64, animate: bool) {
+        use tauri_nspanel::cocoa::base::id;
+        use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+        let Ok(ns_window) = window.ns_window() else { return };
+        let ns_window = ns_window as id;
+        unsafe {
+            if animate {
+                let animator: id = msg_send![ns_window, animator];
+                let _: () = msg_send![animator, setAlphaValue: alpha];
+            } else {
+                let _: () = msg_send![ns_window, setAlphaValue: alpha];
+            }
+        }
     }
 
     pub fn hide(app: &AppHandle) -> Result<(), String> {

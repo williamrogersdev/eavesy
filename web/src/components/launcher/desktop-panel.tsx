@@ -364,6 +364,7 @@ export function DesktopPanel() {
           runTask={runTask}
           project={project}
           onManageProjects={manageProjects}
+          mascot={!live ? 'idle' : live.phase === 'thinking' ? 'thinking' : live.sessionId !== null ? 'listening' : 'idle'}
         />
         {view === 'list' && (
           <CaptureToolbar

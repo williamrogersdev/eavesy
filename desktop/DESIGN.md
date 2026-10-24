@@ -202,18 +202,18 @@ alias block so old classes still work.
   --ev-focus: 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-coat);
 }
 @media (prefers-color-scheme: dark) { .launcher-scope, .ev { /* after hours */
-  --ev-paper:      #161312;
-  --ev-well:       #110F0E;
-  --ev-raised:     #211C1A;
-  --ev-line:       #332C28;
-  --ev-line-strong:#463D38;
+  --ev-paper:      #1F1A18;  /* warm paper after hours, never a black slab */
+  --ev-well:       #29231F;  /* lighter than paper: raised, not sunken */
+  --ev-raised:     #2E2724;
+  --ev-line:       #3A322D;
+  --ev-line-strong:#4D433D;
   --ev-ink:        #F2EBDF;
   --ev-ink-2:      #B5ABA0;
   --ev-ink-3:      #82786F;
   --ev-coat:       #F2EBDF;  /* in the dark the coat turns to cream paper */
   --ev-coat-hover: #FFFFFF;
-  --ev-coat-soft:  #2C2522;
-  --ev-on-coat:    #161312;
+  --ev-coat-soft:  #352D29;
+  --ev-on-coat:    #1F1A18;
   --ev-manila:      #F0C879;
   --ev-manila-shade:#D9AB55;
   --ev-manila-soft: #3A2F1C;
@@ -237,7 +237,28 @@ alias block so old classes still work.
 ```
 The panel keeps the macOS vibrancy blur (`backdrop-filter: blur(28px)
 saturate(170%)`) with `--ev-paper` at 88% on top. It reads as native glass,
-just warm. Warmth must not depend on the wallpaper.
+just warm. Warmth must not depend on the wallpaper. The native material is
+`Popover`, which follows the system appearance; the always-dark `HudWindow`
+material is for the pill only (under paper it turned the panel into a black
+slab).
+
+**One surface, one mascot, one live signal.** (From
+[assistant.md](../docs/plans/assistant.md), Visual rules.)
+- The panel has one mascot, in the title bar. While a capture runs it
+  carries the capture's state (hat up while the mic is live); nothing below
+  repeats it.
+- A live capture shows in the panel as the **live card**: the pill carried
+  in, in `--ev-hud` charcoal with the coral light, the label, the time,
+  Stop, and the same number of lines the pill shows (newest in full ink,
+  older in `--ev-hud-ink-2`). Nothing shrinks to one line.
+- Opening the panel fades it in over the pill (the native animator, about
+  240 ms) while the pill stays underneath and is ordered out once the panel
+  covers it, so nothing cuts.
+- Keycaps don't decorate idle controls: shortcuts live in tooltips, and a
+  keycap shows only where it teaches something (onboarding, the empty state,
+  a row's Return-to-paste).
+- Search is quiet until used: no well, no keycap, "Search" placeholder; it
+  takes the well on hover, focus or while it holds a query.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
 for the voice of the product: headings, date groups, buttons, chips, mascot
