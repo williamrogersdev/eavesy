@@ -254,7 +254,9 @@ pub fn read_one(pid: u32) -> Option<Proc> {
 }
 
 /// Sends SIGTERM, only to the very process that was shown (same pid and
-/// start time) and only if it's yours.
+/// start time) and only if it's yours. The check runs right before the
+/// signal; macOS has no pidfd, so a pid reused in the microseconds between
+/// them could still be hit. The kernel only lets it reach your own processes.
 pub fn terminate(pid: u32, started_us: u64) -> Result<(), String> {
     let Some(proc) = read_one(pid) else { return Err("it already stopped".into()) };
     if proc.started_us != started_us {

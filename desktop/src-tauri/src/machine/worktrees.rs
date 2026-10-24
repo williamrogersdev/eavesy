@@ -259,7 +259,7 @@ mod tests {
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
         run(&repo, &["add", "."]);
         run(&repo, &["commit", "-qm", "one"]);
-        for name in ["squashed", "unmerged", "dirty"] {
+        for name in ["squashed", "unmerged", "dirty", "locked"] {
             run(&repo, &["worktree", "add", "-q", "-b", name, &root.join(name).to_string_lossy()]);
         }
         let squashed = root.canonicalize().unwrap().join("squashed");
@@ -280,8 +280,11 @@ mod tests {
         let dirty_wt = squashed.with_file_name("dirty");
         std::fs::write(dirty_wt.join("e.txt"), "untracked\n").unwrap();
 
+        let locked = squashed.with_file_name("locked");
+        run(&repo, &["worktree", "lock", &locked.to_string_lossy()]);
+
         let entries = list(&repo);
-        assert_eq!(entries.len(), 4);
+        assert_eq!(entries.len(), 5);
         let bases = bases(&repo);
         assert_eq!(bases.iter().map(|base| base.name.as_str()).collect::<Vec<_>>(), vec!["main"]);
         let facts = |path: &Path| {
@@ -292,6 +295,10 @@ mod tests {
         assert_eq!(classify(&facts(&unmerged)), Status::Unmerged);
         // Its branch has nothing new, so it's merged, but the untracked file wins.
         assert_eq!(classify(&facts(&dirty_wt)), Status::Dirty);
+        // Nothing new on its branch and clean, but locked.
+        assert_eq!(classify(&facts(&locked)), Status::Locked);
+        // Its work is merged, but someone is in it.
+        assert_eq!(classify(&Facts { in_use: true, ..facts(&squashed) }), Status::InUse);
 
         // Git itself refuses a worktree with changes, whatever we decided.
         assert!(remove(&repo, &dirty_wt.to_string_lossy()).is_err());

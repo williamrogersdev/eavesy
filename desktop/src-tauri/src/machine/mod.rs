@@ -92,7 +92,8 @@ fn repo_roots(home: &Path, procs: &[Proc]) -> Vec<PathBuf> {
     let session_dirs: HashSet<&str> = procs.iter().filter(|proc| proc.uid == uid && procs::is_agent(proc)).filter_map(|proc| proc.cwd.as_deref()).collect();
     for dir in session_dirs {
         let common = std::process::Command::new("git")
-            .args(["-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .args(["-c", "core.fsmonitor=false", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .stderr(std::process::Stdio::null())
             .output();
         if let Some(output) = common.ok().filter(|output| output.status.success()) {
@@ -108,10 +109,10 @@ fn repo_roots(home: &Path, procs: &[Proc]) -> Vec<PathBuf> {
 
 const THREADS: usize = 8;
 
-/// One repo's linked worktrees. `cwds` are where your processes run.
-fn repo_rows(home: &Path, root: &Path, cwds: &[&str]) -> Option<(String, Vec<WorktreeRow>)> {
-    let entries = worktrees::list(root);
-    // The first entry is the main checkout, which is never removed.
+/// One repo's linked worktrees, from its `git worktree list` (the first
+/// entry is the main checkout, which is never removed). `cwds` are where your
+/// processes run.
+fn repo_rows(home: &Path, entries: &[worktrees::Entry], cwds: &[&str]) -> Option<(String, Vec<WorktreeRow>)> {
     let main = entries.first()?;
     let repo = PathBuf::from(&main.path);
     let bases = worktrees::bases(&repo);
@@ -151,8 +152,12 @@ fn worktree_rows(home: &Path, procs: &[Proc]) -> (Vec<String>, Vec<WorktreeRow>)
     let mut repos = Vec::new();
     let mut rows = Vec::new();
     for root in repo_roots(home, procs) {
-        let Some((repo, repo_rows)) = repo_rows(home, &root, &cwds) else { continue };
-        if !repos.contains(&repo) {
+        let entries = worktrees::list(&root);
+        // Two roots can be the same repo; scan it once.
+        if entries.first().is_none_or(|main| repos.contains(&main.path)) {
+            continue;
+        }
+        if let Some((repo, repo_rows)) = repo_rows(home, &entries, &cwds) {
             repos.push(repo);
             rows.extend(repo_rows);
         }
@@ -235,6 +240,18 @@ pub struct Outcome {
     pub restore: Option<String>,
 }
 
+/// `'…'` for a shell, so a path or branch with a quote in it stays one word.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// A process of yours runs in the worktree, or a session wrote there lately.
+fn in_use_now(home: &Path, worktree: &str) -> bool {
+    let uid = procs::own_uid();
+    procs::snapshot().iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree))
+        || worktrees::recent_session(home, worktree, RECENT_SESSION)
+}
+
 fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome> {
     let (procs, inventory) = gather();
     let labels = procs::classify(&procs, procs::own_uid(), std::process::id());
@@ -265,29 +282,42 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
         }
     }
 
+    let home = dirs::home_dir().unwrap_or_default();
     for path in worktree_paths {
         let row = inventory.worktrees.iter().find(|row| row.path == path);
-        let Some(row) = row.filter(|row| row.status == Status::Stale) else {
+        // Stopping processes took time, so look again at what's running in it
+        // and at its files, right before it goes.
+        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && !in_use_now(&home, &path) && !worktrees::dirty(Path::new(&path));
+        let Some(row) = row.filter(|_| still_stale) else {
             outcomes.push(Outcome { target: path, ok: false, message: Some("It isn't safe to remove any more.".into()), restore: None });
             continue;
         };
         let result = worktrees::remove(Path::new(&row.repo), &row.path);
         tracing::info!(ok = result.is_ok(), "machine: removed a stale worktree");
-        let restore = row.branch.as_ref().map(|branch| format!("git -C '{}' worktree add '{}' '{}'", row.repo, row.path, branch));
+        let restore = row.branch.as_ref().map(|branch| format!("git -C {} worktree add {} {}", shell_quote(&row.repo), shell_quote(&row.path), shell_quote(branch)));
         outcomes.push(Outcome { target: path, ok: result.is_ok(), restore: restore.filter(|_| result.is_ok()), message: result.err() });
     }
     outcomes
 }
 
-/// Called by Settings' confirm card. Only Eavesy's own windows can call it:
-/// the agents socket and MCP have no way in.
+/// Called by the confirm card in Settings, and refused from any other
+/// window. The agents socket and MCP have no way to reach it.
 #[tauri::command]
-pub async fn machine_clean(worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<Vec<Outcome>, String> {
+pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<Vec<Outcome>, String> {
+    if window.label() != "settings" {
+        return Err("Cleaning up only works from Settings.".into());
+    }
     tauri::async_runtime::spawn_blocking(move || clean(worktrees, processes)).await.map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn restore_lines_quote_for_the_shell() {
+        assert_eq!(super::shell_quote("/r/it's here"), "'/r/it'\\''s here'");
+        assert_eq!(super::shell_quote("main"), "'main'");
+    }
+
     /// Prints this Mac's inventory without touching anything:
     /// `cargo test --lib machine::tests::print_inventory -- --ignored --nocapture`.
     #[test]

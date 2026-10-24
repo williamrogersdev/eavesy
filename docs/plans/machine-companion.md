@@ -140,8 +140,9 @@ everyone, so those can't be traced to a session; the usual leftovers
 (Homebrew `node`, `bun`, `git`, `cargo`) can. A process whose environment
 can't be read is never labelled.
 
-**Never orphans**, whatever the evidence: processes of other users, anything
-run by launchd as a job (`launchctl` shows it), apps (`.app` bundles),
+**Never orphans**, whatever the evidence: processes of other users, launchd
+jobs (they start with launchd's environment, so they never carry a session's
+tag; no separate check is needed), apps (`.app` bundles),
 system binaries (`/System`, `/usr/libexec`, `/usr/sbin`), daemons every
 session shares (`gpg-agent`, `keyboxd`, `ssh-agent`), anything whose
 executable path can't be read, Eavesy itself and everything it started, the

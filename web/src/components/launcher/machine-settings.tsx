@@ -90,7 +90,12 @@ export function MachineSettings({ active }: { active: boolean }) {
         <div role="status" className="ev-machine-card">
           <p>{failed.length === 0 ? 'Done.' : `${outcomes.length - failed.length} done, ${failed.length} skipped.`}</p>
           {failed.map((outcome) => <p key={outcome.target} className="ev-set-hint">{shortPath(outcome.target, home)}: {outcome.message}</p>)}
-          {restores.length > 0 && <p className="ev-set-hint">Their branches are still in the repo. To bring one back: <code className="ev-machine-code">{restores[0]}</code></p>}
+          {restores.length > 0 && (
+            <>
+              <p className="ev-set-hint">Their branches are still in the repo. To bring one back, run its line in Terminal:</p>
+              <ul className="ev-machine-list">{restores.map((line) => <li key={line}><code className="ev-machine-code">{line}</code></li>)}</ul>
+            </>
+          )}
         </div>
       )}
 
