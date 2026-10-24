@@ -216,6 +216,7 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
 
 #[derive(Serialize)]
 struct TurnRequest<'a> {
+    style: super::style::Style,
     messages: &'a [Message],
 }
 
@@ -232,7 +233,7 @@ async fn ask(app: &AppHandle, messages: &[Message]) -> Result<Vec<Block>, String
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { messages })
+        .json(&TurnRequest { style: crate::settings::load(app).assistant_style.unwrap_or_default(), messages })
         .send()
         .await
         .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;

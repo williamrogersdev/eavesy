@@ -366,6 +366,12 @@ reads or writes can change a tool's tier.**
   (default), **More character**) and two dials, **Chattiness** (shorter ↔
   fuller) and **Warmth** (drier ↔ warmer), each Less / Default / More. You can
   also edit `personality.md` (H1) directly.
+  *Built (step 5):* the style and dials live in the app's settings, not in
+  `personality.md`, and reach the server only as those fixed values; the
+  server owns every word of the prompt they pick, and puts G6's limits after
+  it. Free text in `personality.md` waits for the review list (H4): any
+  process on the Mac can write that file, and text sent with every turn would
+  be a standing way to steer Eavesy.
 - **G5.** The spoken voice is a setting: macOS voices now, a hosted neural
   voice later (voice-conversation piece 1), with speed.
 - **G6.** Hard limits no setting changes: it's an assistant, not a
@@ -800,7 +806,11 @@ Each step ships on its own and is useful alone.
    cards, Ask / Auto / Bypass, the Activity log; agent replies and machine
    cleanup move onto it.
 5. **Settings: Assistant, Connections, Rules, Memory, Monitors, Activity**
-   (F, G, H).
+   (F, G, H). Built: Settings → Assistant with the style and dials (G4), the
+   voice and its speed (G5), the mode and trusted agent folders (C8), and the
+   Activity list (C5). Next: Memory (H3, H4), then Rules and the review list
+   (H2, C3), with accepted rules kept signed like `policy.json`. Connections
+   and Monitors come with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
 8. **Hands** (L): Eavesy's browser and app grants, then accessibility

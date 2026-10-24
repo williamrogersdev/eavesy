@@ -107,12 +107,34 @@ pub struct Settings {
     /// unless turned on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_messages: Option<bool>,
+    /// How Eavesy talks (assistant.md G4). Unset is the default style; a value this
+    /// build can't read is too, rather than costing every other setting.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_style: Option<crate::assistant::style::Style>,
+    /// The macOS voice Eavesy speaks with; unset is the one in System Settings.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_voice: Option<String>,
+    /// Words per minute; unset is the voice's own speed.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_voice_rate: Option<u16>,
+}
+
+/// Reads a field that can't be trusted to be well formed: anything unreadable is unset.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
+    let value = <serde_json::Value as Deserialize>::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
 pub const MAX_AGENT_HOLD_SECS: u32 = 1_800;
 
 impl Settings {
+    /// The voice to speak in, as saved. Speaking checks it against this Mac's
+    /// voices, since the file can be edited by hand and a voice can be removed.
+    pub fn voice(&self) -> crate::agents::speak::Voice {
+        crate::agents::speak::Voice { name: self.assistant_voice.clone(), rate: self.assistant_voice_rate }
+    }
+
     pub fn agent_voice(&self) -> bool {
         self.agent_voice.unwrap_or(false)
     }
@@ -190,6 +212,9 @@ impl Default for Settings {
             agent_voice: None,
             agent_hold_secs: None,
             agent_messages: None,
+            assistant_style: None,
+            assistant_voice: None,
+            assistant_voice_rate: None,
         }
     }
 }
@@ -232,6 +257,7 @@ pub fn load(app: &AppHandle) -> Settings {
         Err(_) => fallback(None, &keychain::System),
     };
     crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    crate::agents::speak::set_voice(settings.voice());
     settings
 }
 
@@ -245,6 +271,7 @@ pub fn update(app: &AppHandle, change: impl FnOnce(&mut Settings)) -> Result<Set
         update_at(&path, &keychain::System, change)?
     };
     crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    crate::agents::speak::set_voice(settings.voice());
     Ok(settings)
 }
 
@@ -784,6 +811,17 @@ mod tests {
         assert_eq!(saved.device_id, settings.device_id);
         assert_eq!(load_at(&path, &FakeKeychain::default()).device_id, settings.device_id, "stable once written");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_unreadable_assistant_style_costs_only_itself() {
+        let raw = r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"keep-me","capture_sounds":false,"assistant_style":{"preset":"unhinged"},"assistant_voice":7,"assistant_voice_rate":"fast"}"#;
+        let settings: Settings = serde_json::from_str(raw).unwrap();
+        assert_eq!(settings.device_id, "keep-me");
+        assert_eq!(settings.capture_sounds, Some(false));
+        assert_eq!((settings.assistant_style, settings.assistant_voice, settings.assistant_voice_rate), (None, None, None));
+        let plain: Settings = serde_json::from_str(r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"d","assistant_style":{"preset":"plain"}}"#).unwrap();
+        assert_eq!(plain.assistant_style.unwrap().preset, crate::assistant::style::Preset::Plain);
     }
 
     #[test]
