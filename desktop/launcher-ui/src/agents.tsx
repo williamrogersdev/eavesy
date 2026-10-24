@@ -10,7 +10,7 @@ document.body.style.background = 'transparent';
 
 type Kind = 'approval' | 'question' | 'finished';
 
-/** One waiting Claude Code session (agents/queue.rs `Item`). */
+/** One waiting Claude Code session, or a remote agent's message (agents/queue.rs `Item`). */
 interface Item {
   id: number;
   session_id: string;
@@ -66,12 +66,17 @@ function Agents() {
 
   if (!head) return null;
   const waiting = items.length - 1;
-  const canReply = head.kind !== 'approval';
+  // From send_to_human / ask_human on Eavesy's MCP (agents/remote.rs).
+  const remote = head.session_id.startsWith('remote:');
+  const canReply = head.kind !== 'approval' && (!remote || head.held);
 
   const send = () => {
     setBusy(true);
     setNote(null);
-    void invoke('agents_send', { id: head.id, sessionId: head.session_id, text: draft })
+    const sent = remote
+      ? invoke('agents_answer', { id: head.id, text: draft })
+      : invoke('agents_send', { id: head.id, sessionId: head.session_id, text: draft });
+    void sent
       .then((how) => { if (how === 'copied') setNote('This session stopped waiting, so your reply is copied. Paste it into the session.'); })
       .catch((error: unknown) => setNote(errMsg(error, 'Couldn’t send that reply.')))
       .finally(() => setBusy(false));
@@ -91,7 +96,7 @@ function Agents() {
         <textarea
           className="ag-reply"
           value={draft}
-          placeholder="Your reply to Claude"
+          placeholder={remote ? `Your answer to ${head.name}` : 'Your reply to Claude'}
           rows={3}
           maxLength={20000}
           onFocus={() => void invoke('agents_edit', { id: head.id })}
@@ -101,14 +106,15 @@ function Agents() {
       ) : (
         <p className="ag-note">Approve or deny it in Claude. Eavesy never approves tools for you.</p>
       )}
+      {remote && canReply && <p className="ag-note">Your answer goes back to {head.name} as text. It never approves anything.</p>}
       {canReply && head.draft && !head.typing && !head.declined && !note && <p className="ag-note">Say “send it” to send this, or say something else to change it.</p>}
       {note && <p className="ag-note">{note}</p>}
       <div className="ag-actions">
-        <button type="button" className="ag-btn" onClick={() => void invoke('agents_dismiss', { id: head.id })}><X size={13} strokeWidth={1.75} />{head.held ? 'Let it stop' : 'Dismiss'}</button>
+        <button type="button" className="ag-btn" onClick={() => void invoke('agents_dismiss', { id: head.id })}><X size={13} strokeWidth={1.75} />{head.held && !remote ? 'Let it stop' : 'Dismiss'}</button>
         <button type="button" className="ag-btn" onClick={() => void invoke('agents_later', { id: head.id })}><Clock size={13} strokeWidth={1.75} />Later</button>
         {canReply && (
-          <button type="button" className="ag-btn" data-primary disabled={busy || !draft.trim()} onClick={send} title={head.held ? 'Send to Claude (⌘↩)' : 'Copy your reply (⌘↩)'}>
-            <Send size={13} strokeWidth={1.75} />{head.held ? 'Send' : 'Copy'}
+          <button type="button" className="ag-btn" data-primary disabled={busy || !draft.trim()} onClick={send} title={remote ? `Send to ${head.name} (⌘↩)` : head.held ? 'Send to Claude (⌘↩)' : 'Copy your reply (⌘↩)'}>
+            <Send size={13} strokeWidth={1.75} />{head.held || remote ? 'Send' : 'Copy'}
           </button>
         )}
       </div>

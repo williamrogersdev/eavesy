@@ -285,6 +285,11 @@ export async function setAgentVoice(enabled: boolean): Promise<void> {
   await invoke('set_agent_voice', { enabled });
 }
 
+/** Shows and says what agents send through your Eavesy connection (`send_to_human`, `ask_human`). */
+export async function setAgentMessages(enabled: boolean): Promise<void> {
+  await invoke('set_agent_messages', { enabled });
+}
+
 /** How long a finished session waits for your reply. 0 never waits. */
 export async function setAgentHold(seconds: number): Promise<void> {
   await invoke('set_agent_hold', { seconds });
@@ -532,6 +537,8 @@ export interface Settings {
   agent_voice?: boolean;
   /** Seconds a finished session waits for your reply. Absent means 300. */
   agent_hold_secs?: number;
+  /** Messages from agents on your Eavesy connection. Absent means off. */
+  agent_messages?: boolean;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

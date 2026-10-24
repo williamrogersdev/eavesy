@@ -97,6 +97,11 @@ pub struct Settings {
     /// turn; 0 never waits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_hold_secs: Option<u32>,
+    /// Eavesy shows and says what agents send through your Eavesy connection
+    /// (`send_to_human`, `ask_human`), and sends your typed answer back (off
+    /// unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_messages: Option<bool>,
 }
 
 pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
@@ -105,6 +110,10 @@ pub const MAX_AGENT_HOLD_SECS: u32 = 1_800;
 impl Settings {
     pub fn agent_voice(&self) -> bool {
         self.agent_voice.unwrap_or(false)
+    }
+
+    pub fn agent_messages(&self) -> bool {
+        self.agent_messages.unwrap_or(false)
     }
 
     pub fn agent_hold_secs(&self) -> u32 {
@@ -170,6 +179,7 @@ impl Default for Settings {
             hud_result_preview: None,
             agent_voice: None,
             agent_hold_secs: None,
+            agent_messages: None,
         }
     }
 }

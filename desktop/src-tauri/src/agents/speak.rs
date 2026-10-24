@@ -17,7 +17,7 @@ const MAX_SPOKEN: usize = 600;
 const POLL: Duration = Duration::from_millis(100);
 
 pub fn say(text: &str) {
-    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_SPOKEN).collect();
+    let text = speakable(text);
     if text.trim().is_empty() {
         return;
     }
@@ -36,6 +36,17 @@ pub fn say(text: &str) {
         }
         Err(error) => tracing::warn!("could not speak: {error}"),
     }
+}
+
+/// What `say` is given: no control characters, and no `[[ … ]]` embedded
+/// speech commands (`say` would change its voice or rate or go silent on
+/// them), since the text can come from an agent.
+fn speakable(text: &str) -> String {
+    let mut text: String = text.chars().filter(|c| !c.is_control()).take(MAX_SPOKEN).collect();
+    while text.contains("[[") || text.contains("]]") {
+        text = text.replace("[[", "[").replace("]]", "]");
+    }
+    text
 }
 
 /// Notes when the line finishes by itself.
@@ -75,5 +86,16 @@ fn stop_locked(playing: &mut Option<(u64, Child)>) {
         let _ = child.kill();
         let _ = child.wait();
         *QUIET_SINCE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((Instant::now(), false));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::speakable;
+
+    #[test]
+    fn embedded_speech_commands_are_read_as_text() {
+        assert_eq!(speakable("hi [[slnc 99999]] there [[[volm 0]]]"), "hi [slnc 99999] there [volm 0]");
+        assert_eq!(speakable("a\u{7}b\nc"), "abc");
     }
 }

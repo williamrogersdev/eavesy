@@ -17,6 +17,8 @@ import {
   setCaptureSounds,
   setAgentHold,
   setAgentVoice,
+  setAgentMessages,
+  copyText,
   setHudLook,
   checkPermissions,
   checkForUpdates,
@@ -34,6 +36,7 @@ import {
   type UpdateStatus,
 } from '@/lib/desktop/bridge';
 import { cn } from '@/lib/utils';
+import { AGENT_INSTRUCTIONS } from '@/lib/agent-instructions';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
@@ -380,6 +383,22 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .then(() => setSettings((current) => current ? { ...current, agent_hold_secs: Number(next) } : current))
       .catch((error: unknown) => setAgentsError(errMsg(error, 'Couldn’t change how long sessions wait.')));
   };
+  const messagesOn = settings?.agent_messages ?? false;
+  const [messagesBusy, setMessagesBusy] = useState(false);
+  const [messagesNote, setMessagesNote] = useState<string | null>(null);
+  const toggleMessages = (next: boolean) => {
+    setMessagesBusy(true);
+    setMessagesNote(null);
+    void setAgentMessages(next)
+      .then(() => setSettings((current) => current ? { ...current, agent_messages: next } : current))
+      .catch((error: unknown) => setMessagesNote(errMsg(error, 'Couldn’t change that setting.')))
+      .finally(() => setMessagesBusy(false));
+  };
+  const copyInstructions = () => {
+    void copyText(AGENT_INSTRUCTIONS)
+      .then(() => setMessagesNote('Copied. Paste it into a Claude project’s instructions or ChatGPT’s custom instructions.'))
+      .catch(() => setMessagesNote('Couldn’t copy the instructions.'));
+  };
   const savedLines = settings?.hud_preview_lines;
   const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 ? savedLines : 0;
   const translucent = settings?.hud_translucent ?? true;
@@ -510,6 +529,25 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                 </div>
               )}
               {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
+            </Section>
+          )}
+          {isDesktop() && (
+            <Section title="Claude chat and ChatGPT">
+              <Switch
+                checked={messagesOn}
+                onCheckedChange={toggleMessages}
+                disabled={!settings || !account || messagesBusy}
+                label="Show and say what your agents send you"
+                hint="Agents connected to Eavesy’s MCP can tell you when they finish (send_to_human) or ask you something (ask_human). This Mac checks your Eavesy account every few seconds, shows each message at the top right and reads it aloud. Your typed answer goes back only to the agent that asked, as text: it never approves anything."
+              />
+              {!account && <p className="ev-set-hint mt-2">Sign in first: messages come through your Eavesy account.</p>}
+              {messagesOn && (
+                <div className="mt-3">
+                  <p className="ev-set-hint">Add Eavesy as a connector in Claude or ChatGPT, then paste these instructions so the model uses it.</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={copyInstructions}>Copy instructions</Button>
+                </div>
+              )}
+              {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
             </Section>
           )}
         </div>
