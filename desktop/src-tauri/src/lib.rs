@@ -1,4 +1,5 @@
 mod agents;
+mod assistant;
 mod translation;
 mod telemetry;
 mod app_menu;
@@ -116,6 +117,11 @@ pub fn run() {
             agents::remote::set_agent_messages,
             machine::machine_inventory,
             machine::machine_clean,
+            assistant::assistant_state,
+            assistant::set_assistant_mode,
+            assistant::set_trusted_agent_folders,
+            assistant::assistant_card_decide,
+            assistant::assistant_activity,
             commands::set_capture_sounds,
             commands::set_hud_look,
             commands::set_dictation_in_panel,
@@ -212,6 +218,7 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            assistant::init(&handle);
 
             if let Err(error) = sqlite::initialize(&handle) {
                 telemetry::capture("sqlite.initialize", &error);

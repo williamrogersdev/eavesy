@@ -231,7 +231,10 @@ reads or writes can change a tool's tier.**
   model call that sees only your request and the proposed action, never the
   content that led to it) confirms the action matches what you asked. A
   mismatch is shown on the card in warn ink ("You asked to stop vite; this
-  also stops postgres"), never silently dropped or silently allowed.
+  also stops postgres"), never silently dropped or silently allowed. The
+  check gets your literal words, not the model's summary of them, and flags
+  any part of the action it can't trace back to them. It fails closed: an
+  error, a timeout or being offline means a card, in every mode.
 - **C8. Permission modes.** Clicking every time gets old, so like Claude
   Code you pick how much Eavesy asks. The mode shows in Settings → Rules,
   in the thread's header, and as a mark on the pill whenever it isn't Ask.
@@ -258,11 +261,43 @@ reads or writes can change a tool's tier.**
   - **It keeps the record:** everything is spoken or shown as it happens,
     logged (C5), and undoable where possible, with Undo held for 60 s
     instead of 10.
+  - **Voice counts as you.** A misheard request in Bypass can run without a
+    card. What limits it: speech reaches Eavesy only through the talk
+    shortcut or "Hey Eavesy", never ambient listening; C7 compares the action
+    with the transcript as heard, so a mismatch is a card; the floor and the
+    breaker still apply; and everything is read back as it runs, with Undo
+    where it exists. Ask and Auto keep voice from pressing a tier 3 card.
+  - **It has a circuit breaker:** more than 5 tier 2 or 3 actions without a
+    click inside a minute, or one action touching more than 20 things, drops
+    back to a card ("That's a lot at once, so Eavesy is asking").
 
-  Auto's safe list (undoable, local): stop processes Eavesy can prove are
-  leftovers (machine-companion rules), move files to the Trash, remove clean
-  worktrees of merged branches, write files inside granted read-and-write
-  folders with a backup, replies to agent sessions you're already in.
+  Auto's safe list (local, and checked again right before it runs): stop
+  processes Eavesy can prove are leftovers (machine-companion rules), move
+  files to the Trash, remove clean worktrees of merged branches, write files
+  inside granted read-and-write folders with a backup, replies to agent
+  sessions you're already in. Trash and file writes can be undone; a stopped
+  process can't be restarted for you and a removed worktree comes back only
+  with its restore line, so those two show what happened without an Undo.
+
+  **Where the mode lives.** Any process running as you can write a file in
+  your home folder, an agent in its own bypass mode included. So the mode,
+  its expiry and the trusted folders are kept in
+  `~/Eavesy/assistant/policy.json`, signed with a key held in the Keychain,
+  and only Eavesy's panel and Settings can change them. Turning on Bypass or
+  trusting a folder also asks in a native macOS dialog, which a web page or a
+  script in a webview can't click. A file that fails its signature loads as
+  **Ask**, and Eavesy says "Your rules changed outside Eavesy".
+
+  **Who's asking** comes from the channel a request arrived on, never from
+  what it says: Eavesy's own UI and voice are you, the local agents socket is
+  a local agent, the Mac link is a remote agent, and a monitor is a monitor.
+  A local agent's folder is read from its process (the peer pid's working
+  folder), never from its message. That is still a fact the agent controls,
+  since it can change folder, so **Trust local agents** means "agents
+  working here", not proof of which agent is asking.
+  A card accepts by sending back only its id and the ticked rows; Eavesy
+  runs the action it stored when it showed the card, checks each row again
+  first, and a card expires after 5 minutes.
 
 ### D. Watching things for you
 
@@ -363,10 +398,14 @@ How it sounds (spoken lines; the screen has the details):
   | `connections.json` | MCP servers and connectors (F) |
   | `monitors.json` | Which monitors are on, at what level (D) |
   | `log/YYYY-MM-DD.jsonl` | Activity: every action and its result (C5) |
+  | `policy.json` | The permission mode and trusted folders (C8). Signed; Eavesy alone writes it |
 
 - **H2.** Settings shows each of these as a proper UI, with the file's path
   and **Open in editor**. The file and the UI never disagree: the app watches
   the files and reloads; invalid edits are refused with the line that's wrong.
+  Edits made outside Eavesy to `rules.md` and `connections.json` never apply
+  live: they wait in the review list (H4) until you accept them in the UI,
+  since an agent can write those files as easily as you can.
 - **H3.** Memory is visible and deletable item by item. "Don't remember this"
   on any conversation turn, an **off the record** conversation that neither
   reads nor writes memory, and an off switch for memory entirely. Deleting a
