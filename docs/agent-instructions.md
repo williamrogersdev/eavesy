@@ -49,4 +49,5 @@ copies. Keep the two in sync.
 - Messages wait 2 hours for a Mac to come online; questions wait only as long
   as the agent waits.
 - If a client cuts the call off before its `timeout_sec`, the card stays until
-  that time runs out, and an answer typed then reaches no agent.
+  that time runs out. An answer typed then is accepted, and the card says it
+  was sent, but no agent receives it.

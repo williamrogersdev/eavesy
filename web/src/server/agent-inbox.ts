@@ -11,7 +11,7 @@
  *
  * Relative imports only: the MCP Worker uses this module directly.
  */
-import { and, count, eq, gt, inArray, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 
@@ -49,11 +49,15 @@ const PER_POLL = 10;
 /** A message for the person calling the tool. */
 export class AgentInboxError extends Error {}
 
-/** Agent text made safe to show and speak: no control characters but newlines and tabs, trimmed, clipped. */
+/**
+ * Agent text made safe to show and speak: no control characters but newlines
+ * and tabs, no zero-width or direction-override characters that could hide or
+ * reorder words on the card, trimmed, clipped.
+ */
 export function cleanText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
   // eslint-disable-next-line no-control-regex
-  const text = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/g, '').trim();
+  const text = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
   return [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
 }
 
@@ -139,15 +143,23 @@ export interface NewMessage {
   ttlMs: number;
 }
 
-/** Stores a message for the user's Macs. Refuses once too many are waiting. */
-export async function createMessage(db: Db, message: NewMessage, now = Date.now()): Promise<string> {
+/**
+ * Refuses once too many messages are waiting. Approximate: two calls at the
+ * same moment can both pass, which only lets the cap run over by a few.
+ */
+export async function assertRoom(db: Db, userId: string, now = Date.now()): Promise<void> {
   const [waiting] = await db
     .select({ n: count() })
     .from(schema.agentMessages)
-    .where(and(eq(schema.agentMessages.userId, message.userId), eq(schema.agentMessages.status, 'pending'), gt(schema.agentMessages.expiresAt, now)));
+    .where(and(eq(schema.agentMessages.userId, userId), eq(schema.agentMessages.status, 'pending'), gt(schema.agentMessages.expiresAt, now)));
   if ((waiting?.n ?? 0) >= MAX_PENDING) {
     throw new AgentInboxError('Too many messages are already waiting for this person. Wait for them to catch up before sending more.');
   }
+}
+
+/** Stores a message for the user's Macs. Refuses once too many are waiting. */
+export async function createMessage(db: Db, message: NewMessage, now = Date.now()): Promise<string> {
+  await assertRoom(db, message.userId, now);
   const id = crypto.randomUUID();
   await db.insert(schema.agentMessages).values({
     id,
@@ -190,7 +202,7 @@ async function readAsk(db: Db, id: string) {
 export interface WaitOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  /** How often the row is read. */
+  /** How often the row is read at first; after a minute, half as often. */
   everyMs?: number;
 }
 
@@ -203,12 +215,13 @@ export async function waitForAnswer(db: Db, id: string, deadline: number, option
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const everyMs = options.everyMs ?? 1_500;
+  const started = now();
   for (;;) {
     const result = finished(await readAsk(db, id));
     if (result) return result;
     const left = deadline - now();
     if (left <= 0) break;
-    await sleep(Math.min(everyMs, left));
+    await sleep(Math.min(now() - started < 60_000 ? everyMs : everyMs * 2, left));
   }
   await db
     .update(schema.agentMessages)
@@ -242,7 +255,8 @@ function parseChoices(json: string | null): string[] {
  * has taken plus its own asks still waiting (so a Mac that restarted shows
  * them again; it ignores ones it already shows), and lists those asks' ids,
  * so it can drop a card that timed out. A message goes to the first Mac that
- * asks; a `send` counts as delivered then.
+ * asks; a `send` counts as delivered then. An ask held by a Mac that stopped
+ * polling goes to the next Mac that does.
  */
 export async function pollForDevice(db: Db, userId: string, deviceId: string, now = Date.now()) {
   await db
@@ -255,10 +269,14 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
       setWhere: or(lte(schema.agentListeners.seenAt, now - LISTENER_WRITE_MS), ne(schema.agentListeners.userId, userId)),
     });
   const open = and(eq(schema.agentMessages.userId, userId), eq(schema.agentMessages.status, 'pending'), gt(schema.agentMessages.expiresAt, now));
+  const free = or(
+    isNull(schema.agentMessages.deviceId),
+    sql`${schema.agentMessages.deviceId} NOT IN (SELECT ${schema.agentListeners.deviceId} FROM ${schema.agentListeners} WHERE ${schema.agentListeners.seenAt} > ${now - LISTENING_MS})`,
+  );
   const unclaimed = await db
     .select({ id: schema.agentMessages.id })
     .from(schema.agentMessages)
-    .where(and(open, isNull(schema.agentMessages.deviceId)))
+    .where(and(open, free))
     .orderBy(schema.agentMessages.createdAt)
     .limit(PER_POLL);
   const delivered: Row[] = [];
@@ -267,7 +285,7 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
     const claimed = await db
       .update(schema.agentMessages)
       .set({ deviceId })
-      .where(and(open, isNull(schema.agentMessages.deviceId), inArray(schema.agentMessages.id, unclaimed.map((row) => row.id))))
+      .where(and(open, free, inArray(schema.agentMessages.id, unclaimed.map((row) => row.id))))
       .returning();
     const sends = claimed.filter((row) => row.kind === 'send').map((row) => row.id);
     if (sends.length) {

@@ -488,6 +488,8 @@ pub fn answer(app: &AppHandle, dictation: &str, claim: voice::Claim, text: &str)
     match voice::step(found.offered(), &text, claim.prompt) {
         voice::Step::Send(reply) => {
             let said = match send_reply(app, item, reply) {
+                // A remote agent's answer says how it went once it's in.
+                Ok(remote::ANSWERING) => return,
                 Ok("sent") => format!("Sent to {}.", found.name),
                 Ok(_) => format!("{} stopped waiting, so I copied it. Paste it in.", found.name),
                 Err(error) => {

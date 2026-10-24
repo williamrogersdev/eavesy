@@ -22,6 +22,7 @@ import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/
 import * as savedPrompts from '../../../web/src/db/repo/prompts';
 import {
   AgentInboxError,
+  assertRoom,
   ASK_DEFAULT_SEC,
   ASK_MAX_SEC,
   ASK_MIN_SEC,
@@ -607,6 +608,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       const input = parseSend(args);
       // Nothing is kept for someone who never turned messages on.
       if (!(await macEnabled(db, userId))) return { status: 'not_enabled' };
+      await assertRoom(db, userId);
       await humanMessageAllowed(env, token);
       const listening = await macListening(db, userId);
       await createMessage(db, { userId, mcpTokenId: token.id, source: token.name, kind: 'send', text: input.text, spoken: input.spoken, ttlMs: SEND_TTL_MS });
@@ -618,6 +620,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       const input = parseAsk(args);
       // Straight away, without waiting: nobody is there to answer.
       if (!(await macListening(db, userId))) return { status: 'mac_offline' };
+      await assertRoom(db, userId);
       await humanMessageAllowed(env, token);
       const ttlMs = input.timeoutSec * 1000;
       const id = await createMessage(db, {

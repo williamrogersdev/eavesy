@@ -41,6 +41,7 @@ describe('agent text', () => {
     expect(cleanText('  hi\u0007 there\nnext\u001b[31m  ', 100)).toBe('hi there\nnext[31m');
     expect(cleanText('x'.repeat(10), 5)).toBe('xxxx…');
     expect(cleanText(42, 10)).toBe('');
+    expect(cleanText('pay\u202Eevil\u200B me\uFEFF', 100)).toBe('payevil me');
   });
 
   test('a connection name is one short line, with a fallback', () => {
@@ -132,6 +133,16 @@ describe('delivering to a Mac', () => {
       },
     });
     expect(result).toEqual({ status: 'dismissed' });
+  });
+
+  test('an ask held by a Mac that went quiet goes to one that polls', async () => {
+    const t = setup();
+    const id = await createMessage(t.db, ask('u1', 10 * 60_000), 1_000);
+    expect((await pollForDevice(t.db, 'u1', 'mac-a', 1_000)).waiting).toEqual([id]);
+    expect((await pollForDevice(t.db, 'u1', 'mac-b', 2_000)).items).toEqual([]);
+    const later = 1_000 + LISTENING_MS + 1;
+    expect((await pollForDevice(t.db, 'u1', 'mac-b', later)).items.map((item) => item.id)).toEqual([id]);
+    expect(await resolveForDevice(t.db, 'u1', 'mac-a', id, { status: 'answered', text: 'old' }, later)).toBe(false);
   });
 
   test('expired messages are never delivered', async () => {

@@ -32,6 +32,8 @@ const SESSION_PREFIX: &str = "remote:";
 /// Asks on the card, by queue item: the cloud id the answer goes to.
 static ASKS: Mutex<Option<HashMap<u64, String>>> = Mutex::new(None);
 static SEEN: Mutex<Option<(HashSet<String>, VecDeque<String>)>> = Mutex::new(None);
+/// Asks missing from the last poll's waiting list, by queue item.
+static MISSED: Mutex<Option<HashSet<u64>>> = Mutex::new(None);
 
 fn with_asks<T>(f: impl FnOnce(&mut HashMap<u64, String>) -> T) -> T {
     let mut asks = ASKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -155,8 +157,10 @@ async fn poll_once(app: &AppHandle) -> Duration {
         add(message);
         changed = true;
     }
-    let waiting: HashSet<&str> = poll.waiting.iter().map(String::as_str).collect();
-    let gone: Vec<u64> = with_asks(|asks| asks.iter().filter(|(_, cloud)| !waiting.contains(cloud.as_str())).map(|(id, _)| *id).collect());
+    let gone = {
+        let mut missed = MISSED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        with_asks(|asks| gone_asks(asks, &poll.waiting, missed.get_or_insert_with(HashSet::new)))
+    };
     for id in gone {
         // Timed out, or the agent stopped waiting.
         with_asks(|asks| asks.remove(&id));
@@ -167,6 +171,18 @@ async fn poll_once(app: &AppHandle) -> Duration {
         refresh(app);
     }
     POLL
+}
+
+/// The asks to take off the card: missing from two polls in a row, so one odd
+/// reply never drops a card someone is typing into. `missed` carries the
+/// asks missing from this poll over to the next.
+fn gone_asks(asks: &HashMap<u64, String>, waiting: &[String], missed: &mut HashSet<u64>) -> Vec<u64> {
+    let waiting: HashSet<&str> = waiting.iter().map(String::as_str).collect();
+    let now_missing: HashSet<u64> = asks.iter().filter(|(_, cloud)| !waiting.contains(cloud.as_str())).map(|(id, _)| *id).collect();
+    let mut gone: Vec<u64> = now_missing.intersection(missed).copied().collect();
+    gone.sort_unstable();
+    *missed = now_missing.difference(&gone.iter().copied().collect()).copied().collect();
+    gone
 }
 
 fn add(message: &Message) {
@@ -232,20 +248,48 @@ pub fn clear(app: &AppHandle) {
     }
 }
 
-/// A reply to a remote ask said by voice (mod.rs `send_reply`): goes to the
-/// agent that asked, in the background, and never to the clipboard. None for
-/// an item that isn't a remote ask.
+/// A reply to a remote item said by voice (mod.rs `send_reply`). An ask's
+/// answer goes to the agent that asked, in the background; the card stays
+/// until it's in, and Eavesy then says how it went. Never the clipboard.
+/// None for an item that isn't remote.
 pub fn send(app: &AppHandle, id: u64, text: &str) -> Option<Result<&'static str, String>> {
-    let cloud_id = with_asks(|asks| asks.remove(&id))?;
-    with_queue(|queue| queue.remove(id));
+    let (session_id, name) = with_queue(|queue| queue.get(id).map(|item| (item.session_id.clone(), item.name.clone())))?;
+    if !is_remote(&session_id) {
+        return None;
+    }
+    let Some(cloud_id) = with_asks(|asks| asks.get(&id).cloned()) else {
+        return Some(Err("That message doesn't take an answer.".into()));
+    };
     let app = app.clone();
     let text = text.to_string();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = resolve(&app, &cloud_id, Outcome::Answered { text: &text }).await {
-            tracing::warn!("agent inbox: voice answer: {error}");
-        }
+        let said = match finish_answer(&app, id, &cloud_id, &text).await {
+            Ok(()) => format!("Sent to {name}."),
+            Err(error) if error.contains("stopped waiting") => format!("{name} stopped waiting for an answer."),
+            Err(error) => {
+                tracing::warn!("agent inbox: voice answer: {error}");
+                format!("I couldn't send that to {name}. It's still on the card.")
+            }
+        };
+        super::refresh_saying(&app, Some(said));
     });
-    Some(Ok("sent"))
+    Some(Ok(ANSWERING))
+}
+
+/// What `send` returns while the answer is on its way.
+pub const ANSWERING: &str = "answering";
+
+/// Sends an answer and takes the card off, unless it failed in a way worth
+/// retrying (the agent is still waiting): then the card stays.
+async fn finish_answer(app: &AppHandle, id: u64, cloud_id: &str, text: &str) -> Result<(), String> {
+    let result = resolve(app, cloud_id, Outcome::Answered { text }).await;
+    if matches!(&result, Err(error) if !error.contains("stopped waiting")) {
+        return result;
+    }
+    with_asks(|asks| asks.remove(&id));
+    with_queue(|queue| queue.remove(id));
+    super::speak::stop();
+    result
 }
 
 /// Sends what you typed to the agent that asked. The card keeps it if that fails.
@@ -259,13 +303,7 @@ pub async fn agents_answer(app: AppHandle, id: u64, text: String) -> Result<(), 
         return Err(format!("That answer is too long. Keep it under {} characters.", super::protocol::MAX_REPLY_CHARS));
     }
     let cloud_id = with_asks(|asks| asks.get(&id).cloned()).ok_or("That agent stopped waiting for an answer.")?;
-    let result = resolve(&app, &cloud_id, Outcome::Answered { text: &text }).await;
-    if matches!(&result, Err(error) if !error.contains("stopped waiting")) {
-        return result;
-    }
-    with_asks(|asks| asks.remove(&id));
-    with_queue(|queue| queue.remove(id));
-    super::speak::stop();
+    let result = finish_answer(&app, id, &cloud_id, &text).await;
     refresh(&app);
     result
 }
@@ -332,6 +370,20 @@ mod tests {
         // A Claude Code session with the same name doesn't replace it.
         queue.push("c1", "Chat GPT".into(), Kind::Finished, None, false, 2);
         assert!(queue.get(id).is_some());
+    }
+
+    #[test]
+    fn an_ask_leaves_after_two_polls_without_it() {
+        let asks: HashMap<u64, String> = [(1, "a".to_string()), (2, "b".to_string())].into();
+        let mut missed = HashSet::new();
+        assert!(gone_asks(&asks, &["a".into()], &mut missed).is_empty());
+        assert_eq!(missed, [2].into());
+        // Back in the list: forgiven.
+        assert!(gone_asks(&asks, &["a".into(), "b".into()], &mut missed).is_empty());
+        assert!(missed.is_empty());
+        assert!(gone_asks(&asks, &[], &mut missed).is_empty());
+        assert_eq!(gone_asks(&asks, &[], &mut missed), vec![1, 2]);
+        assert!(missed.is_empty());
     }
 
     #[test]

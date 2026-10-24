@@ -3,6 +3,9 @@ import { getDb } from '@/db/client';
 import { resolveIngestActor } from '@/server/device-auth';
 import { cleanText, MAX_ANSWER_CHARS, resolveForDevice } from '@/server/agent-inbox';
 
+/** Far above the longest answer (20,000 characters of up to 4 UTF-8 bytes) plus JSON. */
+const MAX_BODY_BYTES = 100_000;
+
 /**
  * The Mac that showed an `ask_human` card sends what you typed, or that you
  * dismissed it. The answer goes back only to the call that asked.
@@ -11,13 +14,20 @@ export const Route = createFileRoute('/api/agents/inbox/$id')({ server: { handle
   POST: async ({ request, params }) => {
     const actor = await resolveIngestActor(request).catch(() => null);
     if (!actor?.deviceId) return Response.json({ error: 'Connect this Mac to your Eavesy account first.' }, { status: 401 });
-    const body: unknown = await request.json().catch(() => null);
+    const raw = await request.text().catch(() => '');
+    if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
+      return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 413 });
+    }
+    let body: unknown = null;
+    try { body = JSON.parse(raw); } catch { /* answered below */ }
     const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
     let outcome: { status: 'answered'; text: string } | { status: 'dismissed' };
     if (record.status === 'dismissed') {
       outcome = { status: 'dismissed' };
     } else if (record.status === 'answered') {
-      if (typeof record.text === 'string' && [...record.text].length > MAX_ANSWER_CHARS) {
+      if (typeof record.text !== 'string') return Response.json({ error: 'Write an answer first.' }, { status: 400 });
+      // Checked before cleaning, which would otherwise clip it without saying.
+      if ([...record.text.trim()].length > MAX_ANSWER_CHARS) {
         return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 400 });
       }
       const text = cleanText(record.text, MAX_ANSWER_CHARS);
