@@ -36,7 +36,9 @@ them, so it must never depend on any single vendor.
    cloud is only for sync and for reaching web-only clients.
 6. **The human approves, the agent never holds secrets.** Secrets, file access
    and stopping any process outside the calling session's own tagged tree need
-   a click in Eavesy's own UI. No API, tool or agent can approve them. An agent
+   a click in Eavesy's own UI, or a permission mode the human turned on there
+   by click ([assistant.md](assistant.md) C8). No API, tool or agent can
+   approve them or turn a mode on. An agent
    may stop processes *it* started (its own services and its tagged
    descendants), because that's cleanup, not control.
 7. **Fast or it doesn't ship.** Every step has a speed budget (see
