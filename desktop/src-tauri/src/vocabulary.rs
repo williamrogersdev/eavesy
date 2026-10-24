@@ -77,10 +77,52 @@ pub fn store(app: &AppHandle, words: &[String]) {
     }
 }
 
-/// The sidecar's `--vocabulary` value: one word or phrase per line.
+/// The app's own name. The recognizer always gets it, ahead of the account's
+/// words, so the 100-word cap never pushes it out and nobody has to add it.
+pub const BUILT_IN: &[&str] = &["Eavesy"];
+
+/// The sidecar's `--vocabulary` value: one word or phrase per line, the
+/// built-in terms first, then the newest of the account's words that fit.
 pub fn sidecar_arg(words: &[String]) -> Option<String> {
-    let words = clean(words);
-    (!words.is_empty()).then(|| words.join("\n"))
+    let mut all: Vec<String> = BUILT_IN.iter().map(|word| word.to_string()).collect();
+    for word in clean(words).into_iter().rev() {
+        if all.len() == MAX_WORDS {
+            break;
+        }
+        if !all.iter().any(|kept| kept.eq_ignore_ascii_case(&word)) {
+            all.push(word);
+        }
+    }
+    let built_in = BUILT_IN.len();
+    all[built_in..].reverse();
+    Some(all.join("\n"))
+}
+
+/// The app's name spelled right wherever the recognizer clearly misheard it.
+/// Only spellings that are no English word, so "easy", "eves" and "Evie" are
+/// never touched; one joined to a dot, slash, at-sign or dash is a domain,
+/// path or handle and stays as written.
+pub fn fix_built_in_terms(text: &str) -> String {
+    static MISHEARD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie)\b").unwrap()
+    });
+    let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
+    let mut out = String::with_capacity(text.len());
+    let mut end = 0;
+    for found in MISHEARD.find_iter(text) {
+        let before = text[..found.start()].chars().next_back();
+        let mut after = text[found.end()..].chars();
+        let next = after.next();
+        let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
+        if joined(before) || before == Some('.') || joined(next) || domain {
+            continue;
+        }
+        out.push_str(&text[end..found.start()]);
+        out.push_str(BUILT_IN[0]);
+        end = found.end();
+    }
+    out.push_str(&text[end..]);
+    out
 }
 
 /// Fetches the account's words in the background and caches them.
@@ -115,6 +157,9 @@ pub fn refresh(app: &AppHandle) {
     });
 }
 
+/// How many words the recognizer takes.
+const MAX_WORDS: usize = 100;
+
 /// One line each, so a word can't break the sidecar's line-per-word argument,
 /// and none starting `--`, which the sidecar would read as another flag. The
 /// recognizer takes 100, so it gets the newest: words are stored oldest first.
@@ -131,7 +176,7 @@ fn clean(words: &[String]) -> Vec<String> {
         })
         .filter(|word| !word.is_empty())
         .collect();
-    let skip = words.len().saturating_sub(100);
+    let skip = words.len().saturating_sub(MAX_WORDS);
     words.into_iter().skip(skip).collect()
 }
 
@@ -144,7 +189,33 @@ mod tests {
         let words: Vec<String> =
             ["Eavesy", " Priya\nRaman ", "", "--mode", "-ish"].iter().map(|word| word.to_string()).collect();
         assert_eq!(sidecar_arg(&words).as_deref(), Some("Eavesy\nPriya Raman\nmode\n-ish"));
-        assert_eq!(sidecar_arg(&[]), None);
+    }
+
+    #[test]
+    fn the_app_name_always_reaches_the_sidecar_first() {
+        assert_eq!(sidecar_arg(&[]).as_deref(), Some("Eavesy"));
+        let words: Vec<String> = ["Priya", "eavesy"].iter().map(|word| word.to_string()).collect();
+        assert_eq!(sidecar_arg(&words).as_deref(), Some("Eavesy\nPriya"));
+    }
+
+    #[test]
+    fn a_full_list_keeps_the_app_name_and_the_newest_words() {
+        let words: Vec<String> = (0..140).map(|i| format!("w{i}")).collect();
+        let arg = sidecar_arg(&words).unwrap();
+        let lines: Vec<&str> = arg.lines().collect();
+        assert_eq!(lines.len(), 100);
+        assert_eq!(lines[0], "Eavesy");
+        assert_eq!(lines[1], "w41");
+        assert_eq!(lines[99], "w139");
+    }
+
+    #[test]
+    fn misheard_app_names_are_spelled_right() {
+        assert_eq!(fix_built_in_terms("I dictated it in Evesy."), "I dictated it in Eavesy.");
+        assert_eq!(fix_built_in_terms("eavsy's notes, EEVESY and Eavesie"), "Eavesy's notes, Eavesy and Eavesy");
+        for text in ["That was easy.", "On the eves of it.", "Evie said yes.", "Evesham", "eavesy.com", "evesy.app/login", "@evesy", "my-evesy", "Eavesdrop"] {
+            assert_eq!(fix_built_in_terms(text), text);
+        }
     }
 
     #[test]

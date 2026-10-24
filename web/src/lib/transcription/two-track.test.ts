@@ -147,6 +147,13 @@ describe('hallucination filter', () => {
 });
 
 describe('glossary read-back', () => {
+  test('drops the app name read back alone on doubtful audio, and keeps it said', () => {
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.1 })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary: ['Kubernetes'] })).toBe(true);
+    expect(isHallucination({ text: 'Open Eavesy.', noSpeechProb: 0.6 })).toBe(false);
+  });
+
   const glossary = ['Eavesy', 'Priya Raman', 'Kubernetes'];
 
   test('drops a bare list of the custom words Whisper read back from its prompt', () => {

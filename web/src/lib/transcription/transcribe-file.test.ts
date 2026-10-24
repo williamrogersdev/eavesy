@@ -75,6 +75,7 @@ describe('Workers AI file transcription', () => {
         language: 'es',
         vad_filter: true,
         condition_on_previous_text: false,
+        initial_prompt: 'Eavesy.',
       },
     });
     expect(result.segments).toEqual([]);
@@ -95,7 +96,7 @@ describe('Workers AI file transcription', () => {
       },
     });
     expect('language' in input).toBe(false);
-    expect(input.initial_prompt).toBe('Weekly sync with Priya Priya Raman.');
+    expect(input.initial_prompt).toBe('Weekly sync with Priya Eavesy, Priya Raman.');
   });
 
   test('an unsure detection outside the languages the user speaks is redone in theirs', async () => {

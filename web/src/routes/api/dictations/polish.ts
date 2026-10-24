@@ -10,7 +10,7 @@ import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
-import { parseVocabulary } from '@/lib/transcription/vocabulary';
+import { fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardUserQuota } from '@/server/rate-limit';
 
@@ -43,7 +43,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         }
         const parsed = schema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const text = parsed.data.text.trim();
+        const text = fixBuiltInTerms(parsed.data.text.trim());
         if (!text || text.length > MAX_POLISH_CHARS) {
           return Response.json({ text: stripFillers(text), polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
