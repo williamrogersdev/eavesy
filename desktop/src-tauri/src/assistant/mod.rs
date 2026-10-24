@@ -9,8 +9,11 @@
 
 pub mod activity;
 pub mod cards;
+mod check;
 pub mod policy;
 pub mod store;
+pub mod thread;
+mod tools;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +68,7 @@ pub struct Core {
 
 /// Loads the signed policy. Called once from setup.
 pub fn init(app: &AppHandle) {
+    thread::init(app);
     let loaded = match store::path() {
         Some(path) => store::load(&path, &keys()),
         None => store::Loaded::Missing,
@@ -114,9 +118,7 @@ fn emit_cards(app: &AppHandle, core: &Core) {
 }
 
 /// Runs `action` if the policy allows it now, or puts up a card. Blocking: call it off
-/// the main thread. Its first callers are the conversation and the middleman tools
-/// (assistant.md build steps 5 and 10).
-#[allow(dead_code)]
+/// the main thread.
 pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, check: &Check) -> Submitted {
     let core = app.state::<Core>();
     let facts = action.facts();
@@ -339,11 +341,13 @@ pub async fn assistant_card_decide(app: AppHandle, window: WebviewWindow, card_i
             Err(TakeError::Expired) => Err("That card expired. Ask again.".to_string()),
             Ok((card, _, rows)) if rows.is_empty() => {
                 log(&card.requester, &card.tool, &card.title, "declined", None);
+                thread::note(&app, format!("the user declined the card \"{}\"", card.title));
                 Ok(None)
             }
             Ok((card, action, rows)) => {
                 let ran = action.run(&rows);
                 log(&card.requester, &card.tool, &card.title, "accepted", Some(ran.summary.clone()));
+                thread::note(&app, format!("the user accepted {} of {} rows on the card \"{}\": {}", rows.len(), card.rows.len(), card.title, ran.summary));
                 Ok(Some(ran))
             }
         };

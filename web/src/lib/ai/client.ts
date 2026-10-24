@@ -24,6 +24,10 @@ export const MODELS = {
   translate: 'claude-haiku-5-5',
   /** Spoken summary and suggested reply when a Claude Code session stops: short, latency-sensitive. */
   agentReply: 'claude-haiku-5-5',
+  /** Eavesy's conversation: tool use, short replies. */
+  assistant: 'claude-sonnet-5-5',
+  /** The second-model check on each tier 2 or 3 action (assistant.md C7). */
+  assistantCheck: 'claude-haiku-5-5',
   vision: 'claude-sonnet-4-6',
   embed: 'voyage-3',
 } as const;

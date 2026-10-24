@@ -27,6 +27,7 @@ import { learnedLabel } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { CaptureHistory } from './capture-history';
 import { CaptureToolbar } from './capture-toolbar';
+import { EavesyTab } from './eavesy-tab';
 import { LauncherToast } from './launcher-toast';
 import { usesFnKey } from './permission-checklist';
 import { ResizeHandles } from './resize-handles';
@@ -42,6 +43,9 @@ import { useSignedOut } from './use-signed-out';
 import { useToastTasks } from './use-toast-tasks';
 
 type PanelView = 'setup' | 'list';
+type PanelTab = 'eavesy' | 'captures';
+const PANEL_TABS: [PanelTab, string][] = [['eavesy', 'Eavesy'], ['captures', 'Captures']];
+const TAB_KEY = 'eavesy.panel.tab';
 
 /** A key press meant for a field (or a pop-up list), which the panel's shortcuts leave alone. */
 function isTyping(target: EventTarget | null): boolean {
@@ -57,6 +61,15 @@ function isTyping(target: EventTarget | null): boolean {
  */
 export function DesktopPanel() {
   const [view, setView] = useState<PanelView>('setup');
+  // The Eavesy tab comes first (assistant.md); the last one you picked is remembered.
+  const [tab, setTab] = useState<PanelTab>(() => {
+    try { return localStorage.getItem(TAB_KEY) === 'eavesy' ? 'eavesy' : 'captures'; }
+    catch { return 'captures'; }
+  });
+  const pickTab = useCallback((next: PanelTab) => {
+    setTab(next);
+    try { localStorage.setItem(TAB_KEY, next); } catch { /* remembered for this session only */ }
+  }, []);
   const [setupKnown, setSetupKnown] = useState(false);
   const setupForced = useRef(false);
   const [setupStep, setSetupStep] = useState(0);
@@ -367,6 +380,15 @@ export function DesktopPanel() {
           mascot={!live ? 'idle' : live.phase === 'thinking' ? 'thinking' : live.sessionId !== null ? 'listening' : 'idle'}
         />
         {view === 'list' && (
+          <div className="ev-tabs" role="tablist" aria-label="Panel">
+            {PANEL_TABS.map(([value, label]) => (
+              <button key={value} type="button" role="tab" className="ev-tab" aria-selected={tab === value} onClick={() => pickTab(value)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {view === 'list' && tab === 'captures' && (
           <CaptureToolbar
             live={live}
             busy={capture.starting || capture.shooting}
@@ -423,6 +445,8 @@ export function DesktopPanel() {
               flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
             }, 'Couldn’t finish setup')}
           />
+        ) : tab === 'eavesy' ? (
+          <EavesyTab flash={flash} />
         ) : (
           <div className="ev-history">
             <CaptureHistory

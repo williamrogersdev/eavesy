@@ -220,6 +220,17 @@ fn gather() -> (Vec<Proc>, Inventory) {
     (procs, Inventory { repos, worktrees, leftovers, zombies, ports })
 }
 
+/// The inventory, for the assistant's `machine_overview` tool. Blocking.
+pub fn inventory() -> Inventory {
+    gather().1
+}
+
+impl Inventory {
+    pub fn stale_worktrees(&self) -> usize {
+        self.worktrees.iter().filter(|row| row.status == Status::Stale).count()
+    }
+}
+
 #[tauri::command]
 pub async fn machine_inventory() -> Result<Inventory, String> {
     tauri::async_runtime::spawn_blocking(|| gather().1).await.map_err(|error| error.to_string())
@@ -313,7 +324,7 @@ pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>,
         return Err("Cleaning up only works from Settings.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let action = Clean { worktrees, processes };
+        let action = Clean { worktrees, processes, labels: HashMap::new() };
         let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
         assistant::run_clicked(&action, &rows).detail
     })
@@ -327,9 +338,55 @@ pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>,
 pub struct Clean {
     pub worktrees: Vec<String>,
     pub processes: Vec<ProcessRef>,
+    /// What each row says on a card, by row id (C1: names, folders, ports).
+    pub labels: HashMap<String, String>,
 }
 
 impl Clean {
+    /// For a request from Eavesy's conversation: keeps only worktrees that are stale and
+    /// processes that are leftovers right now, and labels each row so the card and the
+    /// check (C7) can see what it is. Blocking.
+    pub fn described(worktrees: &[String], processes: &[ProcessRef]) -> Result<Clean, String> {
+        let inventory = inventory();
+        let home = dirs::home_dir().map(|home| home.to_string_lossy().into_owned()).unwrap_or_default();
+        let short = |path: &str| match path.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() => format!("~{rest}"),
+            _ => path.to_string(),
+        };
+        let mut labels = HashMap::new();
+        let worktrees: Vec<String> = inventory
+            .worktrees
+            .iter()
+            .filter(|row| row.status == Status::Stale && worktrees.contains(&row.path))
+            .map(|row| {
+                let branch = row.branch.as_deref().map(|branch| format!(" · {branch}, merged")).unwrap_or_default();
+                labels.insert(format!("worktree:{}", row.path), format!("Remove worktree {}{branch}", short(&row.path)));
+                row.path.clone()
+            })
+            .collect();
+        let processes: Vec<ProcessRef> = inventory
+            .leftovers
+            .iter()
+            .filter(|row| processes.iter().any(|asked| asked.pid == row.pid && asked.started_us == row.started_us))
+            .map(|row| {
+                let process = ProcessRef { pid: row.pid, started_us: row.started_us };
+                let folder = row.cwd.as_deref().map(|cwd| format!(" in {}", short(cwd))).unwrap_or_default();
+                let ports = if row.ports.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · port {}", row.ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", "))
+                };
+                let helpers = if row.helpers > 0 { format!(" · with {} helper{}", row.helpers, plural(row.helpers)) } else { String::new() };
+                labels.insert(Clean::process_row(&process), format!("Stop {} (pid {}){folder}{ports}{helpers}", row.name, row.pid));
+                process
+            })
+            .collect();
+        if worktrees.is_empty() && processes.is_empty() {
+            return Err("None of those are finished worktrees or leftover processes right now.".into());
+        }
+        Ok(Clean { worktrees, processes, labels })
+    }
+
     fn process_row(process: &ProcessRef) -> String { format!("process:{}:{}", process.pid, process.started_us) }
 }
 
@@ -358,8 +415,9 @@ impl assistant::Action for Clean {
     }
 
     fn rows(&self) -> Vec<Row> {
-        let worktrees = self.worktrees.iter().map(|path| Row { id: format!("worktree:{path}"), label: path.clone() });
-        let processes = self.processes.iter().map(|process| Row { id: Clean::process_row(process), label: format!("process {}", process.pid) });
+        let label = |id: String, fallback: String| Row { label: self.labels.get(&id).cloned().unwrap_or(fallback), id };
+        let worktrees = self.worktrees.iter().map(|path| label(format!("worktree:{path}"), path.clone()));
+        let processes = self.processes.iter().map(|process| label(Clean::process_row(process), format!("process {}", process.pid)));
         worktrees.chain(processes).collect()
     }
 

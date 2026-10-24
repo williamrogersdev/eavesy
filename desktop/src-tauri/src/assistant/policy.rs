@@ -95,8 +95,6 @@ pub struct Facts {
 }
 
 /// The second-model check's answer (C7).
-/// Built by the check itself, which arrives with the conversation (build step 5).
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Check {
     /// Not run: Look and Do don't need it.

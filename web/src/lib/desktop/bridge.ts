@@ -393,6 +393,39 @@ export async function onAssistantCards(cb: (cards: AssistantCard[]) => void): Pr
   return t.event.listen<AssistantCard[]>('assistant:cards', (event) => cb(event.payload));
 }
 
+/** Eavesy's conversation (assistant/thread.rs `View`). */
+export interface AssistantThread {
+  busy: boolean;
+  turns: {
+    id: number;
+    who: 'you' | 'eavesy';
+    spoken: boolean;
+    at_ms: number;
+    text: string;
+    /** Tools Eavesy used for this turn: `line` is the first line of the result, null while running. */
+    steps: { tool: string; line: string | null; ok: boolean }[];
+  }[];
+}
+
+export async function getAssistantThread(): Promise<AssistantThread> {
+  return invoke<AssistantThread>('assistant_thread');
+}
+
+/** Resolves once Eavesy has answered; the thread updates as it goes through `onAssistantThread`. */
+export async function sendToAssistant(text: string, spoken = false): Promise<void> {
+  await invoke('assistant_send', { text, spoken });
+}
+
+export async function clearAssistantThread(): Promise<void> {
+  await invoke('assistant_clear');
+}
+
+export async function onAssistantThread(cb: (thread: AssistantThread) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<AssistantThread>('assistant:thread', (event) => cb(event.payload));
+}
+
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 

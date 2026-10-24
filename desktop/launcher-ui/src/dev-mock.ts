@@ -77,6 +77,7 @@ export function installDevMock(): void {
       ? { phase: 'recording', sessionId: 's-live', mode: 'audio', startedAtMs: now - 23_000 }
       : { phase: 'idle', sessionId: null },
     get_screenshot_folder: '~/Desktop',
+    ...assistantMock(params.has('eavesy-empty'), (event, payload) => emit(event, payload)),
     get_app_info: { name: 'Eavesy', version, update: { state: 'upToDate', currentVersion: version } },
     capture_media: '/mock/shot.png',
     list_projects: params.has('noprojects') ? [] : [
@@ -303,5 +304,58 @@ function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<str
     if (method === 'DELETE') projects = projects.filter((p) => p.id !== id);
     else projects = projects.map((p) => (p.id === id ? { ...p, ...fields } : p));
     return { ok: true };
+  };
+}
+
+/** Eavesy's tab (assistant/thread.rs and assistant/mod.rs), with a card waiting. */
+function assistantMock(empty: boolean, emit: (event: string, payload: unknown) => void): Record<string, unknown> {
+  const now = Date.now();
+  const thread = {
+    busy: false,
+    turns: empty ? [] : [
+      { id: 0, who: 'you', spoken: true, at_ms: now - 60_000, text: 'Which of my Claude sessions are still running from yesterday?', steps: [] },
+      { id: 1, who: 'eavesy', spoken: false, at_ms: now - 55_000, text: 'Two dev servers outlived their sessions, both in worktrees you already merged: hud-fix and settings-race. Want me to show them out?', steps: [{ tool: 'machine_overview', line: '2 stale worktrees, 2 leftover processes', ok: true }] },
+      { id: 3, who: 'you', spoken: false, at_ms: now - 30_000, text: 'Yes, and clear out their worktrees.', steps: [] },
+      { id: 4, who: 'eavesy', spoken: false, at_ms: now - 28_000, text: 'It’s on the card below. Untick anything you want to keep.', steps: [{ tool: 'clean_machine', line: 'Waiting for your click', ok: true }] },
+    ],
+  };
+  const state = {
+    mode: 'ask', effective: 'ask', until_ms: null as number | null, trusted_folders: [] as string[], tampered: false,
+    cards: empty ? [] : [{
+      id: 'card-1', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees and stop 2 leftover processes', warning: null, expires_ms: now + 300_000,
+      rows: [
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/hud-fix', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/hud-fix · claude/hud-fix, merged' },
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/settings-race', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/settings-race · claude/settings-race, merged' },
+        { id: 'process:4191:1', label: 'Stop node (pid 4191) in ~/Developer/eavesy/.claude/worktrees/hud-fix/web · port 5173' },
+        { id: 'process:4207:1', label: 'Stop node (pid 4207) in ~/Developer/eavesy/.claude/worktrees/settings-race/web · port 5174' },
+      ],
+    }],
+  };
+  return {
+    assistant_thread: () => thread,
+    assistant_state: () => ({ ...state }),
+    assistant_send: ({ text }: Record<string, unknown>) => {
+      thread.turns.push({ id: thread.turns.length * 2, who: 'you', spoken: false, at_ms: Date.now(), text: String(text), steps: [] });
+      thread.busy = true;
+      emit('assistant:thread', { ...thread });
+      return new Promise((resolve) => setTimeout(() => {
+        thread.turns.push({ id: thread.turns.length * 2 + 1, who: 'eavesy', spoken: false, at_ms: Date.now(), text: 'Quiet on my end. Nothing else is waiting on you.', steps: [{ tool: 'agent_sessions', line: '3 sessions', ok: true }] });
+        thread.busy = false;
+        emit('assistant:thread', { ...thread });
+        resolve(null);
+      }, 1200));
+    },
+    assistant_clear: () => { thread.turns = []; emit('assistant:thread', { ...thread }); },
+    assistant_card_decide: ({ cardId, acceptedRowIds }: Record<string, unknown>) => {
+      state.cards = state.cards.filter((card) => card.id !== cardId);
+      emit('assistant:cards', state.cards);
+      const count = (acceptedRowIds as string[]).length;
+      return count ? { summary: `${count} of ${count} done`, detail: null } : null;
+    },
+    set_assistant_mode: ({ mode, minutes }: Record<string, unknown>) => {
+      state.mode = String(mode);
+      state.effective = String(mode);
+      state.until_ms = typeof minutes === 'number' && mode !== 'ask' ? Date.now() + minutes * 60_000 : null;
+    },
   };
 }

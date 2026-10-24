@@ -98,6 +98,8 @@ export const USER_DAILY_QUOTAS = {
   'meeting-export': { limit: 200, failMode: 'closed' },
   // Spoken summaries and suggested replies when a Claude Code session stops.
   'agent-reply': { limit: 1_000, failMode: 'closed' },
+  // Eavesy's conversation: each model step and each C7 check counts once.
+  assistant: { limit: 1_500, failMode: 'closed' },
 } as const satisfies Record<string, { limit: number; failMode: FailMode }>;
 
 export type QuotaScope = keyof typeof USER_DAILY_QUOTAS;
