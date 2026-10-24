@@ -35,6 +35,7 @@ export default defineConfig({
         hud: path.resolve(dir, 'hud.html'),
         marker: path.resolve(dir, 'marker.html'),
         settings: path.resolve(dir, 'settings.html'),
+        agents: path.resolve(dir, 'agents.html'),
       },
     },
   },

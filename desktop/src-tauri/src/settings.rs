@@ -89,9 +89,28 @@ pub struct Settings {
     /// instead of only a Pasted stamp (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_result_preview: Option<bool>,
+    /// Eavesy says when a Claude Code session finishes or needs you, and sends
+    /// the reply you approve back into it (off unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_voice: Option<bool>,
+    /// How long a finished session waits for your reply before it ends its
+    /// turn; 0 never waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_hold_secs: Option<u32>,
 }
 
+pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
+pub const MAX_AGENT_HOLD_SECS: u32 = 1_800;
+
 impl Settings {
+    pub fn agent_voice(&self) -> bool {
+        self.agent_voice.unwrap_or(false)
+    }
+
+    pub fn agent_hold_secs(&self) -> u32 {
+        self.agent_hold_secs.unwrap_or(DEFAULT_AGENT_HOLD_SECS).min(MAX_AGENT_HOLD_SECS)
+    }
+
     pub fn segment_sec(&self) -> u32 {
         self.segment_sec
             .unwrap_or(DEFAULT_SEGMENT_SEC)
@@ -149,6 +168,8 @@ impl Default for Settings {
             hud_translucent: None,
             fast_live_words: None,
             hud_result_preview: None,
+            agent_voice: None,
+            agent_hold_secs: None,
         }
     }
 }

@@ -136,6 +136,24 @@ that blocked with "The user replied: please also say the word BANANA" made
 Claude answer `BANANA` in the same session. The input had
 `last_assistant_message`, and `stop_hook_active: true` on the second stop.
 
+**First slice, as built (desktop `src-tauri/src/agents/`):**
+
+- The hook is the app's own binary, `Eavesy --agent-hook <stop|notification|prompt>`,
+  written into `~/.claude/settings.json` when you turn on "Claude Code
+  sessions" in Settings → Dictation, and taken out when you turn it off. It
+  talks to the app over a 0600 Unix socket in the per-user temp dir and exits
+  silently within 250 ms when the app isn't running.
+- Only attended sessions are held. Claude Code sets
+  `CLAUDE_CODE_SESSION_ATTENDED=0` for `claude -p` and SDK child runs and `1`
+  for the desktop Code tab, so headless runs and subagents never wait.
+- Speech uses macOS's own `say` for now, not the sidecar's
+  `AVSpeechSynthesizer`. Swapping it is one function in `speak.rs`.
+- Send and edit are on a small reply card at the top right, which never
+  takes focus by itself. Voice "send it" comes with piece 3d.
+- An end-to-end run of real `claude -p` through the hook and a stand-in app
+  continued with the reply in the same session. The Code tab is still
+  unverified.
+
 The flow:
 
 1. Claude stops. The hook sends the stop to Eavesy, and once the app has
@@ -350,7 +368,7 @@ need step 3, and the tools need steps 4 and 5.
      the client gets hooks or paste only.
    - Measure `AVSpeechSynthesizer` latency and quality with Premium voices
      on macOS 26.
-1. **Speak and the queue:** sidecar TTS, barge-in, mutes, the attention queue
+1. **Speak and the queue:** sidecar TTS (`say` in the first slice), barge-in, mutes, the attention queue
    reading cards aloud in order, with the digest and names (piece 3c).
    Depends on architecture step 1.
 2. **Reply for me, in Claude Code:** the hooks, the cloud summarize and

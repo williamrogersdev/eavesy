@@ -159,6 +159,8 @@ fn note_press_in_background() {
 }
 
 fn start(app: &AppHandle, pressed_at: Instant) {
+    // You're talking: Eavesy stops talking.
+    crate::agents::speak::stop();
     // Say "Starting…" at once: the engine takes a moment to open the mic. The
     // red state, the timer and the start sound wait until it really is open.
     crate::hud::set_state(app, crate::hud::HudState {
@@ -205,6 +207,7 @@ fn start(app: &AppHandle, pressed_at: Instant) {
 fn stop(app: &AppHandle, session_id: String) {
     // Failures are reported by the stop itself (HUD and telemetry).
     let _ = crate::audio::stop_capture(app.clone(), app.state::<Captures>(), session_id);
+    crate::agents::dictation_ended(app);
 }
 
 #[cfg(test)]

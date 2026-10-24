@@ -735,3 +735,71 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 .ctl-video-help > .ctl-video-count { display: inline-flex; flex: none; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .mk-root { touch-action: none; }
+
+/* The reply card for Claude Code sessions (agents.tsx): the HUD's dark coat,
+   manila for the one action that sends. */
+.ag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  background: var(--ev-hud);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line);
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-body);
+}
+.ag-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ag-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--ev-hud-line);
+  font: var(--ev-t-small);
+}
+.ag-kind[data-kind='approval'], .ag-kind[data-kind='question'] { background: var(--ev-manila); color: var(--ev-manila-ink); }
+.ag-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--ev-t-ui); }
+.ag-more { flex: none; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
+.ag-summary { margin: 0; font: var(--ev-t-head); }
+.ag-message {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--ev-hud-ink-2);
+  font: var(--ev-t-small);
+}
+.ag-reply {
+  resize: none;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: rgb(255 240 220 / 0.08);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line);
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-body);
+  outline: none;
+}
+.ag-reply:focus { box-shadow: inset 0 0 0 1.5px var(--ev-manila); }
+.ag-reply::placeholder { color: var(--ev-hud-ink-2); }
+.ag-note { margin: 0; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
+.ag-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.ag-btn, .ag-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-small);
+  cursor: default;
+}
+.ag-btn { padding: 5px 9px; box-shadow: inset 0 0 0 1px var(--ev-hud-line); }
+.ag-icon { flex: none; padding: 3px; color: var(--ev-hud-ink-2); }
+.ag-btn:hover, .ag-icon:hover { background: rgb(255 240 220 / 0.08); }
+.ag-btn[data-primary] { background: var(--ev-manila); color: var(--ev-manila-ink); box-shadow: none; }
+.ag-btn[data-primary]:hover { background: var(--ev-manila-shade); }
+.ag-btn:disabled { opacity: 0.45; }
