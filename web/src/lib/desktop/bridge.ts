@@ -330,6 +330,69 @@ export async function cleanMachine(worktrees: string[], processes: { pid: number
   return invoke<MachineOutcome[]>('machine_clean', { worktrees, processes });
 }
 
+/** How much Eavesy may do without a card (assistant/policy.rs `Mode`). */
+export type AssistantMode = 'ask' | 'auto' | 'bypass';
+
+/** A pending card (assistant/cards.rs `CardView`). Accepting sends back only its id and the ticked row ids. */
+export interface AssistantCard {
+  id: string;
+  requester: string;
+  tool: string;
+  title: string;
+  rows: { id: string; label: string }[];
+  warning: string | null;
+  expires_ms: number;
+}
+
+export interface AssistantState {
+  mode: AssistantMode;
+  /** The mode in force: Ask once `until_ms` has passed. */
+  effective: AssistantMode;
+  until_ms: number | null;
+  trusted_folders: string[];
+  /** The policy file changed outside Eavesy, so it's on Ask until you set it again. */
+  tampered: boolean;
+  cards: AssistantCard[];
+}
+
+export interface AssistantActivity {
+  at_ms: number;
+  requester: string;
+  tool: string;
+  summary: string;
+  decision: string;
+  outcome?: string;
+}
+
+export async function getAssistantState(): Promise<AssistantState> {
+  return invoke<AssistantState>('assistant_state');
+}
+
+/** Bypass opens a native confirm first; cancelling rejects with "cancelled". `minutes` null means until you turn it off. */
+export async function setAssistantMode(mode: AssistantMode, minutes: number | null): Promise<void> {
+  await invoke('set_assistant_mode', { mode, minutes });
+}
+
+/** Adding a folder opens a native confirm first. Resolves with the folders as saved. */
+export async function setTrustedAgentFolders(folders: string[]): Promise<string[]> {
+  return invoke<string[]>('set_trusted_agent_folders', { folders });
+}
+
+/** No rows accepted declines the card. Resolves with what ran, or null when declined. */
+export async function decideAssistantCard(cardId: string, acceptedRowIds: string[]): Promise<{ summary: string; detail: unknown } | null> {
+  return invoke('assistant_card_decide', { cardId, acceptedRowIds });
+}
+
+export async function getAssistantActivity(limit = 100): Promise<AssistantActivity[]> {
+  return invoke<AssistantActivity[]>('assistant_activity', { limit });
+}
+
+export async function onAssistantCards(cb: (cards: AssistantCard[]) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<AssistantCard[]>('assistant:cards', (event) => cb(event.payload));
+}
+
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 
