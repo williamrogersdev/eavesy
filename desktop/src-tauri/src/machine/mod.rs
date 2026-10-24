@@ -245,11 +245,12 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// A process of yours runs in the worktree, or a session wrote there lately.
-fn in_use_now(home: &Path, procs: &[Proc], worktree: &str) -> bool {
+/// Nothing of yours runs in the worktree, no session wrote there lately, and
+/// it holds nothing removal would lose.
+fn safe_to_remove_now(home: &Path, procs: &[Proc], worktree: &str) -> bool {
     let uid = procs::own_uid();
-    procs.iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree))
-        || worktrees::recent_session(home, worktree, RECENT_SESSION)
+    let running = procs.iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree));
+    !running && !worktrees::recent_session(home, worktree, RECENT_SESSION) && !worktrees::dirty(Path::new(worktree))
 }
 
 fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome> {
@@ -283,15 +284,13 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
     }
 
     let home = dirs::home_dir().unwrap_or_default();
-    // One look at what's running for all of them. A process that starts in a
-    // worktree during the next few milliseconds isn't seen; git still refuses
-    // changes, and nothing it could have written yet is ignored output.
-    let now = if worktree_paths.is_empty() { Vec::new() } else { procs::snapshot() };
     for path in worktree_paths {
         let row = inventory.worktrees.iter().find(|row| row.path == path);
-        // Stopping processes took time, so look again at what's running in it
-        // and at its files, right before it goes.
-        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && !in_use_now(&home, &now, &path) && !worktrees::dirty(Path::new(&path));
+        // Stopping processes and removing the ones before it took time, so
+        // look again, right before it goes. A process that starts in it in
+        // the milliseconds between this check and git's own is the one window
+        // left; git still refuses changes and untracked files then.
+        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && safe_to_remove_now(&home, &procs::snapshot(), &path);
         let Some(row) = row.filter(|_| still_stale) else {
             outcomes.push(Outcome { target: path, ok: false, message: Some("It isn't safe to remove any more.".into()), restore: None });
             continue;
@@ -342,10 +341,21 @@ mod tests {
         assert_eq!(status(&[]), super::Status::Stale);
         let inside = worktree.join("web").to_string_lossy().into_owned();
         assert_eq!(status(&[inside.as_str()]), super::Status::InUse);
-        let transcripts = super::worktrees::transcript_dir(&home, &worktree.to_string_lossy());
+        // The check right before removal says the same.
+        let path = worktree.to_string_lossy().into_owned();
+        let mut proc = super::procs::Proc { uid: super::procs::own_uid(), cwd: Some(inside.clone()), ..Default::default() };
+        assert!(!super::safe_to_remove_now(&home, std::slice::from_ref(&proc), &path));
+        proc.cwd = Some(root.to_string_lossy().into_owned());
+        assert!(super::safe_to_remove_now(&home, std::slice::from_ref(&proc), &path));
+        std::fs::write(worktree.join(".env"), "TOKEN=x\n").unwrap();
+        assert!(!super::safe_to_remove_now(&home, &[], &path), "an untracked .env");
+        std::fs::remove_file(worktree.join(".env")).unwrap();
+
+        let transcripts = super::worktrees::transcript_dir(&home, &path);
         std::fs::create_dir_all(&transcripts).unwrap();
         std::fs::write(transcripts.join("s.jsonl"), "{}\n").unwrap();
         assert_eq!(status(&[]), super::Status::InUse);
+        assert!(!super::safe_to_remove_now(&home, &[], &path));
         let _ = std::fs::remove_dir_all(&root);
     }
 

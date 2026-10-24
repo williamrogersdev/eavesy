@@ -156,7 +156,9 @@ pub fn merged(repo: &Path, head: &str, bases: &[Base]) -> bool {
 
 /// Ignored folders a package manager, compiler or test runner owns outright
 /// and makes again. Git reports a wholly ignored folder as one line, so a
-/// name here vouches for everything inside it. Generic names (`build`, `out`,
+/// name here vouches for everything inside it: a `.env` someone put inside
+/// `target/` or `.venv/` would go with the worktree. That's the trade for not
+/// walking every file in `node_modules`. Generic names (`build`, `out`,
 /// `dist`, `.cache`) aren't here: people keep their own files in those, and
 /// `.wrangler` and `.vercel` hold local databases and project settings.
 const REBUILDABLE: &[&str] = &[

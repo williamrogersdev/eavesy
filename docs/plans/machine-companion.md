@@ -97,7 +97,10 @@ A worktree is **stale** when all of these hold:
    `__pycache__`, …) don't count. Generic ones (`build/`, `out/`, `dist/`,
    `.cache/`) do, because git reports a wholly ignored folder as one line and
    people keep their own files in those. `.wrangler/` and `.vercel/` count too,
-   since they hold local databases and project settings.
+   since they hold local databases and project settings. The trade-off: a
+   trusted folder's name vouches for everything in it, so a file someone put
+   inside `target/` or `.venv/` goes with the worktree. Checking every file
+   in `node_modules` on each scan would cost far more than that risk.
 4. **No open session** uses it: no running process has its cwd inside it, and
    no Claude Code session in it has been active recently (a transcript in
    `~/.claude/projects/<slug>` modified in the last 24 h).
