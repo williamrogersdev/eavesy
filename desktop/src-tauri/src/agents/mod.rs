@@ -267,13 +267,17 @@ pub struct Snapshot {
 }
 
 /// The sessions for the assistant's `agent_sessions` tool: name, Eavesy's summary and
-/// whether it waits on you. Never Claude's own words, which can carry instructions.
+/// whether it waits on you. Never Claude's own words, which can carry instructions; the
+/// summary is still drawn from them, so both texts are cut short.
 pub fn overview() -> Vec<serde_json::Value> {
+    fn short(text: &str, max: usize) -> String {
+        text.chars().take(max).collect()
+    }
     with_queue(|queue| {
         queue
             .ordered()
             .into_iter()
-            .map(|item| serde_json::json!({ "session": item.name, "summary": item.summary, "waiting_on_you": item.held }))
+            .map(|item| serde_json::json!({ "session": short(&item.name, 80), "summary": item.summary.as_deref().map(|summary| short(summary, 300)), "waiting_on_you": item.held }))
             .collect()
     })
 }

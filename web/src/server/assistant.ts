@@ -143,6 +143,7 @@ export async function runTurn(client: AssistantClient, input: TurnInput): Promis
     // A reply cut off by max_tokens can end in a tool call with half its input: never run one.
     if (part.type === 'tool_use' && !cut) content.push({ type: 'tool_use', id: part.id, name: part.name, input: part.input });
   }
+  if (cut && !content.length) content.push({ type: 'text', text: 'I ran out of room before I could finish that. Try asking for less at once.' });
   return { content, stopReason: message.stop_reason };
 }
 

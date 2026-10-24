@@ -24,6 +24,8 @@ const CHECKED_TURNS: usize = 3;
 /// Messages kept in the thread.
 const KEPT_MESSAGES: usize = 200;
 const TEXT_CHARS: usize = 4_000;
+/// Most of the notes block sent with a turn (the cloud takes 8,000 per block), newest kept.
+const NOTE_CHARS: usize = 7_000;
 /// Longest request the C7 check takes.
 const CHECK_CHARS: usize = 4_000;
 
@@ -66,7 +68,8 @@ impl Turn {
     /// The message as the model gets it: notes first, in one block, then the turn itself.
     fn for_model(&self) -> Message {
         let notes = self.notes.iter().map(|note| format!("[Eavesy app note: {note}]")).collect::<Vec<_>>().join("\n");
-        let mut content: Vec<Block> = if notes.is_empty() { Vec::new() } else { vec![Block::Text { text: notes }] };
+        let notes = newest_chars(&notes, NOTE_CHARS);
+        let mut content: Vec<Block> = if notes.is_empty() { Vec::new() } else { vec![Block::Text { text: notes.to_string() }] };
         content.extend(self.message.content.iter().cloned());
         Message { role: self.message.role, content }
     }
@@ -248,7 +251,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
-            let messages: Vec<Message> = thread.turns.iter().filter(|turn| !turn.failed).map(Turn::for_model).collect();
+            let messages = sent(&thread.turns);
             let said: Vec<String> = thread.turns.iter().filter(|turn| is_your_words(&turn.message)).map(|turn| text_of(&turn.message)).collect();
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
@@ -285,6 +288,12 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         push(app, Message { role: Role::User, content: results }, false);
     }
     push(app, Message { role: Role::Assistant, content: vec![Block::Text { text: "That took more steps than I allow myself. Tell me how you'd like to go on.".into() }] }, false);
+}
+
+/// What the model is sent: every turn but the errors shown in Eavesy's place. Dropping
+/// one can leave two user messages in a row, which the API joins into one turn.
+fn sent(turns: &[Turn]) -> Vec<Message> {
+    turns.iter().filter(|turn| !turn.failed).map(Turn::for_model).collect()
 }
 
 /// The end of `text`, at most `max` characters: the check takes 4,000 (checkInput in
@@ -410,6 +419,19 @@ mod tests {
         assert_eq!(cut.chars().count(), CHECK_CHARS);
         assert!(cut.ends_with("é"));
         assert_eq!(newest_chars("short", CHECK_CHARS), "short");
+    }
+
+    #[test]
+    fn errors_are_not_sent_to_the_model() {
+        let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
+        let turns = vec![
+            Turn { message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
+            Turn { message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
+            Turn { message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false },
+        ];
+        let messages = sent(&turns);
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| message.role == Role::User));
     }
 
     #[test]

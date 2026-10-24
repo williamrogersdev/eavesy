@@ -53,6 +53,9 @@ describe('runTurn', () => {
     ], 'max_tokens');
     const reply = await runTurn(client, { messages: [{ role: 'user', content: [{ type: 'text', text: 'clean up' }] }] });
     expect(reply.content).toEqual([{ type: 'text', text: 'Let me look.' }]);
+    const { client: onlyCall } = fakeClient([{ type: 'tool_use', id: 't2', name: 'machine_overview', input: {} } as Anthropic.ContentBlock], 'max_tokens');
+    const cut = await runTurn(onlyCall, { messages: [{ role: 'user', content: [{ type: 'text', text: 'clean up' }] }] });
+    expect(cut.content).toEqual([{ type: 'text', text: expect.stringContaining('ran out of room') as string }]);
   });
 
   test('rejects threads with blocks the Mac never sends', () => {
