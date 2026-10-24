@@ -3,7 +3,7 @@ import type { TranscriptSegment } from './types';
 import { audioBase64 } from './base64';
 import { retryLanguage, whisperLanguage } from './language';
 import { isHallucination } from './two-track';
-import { whisperPrompt } from './vocabulary';
+import { fixBuiltInTerms, whisperPrompt } from './vocabulary';
 import { isRecord } from '@/lib/json';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
@@ -106,7 +106,7 @@ export function mapWhisperResult(
     throw new Error('Workers AI returned an invalid transcription response');
   }
 
-  const text = result.text;
+  const text = fixBuiltInTerms(result.text);
   const info = isRecord(result.transcription_info) ? result.transcription_info : {};
   const segments: TranscriptSegment[] = [];
   let timestampSource: FileTranscriptionResult['timestampSource'] = 'unavailable';
@@ -115,7 +115,7 @@ export function mapWhisperResult(
   if (Array.isArray(result.segments) && result.segments.length > 0) {
     for (const s of result.segments) {
       if (!isRecord(s)) continue;
-      const segText = typeof s.text === 'string' ? s.text.trim() : '';
+      const segText = typeof s.text === 'string' ? fixBuiltInTerms(s.text.trim()) : '';
       if (!segText) continue;
       const timed = typeof s.start === 'number' && typeof s.end === 'number' && Number.isFinite(s.start) && Number.isFinite(s.end) && s.start >= 0 && s.end >= s.start;
       if (timed) timestampSource = 'segments';

@@ -233,6 +233,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 (polished.text, polished.written)
             }
         };
+        // The server spells the app's name too, but not when it couldn't help.
+        let text = crate::vocabulary::fix_built_in_terms(&text);
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
