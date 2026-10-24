@@ -6,6 +6,31 @@ import { cleanText, MAX_ANSWER_CHARS, resolveForDevice } from '@/server/agent-in
 /** Far above the longest answer (20,000 characters of up to 4 UTF-8 bytes) plus JSON. */
 const MAX_BODY_BYTES = 100_000;
 
+/** The body as text, read until `max` bytes; null past that, without reading the rest. */
+async function readCapped(request: Request, max: number): Promise<string | null> {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 /**
  * The Mac that showed an `ask_human` card sends what you typed, or that you
  * dismissed it. The answer goes back only to the call that asked.
@@ -17,8 +42,8 @@ export const Route = createFileRoute('/api/agents/inbox/$id')({ server: { handle
     if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) {
       return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 413 });
     }
-    const raw = await request.text().catch(() => '');
-    if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
+    const raw = await readCapped(request, MAX_BODY_BYTES);
+    if (raw === null) {
       return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 413 });
     }
     let body: unknown = null;

@@ -55,9 +55,11 @@ export class AgentInboxError extends Error {}
 
 /**
  * Agent text made safe to show and speak: no control characters but newlines
- * and tabs; no soft hyphens, zero-width spaces, word joiners, or direction
- * marks, embeddings, overrides and isolates, which could hide or reorder words
- * on the card. Zero-width joiners stay, since emoji are built with them.
+ * and tabs; no soft hyphen (U+00AD), zero-width space (U+200B, U+FEFF), word
+ * joiner and invisible operators (U+2060-2064), line and paragraph separators
+ * (U+2028-2029), or direction marks, embeddings, overrides and isolates
+ * (U+061C, U+200E-200F, U+202A-202E, U+2066-2069), which could hide or
+ * reorder words on the card. Zero-width joiners stay, since emoji are built with them.
  * Trimmed and clipped.
  */
 export function cleanText(value: unknown, max: number): string {

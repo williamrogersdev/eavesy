@@ -263,15 +263,11 @@ pub fn send(app: &AppHandle, id: u64, text: &str) -> Option<Result<&'static str,
     let app = app.clone();
     let text = text.to_string();
     tauri::async_runtime::spawn(async move {
-        let said = match finish_answer(&app, id, &cloud_id, &text).await {
-            Ok(()) => format!("Sent to {name}."),
-            Err(error) if error.contains("stopped waiting") => format!("{name} stopped waiting for an answer."),
-            Err(error) => {
-                tracing::warn!("agent inbox: voice answer: {error}");
-                format!("I couldn't send that to {name}. It's still on the card.")
-            }
-        };
-        super::refresh_saying(&app, Some(said));
+        let result = finish_answer(&app, id, &cloud_id, &text).await;
+        if let Err(error) = &result {
+            tracing::warn!("agent inbox: voice answer: {error}");
+        }
+        super::refresh_saying(&app, Some(voice_outcome(&name, &result)));
     });
     Some(Ok(ANSWERING))
 }
@@ -290,6 +286,15 @@ async fn finish_answer(app: &AppHandle, id: u64, cloud_id: &str, text: &str) -> 
     with_queue(|queue| queue.remove(id));
     super::speak::stop();
     result
+}
+
+/// What Eavesy says once a voice answer has gone, or hasn't.
+fn voice_outcome(name: &str, result: &Result<(), String>) -> String {
+    match result {
+        Ok(()) => format!("Sent to {name}."),
+        Err(_) if !keeps_card(result) => format!("{name} stopped waiting for an answer."),
+        Err(_) => format!("I couldn't send that to {name}. It's still on the card."),
+    }
 }
 
 /// An answer that failed while the agent still waits leaves the card, to try
@@ -390,6 +395,13 @@ mod tests {
         assert!(gone_asks(&asks, &[], &mut missed).is_empty());
         assert_eq!(gone_asks(&asks, &[], &mut missed), vec![1, 2]);
         assert!(missed.is_empty());
+    }
+
+    #[test]
+    fn a_voice_answer_says_how_it_went() {
+        assert_eq!(voice_outcome("ChatGPT", &Ok(())), "Sent to ChatGPT.");
+        assert_eq!(voice_outcome("ChatGPT", &Err("That agent stopped waiting for an answer.".into())), "ChatGPT stopped waiting for an answer.");
+        assert_eq!(voice_outcome("ChatGPT", &Err("Couldn't reach Eavesy. Try again.".into())), "I couldn't send that to ChatGPT. It's still on the card.");
     }
 
     #[test]

@@ -122,6 +122,25 @@ describe('delivering to a Mac', () => {
     expect(await resolveForDevice(t.db, 'u1', 'mac-a', id, { status: 'answered', text: 'late' }, 5_200)).toBe(false);
   });
 
+  test('an answer that lands as the wait runs out still wins', async () => {
+    const t = setup();
+    const id = await createMessage(t.db, ask('u1', 10_000), 1_000);
+    await pollForDevice(t.db, 'u1', 'mac-a', 1_000);
+    let clock = 1_000;
+    const result = await waitForAnswer(t.db, id, 3_000, {
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        // The answer arrives in the last nap, right before the ask would close.
+        if (clock >= 3_000) await resolveForDevice(t.db, 'u1', 'mac-a', id, { status: 'answered', text: 'just in time' }, clock);
+      },
+      everyMs: 1_000,
+    });
+    expect(result).toEqual({ status: 'answered', text: 'just in time' });
+    const row = t.sqlite.query('SELECT status FROM agent_messages').get() as { status: string };
+    expect(row.status).toBe('answered');
+  });
+
   test('a dismissal is returned while waiting', async () => {
     const t = setup();
     const id = await createMessage(t.db, ask(), 1_000);
