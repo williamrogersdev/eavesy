@@ -8,7 +8,7 @@ import { anthropic, anthropicForUser } from '@/lib/ai/client';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
-import { DICTATION_STYLES, effectiveDictation, requestedDictation, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -60,16 +60,21 @@ export const Route = createFileRoute('/api/dictations/polish')({
         ]);
         const project = user ? projectRow : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
+        const tone = writtenWith(parsed.data, user, project);
         const result = await polishDictation(byoKey ? anthropicForUser(byoKey) : platformClient(), {
           text,
-          ...requestedDictation(parsed.data, effectiveDictation(user, project)),
+          style: tone.style,
+          forAgents: tone.forAgents,
           asked: parsed.data.style !== undefined || parsed.data.forAgents !== undefined,
           hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
           context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
-        return Response.json(result);
+        // Told back with the words, for the Mac app's tone row: the tone in
+        // force for them (the setting the row shows and changes) and whether
+        // the model applied it. When it didn't, the words went out plain.
+        return Response.json({ ...result, written: { ...tone, applied: result.polished } });
       },
     },
   },

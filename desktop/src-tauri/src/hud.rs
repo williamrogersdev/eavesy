@@ -306,7 +306,8 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
 static PEEK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// The state as the HUD gets it, with this side's reading of it: `receipt`
-/// (what happened to a finished dictation's words) and `opensItself`. The
+/// (what happened to a finished dictation's words), `opensItself`, and
+/// `written` (the tone the words are in, when the server said). The
 /// renderer draws from these instead of working them out again, so it draws
 /// the drawer exactly when the window is sized for it.
 pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
@@ -320,6 +321,9 @@ pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
     if let Some(object) = value.as_object_mut() {
         object.insert("receipt".into(), receipt(state).into());
         object.insert("opensItself".into(), opens_by_itself(state, prefs(app).preview).into());
+        if let Some(written) = state.session_id.as_deref().and_then(crate::dictation::written_as).and_then(|written| serde_json::to_value(written).ok()) {
+            object.insert("written".into(), written);
+        }
     }
     value
 }

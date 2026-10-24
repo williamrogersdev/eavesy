@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dictationStyle, effectiveDictation, requestedDictation, withoutSwearing } from './dictation-style';
+import { dictationStyle, effectiveDictation, requestedDictation, sameWriting, withoutSwearing, writingFrom, writtenWith } from './dictation-style';
 
 describe('withoutSwearing', () => {
   test('drops swear words and tidies the gaps', () => {
@@ -46,4 +46,34 @@ test('a requested tone overrides the saved one, and only what was asked for', ()
   expect(requestedDictation({}, saved)).toEqual(saved);
   expect(requestedDictation({ style: 'friendly' }, saved)).toEqual({ style: 'friendly', forAgents: true });
   expect(requestedDictation({ forAgents: false }, saved)).toEqual({ style: 'professional', forAgents: false });
+});
+
+describe('writtenWith', () => {
+  const account = { dictationStyle: 'professional', dictationForAgents: true };
+  test('is the saved choice, and names no project when the project has none of its own', () => {
+    expect(writtenWith({}, account, null)).toEqual({ style: 'professional', forAgents: true, projectId: null });
+    expect(writtenWith({}, account, { id: 'p1', dictationStyle: null, dictationForAgents: null })).toEqual({ style: 'professional', forAgents: true, projectId: null });
+  });
+  test('names the project that set its own tone, even for only one of the two', () => {
+    expect(writtenWith({}, account, { id: 'p1', dictationStyle: 'concise', dictationForAgents: null })).toEqual({ style: 'concise', forAgents: true, projectId: 'p1' });
+    expect(writtenWith({}, account, { id: 'p1', dictationStyle: null, dictationForAgents: false })).toEqual({ style: 'professional', forAgents: false, projectId: 'p1' });
+  });
+  test('a rewrite request is what the words are in', () => {
+    expect(writtenWith({ style: 'friendly' }, account, null)).toEqual({ style: 'friendly', forAgents: true, projectId: null });
+    expect(writtenWith({ forAgents: false }, null, null)).toEqual({ style: 'natural', forAgents: false, projectId: null });
+  });
+});
+
+test('writingFrom reads a reply and rejects anything else', () => {
+  expect(writingFrom({ style: 'concise', forAgents: true, projectId: 'p1' })).toEqual({ style: 'concise', forAgents: true, projectId: 'p1' });
+  expect(writingFrom({ style: 'concise' })).toEqual({ style: 'concise', forAgents: false, projectId: null });
+  expect(writingFrom({ style: 'pirate', forAgents: true })).toBeNull();
+  expect(writingFrom(null)).toBeNull();
+  expect(writingFrom('concise')).toBeNull();
+});
+
+test('sameWriting compares both halves', () => {
+  expect(sameWriting({ style: 'natural', forAgents: false }, { style: 'natural', forAgents: false })).toBe(true);
+  expect(sameWriting({ style: 'natural', forAgents: true }, { style: 'natural', forAgents: false })).toBe(false);
+  expect(sameWriting({ style: 'concise', forAgents: false }, { style: 'natural', forAgents: false })).toBe(false);
 });

@@ -366,9 +366,10 @@ Meeting means mic + computer audio, and Talk means mic only.
   raised r9 strip with e-2, fading in over 160ms. They're always visible on
   the keyboard-focused row and while a row's tray is open.
 - **Rewrite tray** (pulled, never shown unasked): Rewrite opens a row of
-  26px chips under the words, the same choices as the HUD drawer: Original,
-  Professional, Friendly, Concise, a 1px rule, **For AI** (a toggle that
-  works with any tone; text only, no robot), then Translate. Each version is
+  26px chips under the words: Original, Professional, Friendly, Concise, a
+  1px rule, **For AI** (a toggle that works with any tone; text only, no
+  robot), then Translate. Unlike the HUD drawer's tone row, these are
+  versions of one capture, not the setting. Each version is
   made from the saved words, never from another rewrite, is kept for the
   session, and is never saved over the transcript. Copy and Paste use the
   version on screen. While one is being made the words dim and "Rewriting…"
@@ -474,7 +475,7 @@ the pill can't jitter or flip while words arrive.
 | bar | 264 × 40 | recording and writing with live words off (the default) |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
-| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row. Opens by itself unless that switch is off; then hovering the receipt opens it |
+| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch). Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **How it looks while recording** is the user's call (Settings → General → Recording
@@ -516,18 +517,32 @@ pointer on it for 250ms (not on a button) opens the drawer.
 
 The drawer holds the words that went out, editable in place, beside Copy,
 **–** (collapse to the pill) and **×** (hide the control until it is
-reopened from the menu bar). Under the words, the **tone row** rewrites
-them: **Original** · **Professional** · **Friendly** · **Concise**, and a
-**For AI** toggle (written as a prompt for an AI agent). Each tone
-starts from the words as pasted, so tones never compound, and Original goes
-back to them without asking the server. The rewrite replaces the pasted words
-in the app only while they are still there exactly as pasted and that field
-still has the keyboard; otherwise it is copied, and the stamp says
-**Updated** or **Copied**. A rewrite is saved as the transcript but never
-taught to the dictionary, and typing over it makes the typed words the new
-starting point. When the server can't rewrite it (the model fails, or the
-rewrite strays from what was said) the stamp area says so and nothing
-changes; it never claims **Updated** for the plain cleanup. The drawer reads
+reopened from the menu bar). Under the words, the **tone row** is the
+dictation setting itself (Settings → Dictation), not a one-off: a **Tone**
+pop-up (As spoken · Professional · Friendly · Concise, a native `<select>`
+whose list opens over the control, so the window never has to hold it), a
+1px rule, a **For AI** switch (written as a prompt for an AI agent; the
+track lights cream when on) and, at the row's end, "Sets your default" in
+quiet ink. The row shows the tone in force for the words (the server tells
+the app with them; a project's own tone counts, and the saved choice stands
+in when the server didn't say). Changing it keeps the choice first, for
+every dictation to come, on the account or on the project when the tone was
+the project's own, then rewrites this dictation to match; a choice that
+can't be kept isn't made at all, and the row goes back. Each rewrite starts
+from the words as pasted, so tones never compound, and picking the tone
+they went out in goes back to them without asking the server. When the
+model didn't apply the tone (a short dictation, a failed rewrite, words
+corrected live, offline) the row still shows the setting, but the words
+count as plain, so any change rewrites them from there. The rewrite
+replaces the pasted words in the app only while they are still there
+exactly as pasted and that field still has the keyboard; otherwise it is
+copied, and the stamp says **Updated** or **Copied**. A rewrite is saved as
+the transcript but never taught to the dictionary, and typing over it makes
+the typed words the new starting point while the row keeps its choice. When
+the server can't rewrite it (the model fails, or the rewrite strays from
+what was said) the stamp area says "Kept for next time, but this one
+couldn't be rewritten" and the words stay. It never claims **Updated** for
+the plain cleanup. The drawer reads
 a long dictation from its start, fades its last line while more is below,
 and its stamp counts the words; past 20,000 characters the tone row gives
 way to "Too long to change the tone here" and **Open in Eavesy**, which the

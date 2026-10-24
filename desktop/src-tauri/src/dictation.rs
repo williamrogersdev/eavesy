@@ -21,6 +21,12 @@ const PROJECT_WAIT: Duration = Duration::from_secs(1);
 /// The last dictation's words as they went into the user's app (session,
 /// words, project), so a tone change can swap them for its rewrite.
 static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
+/// The tone the last dictation's words were written in, when the server
+/// said: the HUD's tone row shows it as what is picked. Keyed by session so
+/// that a late delivery for an older session, which overwrites it, can never
+/// be read as the current one's ([`written_as`] filters by id); it is set
+/// right before the Done state that carries it to the HUD.
+static WRITTEN: Mutex<Option<(String, crate::transcribe::Written)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
 const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
@@ -220,9 +226,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let corrected = crate::live_edit::corrected(&session_id, &text);
         let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
-        let text = match corrected {
-            Some(corrected) => crate::transcribe::drop_fillers(&corrected),
-            None => crate::transcribe::polish_dictation(&app, &text, project.as_deref()),
+        let (text, written) = match corrected {
+            Some(corrected) => (crate::transcribe::drop_fillers(&corrected), None),
+            None => {
+                let polished = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
+                (polished.text, polished.written)
+            }
         };
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
@@ -277,6 +286,10 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
             && current.session_id.as_deref() != Some(session_id.as_str());
         if !busy_elsewhere {
+            // Before the state, which carries it to the HUD (`hud::shown`). A
+            // delivery skipped above leaves an older session's entry here, which
+            // is harmless: `written_as` answers only for its own session id.
+            *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.map(|written| (session_id.clone(), written));
             crate::hud::set_state(&app, crate::hud::HudState {
                 phase: crate::hud::Phase::Done,
                 session_id: Some(session_id),
@@ -287,6 +300,14 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             });
         }
     });
+}
+
+/// The tone a dictation's words were written in, while it is the last one
+/// the HUD was given (a delivery skipped for a busier HUD doesn't count) and
+/// the server said which. None for any other session, however late its
+/// delivery was.
+pub fn written_as(session_id: &str) -> Option<crate::transcribe::Written> {
+    WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, _)| id == session_id).map(|(_, written)| written.clone())
 }
 
 /// The project a dictation was written for, while it is the last one pasted:

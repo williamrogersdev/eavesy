@@ -63,12 +63,41 @@ export function effectiveDictation(
   };
 }
 
-/** The tone a request asked for, over the saved one: the Mac app's tone buttons rewrite one dictation without changing Settings. */
+/** The tone a request asked for, over the saved one: a rewrite of one dictation, from the Mac app or the history. */
 export function requestedDictation(
   request: { style?: DictationStyle; forAgents?: boolean },
   saved: { style: DictationStyle; forAgents: boolean },
 ): { style: DictationStyle; forAgents: boolean } {
   return { style: request.style ?? saved.style, forAgents: request.forAgents ?? saved.forAgents };
+}
+
+/** How a dictation is written: its tone, and as a prompt for an AI or not. */
+export interface Writing { style: DictationStyle; forAgents: boolean }
+
+/**
+ * The tone a dictation's words are in, told back to the Mac app with them:
+ * what was asked for, else the saved choice, and the project when that
+ * choice is the project's own (so changing it changes the project, not the
+ * account).
+ */
+export function writtenWith(
+  request: { style?: DictationStyle; forAgents?: boolean },
+  account: { dictationStyle?: string | null; dictationForAgents?: boolean | null } | null | undefined,
+  project?: { id: string; dictationStyle?: DictationStyle | null; dictationForAgents?: boolean | null } | null,
+): Writing & { projectId: string | null } {
+  const own = !!project && (project.dictationStyle != null || project.dictationForAgents != null);
+  return { ...requestedDictation(request, effectiveDictation(account, project)), projectId: own ? project.id : null };
+}
+
+export function sameWriting(a: Writing, b: Writing): boolean {
+  return a.style === b.style && a.forAgents === b.forAgents;
+}
+
+/** A `Writing` read from a server reply or an event, or null when it isn't one. */
+export function writingFrom(value: unknown): (Writing & { projectId: string | null }) | null {
+  const raw = value as { style?: unknown; forAgents?: unknown; projectId?: unknown } | null;
+  if (!raw || typeof raw !== 'object' || !isDictationStyle(raw.style)) return null;
+  return { style: raw.style, forAgents: raw.forAgents === true, projectId: typeof raw.projectId === 'string' ? raw.projectId : null };
 }
 
 /** "What the hell" keeps its "what": the "the" goes only with the swear word after it. */
