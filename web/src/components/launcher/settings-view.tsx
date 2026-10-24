@@ -499,7 +499,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                 onCheckedChange={toggleAgents}
                 disabled={!settings || agentsBusy}
                 label="Say when a session finishes or needs you"
-                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send. Summaries and suggestions are written by Claude through Eavesy’s cloud when you’re signed in."
+                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
               />
               {agentsOn && (
                 <div className="mt-3">
