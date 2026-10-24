@@ -246,9 +246,9 @@ fn shell_quote(text: &str) -> String {
 }
 
 /// A process of yours runs in the worktree, or a session wrote there lately.
-fn in_use_now(home: &Path, worktree: &str) -> bool {
+fn in_use_now(home: &Path, procs: &[Proc], worktree: &str) -> bool {
     let uid = procs::own_uid();
-    procs::snapshot().iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree))
+    procs.iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree))
         || worktrees::recent_session(home, worktree, RECENT_SESSION)
 }
 
@@ -283,11 +283,12 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
     }
 
     let home = dirs::home_dir().unwrap_or_default();
+    let now = if worktree_paths.is_empty() { Vec::new() } else { procs::snapshot() };
     for path in worktree_paths {
         let row = inventory.worktrees.iter().find(|row| row.path == path);
         // Stopping processes took time, so look again at what's running in it
         // and at its files, right before it goes.
-        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && !in_use_now(&home, &path) && !worktrees::dirty(Path::new(&path));
+        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && !in_use_now(&home, &now, &path) && !worktrees::dirty(Path::new(&path));
         let Some(row) = row.filter(|_| still_stale) else {
             outcomes.push(Outcome { target: path, ok: false, message: Some("It isn't safe to remove any more.".into()), restore: None });
             continue;
@@ -301,7 +302,8 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
 }
 
 /// Called by the confirm card in Settings, and refused from any other
-/// window. The agents socket and MCP have no way to reach it.
+/// window. It's a Tauri command, so only Eavesy's own webviews can call it;
+/// the agents socket (agents/mod.rs) only reads hook messages.
 #[tauri::command]
 pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<Vec<Outcome>, String> {
     if window.label() != "settings" {

@@ -18,7 +18,7 @@ describe('machine model', () => {
   });
 
   test('says why worktrees are kept, most first', () => {
-    expect(keptSummary(['stale', 'unmerged', 'dirty', 'unmerged', 'in_use'])).toBe('2 not merged, 1 with changes, 1 in use');
+    expect(keptSummary(['stale', 'unmerged', 'dirty', 'unmerged', 'in_use'])).toBe('2 not merged, 1 with changes or local files, 1 in use');
     expect(keptSummary(['stale'])).toBe('');
   });
 

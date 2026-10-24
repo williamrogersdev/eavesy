@@ -1,7 +1,9 @@
 //! Git worktrees, and which ones are safe to remove: the branch's work is
-//! already in the default branch, nothing is uncommitted, and no session is
-//! using it. Removal is `git worktree remove` without `--force`, so git
-//! refuses anything with changes even if this classification were wrong.
+//! already in the default branch, nothing is uncommitted, no ignored file is
+//! more than build output, and no session is using it. Removal is `git
+//! worktree remove` without `--force`, so git also refuses modified or
+//! untracked files on its own. It does delete ignored files, which is why
+//! `dirty` counts any ignored file that can't be rebuilt (`.env`, say).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -152,9 +154,25 @@ pub fn merged(repo: &Path, head: &str, bases: &[Base]) -> bool {
     })
 }
 
+/// Ignored folders and files that a build or an install makes again.
+const REBUILDABLE: &[&str] = &[
+    "node_modules", "target", "dist", "build", "out", ".next", ".nuxt", ".output", ".svelte-kit", ".turbo", ".vite",
+    ".wrangler", ".vercel", ".netlify", ".parcel-cache", ".cache", ".tanstack", ".vinxi", ".expo", "coverage",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", ".gradle", "DerivedData", ".build", ".DS_Store",
+];
+
+/// One `git status --porcelain --ignored` line that removing the worktree
+/// would lose: a change, an untracked file, or an ignored file that isn't
+/// build output.
+pub fn would_lose(line: &str) -> bool {
+    let Some(path) = line.strip_prefix("!! ") else { return !line.trim().is_empty() };
+    let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path);
+    !(REBUILDABLE.contains(&name) || name.ends_with(".tsbuildinfo") || name.ends_with(".pyc"))
+}
+
 pub fn dirty(worktree: &Path) -> bool {
     // A status that fails is treated as dirty: never remove what we can't read.
-    git(worktree, &["status", "--porcelain", "--untracked-files=normal"]).is_none_or(|out| !out.is_empty())
+    git(worktree, &["status", "--porcelain", "--untracked-files=normal", "--ignored=matching"]).is_none_or(|out| out.lines().any(would_lose))
 }
 
 /// Claude Code keeps each folder's transcripts in `~/.claude/projects/<slug>`,
@@ -220,6 +238,32 @@ mod tests {
     }
 
     #[test]
+    fn ignored_build_output_goes_but_local_files_keep_it() {
+        assert!(!would_lose("!! node_modules/"));
+        assert!(!would_lose("!! web/node_modules/"));
+        assert!(!would_lose("!! desktop/src-tauri/target/"));
+        assert!(!would_lose("!! web/tsconfig.tsbuildinfo"));
+        assert!(would_lose("!! .env"));
+        assert!(would_lose("!! web/.dev.vars"));
+        assert!(would_lose("!! desktop/src-tauri/binaries/"));
+        assert!(would_lose("?? notes.md"));
+        assert!(would_lose(" M src/lib.rs"));
+        assert!(!would_lose(""));
+    }
+
+    #[test]
+    fn a_recent_transcript_means_in_use() {
+        let home = std::env::temp_dir().join(format!("eavesy-home-{}", std::process::id()));
+        let worktree = "/Users/w/Developer/x/.claude/worktrees/y";
+        assert!(!recent_session(&home, worktree, std::time::Duration::from_secs(60)));
+        let dir = transcript_dir(&home, worktree);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("s.jsonl"), "{}\n").unwrap();
+        assert!(recent_session(&home, worktree, std::time::Duration::from_secs(60)));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn transcript_slug_matches_claude_code() {
         let dir = transcript_dir(Path::new("/Users/w"), "/Users/w/Developer/eavesy/.claude/worktrees/sharp-hodgkin-5cf282");
         assert_eq!(dir, Path::new("/Users/w/.claude/projects/-Users-w-Developer-eavesy--claude-worktrees-sharp-hodgkin-5cf282"));
@@ -257,9 +301,10 @@ mod tests {
         let repo = repo.canonicalize().unwrap();
         run(&repo, &["init", "-q", "-b", "main"]);
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        std::fs::write(repo.join(".gitignore"), "node_modules/\n.env\n").unwrap();
         run(&repo, &["add", "."]);
         run(&repo, &["commit", "-qm", "one"]);
-        for name in ["squashed", "unmerged", "dirty", "locked"] {
+        for name in ["squashed", "unmerged", "dirty", "locked", "secrets"] {
             run(&repo, &["worktree", "add", "-q", "-b", name, &root.join(name).to_string_lossy()]);
         }
         let squashed = root.canonicalize().unwrap().join("squashed");
@@ -279,12 +324,17 @@ mod tests {
         run(&unmerged, &["commit", "-qm", "mine"]);
         let dirty_wt = squashed.with_file_name("dirty");
         std::fs::write(dirty_wt.join("e.txt"), "untracked\n").unwrap();
+        // Ignored build output doesn't keep a worktree; an ignored .env does.
+        std::fs::create_dir_all(squashed.join("node_modules/x")).unwrap();
+        std::fs::write(squashed.join("node_modules/x/i.js"), "\n").unwrap();
+        let secrets = squashed.with_file_name("secrets");
+        std::fs::write(secrets.join(".env"), "TOKEN=x\n").unwrap();
 
         let locked = squashed.with_file_name("locked");
         run(&repo, &["worktree", "lock", &locked.to_string_lossy()]);
 
         let entries = list(&repo);
-        assert_eq!(entries.len(), 5);
+        assert_eq!(entries.len(), 6);
         let bases = bases(&repo);
         assert_eq!(bases.iter().map(|base| base.name.as_str()).collect::<Vec<_>>(), vec!["main"]);
         let facts = |path: &Path| {
@@ -295,12 +345,14 @@ mod tests {
         assert_eq!(classify(&facts(&unmerged)), Status::Unmerged);
         // Its branch has nothing new, so it's merged, but the untracked file wins.
         assert_eq!(classify(&facts(&dirty_wt)), Status::Dirty);
+        // git worktree remove would delete an ignored .env, so it counts.
+        assert_eq!(classify(&facts(&secrets)), Status::Dirty);
         // Nothing new on its branch and clean, but locked.
         assert_eq!(classify(&facts(&locked)), Status::Locked);
         // Its work is merged, but someone is in it.
         assert_eq!(classify(&Facts { in_use: true, ..facts(&squashed) }), Status::InUse);
 
-        // Git itself refuses a worktree with changes, whatever we decided.
+        // Git itself refuses untracked files, whatever we decided.
         assert!(remove(&repo, &dirty_wt.to_string_lossy()).is_err());
         assert!(dirty_wt.join("e.txt").exists());
         remove(&repo, &squashed.to_string_lossy()).unwrap();

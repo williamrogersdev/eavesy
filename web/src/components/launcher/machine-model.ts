@@ -27,14 +27,14 @@ export function groupLeftovers(leftovers: Leftover[]): LeftoverGroup[] {
 }
 
 const KEPT_LABEL: Record<Exclude<WorktreeStatus, 'stale'>, string> = {
-  dirty: 'with changes',
+  dirty: 'with changes or local files',
   unmerged: 'not merged',
   in_use: 'in use',
   locked: 'locked',
   missing: 'missing their folder',
 };
 
-/** "178 not merged, 13 with changes": the worktrees Eavesy leaves alone, and why. */
+/** "178 not merged, 13 with changes or local files": the worktrees Eavesy leaves alone, and why. */
 export function keptSummary(statuses: WorktreeStatus[]): string {
   const counts = new Map<Exclude<WorktreeStatus, 'stale'>, number>();
   for (const status of statuses) if (status !== 'stale') counts.set(status, (counts.get(status) ?? 0) + 1);

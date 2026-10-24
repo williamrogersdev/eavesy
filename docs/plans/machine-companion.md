@@ -89,8 +89,11 @@ A worktree is **stale** when all of these hold:
    The second case is how a squash-merged PR looks: its commits never become
    ancestors of `main`, and once its remote branch is deleted they're on no
    remote either, but every change in them is in `main`.
-3. `git status --porcelain` is empty: no staged, unstaged or untracked files
-   (ignored files like `node_modules` and `target/` don't count).
+3. Nothing would be lost: no staged, unstaged or untracked files, and no
+   ignored file other than build output. `git worktree remove` without
+   `--force` refuses changes and untracked files, but it deletes ignored ones,
+   so an ignored `.env` or `.dev.vars` keeps the worktree. Rebuildable output
+   (`node_modules`, `target/`, `dist/`, `.next/`, …) doesn't count.
 4. **No open session** uses it: no running process has its cwd inside it, and
    no Claude Code session in it has been active recently (a transcript in
    `~/.claude/projects/<slug>` modified in the last 24 h).
@@ -141,8 +144,9 @@ everyone, so those can't be traced to a session; the usual leftovers
 can't be read is never labelled.
 
 **Never orphans**, whatever the evidence: processes of other users, launchd
-jobs (they start with launchd's environment, so they never carry a session's
-tag; no separate check is needed), apps (`.app` bundles),
+jobs (they start with launchd's environment, so they don't carry a
+session's tag unless someone ran `launchctl setenv` with it; there's no
+separate check yet), apps (`.app` bundles),
 system binaries (`/System`, `/usr/libexec`, `/usr/sbin`), daemons every
 session shares (`gpg-agent`, `keyboxd`, `ssh-agent`), anything whose
 executable path can't be read, Eavesy itself and everything it started, the
@@ -168,7 +172,8 @@ The rules, in order of importance:
    2 to 5; any change drops it from the batch with a note.
 2. **`git worktree remove` without `--force`.** Git itself refuses a worktree
    with changes or untracked files, which is a second check that doesn't
-   depend on our code. The branch is left alone; deleting merged branches is
+   depend on our code. Git doesn't protect ignored files, so rule 3 above
+   checks those. The branch is left alone; deleting merged branches is
    a separate, later option.
 3. **Processes: own user only, SIGTERM first.** Eavesy checks the uid and the
    `(pid, start time)` pair right before signalling, so a reused pid can't be

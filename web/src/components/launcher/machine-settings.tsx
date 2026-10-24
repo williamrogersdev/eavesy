@@ -103,7 +103,7 @@ export function MachineSettings({ active }: { active: boolean }) {
         <>
           <Card title="Worktrees you can remove">
             {stale.length === 0
-              ? <p className="ev-set-hint">None. A worktree shows up here once its branch is merged, it has no changes, and no session is using it.</p>
+              ? <p className="ev-set-hint">None. A worktree shows up here once its branch is merged, it has no changes or local files, and no session is using it.</p>
               : stale.map((w) => (
                 <Row key={w.path} label={shortPath(w.path, home)} hint={w.branch ? `${w.branch}, merged` : 'merged'}>
                   <Check checked={worktrees.has(w.path)} label={`Remove ${w.path}`} onChange={(on) => setWorktrees((set) => toggle(set, w.path, on))} />
@@ -156,7 +156,7 @@ export function MachineSettings({ active }: { active: boolean }) {
                     <li key={group.key}>Ask {stopWhat(group)} to stop.</li>
                   ))}
                 </ul>
-                <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Git refuses a worktree with changes.</p>
+                <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Build output like node_modules goes with a worktree; one with changes or local files such as .env is never offered.</p>
                 <div className="flex justify-end gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>Cancel</Button>
                   <Button variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
