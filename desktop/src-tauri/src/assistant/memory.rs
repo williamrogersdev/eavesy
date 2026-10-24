@@ -20,78 +20,106 @@ pub fn path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join("Eavesy").join("assistant").join("memory.md"))
 }
 
-/// One note as it may be kept: a single line, no control characters, capped.
+/// Most of the file read; a note past this is past the cap anyway.
+const MAX_FILE_BYTES: u64 = 256 * 1024;
+
+/// One note as it may be kept: a single line, no control or line-separator
+/// characters, capped.
 pub fn clean(note: &str) -> String {
-    let flat: String = note.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let flat: String = note.chars().map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
     let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
     let flat = flat.trim_start_matches(['-', '*', ' ']).trim();
     flat.chars().take(NOTE_CHARS).collect()
 }
 
-/// The notes in a file's text: each `- ` line, cleaned. Other lines (a heading you
-/// added, blank lines) are kept in the file but aren't notes.
-pub fn parse(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.trim_start().strip_prefix("- ").or_else(|| line.trim_start().strip_prefix("* ")))
-        .map(clean)
-        .filter(|note| !note.is_empty())
-        .take(MAX_NOTES)
-        .collect()
+/// The note on one line of the file, if it's a `- ` or `* ` line.
+fn note_on(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix("- ").or_else(|| line.trim_start().strip_prefix("* "))?;
+    Some(clean(rest)).filter(|note| !note.is_empty())
 }
 
-fn render(notes: &[String]) -> String {
-    let mut text = String::from("# What Eavesy remembers\n\nOne note per line. Eavesy reads these with every message. Delete a line to make it forget.\n\n");
-    for note in notes {
-        text.push_str("- ");
-        text.push_str(note);
-        text.push('\n');
+/// The notes in a file's text, as many as go with a turn. Other lines (a heading you
+/// added, blank lines) aren't notes, and every write leaves them as they are.
+pub fn parse(text: &str) -> Vec<String> {
+    text.lines().filter_map(note_on).take(MAX_NOTES).collect()
+}
+
+const HEADER: &str = "# What Eavesy remembers\n\nOne note per line. Eavesy reads these with every message. Delete a line to make it forget.\n\n";
+
+fn read_text(file: &Path) -> String {
+    use std::io::Read;
+    let mut text = String::new();
+    if let Ok(handle) = std::fs::File::open(file) {
+        let _ = handle.take(MAX_FILE_BYTES).read_to_string(&mut text);
     }
     text
 }
 
 pub fn read(file: &Path) -> Vec<String> {
-    std::fs::read_to_string(file).map(|text| parse(&text)).unwrap_or_default()
+    parse(&read_text(file))
 }
 
-fn write(file: &Path, notes: &[String]) -> Result<(), String> {
+fn write_text(file: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
     }
-    crate::fs_writer::atomic_write(file, render(notes).as_bytes())
+    crate::fs_writer::atomic_write(file, text.as_bytes())
 }
 
-/// Adds a note. A note already kept isn't added twice.
+/// The file with the lines `drop` picks taken out; everything else stays byte for byte.
+fn without(text: &str, mut drop: impl FnMut(&str) -> bool) -> String {
+    text.split_inclusive('\n').filter(|line| !drop(line.trim_end_matches(['\n', '\r']))).collect()
+}
+
+/// Adds a note at the end of the file, leaving every other line alone, and returns
+/// the note as kept. A note already kept (in any case) isn't added twice: the kept
+/// one is returned, so Undo removes the right line.
 pub fn add(file: &Path, note: &str) -> Result<String, String> {
     let note = clean(note);
     if note.is_empty() {
         return Err("There's nothing in that to remember.".into());
     }
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut notes = read(file);
-    if notes.iter().any(|kept| kept.eq_ignore_ascii_case(&note)) {
-        return Ok(note);
+    let mut text = read_text(file);
+    let kept: Vec<String> = text.lines().filter_map(note_on).collect();
+    if let Some(same) = kept.iter().find(|kept| kept.eq_ignore_ascii_case(&note)) {
+        return Ok(same.clone());
     }
-    if notes.len() >= MAX_NOTES {
+    if kept.len() >= MAX_NOTES {
         return Err(format!("I'm already keeping {MAX_NOTES} notes. Clear some out in Settings → Assistant → Memory first."));
     }
-    notes.push(note.clone());
-    write(file, &notes)?;
+    if text.trim().is_empty() {
+        text = HEADER.to_string();
+    } else if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!("- {note}\n"));
+    write_text(file, &text)?;
     Ok(note)
 }
 
-/// Removes a note (the first that matches); none matching is fine.
+/// Removes the first line holding this note; none matching is fine.
 pub fn forget(file: &Path, note: &str) -> Result<(), String> {
     let note = clean(note);
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut notes = read(file);
-    let Some(at) = notes.iter().position(|kept| *kept == note) else { return Ok(()) };
-    notes.remove(at);
-    write(file, &notes)
+    let text = read_text(file);
+    let mut found = false;
+    let left = without(&text, |line| {
+        let hit = !found && note_on(line).as_deref() == Some(note.as_str());
+        found |= hit;
+        hit
+    });
+    if found { write_text(file, &left) } else { Ok(()) }
 }
 
+/// Removes every note line; a heading or anything else you wrote stays.
 pub fn forget_all(file: &Path) -> Result<(), String> {
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    write(file, &[])
+    let text = read_text(file);
+    if text.is_empty() {
+        return Ok(());
+    }
+    write_text(file, &without(&text, |line| note_on(line).is_some()))
 }
 
 /// What goes with a turn: the notes when memory is on, none when it's off.
@@ -152,7 +180,7 @@ pub fn open_assistant_memory(app: AppHandle, window: WebviewWindow) -> Result<()
     let file = path().ok_or("No home folder.")?;
     if !file.exists() {
         let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        write(&file, &[])?;
+        write_text(&file, HEADER)?;
     }
     app.shell().open(file.display().to_string(), None).map_err(|e| format!("Couldn't open it: {e}"))
 }
@@ -168,6 +196,7 @@ mod tests {
     #[test]
     fn notes_are_one_clean_capped_line() {
         assert_eq!(clean("  - uses bun,\nnot npm\u{7} "), "uses bun, not npm");
+        assert_eq!(clean("a\u{2028}b\u{85}c"), "a b c");
         assert_eq!(clean(&"a".repeat(NOTE_CHARS + 10)).chars().count(), NOTE_CHARS);
         assert_eq!(parse("# Heading\n\n- one\n* two\nnot a note\n-   \n- three"), ["one", "two", "three"]);
         let many: String = (0..MAX_NOTES + 5).map(|i| format!("- n{i}\n")).collect();
@@ -186,6 +215,32 @@ mod tests {
         forget(&file, "never kept").unwrap();
         assert_eq!(read(&file), ["Ships behind flags"]);
         forget_all(&file).unwrap();
+        assert!(read(&file).is_empty());
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn writes_leave_your_own_lines_alone() {
+        let file = temp_file();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let mine = "# Mine\n\nSome words I wrote.\n- First\n- Second\n";
+        std::fs::write(&file, mine).unwrap();
+        add(&file, "Third").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), format!("{mine}- Third\n"));
+        forget(&file, "Second").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n\nSome words I wrote.\n- First\n- Third\n");
+        forget_all(&file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n\nSome words I wrote.\n");
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn a_duplicate_returns_the_kept_spelling_so_undo_finds_it() {
+        let file = temp_file();
+        add(&file, "Prefers Bun").unwrap();
+        let kept = add(&file, "prefers bun").unwrap();
+        assert_eq!(kept, "Prefers Bun");
+        forget(&file, &kept).unwrap();
         assert!(read(&file).is_empty());
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }

@@ -176,6 +176,8 @@ describe('memory', () => {
     expect(turnInput.parse({ messages }).memory).toEqual([]);
     expect(turnInput.safeParse({ messages, memory: Array.from({ length: 51 }, () => 'x') }).success).toBe(false);
     expect(turnInput.safeParse({ messages, memory: ['x'.repeat(301)] }).success).toBe(false);
+    expect(turnInput.safeParse({ messages, memory: ['😀'.repeat(300)] }).success).toBe(true);
+    expect(memoryBlock(['a\u0085b\u2028c'])).toContain('- a b c');
   });
 
   test('remember is offered to the model', () => {

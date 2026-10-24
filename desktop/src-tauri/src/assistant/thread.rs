@@ -175,11 +175,11 @@ fn view(thread: &Thread) -> View {
                     .content
                     .iter()
                     .filter_map(|block| match block {
-                        Block::ToolUse { id, name, input } => {
+                        Block::ToolUse { id, name, .. } => {
                             let (line, ok) = results.get(id.as_str()).cloned().map_or((None, true), |(line, ok)| (Some(line), ok));
-                            let kept = ok && line.as_deref().is_some_and(|line| line.starts_with("Remembered: "));
-                            let remembered = (name == "remember" && kept)
-                                .then(|| input.get("note").and_then(|note| note.as_str()).map(super::memory::clean))
+                            // The note as kept (a duplicate keeps its first spelling), so Undo finds it.
+                            let remembered = (name == "remember" && ok)
+                                .then(|| line.as_deref().and_then(|line| line.strip_prefix("Remembered: ")).map(super::memory::clean))
                                 .flatten();
                             Some(Step { tool: name.clone(), line, ok, remembered })
                         }
@@ -491,6 +491,18 @@ mod tests {
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
         assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true, remembered: None }]);
+    }
+
+    #[test]
+    fn a_kept_note_offers_undo_with_the_note_as_kept() {
+        let remember = Message { role: Role::Assistant, content: vec![Block::ToolUse { id: "r".into(), name: "remember".into(), input: serde_json::json!({ "note": "prefers bun" }) }] };
+        let kept = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "r".into(), content: "Remembered: Prefers Bun".into(), is_error: false }] };
+        let refused = Message { role: Role::Assistant, content: vec![Block::ToolUse { id: "s".into(), name: "remember".into(), input: serde_json::json!({ "note": "x" }) }] };
+        let no = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "s".into(), content: "I only keep notes you ask me to keep.".into(), is_error: true }] };
+        let turns = [said("remember I use bun"), remember, kept, refused, no].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
+        let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new() });
+        assert_eq!(view.turns[1].steps[0].remembered.as_deref(), Some("Prefers Bun"));
+        assert_eq!(view.turns[2].steps[0].remembered, None);
     }
 
     #[test]

@@ -238,8 +238,8 @@ export function AssistantSettings({ active, settings, onSettings }: {
           </div>
           {notes.length > 0 && (
             <ul className="ev-assistant-folders">
-              {notes.map((note) => (
-                <li key={note}>
+              {notes.map((note, index) => (
+                <li key={`${index}-${note}`}>
                   <span className="ev-set-label ev-assistant-note">{note}</span>
                   <IconButton label={`Forget “${note}”`} icon={Trash2} size={24} onClick={() => forgetNote(note)} />
                 </li>
