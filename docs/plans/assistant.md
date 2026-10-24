@@ -673,19 +673,19 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
 - Every turn has a quiet hover row; on the keyboard-focused turn it's always
   visible. `R` repeats, `E` edits, `⌘C` copies.
 
-### Visual rules (added to DESIGN.md when step 1 ships)
+### Visual rules (in DESIGN.md §4 since step 1)
 
 - **One material.** The panel uses the pill's charcoal family in dark mode
   and the cream paper in light, with real vibrancy; wells are *lighter* than
   paper in dark mode (raised, not sunken), matching Settings' walnut.
-- **Title bar:** close, the name (no mascot when the live bar or the
-  conversation shows one), and Settings. The project chip moves to the
+- **Title bar:** close, the one mascot (it carries the live state, so the
+  live card has none), the name, and Settings. The project chip moves to the
   composer's context line; the account moves into Settings' menu.
 - **Search:** "Search" placeholder, filter as a small icon menu at the end,
   no keycap until the field is focused. Focus ring is 1px ink-3 plus a soft
   glow, not a 2px cream ring.
-- **Live bar:** Stop is a 28px round coral icon button; the `fn` hint lives
-  in its tooltip. The ticker cuts at a word boundary with a soft fade.
+- **Live bar:** the pill carried in (charcoal, coral light, up to 4 lines);
+  Stop is a 28px coral pill; the `fn` hint lives in its tooltip. The ticker cuts at a word boundary with a soft fade.
 - **Keycaps:** one style, shown on hover or focus only, chords drawn as one
   cap (`⌘V`, not `⌘` `V`).
 - **Motion:** the panel opens from the pill's position with a 240 ms

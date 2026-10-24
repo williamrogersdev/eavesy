@@ -52,14 +52,19 @@
   align-items: center;
   gap: 8px;
   height: 32px;
-  margin: 10px 12px 0;
+  margin: 8px 12px 0;
   padding: 0 3px 0 10px;
   border-radius: var(--ev-r-ctl);
-  background: var(--ev-well);
+  background: transparent;
   color: var(--ev-ink-3);
+  transition: background var(--ev-d-state) var(--ev-ease-out);
 }
+/* Quiet until you use it: a field only once hovered, focused or holding a query. */
+.ev-search:hover,
+.ev-search:focus-within,
+.ev-search[data-active='true'] { background: var(--ev-well); }
 /* What to show sits inside the search field: one row of chrome, not two. */
-.ev-search-filter > select { background: transparent; box-shadow: none; color: var(--ev-ink-2); }
+.ev-search-filter > select { background: transparent; box-shadow: none; color: var(--ev-ink-3); }
 .ev-search:focus-within { box-shadow: var(--ev-focus); }
 .ev-search input {
   flex: 1;
@@ -316,36 +321,46 @@
 .ev-grow > * { min-height: 0; overflow: hidden; }
 @keyframes ev-grow { from { grid-template-rows: 0fr; opacity: 0; } }
 
-/* ---------- live bar: the toolbar while a capture runs ---------- */
+/* ---------- live card: the pill, carried into the panel while a capture runs ---------- */
 .ev-livebar {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 42px;
-  padding: 4px 4px 4px 10px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 12px 14px;
   border-radius: var(--ev-r-pop);
-  background: var(--ev-well);
+  background: var(--ev-hud);
+  color: var(--ev-hud-ink);
+  animation: ev-fade var(--ev-d-enter) var(--ev-ease-out);
 }
-.ev-livebar > svg { flex: none; }
-.ev-livebar-label { flex: none; font: 600 12.5px/1 var(--ev-font-round); }
-.ev-livebar-time { flex: none; font: 600 11px/1 var(--ev-font-round); color: var(--ev-ink-3); font-variant-numeric: tabular-nums; }
-.ev-livebar-ticker { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--ev-ink-2); font: var(--ev-t-small); }
+.ev-livebar-head { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.ev-livebar-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ev-rec); }
+.ev-livebar-label { flex: none; font: 600 13px/1 var(--ev-font-round); }
+.ev-livebar-time { flex: none; font: 600 12px/1 var(--ev-font-round); color: var(--ev-hud-ink-2); font-variant-numeric: tabular-nums; }
+.ev-livebar-spacer { flex: 1; }
+.ev-livebar-lines { display: flex; flex-direction: column; gap: 2px; padding-right: 4px; }
+.ev-livebar-lines p {
+  margin: 0;
+  color: var(--ev-hud-ink-2);
+  font: var(--ev-t-body);
+  overflow-wrap: anywhere;
+}
+.ev-livebar-lines p[data-latest] { color: var(--ev-hud-ink); }
 .ev-livebar-stop {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 5px;
-  height: 34px;
+  gap: 6px;
+  height: 28px;
   padding: 0 12px;
-  border-radius: var(--ev-r-ctl);
+  border: 0;
+  border-radius: var(--ev-r-pill);
   background: var(--ev-rec);
-  color: var(--ev-on-coat);
+  color: #161312;
   font: 600 12.5px/1 var(--ev-font-round);
 }
-.ev-livebar-stop .ev-kbd kbd { background: transparent; box-shadow: none; color: inherit; }
 .ev-livebar-stop:hover { filter: brightness(0.95); }
 .ev-livebar-stop:active { transform: scale(0.97); }
-.ev-livebar-stop:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-livebar-stop:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ev-hud), 0 0 0 4px var(--ev-hud-ink); }
 
 /* ---------- empty ---------- */
 .ev-empty {
