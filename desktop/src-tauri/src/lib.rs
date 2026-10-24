@@ -1,3 +1,4 @@
+mod agents;
 mod translation;
 mod telemetry;
 mod app_menu;
@@ -59,6 +60,8 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Claude Code hooks run this binary; they must not start the app.
+    if agents::hook::maybe_run() { return; }
     if walkthrough_agent::maybe_run() { return; }
     let _error_reporting = telemetry::init();
     #[cfg(target_os = "macos")]
@@ -100,6 +103,14 @@ pub fn run() {
             audio::start_capture,
             live_transcript::live_transcript,
             commands::set_live_captions,
+            agents::agents_state,
+            agents::agents_send,
+            agents::agents_later,
+            agents::agents_dismiss,
+            agents::agents_repeat,
+            agents::agents_edit,
+            agents::set_agent_voice,
+            agents::set_agent_hold,
             commands::set_capture_sounds,
             commands::set_hud_look,
             commands::set_dictation_in_panel,
@@ -286,6 +297,7 @@ pub fn run() {
             #[cfg(desktop)]
             updates::check_in_background(&handle);
             vocabulary::refresh(&handle);
+            agents::start(&handle);
 
             tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
             let sync_handle = handle.clone();

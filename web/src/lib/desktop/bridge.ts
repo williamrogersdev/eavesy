@@ -280,6 +280,16 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
 }
 
+/** Turns talking with Claude Code sessions on or off; this adds or removes Eavesy's hooks in `~/.claude/settings.json`. */
+export async function setAgentVoice(enabled: boolean): Promise<void> {
+  await invoke('set_agent_voice', { enabled });
+}
+
+/** How long a finished session waits for your reply. 0 never waits. */
+export async function setAgentHold(seconds: number): Promise<void> {
+  await invoke('set_agent_hold', { seconds });
+}
+
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
 export type HudPreviewLines = 0 | 1 | 2 | 4;
 
@@ -483,6 +493,10 @@ export interface Settings {
   hud_result_preview?: boolean;
   /** Live words about a second sooner from a fast recognizer. Absent means on. */
   fast_live_words?: boolean;
+  /** Talk with Claude Code sessions. Absent means off. */
+  agent_voice?: boolean;
+  /** Seconds a finished session waits for your reply. Absent means 300. */
+  agent_hold_secs?: number;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

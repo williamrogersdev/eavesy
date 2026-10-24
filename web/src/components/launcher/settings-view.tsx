@@ -4,7 +4,7 @@ import './preferences.css';
 
 import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Loader2, LogOut, MessageSquareText, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Button, Card, IconButton, Mascot, Row, Select, StatusDisc, Switch } from '@/components/launcher/ui';
+import { Button, Card, IconButton, Mascot, Row, Segmented, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
 import {
@@ -15,6 +15,8 @@ import {
   setLauncherPosition,
   setLiveCaptions,
   setCaptureSounds,
+  setAgentHold,
+  setAgentVoice,
   setHudLook,
   checkPermissions,
   checkForUpdates,
@@ -45,6 +47,14 @@ const PREVIEW_OPTIONS: { value: string; label: string }[] = [
   { value: '1', label: '1 line' },
   { value: '2', label: '2 lines' },
   { value: '4', label: '4 lines' },
+];
+
+type AgentHold = '0' | '120' | '300' | '900';
+const AGENT_HOLDS: { value: AgentHold; label: string }[] = [
+  { value: '0', label: 'Don’t wait' },
+  { value: '120', label: '2 min' },
+  { value: '300', label: '5 min' },
+  { value: '900', label: '15 min' },
 ];
 
 export function accountInitial(account: AccountInfo): string {
@@ -350,6 +360,24 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setLocalError('The recording sound preference couldn’t be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
   };
+  const agentsOn = settings?.agent_voice ?? false;
+  const agentHold = String(settings?.agent_hold_secs ?? 300) as AgentHold;
+  const [agentsBusy, setAgentsBusy] = useState(false);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+  const toggleAgents = (next: boolean) => {
+    setAgentsBusy(true);
+    setAgentsError(null);
+    void setAgentVoice(next)
+      .then(() => setSettings((current) => current ? { ...current, agent_voice: next } : current))
+      .catch((error: unknown) => setAgentsError(errMsg(error, 'Couldn’t change that setting.')))
+      .finally(() => setAgentsBusy(false));
+  };
+  const pickHold = (next: AgentHold) => {
+    setAgentsError(null);
+    void setAgentHold(Number(next))
+      .then(() => setSettings((current) => current ? { ...current, agent_hold_secs: Number(next) } : current))
+      .catch((error: unknown) => setAgentsError(errMsg(error, 'Couldn’t change how long sessions wait.')));
+  };
   const savedLines = settings?.hud_preview_lines;
   const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 ? savedLines : 0;
   const translucent = settings?.hud_translucent ?? true;
@@ -464,6 +492,24 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           {account
             ? <DictationCard account={accountPrefs} projects={projects.projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
             : signInFirst('choose how dictation is written')}
+          {isDesktop() && (
+            <Section title="Claude Code sessions">
+              <Switch
+                checked={agentsOn}
+                onCheckedChange={toggleAgents}
+                disabled={!settings || agentsBusy}
+                label="Say when a session finishes or needs you"
+                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
+              />
+              {agentsOn && (
+                <div className="mt-3">
+                  <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
+                  <p className="ev-set-hint mt-2">While it waits, the session looks busy in Claude. Press Esc there to take it back.</p>
+                </div>
+              )}
+              {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
+            </Section>
+          )}
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
           {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}
