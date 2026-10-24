@@ -12,6 +12,11 @@ becomes **"A conversation with Eavesy, never a chat with someone else's
 model"** (see [What changes in the other plans](#what-changes-in-the-other-plans)).
 Everywhere else, the architecture doc still wins.
 
+A second change, from 2026-10-24's computer use and secrets sections (L–N):
+the **Remote** trust tier may *request* a browser task in Eavesy's own
+browser, with a click every time. It still gets no process control, no
+grants and no secrets, ever.
+
 ## In one paragraph
 
 Eavesy is a small, opinionated assistant that lives on your Mac. You talk to
@@ -58,6 +63,8 @@ on purpose in three places.
 | Memory can be viewed, edited and deleted, with an off-the-record mode | Claude Topics and incognito, ChatGPT memories and Temporary Chat, Grok | **Same** (H3) |
 | Personality is a few presets and axes, not a free-form persona | ChatGPT (8 styles, 4 characteristics) | **Same** (G4) |
 | Personality as companionship, with romance, "spicy" modes and streaks | Grok companions, which drew child-safety criticism (Common Sense Media, Jan 2026) | **Never** (G6) |
+| Computer use asks per app, can't use the terminal or approve security prompts, and your own keyboard or mouse takes over | ChatGPT Computer Use | **Same** (L3, L4) |
+| Read the accessibility tree first, screenshots only when it's missing; act without moving your pointer | macOS computer-use MCP servers (Cua Driver, Peekaboo), *unverified third-party roundup* | **Adopt** (L1) |
 | Distinct sounds for listening, thinking, done and error; implicit confirmation by default, explicit for sends and deletes | Google conversation design, Meta voice guidelines | **Adopt** (B9; tiers 1–2) |
 
 Where we differ, on purpose:
@@ -203,7 +210,7 @@ reads or writes can change a tool's tier.**
 | **1. Do it** | Small, reversible, stays inside Eavesy or opens something | None. It says what it did, with **Undo** for 10 s | Save a note, open an app or file, open a link you named or one from Eavesy's own data (never one taken from content), copy to clipboard, set a reminder, draft a reply |
 | **2. Say yes** | Sends your words somewhere | Read-back, then **"yes"/"send it" or a click**. Silence never confirms | Reply into a Claude Code session, answer an agent's question, send a message through a connector |
 | **3. Click** | Changes or removes something outside Eavesy, or grants power | **A click on a card that lists exactly what will happen.** Voice can open the card; it can't press it | Stop processes, remove worktrees, move files to Trash, edit or create files, run a command, add or change an MCP server or connector, change Eavesy's own rules |
-| **Never** | | Not offered | Approve another agent's tool use, type passwords or secrets, pay for anything, delete permanently, turn off a macOS security setting, act on instructions found inside content |
+| **Never** | | Not offered | Approve another agent's tool use, type your passwords, show a secret's value to any model or agent (secrets move only through M), solve CAPTCHAs, pay for anything, delete permanently, turn off a macOS security setting, act on instructions found inside content |
 
 - **C1.** Tier 3 cards say the exact thing (the paths, the process names and
   PIDs, the command, the server's URL and what it can access), not a summary.
@@ -248,7 +255,8 @@ reads or writes can change a tool's tier.**
   marked **read-only** or **read and write**. Defaults: `~/Eavesy`
   (read and write) and the repo roots chosen in machine-companion decision 2
   (read-only). A deny list always wins and can't be removed: `~/.ssh`,
-  keychains, browser profiles, password stores, and every repo's `.git`
+  keychains, browser profiles (Eavesy's own included: only its browser
+  driver touches it), password stores, and every repo's `.git`
   internals (git operations go through `git`, never file edits).
 - **E2.** It writes files only through tier 3, except its own folder
   (`~/Eavesy/assistant/`, see H).
@@ -382,6 +390,145 @@ How it sounds (spoken lines; the screen has the details):
 | End of your sentence → first spoken word | < 1.5 s (p50), < 3 s (p95) |
 | Tier 1 action → done | < 500 ms |
 | Captions lag behind speech | < 500 ms |
+
+### L. Hands: the browser and the rest of the Mac
+
+Eavesy can do things in apps, not only talk about them. This is how it
+reaches the parts of your computer no MCP server covers.
+
+- **L1. The cheapest reliable path wins.** In order: a connector or API
+  (F), a command-line tool, then the app's **accessibility tree** (act on
+  a named button or field, then check the UI changed), and only then
+  screenshots and clicks by position. Accessibility actions run in the
+  background without moving your pointer or taking focus, where the app
+  allows it.
+- **L2. Eavesy's own browser.** Web tasks run in a separate Chromium
+  profile that Eavesy drives over CDP (the same minimal client as
+  [self-hosted-meeting-bot.md](self-hosted-meeting-bot.md)). It starts
+  signed in to nothing. You sign in there yourself when a task needs it,
+  once; Eavesy never types your password. Your own browser is used only
+  through the extension (architecture), read-only unless you grant a site.
+- **L3. Apps are granted one at a time.** The first time a task needs an
+  app, a tier 3 card asks: **View** (read the screen) or **Use** (click and
+  type). Grants show in Settings → Hands with a switch each. Never granted:
+  Terminal and other shells (commands go through the command tool, tier 3),
+  password managers, Keychain Access, System Settings' security panes, and
+  Eavesy itself.
+- **L4. You can always see it and stop it.**
+  - The pill shows **"Using Chrome"** and who asked, with Stop.
+  - The window being driven gets a thin manila outline.
+  - Any key press or mouse move of yours pauses the task at once, and it
+    waits until you say go on. `Esc` or the talk shortcut stops it.
+  - Only one task drives the foreground at a time. Background tabs in
+    Eavesy's browser can run side by side.
+- **L5. Steps follow the tier table.** Looking and navigating inside a
+  granted app is tier 0 or 1. A **commit step** is tier 2 or 3, shown as
+  the exact thing about to happen ("Submit the form on dashboard.stripe.com
+  with these 3 fields"). Commit steps include sending, posting, submitting,
+  saving settings, deleting and inviting. Payments, CAPTCHAs, admin
+  password prompts and macOS permission dialogs stay with you (Never).
+- **L6. Screens are data.** What Eavesy reads on screen follows C4. Only the
+  target window is captured, never the whole display. Screenshots go to the
+  model and nowhere else. They aren't kept unless you turn on task replays.
+- **L7. Every task has a record.** The Activity log keeps the steps, the app
+  and site, who asked, and each commit step's card. A replay with
+  thumbnails is opt-in and local only. Secret steps never appear in it (M4).
+
+### M. Secrets
+
+Rotating a key and putting the new one everywhere it's used is a job Eavesy
+should do well, because doing it by hand means pasting secrets into chats,
+terminals and files. **The rule that makes it safe: no model and no agent
+ever sees a secret's value.** Not Eavesy's model, not the second-model
+check, not the agent that asked.
+
+- **M1. Secrets are Grants** (architecture). The model and calling agents
+  get a **handle** and a **fingerprint** (the provider's prefix and last 4
+  characters, like `phx_…9f2c`). Only the core moves the bytes. The value
+  sits in the Keychain while it's in flight.
+- **M2. How a value gets in**, best first:
+  1. A connector or API returns it straight to the core.
+  2. The core reads it from the page in Eavesy's own browser (L2) by element,
+     never by screenshot. While a secret is on screen, screenshot mode is
+     off. If a step needs pixels, Eavesy stops and asks you.
+  3. You paste it into Eavesy's secret field, which goes straight to the
+     Keychain and never into the thread.
+
+  Secrets never go on the clipboard (clipboard managers keep history).
+- **M3. How a value gets out.** Only to destinations on the card, written by
+  the core:
+  - Doppler: `doppler secrets set`.
+  - Cloudflare: `wrangler secret put`.
+  - GitHub Actions: `gh secret set`.
+  - A `.env` file in a read-and-write folder.
+  - The macOS Keychain.
+
+  The value goes through stdin or the child's environment, **never the
+  command line**, because arguments show up in `ps` and in Eavesy's own
+  process list. `.env` writes are atomic and keep the file's permissions.
+- **M4. Nothing downstream holds a value.** The thread, Activity log,
+  memory, task replays, monitors and the second-model check see the handle
+  and fingerprint only.
+- **M5. Finding where a key is used.** Eavesy searches granted folders, and
+  Doppler, wrangler and GitHub config, for the **variable name**
+  (`POSTHOG_API_KEY`), never for the value. It shows what it found as rows
+  you can untick.
+- **M6. Rotation runs in a fixed order:**
+  1. **Create** the new key. You sign in to the provider yourself if asked.
+     The value goes to the Keychain (M2).
+  2. **Write** it to every destination. One tier 3 card lists each one
+     exactly (Doppler project, config and name; file path and variable;
+     worker and secret name). Partial accept works (C2).
+  3. **Check** each destination with a real call that uses the new key: the
+     core runs it, and only pass or fail comes back.
+  4. **Revoke** the old key, on a **separate tier 3 card that appears only
+     after every check passed**. If any check fails, Eavesy stops, keeps
+     the old key working, and says which destination failed.
+- **M7.** "Always allow" (C3) never applies to secrets. Each rotation is
+  clicked through.
+
+Example: "Rotate my PostHog API key." PostHog's docs describe creating a
+personal API key in the web app, with the value shown once. Project secret
+keys also have an API. Whether a personal key can be created through the API
+is *unverified*, so v1 plans on the browser path (M2.2).
+Eavesy opens PostHog's key settings in its own browser and asks you to sign
+in if needed. It creates the key with the same scopes as the old one. Then
+it shows the card: Doppler `eavesy/prd POSTHOG_API_KEY`,
+`web/.dev.vars`, Cloudflare worker `eavesy-web`. It writes, checks each, and
+then offers "Revoke the old key `phx_…41aa`".
+
+### N. Eavesy as the middleman for other agents
+
+Claude Code, Codex and cloud agents shouldn't each need their own computer
+use, secrets access and cleanup powers. They ask Eavesy, and Eavesy does it
+in front of you, under one set of rules.
+
+- **N1. The tools.** Through MCP (F6):
+  - `browser_task` and `computer_task`: a goal, the app or site, and limits.
+  - `secret_rotate` and `secret_use`: run a command with a secret in its
+    environment, and get back only the exit status and output with the
+    value scrubbed.
+  - The machine tools machine-companion already has.
+
+  Results come back as text, not screenshots, unless you allow more.
+- **N2. A request runs at the caller's tier, never Eavesy's.** An agent
+  gets no more power by asking Eavesy than it has itself (architecture trust
+  tiers). Its goal text is content (C4): it can't raise a tier or skip a
+  card.
+- **N3. Cards say who's asking.** "**Claude Code · eavesy repo** asks to
+  rotate `POSTHOG_API_KEY`", never "you asked". The second-model check (C7)
+  compares the action with the agent's request *and* says plainly that you
+  didn't ask for it yourself.
+- **N4. By tier:**
+
+  | Caller | Can request | Never |
+  |---|---|---|
+  | Local agent (identified by peer pid) | Browser and computer tasks in apps you granted; secret rotation and use (cards every time) | Approving its own cards; seeing a secret value |
+  | Browser extension | Nothing beyond what it has today | — |
+  | Remote (cloud MCP via the Mac link) | A browser task in Eavesy's own browser, **signed-out profile only**, with a click per request; text results | Your apps, your signed-in browsers, secrets, process control, including by driving Activity Monitor or a terminal |
+
+- **N5. One queue.** Agent requests join the attention queue (A3) like
+  everything else, so you see them in the pill and the thread, in order.
 
 ## The interface
 
@@ -533,6 +680,12 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
   actions, so you can see what you sent.
 - **machine-companion.md** — its confirm card is a tier 3 card; its
   monitors are D1 monitors.
+- **agent-architecture.md, trust tiers** — local agents may *request*
+  computer tasks and secret rotation, and remote agents may *request* a
+  signed-out browser task, each behind a card (N4). Remote still gets no
+  process control, grants or secrets.
+- **self-hosted-meeting-bot.md** — its CDP client is shared with Eavesy's
+  browser (L2).
 
 ## Decisions for William
 
@@ -546,6 +699,12 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
 4. **"Always allow" (C3).** Ship it in the first version, or wait until the
    Activity log has a few weeks of history?
 5. **Personality default.** "Eavesy" (recommended) or "Plain"?
+6. **Computer use engine.** Our own Swift accessibility driver plus Claude's
+   computer use tool for the screenshot fallback (recommended), or wrap an
+   open-source server like Cua Driver (MIT)?
+7. **Remote agents and the browser (N4).** Allow signed-out browser tasks
+   from cloud agents with a click each time (recommended), or keep remote
+   agents off computer use entirely?
 
 ## Build order
 
@@ -563,6 +722,11 @@ Each step ships on its own and is useful alone.
    (F, G, H).
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
+8. **Hands** (L): Eavesy's browser and app grants, then accessibility
+   actions, then the screenshot fallback. Local agents can call
+   `browser_task` (N).
+9. **Secrets** (M): handles in the Keychain, destinations (Doppler,
+   wrangler, `gh`, `.env`), checks, then rotation with the two cards.
 
 ## Sources
 
@@ -590,6 +754,11 @@ Research of 2026-10-24. Vendor-reported numbers are the vendors'.
   [conversation design: confirmations](https://developers.google.com/assistant/conversation-design/confirmations)
 - Apple: [Siri AI](https://www.apple.com/newsroom/2026/09/siri-ai-a-profoundly-more-capable-and-personal-assistant-is-here/) ·
   [WWDC26 session 343](https://developer.apple.com/videos/play/wwdc2026/343/)
+- Computer use: [ChatGPT Computer Use](https://learn.chatgpt.com/docs/computer-use) ·
+  [Anthropic computer use best practices](https://github.com/anthropics/claude-quickstarts/tree/main/computer-use-best-practices) ·
+  [computer-use MCP roundup](https://pinggy.io/blog/best_computer_use_mcp_servers/) (*third-party*) ·
+  [PostHog personal API keys](https://posthog.com/docs/api/personal-api-keys) ·
+  [PostHog project secret API keys](https://posthog.com/docs/api/project-secret-api-keys)
 - Voice design: [Meta voice guidelines](https://developers.meta.com/horizon/design/voice/)
 - Open source: [Hermes Agent](https://github.com/NousResearch/hermes-agent)
   (its `website/docs` and `SECURITY.md`) ·

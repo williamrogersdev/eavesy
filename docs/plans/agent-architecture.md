@@ -203,9 +203,9 @@ test fails CI if either server's tool list or schemas drift from the spec.
 | Tier | Who | Can |
 |---|---|---|
 | Human | Eavesy UI, hotkeys | Everything. The only tier that can approve grants and stop processes outside a session's own tree |
-| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes the core recorded as its own session's (see the ownership rule above) |
+| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes the core recorded as its own session's (see the ownership rule above). *Request* browser and computer tasks and secret rotation, each behind a card ([assistant.md](assistant.md) N4). Never sees a secret's value |
 | Browser extension | Your browser, authenticated by native messaging | Register tabs as Sessions, receive delivered Items, capture page content |
-| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. **No process control, no grants, ever** |
+| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. *Request* a browser task in Eavesy's own signed-out browser, with a click per request (changed 2026-10-24 by [assistant.md](assistant.md) N4). **No process control, no grants, no secrets, ever**, including by driving an app |
 
 ### Mac link authentication
 
