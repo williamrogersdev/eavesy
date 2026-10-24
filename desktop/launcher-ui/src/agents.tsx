@@ -25,12 +25,14 @@ interface Item {
   draft: string | null;
   /** You clicked in to type, so voice answers leave it alone. */
   typing: boolean;
+  /** You said no to it, so “send it” sends nothing until a new draft. */
+  declined: boolean;
 }
 
 const preview = !(window as unknown as { __TAURI__?: unknown }).__TAURI__;
 const PREVIEW: Item[] = preview ? [
-  { id: 1, session_id: 'a', name: 'eavesy', kind: 'question', summary: 'wants to know whether to ship the HUD fix behind a flag', suggestion: 'No flag. Ship it and open a PR.', message: 'The HUD fix is ready and tests pass. Should I put it behind a flag or ship it directly?', held: true, draft: null, typing: false },
-  { id: 2, session_id: 'b', name: 'repackify', kind: 'approval', summary: 'needs approval to run a command', suggestion: null, message: null, held: false, draft: null, typing: false },
+  { id: 1, session_id: 'a', name: 'eavesy', kind: 'question', summary: 'wants to know whether to ship the HUD fix behind a flag', suggestion: 'No flag. Ship it and open a PR.', message: 'The HUD fix is ready and tests pass. Should I put it behind a flag or ship it directly?', held: true, draft: null, typing: false, declined: false },
+  { id: 2, session_id: 'b', name: 'repackify', kind: 'approval', summary: 'needs approval to run a command', suggestion: null, message: null, held: false, draft: null, typing: false, declined: false },
 ] : [];
 
 const KIND_LABEL: Record<Kind, string> = { approval: 'Needs approval', question: 'Asks you', finished: 'Finished' };
@@ -99,7 +101,7 @@ function Agents() {
       ) : (
         <p className="ag-note">Approve or deny it in Claude. Eavesy never approves tools for you.</p>
       )}
-      {canReply && head.draft && !head.typing && !note && <p className="ag-note">Say “send it” to send this, or say something else to change it.</p>}
+      {canReply && head.draft && !head.typing && !head.declined && !note && <p className="ag-note">Say “send it” to send this, or say something else to change it.</p>}
       {note && <p className="ag-note">{note}</p>}
       <div className="ag-actions">
         <button type="button" className="ag-btn" onClick={() => void invoke('agents_dismiss', { id: head.id })}><X size={13} strokeWidth={1.75} />{head.held ? 'Let it stop' : 'Dismiss'}</button>

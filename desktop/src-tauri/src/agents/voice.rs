@@ -16,7 +16,10 @@ pub const ANSWER_WINDOW: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
+    /// "Send it" and its like.
     Send,
+    /// A bare "yes": it sends only in answer to "Send that?".
+    Yes,
     No,
     Later,
     Dismiss,
@@ -32,6 +35,8 @@ pub enum Step {
     Dismiss,
     /// Nothing is sent; what's on the card stays there.
     Decline,
+    /// "Send it" with nothing offered: there's nothing to send.
+    NothingToSend,
     /// Put this on the card and read it back, asking to send it.
     ReadBack(String),
 }
@@ -50,7 +55,7 @@ const SEND: &[&str] = &[
 ];
 /// Only answers "Send that?", so alone they send what was just read out.
 const YES: &[&str] = &["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "correct", "sounds good", "thats right", "perfect"];
-const NO: &[&str] = &["no", "nope", "cancel", "dont send it", "dont send that", "dont send", "do not send it", "wait", "stop", "no dont send it", "no dont send that"];
+const NO: &[&str] = &["no", "nope", "cancel", "dont send it", "dont send that", "dont send", "do not send it", "no dont send it", "no dont send that"];
 const LATER: &[&str] = &["later", "not now", "ask me later", "remind me later", "come back later", "skip", "skip it", "maybe later"];
 const DISMISS: &[&str] = &["dismiss", "dismiss it", "dismiss that", "let it stop", "ignore it", "ignore that", "never mind", "nevermind", "forget it"];
 /// Said around a command without changing it.
@@ -92,8 +97,11 @@ pub fn parse(text: &str) -> Command {
     let normalized = normalize(text);
     let core = strip(&normalized, LEAD, TAIL);
     let is = |set: &[&str]| set.contains(&core);
-    if is(SEND) || is(YES) {
+    if is(SEND) {
         return Command::Send;
+    }
+    if is(YES) {
+        return Command::Yes;
     }
     // "yes, send that", "okay send it".
     if YES.iter().any(|yes| core.strip_prefix(yes).and_then(|rest| rest.strip_prefix(' ')).is_some_and(|rest| SEND.contains(&rest))) {
@@ -110,14 +118,16 @@ pub fn parse(text: &str) -> Command {
     }
 }
 
-/// What `heard` does to an item showing `draft` (a reply read back to you)
-/// or else `suggestion`. "Send it" sends only what was last offered; with
-/// nothing offered, a "yes" or "no" is your reply and is read back too.
-pub fn step(suggestion: Option<&str>, draft: Option<&str>, heard: &str) -> Step {
-    let offered = draft.or(suggestion).map(str::trim).filter(|text| !text.is_empty());
+/// What `heard` does given `offered`: the reply Eavesy last asked "Send
+/// that?" about (a draft read back, else the suggestion), or None once you
+/// said no to it. "Send it" sends only what's offered; with nothing offered,
+/// a "yes" or "no" is your reply and is read back too.
+pub fn step(offered: Option<&str>, heard: &str) -> Step {
+    let offered = offered.map(str::trim).filter(|text| !text.is_empty());
     let heard = heard.trim();
     match (parse(heard), offered) {
-        (Command::Send, Some(text)) => Step::Send(text.to_string()),
+        (Command::Send | Command::Yes, Some(text)) => Step::Send(text.to_string()),
+        (Command::Send, None) => Step::NothingToSend,
         (Command::No, Some(_)) => Step::Decline,
         (Command::Later, _) => Step::Later,
         (Command::Dismiss, _) => Step::Dismiss,
@@ -125,9 +135,18 @@ pub fn step(suggestion: Option<&str>, draft: Option<&str>, heard: &str) -> Step 
     }
 }
 
+/// How much of a draft is read back; `speak` cuts long lines, and the
+/// question at the end must always be heard.
+const READ_BACK_CHARS: usize = 300;
+
 /// What Eavesy says back after a new draft.
 pub fn read_back(draft: &str) -> String {
-    format!("I'll send: {}. Send that?", draft.trim().trim_end_matches('.'))
+    let draft = draft.trim().trim_end_matches('.');
+    if draft.chars().count() <= READ_BACK_CHARS {
+        return format!("I'll send: {draft}. Send that?");
+    }
+    let start: String = draft.chars().take(READ_BACK_CHARS).collect();
+    format!("I'll send: {start}… and the rest, on the card. Send that?")
 }
 
 /// Whether a dictation starting `now` answers `head`, the card's front item:
@@ -151,8 +170,10 @@ mod tests {
     #[test]
     fn send_phrases_match_whole_utterances_only() {
         for said in ["Send it.", "yes, send that", "Yes send that!", "okay send it please", "Um, send it", "Yeah.", "go ahead", "Send it, thanks"] {
-            assert_eq!(parse(said), Command::Send, "{said}");
+            assert!(matches!(parse(said), Command::Send | Command::Yes), "{said}");
         }
+        assert_eq!(parse("Yeah."), Command::Yes);
+        assert_eq!(parse("yes, send that"), Command::Send);
         for said in ["send it to staging", "yes but also fix the tests", "send that and open a PR", "sending it later", "yes please, and run the tests"] {
             assert_eq!(parse(said), Command::Reply, "{said}");
         }
@@ -166,42 +187,56 @@ mod tests {
         assert_eq!(parse("let it stop"), Command::Dismiss);
         assert_eq!(parse("No."), Command::No);
         assert_eq!(parse("don't send it"), Command::No);
-        for said in ["later, also fix the tests", "dismiss the warning and continue", "no, put it behind a flag", "stop the server first"] {
+        for said in ["later, also fix the tests", "dismiss the warning and continue", "no, put it behind a flag", "stop the server first", "wait", "stop"] {
             assert_eq!(parse(said), Command::Reply, "{said}");
         }
     }
 
     #[test]
     fn send_it_sends_what_was_last_offered() {
-        assert_eq!(step(Some("No flag."), None, "send it"), Step::Send("No flag.".into()));
-        // A draft read back wins over the suggestion it replaced.
-        assert_eq!(step(Some("No flag."), Some("Put it behind a flag"), "yes"), Step::Send("Put it behind a flag".into()));
+        assert_eq!(step(Some("No flag."), "send it"), Step::Send("No flag.".into()));
+        assert_eq!(step(Some("Put it behind a flag"), "yes"), Step::Send("Put it behind a flag".into()));
+    }
+
+    #[test]
+    fn send_it_with_nothing_offered_never_becomes_a_draft() {
+        assert_eq!(step(None, "send it"), Step::NothingToSend);
+        assert_eq!(step(Some("   "), "Yes, send that."), Step::NothingToSend);
     }
 
     #[test]
     fn anything_else_is_read_back_and_never_sent() {
-        assert_eq!(step(Some("No flag."), None, "no, put it behind a flag"), Step::ReadBack("no, put it behind a flag".into()));
-        assert_eq!(step(Some("No flag."), Some("Put it behind a flag"), "actually ship it"), Step::ReadBack("actually ship it".into()));
+        assert_eq!(step(Some("No flag."), "no, put it behind a flag"), Step::ReadBack("no, put it behind a flag".into()));
+        assert_eq!(step(Some("Put it behind a flag"), "actually ship it"), Step::ReadBack("actually ship it".into()));
         // With nothing offered, "yes" and "no" are the reply itself.
-        assert_eq!(step(None, None, "Yes."), Step::ReadBack("Yes.".into()));
-        assert_eq!(step(None, Some("  "), "no"), Step::ReadBack("no".into()));
+        assert_eq!(step(None, "Yes."), Step::ReadBack("Yes.".into()));
+        assert_eq!(step(Some("  "), "no"), Step::ReadBack("no".into()));
     }
 
     #[test]
     fn no_declines_and_later_and_dismiss_do_what_the_buttons_do() {
-        assert_eq!(step(Some("No flag."), None, "no"), Step::Decline);
-        assert_eq!(step(Some("No flag."), Some("Flag it"), "cancel"), Step::Decline);
-        assert_eq!(step(Some("No flag."), None, "later"), Step::Later);
-        assert_eq!(step(None, None, "dismiss"), Step::Dismiss);
+        assert_eq!(step(Some("No flag."), "no"), Step::Decline);
+        assert_eq!(step(Some("Flag it"), "cancel"), Step::Decline);
+        assert_eq!(step(Some("No flag."), "later"), Step::Later);
+        assert_eq!(step(None, "dismiss"), Step::Dismiss);
     }
 
     #[test]
     fn a_full_conversation_sends_only_after_yes() {
-        let suggestion = Some("No flag. Ship it.");
-        let Step::ReadBack(draft) = step(suggestion, None, "Put it behind a flag.") else { panic!("should read back") };
+        let Step::ReadBack(draft) = step(Some("No flag. Ship it."), "Put it behind a flag.") else { panic!("should read back") };
         assert_eq!(read_back(&draft), "I'll send: Put it behind a flag. Send that?");
-        assert_eq!(step(suggestion, Some(&draft), "no"), Step::Decline);
-        assert_eq!(step(suggestion, Some(&draft), "yes, send that"), Step::Send("Put it behind a flag.".into()));
+        assert_eq!(step(Some(&draft), "no"), Step::Decline);
+        // Once declined nothing is offered: "send it" sends nothing, "yes" is read back.
+        assert_eq!(step(None, "send it"), Step::NothingToSend);
+        assert_eq!(step(None, "yes"), Step::ReadBack("yes".into()));
+        assert_eq!(step(Some(&draft), "yes, send that"), Step::Send("Put it behind a flag.".into()));
+    }
+
+    #[test]
+    fn a_long_read_back_still_ends_with_the_question() {
+        let line = read_back(&"word ".repeat(200));
+        assert!(line.ends_with("on the card. Send that?"), "{line}");
+        assert!(line.chars().count() < 400);
     }
 
     fn question(queue: &mut Queue, kind: Kind) -> Item {

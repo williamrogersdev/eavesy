@@ -342,13 +342,6 @@ pub fn agents_state() -> Snapshot {
 /// stopped waiting, the reply is copied for you to paste instead.
 #[tauri::command]
 pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) -> Result<&'static str, String> {
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        return Err("Write a reply first.".into());
-    }
-    if text.chars().count() > protocol::MAX_REPLY_CHARS {
-        return Err(format!("That reply is too long to send. Keep it under {} characters.", protocol::MAX_REPLY_CHARS));
-    }
     // The card names the session it showed you, so a reply never lands in another one.
     if !with_queue(|queue| queue.get(id).is_some_and(|item| item.session_id == session_id)) {
         return Err("That session isn't waiting any more.".into());
@@ -361,6 +354,13 @@ pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) ->
 /// Sends a reply through the item's held hook, or copies it when the session
 /// stopped waiting, and takes the item off. Says which: "sent" or "copied".
 fn send_reply(app: &AppHandle, id: u64, text: String) -> Result<&'static str, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Write a reply first.".into());
+    }
+    if text.chars().count() > protocol::MAX_REPLY_CHARS {
+        return Err(format!("That reply is too long to send. Keep it under {} characters.", protocol::MAX_REPLY_CHARS));
+    }
     let held = with_queue(|queue| queue.get(id).map(|item| item.held)).ok_or("That session isn't waiting any more.")?;
     let sent = held && with_holds(|holds| holds.remove(&id)).is_some_and(|tx| tx.send(Answer::Reply { text: text.clone() }).is_ok());
     if !sent {
@@ -423,6 +423,8 @@ pub fn agents_edit(app: AppHandle, id: u64) {
 /// before the dictation stops Eavesy talking. Forgets any earlier answer.
 pub fn claim_dictation() -> Option<u64> {
     *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    // Read under separate locks: a line ending between them only shifts
+    // whether this one dictation counts, and a playing line counts anyway.
     let last_said = *LAST_SAID.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let (speaking, quiet_since) = speak::status();
     with_queue(|queue| voice::answers(queue.head(), last_said, speaking, quiet_since, std::time::Instant::now()))
@@ -474,7 +476,7 @@ pub fn answer(app: &AppHandle, dictation: &str, item: u64, text: &str) {
     // The card and Eavesy's voice say what happened; the HUD steps aside.
     crate::hud::advance_from(app, dictation, &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing], crate::hud::HudState::idle());
     tracing::info!(item, "voice answer to the reply card");
-    match voice::step(found.suggestion.as_deref(), found.draft.as_deref(), &text) {
+    match voice::step(found.offered(), &text) {
         voice::Step::Send(reply) => {
             let said = match send_reply(app, item, reply) {
                 Ok("sent") => format!("Sent to {}.", found.name),
@@ -497,8 +499,13 @@ pub fn answer(app: &AppHandle, dictation: &str, item: u64, text: &str) {
         // Only the card is told: anything new at the front waits to be said
         // until this is answered, rather than being cut off by it.
         voice::Step::Decline => {
+            with_queue(|queue| queue.decline(item));
             let _ = app.emit(STATE_EVENT, snapshot());
             say("Okay, not sent. Say your reply, or use the card.", Some(item));
+        }
+        voice::Step::NothingToSend => {
+            let _ = app.emit(STATE_EVENT, snapshot());
+            say("There's nothing to send yet. Say your reply, or use the card.", Some(item));
         }
         voice::Step::ReadBack(draft) => {
             with_queue(|queue| queue.set_draft(item, draft.clone()));
@@ -573,6 +580,14 @@ mod tests {
         let (a, _) = queue.push("a", "docs".into(), Kind::Finished, None, false, 1);
         queue.resolve(a, "finished the docs".into(), None, false);
         assert_eq!(utterance(&items(&queue), false).as_deref(), Some("docs: finished the docs."));
+    }
+
+    #[test]
+    fn an_answer_belongs_to_the_dictation_that_claimed_it() {
+        answer_with("dictation-1", 7);
+        assert_eq!(take_answer("dictation-2"), None, "another dictation never takes it");
+        assert_eq!(take_answer("dictation-1"), Some(7));
+        assert_eq!(take_answer("dictation-1"), None, "taken once");
     }
 
     #[test]
