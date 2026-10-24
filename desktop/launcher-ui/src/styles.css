@@ -803,3 +803,6 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 .ag-btn[data-primary] { background: var(--ev-manila); color: var(--ev-manila-ink); box-shadow: none; }
 .ag-btn[data-primary]:hover { background: var(--ev-manila-shade); }
 .ag-btn:disabled { opacity: 0.45; }
+
+/* Eavesy's answer on the pill: the full reply, scrolling when it runs long. */
+.ctl-answer { flex: 1; min-height: 0; overflow-y: auto; user-select: text; }

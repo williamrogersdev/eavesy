@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, ShieldAlert } from 'lucide-react';
+import { ArrowUp, ShieldAlert, Volume2 } from 'lucide-react';
 import {
   clearAssistantThread,
   decideAssistantCard,
@@ -7,6 +7,7 @@ import {
   getAssistantThread,
   onAssistantCards,
   onAssistantThread,
+  repeatAssistantReply,
   sendToAssistant,
   setAssistantMode,
   type AssistantCard,
@@ -139,7 +140,12 @@ export function EavesyTab({ flash }: { flash: Flash }) {
               ))}
               {turn.text && <p className="ev-turn-text">{turn.text}</p>}
               <span className="ev-turn-meta">
-                {turn.who === 'you' ? (turn.spoken ? 'Said' : 'Typed') : null}
+                {turn.who === 'you' ? (turn.spoken ? 'Said' : 'Typed') : turn.spoken ? 'Spoken' : null}
+                {turn.who === 'eavesy' && turn.text && (
+                  <button type="button" className="ev-link" aria-label="Say it again" onClick={() => void repeatAssistantReply(turn.id).catch((error: unknown) => flash(errMsg(error, 'Couldn’t say it'), 4000, 'warn'))}>
+                    <Volume2 size={12} strokeWidth={1.75} aria-hidden /> Repeat
+                  </button>
+                )}
                 {turn.who === 'eavesy' && turn.text && (
                   <button type="button" className="ev-link" onClick={() => void navigator.clipboard.writeText(turn.text).then(() => flash('Copied', 1500), () => flash('Couldn’t copy that', 4000, 'warn'))}>Copy</button>
                 )}

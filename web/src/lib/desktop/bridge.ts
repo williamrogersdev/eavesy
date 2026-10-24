@@ -420,6 +420,18 @@ export async function clearAssistantThread(): Promise<void> {
   await invoke('assistant_clear');
 }
 
+/** Says one of Eavesy's replies again. */
+export async function repeatAssistantReply(id: number): Promise<void> {
+  await invoke('assistant_repeat', { id });
+}
+
+/** Something asked for the Eavesy tab: a talk turn left a card, or Open on the pill. */
+export async function onAssistantShow(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen('assistant:show', () => cb());
+}
+
 export async function onAssistantThread(cb: (thread: AssistantThread) => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
@@ -612,6 +624,7 @@ export async function stopCapture(sessionId: string): Promise<void> {
 export interface Settings {
   toggle_hotkey: string;
   dictation_hotkey: string;
+  assistant_hotkey: string;
   device_id: string;
   setup_completed: boolean;
   recordings_root?: string | null;
@@ -702,7 +715,7 @@ export async function completeSetup(): Promise<void> {
   await invoke('complete_setup');
 }
 
-export type HotkeyAction = 'toggle' | 'dictation';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant';
 /** Both shortcuts; "" means unbound, "Fn" the fn / 🌐 key on its own. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -736,7 +749,7 @@ export async function checkHotkey(action: HotkeyAction, accelerator: string): Pr
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }

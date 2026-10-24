@@ -42,7 +42,7 @@ export function installDevMock(): void {
   let copiedText = '';
   const live = params.has('live');
   const settings = {
-    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
+    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
     fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
@@ -185,14 +185,16 @@ function installSetupMock(results: Record<string, unknown>): void {
   });
 }
 
-type Bindings = { toggle_hotkey: string; dictation_hotkey: string };
-const DEFAULTS = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string };
+type Action = 'toggle' | 'dictation' | 'assistant';
+const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant'];
+const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
 const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
 
 /** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
 function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args: Record<string, unknown>) => Promise<unknown>> {
-  const key = (action: unknown) => (action === 'toggle' ? 'toggle_hotkey' : 'dictation_hotkey');
-  const other = (action: unknown) => (action === 'toggle' ? 'dictation' : 'toggle');
+  const key = (action: unknown) => `${String(action)}_hotkey` as keyof Bindings;
+  const holder = (action: unknown, accel: string) => ACTIONS.find((other) => other !== action && !!accel && settings[key(other)] === accel);
   const validate = (accel: string) => {
     if (!accel || accel === 'Fn' || /^F([1-9]|1[0-2])$/.test(accel) || /(^|\+)(Cmd|Ctrl|Alt)\+/.test(accel)) return null;
     return { kind: 'needsModifier' };
@@ -200,10 +202,10 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
   const plan = (action: unknown, accel: string, swap: boolean) => {
     const refused = validate(accel);
     if (refused) return refused;
-    const otherKey = key(other(action));
-    if (accel && settings[otherKey] === accel) {
-      if (!swap) return { kind: 'taken', by: other(action) };
-      settings[otherKey] = settings[key(action)];
+    const taken = holder(action, accel);
+    if (taken) {
+      if (!swap) return { kind: 'taken', by: taken };
+      settings[key(taken)] = settings[key(action)];
     }
     settings[key(action)] = accel;
     return null;
@@ -211,7 +213,8 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
   return {
     check_hotkey: ({ action, accelerator }) => {
       const accel = String(accelerator);
-      const refused = validate(accel) ?? (accel && settings[key(other(action))] === accel ? { kind: 'taken', by: other(action) } : null);
+      const taken = holder(action, accel);
+      const refused = validate(accel) ?? (taken ? { kind: 'taken', by: taken } : null);
       if (refused) return Promise.reject(refused);
       if (accel === 'Cmd+Space') return Promise.resolve({ kind: 'system', name: 'Spotlight' });
       const common = /^Cmd\+([A-Z])$/.exec(accel)?.[1];
@@ -224,6 +227,7 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     reset_all_hotkeys: () => {
       settings.toggle_hotkey = DEFAULTS.toggle;
       settings.dictation_hotkey = DEFAULTS.dictation;
+      settings.assistant_hotkey = DEFAULTS.assistant;
       return Promise.resolve(null);
     },
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),

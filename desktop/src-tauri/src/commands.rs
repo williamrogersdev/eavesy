@@ -819,7 +819,7 @@ pub fn get_recording(app: AppHandle, id: String) -> Result<Option<RecordingDetai
 pub fn check_hotkey(app: AppHandle, action: String, accelerator: String) -> Result<Option<crate::shortcut_conflicts::Conflict>, HotkeyError> {
     let action = Action::parse(&action)?;
     let settings = settings::load(&app);
-    let current = hotkeys::Bindings { toggle: settings.toggle_hotkey, dictation: settings.dictation_hotkey };
+    let current = hotkeys::Bindings::of(&settings);
     crate::shortcut_conflicts::check(&current, action, &accelerator)
 }
 

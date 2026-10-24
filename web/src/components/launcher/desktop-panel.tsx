@@ -8,6 +8,7 @@ import {
   getSetupStatus,
   hidePanel,
   importFiles,
+  onAssistantShow,
   onDictionaryLearning,
   onDragDrop,
   onLauncherOpened,
@@ -70,6 +71,10 @@ export function DesktopPanel() {
     setTab(next);
     try { localStorage.setItem(TAB_KEY, next); } catch { /* remembered for this session only */ }
   }, []);
+  useEffect(() => {
+    const off = onAssistantShow(() => pickTab('eavesy'));
+    return () => { void off.then((stop) => stop()); };
+  }, [pickTab]);
   const [setupKnown, setSetupKnown] = useState(false);
   const setupForced = useRef(false);
   const [setupStep, setSetupStep] = useState(0);

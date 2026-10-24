@@ -559,7 +559,7 @@
 .ev-turn-step[data-ok='false'] { color: var(--ev-warn-ink); }
 .ev-turn-meta { display: flex; gap: 8px; font: var(--ev-t-small); color: var(--ev-ink-3); }
 .ev-turn-meta:empty { display: none; }
-.ev-turn-meta .ev-link { color: var(--ev-ink-3); font-weight: 500; }
+.ev-turn-meta .ev-link { display: inline-flex; align-items: center; gap: 3px; color: var(--ev-ink-3); font-weight: 500; }
 .ev-turn-thinking { display: inline-flex; gap: 4px; padding: 6px 0; }
 .ev-turn-thinking i { width: 6px; height: 6px; border-radius: 3px; background: var(--ev-ink-3); animation: ev-thinking 1.2s var(--ev-ease-out) infinite; }
 .ev-turn-thinking i:nth-child(2) { animation-delay: 0.15s; }

@@ -52,6 +52,8 @@ pub struct Message {
 
 #[derive(Clone, Debug)]
 struct Turn {
+    /// Stays the same when older turns are dropped, unlike its place in the thread.
+    id: u64,
     message: Message,
     at_ms: u64,
     /// Your turns: said or typed (B7).
@@ -78,6 +80,7 @@ impl Turn {
 #[derive(Default)]
 pub struct Thread {
     turns: Vec<Turn>,
+    next_id: u64,
     busy: bool,
     /// Notes waiting for your next turn.
     notes: Vec<String>,
@@ -92,7 +95,7 @@ pub struct View {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TurnView {
-    pub id: usize,
+    pub id: u64,
     /// `you` or `eavesy`.
     pub who: &'static str,
     pub spoken: bool,
@@ -156,7 +159,8 @@ fn view(thread: &Thread) -> View {
             }
         }
     }
-    for (id, turn) in thread.turns.iter().enumerate() {
+    for turn in &thread.turns {
+        let id = turn.id;
         match turn.message.role {
             Role::User if is_your_words(&turn.message) => {
                 turns.push(TurnView { id, who: "you", spoken: turn.spoken, at_ms: turn.at_ms, text: text_of(&turn.message), steps: Vec::new() });
@@ -175,7 +179,7 @@ fn view(thread: &Thread) -> View {
                         _ => None,
                     })
                     .collect();
-                turns.push(TurnView { id, who: "eavesy", spoken: false, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
+                turns.push(TurnView { id, who: "eavesy", spoken: turn.spoken, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
             }
         }
     }
@@ -197,7 +201,9 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
         let state = app.state::<Mutex<Thread>>();
         let mut thread = state.lock().unwrap();
         let notes = if is_your_words(&message) { std::mem::take(&mut thread.notes) } else { Vec::new() };
-        thread.turns.push(Turn { message, at_ms: super::now_ms(), spoken, notes, failed });
+        let id = thread.next_id;
+        thread.next_id += 1;
+        thread.turns.push(Turn { id, message, at_ms: super::now_ms(), spoken, notes, failed });
         if thread.turns.len() > KEPT_MESSAGES {
             let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
             let keep = window(&messages, KEPT_MESSAGES).len();
@@ -343,6 +349,12 @@ pub fn assistant_thread(app: AppHandle, window: WebviewWindow) -> Result<View, S
 #[tauri::command]
 pub async fn assistant_send(app: AppHandle, window: WebviewWindow, text: String, spoken: Option<bool>) -> Result<(), String> {
     super::from_ui(&window)?;
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || send(&handle, text, spoken.unwrap_or(false))).await.map_err(|error| error.to_string())?
+}
+
+/// Your message, then Eavesy's answer to it. Blocking: call it off the main thread.
+pub fn send(app: &AppHandle, text: String, spoken: bool) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Ok(());
@@ -358,11 +370,66 @@ pub async fn assistant_send(app: AppHandle, window: WebviewWindow, text: String,
         }
         thread.busy = true;
     }
-    let handle = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || converse(&handle, text, spoken.unwrap_or(false))).await;
-    app.state::<Mutex<Thread>>().lock().unwrap().busy = false;
-    emit(&app);
-    result.map_err(|error| error.to_string())
+    // Busy is cleared however the conversation ends, a panic included.
+    struct Done<'a>(&'a AppHandle);
+    impl Drop for Done<'_> {
+        fn drop(&mut self) {
+            self.0.state::<Mutex<Thread>>().lock().unwrap_or_else(|e| e.into_inner()).busy = false;
+            emit(self.0);
+        }
+    }
+    let _done = Done(app);
+    converse(app, text, spoken);
+    Ok(())
+}
+
+/// Eavesy's newest turn that has words.
+pub struct Reply {
+    pub id: u64,
+    pub text: String,
+    /// An error shown in Eavesy's place, not something it said.
+    pub failed: bool,
+}
+
+pub fn last_reply(app: &AppHandle) -> Option<Reply> {
+    let state = app.state::<Mutex<Thread>>();
+    let thread = state.lock().unwrap();
+    newest_reply(&thread.turns)
+}
+
+fn newest_reply(turns: &[Turn]) -> Option<Reply> {
+    turns.iter().rev().find_map(|turn| {
+        let text = text_of(&turn.message);
+        (turn.message.role == Role::Assistant && !text.trim().is_empty()).then_some(Reply { id: turn.id, text, failed: turn.failed })
+    })
+}
+
+/// Eavesy read this reply out loud (B7).
+pub fn mark_spoken(app: &AppHandle, id: u64) {
+    {
+        let state = app.state::<Mutex<Thread>>();
+        let mut thread = state.lock().unwrap();
+        match thread.turns.iter_mut().find(|turn| turn.id == id) {
+            Some(turn) if turn.message.role == Role::Assistant => turn.spoken = true,
+            _ => return,
+        }
+    }
+    emit(app);
+}
+
+/// Says one of Eavesy's replies again (B3).
+#[tauri::command]
+pub fn assistant_repeat(app: AppHandle, window: WebviewWindow, id: u64) -> Result<(), String> {
+    super::from_ui(&window)?;
+    let text = {
+        let state = app.state::<Mutex<Thread>>();
+        let thread = state.lock().unwrap();
+        match thread.turns.iter().find(|turn| turn.id == id) {
+            Some(turn) if turn.message.role == Role::Assistant && !turn.failed => text_of(&turn.message),
+            _ => return Err("That reply is gone.".into()),
+        }
+    };
+    super::voice::say(&app, Some(id), &text)
 }
 
 #[tauri::command]
@@ -404,8 +471,8 @@ mod tests {
 
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
-        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
-        let view = view(&Thread { turns, busy: true, notes: Vec::new() });
+        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
+        let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new() });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
@@ -435,9 +502,9 @@ mod tests {
     fn errors_are_not_sent_to_the_model() {
         let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
         let turns = vec![
-            Turn { message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
-            Turn { message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
-            Turn { message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false },
+            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
+            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
+            Turn { id: 3, message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false },
         ];
         let messages = sent(&turns);
         assert_eq!(messages.len(), 1);
@@ -446,8 +513,20 @@ mod tests {
     }
 
     #[test]
+    fn an_error_is_the_newest_reply_but_says_so() {
+        let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
+        let turns = vec![
+            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
+            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
+        ];
+        let reply = newest_reply(&turns).unwrap();
+        assert_eq!((reply.id, reply.failed), (2, true));
+        assert!(newest_reply(&turns[..1]).is_none());
+    }
+
+    #[test]
     fn notes_go_to_the_model_but_are_not_your_words() {
-        let turn = Turn { message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into(), "card declined".into()], failed: false };
+        let turn = Turn { id: 0, message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into(), "card declined".into()], failed: false };
         let sent = turn.for_model();
         // However many notes, they take one block, so a message stays within the block cap.
         assert_eq!(sent.content.len(), 2);

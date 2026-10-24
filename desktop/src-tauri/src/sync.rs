@@ -833,10 +833,19 @@ async fn poll_result<R: Runtime>(
             // only moves on from a stopped recording that is not already Done.
             // Read before `deliver`, which takes the paste target.
             let armed = crate::dictation::is_armed(&session.id);
+            // Words for Eavesy: it shows its own answer on the pill.
+            let for_eavesy = crate::assistant::voice::is_for(&session.id);
             crate::dictation::deliver(app, &session.id, &spoken);
             // Check-and-set under the HUD's own lock: a dismissal or a new
             // recording that lands in between must win.
-            crate::hud::advance_from(app, &session.id, &[crate::hud::Phase::Transcribing], finished_state(&session.id, armed, &spoken));
+            if !for_eavesy {
+                let finished = finished_state(&session.id, armed, &spoken);
+                crate::hud::set_state_if(app, finished, |now| {
+                    now.session_id.as_deref() == Some(session.id.as_str())
+                        && now.phase == crate::hud::Phase::Transcribing
+                        && now.mode.as_deref() != Some(crate::assistant::voice::MODE)
+                });
+            }
         }
     }
     if result.status == "complete" {

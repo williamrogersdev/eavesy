@@ -212,10 +212,17 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let answering = crate::agents::take_answer(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
+        // Left marked for Eavesy, so words only the cloud transcript catches still go to it.
         return;
     }
+    let for_eavesy = crate::assistant::voice::take(session_id);
     let app = app.clone();
     let session_id = session_id.to_string();
+    // Talk to Eavesy: the words are a message to it, as said, never pasted.
+    if for_eavesy {
+        std::thread::spawn(move || crate::assistant::voice::deliver(&app, &session_id, &text));
+        return;
+    }
     // An answer to the Claude Code reply card goes there, never into an app.
     if let Some(claim) = answering {
         std::thread::spawn(move || crate::agents::answer(&app, &session_id, claim, &text));
@@ -406,6 +413,15 @@ fn panel_wants_it(app: &AppHandle) -> bool {
 }
 
 fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallback: bool) {
+    // Words for Eavesy that only the cloud transcript caught go to it, never into an app.
+    if crate::assistant::voice::take(session_id) {
+        disarm(session_id);
+        if !text.trim().is_empty() {
+            let (app, session_id, text) = (app.clone(), session_id.to_string(), text.trim().to_string());
+            std::thread::spawn(move || crate::assistant::voice::deliver(&app, &session_id, &text));
+        }
+        return;
+    }
     let Some(target) = take_pending(session_id) else { return };
     if text.trim().is_empty() {
         return;

@@ -577,6 +577,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
         <Card title="Shortcuts">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Hold and ask Eavesy something, or tap to start and stop. It answers on the pill and out loud; esc stops it talking." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
         </Card>

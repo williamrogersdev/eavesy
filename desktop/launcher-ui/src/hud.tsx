@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, X } from 'lucide-react';
+import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -124,6 +124,9 @@ function wordCount(text: string): string {
   return `${count.toLocaleString()} ${count === 1 ? 'word' : 'words'}`;
 }
 
+/** The HUD mode for talking to Eavesy (`voice::MODE` in Rust). */
+const EAVESY_MODE = 'assistant';
+
 function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   const video = state.mode === 'video';
   switch (state.phase) {
@@ -141,6 +144,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
       return 'wide';
     case 'done':
       if (state.mode === 'image') return 'shot';
+      if (state.mode === EAVESY_MODE) return 'result';
       if (video) return 'pill';
       if (state.message?.trim()) return peek ? 'result' : 'receipt';
       return state.notice ? 'wide' : 'pill';
@@ -153,7 +157,7 @@ function browserPreviewState(): HudState | null {
   if (tauri()) return null;
   const params = new URLSearchParams(window.location.search);
   const phase = (params.get('hud') ?? 'idle') as Phase;
-  const mode = params.has('image') ? 'image' : params.has('video') ? 'video' : 'audio';
+  const mode = params.has('image') ? 'image' : params.has('video') ? 'video' : params.has('eavesy') ? EAVESY_MODE : 'audio';
   return {
     phase,
     sessionId: params.has('opening') ? null : 'preview',
@@ -169,6 +173,7 @@ function browserPreviewState(): HudState | null {
       ? params.has('long')
         ? Array.from({ length: Number(params.get('long')) || 12 }, (_, i) => `Point ${i + 1}: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.`).join(' ')
         : 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
+      : phase === 'done' && mode === EAVESY_MODE ? 'Six dev servers are running. Two are from sessions that ended: vite on 5173 (eavesy, archived at 2:40) and bun test (repackify, ended at 3:05). Want me to stop those two?'
       : phase === 'failed' ? 'No speech was heard' : null,
   };
 }
@@ -244,16 +249,18 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
  * change made in Settings meanwhile. The shortcut is read again when the look
  * or the hotkeys change, never on hover.
  */
-function useHudSettings(): { shortcut: string; look: Look } {
+function useHudSettings(): { shortcut: string; talkShortcut: string; look: Look } {
   const [shortcut, setShortcut] = useState('');
+  const [talkShortcut, setTalkShortcut] = useState('');
   const [look, setLook] = useState<Look>(() => {
     const params = new URLSearchParams(window.location.search);
     return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
   });
   const lookChanged = useRef(false);
   const shortcutFrom = (settings: unknown) => {
-    const accel = (settings as { dictation_hotkey?: string } | null)?.dictation_hotkey;
+    const { dictation_hotkey: accel, assistant_hotkey: talk } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string };
     setShortcut(accel ? prettyAccel(accel) : '');
+    setTalkShortcut(talk ? prettyAccel(talk) : '');
   };
   const reloadShortcut = () => { void invoke('get_settings').then(shortcutFrom).catch(() => {}); };
   useEvent('hud:look', (payload) => { lookChanged.current = true; setLook(lookFrom(payload)); reloadShortcut(); });
@@ -272,7 +279,7 @@ function useHudSettings(): { shortcut: string; look: Look } {
     if (tauri()) load(0);
     return () => { disposed = true; };
   }, []);
-  return { shortcut, look };
+  return { shortcut, talkShortcut, look };
 }
 
 /**
@@ -334,7 +341,7 @@ function Hud() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { shortcut, look } = useHudSettings();
+  const { shortcut, talkShortcut, look: settingsLook } = useHudSettings();
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -609,6 +616,9 @@ function Hud() {
   // dictation opens straight into its drawer; Not pasted keeps its Allow pill.
   const finished = state ? receiptFor(state) : null;
   const opensItself = !!state?.opensItself && finished !== null;
+  // Talking to Eavesy always shows your words as you say them (`size_for` in hud.rs).
+  const eavesy = state?.mode === EAVESY_MODE;
+  const look: Look = eavesy && settingsLook.lines === 0 ? { ...settingsLook, lines: 1 } : settingsLook;
   const size = state ? sizeFor(state, look.lines, peeking || keepDrawer || opensItself) : 'pill';
   // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
   const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
@@ -735,7 +745,8 @@ function Hud() {
   const notice = state.notice ?? null;
   const notPasted = !!notice?.includes('Accessibility');
   const busy = starting || state.phase === 'transcribing';
-  const kbd = shortcut ? ` (${shortcut})` : '';
+  const keys = eavesy ? talkShortcut : shortcut;
+  const kbd = keys ? ` (${keys})` : '';
   const learnedStamp = learned && <Stamp tone={learned.tone} fit title={learned.title}>{learned.text}</Stamp>;
 
   const pressSurface = (e: MouseEvent) => {
@@ -1046,12 +1057,13 @@ function Hud() {
           </>
         )}
         {video && !opening && <Marking state={marking} act={act} />}
+        {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
         <span className="ctl-fill" />
-        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
+        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : eavesy ? ' and send to Eavesy' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
@@ -1059,10 +1071,23 @@ function Hud() {
       </span>
       {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
     </div>;
-    if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `Listening… ${doneHint}`);
+    if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
-    top = <>{mark}{errorSay ?? <span className="ctl-say">{video ? 'Saving' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
-    if (!video && look.lines) below = transcriptEditor('Turning your words into text…');
+    top = <>{mark}{errorSay ?? <span className="ctl-say">{video ? 'Saving' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
+    if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
+  } else if (state.phase === 'done' && eavesy) {
+    // Eavesy's answer: in full here, a sentence or two out loud (assistant.md B4).
+    top = (
+      <>
+        {mark}
+        {errorSay ?? <Stamp tone="manila">Eavesy</Stamp>}
+        <span className="ctl-fill" />
+        <button type="button" className="ctl-btn" onClick={() => act('hud_assistant', { action: 'repeat' })} title="Say it again"><Volume2 className="h-3.5 w-3.5" />Repeat</button>
+        <button type="button" className="ctl-btn" onClick={() => act('hud_assistant', { action: 'open' })} title="Open the conversation"><Maximize2 className="h-3.5 w-3.5" />Open</button>
+        {minimize}
+      </>
+    );
+    below = <p className="ctl-words ctl-answer" aria-live="polite">{state.message}</p>;
   } else if (state.phase === 'done' && video) {
     top = <>{mark}{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
       <span className="ctl-fill" />

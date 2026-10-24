@@ -5,6 +5,9 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
+/// Talk to Eavesy. fn+Space (assistant.md B6) needs an event tap that can swallow the
+/// Space, so it waits for that; ⌥Space is free in macOS itself.
+pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Space";
 /// Recording segment length. Each sealed segment is uploaded and transcribed on
 /// its own, so this bounds how stale the cloud transcript is while recording.
 pub const DEFAULT_SEGMENT_SEC: u32 = 60;
@@ -42,6 +45,8 @@ pub struct PanelSize {
 pub struct Settings {
     pub toggle_hotkey: String,
     pub dictation_hotkey: String,
+    #[serde(default = "default_assistant_hotkey")]
+    pub assistant_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -152,6 +157,10 @@ impl Settings {
     }
 }
 
+fn default_assistant_hotkey() -> String {
+    DEFAULT_ASSISTANT_HOTKEY.to_string()
+}
+
 fn new_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -161,6 +170,7 @@ impl Default for Settings {
         Self {
             toggle_hotkey: DEFAULT_TOGGLE_HOTKEY.to_string(),
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
+            assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
