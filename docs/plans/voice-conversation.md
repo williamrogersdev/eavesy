@@ -198,7 +198,8 @@ Claude answer `BANANA` in the same session. The input had
 - Speech uses macOS's own `say` for now, not the sidecar's
   `AVSpeechSynthesizer`. Swapping it is one function in `speak.rs`.
 - Send and edit are on a small reply card at the top right, which never
-  takes focus by itself.
+  takes focus by itself. The card becomes a state of the HUD pill, and sent
+  replies land in Eavesy's conversation thread ([assistant.md](assistant.md), I1).
 - **Answering by voice** (`agents/voice.rs`): a dictation that starts while
   Eavesy reads out a question, or up to 30 seconds after it stops, answers
   that question's card instead of typing into the front app. "Send it" (and
