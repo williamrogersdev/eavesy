@@ -14,12 +14,13 @@ vi.mock('../../src/server/auth', () => ({
 }));
 
 // The model is never called for real.
-const model = vi.hoisted(() => ({ calls: 0 }));
+const model = vi.hoisted(() => ({ calls: 0, down: false }));
 vi.mock('../../src/lib/ai/client', async (importOriginal) => {
   const client = () => ({
     messages: {
       create: async () => {
         model.calls += 1;
+        if (model.down) throw new Error('model down');
         return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ summary: 'wants to know whether to ship.', needsYou: true, suggestedReply: 'Ship it.' }) }] };
       },
     },
@@ -36,11 +37,11 @@ vi.mock('../../src/server/rate-limit', async (importOriginal) => {
 const USER = 'user_agent_reply';
 const body = { kind: 'stop', session: 'eavesy', message: 'Done. Ship it?' };
 
-async function post(token?: string) {
+async function post(token?: string, payload: unknown = body) {
   const request = new Request('https://eavesy.test/api/agents/reply-suggestion', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   const response = await handler(Route, 'POST')({ request, params: {} });
   return { status: response.status, body: await response.json<Record<string, unknown>>() };
@@ -55,6 +56,7 @@ beforeEach(async () => {
   await resetTables('device_tokens', 'devices', 'users');
   actor.userId = null;
   model.calls = 0;
+  model.down = false;
   vi.mocked(guardSpend).mockClear();
   vi.mocked(guardUserQuota).mockClear();
 });
@@ -80,7 +82,7 @@ describe('/api/agents/reply-suggestion', () => {
     const { status, body: answer } = await post(token);
     expect(status).toBe(200);
     expect(answer).toEqual({ summary: 'wants to know whether to ship.', needsYou: true, suggestedReply: 'Ship it.' });
-    expect(guardUserQuota).toHaveBeenCalledWith(USER, 'agent-reply');
+    expect(guardUserQuota).toHaveBeenCalledWith(USER, 'agent-reply', expect.any(Number));
     expect(vi.mocked(guardSpend).mock.calls[0]?.[1]).toBe('agent-reply');
   });
 
@@ -93,6 +95,28 @@ describe('/api/agents/reply-suggestion', () => {
       expect(status).toBe(429);
       expect(answer.code).toBe('daily_quota');
       expect(model.calls).toBe(1);
+    } finally {
+      delete process.env.QUOTA_AGENT_REPLY_PER_DAY;
+    }
+  });
+
+  it('does not charge the quota for an invalid request', async () => {
+    const token = await insertDeviceActor(USER, 'device_agent_reply');
+    expect((await post(token, { kind: 'stop', session: '', message: 'x' })).status).toBe(400);
+    expect(guardUserQuota).not.toHaveBeenCalled();
+    expect(guardSpend).not.toHaveBeenCalled();
+  });
+
+  it('gives the daily use back when the model call fails', async () => {
+    const token = await insertDeviceActor(USER, 'device_agent_reply');
+    process.env.QUOTA_AGENT_REPLY_PER_DAY = '1';
+    try {
+      model.down = true;
+      const failed = await post(token);
+      expect(failed.status).toBe(502);
+      expect(JSON.stringify(failed.body)).not.toContain('model down');
+      model.down = false;
+      expect((await post(token)).status).toBe(200);
     } finally {
       delete process.env.QUOTA_AGENT_REPLY_PER_DAY;
     }

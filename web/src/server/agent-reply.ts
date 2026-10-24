@@ -87,9 +87,9 @@ export function keepStart(text: string, chars: number): string {
   return out;
 }
 
-/** Stops data from closing the tags it's wrapped in. */
+/** Escapes angle brackets so data can't open or close the tags it's wrapped in. */
 function fence(text: string): string {
-  return text.replace(/<\/?\s*(agent_message|user_prompt)\s*>/gi, '');
+  return text.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 export function agentReplyUserMessage(input: AgentReplyInput): string {
@@ -102,7 +102,8 @@ export function agentReplyUserMessage(input: AgentReplyInput): string {
 
 /** Used when the model's answer can't be read: the message's own first sentence. */
 export function fallbackReply(input: AgentReplyInput): AgentReply {
-  const text = input.message.replace(/\s+/g, ' ').trim();
+  // Spoken aloud, so drop markdown and markup the voice would read out.
+  const text = input.message.replace(/<[^>]*>|[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim();
   const sentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
   let summary = sentence;
   if (summary.length > FALLBACK_SUMMARY_CHARS) {
@@ -110,7 +111,7 @@ export function fallbackReply(input: AgentReplyInput): AgentReply {
     const space = cut.lastIndexOf(' ');
     summary = `${space > FALLBACK_SUMMARY_CHARS / 2 ? cut.slice(0, space) : cut}…`;
   }
-  return { summary, needsYou: text.endsWith('?'), suggestedReply: null };
+  return { summary: summary || 'sent a message.', needsYou: input.kind === 'notification' || text.endsWith('?'), suggestedReply: null };
 }
 
 /** Applies the rules the model is asked to follow, whatever it answered. */
@@ -143,6 +144,8 @@ export async function suggestAgentReply(client: AgentReplyClient, input: AgentRe
     messages: [{ role: 'user', content: agentReplyUserMessage(input) }],
   });
   if (message.stop_reason === 'refusal') return fallbackReply(input);
+  // Metadata only: never log the message or the model's output.
+  if (message.stop_reason === 'max_tokens') console.warn(JSON.stringify({ message: 'agent reply hit max_tokens' }));
   const text = message.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
   return parseAgentReply(input, text) ?? fallbackReply(input);
 }
@@ -164,14 +167,15 @@ async function readCapped(request: Request): Promise<string | typeof TOO_LARGE |
       if (size > MAX_BODY_BYTES) return TOO_LARGE;
       chunks.push(part.value);
     }
-  } finally { await reader.cancel(); }
+  } finally { await reader.cancel().catch(() => undefined); }
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   return new TextDecoder().decode(bytes);
 }
 
-export async function agentReplyRequest(request: Request, client: () => AgentReplyClient): Promise<Response> {
+/** Reads and validates the body: a 4xx response, or the input to suggest a reply for. */
+export async function readAgentReplyRequest(request: Request): Promise<AgentReplyInput | Response> {
   const body = await readCapped(request);
   if (body === null) return Response.json({ error: 'Missing message.' }, { status: 400 });
   if (body === TOO_LARGE) return Response.json({ error: 'Message is too large.' }, { status: 413 });
@@ -180,10 +184,25 @@ export async function agentReplyRequest(request: Request, client: () => AgentRep
   catch { return Response.json({ error: 'Invalid reply request.' }, { status: 400 }); }
   const input = agentReplyInput.safeParse(value);
   if (!input.success) return Response.json({ error: 'Invalid reply request.' }, { status: 400 });
+  return input.data;
+}
+
+/** Calls the model; `onFailure` runs (say, to refund a quota) when the provider call fails. */
+export async function agentReplyResponse(
+  input: AgentReplyInput,
+  client: () => AgentReplyClient,
+  onFailure: () => Promise<void> = async () => {},
+): Promise<Response> {
   try {
-    return Response.json(await suggestAgentReply(client(), input.data), { headers: { 'cache-control': 'no-store' } });
+    return Response.json(await suggestAgentReply(client(), input), { headers: { 'cache-control': 'no-store' } });
   } catch {
     // Never forward provider responses or submitted text to logs or clients.
+    await onFailure();
     return Response.json({ error: 'Reply suggestions are unavailable right now. Please try again.' }, { status: 502 });
   }
+}
+
+export async function agentReplyRequest(request: Request, client: () => AgentReplyClient): Promise<Response> {
+  const input = await readAgentReplyRequest(request);
+  return input instanceof Response ? input : agentReplyResponse(input, client);
 }

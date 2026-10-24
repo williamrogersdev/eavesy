@@ -61,13 +61,23 @@ function tooMany(error: string, retryAfterSec: number, code?: string): Response 
   });
 }
 
+/** What each spend scope's daily budget is called when it runs out. */
+const SPEND_SCOPES = {
+  transcribe: 'transcription',
+  process: 'transcription',
+  translation: 'transcription',
+  'agent-reply': 'reply suggestion',
+} as const;
+
+export type SpendScope = keyof typeof SPEND_SCOPES;
+
 /**
  * Per-IP burst limit plus a global daily budget for routes that spend AI
  * capacity. Both fail closed: an unreachable counter must not unlock spend.
  */
 export async function guardSpend(
   request: Request,
-  scope: 'transcribe' | 'process' | 'translation' | 'agent-reply',
+  scope: SpendScope,
   defaults: { perMin: number; perDay: number },
 ): Promise<Response | null> {
   const ip = clientIp(request);
@@ -80,8 +90,7 @@ export async function guardSpend(
   const budget = await consumeDailyBudget({ name: scope, limit: perDay, failMode: 'closed' });
   if (budget.allowed) warnAtSpendThresholds(scope, perDay - budget.remaining, perDay);
   if (!budget.allowed) {
-    const what = scope === 'agent-reply' ? 'reply suggestion' : 'transcription';
-    return tooMany(`Daily free ${what} capacity has been reached. Please try again tomorrow.`, 3600);
+    return tooMany(`Daily free ${SPEND_SCOPES[scope]} capacity has been reached. Please try again tomorrow.`, 3600);
   }
 
   return null;
