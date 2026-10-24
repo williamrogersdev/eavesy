@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::assistant::{self, cards::Row, policy::{Facts, Tier}, Action, Ran};
 use procs::{Label, Proc};
 use worktrees::Status;
 
@@ -224,7 +225,7 @@ pub async fn machine_inventory() -> Result<Inventory, String> {
     tauri::async_runtime::spawn_blocking(|| gather().1).await.map_err(|error| error.to_string())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ProcessRef {
     pub pid: u32,
     pub started_us: u64,
@@ -307,12 +308,74 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
 /// window. It's a Tauri command, so only Eavesy's own webviews can call it;
 /// the agents socket (agents/mod.rs) only reads hook messages.
 #[tauri::command]
-pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<Vec<Outcome>, String> {
+pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<serde_json::Value, String> {
     if window.label() != "settings" {
         return Err("Cleaning up only works from Settings.".into());
     }
-    tauri::async_runtime::spawn_blocking(move || clean(worktrees, processes)).await.map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let action = Clean { worktrees, processes };
+        let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
+        assistant::run_clicked(&action, &rows).detail
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
+
+/// Removing worktrees and stopping leftovers, as a tool on the action core. It's
+/// tier 3 and not undoable: a stopped process can't be restarted for you, and a
+/// removed worktree comes back only by hand with its restore line.
+pub struct Clean {
+    pub worktrees: Vec<String>,
+    pub processes: Vec<ProcessRef>,
+}
+
+impl Clean {
+    fn process_row(process: &ProcessRef) -> String { format!("process:{}:{}", process.pid, process.started_us) }
+}
+
+impl assistant::Action for Clean {
+    fn tool(&self) -> &'static str { "machine.clean" }
+
+    fn facts(&self) -> Facts {
+        Facts {
+            tier: Tier::Click,
+            undoable: false,
+            // On Auto's safe list (C8): every row is checked again right before it goes.
+            safe_listed: true,
+            irreversible: false,
+            grants_power: false,
+            remote_allowed: false,
+            items: self.worktrees.len() + self.processes.len(),
+        }
+    }
+
+    fn title(&self) -> String {
+        match (self.worktrees.len(), self.processes.len()) {
+            (w, 0) => format!("Remove {w} finished worktree{}", plural(w)),
+            (0, p) => format!("Stop {p} leftover process{}", if p == 1 { "" } else { "es" }),
+            (w, p) => format!("Remove {w} worktree{} and stop {p} leftover process{}", plural(w), if p == 1 { "" } else { "es" }),
+        }
+    }
+
+    fn rows(&self) -> Vec<Row> {
+        let worktrees = self.worktrees.iter().map(|path| Row { id: format!("worktree:{path}"), label: path.clone() });
+        let processes = self.processes.iter().map(|process| Row { id: Clean::process_row(process), label: format!("process {}", process.pid) });
+        worktrees.chain(processes).collect()
+    }
+
+    fn run(&self, rows: &[String]) -> Ran {
+        let worktrees = self.worktrees.iter().filter(|path| rows.contains(&format!("worktree:{path}"))).cloned().collect();
+        let processes = self.processes.iter().filter(|process| rows.contains(&Clean::process_row(process))).cloned().collect();
+        let outcomes = clean(worktrees, processes);
+        let done = outcomes.iter().filter(|outcome| outcome.ok).count();
+        Ran {
+            summary: format!("{done} of {} done", outcomes.len()),
+            detail: serde_json::to_value(&outcomes).unwrap_or_default(),
+        }
+    }
+}
+
+fn plural(n: usize) -> &'static str { if n == 1 { "" } else { "s" } }
 
 #[cfg(test)]
 mod tests {
