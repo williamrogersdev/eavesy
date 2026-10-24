@@ -61,18 +61,28 @@ function tooMany(error: string, retryAfterSec: number, code?: string): Response 
   });
 }
 
+/** What each spend scope's daily budget is called when it runs out. */
+const SPEND_SCOPES = {
+  transcribe: 'transcription',
+  process: 'transcription',
+  translation: 'transcription',
+  'agent-reply': 'reply suggestion',
+} as const;
+
+export type SpendScope = keyof typeof SPEND_SCOPES;
+
 /**
  * Per-IP burst limit plus a global daily budget for routes that spend AI
  * capacity. Both fail closed: an unreachable counter must not unlock spend.
  */
 export async function guardSpend(
   request: Request,
-  scope: 'transcribe' | 'process' | 'translation',
+  scope: SpendScope,
   defaults: { perMin: number; perDay: number },
 ): Promise<Response | null> {
   const ip = clientIp(request);
-  const perMin = intEnv(`RL_${scope.toUpperCase()}_PER_MIN`, defaults.perMin);
-  const perDay = intEnv(`BUDGET_${scope.toUpperCase()}_PER_DAY`, defaults.perDay);
+  const perMin = intEnv(`RL_${envName(scope)}_PER_MIN`, defaults.perMin);
+  const perDay = intEnv(`BUDGET_${envName(scope)}_PER_DAY`, defaults.perDay);
 
   const rl = await rateLimit({ key: `${scope}:${ip}`, limit: perMin, windowSec: 60, failMode: 'closed' });
   if (!rl.allowed) return tooMany('Too many requests. Please slow down and try again shortly.', rl.retryAfterSec);
@@ -80,10 +90,19 @@ export async function guardSpend(
   const budget = await consumeDailyBudget({ name: scope, limit: perDay, failMode: 'closed' });
   if (budget.allowed) warnAtSpendThresholds(scope, perDay - budget.remaining, perDay);
   if (!budget.allowed) {
-    return tooMany('Daily free transcription capacity has been reached. Please try again tomorrow.', 3600);
+    return tooMany(`Daily free ${SPEND_SCOPES[scope]} capacity has been reached. Please try again tomorrow.`, 3600);
   }
 
   return null;
+}
+
+/**
+ * Gives back one unit of a spend scope's global daily budget for a request
+ * whose model call failed, so a provider outage doesn't lock everyone out
+ * until midnight UTC. `chargedAt` is a time taken just before `guardSpend`.
+ */
+export async function refundSpend(scope: SpendScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), { key: `budget:${scope}`, windowSec: DAY_SEC }, chargedAt);
 }
 
 const SPEND_WARNING_PERCENTS = [50, 80, 100] as const;

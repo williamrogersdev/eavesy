@@ -22,6 +22,8 @@ export const MODELS = {
   transcriptCleanup: 'claude-haiku-5-5',
   /** Transcript translation: many short lines, latency-sensitive. */
   translate: 'claude-haiku-5-5',
+  /** Spoken summary and suggested reply when a Claude Code session stops: short, latency-sensitive. */
+  agentReply: 'claude-haiku-5-5',
   vision: 'claude-sonnet-4-6',
   embed: 'voyage-3',
 } as const;
