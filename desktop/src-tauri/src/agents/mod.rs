@@ -5,8 +5,12 @@
 //! and the reply you send goes back through the held Stop hook into the same
 //! session.
 //!
+//! Right after Eavesy reads out a question, you can answer the card by voice
+//! (voice.rs): the next dictation goes to the card, not the app you're in.
+//!
 //! Off until you turn it on in Settings. The socket only ever hands back a
-//! reply you sent from the card; it can't approve anything.
+//! reply you sent from the card or told Eavesy to send; it can't approve
+//! anything.
 
 pub mod card;
 pub mod hook;
@@ -16,6 +20,7 @@ pub mod protocol;
 pub mod queue;
 pub mod speak;
 pub mod suggest;
+pub mod voice;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +43,10 @@ const FINISHED_LINGER: Duration = Duration::from_secs(8);
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
 /// Held Stop hooks, by queue item: sending on one ends that hook's wait.
 static HOLDS: Mutex<Option<HashMap<u64, oneshot::Sender<Answer>>>> = Mutex::new(None);
+/// The item Eavesy last spoke about.
+static LAST_SAID: Mutex<Option<u64>> = Mutex::new(None);
+/// The dictation that answers the card, and the item it answers.
+static ANSWERING: Mutex<Option<(String, voice::Claim)>> = Mutex::new(None);
 
 fn with_queue<T>(f: impl FnOnce(&mut Queue) -> T) -> T {
     let mut queue = QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -260,15 +269,28 @@ fn snapshot() -> Snapshot {
 
 /// Tells the card, and says the item at the front if it hasn't been said.
 fn refresh(app: &AppHandle) {
+    refresh_saying(app, None);
+}
+
+/// `refresh`, saying `first` before anything about the front item.
+fn refresh_saying(app: &AppHandle, first: Option<String>) {
     let state = snapshot();
     let _ = app.emit(STATE_EVENT, state.clone());
     let Some(head) = state.items.first().cloned() else {
         card::hide(app);
+        if let Some(first) = first {
+            say(&first, None);
+        }
         return;
     };
     card::show(app);
-    let Some(line) = utterance(&state.items, crate::hud::current().is_live()) else { return };
-    speak::say(&line);
+    let Some(line) = utterance(&state.items, crate::hud::current().is_live()) else {
+        if let Some(first) = first {
+            say(&first, None);
+        }
+        return;
+    };
+    say(&first.map_or(line.clone(), |first| format!("{first} {line}")), Some(head.id));
     with_queue(|queue| queue.mark_spoken(head.id));
     if head.kind == Kind::Finished {
         let app = app.clone();
@@ -279,6 +301,13 @@ fn refresh(app: &AppHandle) {
             }
         });
     }
+}
+
+/// Says a line, noting which item it was about (None: no item, so no voice
+/// answer follows it).
+fn say(line: &str, about: Option<u64>) {
+    *LAST_SAID.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = about;
+    speak::say(line);
 }
 
 /// What to say about the front of the queue, if anything: never while you're
@@ -313,6 +342,18 @@ pub fn agents_state() -> Snapshot {
 /// stopped waiting, the reply is copied for you to paste instead.
 #[tauri::command]
 pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) -> Result<&'static str, String> {
+    // The card names the session it showed you, so a reply never lands in another one.
+    if !with_queue(|queue| queue.get(id).is_some_and(|item| item.session_id == session_id)) {
+        return Err("That session isn't waiting any more.".into());
+    }
+    let how = send_reply(&app, id, text)?;
+    refresh(&app);
+    Ok(how)
+}
+
+/// Sends a reply through the item's held hook, or copies it when the session
+/// stopped waiting, and takes the item off. Says which: "sent" or "copied".
+fn send_reply(app: &AppHandle, id: u64, text: String) -> Result<&'static str, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Write a reply first.".into());
@@ -320,9 +361,7 @@ pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) ->
     if text.chars().count() > protocol::MAX_REPLY_CHARS {
         return Err(format!("That reply is too long to send. Keep it under {} characters.", protocol::MAX_REPLY_CHARS));
     }
-    // The card names the session it showed you, so a reply never lands in another one.
-    let held = with_queue(|queue| queue.get(id).filter(|item| item.session_id == session_id).map(|item| item.held))
-        .ok_or("That session isn't waiting any more.")?;
+    let held = with_queue(|queue| queue.get(id).map(|item| item.held)).ok_or("That session isn't waiting any more.")?;
     let sent = held && with_holds(|holds| holds.remove(&id)).is_some_and(|tx| tx.send(Answer::Reply { text: text.clone() }).is_ok());
     if !sent {
         use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -330,24 +369,37 @@ pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) ->
         app.clipboard().write_text(text).map_err(|error| error.to_string())?;
     }
     with_queue(|queue| queue.remove(id));
-    refresh(&app);
     Ok(if sent { "sent" } else { "copied" })
 }
 
 #[tauri::command]
 pub fn agents_later(app: AppHandle, id: u64) {
-    with_queue(|queue| queue.later(id, now_ms()));
+    later(id);
     speak::stop();
     refresh(&app);
+}
+
+/// Puts an item behind the others. Alone at the front, it isn't said again.
+fn later(id: u64) {
+    with_queue(|queue| {
+        queue.later(id, now_ms());
+        if queue.head().is_some_and(|item| item.id == id) {
+            queue.mark_spoken(id);
+        }
+    });
 }
 
 /// Lets the session end its turn without a reply.
 #[tauri::command]
 pub fn agents_dismiss(app: AppHandle, id: u64) {
-    with_queue(|queue| queue.remove(id));
-    release(id, Answer::Release);
+    dismiss(id);
     speak::stop();
     refresh(&app);
+}
+
+fn dismiss(id: u64) {
+    with_queue(|queue| queue.remove(id));
+    release(id, Answer::Release);
 }
 
 #[tauri::command]
@@ -359,10 +411,110 @@ pub fn agents_repeat(app: AppHandle) {
     refresh(&app);
 }
 
+/// You clicked into the reply: from now on it's yours to type, not to say.
 #[tauri::command]
-pub fn agents_edit(app: AppHandle) {
+pub fn agents_edit(app: AppHandle, id: u64) {
+    with_queue(|queue| queue.set_typing(id));
     speak::stop();
     card::take_keys(&app);
+}
+
+/// A dictation is starting: whether it answers the card (voice.rs). Call it
+/// before the dictation stops Eavesy talking. Forgets any earlier answer.
+pub fn claim_dictation() -> Option<voice::Claim> {
+    *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    // Read under separate locks: a line ending between them only shifts
+    // whether this one dictation counts, and a playing line counts anyway.
+    let last_said = *LAST_SAID.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (speaking, quiet_since) = speak::status();
+    with_queue(|queue| voice::answers(queue.head(), last_said, speaking, quiet_since, std::time::Instant::now()))
+}
+
+/// The dictation `claim_dictation` claimed is running as `dictation`.
+pub fn answer_with(dictation: &str, claim: voice::Claim) {
+    *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((dictation.to_string(), claim));
+}
+
+/// What this dictation answers, if it answers the card. Takes it.
+pub fn take_answer(dictation: &str) -> Option<voice::Claim> {
+    let mut answering = ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match answering.take() {
+        Some((id, claim)) if id == dictation => Some(claim),
+        other => {
+            *answering = other;
+            None
+        }
+    }
+}
+
+/// What you said in answer to the card. Only "send it" and its like send,
+/// and only what Eavesy last offered; anything else is read back first.
+/// Never pastes into the app you're in, even when the session has gone.
+pub fn answer(app: &AppHandle, dictation: &str, claim: voice::Claim, text: &str) {
+    let item = claim.item;
+    let text = crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(text));
+    if text.trim().is_empty() {
+        crate::audio::paste_nothing(app, dictation, "only fillers were heard");
+        return;
+    }
+    // Clicking into the card while this was written down makes it yours to type.
+    let found = with_queue(|queue| queue.get(item).filter(|item| item.kind == Kind::Question && !item.typing).cloned());
+    let Some(found) = found else {
+        // Your words were for a session that has gone: keep them, but not in your app.
+        let notice = match crate::commands::copy_to_clipboard(app, &text) {
+            Ok(()) => "Copied — that session stopped waiting",
+            Err(_) => "That session stopped waiting, so nothing was sent",
+        };
+        crate::hud::advance_from(app, dictation, &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing], crate::hud::HudState {
+            phase: crate::hud::Phase::Done,
+            session_id: Some(dictation.to_string()),
+            mode: Some("audio".to_string()),
+            started_at_ms: None,
+            message: Some(text),
+            notice: Some(notice.to_string()),
+        });
+        return;
+    };
+    // The card and Eavesy's voice say what happened; the HUD steps aside.
+    crate::hud::advance_from(app, dictation, &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing], crate::hud::HudState::idle());
+    tracing::info!(item, "voice answer to the reply card");
+    match voice::step(found.offered(), &text, claim.prompt) {
+        voice::Step::Send(reply) => {
+            let said = match send_reply(app, item, reply) {
+                Ok("sent") => format!("Sent to {}.", found.name),
+                Ok(_) => format!("{} stopped waiting, so I copied it. Paste it in.", found.name),
+                Err(error) => {
+                    tracing::warn!("voice send failed: {error}");
+                    format!("I couldn't send that to {}.", found.name)
+                }
+            };
+            refresh_saying(app, Some(said));
+        }
+        voice::Step::Later => {
+            later(item);
+            refresh_saying(app, Some("Okay, later.".into()));
+        }
+        voice::Step::Dismiss => {
+            dismiss(item);
+            refresh_saying(app, Some("Okay.".into()));
+        }
+        // Only the card is told: anything new at the front waits to be said
+        // until this is answered, rather than being cut off by it.
+        voice::Step::Decline => {
+            with_queue(|queue| queue.decline(item));
+            let _ = app.emit(STATE_EVENT, snapshot());
+            say("Okay, not sent. Say your reply, or use the card.", Some(item));
+        }
+        voice::Step::NothingToSend => {
+            let _ = app.emit(STATE_EVENT, snapshot());
+            say("There's nothing to send yet. Say your reply, or use the card.", Some(item));
+        }
+        voice::Step::ReadBack(draft) => {
+            with_queue(|queue| queue.set_draft(item, draft.clone()));
+            let _ = app.emit(STATE_EVENT, snapshot());
+            say(&voice::read_back(&draft), Some(item));
+        }
+    }
 }
 
 #[tauri::command]
@@ -430,6 +582,15 @@ mod tests {
         let (a, _) = queue.push("a", "docs".into(), Kind::Finished, None, false, 1);
         queue.resolve(a, "finished the docs".into(), None, false);
         assert_eq!(utterance(&items(&queue), false).as_deref(), Some("docs: finished the docs."));
+    }
+
+    #[test]
+    fn an_answer_belongs_to_the_dictation_that_claimed_it() {
+        let claim = voice::Claim { item: 7, prompt: true };
+        answer_with("dictation-1", claim);
+        assert_eq!(take_answer("dictation-2"), None, "another dictation never takes it");
+        assert_eq!(take_answer("dictation-1"), Some(claim));
+        assert_eq!(take_answer("dictation-1"), None, "taken once");
     }
 
     #[test]
