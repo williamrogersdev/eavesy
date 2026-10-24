@@ -59,6 +59,8 @@ pub struct Core {
     tampered: AtomicBool,
     cards: Mutex<Cards<Box<dyn Action>>>,
     breaker: Mutex<Breaker>,
+    /// Held across a policy change and its save, so the policy lock itself stays short.
+    updating: Mutex<()>,
 }
 
 /// Loads the signed policy. Called once from setup.
@@ -75,6 +77,7 @@ pub fn init(app: &AppHandle) {
         tampered: AtomicBool::new(loaded == store::Loaded::Tampered),
         cards: Mutex::default(),
         breaker: Mutex::default(),
+        updating: Mutex::default(),
     });
 }
 
@@ -211,15 +214,16 @@ fn live_cards(core: &Core) -> Vec<CardView> {
     live
 }
 
-/// Changes the policy and saves it under one lock, so two changes can't overwrite each
-/// other. Never call it while a dialog is up.
+/// Changes the policy and saves it, one change at a time so two can't overwrite each
+/// other. The Keychain call runs outside the policy lock, so a slow Keychain never
+/// stalls `submit` or the panel. Never call it while a dialog is up.
 fn update(core: &Core, change: impl FnOnce(&mut Policy)) -> Result<Policy, String> {
     let path = store::path().ok_or("no home folder")?;
-    let mut current = core.policy.lock().unwrap();
-    let mut policy = current.clone();
+    let _updating = core.updating.lock().unwrap();
+    let mut policy = core.policy.lock().unwrap().clone();
     change(&mut policy);
     store::save(&path, &keys(), &policy)?;
-    *current = policy.clone();
+    *core.policy.lock().unwrap() = policy.clone();
     core.tampered.store(false, Ordering::SeqCst);
     Ok(policy)
 }
