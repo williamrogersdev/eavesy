@@ -112,8 +112,10 @@ export function isHallucination(
   const glossary = normalizeVocabulary([...BUILT_IN_TERMS, ...(opts.glossary ?? [])]);
   if (readsBackGlossary(line, glossary, opts.lenient && !opts.quiet ? 3 : 2)) return true;
   // Every prompt names the app, so a doubtful line of nothing but its name is
-  // the prompt read back, not someone saying it.
-  if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.3 && BUILT_IN_TERMS.some((term) => normalize(text) === normalize(term))) return true;
+  // the prompt read back, not someone saying it. A voice note's own words
+  // need more doubt, as with every other short line on one.
+  const doubt = opts.lenient && !opts.quiet ? 0.5 : 0.3;
+  if (line.noSpeechProb !== undefined && line.noSpeechProb > doubt && BUILT_IN_TERMS.some((term) => normalize(text) === normalize(term))) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;

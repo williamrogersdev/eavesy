@@ -150,6 +150,8 @@ describe('glossary read-back', () => {
   test('drops the app name read back alone on doubtful audio, and keeps it said', () => {
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 })).toBe(true);
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.1 })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.4 }, { lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 }, { lenient: true })).toBe(true);
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary: ['Kubernetes'] })).toBe(true);
     expect(isHallucination({ text: 'Open Eavesy.', noSpeechProb: 0.6 })).toBe(false);
   });
