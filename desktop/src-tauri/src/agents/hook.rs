@@ -107,7 +107,9 @@ fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration) -> Opt
     if read_answer(&mut reader)? != (Answer::Ack { hold: true }) {
         return None;
     }
-    stream.set_read_timeout(Some(MAX_HOLD)).ok()?;
+    // macOS refuses socket options once the app has closed its end, which it does right
+    // after a reply it had ready at once; the reply is already buffered, so read it anyway.
+    let _ = stream.set_read_timeout(Some(MAX_HOLD));
     match read_answer(&mut reader)? {
         Answer::Reply { text } if !text.trim().is_empty() => Some(text),
         _ => None,
