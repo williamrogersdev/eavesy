@@ -3,6 +3,7 @@ import { ArrowUp, ShieldAlert, Volume2 } from 'lucide-react';
 import {
   clearAssistantThread,
   decideAssistantCard,
+  forgetAssistantNote,
   getAssistantState,
   getAssistantThread,
   onAssistantCards,
@@ -31,6 +32,13 @@ export function EavesyTab({ flash }: { flash: Flash }) {
   const [state, setState] = useState<AssistantState | null>(null);
   const [draft, setDraft] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  // Notes undone from this tab, so their line says so.
+  const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
+  const undo = (note: string) => {
+    forgetAssistantNote(note)
+      .then(() => setUndone((current) => new Set(current).add(note)))
+      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t undo that'), 4000, 'warn'));
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -135,7 +143,12 @@ export function EavesyTab({ flash }: { flash: Flash }) {
               {turn.who === 'eavesy' && <span className="ev-turn-name">Eavesy</span>}
               {turn.steps.map((step, i) => (
                 <span key={`${step.tool}-${i}`} className="ev-turn-step" data-ok={step.ok}>
-                  {toolLabel(step.tool)}{step.line ? ` · ${step.line}` : '…'}
+                  {step.remembered && undone.has(step.remembered)
+                    ? `Forgot: ${step.remembered}`
+                    : <>{toolLabel(step.tool)}{step.line ? ` · ${step.line}` : '…'}</>}
+                  {step.remembered && !undone.has(step.remembered) && (
+                    <> · <button type="button" className="ev-link" onClick={() => undo(step.remembered ?? '')}>Undo</button></>
+                  )}
                 </span>
               ))}
               {turn.text && <p className="ev-turn-text">{turn.text}</p>}

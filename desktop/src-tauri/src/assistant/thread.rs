@@ -110,6 +110,9 @@ pub struct Step {
     /// The result's first line, or None while it's running.
     pub line: Option<String>,
     pub ok: bool,
+    /// A note `remember` kept, so the thread can offer Undo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remembered: Option<String>,
 }
 
 /// Your words, and nothing that answers a tool call: a window can start there.
@@ -172,9 +175,13 @@ fn view(thread: &Thread) -> View {
                     .content
                     .iter()
                     .filter_map(|block| match block {
-                        Block::ToolUse { id, name, .. } => {
+                        Block::ToolUse { id, name, input } => {
                             let (line, ok) = results.get(id.as_str()).cloned().map_or((None, true), |(line, ok)| (Some(line), ok));
-                            Some(Step { tool: name.clone(), line, ok })
+                            let kept = ok && line.as_deref().is_some_and(|line| line.starts_with("Remembered: "));
+                            let remembered = (name == "remember" && kept)
+                                .then(|| input.get("note").and_then(|note| note.as_str()).map(super::memory::clean))
+                                .flatten();
+                            Some(Step { tool: name.clone(), line, ok, remembered })
                         }
                         _ => None,
                     })
@@ -217,6 +224,8 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
 #[derive(Serialize)]
 struct TurnRequest<'a> {
     style: super::style::Style,
+    /// Eavesy's notes (memory.md); the server sends them as data, not instructions.
+    memory: &'a [String],
     messages: &'a [Message],
 }
 
@@ -226,14 +235,14 @@ struct TurnResponse {
     content: Vec<Block>,
 }
 
-async fn ask(app: &AppHandle, style: super::style::Style, messages: &[Message]) -> Result<Vec<Block>, String> {
+async fn ask(app: &AppHandle, style: super::style::Style, memory: &[String], messages: &[Message]) -> Result<Vec<Block>, String> {
     let credential = crate::settings::device_credential(app).ok_or("Sign in to Eavesy to talk to it.")?;
     let client = crate::sync::http_client().map_err(|e| e.to_string())?;
     let response = client
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { style, messages })
+        .json(&TurnRequest { style, memory, messages })
         .send()
         .await
         .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;
@@ -260,6 +269,8 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
     // Read once: every step of one answer talks the same way.
     let style = crate::settings::load(app).assistant_style.unwrap_or_default();
     for step in 0..MAX_STEPS {
+        // Read each step, so a note kept a step ago is in the next one.
+        let memory = super::memory::for_turn(app);
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
@@ -268,7 +279,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
         let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
-        let content = match tauri::async_runtime::block_on(ask(app, style, &messages)) {
+        let content = match tauri::async_runtime::block_on(ask(app, style, &memory, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
             Err(error) => {
@@ -479,7 +490,7 @@ mod tests {
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
-        assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true }]);
+        assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true, remembered: None }]);
     }
 
     #[test]
