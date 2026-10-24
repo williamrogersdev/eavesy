@@ -151,11 +151,12 @@ export async function suggestAgentReply(client: AgentReplyClient, input: AgentRe
   return parseAgentReply(input, text) ?? fallbackReply(input);
 }
 
-const TOO_LARGE = Symbol('too large');
+export const TOO_LARGE = Symbol('too large');
 
-async function readCapped(request: Request): Promise<string | typeof TOO_LARGE | null> {
+/** The body as text, or TOO_LARGE past `maxBytes` (counted as it streams, not trusted from headers). */
+export async function readCapped(request: Request, maxBytes = MAX_BODY_BYTES): Promise<string | typeof TOO_LARGE | null> {
   const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return TOO_LARGE;
+  if (Number.isFinite(declared) && declared > maxBytes) return TOO_LARGE;
   const reader = request.body?.getReader();
   if (!reader) return null;
   const chunks: Uint8Array[] = [];
@@ -165,7 +166,7 @@ async function readCapped(request: Request): Promise<string | typeof TOO_LARGE |
       const part = await reader.read();
       if (part.done) break;
       size += part.value.length;
-      if (size > MAX_BODY_BYTES) return TOO_LARGE;
+      if (size > maxBytes) return TOO_LARGE;
       chunks.push(part.value);
     }
   } finally { await reader.cancel().catch(() => undefined); }
