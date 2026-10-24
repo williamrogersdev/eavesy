@@ -13,6 +13,17 @@ use super::queue::{Item, Kind};
 
 /// How long after Eavesy stops talking a dictation still answers the card.
 pub const ANSWER_WINDOW: Duration = Duration::from_secs(30);
+/// A bare "yes" sends only this soon after "Send that?": later, it may be
+/// you talking to someone else, so it's read back instead.
+pub const YES_WINDOW: Duration = Duration::from_secs(8);
+
+/// A dictation that answers the card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Claim {
+    pub item: u64,
+    /// Started while Eavesy talked or within [`YES_WINDOW`] of it stopping.
+    pub prompt: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
@@ -121,12 +132,14 @@ pub fn parse(text: &str) -> Command {
 /// What `heard` does given `offered`: the reply Eavesy last asked "Send
 /// that?" about (a draft read back, else the suggestion), or None once you
 /// said no to it. "Send it" sends only what's offered; with nothing offered,
-/// a "yes" or "no" is your reply and is read back too.
-pub fn step(offered: Option<&str>, heard: &str) -> Step {
+/// a "yes" or "no" is your reply and is read back too. A bare "yes" sends
+/// only when `prompt` (see [`Claim`]); otherwise it's read back.
+pub fn step(offered: Option<&str>, heard: &str, prompt: bool) -> Step {
     let offered = offered.map(str::trim).filter(|text| !text.is_empty());
     let heard = heard.trim();
     match (parse(heard), offered) {
-        (Command::Send | Command::Yes, Some(text)) => Step::Send(text.to_string()),
+        (Command::Send, Some(text)) => Step::Send(text.to_string()),
+        (Command::Yes, Some(text)) if prompt => Step::Send(text.to_string()),
         (Command::Send, None) => Step::NothingToSend,
         (Command::No, Some(_)) => Step::Decline,
         (Command::Later, _) => Step::Later,
@@ -152,14 +165,13 @@ pub fn read_back(draft: &str) -> String {
 /// Whether a dictation starting `now` answers `head`, the card's front item:
 /// it's a question you haven't started typing into, Eavesy's last words were
 /// about it, and it's still talking or stopped within [`ANSWER_WINDOW`].
-/// Returns the item it answers.
-pub fn answers(head: Option<&Item>, last_said: Option<u64>, speaking: bool, quiet_since: Option<Instant>, now: Instant) -> Option<u64> {
+pub fn answers(head: Option<&Item>, last_said: Option<u64>, speaking: bool, quiet_since: Option<Instant>, now: Instant) -> Option<Claim> {
     let head = head?;
     if head.kind != Kind::Question || head.typing || last_said != Some(head.id) {
         return None;
     }
-    let recent = speaking || quiet_since.is_some_and(|at| now.saturating_duration_since(at) <= ANSWER_WINDOW);
-    recent.then_some(head.id)
+    let within = |window: Duration| speaking || quiet_since.is_some_and(|at| now.saturating_duration_since(at) <= window);
+    within(ANSWER_WINDOW).then(|| Claim { item: head.id, prompt: within(YES_WINDOW) })
 }
 
 #[cfg(test)]
@@ -194,42 +206,49 @@ mod tests {
 
     #[test]
     fn send_it_sends_what_was_last_offered() {
-        assert_eq!(step(Some("No flag."), "send it"), Step::Send("No flag.".into()));
-        assert_eq!(step(Some("Put it behind a flag"), "yes"), Step::Send("Put it behind a flag".into()));
+        assert_eq!(step(Some("No flag."), "send it", true), Step::Send("No flag.".into()));
+        assert_eq!(step(Some("Put it behind a flag"), "yes", true), Step::Send("Put it behind a flag".into()));
+    }
+
+    #[test]
+    fn a_late_bare_yes_is_read_back_but_send_it_still_sends() {
+        assert_eq!(step(Some("No flag."), "sure", false), Step::ReadBack("sure".into()));
+        assert_eq!(step(Some("No flag."), "send it", false), Step::Send("No flag.".into()));
+        assert_eq!(step(Some("No flag."), "okay, send it", false), Step::Send("No flag.".into()));
     }
 
     #[test]
     fn send_it_with_nothing_offered_never_becomes_a_draft() {
-        assert_eq!(step(None, "send it"), Step::NothingToSend);
-        assert_eq!(step(Some("   "), "Yes, send that."), Step::NothingToSend);
+        assert_eq!(step(None, "send it", true), Step::NothingToSend);
+        assert_eq!(step(Some("   "), "Yes, send that.", true), Step::NothingToSend);
     }
 
     #[test]
     fn anything_else_is_read_back_and_never_sent() {
-        assert_eq!(step(Some("No flag."), "no, put it behind a flag"), Step::ReadBack("no, put it behind a flag".into()));
-        assert_eq!(step(Some("Put it behind a flag"), "actually ship it"), Step::ReadBack("actually ship it".into()));
+        assert_eq!(step(Some("No flag."), "no, put it behind a flag", true), Step::ReadBack("no, put it behind a flag".into()));
+        assert_eq!(step(Some("Put it behind a flag"), "actually ship it", true), Step::ReadBack("actually ship it".into()));
         // With nothing offered, "yes" and "no" are the reply itself.
-        assert_eq!(step(None, "Yes."), Step::ReadBack("Yes.".into()));
-        assert_eq!(step(Some("  "), "no"), Step::ReadBack("no".into()));
+        assert_eq!(step(None, "Yes.", true), Step::ReadBack("Yes.".into()));
+        assert_eq!(step(Some("  "), "no", true), Step::ReadBack("no".into()));
     }
 
     #[test]
     fn no_declines_and_later_and_dismiss_do_what_the_buttons_do() {
-        assert_eq!(step(Some("No flag."), "no"), Step::Decline);
-        assert_eq!(step(Some("Flag it"), "cancel"), Step::Decline);
-        assert_eq!(step(Some("No flag."), "later"), Step::Later);
-        assert_eq!(step(None, "dismiss"), Step::Dismiss);
+        assert_eq!(step(Some("No flag."), "no", true), Step::Decline);
+        assert_eq!(step(Some("Flag it"), "cancel", true), Step::Decline);
+        assert_eq!(step(Some("No flag."), "later", true), Step::Later);
+        assert_eq!(step(None, "dismiss", true), Step::Dismiss);
     }
 
     #[test]
     fn a_full_conversation_sends_only_after_yes() {
-        let Step::ReadBack(draft) = step(Some("No flag. Ship it."), "Put it behind a flag.") else { panic!("should read back") };
+        let Step::ReadBack(draft) = step(Some("No flag. Ship it."), "Put it behind a flag.", true) else { panic!("should read back") };
         assert_eq!(read_back(&draft), "I'll send: Put it behind a flag. Send that?");
-        assert_eq!(step(Some(&draft), "no"), Step::Decline);
+        assert_eq!(step(Some(&draft), "no", true), Step::Decline);
         // Once declined nothing is offered: "send it" sends nothing, "yes" is read back.
-        assert_eq!(step(None, "send it"), Step::NothingToSend);
-        assert_eq!(step(None, "yes"), Step::ReadBack("yes".into()));
-        assert_eq!(step(Some(&draft), "yes, send that"), Step::Send("Put it behind a flag.".into()));
+        assert_eq!(step(None, "send it", true), Step::NothingToSend);
+        assert_eq!(step(None, "yes", true), Step::ReadBack("yes".into()));
+        assert_eq!(step(Some(&draft), "yes, send that", true), Step::Send("Put it behind a flag.".into()));
     }
 
     #[test]
@@ -255,8 +274,11 @@ mod tests {
         let now = Instant::now();
         let mut queue = Queue::default();
         let item = question(&mut queue, Kind::Question);
-        assert_eq!(answers(Some(&item), Some(item.id), true, None, now), Some(item.id));
-        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + ANSWER_WINDOW), Some(item.id));
+        let claim = |prompt| Some(Claim { item: item.id, prompt });
+        assert_eq!(answers(Some(&item), Some(item.id), true, None, now), claim(true));
+        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + YES_WINDOW), claim(true));
+        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + YES_WINDOW + Duration::from_secs(1)), claim(false));
+        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + ANSWER_WINDOW), claim(false));
         assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + ANSWER_WINDOW + Duration::from_secs(1)), None);
         assert_eq!(answers(Some(&item), Some(item.id), false, None, now), None, "never said");
         assert_eq!(answers(Some(&item), Some(item.id + 1), true, None, now), None, "the last words were about another item");

@@ -153,7 +153,8 @@ Claude answer `BANANA` in the same session. The input had
 - **Answering by voice** (`agents/voice.rs`): a dictation that starts while
   Eavesy reads out a question, or up to 30 seconds after it stops, answers
   that question's card instead of typing into the front app. "Send it" (and
-  a few fixed variants, whole utterance only) sends what Eavesy last offered;
+  a few fixed variants, whole utterance only) sends what Eavesy last offered,
+  and so does a bare "yes", but only within 8 seconds of "Send that?";
   "later" and "dismiss" do what the buttons do; "no" sends nothing; anything
   else becomes the draft and is read back ("I'll send: … Send that?"). No
   model picks the command. Approvals and a card you clicked into to type

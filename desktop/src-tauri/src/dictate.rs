@@ -186,8 +186,8 @@ fn start(app: &AppHandle, pressed_at: Instant) {
     );
     match result {
         Ok(session) => {
-            if let Some(item) = answering {
-                crate::agents::answer_with(&session.session_id, item);
+            if let Some(claim) = answering {
+                crate::agents::answer_with(&session.session_id, claim);
             }
             crate::telemetry::track("dictation_started", serde_json::json!({}));
             crate::projects::assign_in_background(app, &session.session_id);

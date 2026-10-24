@@ -46,7 +46,7 @@ static HOLDS: Mutex<Option<HashMap<u64, oneshot::Sender<Answer>>>> = Mutex::new(
 /// The item Eavesy last spoke about.
 static LAST_SAID: Mutex<Option<u64>> = Mutex::new(None);
 /// The dictation that answers the card, and the item it answers.
-static ANSWERING: Mutex<Option<(String, u64)>> = Mutex::new(None);
+static ANSWERING: Mutex<Option<(String, voice::Claim)>> = Mutex::new(None);
 
 fn with_queue<T>(f: impl FnOnce(&mut Queue) -> T) -> T {
     let mut queue = QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -421,7 +421,7 @@ pub fn agents_edit(app: AppHandle, id: u64) {
 
 /// A dictation is starting: whether it answers the card (voice.rs). Call it
 /// before the dictation stops Eavesy talking. Forgets any earlier answer.
-pub fn claim_dictation() -> Option<u64> {
+pub fn claim_dictation() -> Option<voice::Claim> {
     *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     // Read under separate locks: a line ending between them only shifts
     // whether this one dictation counts, and a playing line counts anyway.
@@ -431,15 +431,15 @@ pub fn claim_dictation() -> Option<u64> {
 }
 
 /// The dictation `claim_dictation` claimed is running as `dictation`.
-pub fn answer_with(dictation: &str, item: u64) {
-    *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((dictation.to_string(), item));
+pub fn answer_with(dictation: &str, claim: voice::Claim) {
+    *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((dictation.to_string(), claim));
 }
 
-/// The item this dictation answers, if it answers the card. Takes it.
-pub fn take_answer(dictation: &str) -> Option<u64> {
+/// What this dictation answers, if it answers the card. Takes it.
+pub fn take_answer(dictation: &str) -> Option<voice::Claim> {
     let mut answering = ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match answering.take() {
-        Some((id, item)) if id == dictation => Some(item),
+        Some((id, claim)) if id == dictation => Some(claim),
         other => {
             *answering = other;
             None
@@ -450,7 +450,8 @@ pub fn take_answer(dictation: &str) -> Option<u64> {
 /// What you said in answer to the card. Only "send it" and its like send,
 /// and only what Eavesy last offered; anything else is read back first.
 /// Never pastes into the app you're in, even when the session has gone.
-pub fn answer(app: &AppHandle, dictation: &str, item: u64, text: &str) {
+pub fn answer(app: &AppHandle, dictation: &str, claim: voice::Claim, text: &str) {
+    let item = claim.item;
     let text = crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(text));
     if text.trim().is_empty() {
         crate::audio::paste_nothing(app, dictation, "only fillers were heard");
@@ -476,7 +477,7 @@ pub fn answer(app: &AppHandle, dictation: &str, item: u64, text: &str) {
     // The card and Eavesy's voice say what happened; the HUD steps aside.
     crate::hud::advance_from(app, dictation, &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing], crate::hud::HudState::idle());
     tracing::info!(item, "voice answer to the reply card");
-    match voice::step(found.offered(), &text) {
+    match voice::step(found.offered(), &text, claim.prompt) {
         voice::Step::Send(reply) => {
             let said = match send_reply(app, item, reply) {
                 Ok("sent") => format!("Sent to {}.", found.name),
@@ -584,9 +585,10 @@ mod tests {
 
     #[test]
     fn an_answer_belongs_to_the_dictation_that_claimed_it() {
-        answer_with("dictation-1", 7);
+        let claim = voice::Claim { item: 7, prompt: true };
+        answer_with("dictation-1", claim);
         assert_eq!(take_answer("dictation-2"), None, "another dictation never takes it");
-        assert_eq!(take_answer("dictation-1"), Some(7));
+        assert_eq!(take_answer("dictation-1"), Some(claim));
         assert_eq!(take_answer("dictation-1"), None, "taken once");
     }
 
