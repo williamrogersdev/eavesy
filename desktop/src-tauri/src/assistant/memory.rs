@@ -68,7 +68,7 @@ pub(super) fn read_for_edit(file: &Path) -> Result<String, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(error) => return Err(format!("Couldn't read {name}: {error}")),
         Ok(meta) if meta.len() > MAX_EDIT_BYTES => {
-            return Err(format!("{name} is too big for me to edit safely. Trim it in your editor (Settings → Assistant → Open in Editor)."));
+            return Err(format!("{name} is too big for me to edit safely. Trim it in your editor first."));
         }
         Ok(_) => {}
     }

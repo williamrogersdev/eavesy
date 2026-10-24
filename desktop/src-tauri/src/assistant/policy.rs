@@ -200,6 +200,14 @@ pub fn by_rule(facts: &Facts, requester: &Requester, mode: Mode) -> bool {
     facts.always_allowed && yours && !facts.grants_power && matches!(facts.tier, Tier::Say | Tier::Click)
 }
 
+/// True when this action runs now only because a rule covers it: the mode alone would
+/// have shown a card. What the log and the thread credit to the rule.
+pub fn only_by_rule(facts: &Facts, requester: &Requester, policy: &Effective, check: &Check, breaker: &Breaker) -> bool {
+    let runs = |decision: Decision| matches!(decision, Decision::Run | Decision::RunWithUndo { .. });
+    let without = Facts { always_allowed: false, ..facts.clone() };
+    facts.always_allowed && runs(decide(facts, requester, policy, check, breaker)) && !runs(decide(&without, requester, policy, check, breaker))
+}
+
 /// Auto runs tier 3 only when it can be undone or is on the safe list, and never when it
 /// can't be taken back or hands out power.
 fn auto_may_run(facts: &Facts) -> bool {
@@ -369,6 +377,19 @@ mod tests {
         // Too many at once is a card, rule or not.
         let many = Facts { always_allowed: true, items: MAX_UNATTENDED_ITEMS + 1, ..facts(Tier::Click) };
         assert!(matches!(decide(&many, &you(), &mode(Mode::Ask), &Check::Pass, &Breaker::default()), Decision::Card { .. }));
+    }
+
+    #[test]
+    fn a_run_is_credited_to_a_rule_only_when_the_mode_would_have_asked() {
+        let quiet = Breaker::default();
+        let ruled = Facts { always_allowed: true, safe_listed: true, ..facts(Tier::Click) };
+        assert!(only_by_rule(&ruled, &you(), &mode(Mode::Ask), &Check::Pass, &quiet));
+        // Auto and Bypass run a safe-listed cleanup anyway.
+        assert!(!only_by_rule(&ruled, &you(), &mode(Mode::Auto), &Check::Pass, &quiet));
+        assert!(!only_by_rule(&ruled, &you(), &mode(Mode::Bypass), &Check::Pass, &quiet));
+        // A card is no run at all.
+        assert!(!only_by_rule(&ruled, &you(), &mode(Mode::Ask), &Check::Failed, &quiet));
+        assert!(!only_by_rule(&Facts { always_allowed: false, ..ruled }, &you(), &mode(Mode::Ask), &Check::Pass, &quiet));
     }
 
     #[test]

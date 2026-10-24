@@ -293,12 +293,9 @@ mod tests {
     fn a_rule_added_outside_eavesy_loads_as_ask() {
         let (file, keys) = (temp(), Memory::default());
         save(&file, &keys, &Policy { mode: Mode::Auto, ..Policy::default() }).unwrap();
-        let edited = std::fs::read_to_string(&file).unwrap().replace(
-            "\"trusted_folders\": []",
-            "\"trusted_folders\": [], \"rules\": [{\"kind\": \"remove_worktrees\", \"under\": \"/\"}]",
-        );
-        assert!(edited.contains("remove_worktrees"));
-        std::fs::write(&file, edited).unwrap();
+        let mut signed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        signed["policy"]["rules"] = serde_json::json!([{"kind": "remove_worktrees", "under": "/"}]);
+        std::fs::write(&file, signed.to_string()).unwrap();
         assert_eq!(load(&file, &keys), Loaded::Tampered);
         assert!(load(&file, &keys).policy().rules.is_empty());
     }

@@ -130,7 +130,7 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
         _ if asked_only.is_some() => super::check::run(app, request, action.as_ref()),
         _ => Check::NotRun,
     };
-    if let Some(reason) = asked_only.filter(|_| check != Check::Pass).map(str::to_string) {
+    if let Some(reason) = refusal(asked_only, &check) {
         super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
         return ToolResult { content: reason, is_error: true };
     }
@@ -258,6 +258,11 @@ impl Action for Remember {
     }
 }
 
+/// What Eavesy says instead of running an asked-only tool whose check didn't pass.
+fn refusal(asked_only: Option<&'static str>, check: &Check) -> Option<String> {
+    asked_only.filter(|_| *check != Check::Pass).map(str::to_string)
+}
+
 /// Writes a rule into rules.md, where it waits in the review list until you accept it in
 /// Settings (H4). Nothing here puts it in force.
 struct SuggestRule {
@@ -299,6 +304,13 @@ mod tests {
         assert!(asked_only("remember").is_some());
         assert!(asked_only("suggest_rule").is_some());
         assert!(asked_only("open_link").is_none());
+        // Anything but a pass refuses, offline and errors included; other tools never do.
+        assert_eq!(refusal(asked_only("suggest_rule"), &Check::Pass), None);
+        for check in [Check::NotRun, Check::Failed, Check::Flagged("not asked".into())] {
+            assert!(refusal(asked_only("suggest_rule"), &check).is_some(), "{check:?}");
+            assert!(refusal(asked_only("remember"), &check).is_some(), "{check:?}");
+            assert_eq!(refusal(asked_only("open_link"), &check), None);
+        }
     }
 
     #[test]

@@ -142,7 +142,10 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
     // Set here from the signed rules, whatever the tool said.
     let covering = rules::covering(&policy.rules, &action.scopes(), action.rows().len());
     facts.always_allowed = covering.is_some();
-    let decision = gate(&facts, requester, &effective, check, &mut core.breaker.lock().unwrap());
+    let mut breaker = core.breaker.lock().unwrap();
+    let ran_by_rule = policy::only_by_rule(&facts, requester, &effective, check, &breaker);
+    let decision = gate(&facts, requester, &effective, check, &mut breaker);
+    drop(breaker);
     let who = requester.label();
     let title = action.title();
     match decision {
@@ -157,7 +160,7 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
             let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
             let mut ran = action.run(&rows);
             // Say which rule let it run, so the log and the thread show why no card came (C5).
-            if let Some(used) = covering.filter(|_| policy::by_rule(&facts, requester, effective.mode)) {
+            if let Some(used) = covering.filter(|_| ran_by_rule) {
                 let named: Vec<String> = used.iter().map(rules::Rule::text).collect();
                 ran.summary = format!("{} (your rule: {})", ran.summary, named.join("; "));
             }
