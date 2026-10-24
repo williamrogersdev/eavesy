@@ -21,7 +21,8 @@ pub const YES_WINDOW: Duration = Duration::from_secs(8);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Claim {
     pub item: u64,
-    /// Started while Eavesy talked or within [`YES_WINDOW`] of it stopping.
+    /// Started within [`YES_WINDOW`] of a line heard to its end, so its
+    /// "Send that?" was heard.
     pub prompt: bool,
 }
 
@@ -140,6 +141,8 @@ pub fn step(offered: Option<&str>, heard: &str, prompt: bool) -> Step {
     match (parse(heard), offered) {
         (Command::Send, Some(text)) => Step::Send(text.to_string()),
         (Command::Yes, Some(text)) if prompt => Step::Send(text.to_string()),
+        // A late "yes": ask again about the same reply.
+        (Command::Yes, Some(text)) => Step::ReadBack(text.to_string()),
         (Command::Send, None) => Step::NothingToSend,
         (Command::No, Some(_)) => Step::Decline,
         (Command::Later, _) => Step::Later,
@@ -165,13 +168,16 @@ pub fn read_back(draft: &str) -> String {
 /// Whether a dictation starting `now` answers `head`, the card's front item:
 /// it's a question you haven't started typing into, Eavesy's last words were
 /// about it, and it's still talking or stopped within [`ANSWER_WINDOW`].
-pub fn answers(head: Option<&Item>, last_said: Option<u64>, speaking: bool, quiet_since: Option<Instant>, now: Instant) -> Option<Claim> {
+/// `quiet_since` is when it stopped, and whether the line played to its end.
+pub fn answers(head: Option<&Item>, last_said: Option<u64>, speaking: bool, quiet_since: Option<(Instant, bool)>, now: Instant) -> Option<Claim> {
     let head = head?;
     if head.kind != Kind::Question || head.typing || last_said != Some(head.id) {
         return None;
     }
-    let within = |window: Duration| speaking || quiet_since.is_some_and(|at| now.saturating_duration_since(at) <= window);
-    within(ANSWER_WINDOW).then(|| Claim { item: head.id, prompt: within(YES_WINDOW) })
+    let since = |window: Duration| quiet_since.filter(|(at, _)| now.saturating_duration_since(*at) <= window);
+    let recent = speaking || since(ANSWER_WINDOW).is_some();
+    let prompt = !speaking && since(YES_WINDOW).is_some_and(|(_, heard)| heard);
+    recent.then_some(Claim { item: head.id, prompt })
 }
 
 #[cfg(test)]
@@ -212,7 +218,8 @@ mod tests {
 
     #[test]
     fn a_late_bare_yes_is_read_back_but_send_it_still_sends() {
-        assert_eq!(step(Some("No flag."), "sure", false), Step::ReadBack("sure".into()));
+        // Asked again about the same reply, never replaced by the word "sure".
+        assert_eq!(step(Some("No flag."), "sure", false), Step::ReadBack("No flag.".into()));
         assert_eq!(step(Some("No flag."), "send it", false), Step::Send("No flag.".into()));
         assert_eq!(step(Some("No flag."), "okay, send it", false), Step::Send("No flag.".into()));
     }
@@ -275,11 +282,14 @@ mod tests {
         let mut queue = Queue::default();
         let item = question(&mut queue, Kind::Question);
         let claim = |prompt| Some(Claim { item: item.id, prompt });
-        assert_eq!(answers(Some(&item), Some(item.id), true, None, now), claim(true));
-        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + YES_WINDOW), claim(true));
-        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + YES_WINDOW + Duration::from_secs(1)), claim(false));
-        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + ANSWER_WINDOW), claim(false));
-        assert_eq!(answers(Some(&item), Some(item.id), false, Some(now), now + ANSWER_WINDOW + Duration::from_secs(1)), None);
+        let heard = Some((now, true));
+        // Over the line, "Send that?" wasn't heard yet: only "send it" sends.
+        assert_eq!(answers(Some(&item), Some(item.id), true, None, now), claim(false));
+        assert_eq!(answers(Some(&item), Some(item.id), false, heard, now + YES_WINDOW), claim(true));
+        assert_eq!(answers(Some(&item), Some(item.id), false, Some((now, false)), now), claim(false), "cut off before the question");
+        assert_eq!(answers(Some(&item), Some(item.id), false, heard, now + YES_WINDOW + Duration::from_secs(1)), claim(false));
+        assert_eq!(answers(Some(&item), Some(item.id), false, heard, now + ANSWER_WINDOW), claim(false));
+        assert_eq!(answers(Some(&item), Some(item.id), false, heard, now + ANSWER_WINDOW + Duration::from_secs(1)), None);
         assert_eq!(answers(Some(&item), Some(item.id), false, None, now), None, "never said");
         assert_eq!(answers(Some(&item), Some(item.id + 1), true, None, now), None, "the last words were about another item");
         assert_eq!(answers(None, Some(item.id), true, None, now), None);

@@ -457,7 +457,8 @@ pub fn answer(app: &AppHandle, dictation: &str, claim: voice::Claim, text: &str)
         crate::audio::paste_nothing(app, dictation, "only fillers were heard");
         return;
     }
-    let found = with_queue(|queue| queue.get(item).filter(|item| item.kind == Kind::Question).cloned());
+    // Clicking into the card while this was written down makes it yours to type.
+    let found = with_queue(|queue| queue.get(item).filter(|item| item.kind == Kind::Question && !item.typing).cloned());
     let Some(found) = found else {
         // Your words were for a session that has gone: keep them, but not in your app.
         let notice = match crate::commands::copy_to_clipboard(app, &text) {
