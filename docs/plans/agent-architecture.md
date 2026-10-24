@@ -3,7 +3,8 @@
 Status: proposal (2026-10-17). It builds on
 [agent-connector.md](agent-connector.md), the research and feature plan. This
 doc covers how the features fit together so they don't turn into a pile of
-unrelated parts.
+unrelated parts. Voice on top of send and ask (spoken replies, clarify mode,
+CLI channels) is planned in [voice-conversation.md](voice-conversation.md).
 
 ## The goal
 
