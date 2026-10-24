@@ -232,6 +232,37 @@ reads or writes can change a tool's tier.**
   content that led to it) confirms the action matches what you asked. A
   mismatch is shown on the card in warn ink ("You asked to stop vite; this
   also stops postgres"), never silently dropped or silently allowed.
+- **C8. Permission modes.** Clicking every time gets old, so like Claude
+  Code you pick how much Eavesy asks. The mode shows in Settings → Rules,
+  in the thread's header, and as a mark on the pill whenever it isn't Ask.
+
+  | Mode | Tier 2 (send) | Tier 3 (change, remove) | When it still asks |
+  |---|---|---|---|
+  | **Ask** (default) | Read-back, then "yes" or a click | Card, click only | Always |
+  | **Auto** | Runs when the second-model check (C7) passes; says what it sent | Runs when C7 passes and the action can be undone or is on the safe list below; shows what it did with Undo | C7 flags it; it can't be undone (revoke a key, empty a file, push, post publicly); it adds a connection or changes rules |
+  | **Bypass** | Runs, no read-back | Runs, no card | Only the floor below |
+
+  Bypass is for when you trust the session and don't want to click:
+  - **Turning it on** takes a click in Eavesy's UI (never voice, never an
+    agent, never content), with a choice of **for this task**, **for an
+    hour** or **until I turn it off**. While it's on, the pill and panel
+    carry a warn-ink **Bypass** mark, and one click turns it off.
+  - **It applies to what *you* ask**, typed or spoken. Requests from other
+    agents (N) and from monitors still get cards, unless you also tick
+    **Trust local agents** for a project folder (for example
+    `~/Developer/eavesy`). Remote agents always get a card.
+  - **It never skips the floor:** the "Never" row; a secret's value never
+    reaching a model or agent (M); revoking an old key only after every
+    check passed (M6); Never-granted apps (L3); C7 still runs, and when it
+    flags a mismatch Eavesy stops and shows the card, in every mode.
+  - **It keeps the record:** everything is spoken or shown as it happens,
+    logged (C5), and undoable where possible, with Undo held for 60 s
+    instead of 10.
+
+  Auto's safe list (undoable, local): stop processes Eavesy can prove are
+  leftovers (machine-companion rules), move files to the Trash, remove clean
+  worktrees of merged branches, write files inside granted read-and-write
+  folders with a backup, replies to agent sessions you're already in.
 
 ### D. Watching things for you
 
@@ -484,8 +515,10 @@ check, not the agent that asked.
   4. **Revoke** the old key, on a **separate tier 3 card that appears only
      after every check passed**. If any check fails, Eavesy stops, keeps
      the old key working, and says which destination failed.
-- **M7.** "Always allow" (C3) never applies to secrets. Each rotation is
-  clicked through.
+- **M7.** "Always allow" (C3) never applies to secrets. In Ask and Auto
+  each rotation is clicked through. In Bypass it runs without the cards
+  but in the same order, and the old key is still revoked only after every
+  check passed.
 
 Example: "Rotate my PostHog API key." PostHog's docs describe creating a
 personal API key in the web app, with the value shown once. Project secret
@@ -673,8 +706,9 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
   Eavesy, never a chat with someone else's model." Eavesy still doesn't
   wrap Claude or ChatGPT or show their chats; it has its own conversation
   about your Mac, your captures and your agents. Rule 4 (one way to
-  interrupt) and rule 6 (the human approves by click) stand and are what the
-  tier table enforces.
+  interrupt) stands. Rule 6 (the human approves by click) gains one case:
+  approval can also be a mode the human turned on by click (C8, Auto or
+  Bypass), never one an agent, a tool or content turned on.
 - **voice-conversation.md** — the reply card becomes a state of the pill
   (I1), and replies to agents land in the conversation thread as tier 2
   actions, so you can see what you sent.
@@ -687,24 +721,24 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
 - **self-hosted-meeting-bot.md** — its CDP client is shared with Eavesy's
   browser (L2).
 
-## Decisions for William
+## Decisions
+
+Taken on 2026-10-24. William said to build all of it and to go with a Swift
+driver; the rest take the recommended option and can be changed in Settings
+or a follow-up PR.
 
 1. **The model.** Conversation on Claude Sonnet 5.5 through Eavesy's cloud,
-   with Haiku 5.5 for summaries and suggestions (recommended), or Opus for
-   everything (slower, pricier)?
-2. **Talk shortcut.** `fn` + `Space` (recommended), a double-tap of `fn`, or
-   only "Hey Eavesy"?
-3. **Where the thread lives.** The panel's first tab (recommended), or a
-   separate window?
-4. **"Always allow" (C3).** Ship it in the first version, or wait until the
-   Activity log has a few weeks of history?
-5. **Personality default.** "Eavesy" (recommended) or "Plain"?
-6. **Computer use engine.** Our own Swift accessibility driver plus Claude's
-   computer use tool for the screenshot fallback (recommended), or wrap an
-   open-source server like Cua Driver (MIT)?
-7. **Remote agents and the browser (N4).** Allow signed-out browser tasks
-   from cloud agents with a click each time (recommended), or keep remote
-   agents off computer use entirely?
+   Haiku 5.5 for summaries, suggestions and the C7 check.
+2. **Talk shortcut.** `fn` + `Space`, plus "Hey Eavesy" once step 11 lands.
+3. **Where the thread lives.** The panel's first tab.
+4. **"Always allow" (C3).** Ships in the first version, scoped rules only.
+5. **Personality default.** "Eavesy".
+6. **Computer use engine.** Our own Swift accessibility driver; Claude's
+   computer use tool only for the screenshot fallback.
+7. **Remote agents and the browser (N4).** Allowed for signed-out browser
+   tasks, with a click per request.
+8. **Bypass length (C8).** "For an hour" is pre-selected; the other two
+   choices are one click away.
 
 ## Build order
 
@@ -716,8 +750,9 @@ Each step ships on its own and is useful alone.
    conversation with tier 0 and 1 tools, Repeat, Edit, Reply.
 3. **Talk to Eavesy by voice** (B5, B6): the shortcut, live captions in the
    pill, spoken replies, barge-in.
-4. **The tier table and cards** (C): tier 2 read-back, tier 3 cards, the
-   Activity log; agent replies and machine cleanup move onto it.
+4. **The tier table, cards and modes** (C): tier 2 read-back, tier 3
+   cards, Ask / Auto / Bypass, the Activity log; agent replies and machine
+   cleanup move onto it.
 5. **Settings: Assistant, Connections, Rules, Memory, Monitors, Activity**
    (F, G, H).
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
