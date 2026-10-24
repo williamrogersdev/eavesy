@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::panel;
-use crate::settings::{self, Settings, DEFAULT_DICTATION_HOTKEY, DEFAULT_TOGGLE_HOTKEY};
+use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_TOGGLE_HOTKEY};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
 /// A lone fn tap while shortcuts are suspended for recording one in Settings.
@@ -20,28 +20,33 @@ pub const FN: &str = "Fn";
 pub enum Action {
     Toggle,
     Dictation,
+    /// Talk to Eavesy: records like dictation, and the words go to Eavesy.
+    Assistant,
 }
 
 impl Action {
+    pub const ALL: [Action; 3] = [Action::Toggle, Action::Dictation, Action::Assistant];
+
     pub fn parse(s: &str) -> Result<Self, HotkeyError> {
         match s {
             "toggle" => Ok(Action::Toggle),
             "dictation" => Ok(Action::Dictation),
+            "assistant" => Ok(Action::Assistant),
             other => Err(HotkeyError::invalid(format!("unknown shortcut action '{other}'"))),
         }
     }
 
-    fn other(self) -> Self {
-        match self { Action::Toggle => Action::Dictation, Action::Dictation => Action::Toggle }
-    }
-
     /// The name people see in Settings.
     pub fn label(self) -> &'static str {
-        match self { Action::Toggle => "Open Eavesy", Action::Dictation => "Talk" }
+        match self { Action::Toggle => "Open Eavesy", Action::Dictation => "Talk", Action::Assistant => "Talk to Eavesy" }
     }
 
     pub fn default_accelerator(self) -> &'static str {
-        match self { Action::Toggle => DEFAULT_TOGGLE_HOTKEY, Action::Dictation => DEFAULT_DICTATION_HOTKEY }
+        match self {
+            Action::Toggle => DEFAULT_TOGGLE_HOTKEY,
+            Action::Dictation => DEFAULT_DICTATION_HOTKEY,
+            Action::Assistant => DEFAULT_ASSISTANT_HOTKEY,
+        }
     }
 }
 
@@ -51,13 +56,21 @@ impl Action {
 pub enum TakenBy {
     Toggle,
     Dictation,
+    Assistant,
     /// Another app or macOS registered it first.
     Other,
 }
 
 impl From<Action> for TakenBy {
     fn from(action: Action) -> Self {
-        match action { Action::Toggle => TakenBy::Toggle, Action::Dictation => TakenBy::Dictation }
+        match action { Action::Toggle => TakenBy::Toggle, Action::Dictation => TakenBy::Dictation, Action::Assistant => TakenBy::Assistant }
+    }
+}
+
+impl TakenBy {
+    /// The shortcut's own action, unless another app holds it.
+    fn action(self) -> Option<Action> {
+        match self { TakenBy::Toggle => Some(Action::Toggle), TakenBy::Dictation => Some(Action::Dictation), TakenBy::Assistant => Some(Action::Assistant), TakenBy::Other => None }
     }
 }
 
@@ -82,11 +95,10 @@ impl HotkeyError {
         let name = action.label();
         match self {
             HotkeyError::NeedsModifier => format!("Your {name} shortcut ({keys}) needs ⌘, ⌃ or ⌥."),
-            HotkeyError::Taken { by: TakenBy::Other } => format!("Your {name} shortcut ({keys}) is in use by another app."),
-            HotkeyError::Taken { by } => {
-                let other = if *by == TakenBy::Toggle { Action::Toggle } else { Action::Dictation };
-                format!("Your {name} shortcut ({keys}) is also set for {}.", other.label())
-            }
+            HotkeyError::Taken { by } => match by.action() {
+                Some(other) => format!("Your {name} shortcut ({keys}) is also set for {}.", other.label()),
+                None => format!("Your {name} shortcut ({keys}) is in use by another app."),
+            },
             HotkeyError::InputMonitoring => format!("Your {name} shortcut (fn) needs Input Monitoring for Eavesy."),
             HotkeyError::Invalid { message } => format!("Your {name} shortcut ({keys}) couldn't be set: {message}"),
         }
@@ -97,9 +109,10 @@ impl std::fmt::Display for HotkeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HotkeyError::NeedsModifier => f.write_str("Use ⌘, ⌃ or ⌥ with a key, or fn on its own."),
-            HotkeyError::Taken { by: TakenBy::Other } => f.write_str("Another app is using that shortcut."),
-            HotkeyError::Taken { by: TakenBy::Toggle } => f.write_str("Already used for Open Eavesy."),
-            HotkeyError::Taken { by: TakenBy::Dictation } => f.write_str("Already used for Talk."),
+            HotkeyError::Taken { by } => match by.action() {
+                Some(other) => write!(f, "Already used for {}.", other.label()),
+                None => f.write_str("Another app is using that shortcut."),
+            },
             HotkeyError::InputMonitoring => f.write_str("fn needs Input Monitoring. Allow Eavesy in Privacy & Security, then relaunch."),
             HotkeyError::Invalid { message } => f.write_str(message),
         }
@@ -138,34 +151,39 @@ fn same_keys(a: &str, b: &str) -> bool {
 pub struct Bindings {
     pub toggle: String,
     pub dictation: String,
+    pub assistant: String,
 }
 
 impl Bindings {
     pub fn defaults() -> Self {
-        Bindings { toggle: DEFAULT_TOGGLE_HOTKEY.into(), dictation: DEFAULT_DICTATION_HOTKEY.into() }
+        Bindings { toggle: DEFAULT_TOGGLE_HOTKEY.into(), dictation: DEFAULT_DICTATION_HOTKEY.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into() }
     }
 
-    fn of(settings: &Settings) -> Self {
-        Bindings { toggle: settings.toggle_hotkey.clone(), dictation: settings.dictation_hotkey.clone() }
+    pub fn of(settings: &Settings) -> Self {
+        Bindings { toggle: settings.toggle_hotkey.clone(), dictation: settings.dictation_hotkey.clone(), assistant: settings.assistant_hotkey.clone() }
     }
 
     pub fn get(&self, action: Action) -> &str {
-        match action { Action::Toggle => &self.toggle, Action::Dictation => &self.dictation }
+        match action { Action::Toggle => &self.toggle, Action::Dictation => &self.dictation, Action::Assistant => &self.assistant }
     }
 
     fn set(&mut self, action: Action, accelerator: String) {
-        match action { Action::Toggle => self.toggle = accelerator, Action::Dictation => self.dictation = accelerator }
+        match action {
+            Action::Toggle => self.toggle = accelerator,
+            Action::Dictation => self.dictation = accelerator,
+            Action::Assistant => self.assistant = accelerator,
+        }
     }
 }
 
-/// What the bindings become when `action` is given `accelerator`. If the other
+/// What the bindings become when `action` is given `accelerator`. If another
 /// action already has it, that's an error unless `swap`, in which case the two
 /// trade places.
 pub fn plan(current: &Bindings, action: Action, accelerator: &str, swap: bool) -> Result<Bindings, HotkeyError> {
     validate(accelerator)?;
     let mut next = current.clone();
-    let other = action.other();
-    if same_keys(current.get(other), accelerator) {
+    let holder = Action::ALL.into_iter().find(|other| *other != action && same_keys(current.get(*other), accelerator));
+    if let Some(other) = holder {
         if !swap { return Err(HotkeyError::Taken { by: other.into() }); }
         next.set(other, current.get(action).to_string());
     }
@@ -181,13 +199,13 @@ fn registry() -> std::sync::MutexGuard<'static, bool> {
     REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Registers both shortcuts. Returns each one that failed and why.
+/// Registers every shortcut. Returns each one that failed and why.
 pub fn register_all(app: &AppHandle, settings: &Settings) -> Vec<(Action, String, HotkeyError)> {
     register_bindings(app, &Bindings::of(settings))
 }
 
 fn register_bindings(app: &AppHandle, bindings: &Bindings) -> Vec<(Action, String, HotkeyError)> {
-    [Action::Toggle, Action::Dictation]
+    Action::ALL
         .into_iter()
         .filter_map(|action| {
             let accelerator = bindings.get(action);
@@ -204,11 +222,11 @@ fn unregister_everything(app: &AppHandle) {
 }
 
 fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), HotkeyError> {
-    if action == Action::Dictation { crate::dictate::reset_key(); }
+    if action != Action::Toggle { crate::dictate::reset_key(); }
     if accelerator.is_empty() { return Ok(()); }
     if accelerator == FN {
         #[cfg(target_os = "macos")]
-        return crate::fn_key::bind(app, if action == Action::Toggle { 1 } else { 2 });
+        return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant => crate::fn_key::TALK });
         #[cfg(not(target_os = "macos"))]
         return Err(HotkeyError::invalid("fn works on macOS only"));
     }
@@ -223,6 +241,10 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
         Action::Dictation => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| match event.state {
             ShortcutState::Pressed => crate::dictate::key_down(app),
             ShortcutState::Released => crate::dictate::key_up(app),
+        }),
+        Action::Assistant => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| match event.state {
+            ShortcutState::Pressed => crate::dictate::talk_key_down(app),
+            ShortcutState::Released => crate::dictate::talk_key_up(app),
         }),
     };
     // macOS refuses a hotkey another app already registered.
@@ -358,6 +380,7 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
     let saved = settings::update(app, |config| {
         config.toggle_hotkey = next.toggle.clone();
         config.dictation_hotkey = next.dictation.clone();
+        config.assistant_hotkey = next.assistant.clone();
     });
     match saved {
         Ok(config) => {
@@ -384,7 +407,7 @@ mod tests {
     use super::*;
 
     fn bindings(toggle: &str, dictation: &str) -> Bindings {
-        Bindings { toggle: toggle.into(), dictation: dictation.into() }
+        Bindings { toggle: toggle.into(), dictation: dictation.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into() }
     }
 
     #[test]
@@ -405,6 +428,17 @@ mod tests {
         assert_eq!(plan(&now, Action::Dictation, "Shift+Cmd+Space", false), Err(HotkeyError::Taken { by: TakenBy::Toggle }));
         assert_eq!(plan(&now, Action::Toggle, "Cmd+Shift+D", true), Ok(bindings("Cmd+Shift+D", "Cmd+Shift+Space")));
         assert_eq!(plan(&bindings("Fn", "Alt+D"), Action::Dictation, "Fn", true), Ok(bindings("Alt+D", "Fn")));
+    }
+
+    #[test]
+    fn talk_to_eavesy_is_a_third_shortcut_that_trades_with_either() {
+        let now = bindings("Cmd+Shift+Space", "Cmd+Shift+D");
+        assert_eq!(plan(&now, Action::Assistant, "Cmd+Shift+D", false), Err(HotkeyError::Taken { by: TakenBy::Dictation }));
+        let swapped = plan(&now, Action::Assistant, "Cmd+Shift+D", true).unwrap();
+        assert_eq!((swapped.dictation.as_str(), swapped.assistant.as_str()), (DEFAULT_ASSISTANT_HOTKEY, "Cmd+Shift+D"));
+        assert_eq!(plan(&now, Action::Toggle, DEFAULT_ASSISTANT_HOTKEY, false), Err(HotkeyError::Taken { by: TakenBy::Assistant }));
+        assert_eq!(HotkeyError::Taken { by: TakenBy::Assistant }.to_string(), "Already used for Talk to Eavesy.");
+        assert_eq!(validate(DEFAULT_ASSISTANT_HOTKEY), Ok(()));
     }
 
     #[test]

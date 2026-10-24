@@ -5,9 +5,10 @@ use tauri::AppHandle;
 
 use crate::hotkeys::HotkeyError;
 
-/// 0 off, 1 open Eavesy, 2 dictation, `CAPTURE` report taps to Settings.
+/// 0 off, 1 open Eavesy, 2 dictation, `TALK` talk to Eavesy, `CAPTURE` report taps to Settings.
 static ACTION: AtomicU8 = AtomicU8::new(0);
 const CAPTURE: u8 = 3;
+pub const TALK: u8 = 4;
 static TAP: OnceLock<usize> = OnceLock::new();
 const FN: u64 = 1 << 23;
 const MODIFIERS: u64 = (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20);
@@ -64,6 +65,7 @@ extern "C" fn receive(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut 
             match ACTION.load(Ordering::SeqCst) {
                 1 => crate::hotkeys::toggle_launcher(&context.app),
                 2 => crate::hotkeys::trigger_dictation(&context.app),
+                TALK => crate::dictate::toggle_talk(&context.app),
                 CAPTURE => { use tauri::Emitter; let _ = context.app.emit(crate::hotkeys::EVENT_FN_TAP, ()); }
                 _ => {}
             }

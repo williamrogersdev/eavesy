@@ -175,7 +175,7 @@ fn view(thread: &Thread) -> View {
                         _ => None,
                     })
                     .collect();
-                turns.push(TurnView { id, who: "eavesy", spoken: false, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
+                turns.push(TurnView { id, who: "eavesy", spoken: turn.spoken, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
             }
         }
     }
@@ -343,6 +343,12 @@ pub fn assistant_thread(app: AppHandle, window: WebviewWindow) -> Result<View, S
 #[tauri::command]
 pub async fn assistant_send(app: AppHandle, window: WebviewWindow, text: String, spoken: Option<bool>) -> Result<(), String> {
     super::from_ui(&window)?;
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || send(&handle, text, spoken.unwrap_or(false))).await.map_err(|error| error.to_string())?
+}
+
+/// Your message, then Eavesy's answer to it. Blocking: call it off the main thread.
+pub fn send(app: &AppHandle, text: String, spoken: bool) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Ok(());
@@ -358,11 +364,58 @@ pub async fn assistant_send(app: AppHandle, window: WebviewWindow, text: String,
         }
         thread.busy = true;
     }
-    let handle = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || converse(&handle, text, spoken.unwrap_or(false))).await;
-    app.state::<Mutex<Thread>>().lock().unwrap().busy = false;
-    emit(&app);
-    result.map_err(|error| error.to_string())
+    // Busy is cleared however the conversation ends, a panic included.
+    struct Done<'a>(&'a AppHandle);
+    impl Drop for Done<'_> {
+        fn drop(&mut self) {
+            self.0.state::<Mutex<Thread>>().lock().unwrap_or_else(|e| e.into_inner()).busy = false;
+            emit(self.0);
+        }
+    }
+    let _done = Done(app);
+    converse(app, text, spoken);
+    Ok(())
+}
+
+/// Eavesy's newest reply that has words: its turn, and the words.
+pub fn last_reply(app: &AppHandle) -> Option<(Option<usize>, String)> {
+    let state = app.state::<Mutex<Thread>>();
+    let thread = state.lock().unwrap();
+    thread.turns.iter().enumerate().rev().find_map(|(id, turn)| {
+        let text = text_of(&turn.message);
+        (turn.message.role == Role::Assistant && !text.trim().is_empty()).then_some((Some(id), text))
+    })
+}
+
+/// Eavesy read this reply out loud (B7).
+pub fn mark_spoken(app: &AppHandle, id: usize) {
+    {
+        let state = app.state::<Mutex<Thread>>();
+        let mut thread = state.lock().unwrap();
+        match thread.turns.get_mut(id) {
+            Some(turn) if turn.message.role == Role::Assistant => turn.spoken = true,
+            _ => return,
+        }
+    }
+    emit(app);
+}
+
+/// Says one of Eavesy's replies again (B3).
+#[tauri::command]
+pub fn assistant_repeat(app: AppHandle, window: WebviewWindow, id: usize) -> Result<(), String> {
+    super::from_ui(&window)?;
+    let text = {
+        let state = app.state::<Mutex<Thread>>();
+        let thread = state.lock().unwrap();
+        match thread.turns.get(id) {
+            Some(turn) if turn.message.role == Role::Assistant => text_of(&turn.message),
+            _ => return Err("That reply is gone.".into()),
+        }
+    };
+    if !super::voice::say(&app, Some(id), &text) {
+        return Err("Eavesy doesn't talk while you're recording.".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]

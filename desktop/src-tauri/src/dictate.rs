@@ -27,6 +27,8 @@ struct Press {
 
 /// The hotkey is down. A held key can repeat its press; only the first counts.
 static KEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// The same for the Talk to Eavesy shortcut, which records the same way.
+static TALK_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 
 static PRESS: Mutex<Press> = Mutex::new(Press { started_by: None, stop_when_ready: false });
 
@@ -80,6 +82,7 @@ fn on_release(started_by: Option<Instant>, now: Instant, active: Option<String>,
 /// so its release may never arrive and must not leave the hotkey stuck.
 pub fn reset_key() {
     KEY_DOWN.store(false, Ordering::SeqCst);
+    TALK_KEY_DOWN.store(false, Ordering::SeqCst);
     *press() = Press::default();
 }
 
@@ -94,7 +97,21 @@ pub fn key_down(app: &AppHandle) {
     if KEY_DOWN.swap(true, Ordering::SeqCst) {
         return;
     }
-    pressed(app, true);
+    pressed(app, true, false);
+}
+
+/// The Talk to Eavesy shortcut went down: like dictation, but the words go to Eavesy.
+pub fn talk_key_down(app: &AppHandle) {
+    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    pressed(app, true, true);
+}
+
+/// The Talk to Eavesy shortcut came up.
+pub fn talk_key_up(app: &AppHandle) {
+    TALK_KEY_DOWN.store(false, Ordering::SeqCst);
+    released(app);
 }
 
 /// The dictation hotkey came up.
@@ -103,8 +120,9 @@ pub fn key_up(app: &AppHandle) {
     released(app);
 }
 
-/// `can_hold`: a real key press, whose release can end a push-to-talk.
-fn pressed(app: &AppHandle, can_hold: bool) {
+/// `can_hold`: a real key press, whose release can end a push-to-talk. `for_eavesy`:
+/// a recording this press starts is a message to Eavesy.
+fn pressed(app: &AppHandle, can_hold: bool, for_eavesy: bool) {
     let at = Instant::now();
     let app = app.clone();
     std::thread::spawn(move || {
@@ -120,7 +138,7 @@ fn pressed(app: &AppHandle, can_hold: bool) {
             }
             OnPress::Start => {
                 *press() = Press { started_by: can_hold.then_some(at), stop_when_ready: false };
-                start(&app, at);
+                start(&app, at, for_eavesy);
             }
         }
     });
@@ -148,7 +166,13 @@ fn released(app: &AppHandle) {
 
 /// A press that toggles without a release (Fn tap, menu bar).
 pub fn toggle(app: &AppHandle) {
-    pressed(app, false);
+    pressed(app, false, false);
+}
+
+/// Talk to Eavesy as a toggle (fn tap).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn toggle_talk(app: &AppHandle) {
+    pressed(app, false, true);
 }
 
 /// Where the cursor is right now: the paste goes back there. Looking it up
@@ -158,18 +182,22 @@ fn note_press_in_background() {
     std::thread::spawn(crate::dictation::note_shortcut_press);
 }
 
-fn start(app: &AppHandle, pressed_at: Instant) {
+fn start(app: &AppHandle, pressed_at: Instant, for_eavesy: bool) {
     // Decided before Eavesy stops talking: a dictation that starts over (or
-    // just after) a question it read out answers that question's card.
-    let answering = crate::agents::claim_dictation();
+    // just after) a question it read out answers that question's card. Talking
+    // to Eavesy is never an answer to a card.
+    let answering = if for_eavesy { None } else { crate::agents::claim_dictation() };
     // You're talking: Eavesy stops talking.
-    crate::agents::speak::stop();
+    crate::assistant::voice::hush(app);
+    if for_eavesy {
+        crate::assistant::voice::begin();
+    }
     // Say "Starting…" at once: the engine takes a moment to open the mic. The
     // red state, the timer and the start sound wait until it really is open.
     crate::hud::set_state(app, crate::hud::HudState {
         phase: crate::hud::Phase::Recording,
         session_id: None,
-        mode: Some("audio".to_string()),
+        mode: Some(if for_eavesy { crate::assistant::voice::MODE } else { "audio" }.to_string()),
         started_at_ms: None,
         message: None,
         notice: None,
@@ -186,6 +214,9 @@ fn start(app: &AppHandle, pressed_at: Instant) {
     );
     match result {
         Ok(session) => {
+            if for_eavesy {
+                crate::assistant::voice::bind(&session.session_id);
+            }
             if let Some(claim) = answering {
                 crate::agents::answer_with(&session.session_id, claim);
             }
@@ -197,6 +228,7 @@ fn start(app: &AppHandle, pressed_at: Instant) {
             }
         }
         Err(error) => {
+            crate::assistant::voice::cancel();
             *press() = Press::default();
             crate::hud::set_state(app, crate::hud::HudState {
                 phase: crate::hud::Phase::Failed,

@@ -686,7 +686,11 @@ fn spawn_capture(
         crate::hud::HudState {
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
-            mode: Some(if mode == "screen" { "video" } else { mode }.to_string()),
+            mode: Some(match mode {
+                "screen" => "video",
+                "audio" if source == "mic" && crate::assistant::voice::starting() => crate::assistant::voice::MODE,
+                other => other,
+            }.to_string()),
             // The timer counts from the mic going live, not from the key press.
             started_at_ms: Some(now_ms()),
             message: None,
@@ -1522,12 +1526,13 @@ fn paste_dictation_now(
 pub(crate) fn paste_nothing(app: &AppHandle, session_id: &str, reason: &str) {
     eprintln!("dictation: nothing to paste ({reason})");
     crate::dictation::disarm(session_id);
+    let for_eavesy = crate::assistant::voice::take(session_id);
     let failed = crate::hud::HudState {
         phase: crate::hud::Phase::Failed,
         session_id: Some(session_id.to_string()),
         mode: None,
         started_at_ms: None,
-        message: Some("Didn't hear anything, so nothing was pasted.".to_string()),
+        message: Some(if for_eavesy { "Didn't hear anything, so nothing was sent to Eavesy." } else { "Didn't hear anything, so nothing was pasted." }.to_string()),
         notice: None,
     };
     crate::hud::advance_from(app, session_id, &[crate::hud::Phase::Transcribing], failed);

@@ -38,7 +38,7 @@ import {
 
 export { SHORTCUT_LABELS, talkHint } from './shortcut-keys';
 
-const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
 const NOTHING_HELD: HeldModifiers = { meta: false, ctrl: false, alt: false, shift: false };
 
 /** Shared state for every ShortcutRow on a screen: the bindings, the defaults, fn readiness, and which row is recording. */
@@ -76,7 +76,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   const reload = useCallback(async () => {
     const settings = await getSettings().catch(() => null);
-    const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '' } : FALLBACK_DEFAULTS;
+    const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '', assistant: settings.assistant_hotkey ?? '' } : FALLBACK_DEFAULTS;
     bindingsRef.current = next;
     setBindings(next);
   }, []);
@@ -280,7 +280,6 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
   const liveCaps = heldCaps(held);
   // Only promise "tap fn" when the Mac app confirmed it's listening for one.
   const fnHearable = !desktop || shortcuts.fnArmed;
-  const other: HotkeyAction = action === 'toggle' ? 'dictation' : 'toggle';
 
   return (
     <div ref={rowRef} className="ev-shortcut" data-recording={recording || undefined}>
@@ -336,7 +335,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       {notice?.kind === 'error' ? <p role="alert" className="ev-shortcut-error">{notice.text}</p> : null}
 
       {notice?.kind === 'taken' ? (
-        <InlineCard text={`Already used for ${SHORTCUT_LABELS[other]}.`}>
+        <InlineCard text={`Already used for ${SHORTCUT_LABELS[notice.by]}.`}>
           <Button variant="primary" size="sm" loading={busy} onClick={() => { void commit(notice.accelerator, true); }}>Swap</Button>
           <Button variant="quiet" size="sm" disabled={busy} onClick={() => setNotice(null)}>Cancel</Button>
         </InlineCard>
@@ -442,7 +441,7 @@ export function RestoreDefaultShortcuts({ shortcuts }: { shortcuts: Shortcuts })
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { bindings, defaults, reload, changed } = shortcuts;
-  if (!isDesktop() || !bindings || (bindings.toggle === defaults.toggle && bindings.dictation === defaults.dictation)) return null;
+  if (!isDesktop() || !bindings || (bindings.toggle === defaults.toggle && bindings.dictation === defaults.dictation && bindings.assistant === defaults.assistant)) return null;
   const restore = () => {
     setBusy(true);
     setError(null);
@@ -456,7 +455,7 @@ export function RestoreDefaultShortcuts({ shortcuts }: { shortcuts: Shortcuts })
       {confirming ? (
         <>
           <p className="ev-set-hint flex-1">
-            {SHORTCUT_LABELS.toggle} goes back to {keysText(defaults.toggle)} and {SHORTCUT_LABELS.dictation} to {keysText(defaults.dictation)}.
+            {SHORTCUT_LABELS.toggle} goes back to {keysText(defaults.toggle)}, {SHORTCUT_LABELS.dictation} to {keysText(defaults.dictation)} and {SHORTCUT_LABELS.assistant} to {keysText(defaults.assistant)}.
           </p>
           <Button variant="quiet" size="sm" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button>
           <Button variant="primary" size="sm" loading={busy} onClick={restore}>Restore</Button>

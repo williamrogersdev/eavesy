@@ -188,6 +188,8 @@ const SHOT: (f64, f64) = (360.0, 172.0);
 /// never measures its content.
 pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
+    // Talking to Eavesy always shows your words as you say them, and its answer after.
+    let eavesy = state.mode.as_deref() == Some(crate::assistant::voice::MODE);
     match state.phase {
         // Saved with a notice says why nothing was typed ("Saved. Sign in to
         // have it typed for you"): room for it, like Failed.
@@ -195,10 +197,12 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
         Phase::Recording if video => VIDEO_LIVE,
         Phase::Transcribing if video => DEFAULT_SIZE,
+        Phase::Recording | Phase::Transcribing if eavesy => live_size(lines.max(1)),
         Phase::Recording | Phase::Transcribing => live_size(lines),
         Phase::Failed => WIDE,
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
+            _ if eavesy => RESULT,
             Some("video") => DEFAULT_SIZE,
             _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) => if peek { RESULT } else { RECEIPT },
             _ if state.notice.is_some() => WIDE,
@@ -333,7 +337,7 @@ pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
 /// for anything that isn't a finished dictation with words.
 fn receipt(state: &HudState) -> Option<&'static str> {
     let words = state.message.as_deref().is_some_and(|text| !text.trim().is_empty());
-    if state.phase != Phase::Done || matches!(state.mode.as_deref(), Some("image" | "video")) || !words {
+    if state.phase != Phase::Done || matches!(state.mode.as_deref(), Some("image" | "video" | crate::assistant::voice::MODE)) || !words {
         return None;
     }
     Some(match state.notice.as_deref() {
@@ -844,6 +848,11 @@ mod tests {
         assert_eq!(size_for(&pasted, 4, true), RESULT);
         // The drawer is only ever a finished dictation's.
         assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true), WIDE);
+        // Talking to Eavesy shows your words even with live words off, then its answer.
+        assert_eq!(size_for(&state(Phase::Recording, Some("assistant"), None), 0, false), live_size(1));
+        let answer = state(Phase::Done, Some("assistant"), Some("Six dev servers."));
+        assert_eq!(size_for(&answer, 0, false), RESULT);
+        assert_eq!(receipt(&answer), None);
         assert_eq!(size_for(&HudState::idle(), 4, true), DEFAULT_SIZE);
     }
 

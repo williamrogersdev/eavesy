@@ -177,8 +177,10 @@ other docs and PRs can cite them (`A3`, `C2`…).
 - **B6. Talking to Eavesy and dictating are different gestures**, and you can
   always tell which one is live:
   - `fn` (tap or hold) stays **dictation**: words go to your cursor.
-  - **Talk to Eavesy** is its own shortcut (default `fn` + `Space`, settable)
-    or "Hey Eavesy" (opt-in, voice-conversation piece 3d).
+  - **Talk to Eavesy** is its own shortcut (default `⌥Space`, settable; fn
+    can be chosen too) or "Hey Eavesy" (opt-in, voice-conversation piece 3d).
+    `fn` + `Space` waits for an event tap that can swallow the Space: the
+    fn tap today only listens, so the Space would also be typed.
   - The HUD shows which by its **label**: "Listening" (dictation) vs
     "Eavesy's listening" (conversation), plus a small manila mark on the
     conversation pill. The **live-mic signal is the same in both**: coral
@@ -788,7 +790,12 @@ Each step ships on its own and is useful alone.
 2. **The thread and captions** (B1–B4, B7): the Eavesy tab, typed
    conversation with tier 0 and 1 tools, Repeat, Edit, Reply.
 3. **Talk to Eavesy by voice** (B5, B6): the shortcut, live captions in the
-   pill, spoken replies, barge-in.
+   pill, spoken replies, barge-in. Built: the shortcut (hold or tap), "Eavesy's
+   listening" with your words on the pill, the answer in full there with
+   Repeat and Open, a sentence or two said out loud, and a card that comes up
+   opens the panel. Esc, the shortcut or any dictation stops it talking.
+   Still to do: interrupting by just talking (B8), the sounds for thinking,
+   done and "didn't catch that" (B9), and a hosted neural voice (G5).
 4. **The tier table, cards and modes** (C): tier 2 read-back, tier 3
    cards, Ask / Auto / Bypass, the Activity log; agent replies and machine
    cleanup move onto it.

@@ -123,7 +123,7 @@ mod tests {
     }
     #[test]
     fn fn_is_never_a_conflict_and_common_combos_are_named() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into(), assistant: "Alt+Space".into() };
         assert_eq!(check(&now, Action::Dictation, "Fn"), Ok(None));
         assert_eq!(check(&now, Action::Dictation, ""), Ok(None));
         assert_eq!(common_name(&Shortcut::from_str("Cmd+C").unwrap()), Some("Copy"));

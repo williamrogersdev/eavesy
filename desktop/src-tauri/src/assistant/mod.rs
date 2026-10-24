@@ -10,6 +10,7 @@
 pub mod activity;
 pub mod cards;
 mod check;
+pub mod voice;
 pub mod policy;
 pub mod store;
 pub mod thread;
@@ -111,6 +112,14 @@ fn log(requester: &str, tool: &str, summary: &str, decision: &str, outcome: Opti
     if let Err(error) = activity::append(&dir, &entry) {
         tracing::warn!(%error, "assistant: couldn't write the Activity log");
     }
+}
+
+/// Opens the panel on the Eavesy tab.
+pub const EVENT_SHOW: &str = "assistant:show";
+
+/// How many cards are waiting for a click.
+pub fn waiting_cards(app: &AppHandle) -> usize {
+    live_cards(&app.state::<Core>()).len()
 }
 
 fn emit_cards(app: &AppHandle, core: &Core) {

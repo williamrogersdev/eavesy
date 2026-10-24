@@ -124,6 +124,8 @@ pub fn run() {
             assistant::assistant_activity,
             assistant::thread::assistant_thread,
             assistant::thread::assistant_send,
+            assistant::thread::assistant_repeat,
+            assistant::voice::hud_assistant,
             assistant::thread::assistant_clear,
             commands::set_capture_sounds,
             commands::set_hud_look,
