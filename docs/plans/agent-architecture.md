@@ -393,7 +393,10 @@ touched*. There's no big-bang refactor.
 - **A running CLI session can't be fully driven from outside.** There's no
   vendor API to inject a prompt into a live Claude Code or Codex session.
   Focus-and-paste plus the inbox is the honest way to do it. If vendors add
-  an API, it becomes one more delivery method in the router.
+  an API, it becomes one more delivery method in the router. Claude Code's
+  channels (research preview) are that API for the CLI. See
+  [voice-conversation.md](voice-conversation.md), piece 5. Paste stays the
+  fallback everywhere else.
 - **The Mac link is a new Durable Object binding.** Under AGENTS.md, a wrangler
   binding change means "stop and ask" before merge. Grants also touch
   security, so the same applies.
