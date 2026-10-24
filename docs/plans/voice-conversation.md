@@ -149,7 +149,9 @@ Claude answer `BANANA` in the same session. The input had
 - Speech uses macOS's own `say` for now, not the sidecar's
   `AVSpeechSynthesizer`. Swapping it is one function in `speak.rs`.
 - Send and edit are on a small reply card at the top right, which never
-  takes focus by itself. Voice "send it" comes with piece 3d.
+  takes focus by itself. Voice "send it" comes with piece 3d. The card
+  becomes a state of the HUD pill, and sent replies land in Eavesy's
+  conversation thread ([assistant.md](assistant.md), I1).
 - An end-to-end run of real `claude -p` through the hook and a stand-in app
   continued with the reply in the same session. The Code tab is still
   unverified.

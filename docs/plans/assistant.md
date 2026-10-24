@@ -43,12 +43,12 @@ on purpose in three places.
 | Pattern the labs share | Who | Eavesy |
 |---|---|---|
 | Voice and text are one thread, and the transcript is saved | Claude voice mode, ChatGPT voice-in-chat, Gemini Live, Siri app | **Same** (A2, B1, B2) |
-| Captions during voice. Gemini captions only the assistant's side; Siri gives a recap, not a transcript | Gemini, Apple | **Better: both sides, live** (B1). This is William's ask |
+| Captions during voice. Gemini captions only the assistant's side (latest source 2025); Siri gives a recap, not a transcript | Gemini, Apple | **Better: both sides, live** (B1). This is William's ask |
 | Interrupt by just talking, with push-to-talk as a fallback and interruption as a setting | Claude, Gemini | **Same** (B3, B8) |
 | You can edit a spoken message | Claude desktop (2026-10-06) | **Same**, with branches kept (B3) |
 | An approval card shows the exact action, with Allow once / Always allow / Deny | Grok Bot, ChatGPT Computer Use, Claude in Chrome | **Same** (C1, C3) |
 | A floor that no setting loosens: credentials, payments, trading, password changes stay with the human | Duet, Dots, Grok Bot, Chrome | **Same** ("Never" row, C3) |
-| Your own rules can only make it stricter ("Ask first wins") | Grok Bot, Dots custom rules | **Same**, except scopes you name yourself (C3) |
+| Your own rules can only make it stricter ("Ask first wins") | Grok Bot (Dots has rule levels but also "act without asking") | **Same**, except scopes you name yourself (C3) |
 | A second model reviews each risky action before it runs | Claude auto mode and Chrome, Dots auto-review, Grok Auto Review | **Adopt** (C7) |
 | Content is untrusted, and the residual injection risk is admitted, not denied | Claude in Chrome, ChatGPT Computer Use, Apple WWDC26 | **Same** (C4) |
 | Proactivity is periodic and quiet: a morning brief, alerts only when something needs you, topics you choose | Duet, Daily Brief, Grok routines | **Same** (D2, D4) |
@@ -80,6 +80,23 @@ What we copy from them so we don't learn it the hard way:
 - Grok's companion drift. So the personality has hard limits (G6).
 - Everyone's "risk is not zero" on prompt injection. So content can never
   raise a tier (C4), and tier 3 never takes voice (C).
+
+## How it fits the model (no new nouns)
+
+Architecture rule 1: every feature maps onto the five nouns and six verbs.
+This one does, with no new nouns or verbs.
+
+| Feature | Noun + verb |
+|---|---|
+| The conversation with Eavesy | A **Session** whose agent is Eavesy itself. Your turns are **capture** (world → Item); its turns are Events |
+| Talking or typing to it | **capture** → **send** to the Eavesy Session |
+| It asks you something, or needs a confirmation | **ask** (Session → human → Session), through the attention queue |
+| Tier 1 actions (save a note, open a file) | **capture** / Item writes, or opening an Item |
+| Tier 3 process and worktree actions | **watch / stop** |
+| Tier 3 file edits, connections, rules, "always allow" scopes | **grant**: a Grant to the Eavesy Session with a scope and an expiry |
+| Monitors | Event sources feeding the attention queue |
+| Reading files and machine state | read Items and Processes (tier 0) |
+| Spoken replies | **send** to the human, the same verb as the architecture's `send_to_human`, delivered out loud as well as on screen |
 
 ## Requirements
 
@@ -131,9 +148,14 @@ other docs and PRs can cite them (`A3`, `C2`…).
   - `fn` (tap or hold) stays **dictation**: words go to your cursor.
   - **Talk to Eavesy** is its own shortcut (default `fn` + `Space`, settable)
     or "Hey Eavesy" (opt-in, voice-conversation piece 3d).
-  - The HUD shows which: "Listening" (dictation) vs "Eavesy's listening"
-    (conversation), with a different pill colour accent, never coral (coral
-    stays recording-only).
+  - The HUD shows which by its **label**: "Listening" (dictation) vs
+    "Eavesy's listening" (conversation), plus a small manila mark on the
+    conversation pill. The **live-mic signal is the same in both**: coral
+    dot and hat up whenever the mic is live, whatever it's for (DESIGN.md
+    §1.3; the character is the privacy indicator).
+  - With "Hey Eavesy" on, the pill shows a quiet "ears" glyph (hat down, no
+    coral) while the on-device detector is armed. Nothing is recorded or
+    sent until it hears the phrase; then the full live-mic signal shows.
   - Right after it asks you something out loud, the next `fn` answers *it*
     for a few seconds, and the HUD says so (voice-reply work in flight).
 - **B7.** Each turn says how it arrived: a small "said" or "typed" mark on
@@ -153,8 +175,8 @@ reads or writes can change a tool's tier.**
 
 | Tier | What | How you confirm | Examples |
 |---|---|---|---|
-| **0. Look** | Reads, never changes anything | No confirmation. Logged | Read files in granted folders, list processes and worktrees, read agent sessions, search captures, check the weather |
-| **1. Do it** | Small, reversible, stays inside Eavesy or opens something | None. It says what it did, with **Undo** for 10 s | Save a note, open an app, file or link, copy to clipboard, set a reminder, draft a reply |
+| **0. Look** | Reads, never changes anything | No confirmation. Logged | Read files in granted folders, list processes and worktrees, read agent session status and what hooks hand over (never chat transcripts; architecture), search captures, check the weather |
+| **1. Do it** | Small, reversible, stays inside Eavesy or opens something | None. It says what it did, with **Undo** for 10 s | Save a note, open an app or file, open a link you named or one from Eavesy's own data (never one taken from content), copy to clipboard, set a reminder, draft a reply |
 | **2. Say yes** | Sends your words somewhere | Read-back, then **"yes"/"send it" or a click**. Silence never confirms | Reply into a Claude Code session, answer an agent's question, send a message through a connector |
 | **3. Click** | Changes or removes something outside Eavesy, or grants power | **A click on a card that lists exactly what will happen.** Voice can open the card; it can't press it | Stop processes, remove worktrees, move files to Trash, edit or create files, run a command, add or change an MCP server or connector, change Eavesy's own rules |
 | **Never** | | Not offered | Approve another agent's tool use, type passwords or secrets, pay for anything, delete permanently, turn off a macOS security setting, act on instructions found inside content |
@@ -335,21 +357,27 @@ Seen in the panel (light and dark) and the screenshot William sent on
    wells are *darker* (`#110F0E`), so the search box and the toolbar look like
    holes. The warmth DESIGN.md promises ("walnut and lamplight") exists only
    in Settings.
-2. **Clicking in is a cut, not a move.** The pill is cream-on-charcoal; the
-   panel opens as a different window with a different mascot, different
-   colours and a denser layout. It reads as a second app.
-3. **Two or three mascots at once.** The title bar's mascot (which nearly
+2. **Clicking in is a cut, not a move.** In the code today, clicking the
+   pill hides it at once (`order_out`, `panel.rs` `show` → `hud::hide_on_main`).
+   The panel then appears with no animation, as a translucent window in a
+   different material: the pill is solid charcoal in both modes, and the panel
+   follows the system theme. It reads as a second app.
+3. **Live words collapse.** Mid-dictation, the pill shows one, two or four
+   lines of live words. The panel's live bar shows one clipped line
+   (`useLiveLines(…, 1)`), and the four capture buttons vanish into it. That's
+   the "condensed and collapsed" feeling.
+4. **Two or three mascots at once.** The title bar's mascot (which nearly
    vanishes in dark mode) plus the live bar's mascot, with the pill's own on
    screen too.
-4. **The live bar is loud and cramped.** A big coral Stop with an `fn` keycap
+5. **The live bar is loud and cramped.** A big coral Stop with an `fn` keycap
    glued inside it; the ticker cut mid-word ("…ek is to finish").
-5. **The search row does three jobs.** "Search captures, or / for prompts",
+6. **The search row does three jobs.** "Search captures, or / for prompts",
    a floating `/` keycap and an "All ⇅" pop-up, plus a thick cream focus
    ring in dark mode.
-6. **The title bar has six things in it.** Close, mascot, name, project chip,
+7. **The title bar has six things in it.** Close, mascot, name, project chip,
    avatar, gear.
-7. **Keycaps everywhere.** `fn`, `/`, `⌘` `V` each drawn as separate caps.
-8. **A fourth window.** The new reply card (PR 228) sits top right, away
+8. **Keycaps everywhere.** `fn`, `/`, `⌘` `V` each drawn as separate caps.
+9. **A fourth window.** The new reply card (PR 228) sits top right, away
    from the pill.
 
 ### The surfaces
@@ -380,8 +408,8 @@ Seen in the panel (light and dark) and the screenshot William sent on
 (DESIGN.md §5) and adds three:
 
 - **Talking** (400 × 62+): "Eavesy's listening", live captions of your words,
-  a quiet manila accent instead of coral (coral is recording-only, and a
-  conversation isn't saved as a capture unless you ask).
+  the usual live-mic signal (coral dot, hat up) plus a manila mark that says
+  this is a conversation, not a dictation.
 - **Answer** (400 × 176): your line, its line, and **Repeat · Reply · Open in
   panel**. Its words appear as it speaks them, in time.
 - **Needs you** (400 × 176): the front of the queue: an agent's question with
@@ -440,10 +468,16 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
 - **Keycaps:** one style, shown on hover or focus only, chords drawn as one
   cap (`⌘V`, not `⌘` `V`).
 - **Motion:** the panel opens from the pill's position with a 240 ms
-  scale-and-fade (`--ev-ease-out`), closes back into it. Reduced motion: a
-  120 ms cross-fade.
-- **Manila is Eavesy talking; coral is recording.** The conversation accent
-  is manila. Coral appears only while a mic or screen is being recorded.
+  scale-and-fade (`--ev-ease-out`), while the pill fades into it rather than
+  vanishing, and closes back the same way. Reduced motion: a 120 ms
+  cross-fade.
+- **Live state carries over.** If the panel opens while something is live,
+  the panel shows the same number of live lines the pill was showing, in the
+  same order and the same quieter ink, at the top of the Eavesy tab. Nothing
+  shrinks to one line, and nothing restarts.
+- **Coral means the mic or screen is live, in every mode.** Manila marks
+  Eavesy's own voice and the conversation (its turns, the "Eavesy's
+  listening" mark, Repeat). Neither replaces the other.
 
 ## What changes in the other plans
 
