@@ -4,10 +4,13 @@ import {
   clearAssistantThread,
   decideAssistantCard,
   forgetAssistantNote,
+  getAssistantRules,
   getAssistantState,
   getAssistantThread,
   onAssistantCards,
+  onAssistantRules,
   onAssistantThread,
+  openSettingsWindow,
   repeatAssistantReply,
   sendToAssistant,
   setAssistantMode,
@@ -18,7 +21,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
 import { Bubble, Button, IconButton, Mascot, Menu } from './ui';
-import { acceptLabel, modeIsLoud, modeLabel, toolLabel } from './eavesy-model';
+import { acceptLabel, modeIsLoud, modeLabel, rulesWaitingLine, toolLabel } from './eavesy-model';
 
 type Flash = (text: string, ms?: number, tone?: 'warn') => void;
 
@@ -45,11 +48,18 @@ export function EavesyTab({ flash }: { flash: Flash }) {
   const reloadState = useCallback(() => {
     getAssistantState().then(setState).catch(() => undefined);
   }, []);
+  // Rule changes waiting in Settings, from rules.md whoever wrote it (H4).
+  const [rulesWaiting, setRulesWaiting] = useState(0);
+  const reloadRules = useCallback(() => {
+    getAssistantRules().then((rules) => setRulesWaiting(rules.pending.length)).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     getAssistantThread().then(setThread).catch(() => undefined);
     reloadState();
+    reloadRules();
     const unlisten = [
+      onAssistantRules(reloadRules),
       onAssistantThread(setThread),
       onAssistantCards((cards) => setState((current) => (current ? { ...current, cards } : current))),
     ];
@@ -58,7 +68,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
       window.clearInterval(tick);
       for (const off of unlisten) void off.then((stop) => stop());
     };
-  }, [reloadState]);
+  }, [reloadState, reloadRules]);
 
   // A timed mode falls back to Ask on its own; look again once it should have.
   useEffect(() => {
@@ -172,6 +182,11 @@ export function EavesyTab({ flash }: { flash: Flash }) {
             </li>
           )}
         </ol>
+        {rulesWaitingLine(rulesWaiting) && (
+          <p className="ev-turn-step ev-rules-waiting">
+            {rulesWaitingLine(rulesWaiting)} · <button type="button" className="ev-link" onClick={() => void openSettingsWindow('assistant')}>Review in Settings</button>
+          </p>
+        )}
         {state?.cards.map((card) => (
           <ActionCard key={card.id} card={card} flash={flash} onDone={reloadState} />
         ))}

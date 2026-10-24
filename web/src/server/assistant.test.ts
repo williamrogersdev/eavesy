@@ -183,4 +183,10 @@ describe('memory', () => {
   test('remember is offered to the model', () => {
     expect(ASSISTANT_TOOLS.map((tool) => tool.name)).toContain('remember');
   });
+
+  test('rule suggestions name only the kinds the Mac knows', () => {
+    const tool = ASSISTANT_TOOLS.find((t) => t.name === 'suggest_rule');
+    const kind = (tool?.input_schema.properties as Record<string, { enum?: string[] }>).kind;
+    expect(kind.enum).toEqual(['remove_worktrees', 'stop_leftovers']);
+  });
 });

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::policy::{Effective, Mode};
+use super::rules::Rule;
 
 /// What the user chose in Eavesy's UI.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +27,10 @@ pub struct Policy {
     pub until_ms: Option<u64>,
     #[serde(default)]
     pub trusted_folders: Vec<PathBuf>,
+    /// Always allow (C3). Left out of the file while empty, so a file signed before
+    /// rules existed still matches its signature.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<Rule>,
 }
 
 impl Policy {
@@ -229,7 +234,8 @@ mod tests {
     fn a_saved_policy_loads_back() {
         let (file, keys) = (temp(), Memory::default());
         assert_eq!(load(&file, &keys), Loaded::Missing);
-        let policy = Policy { mode: Mode::Bypass, until_ms: Some(10), trusted_folders: vec!["/a".into()] };
+        let rule = Rule { kind: super::super::rules::Kind::RemoveWorktrees, under: "/a".into() };
+        let policy = Policy { mode: Mode::Bypass, until_ms: Some(10), trusted_folders: vec!["/a".into()], rules: vec![rule] };
         save(&file, &keys, &policy).unwrap();
         assert_eq!(load(&file, &keys), Loaded::Valid(policy));
         #[cfg(unix)]
@@ -260,16 +266,46 @@ mod tests {
     #[test]
     fn an_old_copy_put_back_loads_as_ask() {
         let (file, keys) = (temp(), Memory::default());
-        save(&file, &keys, &Policy { mode: Mode::Bypass, until_ms: None, trusted_folders: vec!["/a".into()] }).unwrap();
+        save(&file, &keys, &Policy { mode: Mode::Bypass, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![] }).unwrap();
         let copy = std::fs::read(&file).unwrap();
         save(&file, &keys, &Policy::default()).unwrap();
         std::fs::write(&file, copy).unwrap();
         assert_eq!(load(&file, &keys), Loaded::Tampered);
     }
 
+    /// A file signed before rules existed: the same three fields, the same bytes.
+    #[test]
+    fn a_file_from_before_rules_still_loads() {
+        let (file, keys) = (temp(), Memory::default());
+        let key = keys.create_key().unwrap();
+        let body = br#"{"mode":"auto","until_ms":null,"trusted_folders":["/a"]}"#;
+        let mac = hex::encode(hmac_sha256(&key, body));
+        keys.set_latest(&mac).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let text = format!(r#"{{"policy":{},"mac":"{mac}"}}"#, std::str::from_utf8(body).unwrap());
+        std::fs::write(&file, text).unwrap();
+        let loaded = load(&file, &keys);
+        assert_eq!(loaded, Loaded::Valid(Policy { mode: Mode::Auto, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![] }));
+    }
+
+    /// Editing a rule in the file outside Eavesy breaks the signature like any other edit.
+    #[test]
+    fn a_rule_added_outside_eavesy_loads_as_ask() {
+        let (file, keys) = (temp(), Memory::default());
+        save(&file, &keys, &Policy { mode: Mode::Auto, ..Policy::default() }).unwrap();
+        let edited = std::fs::read_to_string(&file).unwrap().replace(
+            "\"trusted_folders\": []",
+            "\"trusted_folders\": [], \"rules\": [{\"kind\": \"remove_worktrees\", \"under\": \"/\"}]",
+        );
+        assert!(edited.contains("remove_worktrees"));
+        std::fs::write(&file, edited).unwrap();
+        assert_eq!(load(&file, &keys), Loaded::Tampered);
+        assert!(load(&file, &keys).policy().rules.is_empty());
+    }
+
     #[test]
     fn an_expired_mode_is_ask() {
-        let policy = Policy { mode: Mode::Bypass, until_ms: Some(100), trusted_folders: vec![] };
+        let policy = Policy { mode: Mode::Bypass, until_ms: Some(100), trusted_folders: vec![], rules: vec![] };
         assert_eq!(policy.effective(99).mode, Mode::Bypass);
         assert_eq!(policy.effective(100).mode, Mode::Ask);
         assert_eq!(Policy { until_ms: None, ..policy }.effective(u64::MAX).mode, Mode::Bypass);

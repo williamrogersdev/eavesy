@@ -92,6 +92,9 @@ pub struct Facts {
     pub remote_allowed: bool,
     /// How many things it touches (rows on its card).
     pub items: usize,
+    /// Every row is inside a rule you accepted (C3). Set by the core from the signed
+    /// rules, never by the tool.
+    pub always_allowed: bool,
 }
 
 /// The second-model check's answer (C7).
@@ -165,6 +168,9 @@ pub fn decide(facts: &Facts, requester: &Requester, policy: &Effective, check: &
     let spoken = matches!(requester, Requester::You { spoken: true });
 
     let unattended_ok = facts.items <= MAX_UNATTENDED_ITEMS && !breaker.tripped();
+    if unattended_ok && by_rule(facts, requester, policy.mode) {
+        return if facts.undoable { Decision::RunWithUndo { undo_for } } else { Decision::Run };
+    }
     match (policy.mode, facts.tier) {
         (Mode::Ask, Tier::Say) => Decision::ReadBack,
         (Mode::Ask, _) => Decision::Card { warning: None },
@@ -180,6 +186,18 @@ pub fn decide(facts: &Facts, requester: &Requester, policy: &Effective, check: &
         _ if spoken => Decision::Card { warning: None },
         _ => Decision::Card { warning: breaker.tripped().then(|| "That's a lot at once, so Eavesy is asking.".to_string()) },
     }
+}
+
+/// A rule you accepted runs a tier 2 or 3 action for you without a card (C3). Never for
+/// agents or monitors, never for what adds connections or changes rules, and never for
+/// voice in Ask, where only a click presses a card. The check and the breaker still
+/// stand in front of it in `decide`.
+pub fn by_rule(facts: &Facts, requester: &Requester, mode: Mode) -> bool {
+    let yours = match requester {
+        Requester::You { spoken } => !(*spoken && mode == Mode::Ask),
+        _ => false,
+    };
+    facts.always_allowed && yours && !facts.grants_power && matches!(facts.tier, Tier::Say | Tier::Click)
 }
 
 /// Auto runs tier 3 only when it can be undone or is on the safe list, and never when it
@@ -233,7 +251,7 @@ mod tests {
     use super::*;
 
     fn facts(tier: Tier) -> Facts {
-        Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items: 1 }
+        Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false }
     }
 
     fn you() -> Requester { Requester::You { spoken: false } }
@@ -254,7 +272,7 @@ mod tests {
     /// Every combination of the inputs, for the invariants below.
     fn every_case(mut assert: impl FnMut(&Facts, &Requester, &Effective, &Check, bool, Decision)) {
         for tier in TIERS {
-            for bits in 0..32u8 {
+            for bits in 0..64u8 {
                 let facts = Facts {
                     tier,
                     undoable: bits & 1 != 0,
@@ -263,6 +281,7 @@ mod tests {
                     grants_power: bits & 8 != 0,
                     remote_allowed: bits & 16 != 0,
                     items: 1,
+                    always_allowed: bits & 32 != 0,
                 };
                 for requester in requesters() {
                     for m in MODES {
@@ -317,13 +336,61 @@ mod tests {
         });
     }
 
+    /// In Ask, tier 2 and 3 run without a click only by a rule you accepted, for what
+    /// you typed, after a passing check.
     #[test]
     fn ask_never_runs_tier_2_or_3_without_you() {
-        every_case(|facts, _, policy, _, _, decision| {
-            if policy.mode == Mode::Ask && matches!(facts.tier, Tier::Say | Tier::Click) {
-                assert!(!runs(&decision), "{facts:?} → {decision:?}");
+        every_case(|facts, requester, policy, check, _, decision| {
+            if policy.mode == Mode::Ask && matches!(facts.tier, Tier::Say | Tier::Click) && runs(&decision) {
+                assert!(facts.always_allowed && !facts.grants_power, "{facts:?} → {decision:?}");
+                assert_eq!(requester, &you(), "{facts:?} → {decision:?}");
+                assert_eq!(check, &Check::Pass);
             }
         });
+    }
+
+    #[test]
+    fn a_rule_never_reaches_past_the_floor() {
+        every_case(|facts, requester, policy, check, tripped, decision| {
+            if !facts.always_allowed || !runs(&decision) || !matches!(facts.tier, Tier::Say | Tier::Click) {
+                return;
+            }
+            assert_eq!(check, &Check::Pass, "{facts:?}");
+            assert!(!tripped, "{facts:?}");
+            // Only you, or an agent you trust outside Ask; never remote or a monitor.
+            assert!(matches!(requester, Requester::You { .. } | Requester::LocalAgent { .. }), "{requester:?}");
+            if facts.grants_power {
+                // A rule never applies to adding connections or changing rules: this ran
+                // on the mode alone, as it would without the rule.
+                let without = Facts { always_allowed: false, ..facts.clone() };
+                assert!(runs(&decide(&without, requester, policy, check, &Breaker::default())), "{facts:?}");
+            }
+        });
+        // Too many at once is a card, rule or not.
+        let many = Facts { always_allowed: true, items: MAX_UNATTENDED_ITEMS + 1, ..facts(Tier::Click) };
+        assert!(matches!(decide(&many, &you(), &mode(Mode::Ask), &Check::Pass, &Breaker::default()), Decision::Card { .. }));
+    }
+
+    #[test]
+    fn a_rule_runs_what_you_typed_in_ask() {
+        let quiet = Breaker::default();
+        let ruled = Facts { always_allowed: true, ..facts(Tier::Click) };
+        assert_eq!(decide(&ruled, &you(), &mode(Mode::Ask), &Check::Pass, &quiet), Decision::Run);
+        let undoable = Facts { undoable: true, ..ruled.clone() };
+        assert_eq!(decide(&undoable, &you(), &mode(Mode::Ask), &Check::Pass, &quiet), Decision::RunWithUndo { undo_for: UNDO_FOR });
+        // Voice in Ask still opens a card; outside Ask your voice counts as you.
+        let said = Requester::You { spoken: true };
+        assert_eq!(decide(&ruled, &said, &mode(Mode::Ask), &Check::Pass, &quiet), Decision::Card { warning: None });
+        assert_eq!(decide(&Facts { irreversible: true, ..ruled.clone() }, &said, &mode(Mode::Auto), &Check::Pass, &quiet), Decision::Run);
+        // Agents, remote and monitors aren't you, trusted folder or not.
+        assert!(!runs(&decide(&ruled, &agent("/Users/w/Developer/eavesy/web"), &mode(Mode::Ask), &Check::Pass, &quiet)));
+        assert!(!runs(&decide(&Facts { remote_allowed: true, ..ruled.clone() }, &remote(), &mode(Mode::Ask), &Check::Pass, &quiet)));
+        assert!(!runs(&decide(&ruled, &monitor(), &mode(Mode::Ask), &Check::Pass, &quiet)));
+        // Never for adding connections or changing rules, and never past a flag.
+        assert!(!runs(&decide(&Facts { grants_power: true, ..ruled.clone() }, &you(), &mode(Mode::Ask), &Check::Pass, &quiet)));
+        assert!(!runs(&decide(&ruled, &you(), &mode(Mode::Ask), &Check::Flagged("no".into()), &quiet)));
+        assert!(!runs(&decide(&ruled, &you(), &mode(Mode::Ask), &Check::Failed, &quiet)));
+        assert!(!runs(&decide(&Facts { always_allowed: true, ..facts(Tier::Never) }, &you(), &mode(Mode::Bypass), &Check::Pass, &quiet)));
     }
 
     #[test]
@@ -335,10 +402,12 @@ mod tests {
         });
     }
 
+    /// Unless a rule you accepted covers it, which can't reach what grants power.
     #[test]
     fn auto_never_runs_what_cant_be_taken_back_or_grants_power() {
-        every_case(|facts, _, policy, _, _, decision| {
-            if policy.mode == Mode::Auto && facts.tier == Tier::Click && (facts.irreversible || facts.grants_power) {
+        every_case(|facts, requester, policy, _, _, decision| {
+            let ruled = by_rule(facts, requester, policy.mode);
+            if policy.mode == Mode::Auto && facts.tier == Tier::Click && (facts.irreversible || facts.grants_power) && !ruled {
                 assert!(!runs(&decision), "{facts:?} → {decision:?}");
             }
         });

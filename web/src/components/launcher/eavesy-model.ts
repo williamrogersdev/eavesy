@@ -1,4 +1,4 @@
-import type { AssistantActivity, AssistantCard, AssistantMode, AssistantState, AssistantVoice } from '@/lib/desktop/bridge';
+import type { AssistantActivity, AssistantCard, AssistantMode, AssistantRuleChange, AssistantState, AssistantVoice } from '@/lib/desktop/bridge';
 
 /** Friendly names for the tools in a turn's steps. Unknown tools show their own name. */
 const TOOL_LABELS: Record<string, string> = {
@@ -7,6 +7,7 @@ const TOOL_LABELS: Record<string, string> = {
   open_link: 'Opened a link',
   clean_machine: 'Clean-up',
   remember: 'Memory',
+  suggest_rule: 'Suggested a rule',
   // The names the action core logs to Activity.
   'machine.overview': 'Looked at this Mac',
   'agents.sessions': 'Checked your agent sessions',
@@ -16,6 +17,8 @@ const TOOL_LABELS: Record<string, string> = {
   'assistant.trust': 'Trusted folders',
   'assistant.remember': 'Remembered',
   'assistant.forget': 'Forgot',
+  'assistant.rule': 'Rules',
+  'assistant.suggest_rule': 'Suggested a rule',
 };
 
 export function toolLabel(tool: string): string {
@@ -58,4 +61,20 @@ export function sortVoices(voices: readonly AssistantVoice[], language: string):
 export function activityLine(entry: AssistantActivity): string {
   const decision = { ran: 'Ran', accepted: 'Accepted', declined: 'Declined', refused: 'Refused', card: 'Asked first' }[entry.decision] ?? entry.decision;
   return entry.outcome ? `${decision}: ${entry.outcome}` : decision;
+}
+
+/** One line for a change waiting in the rules review list. */
+export function ruleChangeLine(change: AssistantRuleChange): string {
+  switch (change.kind) {
+    case 'add': return `Added: ${change.text}`;
+    case 'remove': return `Removed: ${change.text}`;
+    case 'invalid': return `Line ${change.line}: ${change.text}`;
+    case 'unreadable': return 'Eavesy can’t read rules.md';
+  }
+}
+
+/** The thread's line when rule changes wait for you (H4). Null when none do. */
+export function rulesWaitingLine(count: number): string | null {
+  if (count <= 0) return null;
+  return count === 1 ? 'A rule change is waiting for you' : `${count} rule changes are waiting for you`;
 }

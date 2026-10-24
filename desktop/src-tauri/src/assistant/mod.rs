@@ -13,6 +13,7 @@ mod check;
 pub mod memory;
 pub mod voice;
 pub mod policy;
+pub mod rules;
 pub mod store;
 pub mod style;
 pub mod thread;
@@ -41,6 +42,9 @@ pub trait Action: Send + Sync + 'static {
     fn rows(&self) -> Vec<Row>;
     /// Runs the given rows, checking each again right before touching it.
     fn run(&self, rows: &[String]) -> Ran;
+    /// What each row touches, in `rows` order, from the tool's own data, so a rule you
+    /// accepted can cover it (C3). None by default: no rule reaches the tool.
+    fn scopes(&self) -> Vec<rules::Scope> { Vec::new() }
 }
 
 #[derive(Debug, Serialize)]
@@ -132,8 +136,12 @@ fn emit_cards(app: &AppHandle, core: &Core) {
 /// the main thread.
 pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, check: &Check) -> Submitted {
     let core = app.state::<Core>();
-    let facts = action.facts();
-    let effective = core.policy.lock().unwrap().effective(now_ms());
+    let mut facts = action.facts();
+    let policy = core.policy.lock().unwrap().clone();
+    let effective = policy.effective(now_ms());
+    // Set here from the signed rules, whatever the tool said.
+    let covering = rules::covering(&policy.rules, &action.scopes(), action.rows().len());
+    facts.always_allowed = covering.is_some();
     let decision = gate(&facts, requester, &effective, check, &mut core.breaker.lock().unwrap());
     let who = requester.label();
     let title = action.title();
@@ -147,7 +155,12 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
         // Bypass, which run without the Undo button rather than not at all.
         Decision::Run | Decision::RunWithUndo { .. } => {
             let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
-            let ran = action.run(&rows);
+            let mut ran = action.run(&rows);
+            // Say which rule let it run, so the log and the thread show why no card came (C5).
+            if let Some(used) = covering.filter(|_| policy::by_rule(&facts, requester, effective.mode)) {
+                let named: Vec<String> = used.iter().map(rules::Rule::text).collect();
+                ran.summary = format!("{} (your rule: {})", ran.summary, named.join("; "));
+            }
             log(&who, action.tool(), &title, "ran", Some(ran.summary.clone()));
             Submitted::Ran { ran }
         }
@@ -382,7 +395,7 @@ mod tests {
 
     #[test]
     fn unattended_runs_trip_the_breaker_for_the_next_one() {
-        let facts = Facts { tier: Tier::Click, undoable: true, safe_listed: true, irreversible: false, grants_power: false, remote_allowed: false, items: 1 };
+        let facts = Facts { tier: Tier::Click, undoable: true, safe_listed: true, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false };
         let you = Requester::You { spoken: false };
         let bypass = Effective { mode: Mode::Bypass, trusted_folders: vec![] };
         let mut breaker = Breaker::new(std::time::Duration::from_secs(60), 3);

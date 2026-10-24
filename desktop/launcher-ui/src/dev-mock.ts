@@ -327,6 +327,22 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
   };
   let notes = empty ? [] : ['Uses bun, not npm', 'Ships risky changes behind a flag', 'Robin reviews PRs in the afternoon'];
   let memoryOn = true;
+  type RuleKind = 'remove_worktrees' | 'stop_leftovers';
+  type MockRule = { kind: RuleKind; under: string };
+  const ruleText = (rule: MockRule) => `${rule.kind === 'remove_worktrees' ? 'Remove finished worktrees under' : 'Stop leftover processes under'} ${rule.under.replace('/Users/w', '~')}`;
+  const sameRule = (a: MockRule, b: MockRule) => a.kind === b.kind && a.under === b.under;
+  let rules: MockRule[] = empty ? [] : [{ kind: 'remove_worktrees', under: '/Users/w/Developer' }];
+  // What an agent wrote into rules.md, waiting for review.
+  let pendingRules: MockRule[] = empty ? [] : [{ kind: 'stop_leftovers', under: '/Users/w/Developer/eavesy' }];
+  let badLine = !empty;
+  const rulesView = () => ({
+    rules: rules.map((rule) => ({ rule, text: ruleText(rule) })),
+    pending: [
+      ...pendingRules.map((rule) => ({ kind: 'add', rule, text: ruleText(rule) })),
+      ...(badLine ? [{ kind: 'invalid', line: 9, text: 'Delete everything under ~/Developer', reason: 'Eavesy doesn’t know this rule.' }] : []),
+    ],
+    path: '/Users/w/Eavesy/assistant/rules.md',
+  });
   const state = {
     mode: 'ask', effective: 'ask', until_ms: null as number | null, trusted_folders: [] as string[], tampered: false,
     cards: empty ? [] : [{
@@ -372,6 +388,29 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     assistant_forget_all: () => { notes = []; },
     set_assistant_memory: ({ on }: Record<string, unknown>) => { memoryOn = on === true; },
     open_assistant_memory: () => null,
+    assistant_rules: () => rulesView(),
+    add_assistant_rule: ({ kind, folder }: Record<string, unknown>) => {
+      const rule = { kind: kind as RuleKind, under: String(folder) };
+      if (!rules.some((kept) => sameRule(kept, rule))) rules.push(rule);
+      return rulesView();
+    },
+    remove_assistant_rule: ({ rule }: Record<string, unknown>) => {
+      rules = rules.filter((kept) => !sameRule(kept, rule as MockRule));
+      return rulesView();
+    },
+    accept_assistant_rule_change: ({ change }: Record<string, unknown>) => {
+      const accepted = change as { kind: string; rule?: MockRule };
+      if (accepted.kind === 'add' && accepted.rule) rules.push(accepted.rule);
+      pendingRules = pendingRules.filter((rule) => !accepted.rule || !sameRule(rule, accepted.rule));
+      return rulesView();
+    },
+    discard_assistant_rule_change: ({ change }: Record<string, unknown>) => {
+      const dropped = change as { kind: string; rule?: MockRule };
+      pendingRules = pendingRules.filter((rule) => !dropped.rule || !sameRule(rule, dropped.rule));
+      if (dropped.kind === 'invalid') badLine = false;
+      return rulesView();
+    },
+    open_assistant_rules: () => null,
     set_assistant_voice: () => null,
     assistant_voices: () => [
       { name: 'Samantha', locale: 'en_US' }, { name: 'Daniel', locale: 'en_GB' }, { name: 'Eddy (English (US))', locale: 'en_US' }, { name: 'Thomas', locale: 'fr_FR' },

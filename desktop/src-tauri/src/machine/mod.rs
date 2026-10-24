@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::assistant::{self, cards::Row, policy::{Facts, Tier}, Action, Ran};
+use crate::assistant::{self, cards::Row, policy::{Facts, Tier}, rules::{Kind, Scope}, Action, Ran};
 use procs::{Label, Proc};
 use worktrees::Status;
 
@@ -324,7 +324,7 @@ pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>,
         return Err("Cleaning up only works from Settings.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let action = Clean { worktrees, processes, labels: HashMap::new() };
+        let action = Clean { worktrees, processes, labels: HashMap::new(), folders: HashMap::new() };
         let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
         assistant::run_clicked(&action, &rows).detail
     })
@@ -340,6 +340,9 @@ pub struct Clean {
     pub processes: Vec<ProcessRef>,
     /// What each row says on a card, by row id (C1: names, folders, ports).
     pub labels: HashMap<String, String>,
+    /// The folder each leftover process runs in, by row id, from the inventory, so a
+    /// rule you accepted can cover it (C3).
+    pub folders: HashMap<String, PathBuf>,
 }
 
 impl Clean {
@@ -354,6 +357,7 @@ impl Clean {
             _ => path.to_string(),
         };
         let mut labels = HashMap::new();
+        let mut folders = HashMap::new();
         let worktrees: Vec<String> = inventory
             .worktrees
             .iter()
@@ -378,13 +382,16 @@ impl Clean {
                 };
                 let helpers = if row.helpers > 0 { format!(" · with {} helper{}", row.helpers, plural(row.helpers)) } else { String::new() };
                 labels.insert(Clean::process_row(&process), format!("Stop {} (pid {}){folder}{ports}{helpers}", row.name, row.pid));
+                if let Some(cwd) = &row.cwd {
+                    folders.insert(Clean::process_row(&process), PathBuf::from(cwd));
+                }
                 process
             })
             .collect();
         if worktrees.is_empty() && processes.is_empty() {
             return Err("None of those are finished worktrees or leftover processes right now.".into());
         }
-        Ok(Clean { worktrees, processes, labels })
+        Ok(Clean { worktrees, processes, labels, folders })
     }
 
     fn process_row(process: &ProcessRef) -> String { format!("process:{}:{}", process.pid, process.started_us) }
@@ -403,6 +410,7 @@ impl assistant::Action for Clean {
             grants_power: false,
             remote_allowed: false,
             items: self.worktrees.len() + self.processes.len(),
+            always_allowed: false,
         }
     }
 
@@ -418,6 +426,12 @@ impl assistant::Action for Clean {
         let label = |id: String, fallback: String| Row { label: self.labels.get(&id).cloned().unwrap_or(fallback), id };
         let worktrees = self.worktrees.iter().map(|path| label(format!("worktree:{path}"), path.clone()));
         let processes = self.processes.iter().map(|process| label(Clean::process_row(process), format!("process {}", process.pid)));
+        worktrees.chain(processes).collect()
+    }
+
+    fn scopes(&self) -> Vec<Scope> {
+        let worktrees = self.worktrees.iter().map(|path| Scope { kind: Kind::RemoveWorktrees, path: Some(PathBuf::from(path)) });
+        let processes = self.processes.iter().map(|process| Scope { kind: Kind::StopLeftovers, path: self.folders.get(&Clean::process_row(process)).cloned() });
         worktrees.chain(processes).collect()
     }
 

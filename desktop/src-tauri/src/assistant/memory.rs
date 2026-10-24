@@ -62,23 +62,24 @@ fn read_text(file: &Path) -> String {
 
 /// The whole file, for an edit. Missing is empty; anything else that stops a full,
 /// exact read is an error, so an edit never writes back less than was there.
-fn read_for_edit(file: &Path) -> Result<String, String> {
+pub(super) fn read_for_edit(file: &Path) -> Result<String, String> {
+    let name = file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     match std::fs::metadata(file) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(error) => return Err(format!("Couldn't read memory.md: {error}")),
+        Err(error) => return Err(format!("Couldn't read {name}: {error}")),
         Ok(meta) if meta.len() > MAX_EDIT_BYTES => {
-            return Err("memory.md is too big for me to edit safely. Trim it in Settings → Assistant → Memory → Open in Editor.".into());
+            return Err(format!("{name} is too big for me to edit safely. Trim it in your editor (Settings → Assistant → Open in Editor)."));
         }
         Ok(_) => {}
     }
-    std::fs::read_to_string(file).map_err(|error| format!("Couldn't read memory.md: {error}"))
+    std::fs::read_to_string(file).map_err(|error| format!("Couldn't read {name}: {error}"))
 }
 
 pub fn read(file: &Path) -> Vec<String> {
     parse(&read_text(file))
 }
 
-fn write_text(file: &Path, text: &str) -> Result<(), String> {
+pub(super) fn write_text(file: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
     }
@@ -86,7 +87,7 @@ fn write_text(file: &Path, text: &str) -> Result<(), String> {
 }
 
 /// The file with the lines `drop` picks taken out; everything else stays byte for byte.
-fn without(text: &str, mut drop: impl FnMut(&str) -> bool) -> String {
+pub(super) fn without(text: &str, mut drop: impl FnMut(&str) -> bool) -> String {
     text.split_inclusive('\n').filter(|line| !drop(line.trim_end_matches(['\n', '\r']))).collect()
 }
 
