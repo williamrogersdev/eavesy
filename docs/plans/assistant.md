@@ -534,7 +534,7 @@ in front of you, under one set of rules.
 
 Mockups (private canvas): [Eavesy assistant UI](https://claude.ai/artifact/ToJYmfHh9SWmgwePWQcRe1).
 It shows the panel today vs proposed, the four pill states, and the Eavesy
-tab in light and dark.
+tab in light and dark, and Eavesy driving its browser while it rotates a key.
 
 ### What feels clunky today
 
