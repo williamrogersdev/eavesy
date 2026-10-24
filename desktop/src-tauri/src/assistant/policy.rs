@@ -378,9 +378,9 @@ mod tests {
         assert!(matches!(decide(&many, &you(), &mode(Mode::Bypass), &pass, &quiet), Decision::Card { .. }));
     }
 
-    /// assistant.md C8: Bypass "applies to what *you* ask, typed or spoken", and Auto
-    /// runs tier 2 for you either way. Voice reaches Eavesy only through its talk
-    /// shortcut. In Ask, voice opens the card and only a click presses it.
+    /// assistant.md C8, Bypass: "**It applies to what *you* ask**, typed or spoken." Auto
+    /// runs tier 2 for you either way. The risk of misheard speech is stated there too.
+    /// In Ask, voice opens the card and only a click presses it.
     #[test]
     fn your_voice_counts_as_you_outside_ask() {
         let said = Requester::You { spoken: true };

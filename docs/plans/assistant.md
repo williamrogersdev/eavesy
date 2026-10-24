@@ -261,6 +261,12 @@ reads or writes can change a tool's tier.**
   - **It keeps the record:** everything is spoken or shown as it happens,
     logged (C5), and undoable where possible, with Undo held for 60 s
     instead of 10.
+  - **Voice counts as you.** A misheard request in Bypass can run without a
+    card. What limits it: speech reaches Eavesy only through the talk
+    shortcut or "Hey Eavesy", never ambient listening; C7 compares the action
+    with the transcript as heard, so a mismatch is a card; the floor and the
+    breaker still apply; and everything is read back as it runs, with Undo
+    where it exists. Ask and Auto keep voice from pressing a tier 3 card.
   - **It has a circuit breaker:** more than 5 tier 2 or 3 actions without a
     click inside a minute, or one action touching more than 20 things, drops
     back to a card ("That's a lot at once, so Eavesy is asking").
