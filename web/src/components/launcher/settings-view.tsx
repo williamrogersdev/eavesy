@@ -501,7 +501,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                 onCheckedChange={toggleAgents}
                 disabled={!settings || agentsBusy}
                 label="Say when a session finishes or needs you"
-                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
+                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send or say “send it”. Right after Eavesy reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
               />
               {agentsOn && (
                 <div className="mt-3">

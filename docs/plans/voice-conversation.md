@@ -149,7 +149,19 @@ Claude answer `BANANA` in the same session. The input had
 - Speech uses macOS's own `say` for now, not the sidecar's
   `AVSpeechSynthesizer`. Swapping it is one function in `speak.rs`.
 - Send and edit are on a small reply card at the top right, which never
-  takes focus by itself. Voice "send it" comes with piece 3d.
+  takes focus by itself. The card becomes a state of the HUD pill, and sent
+  replies land in Eavesy's conversation thread ([assistant.md](assistant.md), I1).
+- **Answering by voice** (`agents/voice.rs`): a dictation that starts while
+  Eavesy reads out a question, or up to 30 seconds after it stops, answers
+  that question's card instead of typing into the front app. "Send it" (and
+  a few fixed variants, whole utterance only) sends what Eavesy last offered,
+  and so does a bare "yes", but only within 8 seconds of hearing "Send
+  that?" to its end (otherwise it asks again);
+  "later" and "dismiss" do what the buttons do; "no" sends nothing; anything
+  else becomes the draft and is read back ("I'll send: … Send that?"). No
+  model picks the command. Approvals and a card you clicked into to type
+  never take a dictation. If the session went away in the meantime, the
+  words are copied, never pasted into your app.
 - An end-to-end run of real `claude -p` through the hook and a stand-in app
   continued with the reply in the same session. The Code tab is still
   unverified.
