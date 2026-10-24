@@ -66,8 +66,25 @@ pub fn take(session_id: &str) -> bool {
     sessions(|all| all.remove(session_id))
 }
 
+/// Puts the pill on a failure that names what happened to your words.
+fn fail(app: &AppHandle, session_id: &str, message: String) {
+    let failed = HudState {
+        phase: Phase::Failed,
+        session_id: Some(session_id.to_string()),
+        mode: None,
+        started_at_ms: None,
+        message: Some(message),
+        notice: None,
+    };
+    hud::advance_from(app, session_id, &[Phase::Recording, Phase::Transcribing], failed);
+}
+
 /// Sends what you said to the thread, then shows and says the answer. Blocking.
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
+    if text.trim().is_empty() {
+        fail(app, session_id, "Didn't hear anything, so nothing was sent to Eavesy.".into());
+        return;
+    }
     let thinking = HudState {
         phase: Phase::Transcribing,
         session_id: Some(session_id.to_string()),
@@ -79,21 +96,18 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
     hud::advance_from(app, session_id, &[Phase::Recording, Phase::Transcribing], thinking);
     if let Err(error) = super::thread::send(app, text.to_string(), true) {
         // Not an answer: your words weren't sent, and the pill says so in its own voice.
-        let failed = HudState {
-            phase: Phase::Failed,
-            session_id: Some(session_id.to_string()),
-            mode: None,
-            started_at_ms: None,
-            message: Some(format!("{error} What you said wasn't sent.")),
-            notice: None,
-        };
-        hud::advance_from(app, session_id, &[Phase::Recording, Phase::Transcribing], failed);
+        fail(app, session_id, format!("{error} What you said wasn't sent."));
         return;
     }
-    let Some((turn, reply)) = super::thread::last_reply(app) else {
+    let Some(super::thread::Reply { id: turn, text: reply, failed }) = super::thread::last_reply(app) else {
         hud::advance_from(app, session_id, &[Phase::Transcribing], HudState { session_id: Some(session_id.to_string()), ..HudState::idle() });
         return;
     };
+    // The model couldn't be reached: that's for the pill, never said as Eavesy's answer.
+    if failed {
+        fail(app, session_id, reply);
+        return;
+    }
     let shown = HudState {
         phase: Phase::Done,
         session_id: Some(session_id.to_string()),
@@ -155,8 +169,8 @@ pub fn hud_assistant(app: AppHandle, window: WebviewWindow, action: String) -> R
     }
     match action.as_str() {
         "repeat" => match super::thread::last_reply(&app) {
-            Some((turn, reply)) => say(&app, Some(turn), &reply),
-            None => Err("There's nothing to repeat.".into()),
+            Some(reply) if !reply.failed => say(&app, Some(reply.id), &reply.text),
+            _ => Err("There's nothing to repeat.".into()),
         },
         "open" => {
             crate::hotkeys::show_launcher_and_emit(&app, Some(super::EVENT_SHOW));
@@ -268,7 +282,7 @@ fn has_code_or_path(sentence: &str) -> bool {
     sentence.contains('`')
         || sentence.split_whitespace().any(|word| {
             let word = word.trim_start_matches(['(', '"', '\'']);
-            word.contains("://") || word.starts_with(['/', '~']) || word.contains("/.") || word.matches('/').count() >= 2
+            word.contains("://") || word.starts_with('~') || (word.contains('/') && word.len() > 1)
         })
 }
 
@@ -295,6 +309,7 @@ mod tests {
     fn code_paths_and_links_are_left_to_the_screen() {
         let reply = "Run `bun test` in ~/Developer/eavesy or see https://eavesy.com/docs. It's quick.";
         assert_eq!(spoken_line(reply), "It's quick. The rest is on screen.");
+        assert_eq!(spoken_line("It's in src/hud.rs. Done."), "Done. The rest is on screen.");
     }
 
     #[test]

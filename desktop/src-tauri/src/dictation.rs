@@ -210,11 +210,12 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
     // Taken even with no words, so the claim ends with its dictation.
     let answering = crate::agents::take_answer(session_id);
-    let for_eavesy = crate::assistant::voice::take(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
+        // Left marked for Eavesy, so words only the cloud transcript catches still go to it.
         return;
     }
+    let for_eavesy = crate::assistant::voice::take(session_id);
     let app = app.clone();
     let session_id = session_id.to_string();
     // Talk to Eavesy: the words are a message to it, as said, never pasted.

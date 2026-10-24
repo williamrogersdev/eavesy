@@ -383,13 +383,24 @@ pub fn send(app: &AppHandle, text: String, spoken: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Eavesy's newest reply that has words: its turn, and the words.
-pub fn last_reply(app: &AppHandle) -> Option<(u64, String)> {
+/// Eavesy's newest turn that has words.
+pub struct Reply {
+    pub id: u64,
+    pub text: String,
+    /// An error shown in Eavesy's place, not something it said.
+    pub failed: bool,
+}
+
+pub fn last_reply(app: &AppHandle) -> Option<Reply> {
     let state = app.state::<Mutex<Thread>>();
     let thread = state.lock().unwrap();
-    thread.turns.iter().rev().find_map(|turn| {
+    newest_reply(&thread.turns)
+}
+
+fn newest_reply(turns: &[Turn]) -> Option<Reply> {
+    turns.iter().rev().find_map(|turn| {
         let text = text_of(&turn.message);
-        (turn.message.role == Role::Assistant && !text.trim().is_empty()).then_some((turn.id, text))
+        (turn.message.role == Role::Assistant && !text.trim().is_empty()).then_some(Reply { id: turn.id, text, failed: turn.failed })
     })
 }
 
@@ -414,7 +425,7 @@ pub fn assistant_repeat(app: AppHandle, window: WebviewWindow, id: u64) -> Resul
         let state = app.state::<Mutex<Thread>>();
         let thread = state.lock().unwrap();
         match thread.turns.iter().find(|turn| turn.id == id) {
-            Some(turn) if turn.message.role == Role::Assistant => text_of(&turn.message),
+            Some(turn) if turn.message.role == Role::Assistant && !turn.failed => text_of(&turn.message),
             _ => return Err("That reply is gone.".into()),
         }
     };
@@ -499,6 +510,18 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].content.len(), 2);
+    }
+
+    #[test]
+    fn an_error_is_the_newest_reply_but_says_so() {
+        let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
+        let turns = vec![
+            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
+            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
+        ];
+        let reply = newest_reply(&turns).unwrap();
+        assert_eq!((reply.id, reply.failed), (2, true));
+        assert!(newest_reply(&turns[..1]).is_none());
     }
 
     #[test]

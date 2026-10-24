@@ -189,9 +189,17 @@ fn start(app: &AppHandle, pressed_at: Instant, for_eavesy: bool) {
     let answering = if for_eavesy { None } else { crate::agents::claim_dictation() };
     // You're talking: Eavesy stops talking.
     crate::assistant::voice::hush(app);
-    if for_eavesy {
-        crate::assistant::voice::begin();
+    // However start ends, the next recording isn't taken for Eavesy's by mistake.
+    struct Started;
+    impl Drop for Started {
+        fn drop(&mut self) {
+            crate::assistant::voice::cancel();
+        }
     }
+    let _started = for_eavesy.then(|| {
+        crate::assistant::voice::begin();
+        Started
+    });
     // Say "Starting…" at once: the engine takes a moment to open the mic. The
     // red state, the timer and the start sound wait until it really is open.
     crate::hud::set_state(app, crate::hud::HudState {
