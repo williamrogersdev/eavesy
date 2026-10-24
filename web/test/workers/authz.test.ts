@@ -100,6 +100,8 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/assistant/check': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Compares only the caller-submitted request and action for the authenticated paired-device quota; reads and stores no user data' } },
+  '/api/assistant/turn': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Runs one model step over the caller-submitted conversation for the authenticated paired-device quota; reads and stores no user data' } },
   '/api/agents/reply-suggestion': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Summarizes only the caller-submitted agent message for the authenticated browser or paired-device quota; reads and stores no user data' } },
   '/api/agents/inbox': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Paired devices only; hands the calling device only its own user’s agent messages (agent-inbox tests cover other users and other Macs)' } },
   '/api/agents/inbox/$id': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Paired devices only; answers an ask only when it belongs to the caller’s user and was shown on the calling device' } },
