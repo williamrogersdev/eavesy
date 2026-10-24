@@ -377,9 +377,13 @@ touched*. There's no big-bang refactor.
 
 ## Deliberate choices and pushback
 
-- **No chat UI of our own.** Eavesy sends to the tools you already use and
-  doesn't try to replace them. Once Eavesy has a chat box, it's competing
-  with Claude and ChatGPT instead of making them better.
+- **A conversation with Eavesy, never a chat with someone else's model.**
+  (Changed 2026-10-24 by [assistant.md](assistant.md); it was "No chat UI of
+  our own".) Eavesy has its own conversation with you about your Mac, your
+  captures and your agents, with both sides on screen. It still doesn't wrap
+  Claude or ChatGPT, show their chats or try to replace them: it sends to
+  the tools you already use. Rules 4 and 6 stand, and assistant.md's tier
+  table enforces them.
 - **No orchestrator and no required launcher.** `eavesy run` is optional. Watch
   works without it, and tagging just makes it more precise. Making agents
   run "through Eavesy" would make Eavesy a dependency people resent.
