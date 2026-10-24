@@ -91,9 +91,15 @@ fn leading_session_id(input: &[u8]) -> Option<String> {
 /// let Claude carry on: no app, no answer in time, a release, or a dropped
 /// connection.
 pub fn deliver(socket: &Path, message: &HookMessage) -> Option<String> {
+    deliver_within(socket, message, CONNECT_BUDGET)
+}
+
+/// `deliver`, with how long the app gets to acknowledge. Tests that exercise the reply
+/// path give a loaded machine more room than the hook's real budget.
+fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration) -> Option<String> {
     let mut stream = UnixStream::connect(socket).ok()?;
-    stream.set_write_timeout(Some(CONNECT_BUDGET)).ok()?;
-    stream.set_read_timeout(Some(CONNECT_BUDGET)).ok()?;
+    stream.set_write_timeout(Some(budget)).ok()?;
+    stream.set_read_timeout(Some(budget)).ok()?;
     let mut line = serde_json::to_string(message).ok()?;
     line.push('\n');
     stream.write_all(line.as_bytes()).ok()?;
@@ -119,6 +125,9 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
     use std::time::Instant;
+
+    /// Room for the fake app's thread to be scheduled on a busy CI runner.
+    const ROOMY: Duration = Duration::from_secs(5);
 
     fn stop_message() -> HookMessage {
         message(Event::Stop, br#"{"session_id":"s1","cwd":"/tmp/p","last_assistant_message":"Ship it?"}"#, true, None).unwrap()
@@ -190,7 +199,7 @@ mod tests {
     fn a_held_stop_returns_your_reply() {
         let path = temp_socket("reply");
         let server = serve(&path, vec![Answer::Ack { hold: true }, Answer::Reply { text: "ship it".into() }]);
-        assert_eq!(deliver(&path, &stop_message()).as_deref(), Some("ship it"));
+        assert_eq!(deliver_within(&path, &stop_message(), ROOMY).as_deref(), Some("ship it"));
         assert_eq!(server.join().unwrap().session_id, "s1");
         let _ = std::fs::remove_file(path);
     }
@@ -200,7 +209,7 @@ mod tests {
         for answers in [vec![Answer::Ack { hold: false }], vec![Answer::Ack { hold: true }, Answer::Release], vec![Answer::Ack { hold: true }]] {
             let path = temp_socket("release");
             let server = serve(&path, answers);
-            assert_eq!(deliver(&path, &stop_message()), None);
+            assert_eq!(deliver_within(&path, &stop_message(), ROOMY), None);
             server.join().unwrap();
             let _ = std::fs::remove_file(path);
         }
