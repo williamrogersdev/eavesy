@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -293,6 +293,41 @@ export async function setAgentMessages(enabled: boolean): Promise<void> {
 /** How long a finished session waits for your reply. 0 never waits. */
 export async function setAgentHold(seconds: number): Promise<void> {
   await invoke('set_agent_hold', { seconds });
+}
+
+/** Why a worktree can or can't be removed (machine/worktrees.rs `Status`). */
+export type WorktreeStatus = 'stale' | 'missing' | 'locked' | 'dirty' | 'in_use' | 'unmerged';
+
+/** What agent sessions left on this Mac (machine/mod.rs `Inventory`). */
+export interface MachineInventory {
+  repos: string[];
+  worktrees: { path: string; repo: string; branch: string | null; status: WorktreeStatus }[];
+  /** Processes whose Claude Code session ended, each with the leftovers it started. */
+  leftovers: { pid: number; started_us: number; name: string; exe: string; cwd: string | null; session_id: string | null; helpers: number; ports: number[] }[];
+  zombies: { pid: number; parent_pid: number; parent_name: string | null }[];
+  ports: { port: number; address: string; pid: number; name: string; cwd: string | null; owner: 'leftover' | 'session' | 'other' }[];
+}
+
+export interface MachineOutcome {
+  target: string;
+  ok: boolean;
+  message: string | null;
+  /** The command that brings a removed worktree back. */
+  restore: string | null;
+}
+
+/** Reads the inventory. It changes nothing. */
+export async function getMachineInventory(): Promise<MachineInventory> {
+  return invoke<MachineInventory>('machine_inventory');
+}
+
+/**
+ * Removes the worktrees (never forced) and asks the processes to stop
+ * (SIGTERM). The app checks each one again first and skips any that is no
+ * longer stale or a leftover.
+ */
+export async function cleanMachine(worktrees: string[], processes: { pid: number; started_us: number }[]): Promise<MachineOutcome[]> {
+  return invoke<MachineOutcome[]>('machine_clean', { worktrees, processes });
 }
 
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */

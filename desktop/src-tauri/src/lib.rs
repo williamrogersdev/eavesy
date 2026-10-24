@@ -30,6 +30,7 @@ mod cf;
 mod cloud_pull;
 mod dictate;
 mod dictation;
+mod machine;
 mod make_room;
 mod moments;
 mod panel;
@@ -113,6 +114,8 @@ pub fn run() {
             agents::set_agent_hold,
             agents::remote::agents_answer,
             agents::remote::set_agent_messages,
+            machine::machine_inventory,
+            machine::machine_clean,
             commands::set_capture_sounds,
             commands::set_hud_look,
             commands::set_dictation_in_panel,

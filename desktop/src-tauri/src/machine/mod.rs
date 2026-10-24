@@ -1,0 +1,376 @@
+//! What's on this Mac that agent sessions left behind
+//! (docs/plans/machine-companion.md, first slice): git worktrees whose work
+//! has landed, processes whose Claude Code session ended, and the ports
+//! your processes listen on.
+//!
+//! Read-only until you click. Settings lists the inventory; a confirm card
+//! names exactly what goes, and only then are worktrees removed (never
+//! forced) and processes sent SIGTERM. Everything is checked again right
+//! before it's touched, so the list the card sends back is only a request.
+//! Nothing here runs in the background or on its own.
+
+pub mod ports;
+pub mod procs;
+pub mod worktrees;
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use procs::{Label, Proc};
+use worktrees::Status;
+
+/// A folder whose Claude Code transcript changed this recently is still in use.
+const RECENT_SESSION: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long a leftover gets to stop its own helpers before they're asked too.
+const HELPER_GRACE: Duration = Duration::from_millis(1500);
+
+#[derive(Debug, Serialize)]
+pub struct WorktreeRow {
+    pub path: String,
+    pub repo: String,
+    pub branch: Option<String>,
+    pub status: Status,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LeftoverRow {
+    pub pid: u32,
+    pub started_us: u64,
+    pub name: String,
+    pub exe: String,
+    pub cwd: Option<String>,
+    pub session_id: Option<String>,
+    /// Leftovers it started, stopped along with it.
+    pub helpers: usize,
+    pub ports: Vec<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ZombieRow {
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub parent_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortOwner {
+    Leftover,
+    Session,
+    Other,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PortRow {
+    pub port: u16,
+    pub address: String,
+    pub pid: u32,
+    pub name: String,
+    pub cwd: Option<String>,
+    pub owner: PortOwner,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct Inventory {
+    pub repos: Vec<String>,
+    pub worktrees: Vec<WorktreeRow>,
+    pub leftovers: Vec<LeftoverRow>,
+    pub zombies: Vec<ZombieRow>,
+    pub ports: Vec<PortRow>,
+}
+
+/// The repos to look in: every checkout directly in `~/Developer`, and the
+/// repo of every running Claude Code session.
+fn repo_roots(home: &Path, procs: &[Proc]) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(home.join("Developer"))
+        .map(|entries| entries.flatten().map(|entry| entry.path()).filter(|path| path.join(".git").is_dir()).collect())
+        .unwrap_or_default();
+    let uid = procs::own_uid();
+    let session_dirs: HashSet<&str> = procs.iter().filter(|proc| proc.uid == uid && procs::is_agent(proc)).filter_map(|proc| proc.cwd.as_deref()).collect();
+    for dir in session_dirs {
+        let common = std::process::Command::new("git")
+            .args(["-c", "core.fsmonitor=false", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .stderr(std::process::Stdio::null())
+            .output();
+        if let Some(output) = common.ok().filter(|output| output.status.success()) {
+            let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            if common.file_name().is_some_and(|name| name == ".git") {
+                candidates.extend(common.parent().map(Path::to_path_buf));
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    candidates.into_iter().filter_map(|path| path.canonicalize().ok()).filter(|path| seen.insert(path.clone())).collect()
+}
+
+const THREADS: usize = 8;
+
+/// One repo's linked worktrees, from its `git worktree list` (the first
+/// entry is the main checkout, which is never removed). `cwds` are where your
+/// processes run.
+fn repo_rows(home: &Path, entries: &[worktrees::Entry], cwds: &[&str]) -> Option<(String, Vec<WorktreeRow>)> {
+    let main = entries.first()?;
+    let repo = PathBuf::from(&main.path);
+    let bases = worktrees::bases(&repo);
+    let row = |entry: &worktrees::Entry| {
+        let path = Path::new(&entry.path);
+        let mut facts = worktrees::Facts {
+            exists: path.is_dir() && !entry.prunable,
+            locked: entry.locked,
+            dirty: false,
+            in_use: cwds.iter().any(|cwd| worktrees::inside(cwd, &entry.path)) || worktrees::recent_session(home, &entry.path, RECENT_SESSION),
+            merged: false,
+        };
+        // Only find out what decides it (see worktrees::classify).
+        if facts.exists && !facts.locked && !facts.in_use {
+            facts.merged = entry.head.as_deref().is_some_and(|head| worktrees::merged(&repo, head, &bases));
+            facts.dirty = facts.merged && worktrees::dirty(path);
+        }
+        WorktreeRow {
+            path: entry.path.clone(),
+            repo: main.path.clone(),
+            branch: entry.branch.as_deref().map(|branch| branch.trim_start_matches("refs/heads/").to_string()),
+            status: worktrees::classify(&facts),
+        }
+    };
+    let linked: Vec<&worktrees::Entry> = entries.iter().skip(1).filter(|entry| !entry.bare).collect();
+    let chunk = linked.len().div_ceil(THREADS).max(1);
+    let rows = std::thread::scope(|scope| {
+        let workers: Vec<_> = linked.chunks(chunk).map(|entries| scope.spawn(|| entries.iter().map(|entry| row(entry)).collect::<Vec<_>>())).collect();
+        workers.into_iter().flat_map(|worker| worker.join().unwrap_or_default()).collect()
+    });
+    Some((main.path.clone(), rows))
+}
+
+fn worktree_rows(home: &Path, procs: &[Proc]) -> (Vec<String>, Vec<WorktreeRow>) {
+    let uid = procs::own_uid();
+    let cwds: Vec<&str> = procs.iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).collect();
+    let mut repos = Vec::new();
+    let mut rows = Vec::new();
+    for root in repo_roots(home, procs) {
+        let entries = worktrees::list(&root);
+        // Two roots can be the same repo; scan it once.
+        if entries.first().is_none_or(|main| repos.contains(&main.path)) {
+            continue;
+        }
+        if let Some((repo, repo_rows)) = repo_rows(home, &entries, &cwds) {
+            repos.push(repo);
+            rows.extend(repo_rows);
+        }
+    }
+    (repos, rows)
+}
+
+fn gather() -> (Vec<Proc>, Inventory) {
+    let procs = procs::snapshot();
+    let uid = procs::own_uid();
+    let labels = procs::classify(&procs, uid, std::process::id());
+    let by_pid: HashMap<u32, &Proc> = procs.iter().map(|proc| (proc.pid, proc)).collect();
+    let listeners = ports::listening(uid);
+    let groups = procs::orphan_groups(&procs, &labels);
+
+    let leftovers = groups
+        .iter()
+        .filter_map(|(root, helpers)| {
+            let proc = by_pid.get(root)?;
+            let group: HashSet<u32> = helpers.iter().copied().chain([*root]).collect();
+            let mut ports: Vec<u16> = listeners.iter().filter(|l| group.contains(&l.pid)).map(|l| l.port).collect();
+            ports.dedup();
+            Some(LeftoverRow {
+                pid: proc.pid,
+                started_us: proc.started_us,
+                name: proc.name.clone(),
+                exe: proc.exe.clone(),
+                cwd: proc.cwd.clone(),
+                session_id: proc.tag.as_ref().and_then(|tag| tag.session_id.clone()),
+                helpers: helpers.len(),
+                ports,
+            })
+        })
+        .collect();
+    let zombies = procs
+        .iter()
+        .filter(|proc| proc.uid == uid && proc.zombie)
+        .map(|proc| ZombieRow { pid: proc.pid, parent_pid: proc.ppid, parent_name: by_pid.get(&proc.ppid).map(|parent| parent.name.clone()) })
+        .collect();
+    let ports = listeners
+        .iter()
+        .map(|listener| {
+            let proc = by_pid.get(&listener.pid);
+            PortRow {
+                port: listener.port,
+                address: listener.address.clone(),
+                pid: listener.pid,
+                name: proc.map(|proc| proc.name.clone()).unwrap_or_default(),
+                cwd: proc.and_then(|proc| proc.cwd.clone()),
+                owner: match labels.get(&listener.pid) {
+                    Some(Label::Orphan) => PortOwner::Leftover,
+                    Some(Label::Live) => PortOwner::Session,
+                    None => PortOwner::Other,
+                },
+            }
+        })
+        .collect();
+    let (repos, worktrees) = dirs::home_dir().map(|home| worktree_rows(&home, &procs)).unwrap_or_default();
+    (procs, Inventory { repos, worktrees, leftovers, zombies, ports })
+}
+
+#[tauri::command]
+pub async fn machine_inventory() -> Result<Inventory, String> {
+    tauri::async_runtime::spawn_blocking(|| gather().1).await.map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProcessRef {
+    pub pid: u32,
+    pub started_us: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Outcome {
+    /// The worktree path, or the process's pid.
+    pub target: String,
+    pub ok: bool,
+    pub message: Option<String>,
+    /// How to bring a removed worktree back.
+    pub restore: Option<String>,
+}
+
+/// `'…'` for a shell, so a path or branch with a quote in it stays one word.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Nothing of yours runs in the worktree, no session wrote there lately, and
+/// it holds nothing removal would lose.
+fn safe_to_remove_now(home: &Path, procs: &[Proc], worktree: &str) -> bool {
+    let uid = procs::own_uid();
+    let running = procs.iter().filter(|proc| proc.uid == uid && !proc.zombie).filter_map(|proc| proc.cwd.as_deref()).any(|cwd| worktrees::inside(cwd, worktree));
+    !running && !worktrees::recent_session(home, worktree, RECENT_SESSION) && !worktrees::dirty(Path::new(worktree))
+}
+
+fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome> {
+    let (procs, inventory) = gather();
+    let labels = procs::classify(&procs, procs::own_uid(), std::process::id());
+    let groups = procs::orphan_groups(&procs, &labels);
+    let started: HashMap<u32, u64> = procs.iter().map(|proc| (proc.pid, proc.started_us)).collect();
+    let mut outcomes = Vec::new();
+
+    let mut helpers_to_stop = Vec::new();
+    for wanted in processes {
+        let target = wanted.pid.to_string();
+        let group = groups.iter().find(|(root, _)| *root == wanted.pid && started.get(root) == Some(&wanted.started_us));
+        let Some((root, helpers)) = group else {
+            outcomes.push(Outcome { target, ok: false, message: Some("It isn't a leftover any more.".into()), restore: None });
+            continue;
+        };
+        let result = procs::terminate(*root, wanted.started_us);
+        tracing::info!(pid = root, ok = result.is_ok(), "machine: asked a leftover process to stop");
+        if result.is_ok() {
+            helpers_to_stop.extend(helpers.iter().filter_map(|pid| started.get(pid).map(|start| (*pid, *start))));
+        }
+        outcomes.push(Outcome { target, ok: result.is_ok(), message: result.err(), restore: None });
+    }
+    if !helpers_to_stop.is_empty() {
+        std::thread::sleep(HELPER_GRACE);
+        for (pid, start) in helpers_to_stop {
+            // Most stop with their parent; a helper that's gone is fine.
+            let _ = procs::terminate(pid, start);
+        }
+    }
+
+    let home = dirs::home_dir().unwrap_or_default();
+    for path in worktree_paths {
+        let row = inventory.worktrees.iter().find(|row| row.path == path);
+        // Stopping processes and removing the ones before it took time, so
+        // look again, right before it goes. A process that starts in it in
+        // the milliseconds between this check and git's own is the one window
+        // left; git still refuses changes and untracked files then.
+        let still_stale = row.is_some_and(|row| row.status == Status::Stale) && safe_to_remove_now(&home, &procs::snapshot(), &path);
+        let Some(row) = row.filter(|_| still_stale) else {
+            outcomes.push(Outcome { target: path, ok: false, message: Some("It isn't safe to remove any more.".into()), restore: None });
+            continue;
+        };
+        let result = worktrees::remove(Path::new(&row.repo), &row.path);
+        tracing::info!(ok = result.is_ok(), "machine: removed a stale worktree");
+        let restore = row.branch.as_ref().map(|branch| format!("git -C {} worktree add {} {}", shell_quote(&row.repo), shell_quote(&row.path), shell_quote(branch)));
+        outcomes.push(Outcome { target: path, ok: result.is_ok(), restore: restore.filter(|_| result.is_ok()), message: result.err() });
+    }
+    outcomes
+}
+
+/// Called by the confirm card in Settings, and refused from any other
+/// window. It's a Tauri command, so only Eavesy's own webviews can call it;
+/// the agents socket (agents/mod.rs) only reads hook messages.
+#[tauri::command]
+pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>, processes: Vec<ProcessRef>) -> Result<Vec<Outcome>, String> {
+    if window.label() != "settings" {
+        return Err("Cleaning up only works from Settings.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || clean(worktrees, processes)).await.map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success();
+        assert!(ok, "git {args:?}");
+    }
+
+    /// A merged, clean worktree is stale until a process runs in it or a
+    /// session writes a transcript for it.
+    #[test]
+    fn a_running_process_or_a_recent_session_keeps_a_worktree() {
+        let root = std::env::temp_dir().join(format!("eavesy-in-use-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let (repo, worktree, home) = (root.join("repo"), root.join("wt"), root.join("home"));
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&repo, &["worktree", "add", "-q", "-b", "wt", &worktree.to_string_lossy()]);
+        let entries = super::worktrees::list(&repo);
+        let status = |cwds: &[&str]| super::repo_rows(&home, &entries, cwds).unwrap().1[0].status;
+        assert_eq!(status(&[]), super::Status::Stale);
+        let inside = worktree.join("web").to_string_lossy().into_owned();
+        assert_eq!(status(&[inside.as_str()]), super::Status::InUse);
+        // The check right before removal says the same.
+        let path = worktree.to_string_lossy().into_owned();
+        let mut proc = super::procs::Proc { uid: super::procs::own_uid(), cwd: Some(inside.clone()), ..Default::default() };
+        assert!(!super::safe_to_remove_now(&home, std::slice::from_ref(&proc), &path));
+        proc.cwd = Some(root.to_string_lossy().into_owned());
+        assert!(super::safe_to_remove_now(&home, std::slice::from_ref(&proc), &path));
+        std::fs::write(worktree.join(".env"), "TOKEN=x\n").unwrap();
+        assert!(!super::safe_to_remove_now(&home, &[], &path), "an untracked .env");
+        std::fs::remove_file(worktree.join(".env")).unwrap();
+
+        let transcripts = super::worktrees::transcript_dir(&home, &path);
+        std::fs::create_dir_all(&transcripts).unwrap();
+        std::fs::write(transcripts.join("s.jsonl"), "{}\n").unwrap();
+        assert_eq!(status(&[]), super::Status::InUse);
+        assert!(!super::safe_to_remove_now(&home, &[], &path));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restore_lines_quote_for_the_shell() {
+        assert_eq!(super::shell_quote("/r/it's here"), "'/r/it'\\''s here'");
+        assert_eq!(super::shell_quote("main"), "'main'");
+    }
+
+    /// Prints this Mac's inventory without touching anything:
+    /// `cargo test --lib machine::tests::print_inventory -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_inventory() {
+        let inventory = super::gather().1;
+        println!("{}", serde_json::to_string_pretty(&inventory).unwrap());
+    }
+}
