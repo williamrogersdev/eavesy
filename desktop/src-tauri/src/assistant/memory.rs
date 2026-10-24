@@ -20,8 +20,11 @@ pub fn path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join("Eavesy").join("assistant").join("memory.md"))
 }
 
-/// Most of the file read; a note past this is past the cap anyway.
+/// Most of the file read for a turn; a note past this is past the cap anyway.
 const MAX_FILE_BYTES: u64 = 256 * 1024;
+/// Largest file Eavesy will edit. Edits rewrite the whole file, so a bigger one is
+/// left for you to trim rather than risk cutting it.
+const MAX_EDIT_BYTES: u64 = 1024 * 1024;
 
 /// One note as it may be kept: a single line, no control or line-separator
 /// characters, capped.
@@ -46,13 +49,29 @@ pub fn parse(text: &str) -> Vec<String> {
 
 const HEADER: &str = "# What Eavesy remembers\n\nOne note per line. Eavesy reads these with every message. Delete a line to make it forget.\n\n";
 
+/// The start of the file, for a turn: bounded, and lossy where the cut splits a
+/// character. Never written back.
 fn read_text(file: &Path) -> String {
     use std::io::Read;
-    let mut text = String::new();
+    let mut bytes = Vec::new();
     if let Ok(handle) = std::fs::File::open(file) {
-        let _ = handle.take(MAX_FILE_BYTES).read_to_string(&mut text);
+        let _ = handle.take(MAX_FILE_BYTES).read_to_end(&mut bytes);
     }
-    text
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// The whole file, for an edit. Missing is empty; anything else that stops a full,
+/// exact read is an error, so an edit never writes back less than was there.
+fn read_for_edit(file: &Path) -> Result<String, String> {
+    match std::fs::metadata(file) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(format!("Couldn't read memory.md: {error}")),
+        Ok(meta) if meta.len() > MAX_EDIT_BYTES => {
+            return Err("memory.md is too big for me to edit safely. Trim it in Settings → Assistant → Memory → Open in Editor.".into());
+        }
+        Ok(_) => {}
+    }
+    std::fs::read_to_string(file).map_err(|error| format!("Couldn't read memory.md: {error}"))
 }
 
 pub fn read(file: &Path) -> Vec<String> {
@@ -80,7 +99,7 @@ pub fn add(file: &Path, note: &str) -> Result<String, String> {
         return Err("There's nothing in that to remember.".into());
     }
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut text = read_text(file);
+    let mut text = read_for_edit(file)?;
     let kept: Vec<String> = text.lines().filter_map(note_on).collect();
     if let Some(same) = kept.iter().find(|kept| kept.eq_ignore_ascii_case(&note)) {
         return Ok(same.clone());
@@ -102,7 +121,7 @@ pub fn add(file: &Path, note: &str) -> Result<String, String> {
 pub fn forget(file: &Path, note: &str) -> Result<(), String> {
     let note = clean(note);
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let text = read_text(file);
+    let text = read_for_edit(file)?;
     let mut found = false;
     let left = without(&text, |line| {
         let hit = !found && note_on(line).as_deref() == Some(note.as_str());
@@ -115,7 +134,7 @@ pub fn forget(file: &Path, note: &str) -> Result<(), String> {
 /// Removes every note line; a heading or anything else you wrote stays.
 pub fn forget_all(file: &Path) -> Result<(), String> {
     let _guard = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let text = read_text(file);
+    let text = read_for_edit(file)?;
     if text.is_empty() {
         return Ok(());
     }
@@ -242,6 +261,24 @@ mod tests {
         assert_eq!(kept, "Prefers Bun");
         forget(&file, &kept).unwrap();
         assert!(read(&file).is_empty());
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn an_edit_never_writes_back_less_than_was_there() {
+        let file = temp_file();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        // Not UTF-8: refused, file untouched.
+        std::fs::write(&file, b"- ok\n\xff\xfe\n").unwrap();
+        assert!(add(&file, "new").is_err());
+        assert!(forget_all(&file).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"- ok\n\xff\xfe\n");
+        // Too big to edit: refused, though the start still reads for a turn.
+        let big = format!("- first\n{}", "x".repeat(MAX_EDIT_BYTES as usize));
+        std::fs::write(&file, &big).unwrap();
+        assert!(add(&file, "new").unwrap_err().contains("too big"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap().len(), big.len());
+        assert_eq!(read(&file), ["first"]);
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 

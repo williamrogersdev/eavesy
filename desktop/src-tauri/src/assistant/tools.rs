@@ -119,8 +119,7 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
         _ if remember => super::check::run(app, request, action.as_ref()),
         _ => Check::NotRun,
     };
-    if remember && check != Check::Pass {
-        let reason = "I only keep notes you ask me to keep. Say what to remember and I'll add it.".to_string();
+    if let Some(reason) = remember.then(|| refuse_note(&check)).flatten() {
         super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
         return ToolResult { content: reason, is_error: true };
     }
@@ -210,6 +209,11 @@ impl Action for OpenLink {
     }
 }
 
+/// Why a note isn't kept: anything but a pass from the check, offline and errors included.
+fn refuse_note(check: &Check) -> Option<String> {
+    (*check != Check::Pass).then(|| "I only keep notes you ask me to keep. Say what to remember and I'll add it.".to_string())
+}
+
 /// Applies at once and shows a "Remembered" line you can undo (H4).
 struct Remember {
     app: AppHandle,
@@ -241,6 +245,14 @@ impl Action for Remember {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_is_kept_only_on_a_pass() {
+        assert_eq!(refuse_note(&Check::Pass), None);
+        for check in [Check::NotRun, Check::Failed, Check::Flagged("not asked".into())] {
+            assert!(refuse_note(&check).is_some(), "{check:?}");
+        }
+    }
 
     #[test]
     fn only_plain_https_links() {
