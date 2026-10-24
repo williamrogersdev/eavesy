@@ -92,6 +92,8 @@ struct NoKeys;
 impl store::KeyStore for NoKeys {
     fn key(&self) -> Result<Option<Vec<u8>>, String> { Ok(None) }
     fn create_key(&self) -> Result<Vec<u8>, String> { Err("no Keychain on this platform".into()) }
+    fn latest(&self) -> Result<Option<String>, String> { Ok(None) }
+    fn set_latest(&self, _: &str) -> Result<(), String> { Err("no Keychain on this platform".into()) }
 }
 
 fn now_ms() -> u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
@@ -120,7 +122,15 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
     let core = app.state::<Core>();
     let facts = action.facts();
     let effective = core.policy.lock().unwrap().effective(now_ms());
-    let decision = policy::decide(&facts, requester, &effective, check, &core.breaker.lock().unwrap());
+    // One guard across deciding and recording, so requests arriving together can't all
+    // slip under the breaker before any of them counts.
+    let mut breaker = core.breaker.lock().unwrap();
+    let decision = policy::decide(&facts, requester, &effective, check, &breaker);
+    let unattended = matches!(decision, Decision::Run | Decision::RunWithUndo { .. }) && matches!(facts.tier, policy::Tier::Say | policy::Tier::Click);
+    if unattended {
+        breaker.record();
+    }
+    drop(breaker);
     let who = requester.label();
     let title = action.title();
     match decision {
@@ -131,9 +141,6 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
         // Undo arrives with the first tier 1 tool; until then nothing returns RunWithUndo
         // without also being safe to run plainly.
         Decision::Run | Decision::RunWithUndo { .. } => {
-            if matches!(facts.tier, policy::Tier::Say | policy::Tier::Click) {
-                core.breaker.lock().unwrap().record();
-            }
             let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
             let ran = action.run(&rows);
             log(&who, action.tool(), &title, "ran", Some(ran.summary.clone()));
@@ -173,13 +180,25 @@ fn from_ui(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
+/// A native alert, brought to the front the way updates.rs does it (Eavesy is an
+/// accessory app, so an alert shown from a background thread can open behind other
+/// windows). Blocks this thread until it's answered; never call it on the main thread.
 fn confirm(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
-    app.dialog()
-        .message(message)
-        .title(title)
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()))
-        .blocking_show()
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (handle, title, message, ok) = (app.clone(), title.to_string(), message.to_string(), ok.to_string());
+    let shown = app.run_on_main_thread(move || {
+        crate::app_menu::present(&handle);
+        handle
+            .dialog()
+            .message(message)
+            .title(title)
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(ok, "Cancel".into()))
+            .show(move |answer| {
+                let _ = tx.send(answer);
+            });
+    });
+    shown.is_ok() && rx.recv().unwrap_or(false)
 }
 
 fn save(core: &Core, policy: Policy) -> Result<(), String> {

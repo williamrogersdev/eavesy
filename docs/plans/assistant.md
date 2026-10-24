@@ -285,6 +285,10 @@ reads or writes can change a tool's tier.**
   **Who's asking** comes from the channel a request arrived on, never from
   what it says: Eavesy's own UI and voice are you, the local agents socket is
   a local agent, the Mac link is a remote agent, and a monitor is a monitor.
+  A local agent's folder is read from its process (the peer pid's working
+  folder), never from its message. That is still a fact the agent controls,
+  since it can change folder, so **Trust local agents** means "agents
+  working here", not proof of which agent is asking.
   A card accepts by sending back only its id and the ticked rows; Eavesy
   runs the action it stored when it showed the card, checks each row again
   first, and a card expires after 5 minutes.

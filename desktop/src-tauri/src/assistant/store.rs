@@ -4,6 +4,10 @@
 //! Bypass included. So the file carries an HMAC whose key lives in the Keychain, and
 //! only Eavesy's own UI writes it. A file that fails the check loads as Ask, and the
 //! app says the rules changed outside Eavesy (assistant.md C8).
+//!
+//! The MAC alone would let an agent copy the file while Bypass is on and put the copy
+//! back later. So the Keychain also holds the MAC of the last file Eavesy wrote, and
+//! only that file loads.
 
 use std::path::{Path, PathBuf};
 
@@ -61,10 +65,13 @@ impl Loaded {
     }
 }
 
-/// Where the signing key lives. A trait so tests don't touch the Keychain.
+/// Where the signing key and the last MAC live. A trait so tests don't touch the Keychain.
 pub trait KeyStore {
     fn key(&self) -> Result<Option<Vec<u8>>, String>;
     fn create_key(&self) -> Result<Vec<u8>, String>;
+    /// The MAC of the last policy Eavesy saved.
+    fn latest(&self) -> Result<Option<String>, String>;
+    fn set_latest(&self, mac: &str) -> Result<(), String>;
 }
 
 pub fn path() -> Option<PathBuf> {
@@ -76,7 +83,9 @@ pub fn load(file: &Path, keys: &impl KeyStore) -> Loaded {
     let Ok(signed) = serde_json::from_str::<Signed>(&text) else { return Loaded::Tampered };
     let Ok(Some(key)) = keys.key() else { return Loaded::Tampered };
     let Ok(body) = serde_json::to_vec(&signed.policy) else { return Loaded::Tampered };
-    if constant_time_eq(hex::encode(hmac_sha256(&key, &body)).as_bytes(), signed.mac.as_bytes()) {
+    let Ok(Some(latest)) = keys.latest() else { return Loaded::Tampered };
+    let mac = hex::encode(hmac_sha256(&key, &body));
+    if constant_time_eq(mac.as_bytes(), signed.mac.as_bytes()) && constant_time_eq(mac.as_bytes(), latest.as_bytes()) {
         Loaded::Valid(signed.policy)
     } else {
         Loaded::Tampered
@@ -90,12 +99,16 @@ pub fn save(file: &Path, keys: &impl KeyStore, policy: &Policy) -> Result<(), St
         None => keys.create_key()?,
     };
     let body = serde_json::to_vec(policy).map_err(|e| e.to_string())?;
-    let signed = Signed { policy: policy.clone(), mac: hex::encode(hmac_sha256(&key, &body)) };
+    let mac = hex::encode(hmac_sha256(&key, &body));
+    let signed = Signed { policy: policy.clone(), mac: mac.clone() };
     let text = serde_json::to_string_pretty(&signed).map_err(|e| e.to_string())?;
     let dir = file.parent().ok_or("the policy file has no folder")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
     let partial = file.with_extension("json.partial");
     write_private(&partial, text.as_bytes())?;
+    // The Keychain first: if the rename then fails, the old file no longer matches and
+    // loads as Ask, which is the safe way to be wrong.
+    keys.set_latest(&mac)?;
     std::fs::rename(&partial, file).map_err(|e| format!("couldn't save the policy: {e}"))
 }
 
@@ -136,12 +149,19 @@ pub struct Keychain;
 #[cfg(target_os = "macos")]
 impl KeyStore for Keychain {
     fn key(&self) -> Result<Option<Vec<u8>>, String> {
-        const ITEM_NOT_FOUND: i32 = -25300;
-        match security_framework::passwords::get_generic_password(KEY_SERVICE, KEY_ACCOUNT) {
-            Ok(bytes) => hex::decode(bytes).map(Some).map_err(|_| "the policy key is damaged".to_string()),
-            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
-            Err(error) => Err(format!("Keychain read failed: {error}")),
+        match keychain_read(KEY_ACCOUNT)? {
+            Some(bytes) => hex::decode(bytes).map(Some).map_err(|_| "the policy key is damaged".to_string()),
+            None => Ok(None),
         }
+    }
+
+    fn latest(&self) -> Result<Option<String>, String> {
+        keychain_read(LATEST_ACCOUNT)?.map(|bytes| String::from_utf8(bytes).map_err(|_| "the policy check is damaged".to_string())).transpose()
+    }
+
+    fn set_latest(&self, mac: &str) -> Result<(), String> {
+        security_framework::passwords::set_generic_password(KEY_SERVICE, LATEST_ACCOUNT, mac.as_bytes())
+            .map_err(|error| format!("couldn't save the policy check in Keychain: {error}"))
     }
 
     fn create_key(&self) -> Result<Vec<u8>, String> {
@@ -153,9 +173,21 @@ impl KeyStore for Keychain {
 }
 
 #[cfg(target_os = "macos")]
+fn keychain_read(account: &str) -> Result<Option<Vec<u8>>, String> {
+    const ITEM_NOT_FOUND: i32 = -25300;
+    match security_framework::passwords::get_generic_password(KEY_SERVICE, account) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+        Err(error) => Err(format!("Keychain read failed: {error}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
 const KEY_SERVICE: &str = "com.eavesy.desktop.assistant-policy.v1";
 #[cfg(target_os = "macos")]
 const KEY_ACCOUNT: &str = "policy";
+#[cfg(target_os = "macos")]
+const LATEST_ACCOUNT: &str = "latest";
 
 #[cfg(test)]
 mod tests {
@@ -163,7 +195,7 @@ mod tests {
     use std::cell::RefCell;
 
     #[derive(Default)]
-    struct Memory(RefCell<Option<Vec<u8>>>);
+    struct Memory(RefCell<Option<Vec<u8>>>, RefCell<Option<String>>);
 
     impl KeyStore for Memory {
         fn key(&self) -> Result<Option<Vec<u8>>, String> { Ok(self.0.borrow().clone()) }
@@ -171,6 +203,11 @@ mod tests {
             let key = vec![7u8; 32];
             *self.0.borrow_mut() = Some(key.clone());
             Ok(key)
+        }
+        fn latest(&self) -> Result<Option<String>, String> { Ok(self.1.borrow().clone()) }
+        fn set_latest(&self, mac: &str) -> Result<(), String> {
+            *self.1.borrow_mut() = Some(mac.into());
+            Ok(())
         }
     }
 
@@ -215,6 +252,16 @@ mod tests {
         let (file, keys) = (temp(), Memory::default());
         save(&file, &keys, &Policy { mode: Mode::Auto, ..Policy::default() }).unwrap();
         assert_eq!(load(&file, &Memory::default()), Loaded::Tampered);
+    }
+
+    #[test]
+    fn an_old_copy_put_back_loads_as_ask() {
+        let (file, keys) = (temp(), Memory::default());
+        save(&file, &keys, &Policy { mode: Mode::Bypass, until_ms: None, trusted_folders: vec!["/a".into()] }).unwrap();
+        let copy = std::fs::read(&file).unwrap();
+        save(&file, &keys, &Policy::default()).unwrap();
+        std::fs::write(&file, copy).unwrap();
+        assert_eq!(load(&file, &keys), Loaded::Tampered);
     }
 
     #[test]
