@@ -621,6 +621,8 @@ export const agentMessages = sqliteTable(
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
     resolvedAt: integer('resolved_at'),
+    /** An ask's held call last said it's still waiting; an answer is taken only while it is. */
+    heldAt: integer('held_at'),
   },
   (t) => [index('agent_messages_user_status_idx').on(t.userId, t.status, t.createdAt)],
 );

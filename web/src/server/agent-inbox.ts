@@ -41,6 +41,10 @@ export const RETAIN_MS = 24 * 60 * 60 * 1000;
 export const LISTENING_MS = 45_000;
 /** How often a polling Mac's `seen_at` is written. */
 const LISTENER_WRITE_MS = 15_000;
+/** How often a held `ask_human` call marks its ask as still waiting. */
+export const HEARTBEAT_MS = 10_000;
+/** An ask whose call hasn't marked it this recently has lost its caller. */
+export const HELD_MS = 25_000;
 /** Undelivered messages a user can have at once, so a looping agent can't pile them up. */
 export const MAX_PENDING = 20;
 /** Messages one Mac picks up per poll. */
@@ -51,13 +55,15 @@ export class AgentInboxError extends Error {}
 
 /**
  * Agent text made safe to show and speak: no control characters but newlines
- * and tabs, no zero-width or direction-override characters that could hide or
- * reorder words on the card, trimmed, clipped.
+ * and tabs; no soft hyphens, zero-width spaces, word joiners, or direction
+ * marks, embeddings, overrides and isolates, which could hide or reorder words
+ * on the card. Zero-width joiners stay, since emoji are built with them.
+ * Trimmed and clipped.
  */
 export function cleanText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
   // eslint-disable-next-line no-control-regex
-  const text = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
+  const text = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u061C\u200B\u200E\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g, '').trim();
   return [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
 }
 
@@ -173,6 +179,7 @@ export async function createMessage(db: Db, message: NewMessage, now = Date.now(
     status: 'pending',
     createdAt: now,
     expiresAt: now + message.ttlMs,
+    heldAt: message.kind === 'ask' ? now : null,
   });
   return id;
 }
@@ -208,19 +215,29 @@ export interface WaitOptions {
 
 /**
  * Waits for the answer to the ask `id` the caller just created, until
- * `deadline`. On time out the ask is closed, so the card leaves the Mac; an
- * answer that landed at the same moment still wins.
+ * `deadline`, marking the ask as held every `HEARTBEAT_MS`: if the client cuts
+ * the call off, the marks stop, the Mac drops the card and no answer is taken
+ * for nobody. On time out the ask is closed; an answer that landed at the same
+ * moment still wins.
  */
 export async function waitForAnswer(db: Db, id: string, deadline: number, options: WaitOptions = {}): Promise<AskResult> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const everyMs = options.everyMs ?? 1_500;
   const started = now();
+  let beat = started;
   for (;;) {
     const result = finished(await readAsk(db, id));
     if (result) return result;
     const left = deadline - now();
     if (left <= 0) break;
+    if (now() - beat >= HEARTBEAT_MS) {
+      beat = now();
+      await db
+        .update(schema.agentMessages)
+        .set({ heldAt: beat })
+        .where(and(eq(schema.agentMessages.id, id), eq(schema.agentMessages.status, 'pending')));
+    }
     await sleep(Math.min(now() - started < 60_000 ? everyMs : everyMs * 2, left));
   }
   await db
@@ -268,7 +285,13 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
       // Written only when stale, so a Mac polling every few seconds rarely writes.
       setWhere: or(lte(schema.agentListeners.seenAt, now - LISTENER_WRITE_MS), ne(schema.agentListeners.userId, userId)),
     });
-  const open = and(eq(schema.agentMessages.userId, userId), eq(schema.agentMessages.status, 'pending'), gt(schema.agentMessages.expiresAt, now));
+  // A send waits for a Mac; an ask only while its call is still held.
+  const open = and(
+    eq(schema.agentMessages.userId, userId),
+    eq(schema.agentMessages.status, 'pending'),
+    gt(schema.agentMessages.expiresAt, now),
+    or(eq(schema.agentMessages.kind, 'send'), gt(schema.agentMessages.heldAt, now - HELD_MS)),
+  );
   const free = or(
     isNull(schema.agentMessages.deviceId),
     sql`${schema.agentMessages.deviceId} NOT IN (SELECT ${schema.agentListeners.deviceId} FROM ${schema.agentListeners} WHERE ${schema.agentListeners.seenAt} > ${now - LISTENING_MS})`,
@@ -316,7 +339,7 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
 
 /**
  * The Mac that showed an ask answers or dismisses it. False when it's no
- * longer waiting (timed out, or not this Mac's).
+ * longer waiting (timed out, its call is gone, or it's not this Mac's).
  */
 export async function resolveForDevice(
   db: Db,
@@ -337,6 +360,7 @@ export async function resolveForDevice(
         eq(schema.agentMessages.kind, 'ask'),
         eq(schema.agentMessages.status, 'pending'),
         gt(schema.agentMessages.expiresAt, now),
+        gt(schema.agentMessages.heldAt, now - HELD_MS),
       ),
     )
     .returning({ id: schema.agentMessages.id });

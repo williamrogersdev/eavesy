@@ -7,6 +7,7 @@ import {
   askTimeoutSec,
   cleanText,
   createMessage,
+  HELD_MS,
   LISTENING_MS,
   macEnabled,
   macListening,
@@ -41,7 +42,8 @@ describe('agent text', () => {
     expect(cleanText('  hi\u0007 there\nnext\u001b[31m  ', 100)).toBe('hi there\nnext[31m');
     expect(cleanText('x'.repeat(10), 5)).toBe('xxxx…');
     expect(cleanText(42, 10)).toBe('');
-    expect(cleanText('pay\u202Eevil\u200B me\uFEFF', 100)).toBe('payevil me');
+    expect(cleanText('pay\u202Eevil\u200B me\uFEFF\u00AD\u2060', 100)).toBe('payevil me');
+    expect(cleanText('👩\u200D💻', 10)).toBe('👩\u200D💻');
   });
 
   test('a connection name is one short line, with a fallback', () => {
@@ -141,8 +143,33 @@ describe('delivering to a Mac', () => {
     expect((await pollForDevice(t.db, 'u1', 'mac-a', 1_000)).waiting).toEqual([id]);
     expect((await pollForDevice(t.db, 'u1', 'mac-b', 2_000)).items).toEqual([]);
     const later = 1_000 + LISTENING_MS + 1;
+    // Its call is still held.
+    t.sqlite.run('UPDATE agent_messages SET held_at = ?', [later]);
     expect((await pollForDevice(t.db, 'u1', 'mac-b', later)).items.map((item) => item.id)).toEqual([id]);
     expect(await resolveForDevice(t.db, 'u1', 'mac-a', id, { status: 'answered', text: 'old' }, later)).toBe(false);
+  });
+
+  test('an ask whose call was cut off leaves the Mac and takes no answer', async () => {
+    const t = setup();
+    const id = await createMessage(t.db, ask('u1', 10 * 60_000), 1_000);
+    expect((await pollForDevice(t.db, 'u1', 'mac-a', 1_000)).waiting).toEqual([id]);
+    const gone = 1_000 + HELD_MS + 1;
+    expect((await pollForDevice(t.db, 'u1', 'mac-a', gone)).waiting).toEqual([]);
+    expect(await resolveForDevice(t.db, 'u1', 'mac-a', id, { status: 'answered', text: 'late' }, gone)).toBe(false);
+  });
+
+  test('a held call keeps its ask alive and reads less often after a minute', async () => {
+    const t = setup();
+    const id = await createMessage(t.db, ask('u1', 10 * 60_000), 0);
+    await pollForDevice(t.db, 'u1', 'mac-a', 0);
+    let clock = 0;
+    const naps: number[] = [];
+    const result = await waitForAnswer(t.db, id, 90_000, { now: () => clock, sleep: async (ms) => { naps.push(ms); clock += ms; }, everyMs: 1_000 });
+    expect(result).toEqual({ status: 'timeout' });
+    expect(naps.slice(0, 3)).toEqual([1_000, 1_000, 1_000]);
+    expect(naps.at(-2)).toBe(2_000);
+    const held = t.sqlite.query('SELECT held_at FROM agent_messages').get() as { held_at: number };
+    expect(held.held_at).toBeGreaterThan(90_000 - HELD_MS);
   });
 
   test('expired messages are never delivered', async () => {

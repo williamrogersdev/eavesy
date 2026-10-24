@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6a6a4705-a95e-499a-9769-87283970e0da",
+  "id": "228be0b4-2ec9-414c-b468-6fe5f8434f42",
   "prevId": "416e526e-391c-4326-974e-3354e5c1237c",
   "tables": {
     "activity_log": {
@@ -252,6 +252,13 @@
         },
         "resolved_at": {
           "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "held_at": {
+          "name": "held_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

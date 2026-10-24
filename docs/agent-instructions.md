@@ -45,9 +45,8 @@ copies. Keep the two in sync.
 - Your answer goes back only to the call that asked, as text. It never
   approves a tool call or anything else.
 - One Mac shows each message: the first one that checks in. A connection can
-  send 30 messages per 10 minutes, and at most 20 can wait at once.
+  send 30 messages per 10 minutes, and about 20 can wait at once.
 - Messages wait 2 hours for a Mac to come online; questions wait only as long
   as the agent waits.
-- If a client cuts the call off before its `timeout_sec`, the card stays until
-  that time runs out. An answer typed then is accepted, and the card says it
-  was sent, but no agent receives it.
+- If a client cuts the call off before its `timeout_sec`, the card leaves the
+  Mac within about half a minute, and an answer is no longer taken.

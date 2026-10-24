@@ -283,13 +283,19 @@ pub const ANSWERING: &str = "answering";
 /// retrying (the agent is still waiting): then the card stays.
 async fn finish_answer(app: &AppHandle, id: u64, cloud_id: &str, text: &str) -> Result<(), String> {
     let result = resolve(app, cloud_id, Outcome::Answered { text }).await;
-    if matches!(&result, Err(error) if !error.contains("stopped waiting")) {
+    if keeps_card(&result) {
         return result;
     }
     with_asks(|asks| asks.remove(&id));
     with_queue(|queue| queue.remove(id));
     super::speak::stop();
     result
+}
+
+/// An answer that failed while the agent still waits leaves the card, to try
+/// again; one that went in, or that no agent waits for any more, takes it off.
+fn keeps_card(result: &Result<(), String>) -> bool {
+    matches!(result, Err(error) if !error.contains("stopped waiting"))
 }
 
 /// Sends what you typed to the agent that asked. The card keeps it if that fails.
@@ -384,6 +390,13 @@ mod tests {
         assert!(gone_asks(&asks, &[], &mut missed).is_empty());
         assert_eq!(gone_asks(&asks, &[], &mut missed), vec![1, 2]);
         assert!(missed.is_empty());
+    }
+
+    #[test]
+    fn only_a_retryable_failure_keeps_the_card() {
+        assert!(!keeps_card(&Ok(())));
+        assert!(!keeps_card(&Err("That agent stopped waiting for an answer.".into())));
+        assert!(keeps_card(&Err("Couldn't reach Eavesy. Try again.".into())));
     }
 
     #[test]

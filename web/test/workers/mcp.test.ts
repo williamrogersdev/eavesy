@@ -501,6 +501,19 @@ describe('MCP messages to the human', () => {
     expect(await call(token, 'send_to_human', {})).toEqual({ error: 'text is required' });
   });
 
+  it('refuse once too many wait, without spending the connection’s rate limit', async () => {
+    const { token } = await mint();
+    await pollForDevice(db(), 'user_mcp', 'mac-a');
+    const now = Date.now();
+    for (let i = 0; i < 20; i += 1) {
+      await testEnv.DB.prepare(
+        "INSERT INTO agent_messages (id, user_id, mcp_token_id, source, kind, text, status, created_at, expires_at) VALUES (?, 'user_mcp', 't', 'x', 'send', 'hi', 'pending', ?, ?)",
+      ).bind(`m${i}`, now, now + 60_000).run();
+    }
+    expect(await call(token, 'send_to_human', { text: 'One more.' })).toEqual({ error: expect.stringContaining('Too many messages') });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'mcp-human:%'").first('n')).toBe(0);
+  });
+
   it('return the answer typed on the Mac to the call that asked', async () => {
     const { token } = await mint();
     await pollForDevice(db(), 'user_mcp', 'mac-a');

@@ -127,9 +127,10 @@ a voice field and the instructions that get agents to use them:
   reads stay far under the subrequest limit. **The wait defaults to 2 minutes
   (30 s to 10 min), not the architecture's 10 minutes**, because the call is
   held and clients cut tool calls off at limits of their own. On timeout the
-  row closes, and the next poll takes the card off the Mac. If a client cuts
-  the call off sooner, the card stays until the row's own time runs out. An
-  answer typed then is accepted, but no agent receives it.
+  row closes, and the next poll takes the card off the Mac. The held call
+  marks its row every 10 s (`held_at`). If a client cuts the call off sooner,
+  the marks stop: after 25 s the Mac drops the card, and an answer is
+  refused, so nobody is told "sent" for an answer no agent gets.
 - `send_to_human` keeps nothing for a user with no Mac that polled in the last
   day (`not_enabled`), and a queued message waits 2 hours, so a Mac turned on
   later doesn't read out a backlog.
@@ -141,7 +142,7 @@ a voice field and the instructions that get agents to use them:
   it, and only while the ask is still waiting. The result goes back only to
   the held call that created the row, and there's no tool for reading other
   rows. Voice answers come with piece 3d.
-- Limits: 30 calls per connection per 10 minutes, 20 waiting messages per
+- Limits: 30 calls per connection per 10 minutes, about 20 waiting messages per
   user, text clipped to 4,000 characters and `spoken` to 300. Remote text
   skips the summarize model. It's said as "*ChatGPT*: …", using the
   connection's name, and `say` gets it with `[[ … ]]` speech commands taken

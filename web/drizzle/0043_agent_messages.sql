@@ -21,6 +21,7 @@ CREATE TABLE `agent_messages` (
 	`created_at` integer NOT NULL,
 	`expires_at` integer NOT NULL,
 	`resolved_at` integer,
+	`held_at` integer,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint

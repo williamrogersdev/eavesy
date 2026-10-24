@@ -14,6 +14,9 @@ export const Route = createFileRoute('/api/agents/inbox/$id')({ server: { handle
   POST: async ({ request, params }) => {
     const actor = await resolveIngestActor(request).catch(() => null);
     if (!actor?.deviceId) return Response.json({ error: 'Connect this Mac to your Eavesy account first.' }, { status: 401 });
+    if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) {
+      return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 413 });
+    }
     const raw = await request.text().catch(() => '');
     if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
       return Response.json({ error: `Keep your answer under ${MAX_ANSWER_CHARS} characters.` }, { status: 413 });
