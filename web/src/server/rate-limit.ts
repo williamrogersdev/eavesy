@@ -96,6 +96,15 @@ export async function guardSpend(
   return null;
 }
 
+/**
+ * Gives back one unit of a spend scope's global daily budget for a request
+ * whose model call failed, so a provider outage doesn't lock everyone out
+ * until midnight UTC. `chargedAt` is a time taken just before `guardSpend`.
+ */
+export async function refundSpend(scope: SpendScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), { key: `budget:${scope}`, windowSec: DAY_SEC }, chargedAt);
+}
+
 const SPEND_WARNING_PERCENTS = [50, 80, 100] as const;
 
 /**

@@ -107,9 +107,10 @@ describe('/api/agents/reply-suggestion', () => {
     expect(guardSpend).not.toHaveBeenCalled();
   });
 
-  it('gives the daily use back when the model call fails', async () => {
+  it('gives the daily use and the global budget unit back when the model call fails', async () => {
     const token = await insertDeviceActor(USER, 'device_agent_reply');
     process.env.QUOTA_AGENT_REPLY_PER_DAY = '1';
+    process.env.BUDGET_AGENT_REPLY_PER_DAY = '1';
     try {
       model.down = true;
       const failed = await post(token);
@@ -119,6 +120,7 @@ describe('/api/agents/reply-suggestion', () => {
       expect((await post(token)).status).toBe(200);
     } finally {
       delete process.env.QUOTA_AGENT_REPLY_PER_DAY;
+      delete process.env.BUDGET_AGENT_REPLY_PER_DAY;
     }
   });
 });

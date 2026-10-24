@@ -123,6 +123,10 @@ describe('fallback', () => {
     expect(body).toEqual({ summary: 'Fixed it.', needsYou: true, suggestedReply: null });
   });
 
+  test('a question ending in a closing quote still needs the user', () => {
+    expect(fallbackReply({ kind: 'stop', session: 's', message: 'Should I say "ship it?"' }).needsYou).toBe(true);
+  });
+
   test('a notification still needs the user when the answer is unreadable', async () => {
     const { body } = await call({ kind: 'notification', session: 's', message: 'Claude needs your permission to use Bash' }, 'not json');
     expect(body).toEqual({ summary: 'Claude needs your permission to use Bash', needsYou: true, suggestedReply: null });

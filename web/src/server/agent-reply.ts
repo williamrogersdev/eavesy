@@ -111,7 +111,7 @@ export function fallbackReply(input: AgentReplyInput): AgentReply {
     const space = cut.lastIndexOf(' ');
     summary = `${space > FALLBACK_SUMMARY_CHARS / 2 ? cut.slice(0, space) : cut}…`;
   }
-  return { summary: summary || 'sent a message.', needsYou: input.kind === 'notification' || text.endsWith('?'), suggestedReply: null };
+  return { summary: summary || 'sent a message.', needsYou: input.kind === 'notification' || /\?["'”’)\]]*$/.test(text), suggestedReply: null };
 }
 
 /** Applies the rules the model is asked to follow, whatever it answered. */

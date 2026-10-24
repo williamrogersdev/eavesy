@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { resolveIngestActor } from '@/server/device-auth';
 import { anthropic } from '@/lib/ai/client';
-import { guardSpend, guardUserQuota, refundUserQuota } from '@/server/rate-limit';
+import { guardSpend, guardUserQuota, refundSpend, refundUserQuota } from '@/server/rate-limit';
 import { agentReplyResponse, readAgentReplyRequest } from '@/server/agent-reply';
 
 export const Route = createFileRoute('/api/agents/reply-suggestion')({ server: { handlers: {
@@ -18,6 +18,7 @@ export const Route = createFileRoute('/api/agents/reply-suggestion')({ server: {
     if (quota) return quota;
     const limited = await guardSpend(request, 'agent-reply', { perMin: 30, perDay: 5000 });
     if (limited) { await refund(); return limited; }
-    return agentReplyResponse(input, anthropic, refund);
+    // Refunds never throw: refundRateLimit logs a failed write and carries on.
+    return agentReplyResponse(input, anthropic, async () => { await refund(); await refundSpend('agent-reply', chargedAt); });
   },
 } } });
