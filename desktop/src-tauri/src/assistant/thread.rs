@@ -24,6 +24,8 @@ const CHECKED_TURNS: usize = 3;
 /// Messages kept in the thread.
 const KEPT_MESSAGES: usize = 200;
 const TEXT_CHARS: usize = 4_000;
+/// Longest request the C7 check takes.
+const CHECK_CHARS: usize = 4_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -55,12 +57,16 @@ struct Turn {
     /// What happened since the last turn (a card you decided), sent to the model ahead
     /// of your words but never counted as them.
     notes: Vec<String>,
+    /// An error shown in Eavesy's place. It's for you, so the model never sees it as
+    /// something it said.
+    failed: bool,
 }
 
 impl Turn {
-    /// The message as the model gets it: notes first, then the turn itself.
+    /// The message as the model gets it: notes first, in one block, then the turn itself.
     fn for_model(&self) -> Message {
-        let mut content: Vec<Block> = self.notes.iter().map(|note| Block::Text { text: format!("[Eavesy app note: {note}]") }).collect();
+        let notes = self.notes.iter().map(|note| format!("[Eavesy app note: {note}]")).collect::<Vec<_>>().join("\n");
+        let mut content: Vec<Block> = if notes.is_empty() { Vec::new() } else { vec![Block::Text { text: notes }] };
         content.extend(self.message.content.iter().cloned());
         Message { role: self.message.role, content }
     }
@@ -177,11 +183,15 @@ fn emit(app: &AppHandle) {
 }
 
 fn push(app: &AppHandle, message: Message, spoken: bool) {
+    record(app, message, spoken, false);
+}
+
+fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
     {
         let state = app.state::<Mutex<Thread>>();
         let mut thread = state.lock().unwrap();
         let notes = if is_your_words(&message) { std::mem::take(&mut thread.notes) } else { Vec::new() };
-        thread.turns.push(Turn { message, at_ms: super::now_ms(), spoken, notes });
+        thread.turns.push(Turn { message, at_ms: super::now_ms(), spoken, notes, failed });
         if thread.turns.len() > KEPT_MESSAGES {
             let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
             let keep = window(&messages, KEPT_MESSAGES).len();
@@ -238,15 +248,18 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
-            let messages: Vec<Message> = thread.turns.iter().map(Turn::for_model).collect();
+            let messages: Vec<Message> = thread.turns.iter().filter(|turn| !turn.failed).map(Turn::for_model).collect();
             let said: Vec<String> = thread.turns.iter().filter(|turn| is_your_words(&turn.message)).map(|turn| text_of(&turn.message)).collect();
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
-        let request = said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n");
+        let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
         let content = match tauri::async_runtime::block_on(ask(app, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
-            Err(error) => vec![Block::Text { text: error }],
+            Err(error) => {
+                record(app, Message { role: Role::Assistant, content: vec![Block::Text { text: error }] }, false, true);
+                return;
+            }
         };
         let calls: Vec<(String, String, serde_json::Value)> = content
             .iter()
@@ -272,6 +285,16 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         push(app, Message { role: Role::User, content: results }, false);
     }
     push(app, Message { role: Role::Assistant, content: vec![Block::Text { text: "That took more steps than I allow myself. Tell me how you'd like to go on.".into() }] }, false);
+}
+
+/// The end of `text`, at most `max` characters: the check takes 4,000 (checkInput in
+/// web/src/server/assistant.ts), and your newest words matter most.
+fn newest_chars(text: &str, max: usize) -> &str {
+    let count = text.chars().count();
+    match text.char_indices().nth(count.saturating_sub(max)) {
+        Some((start, _)) if count > max => &text[start..],
+        _ => text,
+    }
 }
 
 pub fn init(app: &AppHandle) {
@@ -362,7 +385,7 @@ mod tests {
 
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
-        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { message, at_ms: 1, spoken: false, notes: Vec::new() }).collect();
+        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
         let view = view(&Thread { turns, busy: true, notes: Vec::new() });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
@@ -381,9 +404,19 @@ mod tests {
     }
 
     #[test]
+    fn the_check_gets_your_newest_words() {
+        let long = format!("{}{}", "a".repeat(5_000), "é".repeat(10));
+        let cut = newest_chars(&long, CHECK_CHARS);
+        assert_eq!(cut.chars().count(), CHECK_CHARS);
+        assert!(cut.ends_with("é"));
+        assert_eq!(newest_chars("short", CHECK_CHARS), "short");
+    }
+
+    #[test]
     fn notes_go_to_the_model_but_are_not_your_words() {
-        let turn = Turn { message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into()] };
+        let turn = Turn { message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into(), "card declined".into()], failed: false };
         let sent = turn.for_model();
+        // However many notes, they take one block, so a message stays within the block cap.
         assert_eq!(sent.content.len(), 2);
         assert_eq!(text_of(&turn.message), "and the other one?");
     }

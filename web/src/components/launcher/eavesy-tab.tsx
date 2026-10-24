@@ -53,8 +53,8 @@ export function EavesyTab({ flash }: { flash: Flash }) {
 
   // A timed mode falls back to Ask on its own; look again once it should have.
   useEffect(() => {
-    if (state?.until_ms && state.until_ms <= now) reloadState();
-  }, [now, state?.until_ms, reloadState]);
+    if (state?.until_ms && state.until_ms <= now && state.effective !== 'ask') reloadState();
+  }, [now, state?.until_ms, state?.effective, reloadState]);
 
   const turnCount = thread.turns.length;
   const cardCount = state?.cards.length ?? 0;
@@ -141,7 +141,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
               <span className="ev-turn-meta">
                 {turn.who === 'you' ? (turn.spoken ? 'Said' : 'Typed') : null}
                 {turn.who === 'eavesy' && turn.text && (
-                  <button type="button" className="ev-link" onClick={() => void navigator.clipboard.writeText(turn.text).then(() => flash('Copied', 1500))}>Copy</button>
+                  <button type="button" className="ev-link" onClick={() => void navigator.clipboard.writeText(turn.text).then(() => flash('Copied', 1500), () => flash('Couldn’t copy that', 4000, 'warn'))}>Copy</button>
                 )}
               </span>
             </li>

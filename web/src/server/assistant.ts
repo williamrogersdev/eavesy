@@ -135,11 +135,13 @@ export async function runTurn(client: AssistantClient, input: TurnInput): Promis
     messages: input.messages,
   });
   // Metadata only: never log the conversation.
-  if (message.stop_reason === 'max_tokens') console.warn(JSON.stringify({ message: 'assistant turn hit max_tokens' }));
+  const cut = message.stop_reason === 'max_tokens';
+  if (cut) console.warn(JSON.stringify({ message: 'assistant turn hit max_tokens' }));
   const content: TurnReply['content'] = [];
   for (const part of message.content) {
     if (part.type === 'text' && part.text.trim()) content.push({ type: 'text', text: part.text });
-    if (part.type === 'tool_use') content.push({ type: 'tool_use', id: part.id, name: part.name, input: part.input });
+    // A reply cut off by max_tokens can end in a tool call with half its input: never run one.
+    if (part.type === 'tool_use' && !cut) content.push({ type: 'tool_use', id: part.id, name: part.name, input: part.input });
   }
   return { content, stopReason: message.stop_reason };
 }

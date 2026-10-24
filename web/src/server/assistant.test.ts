@@ -46,6 +46,15 @@ describe('runTurn', () => {
     ]);
   });
 
+  test('drops a tool call from a reply cut off by max_tokens', async () => {
+    const { client } = fakeClient([
+      text('Let me look.'),
+      { type: 'tool_use', id: 't1', name: 'clean_machine', input: { worktrees: [] } } as Anthropic.ContentBlock,
+    ], 'max_tokens');
+    const reply = await runTurn(client, { messages: [{ role: 'user', content: [{ type: 'text', text: 'clean up' }] }] });
+    expect(reply.content).toEqual([{ type: 'text', text: 'Let me look.' }]);
+  });
+
   test('rejects threads with blocks the Mac never sends', () => {
     const image = { messages: [{ role: 'user', content: [{ type: 'image', source: {} }] }] };
     expect(turnInput.safeParse(image).success).toBe(false);
