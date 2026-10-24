@@ -81,6 +81,30 @@ What we copy from them so we don't learn it the hard way:
 - Everyone's "risk is not zero" on prompt injection. So content can never
   raise a tier (C4), and tier 3 never takes voice (C).
 
+### What we take from open-source agents
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, Python)
+is the most complete open personal agent; [OpenClaw](https://github.com/openclaw/openclaw)
+(MIT) is the closest product match, a macOS menu-bar agent with voice wake.
+They're Python and Node, so we port designs and file formats, not code.
+
+| Idea | Where | Eavesy |
+|---|---|---|
+| A plain Markdown persona file, `SOUL.md`, that only holds voice; edits by the agent always need your OK | Hermes, OpenClaw | **Adopt.** `personality.md` reads the same format, and Eavesy also reads a `SOUL.md` if you have one (G4, H1) |
+| Skills as a folder with `SKILL.md` ([agentskills.io](https://agentskills.io/specification), Anthropic's open format) | Hermes, OpenClaw, Claude Code | **Adopt.** `~/Eavesy/assistant/skills/`; your `~/.claude/skills` work unchanged. Eavesy's own extras go under `metadata:` (H4) |
+| Bounded memory with a "67% full" header, a frozen copy per conversation, and user facts kept apart from agent notes | Hermes | **Port** (H1, H3) |
+| Agent-written memory and skills staged for review | Hermes (`write_approval`, off by default) | **Port, on by default** (H4) |
+| Setup card for a new MCP server: secrets masked, you click to open sign-in, nothing saved until the first connection works, tools picked at install | Hermes `manage_connections` | **Port** into F2 |
+| Import your setup from Claude Code, Codex, Cursor, OpenClaw: preview first, dry run, never read credential files, skip conflicts, don't overwrite your edits | Hermes `import-agent` | **Port** (F3, H5) |
+| A floor no setting overrides, your own deny list checked first, timeouts deny, background jobs deny by default | Hermes approvals | **Port** into C (tiers stay the main model; no regex list) |
+| "Stop", "never mind" end a voice turn only as a whole utterance | Hermes voice | **Port** (B5) |
+| Wake word on device with openWakeWord (free) and consecutive-frame confirmation | Hermes, OpenClaw | **Evaluate** for "Hey Eavesy" (step 7) |
+| Remote backends, a chat-app gateway with pairing codes, cloud user modelling (Honcho), a YOLO switch, 14 novelty personas, plugins that run in-process | Hermes | **Don't copy.** Against local-first (J) and the tiers (C) |
+
+Hermes says it plainly: an approval prompt is a heuristic, and the operating
+system is the only real boundary. So untrusted input (web pages, email, a new
+MCP server) runs in a scoped subprocess as well as behind a card (C4).
+
 ## How it fits the model (no new nouns)
 
 Architecture rule 1: every feature maps onto the five nouns and six verbs.
@@ -292,9 +316,11 @@ How it sounds (spoken lines; the screen has the details):
 
   | File | What it holds |
   |---|---|
-  | `personality.md` | How it talks (G) |
+  | `personality.md` | How it talks (G). Same format as `SOUL.md` |
   | `rules.md` | Standing instructions and "always allow" scopes (C3) |
-  | `memory.md` | What it remembers about you and your setup |
+  | `about-you.md` | What it knows about you, kept short so you can read it all |
+  | `memory.md` | Its notes about your setup. Capped; when full it consolidates |
+  | `skills/<name>/SKILL.md` | How-tos in the agentskills.io format (H4) |
   | `connections.json` | MCP servers and connectors (F) |
   | `monitors.json` | Which monitors are on, at what level (D) |
   | `log/YYYY-MM-DD.jsonl` | Activity: every action and its result (C5) |
@@ -306,6 +332,17 @@ How it sounds (spoken lines; the screen has the details):
   on any conversation turn, an **off the record** conversation that neither
   reads nor writes memory, and an off switch for memory entirely. Deleting a
   conversation offers to delete what it taught Eavesy too.
+- **H4.** Eavesy can write its own skills and memory ("next time, check for
+  stale worktrees like this"), but its writes to `personality.md`,
+  `rules.md` and `skills/` wait in a review list until you accept them. A
+  line in the thread says when something is waiting. Memory and
+  `about-you.md` writes apply at once and show a "Remembered" line you can
+  undo.
+- **H5.** First run offers **Import from Claude Code** (and Codex, Cursor,
+  OpenClaw, Hermes when found): `CLAUDE.md` becomes memory, `skills/` copy
+  into `skills/claude-code/`, `mcpServers` become connections, allow and deny
+  rules become `rules.md`. You see the whole list first and pick. It never
+  reads credential files.
 
 ### I. UI and UX
 
@@ -347,6 +384,10 @@ How it sounds (spoken lines; the screen has the details):
 | Captions lag behind speech | < 500 ms |
 
 ## The interface
+
+Mockups (private canvas): [Eavesy assistant UI](https://claude.ai/artifact/ToJYmfHh9SWmgwePWQcRe1).
+It shows the panel today vs proposed, the four pill states, and the Eavesy
+tab in light and dark.
 
 ### What feels clunky today
 
@@ -550,6 +591,13 @@ Research of 2026-10-24. Vendor-reported numbers are the vendors'.
 - Apple: [Siri AI](https://www.apple.com/newsroom/2026/09/siri-ai-a-profoundly-more-capable-and-personal-assistant-is-here/) ·
   [WWDC26 session 343](https://developer.apple.com/videos/play/wwdc2026/343/)
 - Voice design: [Meta voice guidelines](https://developers.meta.com/horizon/design/voice/)
+- Open source: [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+  (its `website/docs` and `SECURITY.md`) ·
+  [OpenClaw](https://github.com/openclaw/openclaw) ·
+  [OpenClaw workspace files](https://docs.openclaw.ai/concepts/agent-workspace) ·
+  [agentskills.io spec](https://agentskills.io/specification) ·
+  [Goose permissions](https://goose-docs.ai/docs/guides/goose-permissions) ·
+  [Letta MemFS](https://docs.letta.com/letta-code/memfs)
 
 Not found in any source, so not assumed: a live two-sided transcript with
 replay in any lab's product, and a wake word on any lab's desktop assistant.
