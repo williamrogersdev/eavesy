@@ -208,12 +208,19 @@ fn delivery(trusted: bool, target: Option<Target>, front: Option<Target>) -> Del
 /// cloud transcript that follows does not paste a second time.
 pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
+    // Taken even with no words, so the claim ends with its dictation.
+    let answering = crate::agents::take_answer(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
     }
     let app = app.clone();
     let session_id = session_id.to_string();
+    // An answer to the Claude Code reply card goes there, never into an app.
+    if let Some(claim) = answering {
+        std::thread::spawn(move || crate::agents::answer(&app, &session_id, claim, &text));
+        return;
+    }
     std::thread::spawn(move || {
         let started = Instant::now();
         let project = project_for(&session_id);
