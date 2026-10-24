@@ -85,7 +85,8 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
     match super::submit(app, action, requester, &check) {
         Submitted::Ran { ran } => ToolResult { content: clip(&ran.detail_for_model()), is_error: false },
         Submitted::Card { card } => ToolResult {
-            content: format!("A card is waiting for the user: \"{}\" ({} rows). They decide there; don't call this again.", card.title, card.rows.len()),
+            // The first line is what the thread shows; the second is for the model.
+            content: format!("Waiting for your click\nA card titled \"{}\" is in front of the user, who decides there; don't call this again.", card.title),
             is_error: false,
         },
         Submitted::Refused { reason } => ToolResult { content: reason, is_error: true },
