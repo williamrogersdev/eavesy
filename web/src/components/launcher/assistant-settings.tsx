@@ -156,7 +156,7 @@ export function AssistantSettings({ active, settings, onSettings }: {
   const addRule = (kind: AssistantRuleKind, title: string) => {
     void pickFolder(title)
       .then((folder) => { if (folder) ruleAction(() => addAssistantRule(kind, folder), 'Couldn’t add that rule.'); })
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open the folder picker.')));
+      .catch((e: unknown) => { if (!isCancel(e)) setError(errMsg(e, 'Couldn’t open the folder picker.')); });
   };
   const acceptChange = (change: AssistantRuleChange) => ruleAction(() => acceptAssistantRuleChange(change), 'Couldn’t accept that.');
   const discardChange = (change: AssistantRuleChange) => ruleAction(() => discardAssistantRuleChange(change), 'Couldn’t discard that.');

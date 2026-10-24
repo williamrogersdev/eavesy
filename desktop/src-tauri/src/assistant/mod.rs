@@ -140,7 +140,9 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
     let policy = core.policy.lock().unwrap().clone();
     let effective = policy.effective(now_ms());
     // Set here from the signed rules, whatever the tool said.
-    let covering = rules::covering(&policy.rules, &action.scopes(), action.rows().len());
+    // One scope per row, or no rule applies; `covering` checks the same.
+    let (scopes, rows) = (action.scopes(), action.rows().len());
+    let covering = if scopes.len() == rows { rules::covering(&policy.rules, &scopes, rows) } else { None };
     facts.always_allowed = covering.is_some();
     let mut breaker = core.breaker.lock().unwrap();
     let ran_by_rule = policy::only_by_rule(&facts, requester, &effective, check, &breaker);

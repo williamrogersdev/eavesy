@@ -125,6 +125,12 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
     // you: both are checked against your words like a tier 2 action, and kept only when
     // the check passes (H4).
     let asked_only = asked_only(name);
+    // Only your own conversation can ask for these: an agent's words aren't yours.
+    if asked_only.is_some() && !matches!(requester, Requester::You { .. }) {
+        let reason = "Only you can ask Eavesy for that.".to_string();
+        super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
+        return ToolResult { content: reason, is_error: true };
+    }
     let check = match action.facts().tier {
         Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
         _ if asked_only.is_some() => super::check::run(app, request, action.as_ref()),
@@ -285,10 +291,11 @@ impl Action for SuggestRule {
             return Ran { summary: format!("Already a rule: {}", self.rule.text()), detail: serde_json::Value::Null };
         }
         let summary = match super::rules::path().ok_or_else(|| "No home folder.".to_string()).and_then(|file| super::rules::append(&file, &self.rule, &accepted)) {
-            Ok(_) => {
+            Ok(true) => {
                 let _ = self.app.emit("assistant:rules", ());
                 format!("Waiting for you in Settings → Assistant → Rules: {}", self.rule.text())
             }
+            Ok(false) => format!("Already waiting for you in Settings → Assistant → Rules: {}", self.rule.text()),
             Err(error) => format!("Couldn't suggest that: {error}"),
         };
         Ran { summary, detail: serde_json::Value::Null }
