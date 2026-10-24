@@ -2,7 +2,7 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Loader2, LogOut, MessageSquareText, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageSquareText, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Mascot, Row, Segmented, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
@@ -40,6 +40,7 @@ import { AGENT_INSTRUCTIONS } from '@/lib/agent-instructions';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
+import { MachineSettings } from './machine-settings';
 import { PromptsSettings } from './prompts-settings';
 import { useSavedPrompts } from './use-saved-prompts';
 
@@ -340,10 +341,11 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
     { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
+    ...(isDesktop() ? [{ id: 'machine' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
     { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
-  const activeSection = sections.find((item) => item.id === section)!;
+  const activeSection = sections.find((item) => item.id === section) ?? sections[0];
   const go = (id: SettingsSection) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
@@ -565,6 +567,12 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
             ? <ProjectsSettings account={accountPrefs.prefs} state={projects} open={openProject} onOpen={setOpenProject} onOpenDictation={() => go('dictation')} />
             : signInFirst('make projects')}
         </div>
+
+        {isDesktop() && (
+          <div id="settings-machine" hidden={section !== 'machine'}>
+            <MachineSettings active={section === 'machine'} />
+          </div>
+        )}
 
         <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
         <Card title="Shortcuts">

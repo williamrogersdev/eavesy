@@ -229,8 +229,32 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     get_settings: () => Promise.resolve({ ...settings }),
     fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
     suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
+    machine_inventory: () => Promise.resolve(MACHINE),
+    machine_clean: ({ worktrees }) => Promise.resolve((worktrees as string[]).map((path) => ({ target: path, ok: true, message: null, restore: `git -C '/Users/w/Developer/eavesy' worktree add '${path}' 'some-branch'` }))),
   };
 }
+
+/** Settings → This Mac (machine/mod.rs `Inventory`). */
+const MACHINE = {
+  repos: ['/Users/w/Developer/eavesy', '/Users/w/Developer/repackify'],
+  worktrees: [
+    { path: '/Users/w/Developer/eavesy/.claude/worktrees/agent-a2f49f3017eaff5e0', repo: '/Users/w/Developer/eavesy', branch: 'feat/agent-reply-suggestion', status: 'stale' },
+    { path: '/private/tmp/eavesy-oxlint-pr', repo: '/Users/w/Developer/eavesy', branch: 'codex/oxlint-parity', status: 'stale' },
+    { path: '/Users/w/Developer/eavesy/.claude/worktrees/sharp-hodgkin-5cf282', repo: '/Users/w/Developer/eavesy', branch: 'claude/machine-inventory', status: 'in_use' },
+    { path: '/Users/w/Developer/repackify/.claude/worktrees/bol-timing', repo: '/Users/w/Developer/repackify', branch: 'claude/bol-timing', status: 'unmerged' },
+    { path: '/Users/w/Developer/repackify/.claude/worktrees/wip', repo: '/Users/w/Developer/repackify', branch: 'claude/wip', status: 'dirty' },
+  ],
+  leftovers: [
+    ...Array.from({ length: 98 }, (_, i) => ({ pid: 8000 + i, started_us: 1_792_000_000_000_000 + i, name: 'git', exe: '/opt/homebrew/Cellar/git/2.56.0_1/bin/git', cwd: '/Users/w', session_id: null, helpers: 0, ports: [] })),
+    { pid: 4191, started_us: 1_792_000_000_000_000, name: 'node', exe: '/opt/homebrew/bin/node', cwd: '/Users/w/Developer/vinext/tests/fixtures/pages-i18n', session_id: 'abc', helpers: 2, ports: [4191] },
+  ],
+  zombies: [],
+  ports: [
+    { port: 4191, address: '127.0.0.1', pid: 4191, name: 'node', cwd: '/Users/w/Developer/vinext/tests/fixtures/pages-i18n', owner: 'leftover' },
+    { port: 27925, address: '127.0.0.1', pid: 5100, name: 'convex-local-backend', cwd: '/Users/w/Developer/repackify/.claude/worktrees/lint-tooling', owner: 'session' },
+    { port: 7265, address: '127.0.0.1', pid: 700, name: 'Raycast', cwd: '/', owner: 'other' },
+  ],
+};
 
 /** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */
 function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<string, unknown>) => unknown {
