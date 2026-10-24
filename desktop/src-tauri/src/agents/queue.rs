@@ -28,6 +28,10 @@ pub struct Item {
     /// The session's hook is waiting for your reply.
     pub held: bool,
     pub spoken: bool,
+    /// A reply you dictated, read back and waiting for your "send it".
+    pub draft: Option<String>,
+    /// You clicked into the reply to type: voice answers leave it alone.
+    pub typing: bool,
     pub received_at: u64,
 }
 
@@ -47,7 +51,7 @@ impl Queue {
         let replaced = self.remove_session(session_id);
         self.next_id += 1;
         let id = self.next_id;
-        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, received_at: now });
+        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, draft: None, typing: false, received_at: now });
         (id, replaced)
     }
 
@@ -73,6 +77,18 @@ impl Queue {
     pub fn mark_spoken(&mut self, id: u64) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.spoken = true;
+        }
+    }
+
+    pub fn set_draft(&mut self, id: u64, draft: String) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.draft = Some(draft);
+        }
+    }
+
+    pub fn set_typing(&mut self, id: u64) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.typing = true;
         }
     }
 

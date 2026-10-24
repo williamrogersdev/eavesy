@@ -214,6 +214,11 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     }
     let app = app.clone();
     let session_id = session_id.to_string();
+    // An answer to the Claude Code reply card goes there, never into an app.
+    if let Some(item) = crate::agents::take_answer(&session_id) {
+        std::thread::spawn(move || crate::agents::answer(&app, &session_id, item, &text));
+        return;
+    }
     std::thread::spawn(move || {
         let started = Instant::now();
         let project = project_for(&session_id);

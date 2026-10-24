@@ -21,12 +21,16 @@ interface Item {
   message: string | null;
   /** Its hook is waiting, so Send goes straight into the session. */
   held: boolean;
+  /** A reply you dictated, read back and waiting for your “send it”. */
+  draft: string | null;
+  /** You clicked in to type, so voice answers leave it alone. */
+  typing: boolean;
 }
 
 const preview = !(window as unknown as { __TAURI__?: unknown }).__TAURI__;
 const PREVIEW: Item[] = preview ? [
-  { id: 1, session_id: 'a', name: 'eavesy', kind: 'question', summary: 'wants to know whether to ship the HUD fix behind a flag', suggestion: 'No flag. Ship it and open a PR.', message: 'The HUD fix is ready and tests pass. Should I put it behind a flag or ship it directly?', held: true },
-  { id: 2, session_id: 'b', name: 'repackify', kind: 'approval', summary: 'needs approval to run a command', suggestion: null, message: null, held: false },
+  { id: 1, session_id: 'a', name: 'eavesy', kind: 'question', summary: 'wants to know whether to ship the HUD fix behind a flag', suggestion: 'No flag. Ship it and open a PR.', message: 'The HUD fix is ready and tests pass. Should I put it behind a flag or ship it directly?', held: true, draft: null, typing: false },
+  { id: 2, session_id: 'b', name: 'repackify', kind: 'approval', summary: 'needs approval to run a command', suggestion: null, message: null, held: false, draft: null, typing: false },
 ] : [];
 
 const KIND_LABEL: Record<Kind, string> = { approval: 'Needs approval', question: 'Asks you', finished: 'Finished' };
@@ -34,7 +38,7 @@ const KIND_LABEL: Record<Kind, string> = { approval: 'Needs approval', question:
 /**
  * The reply card: the Claude Code session at the front of the queue, what it
  * needs, and the reply Eavesy suggests. Send goes into that session through
- * its waiting hook; nothing is sent until you press it.
+ * its waiting hook; nothing is sent until you press it or say “send it”.
  */
 function Agents() {
   const [items, setItems] = useState<Item[]>(PREVIEW);
@@ -42,18 +46,21 @@ function Agents() {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const shownId = useRef<number | null>(null);
+  const shownDraft = useRef<string | null>(null);
   const head = items[0] ?? null;
 
   useEffect(() => { void invoke('agents_state').then((state) => { if (state) setItems((state as { items: Item[] }).items); }); }, []);
   useEvent('agents:state', (payload) => setItems((payload as { items: Item[] }).items));
 
-  // A new session at the front starts from its own suggestion.
+  // A new session at the front starts from its own suggestion; a reply you
+  // dictated replaces what's in the box.
   useEffect(() => {
-    if (head?.id === shownId.current) return;
+    if (head?.id === shownId.current && (head?.draft ?? null) === shownDraft.current) return;
     shownId.current = head?.id ?? null;
-    setDraft(head?.suggestion ?? '');
+    shownDraft.current = head?.draft ?? null;
+    setDraft(head?.draft ?? head?.suggestion ?? '');
     setNote(null);
-  }, [head?.id, head?.suggestion]);
+  }, [head?.id, head?.suggestion, head?.draft]);
 
   if (!head) return null;
   const waiting = items.length - 1;
@@ -85,13 +92,14 @@ function Agents() {
           placeholder="Your reply to Claude"
           rows={3}
           maxLength={20000}
-          onFocus={() => void invoke('agents_edit')}
+          onFocus={() => void invoke('agents_edit', { id: head.id })}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter' && event.metaKey && draft.trim()) send(); }}
         />
       ) : (
         <p className="ag-note">Approve or deny it in Claude. Eavesy never approves tools for you.</p>
       )}
+      {canReply && head.draft && !head.typing && !note && <p className="ag-note">Say “send it” to send this, or say something else to change it.</p>}
       {note && <p className="ag-note">{note}</p>}
       <div className="ag-actions">
         <button type="button" className="ag-btn" onClick={() => void invoke('agents_dismiss', { id: head.id })}><X size={13} strokeWidth={1.75} />{head.held ? 'Let it stop' : 'Dismiss'}</button>
