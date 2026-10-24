@@ -9,7 +9,9 @@ tools itself:
 - `ask_human({ question, spoken?, choices?, timeout_sec? })` shows the question,
   reads it aloud, and waits for the answer you type on the card. It returns
   `answered` with your text, `dismissed`, `timeout`, or `mac_offline` straight
-  away when no Mac of yours is listening. The wait defaults to 2 minutes
+  away when no Mac of yours is listening. `send_to_human` returns `sent`,
+  `queued`, or `not_enabled` when you haven't turned messages on (nothing is
+  kept then). The wait defaults to 2 minutes
   (30 seconds to 10 minutes), because the call is held open while it waits and
   clients cut long tool calls off.
 
@@ -44,5 +46,7 @@ copies. Keep the two in sync.
   approves a tool call or anything else.
 - One Mac shows each message: the first one that checks in. A connection can
   send 30 messages per 10 minutes, and at most 20 can wait at once.
-- Messages wait a day for a Mac to come online; questions wait only as long as
-  the agent waits.
+- Messages wait 2 hours for a Mac to come online; questions wait only as long
+  as the agent waits.
+- If a client cuts the call off before its `timeout_sec`, the card stays until
+  that time runs out, and an answer typed then reaches no agent.

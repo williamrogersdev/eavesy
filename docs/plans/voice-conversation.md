@@ -127,7 +127,12 @@ a voice field and the instructions that get agents to use them:
   reads stay far under the subrequest limit. **The wait defaults to 2 minutes
   (30 s to 10 min), not the architecture's 10 minutes**, because the call is
   held and clients cut tool calls off at limits of their own. On timeout the
-  row closes, and the next poll takes the card off the Mac.
+  row closes, and the next poll takes the card off the Mac. If a client cuts
+  the call off sooner, the card stays until the row's own time runs out, and
+  an answer typed then reaches no agent.
+- `send_to_human` keeps nothing for a user with no Mac that polled in the last
+  day (`not_enabled`), and a queued message waits 2 hours, so a Mac turned on
+  later doesn't read out a backlog.
 - **The first Mac that polls takes a message.** No other Mac shows it, so two
   Macs never both speak. If you're at the other Mac, you miss it. The Mac
   link fixes that.
@@ -142,8 +147,8 @@ a voice field and the instructions that get agents to use them:
   connection's name, and `say` gets it with `[[ … ]]` speech commands taken
   out.
 - The instruction snippet is in `docs/agent-instructions.md`. Settings has a
-  Copy button for it, and the server's MCP `instructions` say the same for
-  clients that read them.
+  Copy button for it. The server's MCP `instructions` only describe the
+  tools: they go to every connection, so they don't tell each one to use them.
 - **Next, the push path:** the architecture's MacLink Durable Object (step 7).
   The Mac holds an outbound WebSocket to the DO, `workers/mcp` gets a DO
   binding, and an ask is pushed and answered over the socket, with no D1

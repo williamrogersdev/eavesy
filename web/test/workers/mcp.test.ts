@@ -486,8 +486,15 @@ describe('MCP messages to the human', () => {
     expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
   });
 
+  it('keep nothing for someone who never turned messages on', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'send_to_human', { text: 'Done.' })).toEqual({ status: 'not_enabled' });
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
   it('queue a message for a Mac that comes back, under the connection’s name', async () => {
     const { token } = await mint();
+    await testEnv.DB.prepare("INSERT INTO agent_listeners (device_id, user_id, seen_at) VALUES ('mac-a', 'user_mcp', ?)").bind(Date.now() - 60 * 60 * 1000).run();
     expect(await call(token, 'send_to_human', { text: 'The report is ready.', spoken: 'Report ready.' })).toMatchObject({ status: 'queued' });
     const { items } = await pollForDevice(db(), 'user_mcp', 'mac-a');
     expect(items).toEqual([expect.objectContaining({ kind: 'send', source: 'Claude', text: 'The report is ready.', spoken: 'Report ready.' })]);

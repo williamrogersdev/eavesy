@@ -112,7 +112,8 @@ function ConnectMcpPage() {
         {request ? (
           <>
             <p className="mt-2 text-sm text-ev-ink-2">
-              It will be able to search and read your meetings, dictations and action items.
+              It will be able to search and read your meetings, dictations and action items, and send you
+              messages on your Mac if you turn that on in the Eavesy app.
             </p>
             {request.redirectHost ? (
               <p className="mt-2 text-xs text-ev-ink-2">

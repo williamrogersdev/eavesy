@@ -33,8 +33,8 @@ export const MAX_SOURCE_CHARS = 40;
 export const ASK_DEFAULT_SEC = 120;
 export const ASK_MIN_SEC = 30;
 export const ASK_MAX_SEC = 600;
-/** A message waits this long for a Mac to come online. */
-export const SEND_TTL_MS = 24 * 60 * 60 * 1000;
+/** A message waits this long for a Mac to come online; after that it's old news. */
+export const SEND_TTL_MS = 2 * 60 * 60 * 1000;
 /** Rows are deleted this long after they stop mattering. */
 export const RETAIN_MS = 24 * 60 * 60 * 1000;
 /** A Mac that asked this recently is listening. It polls every few seconds. */
@@ -110,6 +110,20 @@ export async function macListening(db: Db, userId: string, now = Date.now()): Pr
     .select({ deviceId: schema.agentListeners.deviceId })
     .from(schema.agentListeners)
     .where(and(eq(schema.agentListeners.userId, userId), gt(schema.agentListeners.seenAt, now - LISTENING_MS)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * Whether the user has a Mac with agent messages on at all: one polled within
+ * the last day (older listeners are deleted). Without one, a message is
+ * dropped rather than piled up for a Mac that may never ask.
+ */
+export async function macEnabled(db: Db, userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ deviceId: schema.agentListeners.deviceId })
+    .from(schema.agentListeners)
+    .where(eq(schema.agentListeners.userId, userId))
     .limit(1);
   return rows.length > 0;
 }
@@ -225,9 +239,10 @@ function parseChoices(json: string | null): string[] {
 
 /**
  * One poll from a Mac: marks it listening, hands it the messages no other Mac
- * has taken, and lists its asks still waiting, so it can drop a card that
- * timed out. A message goes to the first Mac that asks; a `send` counts as
- * delivered then.
+ * has taken plus its own asks still waiting (so a Mac that restarted shows
+ * them again; it ignores ones it already shows), and lists those asks' ids,
+ * so it can drop a card that timed out. A message goes to the first Mac that
+ * asks; a `send` counts as delivered then.
  */
 export async function pollForDevice(db: Db, userId: string, deviceId: string, now = Date.now()) {
   await db
@@ -246,7 +261,7 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
     .where(and(open, isNull(schema.agentMessages.deviceId)))
     .orderBy(schema.agentMessages.createdAt)
     .limit(PER_POLL);
-  const items: DeliveredMessage[] = [];
+  const delivered: Row[] = [];
   if (unclaimed.length) {
     // Claimed in one statement, so two Macs polling at once never both get one.
     const claimed = await db
@@ -261,23 +276,24 @@ export async function pollForDevice(db: Db, userId: string, deviceId: string, no
         .set({ status: 'delivered', resolvedAt: now })
         .where(inArray(schema.agentMessages.id, sends));
     }
-    for (const row of claimed.sort((a, b) => a.createdAt - b.createdAt)) {
-      items.push({
-        id: row.id,
-        kind: row.kind,
-        source: row.source,
-        text: row.text,
-        spoken: row.spoken,
-        choices: parseChoices(row.choicesJson),
-        expires_at: row.expiresAt,
-      });
-    }
+    delivered.push(...claimed.filter((row) => row.kind === 'send'));
   }
-  const waiting = await db
-    .select({ id: schema.agentMessages.id })
+  const asks = await db
+    .select()
     .from(schema.agentMessages)
     .where(and(open, eq(schema.agentMessages.kind, 'ask'), eq(schema.agentMessages.deviceId, deviceId)));
-  return { items, waiting: waiting.map((row) => row.id) };
+  const items: DeliveredMessage[] = [...delivered, ...asks]
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      source: row.source,
+      text: row.text,
+      spoken: row.spoken,
+      choices: parseChoices(row.choicesJson),
+      expires_at: row.expiresAt,
+    }));
+  return { items, waiting: asks.map((row) => row.id) };
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   cleanText,
   createMessage,
   LISTENING_MS,
+  macEnabled,
   macListening,
   MAX_PENDING,
   parseAsk,
@@ -68,9 +69,11 @@ describe('delivering to a Mac', () => {
   test('a Mac that polled is listening, for a while', async () => {
     const t = setup();
     expect(await macListening(t.db, 'u1', 1_000)).toBe(false);
+    expect(await macEnabled(t.db, 'u1')).toBe(false);
     await pollForDevice(t.db, 'u1', 'mac-a', 1_000);
     expect(await macListening(t.db, 'u1', 1_000 + LISTENING_MS - 1)).toBe(true);
     expect(await macListening(t.db, 'u1', 1_000 + LISTENING_MS + 1)).toBe(false);
+    expect(await macEnabled(t.db, 'u1')).toBe(true);
     expect(await macListening(t.db, 'u2', 1_000)).toBe(false);
   });
 
@@ -86,8 +89,9 @@ describe('delivering to a Mac', () => {
     expect(first.waiting).toEqual([id]);
 
     expect((await pollForDevice(t.db, 'u1', 'mac-b', 1_200)).items).toEqual([]);
+    // A Mac that restarted gets its own waiting ask again, not the delivered message.
     const again = await pollForDevice(t.db, 'u1', 'mac-a', 1_200);
-    expect(again.items).toEqual([]);
+    expect(again.items.map((item) => item.id)).toEqual([id]);
     expect(again.waiting).toEqual([id]);
   });
 

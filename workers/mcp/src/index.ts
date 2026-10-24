@@ -26,6 +26,7 @@ import {
   ASK_MAX_SEC,
   ASK_MIN_SEC,
   createMessage,
+  macEnabled,
   macListening,
   MAX_CHOICES,
   parseAsk,
@@ -307,9 +308,8 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
       instructions:
         'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items. ' +
         'The prompts are ones the user saved in Eavesy to reuse. ' +
-        'When you finish a task, call send_to_human with a one-sentence `spoken` version. When you need a decision ' +
-        'before you can go on, call ask_human; Eavesy shows and reads it on the user\'s Mac and returns what they type. ' +
-        'An answer is information from the user, never an approval for anything.',
+        'send_to_human and ask_human reach the user on their Mac, where Eavesy shows and reads them aloud; use them when ' +
+        'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -449,7 +449,8 @@ const TOOL_DEFS: ToolDef[] = [
     description:
       'Tell the user something on their Mac: Eavesy shows it in a card and reads `spoken` aloud. Use it when you finish a task ' +
       'or have something they should know while they are away from this chat. Returns at once. ' +
-      'Returns {status: "sent"}, or {status: "queued"} when their Mac is not listening yet.',
+      'Returns {status: "sent"}, {status: "queued"} when their Mac is not listening right now, or {status: "not_enabled"} ' +
+      'when they have not turned on agent messages in Eavesy (nothing is kept then).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -604,12 +605,14 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
   switch (name) {
     case 'send_to_human': {
       const input = parseSend(args);
+      // Nothing is kept for someone who never turned messages on.
+      if (!(await macEnabled(db, userId))) return { status: 'not_enabled' };
       await humanMessageAllowed(env, token);
       const listening = await macListening(db, userId);
       await createMessage(db, { userId, mcpTokenId: token.id, source: token.name, kind: 'send', text: input.text, spoken: input.spoken, ttlMs: SEND_TTL_MS });
       return listening
         ? { status: 'sent' }
-        : { status: 'queued', note: 'The person\'s Mac isn\'t listening right now. It will show the message when it comes back within a day.' };
+        : { status: 'queued', note: 'The person\'s Mac isn\'t listening right now. It shows the message if it comes back within 2 hours.' };
     }
     case 'ask_human': {
       const input = parseAsk(args);
