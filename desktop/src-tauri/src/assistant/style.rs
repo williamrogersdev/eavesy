@@ -45,11 +45,11 @@ pub fn set_assistant_style(app: AppHandle, window: WebviewWindow, style: Style) 
     crate::settings::update(&app, |config| config.assistant_style = Some(style)).map(drop)
 }
 
-/// The voices this Mac has, for the picker.
+/// The voices this Mac has, for the picker: listed afresh, so one added since launch shows.
 #[tauri::command(async)]
 pub fn assistant_voices(window: WebviewWindow) -> Result<Vec<speak::VoiceInfo>, String> {
     super::from_ui(&window)?;
-    Ok(speak::voices().to_vec())
+    Ok(speak::refresh_voices())
 }
 
 /// `name` none is the voice chosen in System Settings; `rate` none is its speed.

@@ -122,7 +122,15 @@ pub struct Settings {
 /// Reads a field that can't be trusted to be well formed: anything unreadable is unset.
 fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
     let value = <serde_json::Value as Deserialize>::deserialize(deserializer)?;
-    Ok(serde_json::from_value(value).ok())
+    match serde_json::from_value(value.clone()) {
+        Ok(read) => Ok(Some(read)),
+        Err(error) => {
+            if !value.is_null() {
+                tracing::warn!("ignoring a settings value this build can't read ({error}): {value}");
+            }
+            Ok(None)
+        }
+    }
 }
 
 pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;

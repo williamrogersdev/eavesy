@@ -1,7 +1,7 @@
 'use client';
 
 import { FolderPlus, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_ASSISTANT_STYLE,
   getAssistantActivity,
@@ -44,7 +44,7 @@ const RATES = [
   { value: '210', label: 'Faster' },
   { value: '260', label: 'Fastest' },
 ] as const;
-type Rate = (typeof RATES)[number]['value'];
+type Rate = string;
 type ModeChoice = 'ask' | 'auto' | 'bypass-hour' | 'bypass';
 const MODES: { value: ModeChoice; label: string }[] = [
   { value: 'ask', label: 'Ask' },
@@ -90,8 +90,11 @@ export function AssistantSettings({ active, settings, onSettings }: {
     if (!active) return;
     void loadState();
     loadActivity();
-    if (!voices) void getAssistantVoices().then(setVoices).catch(() => setVoices([]));
-  }, [active, loadState, loadActivity, voices]);
+  }, [active, loadState, loadActivity]);
+  // Listed afresh each time too, so a voice added in System Settings shows.
+  useEffect(() => {
+    if (active) void getAssistantVoices().then(setVoices).catch(() => setVoices([]));
+  }, [active]);
 
   const changeStyle = (patch: Partial<AssistantStyle>) => {
     const next = { ...style, ...patch };
@@ -101,19 +104,29 @@ export function AssistantSettings({ active, settings, onSettings }: {
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change how Eavesy talks.')));
   };
 
-  const voiceName = settings?.assistant_voice ?? SYSTEM_VOICE;
-  const rate: Rate = RATES.find((option) => option.value === String(settings?.assistant_voice_rate))?.value ?? 'default';
+  const saved = settings?.assistant_voice ?? SYSTEM_VOICE;
+  // A saved voice this Mac no longer has isn't used: show what will be.
+  const voiceName = voices && !voices.some((voice) => voice.name === saved) ? SYSTEM_VOICE : saved;
+  const savedRate = settings?.assistant_voice_rate;
+  const rate: Rate = savedRate === undefined ? 'default' : String(savedRate);
+  // A speed set some other way shows as itself rather than as Normal.
+  const rateOptions = RATES.some((option) => option.value === rate) ? RATES : [...RATES, { value: rate, label: `${rate} words a minute` }];
+  // The newest choice of both, so a quick voice change then speed change never sends a stale half.
+  const pendingVoice = useRef<{ name: string; rate: Rate } | null>(null);
   const voiceOptions = useMemo(() => [
     { value: SYSTEM_VOICE, label: 'System voice' },
     ...sortVoices(voices ?? [], typeof navigator === 'undefined' ? 'en' : navigator.language)
       .map((voice) => ({ value: voice.name, label: `${voice.name} (${voice.locale.replace('_', '-')})` })),
   ], [voices]);
-  const changeVoice = (name: string, nextRate: Rate) => {
+  const changeVoice = (patch: { name?: string; rate?: Rate }) => {
+    const { name, rate: nextRate } = { ...(pendingVoice.current ?? { name: voiceName, rate }), ...patch };
+    pendingVoice.current = { name, rate: nextRate };
     setError(null);
     const rateValue = nextRate === 'default' ? null : Number(nextRate);
     void setAssistantVoice(name || null, rateValue)
       .then(() => onSettings((current) => ({ ...current, assistant_voice: name || undefined, assistant_voice_rate: rateValue ?? undefined })))
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change the voice.')));
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change the voice.')))
+      .finally(() => { if (pendingVoice.current?.name === name && pendingVoice.current.rate === nextRate) pendingVoice.current = null; });
   };
 
   const chooseMode = (choice: ModeChoice) => {
@@ -158,10 +171,10 @@ export function AssistantSettings({ active, settings, onSettings }: {
 
       <Card title="Voice">
         <Row label="Voice" hint="Add more in System Settings → Accessibility → Spoken Content.">
-          <Select label="Eavesy’s voice" value={voiceName} options={voiceOptions} disabled={!settings || voices === null} onChange={(name) => changeVoice(name, rate)} />
+          <Select label="Eavesy’s voice" value={voiceName} options={voiceOptions} disabled={!settings || voices === null} onChange={(name) => changeVoice({ name })} />
         </Row>
         <Row label="Speed">
-          <Select label="How fast Eavesy talks" value={rate} options={RATES} disabled={!settings} onChange={(next) => changeVoice(voiceName, next)} />
+          <Select label="How fast Eavesy talks" value={rate} options={rateOptions} disabled={!settings} onChange={(next) => changeVoice({ rate: next })} />
         </Row>
       </Card>
 

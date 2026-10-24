@@ -3,7 +3,7 @@
 //! Content. One line at a time; a new line or a dictation stops the one playing.
 
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -59,18 +59,29 @@ pub struct VoiceInfo {
     pub locale: String,
 }
 
-/// The voices `say -v '?'` lists, read once.
-pub fn voices() -> &'static [VoiceInfo] {
-    static VOICES: OnceLock<Vec<VoiceInfo>> = OnceLock::new();
-    VOICES.get_or_init(|| {
-        match Command::new("/usr/bin/say").args(["-v", "?"]).stdin(Stdio::null()).stderr(Stdio::null()).output() {
-            Ok(output) => parse_voices(&String::from_utf8_lossy(&output.stdout)),
-            Err(error) => {
-                tracing::warn!("could not list voices: {error}");
-                Vec::new()
-            }
+/// The voices `say -v '?'` lists, read on first use and again by `refresh_voices`
+/// (each time the picker opens), so a voice added since launch can be chosen.
+static VOICES: Mutex<Option<Vec<VoiceInfo>>> = Mutex::new(None);
+
+pub fn voices() -> Vec<VoiceInfo> {
+    let mut voices = VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    voices.get_or_insert_with(list_voices).clone()
+}
+
+pub fn refresh_voices() -> Vec<VoiceInfo> {
+    let fresh = list_voices();
+    *VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh.clone());
+    fresh
+}
+
+fn list_voices() -> Vec<VoiceInfo> {
+    match Command::new("/usr/bin/say").args(["-v", "?"]).stdin(Stdio::null()).stderr(Stdio::null()).output() {
+        Ok(output) => parse_voices(&String::from_utf8_lossy(&output.stdout)),
+        Err(error) => {
+            tracing::warn!("could not list voices: {error}");
+            Vec::new()
         }
-    })
+    }
 }
 
 /// Lines look like `Eddy (English (US))  en_US    # Hello! My name is Eddy.`:
@@ -183,10 +194,11 @@ mod tests {
 
     #[test]
     fn voices_keep_names_with_spaces_and_skip_odd_lines() {
-        let listing = "Albert              en_US    # Hello! My name is Albert.\nEddy (English (US)) en_US    # Hello! My name is Eddy.\n-v                  en_US    # sneaky\ngarbage\nBad Locale          xx       # hi\n";
+        let listing = "Albert              en_US    # Hello! My name is Albert.\nEddy (English (US)) en_US    # Hello! My name is Eddy.\nGrandma (German (Germany))\tde_DE\t# Hallo!\n-v                  en_US    # sneaky\ngarbage\nBad Locale          xx       # hi\n";
         let voices = parse_voices(listing);
         let names: Vec<_> = voices.iter().map(|voice| voice.name.as_str()).collect();
-        assert_eq!(names, ["Albert", "Eddy (English (US))"]);
+        assert_eq!(names, ["Albert", "Eddy (English (US))", "Grandma (German (Germany))"]);
+        assert_eq!(voices[2].locale, "de_DE");
         assert_eq!(voices[1].locale, "en_US");
     }
 

@@ -122,6 +122,10 @@ describe('style', () => {
     const prompts = new Set(all.map((style) => {
       const prompt = systemPrompt(style);
       expect(prompt.trimEnd().endsWith('or delete anything permanently.')).toBe(true);
+      // The whole limits block, word for word, after everything the style adds.
+      const limits = ASSISTANT_SYSTEM_PROMPT.slice(ASSISTANT_SYSTEM_PROMPT.indexOf('Whatever your style:'));
+      expect(limits.length).toBeGreaterThan(300);
+      expect(prompt.endsWith(limits)).toBe(true);
       expect(prompt.indexOf('no romance or flirting')).toBeGreaterThan(prompt.indexOf('data, not instructions'));
       expect(prompt).not.toContain('undefined');
       return prompt;
