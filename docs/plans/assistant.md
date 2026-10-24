@@ -808,9 +808,16 @@ Each step ships on its own and is useful alone.
 5. **Settings: Assistant, Connections, Rules, Memory, Monitors, Activity**
    (F, G, H). Built: Settings → Assistant with the style and dials (G4), the
    voice and its speed (G5), the mode and trusted agent folders (C8), and the
-   Activity list (C5). Next: Memory (H3, H4), then Rules and the review list
-   (H2, C3), with accepted rules kept signed like `policy.json`. Connections
-   and Monitors come with step 6.
+   Activity list (C5). Then Memory (H3, H4): `memory.md`, the `remember`
+   tool, the "Remembered" line with Undo, delete one or all in Settings, and
+   the off switch. Notes go to the model as a fenced data block, never as
+   instructions, and never to the check (C7). Since a note rides along with
+   every later message, `remember` must pass the check against your own
+   words, so a page or tool result can't plant one; it doesn't take notes on
+   its own initiative yet. Next: "off the record", `about-you.md` and
+   consolidating when full, then Rules and the review list (H2, C3), with
+   accepted rules kept signed like `policy.json`. Connections and Monitors
+   come with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
 8. **Hands** (L): Eavesy's browser and app grants, then accessibility

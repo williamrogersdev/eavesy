@@ -10,6 +10,7 @@
 pub mod activity;
 pub mod cards;
 mod check;
+pub mod memory;
 pub mod voice;
 pub mod policy;
 pub mod store;

@@ -55,6 +55,21 @@ pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you
             }
             Ok(Box::new(crate::machine::Clean::described(&worktrees, &processes)?))
         }
+        "remember" => {
+            #[derive(Deserialize)]
+            struct Input {
+                note: String,
+            }
+            let Input { note } = serde_json::from_value(input.clone()).map_err(|_| "remember needs a note.".to_string())?;
+            if !crate::settings::load(app).assistant_memory() {
+                return Err("Memory is off in Settings → Assistant, so I can't keep notes.".into());
+            }
+            let note = super::memory::clean(&note);
+            if note.is_empty() {
+                return Err("There's nothing in that to remember.".into());
+            }
+            Ok(Box::new(Remember { app: app.clone(), note }))
+        }
         _ => Err(format!("Eavesy has no tool called {name}.")),
     }
 }
@@ -95,10 +110,19 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
             return ToolResult { content: reason, is_error: true };
         }
     };
+    // A note goes with every later message, so one planted by a tool result or a page
+    // would keep steering Eavesy: `remember` is checked against your words like a tier
+    // 2 action, and kept only when it passes (H4).
+    let remember = name == "remember";
     let check = match action.facts().tier {
         Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
+        _ if remember => super::check::run(app, request, action.as_ref()),
         _ => Check::NotRun,
     };
+    if let Some(reason) = remember.then(|| refuse_note(&check)).flatten() {
+        super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
+        return ToolResult { content: reason, is_error: true };
+    }
     match super::submit(app, action, requester, &check) {
         Submitted::Ran { ran } => ToolResult { content: clip(&ran.detail_for_model()), is_error: false },
         Submitted::Card { card } => ToolResult {
@@ -185,9 +209,50 @@ impl Action for OpenLink {
     }
 }
 
+/// Why a note isn't kept: anything but a pass from the check, offline and errors included.
+fn refuse_note(check: &Check) -> Option<String> {
+    (*check != Check::Pass).then(|| "I only keep notes you ask me to keep. Say what to remember and I'll add it.".to_string())
+}
+
+/// Applies at once and shows a "Remembered" line you can undo (H4).
+struct Remember {
+    app: AppHandle,
+    note: String,
+}
+
+impl Action for Remember {
+    fn tool(&self) -> &'static str { "assistant.remember" }
+    fn facts(&self) -> Facts { Facts { undoable: true, ..facts(Tier::Do, 1) } }
+    fn title(&self) -> String { format!("Remember: {}", self.note) }
+    fn rows(&self) -> Vec<Row> { vec![Row { id: "note".into(), label: self.note.clone() }] }
+    fn run(&self, rows: &[String]) -> Ran {
+        if rows.is_empty() {
+            return Ran { summary: "Nothing remembered".into(), detail: serde_json::Value::Null };
+        }
+        // Looked at again: memory may have been turned off since the call was built.
+        if !crate::settings::load(&self.app).assistant_memory() {
+            return Ran { summary: "Couldn't remember that: memory is off in Settings".into(), detail: serde_json::Value::Null };
+        }
+        let added = super::memory::path().ok_or_else(|| "No home folder.".to_string()).and_then(|file| super::memory::add(&file, &self.note));
+        let summary = match added {
+            Ok(note) => format!("Remembered: {note}"),
+            Err(error) => format!("Couldn't remember that: {error}"),
+        };
+        Ran { summary, detail: serde_json::Value::Null }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_is_kept_only_on_a_pass() {
+        assert_eq!(refuse_note(&Check::Pass), None);
+        for check in [Check::NotRun, Check::Failed, Check::Flagged("not asked".into())] {
+            assert!(refuse_note(&check).is_some(), "{check:?}");
+        }
+    }
 
     #[test]
     fn only_plain_https_links() {

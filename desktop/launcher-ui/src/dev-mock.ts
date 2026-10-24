@@ -321,8 +321,12 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
       { id: 1, who: 'eavesy', spoken: false, at_ms: now - 55_000, text: 'Two dev servers outlived their sessions, both in worktrees you already merged: hud-fix and settings-race. Want me to show them out?', steps: [{ tool: 'machine_overview', line: '2 stale worktrees, 2 leftover processes', ok: true }] },
       { id: 3, who: 'you', spoken: false, at_ms: now - 30_000, text: 'Yes, and clear out their worktrees.', steps: [] },
       { id: 4, who: 'eavesy', spoken: false, at_ms: now - 28_000, text: 'It’s on the card below. Untick anything you want to keep.', steps: [{ tool: 'clean_machine', line: 'Waiting for your click', ok: true }] },
+      { id: 5, who: 'you', spoken: false, at_ms: now - 20_000, text: 'Remember that I use bun, not npm.', steps: [] },
+      { id: 6, who: 'eavesy', spoken: false, at_ms: now - 18_000, text: 'Noted.', steps: [{ tool: 'remember', line: 'Remembered: Uses bun, not npm', ok: true, remembered: 'Uses bun, not npm' }] },
     ],
   };
+  let notes = empty ? [] : ['Uses bun, not npm', 'Ships risky changes behind a flag', 'Robin reviews PRs in the afternoon'];
+  let memoryOn = true;
   const state = {
     mode: 'ask', effective: 'ask', until_ms: null as number | null, trusted_folders: [] as string[], tampered: false,
     cards: empty ? [] : [{
@@ -363,6 +367,11 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     },
     set_trusted_agent_folders: ({ folders }: Record<string, unknown>) => (state.trusted_folders = folders as string[]),
     set_assistant_style: () => null,
+    assistant_memory: () => ({ on: memoryOn, notes: [...notes], path: '/Users/w/Eavesy/assistant/memory.md' }),
+    assistant_forget: ({ note }: Record<string, unknown>) => { notes = notes.filter((kept) => kept !== note); },
+    assistant_forget_all: () => { notes = []; },
+    set_assistant_memory: ({ on }: Record<string, unknown>) => { memoryOn = on === true; },
+    open_assistant_memory: () => null,
     set_assistant_voice: () => null,
     assistant_voices: () => [
       { name: 'Samantha', locale: 'en_US' }, { name: 'Daniel', locale: 'en_GB' }, { name: 'Eddy (English (US))', locale: 'en_US' }, { name: 'Thomas', locale: 'fr_FR' },

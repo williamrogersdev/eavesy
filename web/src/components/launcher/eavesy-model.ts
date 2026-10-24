@@ -6,6 +6,7 @@ const TOOL_LABELS: Record<string, string> = {
   agent_sessions: 'Checked your agent sessions',
   open_link: 'Opened a link',
   clean_machine: 'Clean-up',
+  remember: 'Memory',
   // The names the action core logs to Activity.
   'machine.overview': 'Looked at this Mac',
   'agents.sessions': 'Checked your agent sessions',
@@ -13,6 +14,8 @@ const TOOL_LABELS: Record<string, string> = {
   'machine.clean': 'Clean-up',
   'assistant.mode': 'Mode change',
   'assistant.trust': 'Trusted folders',
+  'assistant.remember': 'Remembered',
+  'assistant.forget': 'Forgot',
 };
 
 export function toolLabel(tool: string): string {

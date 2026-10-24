@@ -1,25 +1,31 @@
 'use client';
 
-import { FolderPlus, RefreshCw, X } from 'lucide-react';
+import { FolderPlus, RefreshCw, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_ASSISTANT_STYLE,
+  forgetAllAssistantNotes,
+  forgetAssistantNote,
   getAssistantActivity,
+  getAssistantMemory,
   getAssistantState,
   getAssistantVoices,
+  openAssistantMemory,
   pickFolder,
+  setAssistantMemory,
   setAssistantMode,
   setAssistantStyle,
   setAssistantVoice,
   setTrustedAgentFolders,
   type AssistantActivity,
+  type AssistantMemory,
   type AssistantState,
   type AssistantStyle,
   type AssistantVoice,
   type Settings,
 } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
-import { Button, Card, IconButton, Row, Segmented, Select } from './ui';
+import { Button, Card, IconButton, Row, Segmented, Select, Switch } from './ui';
 import { activityLine, modeLabel, sortVoices, toolLabel } from './eavesy-model';
 import { formatRelative } from './format';
 
@@ -75,6 +81,8 @@ export function AssistantSettings({ active, settings, onSettings }: {
   const [activity, setActivity] = useState<AssistantActivity[] | null>(null);
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [memory, setMemory] = useState<AssistantMemory | null>(null);
+  const [confirmForget, setConfirmForget] = useState(false);
 
   const loadState = useCallback(() => getAssistantState().then(setState).catch((e: unknown) => setError(errMsg(e, 'Couldn’t read Eavesy’s mode.'))), []);
   const loadActivity = useCallback(() => {
@@ -91,6 +99,30 @@ export function AssistantSettings({ active, settings, onSettings }: {
     void loadState();
     loadActivity();
   }, [active, loadState, loadActivity]);
+  const loadMemory = useCallback(() => {
+    void getAssistantMemory().then(setMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t read Eavesy’s notes.')));
+  }, []);
+  // Read each time too: memory.md can be edited by hand, and Eavesy adds to it as you talk.
+  useEffect(() => {
+    if (active) loadMemory();
+  }, [active, loadMemory]);
+  const forgetNote = (note: string) => {
+    setError(null);
+    void forgetAssistantNote(note).then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t forget that.')));
+  };
+  const forgetAll = () => {
+    setConfirmForget(false);
+    setError(null);
+    void forgetAllAssistantNotes().then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t forget everything.')));
+  };
+  const toggleMemory = (on: boolean) => {
+    setError(null);
+    void setAssistantMemory(on)
+      .then(() => { onSettings((current) => ({ ...current, assistant_memory: on })); loadMemory(); })
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change that setting.')));
+  };
+  const notes = memory?.notes ?? [];
+
   // Listed afresh each time too, so a voice added in System Settings shows.
   useEffect(() => {
     if (active) void getAssistantVoices().then(setVoices).catch(() => setVoices([]));
@@ -181,6 +213,40 @@ export function AssistantSettings({ active, settings, onSettings }: {
         <Row label="Speed">
           <Select label="How fast Eavesy talks" value={rate} options={rateOptions} disabled={!settings} onChange={(next) => changeVoice({ rate: next })} />
         </Row>
+      </Card>
+
+      <Card title="Memory">
+        <Switch
+          checked={memory?.on ?? settings?.assistant_memory ?? true}
+          disabled={!memory}
+          onCheckedChange={toggleMemory}
+          label="Remember things I ask it to"
+          hint="Eavesy keeps short notes when you ask it to remember something, and sends them to its model with each message. Off: no notes are sent or added."
+        />
+        <div className="ev-set-row flex-col">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="ev-set-label">{notes.length === 1 ? '1 note' : `${notes.length} notes`}</div>
+              {memory?.path && <div className="ev-set-hint ev-set-path" title={memory.path}>{memory.path}</div>}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void openAssistantMemory().then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t open the file.')))}>Open in Editor</Button>
+            {notes.length > 0 && (
+              confirmForget
+                ? <Button variant="primary" size="sm" onClick={forgetAll}>Forget All {notes.length}</Button>
+                : <Button variant="quiet" size="sm" onClick={() => setConfirmForget(true)}>Forget All…</Button>
+            )}
+          </div>
+          {notes.length > 0 && (
+            <ul className="ev-assistant-folders">
+              {notes.map((note, index) => (
+                <li key={`${index}-${note}`}>
+                  <span className="ev-set-label ev-assistant-note">{note}</span>
+                  <IconButton label={`Forget “${note}”`} icon={Trash2} size={24} onClick={() => forgetNote(note)} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </Card>
 
       <Card title="Permission">

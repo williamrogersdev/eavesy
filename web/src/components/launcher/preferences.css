@@ -163,3 +163,4 @@
 .ev-assistant-empty { padding-bottom: 12px; }
 .ev-assistant-activity { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 0 12px; list-style: none; max-height: 360px; overflow-y: auto; }
 .ev-assistant-activity .ev-set-label { overflow-wrap: anywhere; }
+.ev-assistant-note { min-width: 0; overflow-wrap: anywhere; }

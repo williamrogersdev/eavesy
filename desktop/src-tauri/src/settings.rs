@@ -117,6 +117,9 @@ pub struct Settings {
     /// Words per minute; unset is the voice's own speed.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub assistant_voice_rate: Option<u16>,
+    /// Eavesy keeps notes and sends them with your messages (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_memory: Option<bool>,
 }
 
 /// Reads a field that can't be trusted to be well formed: anything unreadable is unset.
@@ -137,6 +140,10 @@ pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
 pub const MAX_AGENT_HOLD_SECS: u32 = 1_800;
 
 impl Settings {
+    pub fn assistant_memory(&self) -> bool {
+        self.assistant_memory.unwrap_or(true)
+    }
+
     /// The voice to speak in, as saved. Speaking checks it against this Mac's
     /// voices, since the file can be edited by hand and a voice can be removed.
     pub fn voice(&self) -> crate::agents::speak::Voice {
@@ -223,6 +230,7 @@ impl Default for Settings {
             assistant_style: None,
             assistant_voice: None,
             assistant_voice_rate: None,
+            assistant_memory: None,
         }
     }
 }
