@@ -92,18 +92,18 @@
   /* after hours */
   .launcher-scope,
   .ev {
-    --ev-paper: #161312;
-    --ev-well: #110f0e;
-    --ev-raised: #211c1a;
-    --ev-line: #332c28;
-    --ev-line-strong: #463d38;
+    --ev-paper: #1f1a18;
+    --ev-well: #29231f; /* lighter than paper after hours: raised, not sunken */
+    --ev-raised: #2e2724;
+    --ev-line: #3a322d;
+    --ev-line-strong: #4d433d;
     --ev-ink: #f2ebdf;
     --ev-ink-2: #b5aba0;
     --ev-ink-3: #82786f;
     --ev-coat: #f2ebdf; /* in the dark the coat turns to cream paper */
     --ev-coat-hover: #ffffff;
-    --ev-coat-soft: #2c2522;
-    --ev-on-coat: #161312;
+    --ev-coat-soft: #352d29;
+    --ev-on-coat: #1f1a18;
     --ev-manila: #f0c879;
     --ev-manila-shade: #d9ab55;
     --ev-manila-soft: #3a2f1c;
