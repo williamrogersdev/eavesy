@@ -67,12 +67,12 @@ function tooMany(error: string, retryAfterSec: number, code?: string): Response 
  */
 export async function guardSpend(
   request: Request,
-  scope: 'transcribe' | 'process' | 'translation',
+  scope: 'transcribe' | 'process' | 'translation' | 'agent-reply',
   defaults: { perMin: number; perDay: number },
 ): Promise<Response | null> {
   const ip = clientIp(request);
-  const perMin = intEnv(`RL_${scope.toUpperCase()}_PER_MIN`, defaults.perMin);
-  const perDay = intEnv(`BUDGET_${scope.toUpperCase()}_PER_DAY`, defaults.perDay);
+  const perMin = intEnv(`RL_${envName(scope)}_PER_MIN`, defaults.perMin);
+  const perDay = intEnv(`BUDGET_${envName(scope)}_PER_DAY`, defaults.perDay);
 
   const rl = await rateLimit({ key: `${scope}:${ip}`, limit: perMin, windowSec: 60, failMode: 'closed' });
   if (!rl.allowed) return tooMany('Too many requests. Please slow down and try again shortly.', rl.retryAfterSec);
@@ -80,7 +80,8 @@ export async function guardSpend(
   const budget = await consumeDailyBudget({ name: scope, limit: perDay, failMode: 'closed' });
   if (budget.allowed) warnAtSpendThresholds(scope, perDay - budget.remaining, perDay);
   if (!budget.allowed) {
-    return tooMany('Daily free transcription capacity has been reached. Please try again tomorrow.', 3600);
+    const what = scope === 'agent-reply' ? 'reply suggestion' : 'transcription';
+    return tooMany(`Daily free ${what} capacity has been reached. Please try again tomorrow.`, 3600);
   }
 
   return null;
