@@ -87,6 +87,14 @@ a voice field and the instructions that get agents to use them:
 - `ask_human({ question, spoken?, choices? })`: it's spoken, and the HUD
   listens for a voice answer. The return values don't change (`answered`,
   `dismissed`, `timeout`, `mac_offline`).
+  - The microphone opens only after the spoken question ends, stays open for
+    at most 30 s of silence, and the HUD shows it's listening the whole time.
+  - The transcribed answer shows in the HUD before it's returned. A pick from
+    `choices` is read back ("Sending: option 2, *staging*"), and you confirm
+    with Return or a click. Otherwise it's sent after you stop talking, with
+    a short Undo.
+  - An answer is data for the agent, **never an approval**. Saying "yes" to
+    a question doesn't approve a tool call, a grant or a stop.
 - **The instruction:** the plugin skill, a Claude Desktop project
   instruction and a ChatGPT custom instruction all say the same thing: "When
   you finish a task or need a decision, call `send_to_human` / `ask_human`
@@ -113,12 +121,22 @@ One small, fast model call with one prompt each:
 
 - **Summarize:** a turn's final message → "Done: changed three files, tests
   pass. Want a PR?" Skipped when the agent already sent `spoken`.
-- **Clarify (opt-in, per send):** your dictation plus a little context (target
-  session name and cwd, the front window, and on request your Eavesy library
-  through `search`) → either "ready" or **at most two** questions. The
-  questions are spoken. You answer by voice, and the final request is shown
-  in the HUD for a beat ("Sending: …", with Edit) before it's delivered.
-  Hold a modifier to skip clarify for one send.
+- **Clarify (opt-in, per send):** your dictation plus a little context →
+  either "ready" or **at most two** questions. The questions are spoken.
+  - **What leaves the Mac, exactly:** your dictation, the target session's
+    name and cwd, and the front app's name and window title (the metadata
+    `front_window.rs` already reads, never window contents). Eavesy library
+    results go along only when you ask ("check my notes on…"), and the HUD
+    lists the items it found before they're sent.
+  - **Everything clarify reads is data.** Window titles and library results
+    can carry injected text, so they only help the model ask better
+    questions. The final request is built from your dictation and your
+    answers, nothing else.
+  - **Nothing is sent until you confirm.** The final request waits in the
+    HUD ("Sending: …") for Return, a click or saying "send it", with Edit and
+    Cancel. Silence never sends. An auto-send countdown may come later as a
+    setting, off by default.
+  - Hold a modifier to skip clarify for one send.
 - **Model:** Claude Haiku-class by default. Where the call runs and who pays
   is decision 2 below. Whatever runs it, this sends text to a model provider,
   so it's off until you turn it on, and Settings names the provider (rule 8).
@@ -129,13 +147,18 @@ One small, fast model call with one prompt each:
 
 - Dictation sent to a CLI session arrives as a `<channel source="eavesy">`
   event in the live session. No focus-stealing, no paste, no wrong-window
-  risk. This replaces the architecture doc's "a running CLI session can't be
-  driven from outside": it's now one more delivery method in the router.
+  risk. Channels are the vendor API that the architecture doc's
+  pushback section was waiting for; it now lists them as one more delivery
+  method in the router.
+- **Who can push into a session:** only the app's router. Claude Code starts
+  `eavesy mcp` over stdio, and `eavesy mcp` gets what it delivers only from
+  the app over the local socket (peer-checked, architecture "The local API").
+  It opens no HTTP port, so no other local sender can reach the channel.
 - The `reply` tool is `send_to_human`, so it's spoken like everything else.
-- **Permission relay stays off in v1.** Anyone who can reach the channel could
-  approve tool calls. Eavesy can gate on the native UI as the sender, but
-  approval by voice is decision 4.
-- Limits: channels are a research preview. Custom channels need
+- **Permission relay stays off in v1.** Every tool approval still needs a
+  click in Claude Code or in Eavesy's own UI (architecture rule 6). Approval
+  by voice is decision 4.
+- Limits, as of 2026-10-23: channels are a research preview. Custom channels need
   `--dangerously-load-development-channels` until they're allowlisted, they
   don't load with `-p` or the Agent SDK, and they may not exist in the
   desktop Code tab at all (spike). So this is an upgrade for the CLI, not the
@@ -150,7 +173,7 @@ real work to the agent session as a tool call.
 
 | Option | Fit |
 |---|---|
-| OpenAI Realtime (`gpt-realtime`) | Full-duplex, supports tool calls, hosted. The practical choice if this ships soon |
+| OpenAI Realtime (`gpt-realtime`) | Full-duplex, supports tool calls, hosted. The practical choice if this ships soon. *Not checked against OpenAI's docs for this plan; verify before step 6* |
 | Open full-duplex models (NVIDIA PersonaPlex, Moshi-family) | Local, but the large ones want datacenter GPUs. Watch |
 | **Dessa** (Block) | Speech-only: trained on audio, no text, so it can't read code or call tools by itself. Its announcement says it runs locally on an M4 Max, but it isn't released ("launch links coming soon"). Re-evaluate once it ships *and* has a way to pass text or tool calls in and out |
 
@@ -161,11 +184,14 @@ Step 6 waits until steps 1 to 4 prove people want to talk with agents at all.
 - **No approvals by voice in v1.** Tool permissions, grants and stops still
   need a click (architecture rule 6). Voice can *read out* what's being
   asked.
-- **Spoken text is untrusted.** It comes from an agent's output, which can
-  carry injected text from a web page or a file. TTS only speaks it. Nothing
-  spoken is ever turned back into a command without you saying it.
-- **Clarify never sends without showing you.** You always see the final
-  request before it's delivered, and you can stop it.
+- **Spoken and gathered text is untrusted.** Agent output, window titles and
+  library results can all carry injected text from a web page or a file. TTS
+  only speaks it, and clarify only reads it. Nothing is ever turned into a
+  request or a command unless you said it.
+- **Clarify never sends without your confirm.** The final request waits in
+  the HUD until you confirm it. Silence never sends.
+- **Voice answers are data, not approvals.** An `ask_human` answer goes back
+  to the agent as text. Picks from a list are read back first.
 - **Remote stays remote.** A `send_to_human` that arrives through the Mac link
   is spoken only if you turned that on, and the voice says where it came from
   ("ChatGPT says…").
@@ -189,8 +215,9 @@ need step 3, and the tools need steps 4 and 5.
    - Does the desktop Code tab run hooks from `~/.claude/settings.json` and
      load plugins? Does it support channels?
    - Do Claude Desktop chat and ChatGPT reliably call `send_to_human` when
-     told to in a project or custom instruction? Measure how often, over 20
-     tasks.
+     told to in a project or custom instruction? Run 20 tasks on each. Step 3
+     goes ahead for a client that calls it in at least 17 of 20. Below that,
+     the client gets hooks or paste only.
    - Measure `AVSpeechSynthesizer` latency and quality with Premium voices
      on macOS 26.
 1. **Speak:** sidecar TTS, barge-in, mutes, the attention queue reading cards
@@ -224,7 +251,8 @@ need step 3, and the tools need steps 4 and 5.
 - Claude Code hooks (Stop's `last_assistant_message`, Notification types):
   https://code.claude.com/docs/en/hooks
 - Claude Code channels (capability, reply tool, permission relay, research
-  preview limits): https://code.claude.com/docs/en/channels-reference
+  preview limits; read 2026-10-23):
+  https://code.claude.com/docs/en/channels-reference
 - Dessa announcement page (pasted by William, 2026-10-23). The claims about
   local M4 Max inference and the release are the lab's own and unverified.
 - Full-duplex landscape (single and secondary sources; verify before public
