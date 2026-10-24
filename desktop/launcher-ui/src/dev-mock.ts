@@ -361,5 +361,16 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
       state.effective = String(mode);
       state.until_ms = typeof minutes === 'number' && mode !== 'ask' ? Date.now() + minutes * 60_000 : null;
     },
+    set_trusted_agent_folders: ({ folders }: Record<string, unknown>) => (state.trusted_folders = folders as string[]),
+    set_assistant_style: () => null,
+    set_assistant_voice: () => null,
+    assistant_voices: () => [
+      { name: 'Samantha', locale: 'en_US' }, { name: 'Daniel', locale: 'en_GB' }, { name: 'Eddy (English (US))', locale: 'en_US' }, { name: 'Thomas', locale: 'fr_FR' },
+    ],
+    assistant_activity: () => empty ? [] : [
+      { at_ms: now - 25_000, requester: 'You', tool: 'machine.clean', summary: 'Remove 2 worktrees and stop 2 leftover processes', decision: 'accepted', outcome: '4 of 4 done' },
+      { at_ms: now - 3_600_000, requester: 'Claude Code in eavesy', tool: 'open.link', summary: 'Open https://example.com/pricing', decision: 'refused', outcome: 'Only links you gave' },
+      { at_ms: now - 7_200_000, requester: 'You', tool: 'assistant.mode', summary: 'Auto', decision: 'ran', outcome: 'for 60 min' },
+    ],
   };
 }

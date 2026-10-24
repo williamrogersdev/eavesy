@@ -216,6 +216,7 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
 
 #[derive(Serialize)]
 struct TurnRequest<'a> {
+    style: super::style::Style,
     messages: &'a [Message],
 }
 
@@ -225,14 +226,14 @@ struct TurnResponse {
     content: Vec<Block>,
 }
 
-async fn ask(app: &AppHandle, messages: &[Message]) -> Result<Vec<Block>, String> {
+async fn ask(app: &AppHandle, style: super::style::Style, messages: &[Message]) -> Result<Vec<Block>, String> {
     let credential = crate::settings::device_credential(app).ok_or("Sign in to Eavesy to talk to it.")?;
     let client = crate::sync::http_client().map_err(|e| e.to_string())?;
     let response = client
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { messages })
+        .json(&TurnRequest { style, messages })
         .send()
         .await
         .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;
@@ -256,6 +257,8 @@ async fn ask(app: &AppHandle, messages: &[Message]) -> Result<Vec<Block>, String
 fn converse(app: &AppHandle, text: String, spoken: bool) {
     push(app, Message { role: Role::User, content: vec![Block::Text { text: text.clone() }] }, spoken);
     let requester = Requester::You { spoken };
+    // Read once: every step of one answer talks the same way.
+    let style = crate::settings::load(app).assistant_style.unwrap_or_default();
     for step in 0..MAX_STEPS {
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
@@ -265,7 +268,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
         let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
-        let content = match tauri::async_runtime::block_on(ask(app, &messages)) {
+        let content = match tauri::async_runtime::block_on(ask(app, style, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
             Err(error) => {

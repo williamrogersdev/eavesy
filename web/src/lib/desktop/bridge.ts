@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -378,6 +378,42 @@ export async function setTrustedAgentFolders(folders: string[]): Promise<string[
   return invoke<string[]>('set_trusted_agent_folders', { folders });
 }
 
+/** The native folder picker, for a folder to trust. Null when cancelled. */
+export async function pickFolder(title: string): Promise<string | null> {
+  const dialog = tauri()?.dialog;
+  if (!dialog) return null;
+  const picked = await dialog.open({ directory: true, multiple: false, title });
+  return typeof picked === 'string' ? picked : null;
+}
+
+/** How Eavesy talks (assistant/style.rs `Style`). */
+export interface AssistantStyle {
+  preset: 'plain' | 'eavesy' | 'more';
+  chattiness: 'less' | 'default' | 'more';
+  warmth: 'less' | 'default' | 'more';
+}
+
+export const DEFAULT_ASSISTANT_STYLE: AssistantStyle = { preset: 'eavesy', chattiness: 'default', warmth: 'default' };
+
+export async function setAssistantStyle(style: AssistantStyle): Promise<void> {
+  await invoke('set_assistant_style', { style });
+}
+
+export interface AssistantVoice {
+  name: string;
+  /** Like `en_US`. */
+  locale: string;
+}
+
+export async function getAssistantVoices(): Promise<AssistantVoice[]> {
+  return invoke<AssistantVoice[]>('assistant_voices');
+}
+
+/** Null name is the System Settings voice, null rate its speed. Says a sample line once saved. */
+export async function setAssistantVoice(name: string | null, rate: number | null): Promise<void> {
+  await invoke('set_assistant_voice', { name, rate });
+}
+
 /** No rows accepted declines the card. Resolves with what ran, or null when declined. */
 export async function decideAssistantCard(cardId: string, acceptedRowIds: string[]): Promise<{ summary: string; detail: unknown } | null> {
   return invoke('assistant_card_decide', { cardId, acceptedRowIds });
@@ -648,6 +684,12 @@ export interface Settings {
   agent_hold_secs?: number;
   /** Messages from agents on your Eavesy connection. Absent means off. */
   agent_messages?: boolean;
+  /** Absent means the default style. */
+  assistant_style?: AssistantStyle;
+  /** Absent means the System Settings voice. */
+  assistant_voice?: string;
+  /** Words per minute. Absent means the voice's own speed. */
+  assistant_voice_rate?: number;
 }
 
 export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';

@@ -1,4 +1,4 @@
-import type { AssistantCard, AssistantMode, AssistantState } from '@/lib/desktop/bridge';
+import type { AssistantActivity, AssistantCard, AssistantMode, AssistantState, AssistantVoice } from '@/lib/desktop/bridge';
 
 /** Friendly names for the tools in a turn's steps. Unknown tools show their own name. */
 const TOOL_LABELS: Record<string, string> = {
@@ -6,6 +6,13 @@ const TOOL_LABELS: Record<string, string> = {
   agent_sessions: 'Checked your agent sessions',
   open_link: 'Opened a link',
   clean_machine: 'Clean-up',
+  // The names the action core logs to Activity.
+  'machine.overview': 'Looked at this Mac',
+  'agents.sessions': 'Checked your agent sessions',
+  'open.link': 'Opened a link',
+  'machine.clean': 'Clean-up',
+  'assistant.mode': 'Mode change',
+  'assistant.trust': 'Trusted folders',
 };
 
 export function toolLabel(tool: string): string {
@@ -35,4 +42,17 @@ export function acceptLabel(card: AssistantCard, ticked: ReadonlySet<string>): s
 /** Seconds left on a card, for "expires in" once it's close. */
 export function secondsLeft(card: AssistantCard, now: number): number {
   return Math.max(0, Math.round((card.expires_ms - now) / 1000));
+}
+
+/** Voices in your language first, then the rest, each by name. */
+export function sortVoices(voices: readonly AssistantVoice[], language: string): AssistantVoice[] {
+  const mine = language.split(/[-_]/)[0].toLowerCase();
+  const rank = (voice: AssistantVoice) => (voice.locale.split('_')[0].toLowerCase() === mine ? 0 : 1);
+  return [...voices].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+/** One line of the Activity list: what happened, by whom, and how it ended. */
+export function activityLine(entry: AssistantActivity): string {
+  const decision = { ran: 'Ran', accepted: 'Accepted', declined: 'Declined', refused: 'Refused', card: 'Asked first' }[entry.decision] ?? entry.decision;
+  return entry.outcome ? `${decision}: ${entry.outcome}` : decision;
 }

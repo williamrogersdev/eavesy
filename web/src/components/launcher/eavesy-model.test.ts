@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantCard } from '@/lib/desktop/bridge';
-import { acceptLabel, modeIsLoud, modeLabel, secondsLeft, toolLabel } from './eavesy-model';
+import { acceptLabel, activityLine, modeIsLoud, modeLabel, secondsLeft, sortVoices, toolLabel } from './eavesy-model';
 
 const card = (rows: string[]): AssistantCard => ({
   id: 'c', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees', warning: null, expires_ms: 60_000,
@@ -30,5 +30,21 @@ describe('eavesy model', () => {
   test('tools get plain names', () => {
     expect(toolLabel('machine_overview')).toBe('Looked at this Mac');
     expect(toolLabel('something_new')).toBe('something_new');
+  });
+});
+
+describe('assistant settings', () => {
+  test('voices in your language come first', () => {
+    const voices = [{ name: 'Thomas', locale: 'fr_FR' }, { name: 'Samantha', locale: 'en_US' }, { name: 'Daniel', locale: 'en_GB' }];
+    expect(sortVoices(voices, 'en-AU').map((voice) => voice.name)).toEqual(['Daniel', 'Samantha', 'Thomas']);
+    expect(sortVoices(voices, 'fr').map((voice) => voice.name)).toEqual(['Thomas', 'Daniel', 'Samantha']);
+  });
+
+  test('activity says how each action ended', () => {
+    const base = { at_ms: 0, requester: 'You', tool: 'machine.clean', summary: 'Clean up 2' };
+    expect(toolLabel(base.tool)).toBe('Clean-up');
+    expect(activityLine({ ...base, decision: 'accepted', outcome: 'removed 2' })).toBe('Accepted: removed 2');
+    expect(activityLine({ ...base, decision: 'card' })).toBe('Asked first');
+    expect(activityLine({ ...base, decision: 'something new' })).toBe('something new');
   });
 });

@@ -1,9 +1,11 @@
-//! Speaks with macOS's own voice (`/usr/bin/say`, the voice chosen in System
-//! Settings → Accessibility → Spoken Content). One line at a time; a new line
-//! or a dictation stops the one playing.
+//! Speaks with macOS's own voices (`/usr/bin/say`): the one chosen in Settings →
+//! Assistant, or else the one in System Settings → Accessibility → Spoken
+//! Content. One line at a time; a new line or a dictation stops the one playing.
 
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+
+use serde::Serialize;
 use std::time::{Duration, Instant};
 
 /// The line playing, numbered so its watcher knows it's still the one.
@@ -15,16 +17,118 @@ static QUIET_SINCE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
 /// `say` reads a long line for a long time; summaries are a sentence or two.
 const MAX_SPOKEN: usize = 600;
 const POLL: Duration = Duration::from_millis(100);
+/// Words per minute a voice can be set to; `say` speaks at about 175 by default.
+pub const RATES: std::ops::RangeInclusive<u16> = 100..=360;
+
+/// Which voice, and how fast. `None` leaves each to the system.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Voice {
+    pub name: Option<String>,
+    pub rate: Option<u16>,
+}
+
+impl Voice {
+    /// Refuses a voice this Mac doesn't have and a speed out of range.
+    pub fn checked(name: Option<String>, rate: Option<u16>) -> Result<Voice, String> {
+        let name = name.map(|name| name.trim().to_string()).filter(|name| !name.is_empty());
+        if let Some(name) = &name {
+            if !voices().iter().any(|voice| &voice.name == name) {
+                return Err(format!("This Mac doesn't have a voice called {name}."));
+            }
+        }
+        if let Some(rate) = rate {
+            if !RATES.contains(&rate) {
+                return Err(format!("Pick a speed from {} to {} words a minute.", RATES.start(), RATES.end()));
+            }
+        }
+        Ok(Voice { name, rate })
+    }
+}
+
+static CHOSEN: Mutex<Option<Voice>> = Mutex::new(None);
+
+/// Settings calls this whenever it loads or saves.
+pub fn set_voice(voice: Voice) {
+    *CHOSEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(voice);
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VoiceInfo {
+    pub name: String,
+    /// Like `en_US`.
+    pub locale: String,
+}
+
+/// The voices `say -v '?'` lists, read on first use and again by `refresh_voices`
+/// (each time the picker opens), so a voice added since launch can be chosen.
+static VOICES: Mutex<Option<Vec<VoiceInfo>>> = Mutex::new(None);
+
+pub fn voices() -> Vec<VoiceInfo> {
+    if let Some(voices) = VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref() {
+        return voices.clone();
+    }
+    // Listed without the lock held, so nothing else waits on `say`.
+    refresh_voices()
+}
+
+pub fn refresh_voices() -> Vec<VoiceInfo> {
+    let fresh = list_voices();
+    *VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh.clone());
+    fresh
+}
+
+fn list_voices() -> Vec<VoiceInfo> {
+    match Command::new("/usr/bin/say").args(["-v", "?"]).stdin(Stdio::null()).stderr(Stdio::null()).output() {
+        Ok(output) => parse_voices(&String::from_utf8_lossy(&output.stdout)),
+        Err(error) => {
+            tracing::warn!("could not list voices: {error}");
+            Vec::new()
+        }
+    }
+}
+
+/// Lines look like `Eddy (English (US))  en_US    # Hello! My name is Eddy.`:
+/// the name can hold spaces, so the locale is the last word before the `#`.
+fn parse_voices(listing: &str) -> Vec<VoiceInfo> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (head, _) = line.split_once('#')?;
+            let (name, locale) = head.trim_end().rsplit_once(char::is_whitespace)?;
+            let name = name.trim();
+            // A name that starts with a dash would read as a flag to `say`.
+            (!name.is_empty() && !name.starts_with('-') && locale.contains('_')).then(|| VoiceInfo { name: name.to_string(), locale: locale.to_string() })
+        })
+        .collect()
+}
+
+/// The arguments before the text: a voice only if this Mac has it, a speed only in range.
+fn voice_args(voice: &Voice) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(name) = &voice.name {
+        if voices().iter().any(|known| &known.name == name) {
+            args.extend(["-v".to_string(), name.clone()]);
+        }
+    }
+    if let Some(rate) = voice.rate.filter(|rate| RATES.contains(rate)) {
+        args.extend(["-r".to_string(), rate.to_string()]);
+    }
+    args
+}
 
 pub fn say(text: &str) {
     let text = speakable(text);
     if text.trim().is_empty() {
         return;
     }
+    let voice = CHOSEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_default();
+    // A voice removed since the list was read is still safe to pass: `say` falls
+    // back to the system voice for a name it doesn't know.
+    let args = voice_args(&voice);
     let mut playing = PLAYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     stop_locked(&mut playing);
     // `--` so a line starting with a dash is read, not taken as a flag.
-    match Command::new("/usr/bin/say").arg("--").arg(text).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+    match Command::new("/usr/bin/say").args(args).arg("--").arg(text).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         Ok(child) => {
             let line = {
                 let mut next = NEXT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -91,7 +195,26 @@ fn stop_locked(playing: &mut Option<(u64, Child)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::speakable;
+    use super::{parse_voices, speakable, voice_args, Voice};
+
+    #[test]
+    fn voices_keep_names_with_spaces_and_skip_odd_lines() {
+        let listing = "Albert              en_US    # Hello! My name is Albert.\nEddy (English (US)) en_US    # Hello! My name is Eddy.\nGrandma (German (Germany))\tde_DE\t# Hallo!\n-v                  en_US    # sneaky\ngarbage\nBad Locale          xx       # hi\n";
+        let voices = parse_voices(listing);
+        let names: Vec<_> = voices.iter().map(|voice| voice.name.as_str()).collect();
+        assert_eq!(names, ["Albert", "Eddy (English (US))", "Grandma (German (Germany))"]);
+        assert_eq!(voices[2].locale, "de_DE");
+        assert_eq!(voices[1].locale, "en_US");
+    }
+
+    #[test]
+    fn unknown_voices_and_wild_speeds_are_dropped() {
+        assert!(voice_args(&Voice { name: Some("No Such Voice Here".into()), rate: Some(5) }).is_empty());
+        assert_eq!(voice_args(&Voice { name: None, rate: Some(200) }), ["-r", "200"]);
+        assert!(Voice::checked(Some("No Such Voice Here".into()), None).is_err());
+        assert!(Voice::checked(None, Some(1000)).is_err());
+        assert_eq!(Voice::checked(Some("  ".into()), None), Ok(Voice::default()));
+    }
 
     #[test]
     fn embedded_speech_commands_are_read_as_text() {

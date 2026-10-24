@@ -13,6 +13,7 @@ mod check;
 pub mod voice;
 pub mod policy;
 pub mod store;
+pub mod style;
 pub mod thread;
 mod tools;
 
