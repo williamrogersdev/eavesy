@@ -282,7 +282,8 @@ fn has_code_or_path(sentence: &str) -> bool {
     sentence.contains('`')
         || sentence.split_whitespace().any(|word| {
             let word = word.trim_start_matches(['(', '"', '\'']);
-            word.contains("://") || word.starts_with('~') || (word.contains('/') && word.len() > 1)
+            let file = word.rsplit_once('/').is_some_and(|(_, name)| name.trim_end_matches(['.', ',', ';', ':', ')', '"', '\'']).contains('.'));
+            word.contains("://") || word.starts_with(['/', '~']) || word.starts_with("./") || word.starts_with("../") || file
         })
 }
 
@@ -310,6 +311,8 @@ mod tests {
         let reply = "Run `bun test` in ~/Developer/eavesy or see https://eavesy.com/docs. It's quick.";
         assert_eq!(spoken_line(reply), "It's quick. The rest is on screen.");
         assert_eq!(spoken_line("It's in src/hud.rs. Done."), "Done. The rest is on screen.");
+        // A slash in prose isn't a path.
+        assert_eq!(spoken_line("Stop it and/or restart it. Done."), "Stop it and/or restart it. Done.");
     }
 
     #[test]
