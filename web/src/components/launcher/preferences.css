@@ -164,3 +164,7 @@
 .ev-assistant-activity { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 0 12px; list-style: none; max-height: 360px; overflow-y: auto; }
 .ev-assistant-activity .ev-set-label { overflow-wrap: anywhere; }
 .ev-assistant-note { min-width: 0; overflow-wrap: anywhere; }
+.ev-assistant-review { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ev-assistant-review li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ev-assistant-review .ev-set-label { overflow-wrap: anywhere; }
+.ev-assistant-review li[data-kind='invalid'] .ev-set-label, .ev-assistant-review li[data-kind='unreadable'] .ev-set-label { color: var(--ev-warn-ink); }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantCard } from '@/lib/desktop/bridge';
-import { acceptLabel, activityLine, modeIsLoud, modeLabel, secondsLeft, sortVoices, toolLabel } from './eavesy-model';
+import { acceptLabel, activityLine, modeIsLoud, modeLabel, ruleChangeLine, rulesWaitingLine, secondsLeft, sortVoices, toolLabel } from './eavesy-model';
 
 const card = (rows: string[]): AssistantCard => ({
   id: 'c', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees', warning: null, expires_ms: 60_000,
@@ -46,5 +46,15 @@ describe('assistant settings', () => {
     expect(activityLine({ ...base, decision: 'accepted', outcome: 'removed 2' })).toBe('Accepted: removed 2');
     expect(activityLine({ ...base, decision: 'card' })).toBe('Asked first');
     expect(activityLine({ ...base, decision: 'something new' })).toBe('something new');
+  });
+
+  test('rule changes read as one line each, and the thread says when any wait', () => {
+    const rule = { kind: 'remove_worktrees' as const, under: '/Users/w/Developer' };
+    expect(ruleChangeLine({ kind: 'add', rule, text: 'Remove finished worktrees under ~/Developer' })).toBe('Added: Remove finished worktrees under ~/Developer');
+    expect(ruleChangeLine({ kind: 'remove', rule, text: 'X' })).toBe('Removed: X');
+    expect(ruleChangeLine({ kind: 'invalid', line: 9, text: 'Delete it all', reason: 'no' })).toBe('Line 9: Delete it all');
+    expect(rulesWaitingLine(0)).toBeNull();
+    expect(rulesWaitingLine(1)).toBe('A rule change is waiting for you');
+    expect(rulesWaitingLine(3)).toBe('3 rule changes are waiting for you');
   });
 });

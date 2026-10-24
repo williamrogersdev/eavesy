@@ -58,6 +58,23 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'suggest_rule',
+    description: 'Suggests an "always allow" rule so a cleanup the user names runs without a card next time. Only when the user asks for one. It never takes effect by itself: it waits in Settings → Assistant → Rules until the user accepts it there, and the Mac checks it against what the user said.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['remove_worktrees', 'stop_leftovers'],
+          description: 'remove_worktrees: finished worktrees inside the folder. stop_leftovers: leftover processes running inside the folder.',
+        },
+        folder: { type: 'string', description: 'A project folder, e.g. "~/Developer". Never the home folder itself.' },
+      },
+      required: ['kind', 'folder'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'clean_machine',
     description: 'Removes finished git worktrees (never forced) and stops leftover processes, using paths, pids and start times from machine_overview. The user confirms on a card listing each one; every row is checked again before it is touched.',
     input_schema: {

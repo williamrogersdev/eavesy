@@ -414,6 +414,61 @@ export async function openAssistantMemory(): Promise<void> {
   await invoke('open_assistant_memory');
 }
 
+/** What an always-allow rule lets Eavesy do (assistant/rules.rs `Kind`). */
+export type AssistantRuleKind = 'remove_worktrees' | 'stop_leftovers';
+
+export interface AssistantRule {
+  kind: AssistantRuleKind;
+  under: string;
+}
+
+/** One thing waiting in the review list (assistant/rules.rs `Change`). Sent back as it came to accept or discard it. */
+export type AssistantRuleChange =
+  | { kind: 'add'; rule: AssistantRule; text: string }
+  | { kind: 'remove'; rule: AssistantRule; text: string }
+  | { kind: 'invalid'; line: number; text: string; reason: string }
+  | { kind: 'unreadable'; reason: string };
+
+export interface AssistantRules {
+  rules: { rule: AssistantRule; text: string }[];
+  pending: AssistantRuleChange[];
+  path: string | null;
+}
+
+export async function getAssistantRules(): Promise<AssistantRules> {
+  return invoke<AssistantRules>('assistant_rules');
+}
+
+/** Opens a native confirm first; cancelling rejects with "cancelled". */
+export async function addAssistantRule(kind: AssistantRuleKind, folder: string): Promise<AssistantRules> {
+  return invoke<AssistantRules>('add_assistant_rule', { kind, folder });
+}
+
+export async function removeAssistantRule(rule: AssistantRule): Promise<AssistantRules> {
+  return invoke<AssistantRules>('remove_assistant_rule', { rule });
+}
+
+/** Accepting an added rule opens a native confirm first; cancelling rejects with "cancelled". */
+export async function acceptAssistantRuleChange(change: AssistantRuleChange): Promise<AssistantRules> {
+  return invoke<AssistantRules>('accept_assistant_rule_change', { change });
+}
+
+export async function discardAssistantRuleChange(change: AssistantRuleChange): Promise<AssistantRules> {
+  return invoke<AssistantRules>('discard_assistant_rule_change', { change });
+}
+
+/** Opens rules.md in the default editor. */
+export async function openAssistantRules(): Promise<void> {
+  await invoke('open_assistant_rules');
+}
+
+/** Rules or rules.md changed through Eavesy: look again. */
+export async function onAssistantRules(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<unknown>('assistant:rules', () => cb());
+}
+
 /** How Eavesy talks (assistant/style.rs `Style`). */
 export interface AssistantStyle {
   preset: 'plain' | 'eavesy' | 'more';

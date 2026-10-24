@@ -814,10 +814,18 @@ Each step ships on its own and is useful alone.
    instructions, and never to the check (C7). Since a note rides along with
    every later message, `remember` must pass the check against your own
    words, so a page or tool result can't plant one; it doesn't take notes on
-   its own initiative yet. Next: "off the record", `about-you.md` and
-   consolidating when full, then Rules and the review list (H2, C3), with
-   accepted rules kept signed like `policy.json`. Connections and Monitors
-   come with step 6.
+   its own initiative yet. Then Rules and the review list (H2, C3, H4):
+   always-allow rules are a closed set of kinds tied to rows a tool can
+   prove ("Remove finished worktrees under ~/Developer", "Stop leftover
+   processes under ~/Developer"), kept in the signed `policy.json`, and
+   mirrored to `rules.md`. Any change to `rules.md` made outside Settings,
+   Eavesy's own `suggest_rule` included, waits in the review list, and
+   accepting a new rule asks in a native dialog. A rule runs an action
+   without a card only for what you typed (or said, outside Ask), after a
+   passing check, never past the breaker or for anything that grants power.
+   Next: "off the record", `about-you.md`, consolidating memory when full,
+   and standing instructions in `rules.md`. Connections and Monitors come
+   with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
 8. **Hands** (L): Eavesy's browser and app grants, then accessibility

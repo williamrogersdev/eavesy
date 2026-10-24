@@ -557,6 +557,7 @@
 .ev-turn-text { margin: 0; font: var(--ev-t-body); color: var(--ev-ink); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .ev-turn-step { font: var(--ev-t-small); color: var(--ev-ink-3); }
 .ev-turn-step[data-ok='false'] { color: var(--ev-warn-ink); }
+.ev-rules-waiting { margin: 4px 0 8px; }
 .ev-turn-meta { display: flex; gap: 8px; font: var(--ev-t-small); color: var(--ev-ink-3); }
 .ev-turn-meta:empty { display: none; }
 .ev-turn-meta .ev-link { display: inline-flex; align-items: center; gap: 3px; color: var(--ev-ink-3); font-weight: 500; }

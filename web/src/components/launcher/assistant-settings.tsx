@@ -1,17 +1,24 @@
 'use client';
 
-import { FolderPlus, RefreshCw, Trash2, X } from 'lucide-react';
+import { FolderPlus, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  acceptAssistantRuleChange,
+  addAssistantRule,
   DEFAULT_ASSISTANT_STYLE,
+  discardAssistantRuleChange,
   forgetAllAssistantNotes,
   forgetAssistantNote,
   getAssistantActivity,
   getAssistantMemory,
+  getAssistantRules,
   getAssistantState,
   getAssistantVoices,
   openAssistantMemory,
+  openAssistantRules,
+  onAssistantRules,
   pickFolder,
+  removeAssistantRule,
   setAssistantMemory,
   setAssistantMode,
   setAssistantStyle,
@@ -19,14 +26,17 @@ import {
   setTrustedAgentFolders,
   type AssistantActivity,
   type AssistantMemory,
+  type AssistantRuleChange,
+  type AssistantRuleKind,
+  type AssistantRules,
   type AssistantState,
   type AssistantStyle,
   type AssistantVoice,
   type Settings,
 } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
-import { Button, Card, IconButton, Row, Segmented, Select, Switch } from './ui';
-import { activityLine, modeLabel, sortVoices, toolLabel } from './eavesy-model';
+import { Button, Card, IconButton, Menu, Row, Segmented, Select, Switch } from './ui';
+import { activityLine, modeLabel, ruleChangeLine, sortVoices, toolLabel } from './eavesy-model';
 import { formatRelative } from './format';
 
 const PRESETS = [
@@ -59,6 +69,11 @@ const MODES: { value: ModeChoice; label: string }[] = [
   { value: 'bypass', label: 'Bypass until I turn it off' },
 ];
 const SYSTEM_VOICE = '';
+const RULE_KINDS: { kind: AssistantRuleKind; label: string; pick: string }[] = [
+  { kind: 'remove_worktrees', label: 'Remove finished worktrees under…', pick: 'Remove finished worktrees under this folder without a card' },
+  { kind: 'stop_leftovers', label: 'Stop leftover processes under…', pick: 'Stop leftover processes in this folder without a card' },
+];
+const isCancel = (e: unknown) => errMsg(e, '') === 'cancelled';
 
 function modeChoice(state: AssistantState): ModeChoice {
   if (state.effective === 'bypass') return state.until_ms === null ? 'bypass' : 'bypass-hour';
@@ -122,6 +137,29 @@ export function AssistantSettings({ active, settings, onSettings }: {
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change that setting.')));
   };
   const notes = memory?.notes ?? [];
+
+  const [rules, setRules] = useState<AssistantRules | null>(null);
+  const loadRules = useCallback(() => {
+    void getAssistantRules().then(setRules).catch((e: unknown) => setError(errMsg(e, 'Couldn’t read the rules.')));
+  }, []);
+  // Read each time, and again when Eavesy suggests one: rules.md can change by hand.
+  useEffect(() => {
+    if (!active) return;
+    loadRules();
+    const off = onAssistantRules(loadRules);
+    return () => void off.then((stop) => stop());
+  }, [active, loadRules]);
+  const ruleAction = (run: () => Promise<AssistantRules>, failed: string) => {
+    setError(null);
+    void run().then(setRules).catch((e: unknown) => { if (!isCancel(e)) setError(errMsg(e, failed)); loadRules(); });
+  };
+  const addRule = (kind: AssistantRuleKind, title: string) => {
+    void pickFolder(title)
+      .then((folder) => { if (folder) ruleAction(() => addAssistantRule(kind, folder), 'Couldn’t add that rule.'); })
+      .catch((e: unknown) => { if (!isCancel(e)) setError(errMsg(e, 'Couldn’t open the folder picker.')); });
+  };
+  const acceptChange = (change: AssistantRuleChange) => ruleAction(() => acceptAssistantRuleChange(change), 'Couldn’t accept that.');
+  const discardChange = (change: AssistantRuleChange) => ruleAction(() => discardAssistantRuleChange(change), 'Couldn’t discard that.');
 
   // Listed afresh each time too, so a voice added in System Settings shows.
   useEffect(() => {
@@ -276,6 +314,64 @@ export function AssistantSettings({ active, settings, onSettings }: {
               ))}
             </ul>
           )}
+        </div>
+      </Card>
+
+      <Card title="Rules">
+        <div className="ev-set-row flex-col">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="ev-set-label">Always allow</div>
+              <div className="ev-set-hint">What Eavesy does without a card when you ask, in any mode. Never for agents, voice in Ask, or changes to connections and rules.</div>
+            </div>
+            <Menu
+              trigger={(
+                <Button variant="outline" size="sm" disabled={!rules}>
+                  <Plus size={13} strokeWidth={1.75} aria-hidden /> Add Rule
+                </Button>
+              )}
+              items={RULE_KINDS.map(({ kind, label, pick }) => ({ label, onSelect: () => addRule(kind, pick) }))}
+            />
+          </div>
+          {rules && rules.rules.length === 0 && <p className="ev-set-hint ev-assistant-empty">No rules. Everything follows the mode above.</p>}
+          {rules && rules.rules.length > 0 && (
+            <ul className="ev-assistant-folders">
+              {rules.rules.map(({ rule, text }) => (
+                <li key={`${rule.kind}-${rule.under}`}>
+                  <span className="ev-set-label ev-assistant-note" title={rule.under}>{text}</span>
+                  <IconButton label={`Remove the rule “${text}”`} icon={X} size={24} onClick={() => ruleAction(() => removeAssistantRule(rule), 'Couldn’t remove that rule.')} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {rules && rules.pending.length > 0 && (
+          <div className="ev-set-row flex-col">
+            <div>
+              <div className="ev-set-label">Waiting for you</div>
+              <div className="ev-set-hint">Changes to rules.md made outside this window, by you, an agent or Eavesy. None apply until you accept them.</div>
+            </div>
+            <ul className="ev-assistant-review">
+              {rules.pending.map((change, index) => (
+                <li key={`${change.kind}-${index}`} data-kind={change.kind}>
+                  <div className="min-w-0 flex-1">
+                    <div className="ev-set-label">{ruleChangeLine(change)}</div>
+                    {(change.kind === 'invalid' || change.kind === 'unreadable') && <div className="ev-set-hint">{change.reason}</div>}
+                  </div>
+                  {(change.kind === 'add' || change.kind === 'remove') && (
+                    <Button variant="primary" size="sm" onClick={() => acceptChange(change)}>{change.kind === 'add' ? 'Allow…' : 'Remove'}</Button>
+                  )}
+                  {change.kind !== 'unreadable' && <Button variant="quiet" size="sm" onClick={() => discardChange(change)}>Discard</Button>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="ev-set-row">
+          <div className="min-w-0 flex-1">
+            {rules?.path && <div className="ev-set-hint ev-set-path" title={rules.path}>{rules.path}</div>}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void openAssistantRules().then(loadRules).catch((e: unknown) => setError(errMsg(e, 'Couldn’t open the file.')))}>Open in Editor</Button>
         </div>
       </Card>
 

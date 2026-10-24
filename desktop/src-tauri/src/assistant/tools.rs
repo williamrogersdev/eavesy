@@ -13,7 +13,7 @@ use super::{Action, Ran, Submitted};
 const RESULT_CHARS: usize = 11_000;
 
 fn facts(tier: Tier, items: usize) -> Facts {
-    Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items }
+    Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items, always_allowed: false }
 }
 
 /// What the model gets back: a line it can say, and whether it was an error.
@@ -70,6 +70,16 @@ pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you
             }
             Ok(Box::new(Remember { app: app.clone(), note }))
         }
+        "suggest_rule" => {
+            #[derive(Deserialize)]
+            struct Input {
+                kind: super::rules::Kind,
+                folder: String,
+            }
+            let Input { kind, folder } = serde_json::from_value(input.clone()).map_err(|_| "suggest_rule needs a kind and a folder.".to_string())?;
+            let rule = super::rules::Rule::new(kind, &folder)?;
+            Ok(Box::new(SuggestRule { app: app.clone(), rule }))
+        }
         _ => Err(format!("Eavesy has no tool called {name}.")),
     }
 }
@@ -110,16 +120,23 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
             return ToolResult { content: reason, is_error: true };
         }
     };
-    // A note goes with every later message, so one planted by a tool result or a page
-    // would keep steering Eavesy: `remember` is checked against your words like a tier
-    // 2 action, and kept only when it passes (H4).
-    let remember = name == "remember";
+    // A note goes with every later message, and a suggested rule lands in your review
+    // list, so one planted by a tool result or a page would keep steering Eavesy or nag
+    // you: both are checked against your words like a tier 2 action, and kept only when
+    // the check passes (H4).
+    let asked_only = asked_only(name);
+    // Only your own conversation can ask for these: an agent's words aren't yours.
+    if asked_only.is_some() && !matches!(requester, Requester::You { .. }) {
+        let reason = "Only you can ask Eavesy for that.".to_string();
+        super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
+        return ToolResult { content: reason, is_error: true };
+    }
     let check = match action.facts().tier {
         Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
-        _ if remember => super::check::run(app, request, action.as_ref()),
+        _ if asked_only.is_some() => super::check::run(app, request, action.as_ref()),
         _ => Check::NotRun,
     };
-    if let Some(reason) = remember.then(|| refuse_note(&check)).flatten() {
+    if let Some(reason) = refusal(asked_only, &check) {
         super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
         return ToolResult { content: reason, is_error: true };
     }
@@ -209,9 +226,14 @@ impl Action for OpenLink {
     }
 }
 
-/// Why a note isn't kept: anything but a pass from the check, offline and errors included.
-fn refuse_note(check: &Check) -> Option<String> {
-    (*check != Check::Pass).then(|| "I only keep notes you ask me to keep. Say what to remember and I'll add it.".to_string())
+/// For tools that only run when you asked for them in so many words: what Eavesy says
+/// when the check gives anything but a pass, offline and errors included.
+fn asked_only(name: &str) -> Option<&'static str> {
+    match name {
+        "remember" => Some("I only keep notes you ask me to keep. Say what to remember and I'll add it."),
+        "suggest_rule" => Some("I only suggest rules you ask for. Say what to always allow and where."),
+        _ => None,
+    }
 }
 
 /// Applies at once and shows a "Remembered" line you can undo (H4).
@@ -242,15 +264,59 @@ impl Action for Remember {
     }
 }
 
+/// What Eavesy says instead of running an asked-only tool whose check didn't pass.
+fn refusal(asked_only: Option<&'static str>, check: &Check) -> Option<String> {
+    asked_only.filter(|_| *check != Check::Pass).map(str::to_string)
+}
+
+/// Writes a rule into rules.md, where it waits in the review list until you accept it in
+/// Settings (H4). Nothing here puts it in force.
+struct SuggestRule {
+    app: AppHandle,
+    rule: super::rules::Rule,
+}
+
+impl Action for SuggestRule {
+    fn tool(&self) -> &'static str { "assistant.suggest_rule" }
+    fn facts(&self) -> Facts { facts(Tier::Do, 1) }
+    fn title(&self) -> String { format!("Suggest a rule: {}", self.rule.text()) }
+    fn rows(&self) -> Vec<Row> { vec![Row { id: "rule".into(), label: self.rule.text() }] }
+    fn run(&self, rows: &[String]) -> Ran {
+        use tauri::{Emitter, Manager};
+        if rows.is_empty() {
+            return Ran { summary: "Nothing suggested".into(), detail: serde_json::Value::Null };
+        }
+        let accepted = self.app.state::<super::Core>().policy.lock().unwrap().rules.clone();
+        if accepted.contains(&self.rule) {
+            return Ran { summary: format!("Already a rule: {}", self.rule.text()), detail: serde_json::Value::Null };
+        }
+        let summary = match super::rules::path().ok_or_else(|| "No home folder.".to_string()).and_then(|file| super::rules::append(&file, &self.rule, &accepted)) {
+            Ok(true) => {
+                let _ = self.app.emit("assistant:rules", ());
+                format!("Waiting for you in Settings → Assistant → Rules: {}", self.rule.text())
+            }
+            Ok(false) => format!("Already waiting for you in Settings → Assistant → Rules: {}", self.rule.text()),
+            Err(error) => format!("Couldn't suggest that: {error}"),
+        };
+        Ran { summary, detail: serde_json::Value::Null }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_note_is_kept_only_on_a_pass() {
-        assert_eq!(refuse_note(&Check::Pass), None);
+    fn notes_and_rule_suggestions_need_you_to_have_asked() {
+        assert!(asked_only("remember").is_some());
+        assert!(asked_only("suggest_rule").is_some());
+        assert!(asked_only("open_link").is_none());
+        // Anything but a pass refuses, offline and errors included; other tools never do.
+        assert_eq!(refusal(asked_only("suggest_rule"), &Check::Pass), None);
         for check in [Check::NotRun, Check::Failed, Check::Flagged("not asked".into())] {
-            assert!(refuse_note(&check).is_some(), "{check:?}");
+            assert!(refusal(asked_only("suggest_rule"), &check).is_some(), "{check:?}");
+            assert!(refusal(asked_only("remember"), &check).is_some(), "{check:?}");
+            assert_eq!(refusal(asked_only("open_link"), &check), None);
         }
     }
 
