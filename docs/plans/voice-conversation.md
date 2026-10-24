@@ -21,6 +21,12 @@ What we want:
 3. **Clarify before sending:** a quick back-and-forth that turns a ramble into
    a complete request, so the agent does the right thing the first time.
 4. **Work in both the Claude desktop app and the CLI.** ChatGPT second.
+5. **Reply for me:** when Claude stops, Eavesy tells you what it needs,
+   suggests a reply, and on your go-ahead sends that reply into the same
+   session. This is William's top ask (2026-10-23).
+6. **Many sessions at once:** 20 Claude sessions running at the same time is
+   normal. Eavesy has to queue them, name them and never talk over itself.
+7. **Hands-free:** "Hey Eavesy" starts talking to it without a hotkey.
 
 ## Which surfaces, and how far each can go
 
@@ -109,11 +115,98 @@ step 3):
 - `Stop`: forward `session_id`, `cwd` and `last_assistant_message` to
   Eavesy. Use `last_assistant_message`, not the transcript file: the docs say
   the transcript is written asynchronously and can lag.
+- `UserPromptSubmit`: record the prompt that started the turn, so the
+  summary and the suggested reply know what was asked.
 - `Notification` with `permission_prompt` / `idle_prompt`: mark the session
   as waiting on you, and speak "Claude in *eavesy* needs approval to run a
   command."
-- The hook stays fail-open with the usual 250 ms budget. Summarizing happens
-  in the app, after the hook has already returned.
+- Reaching the app stays fail-open with the usual 250 ms budget: if Eavesy
+  isn't running or doesn't answer, the hook exits and Claude carries on.
+  Summarizing happens in the app, not in the hook.
+
+### 3b. Reply for me (the Stop hook holds for your answer)
+
+A Stop hook may answer `{"decision": "block", "reason": "…"}`, and Claude
+then keeps going in the **same session** with that reason as its next input.
+That gives Eavesy a way to reply into any Claude Code session, desktop Code
+tab included if it runs hooks, with no paste and no window focus.
+
+**Spike result (2026-10-23, CLI 2.1.307, `claude -p`, Haiku):** a Stop hook
+that blocked with "The user replied: please also say the word BANANA" made
+Claude answer `BANANA` in the same session. The input had
+`last_assistant_message`, and `stop_hook_active: true` on the second stop.
+
+The flow:
+
+1. Claude stops. The hook sends the stop to Eavesy, and once the app has
+   acknowledged it, the hook **holds**: it waits for your reply, up to a hold
+   window (default 5 minutes, setting). The hook's `timeout` in the plugin
+   config is set just above the window.
+2. Eavesy's small model reads `last_assistant_message` and the prompt that
+   started the turn, then produces two things: a one-sentence summary of
+   what Claude needs, and a **suggested reply**.
+3. When it's that session's turn in the queue, Eavesy says: "*eavesy-public*
+   wants to know whether to ship the HUD fix behind a flag. I'd say: no flag,
+   ship it, and open a PR. Send that?"
+4. You say "send it", change it out loud ("no, put it behind a flag"; it
+   redrafts and reads back), or say "later". Nothing is sent without your
+   go-ahead, the same confirm rule as clarify. Silence never sends.
+5. Your go-ahead releases the held hook with `decision: block` and your
+   reply. Claude continues right where it stopped.
+6. If the window runs out, the hook exits normally and the session simply
+   ends its turn. Your reply can still go later, through focus-and-paste
+   (desktop) or the channel (CLI).
+
+Rules and caveats:
+
+- Eavesy only ever blocks with a reply you confirmed. It never blocks to
+  keep Claude going by itself, so there's no loop to guard against.
+- While a hook holds, the session looks like it's still working in Claude's
+  UI. Twenty held hooks are twenty sleeping processes, which is cheap.
+- The reply reaches Claude as Stop-hook feedback, not as a typed user
+  message. Claude acted on it in the spike. How the desktop transcript shows
+  it is a spike item.
+- **Tool approvals don't go through this.** A permission prompt is a
+  `Notification`, not a Stop. Eavesy tells you what's being asked and can
+  suggest allow or deny, but you still click (decision 4).
+
+### 3c. Many sessions at once
+
+Every waiting session is one item in the attention queue, and the queue
+does the talking:
+
+- **Order:** needs an approval, then asked a question, then finished. Oldest
+  first within each group.
+- **One voice at a time.** Eavesy never speaks while you're talking or
+  dictating, and it waits for a pause before starting the next item.
+- **A digest first when several are waiting:** "Three sessions need you:
+  *eavesy-public*, *repackify*, *docs*. First, *eavesy-public*: …". Finished
+  sessions that need nothing are grouped: "Two finished: the lint fix and the
+  docs PR."
+- **Names:** the project folder plus the session title (desktop) or branch
+  (CLI), shortened to something speakable. Two sessions in the same project
+  get the branch added.
+- **Voice commands:** "next", "skip", "later", "repeat", "what's waiting?",
+  and "reply to *repackify*: …" to jump straight to one session.
+- The HUD shows the same list, so you can click instead of talking.
+
+### 3d. "Hey Eavesy" (hands-free)
+
+- **Opt-in.** A small on-device wake-word model listens to the mic. Audio
+  before the wake word is never stored, transcribed or sent anywhere. While
+  it's on, macOS shows the mic indicator all the time. The setting says so.
+- After "Hey Eavesy", the HUD opens listening. You stop by pausing, or by
+  saying "send it". Then it's the normal flow: dictation to the session you
+  name or the one at the front of the queue, and the voice commands above.
+- **A false trigger costs nothing.** Nothing is sent without your confirm.
+- Pauses while the screen is locked, during meeting recordings, and when you
+  turn it off from the menubar.
+- **Engine options:** Apple's Sound Analysis with a Create ML classifier
+  trained on "Hey Eavesy", openWakeWord (open source), or Picovoice Porcupine
+  (custom words, commercial licence). Pick by the spike's false-trigger rate
+  and battery cost.
+- It depends on Eavesy hearing its own name. Recognition of "Eavesy" in
+  dictation is being fixed separately.
 
 ### 4. Summarize and clarify (the small model)
 
@@ -137,9 +230,13 @@ One small, fast model call with one prompt each:
     Cancel. Silence never sends. An auto-send countdown may come later as a
     setting, off by default.
   - Hold a modifier to skip clarify for one send.
-- **Model:** Claude Haiku-class by default. Where the call runs and who pays
-  is decision 2 below. Whatever runs it, this sends text to a model provider,
-  so it's off until you turn it on, and Settings names the provider (rule 8).
+- **Suggest a reply:** a stopped turn's final message plus the prompt that
+  started it → a summary of what Claude needs and a suggested reply (piece
+  3b).
+- **Model:** Claude Haiku-class, run through Eavesy's cloud for signed-in
+  users (decided 2026-10-23), with a per-user daily cap. No key to set up.
+  It still sends text to a model provider, so it's off until you turn it on,
+  and Settings names the provider (rule 8).
 
 ### 5. A channel for the CLI (better delivery)
 
@@ -179,6 +276,32 @@ real work to the agent session as a tool call.
 
 Step 6 waits until steps 1 to 4 prove people want to talk with agents at all.
 
+## Several Claude accounts and several Macs
+
+William switches between Claude accounts when one runs out of usage, with a
+different account on the laptop than on the desktop, and has two ChatGPT
+accounts used the same way.
+
+- **Switching Claude accounts doesn't matter.** Hooks, the plugin and
+  `eavesy mcp` live in the Mac's Claude Code config (`~/.claude/…`), not in
+  the Claude account. Signing in as another account on the same Mac keeps
+  them. The exception is a separate config folder per account
+  (`CLAUDE_CONFIG_DIR`): then `eavesy hooks install` has to run once for each
+  folder, and it should find and offer every folder it sees.
+- **The Eavesy account is separate.** The summarize and suggest model runs
+  on Eavesy's cloud under your Eavesy sign-in, so Claude usage limits never
+  touch it.
+- **Each Mac speaks for its own sessions.** Hooks fire on the Mac where the
+  session runs. Hearing about your laptop's sessions while you're at the
+  desktop needs the Mac link (architecture step 7). Until then, each Mac
+  handles its own queue.
+- **Usage limits become one more thing to say:** "*repackify* stopped because
+  this Claude account is out of usage." Whether a limit stop fires the Stop
+  hook, and what the message looks like, is a spike item.
+- **ChatGPT:** the remote MCP connection and the instruction snippet are per
+  ChatGPT account, so you set up each account once. The Eavesy side doesn't
+  care which ChatGPT account calls it.
+
 ## Safety
 
 - **No approvals by voice in v1.** Tool permissions, grants and stops still
@@ -204,6 +327,8 @@ Step 6 waits until steps 1 to 4 prove people want to talk with agents at all.
 | You start talking → speech stops | < 100 ms |
 | End of your answer → next clarify question starts (or "ready") | < 1 s |
 | `speak()` call → first audio (on-device voice) | < 150 ms |
+| Your "send it" → held hook released | < 200 ms |
+| "Hey Eavesy" → HUD listening | < 300 ms |
 
 ## Build order
 
@@ -214,37 +339,54 @@ need step 3, and the tools need steps 4 and 5.
 0. **Spikes (throwaway):**
    - Does the desktop Code tab run hooks from `~/.claude/settings.json` and
      load plugins? Does it support channels?
+   - The held Stop hook (piece 3b) in the desktop Code tab: does a block
+     reply continue the session, how does the transcript show it, and how
+     long a hook `timeout` is allowed? Already passes in the CLI.
+   - Wake word: false triggers per hour of normal talk and music, and
+     battery cost, for each engine in piece 3d.
    - Do Claude Desktop chat and ChatGPT reliably call `send_to_human` when
      told to in a project or custom instruction? Run 20 tasks on each. Step 3
      goes ahead for a client that calls it in at least 17 of 20. Below that,
      the client gets hooks or paste only.
    - Measure `AVSpeechSynthesizer` latency and quality with Premium voices
      on macOS 26.
-1. **Speak:** sidecar TTS, barge-in, mutes, the attention queue reading cards
-   aloud. Depends on architecture step 1.
-2. **Claude Code hooks to speech:** `Stop` and `Notification`, summarizing in
-   the app. Covers the CLI, and the Code tab if the spike says yes.
-3. **Voice on `send_to_human` / `ask_human`, plus the instruction snippets.**
+1. **Speak and the queue:** sidecar TTS, barge-in, mutes, the attention queue
+   reading cards aloud in order, with the digest and names (piece 3c).
+   Depends on architecture step 1.
+2. **Reply for me, in Claude Code:** the hooks, the cloud summarize and
+   suggest call, and the held Stop hook (pieces 3 and 3b). Covers the CLI, and
+   the Code tab if the spike says yes. **This is the first thing William
+   will notice.**
+3. **"Hey Eavesy"** (piece 3d) and the voice commands.
+4. **Voice on `send_to_human` / `ask_human`, plus the instruction snippets.**
    This is what brings in desktop chat and ChatGPT.
-4. **Clarify mode.**
-5. **CLI channel delivery.**
-6. **Full-duplex engine**, if steps 1 to 4 get real use.
+5. **Clarify mode.**
+6. **CLI channel delivery.**
+7. **Full-duplex engine**, if steps 1 to 5 get real use.
 
-## Decisions needed from William
+## Decisions
 
-1. **Where to start:** the Claude Code engine (Code tab + CLI), with desktop
-   chat through MCP tools (recommended), or desktop chat first?
-2. **Who runs the summarize/clarify model:** your own Anthropic API key in
-   Settings (simplest, private, you pay per use), or through Eavesy's cloud
-   (works signed-in with no key, we pay, needs a usage cap)?
-3. **Is a talking clarifier OK under "no chat UI of our own"?** It's narrow by
+Made by William on 2026-10-23:
+
+- **Start with the Claude Code engine**, in both the desktop Code tab and the
+  CLI. Desktop chat comes through the MCP tools after.
+- **Eavesy's cloud runs the small model.** No API key for the user to set up.
+- **Reply for me, many sessions and "Hey Eavesy" are in scope** (goals 5
+  to 7).
+
+Still open:
+
+1. **Is a talking clarifier OK under "no chat UI of our own"?** It's narrow by
    design: at most two questions, then it hands off, and the real conversation
    stays in your agent. I think that keeps within the rule. If you disagree,
-   drop step 4.
-4. **Voice approvals, ever?** If yes, only for tools you mark low-risk, and
+   drop step 5.
+2. **Voice approvals for tool calls, ever?** Replies by voice are in. Tool
+   approvals aren't yet: if they come, only for tools you mark low-risk, and
    only after Eavesy reads back exactly what will run and you confirm.
-5. **Default for speaking replies:** on when you're away from the target app
+3. **Default for speaking:** on when you're away from the target app
    (recommended), always, or only on request?
+4. **Hold window for reply-for-me:** 5 minutes by default (recommended), or
+   longer? A longer hold keeps more sessions looking busy in Claude's UI.
 
 ## Sources
 
