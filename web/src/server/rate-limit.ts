@@ -67,6 +67,7 @@ const SPEND_SCOPES = {
   process: 'transcription',
   translation: 'transcription',
   'agent-reply': 'reply suggestion',
+  assistant: 'assistant',
 } as const;
 
 export type SpendScope = keyof typeof SPEND_SCOPES;

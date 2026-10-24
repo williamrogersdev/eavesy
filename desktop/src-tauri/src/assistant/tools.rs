@@ -1,0 +1,187 @@
+//! The tools Eavesy's conversation can call (web/src/server/assistant.ts lists the
+//! same names for the model). Each one's tier is fixed here, every call goes through
+//! `submit`, and a name not listed here is refused.
+
+use serde::Deserialize;
+use tauri::AppHandle;
+
+use super::cards::Row;
+use super::policy::{Check, Facts, Requester, Tier};
+use super::{Action, Ran, Submitted};
+
+/// Longest tool result handed back to the model.
+const RESULT_CHARS: usize = 11_000;
+
+fn facts(tier: Tier, items: usize) -> Facts {
+    Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items }
+}
+
+/// What the model gets back: a line it can say, and whether it was an error.
+pub struct ToolResult {
+    pub content: String,
+    pub is_error: bool,
+}
+
+/// What the tool would do, built from the model's input; `Err` is a refusal in plain words.
+pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you: &[String]) -> Result<Box<dyn Action>, String> {
+    match name {
+        "machine_overview" => Ok(Box::new(MachineOverview)),
+        "agent_sessions" => Ok(Box::new(AgentSessions)),
+        "open_link" => {
+            #[derive(Deserialize)]
+            struct Input {
+                url: String,
+            }
+            let Input { url } = serde_json::from_value(input.clone()).map_err(|_| "open_link needs a url.".to_string())?;
+            let url = url.trim().to_string();
+            if !is_web_link(&url) {
+                return Err("Eavesy only opens https links.".into());
+            }
+            // A link the model found in a tool result or a page isn't yours to open (assistant.md tier 1).
+            let bare = url.trim_start_matches("https://").trim_end_matches('/');
+            if !said_by_you.iter().any(|text| text.contains(&url) || text.contains(bare)) {
+                return Err("Eavesy only opens a link you typed or said in this conversation.".into());
+            }
+            Ok(Box::new(OpenLink { app: app.clone(), url }))
+        }
+        "clean_machine" => {
+            #[derive(Deserialize)]
+            struct Input {
+                #[serde(default)]
+                worktrees: Vec<String>,
+                #[serde(default)]
+                processes: Vec<crate::machine::ProcessRef>,
+            }
+            let Input { worktrees, processes } = serde_json::from_value(input.clone()).map_err(|_| "clean_machine needs worktrees and processes.".to_string())?;
+            if worktrees.is_empty() && processes.is_empty() {
+                return Err("There's nothing in that request to clean up.".into());
+            }
+            Ok(Box::new(crate::machine::Clean { worktrees, processes }))
+        }
+        _ => Err(format!("Eavesy has no tool called {name}.")),
+    }
+}
+
+fn is_web_link(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    host.contains('.') && !host.starts_with('.') && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Runs one tool call for the conversation: builds it, checks tier 2 and 3 actions
+/// against your words (C7), and submits it. Blocking.
+pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &Requester, said_by_you: &[String], request: &str) -> ToolResult {
+    let action = match build(app, name, input, said_by_you) {
+        Ok(action) => action,
+        Err(reason) => {
+            super::log(&requester.label(), name, "not built", "refused", Some(reason.clone()));
+            return ToolResult { content: reason, is_error: true };
+        }
+    };
+    let check = match action.facts().tier {
+        Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
+        _ => Check::NotRun,
+    };
+    match super::submit(app, action, requester, &check) {
+        Submitted::Ran { ran } => ToolResult { content: clip(&ran.detail_for_model()), is_error: false },
+        Submitted::Card { card } => ToolResult {
+            content: format!("A card is waiting for the user: \"{}\" ({} rows). They decide there; don't call this again.", card.title, card.rows.len()),
+            is_error: false,
+        },
+        Submitted::Refused { reason } => ToolResult { content: reason, is_error: true },
+    }
+}
+
+impl Ran {
+    /// The summary, and the tool's own result when it has one.
+    fn detail_for_model(&self) -> String {
+        match &self.detail {
+            serde_json::Value::Null => self.summary.clone(),
+            detail => format!("{}\n{}", self.summary, detail),
+        }
+    }
+}
+
+fn clip(text: &str) -> String {
+    match text.char_indices().nth(RESULT_CHARS) {
+        Some((cut, _)) => format!("{}… (cut)", &text[..cut]),
+        None => text.to_string(),
+    }
+}
+
+struct MachineOverview;
+
+impl Action for MachineOverview {
+    fn tool(&self) -> &'static str { "machine.overview" }
+    fn facts(&self) -> Facts { facts(Tier::Look, 0) }
+    fn title(&self) -> String { "Look at what agent sessions left on this Mac".into() }
+    fn rows(&self) -> Vec<Row> { Vec::new() }
+    fn run(&self, _: &[String]) -> Ran {
+        let inventory = crate::machine::inventory();
+        Ran {
+            summary: format!("{} stale worktrees, {} leftover processes", inventory.stale_worktrees(), inventory.leftovers.len()),
+            detail: serde_json::to_value(&inventory).unwrap_or_default(),
+        }
+    }
+}
+
+struct AgentSessions;
+
+impl Action for AgentSessions {
+    fn tool(&self) -> &'static str { "agents.sessions" }
+    fn facts(&self) -> Facts { facts(Tier::Look, 0) }
+    fn title(&self) -> String { "Look at your agent sessions".into() }
+    fn rows(&self) -> Vec<Row> { Vec::new() }
+    fn run(&self, _: &[String]) -> Ran {
+        let sessions = crate::agents::overview();
+        Ran { summary: format!("{} sessions", sessions.len()), detail: serde_json::Value::Array(sessions) }
+    }
+}
+
+struct OpenLink {
+    app: AppHandle,
+    url: String,
+}
+
+impl Action for OpenLink {
+    fn tool(&self) -> &'static str { "open.link" }
+    fn facts(&self) -> Facts { facts(Tier::Do, 1) }
+    fn title(&self) -> String { format!("Open {}", self.url) }
+    fn rows(&self) -> Vec<Row> { vec![Row { id: "link".into(), label: self.url.clone() }] }
+    // Shell::open is deprecated in favour of tauri-plugin-opener, as in commands.rs.
+    #[allow(deprecated)]
+    fn run(&self, rows: &[String]) -> Ran {
+        use tauri_plugin_shell::ShellExt;
+        if rows.is_empty() {
+            return Ran { summary: "Nothing opened".into(), detail: serde_json::Value::Null };
+        }
+        let summary = match self.app.shell().open(&self.url, None) {
+            Ok(()) => "Opened it in your browser".to_string(),
+            Err(error) => format!("Couldn't open it: {error}"),
+        };
+        Ran { summary, detail: serde_json::Value::Null }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_plain_https_links() {
+        assert!(is_web_link("https://posthog.com/docs"));
+        assert!(!is_web_link("http://posthog.com"));
+        assert!(!is_web_link("file:///etc/passwd"));
+        assert!(!is_web_link("https://"));
+        assert!(!is_web_link("https:///x"));
+        assert!(!is_web_link("https://a.com/\nx"));
+    }
+
+    #[test]
+    fn long_results_are_cut_on_a_character() {
+        let long = "é".repeat(RESULT_CHARS + 5);
+        let cut = clip(&long);
+        assert!(cut.ends_with("… (cut)"));
+        assert_eq!(cut.chars().count(), RESULT_CHARS + "… (cut)".chars().count());
+    }
+}

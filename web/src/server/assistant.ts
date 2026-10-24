@@ -130,7 +130,7 @@ export async function runTurn(client: AssistantClient, input: TurnInput): Promis
     max_tokens: REPLY_TOKENS,
     system: ASSISTANT_SYSTEM_PROMPT,
     tools: ASSISTANT_TOOLS,
-    messages: input.messages as Anthropic.MessageParam[],
+    messages: input.messages,
   });
   // Metadata only: never log the conversation.
   if (message.stop_reason === 'max_tokens') console.warn(JSON.stringify({ message: 'assistant turn hit max_tokens' }));

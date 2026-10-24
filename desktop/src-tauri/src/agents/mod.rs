@@ -266,6 +266,18 @@ pub struct Snapshot {
     items: Vec<queue::Item>,
 }
 
+/// The sessions for the assistant's `agent_sessions` tool: name, Eavesy's summary and
+/// whether it waits on you. Never Claude's own words, which can carry instructions.
+pub fn overview() -> Vec<serde_json::Value> {
+    with_queue(|queue| {
+        queue
+            .ordered()
+            .into_iter()
+            .map(|item| serde_json::json!({ "session": item.name, "summary": item.summary, "waiting_on_you": item.held }))
+            .collect()
+    })
+}
+
 fn snapshot() -> Snapshot {
     Snapshot { items: with_queue(|queue| queue.ordered().into_iter().cloned().collect()) }
 }

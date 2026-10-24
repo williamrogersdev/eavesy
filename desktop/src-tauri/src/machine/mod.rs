@@ -219,6 +219,17 @@ fn gather() -> (Vec<Proc>, Inventory) {
     (procs, Inventory { repos, worktrees, leftovers, zombies, ports })
 }
 
+/// The inventory, for the assistant's `machine_overview` tool. Blocking.
+pub fn inventory() -> Inventory {
+    gather().1
+}
+
+impl Inventory {
+    pub fn stale_worktrees(&self) -> usize {
+        self.worktrees.iter().filter(|row| row.status == Status::Stale).count()
+    }
+}
+
 #[tauri::command]
 pub async fn machine_inventory() -> Result<Inventory, String> {
     tauri::async_runtime::spawn_blocking(|| gather().1).await.map_err(|error| error.to_string())
