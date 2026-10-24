@@ -64,8 +64,11 @@ pub struct VoiceInfo {
 static VOICES: Mutex<Option<Vec<VoiceInfo>>> = Mutex::new(None);
 
 pub fn voices() -> Vec<VoiceInfo> {
-    let mut voices = VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    voices.get_or_insert_with(list_voices).clone()
+    if let Some(voices) = VOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref() {
+        return voices.clone();
+    }
+    // Listed without the lock held, so nothing else waits on `say`.
+    refresh_voices()
 }
 
 pub fn refresh_voices() -> Vec<VoiceInfo> {
@@ -119,6 +122,8 @@ pub fn say(text: &str) {
         return;
     }
     let voice = CHOSEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_default();
+    // A voice removed since the list was read is still safe to pass: `say` falls
+    // back to the system voice for a name it doesn't know.
     let args = voice_args(&voice);
     let mut playing = PLAYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     stop_locked(&mut playing);

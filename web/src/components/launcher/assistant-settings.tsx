@@ -104,29 +104,30 @@ export function AssistantSettings({ active, settings, onSettings }: {
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change how Eavesy talks.')));
   };
 
+  // What you picked last, shown at once; settings catch up when the save lands.
+  const [picked, setPicked] = useState<{ name: string; rate: Rate } | null>(null);
   const saved = settings?.assistant_voice ?? SYSTEM_VOICE;
-  // A saved voice this Mac no longer has isn't used: show what will be.
-  const voiceName = voices && !voices.some((voice) => voice.name === saved) ? SYSTEM_VOICE : saved;
   const savedRate = settings?.assistant_voice_rate;
-  const rate: Rate = savedRate === undefined ? 'default' : String(savedRate);
+  // A saved voice this Mac no longer has isn't used: show what will be.
+  const voiceName = picked?.name ?? (voices && !voices.some((voice) => voice.name === saved) ? SYSTEM_VOICE : saved);
+  const rate: Rate = picked?.rate ?? (savedRate === undefined ? 'default' : String(savedRate));
   // A speed set some other way shows as itself rather than as Normal.
   const rateOptions = RATES.some((option) => option.value === rate) ? RATES : [...RATES, { value: rate, label: `${rate} words a minute` }];
-  // The newest choice of both, so a quick voice change then speed change never sends a stale half.
-  const pendingVoice = useRef<{ name: string; rate: Rate } | null>(null);
+  // Saves run one after another, so an older one can never land last.
+  const saving = useRef<Promise<void>>(Promise.resolve());
   const voiceOptions = useMemo(() => [
     { value: SYSTEM_VOICE, label: 'System voice' },
     ...sortVoices(voices ?? [], typeof navigator === 'undefined' ? 'en' : navigator.language)
       .map((voice) => ({ value: voice.name, label: `${voice.name} (${voice.locale.replace('_', '-')})` })),
   ], [voices]);
   const changeVoice = (patch: { name?: string; rate?: Rate }) => {
-    const { name, rate: nextRate } = { ...(pendingVoice.current ?? { name: voiceName, rate }), ...patch };
-    pendingVoice.current = { name, rate: nextRate };
+    const next = { name: voiceName, rate, ...patch };
+    setPicked(next);
     setError(null);
-    const rateValue = nextRate === 'default' ? null : Number(nextRate);
-    void setAssistantVoice(name || null, rateValue)
-      .then(() => onSettings((current) => ({ ...current, assistant_voice: name || undefined, assistant_voice_rate: rateValue ?? undefined })))
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change the voice.')))
-      .finally(() => { if (pendingVoice.current?.name === name && pendingVoice.current.rate === nextRate) pendingVoice.current = null; });
+    const rateValue = next.rate === 'default' ? null : Number(next.rate);
+    saving.current = saving.current.then(() => setAssistantVoice(next.name || null, rateValue)
+      .then(() => onSettings((current) => ({ ...current, assistant_voice: next.name || undefined, assistant_voice_rate: rateValue ?? undefined })))
+      .catch((e: unknown) => { setPicked(null); setError(errMsg(e, 'Couldn’t change the voice.')); }));
   };
 
   const chooseMode = (choice: ModeChoice) => {
