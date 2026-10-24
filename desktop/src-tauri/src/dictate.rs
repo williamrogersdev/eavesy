@@ -170,7 +170,7 @@ pub fn toggle(app: &AppHandle) {
 }
 
 /// Talk to Eavesy as a toggle (fn tap).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(target_os = "macos")]
 pub fn toggle_talk(app: &AppHandle) {
     pressed(app, false, true);
 }

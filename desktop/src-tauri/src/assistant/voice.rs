@@ -20,6 +20,8 @@ pub const MODE: &str = "assistant";
 const SPOKEN_CHARS: usize = 220;
 /// How long the answer stays on the pill once Eavesy has finished saying it.
 const ANSWER_STAYS: Duration = Duration::from_secs(8);
+/// Far longer than any spoken line takes: past it, speech is stopped and Esc given back.
+const LONGEST_SPEECH: Duration = Duration::from_secs(120);
 
 /// The next recording to open is for Eavesy (set between the key press and the mic opening).
 static STARTING: AtomicBool = AtomicBool::new(false);
@@ -75,11 +77,20 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
         notice: None,
     };
     hud::advance_from(app, session_id, &[Phase::Recording, Phase::Transcribing], thinking);
-    let answer = match super::thread::send(app, text.to_string(), true) {
-        Ok(()) => super::thread::last_reply(app),
-        Err(error) => Some((None, error)),
-    };
-    let Some((turn, reply)) = answer else {
+    if let Err(error) = super::thread::send(app, text.to_string(), true) {
+        // Not an answer: your words weren't sent, and the pill says so in its own voice.
+        let failed = HudState {
+            phase: Phase::Failed,
+            session_id: Some(session_id.to_string()),
+            mode: None,
+            started_at_ms: None,
+            message: Some(format!("{error} What you said wasn't sent.")),
+            notice: None,
+        };
+        hud::advance_from(app, session_id, &[Phase::Recording, Phase::Transcribing], failed);
+        return;
+    }
+    let Some((turn, reply)) = super::thread::last_reply(app) else {
         hud::advance_from(app, session_id, &[Phase::Transcribing], HudState { session_id: Some(session_id.to_string()), ..HudState::idle() });
         return;
     };
@@ -97,7 +108,7 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
     if super::waiting_cards(app) > 0 {
         crate::hotkeys::show_launcher_and_emit(app, Some(super::EVENT_SHOW));
     }
-    let said = say(app, turn, &reply);
+    let said = say(app, Some(turn), &reply).is_ok();
     if on_pill {
         let app = app.clone();
         let session_id = session_id.to_string();
@@ -113,21 +124,21 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
 }
 
 /// Says the start of `reply` out loud, unless you're dictating or recording (B5).
-/// Returns whether it's speaking.
-pub fn say(app: &AppHandle, turn: Option<usize>, reply: &str) -> bool {
+/// `Err` says why it didn't.
+pub fn say(app: &AppHandle, turn: Option<u64>, reply: &str) -> Result<(), String> {
     if hud::current().is_live() {
-        return false;
+        return Err("Eavesy doesn't talk while you're recording.".into());
     }
     let line = spoken_line(reply);
     if line.is_empty() {
-        return false;
+        return Err("There's nothing to say.".into());
     }
     crate::agents::speak::say(&line);
     if let Some(turn) = turn {
         super::thread::mark_spoken(app, turn);
     }
     hold_esc(app);
-    true
+    Ok(())
 }
 
 /// Stops Eavesy mid-sentence.
@@ -144,8 +155,7 @@ pub fn hud_assistant(app: AppHandle, window: WebviewWindow, action: String) -> R
     }
     match action.as_str() {
         "repeat" => match super::thread::last_reply(&app) {
-            Some((turn, reply)) if say(&app, turn, &reply) => Ok(()),
-            Some(_) => Err("Eavesy doesn't talk while you're recording.".into()),
+            Some((turn, reply)) => say(&app, Some(turn), &reply),
             None => Err("There's nothing to repeat.".into()),
         },
         "open" => {
@@ -156,8 +166,14 @@ pub fn hud_assistant(app: AppHandle, window: WebviewWindow, action: String) -> R
     }
 }
 
+/// Waits for Eavesy to finish talking, stopping it should it ever run on.
 fn wait_until_quiet() {
+    let deadline = std::time::Instant::now() + LONGEST_SPEECH;
     while crate::agents::speak::status().0 {
+        if std::time::Instant::now() > deadline {
+            crate::agents::speak::stop();
+            return;
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -170,6 +186,8 @@ fn escape() -> Shortcut {
 fn hold_esc(app: &AppHandle) {
     let shortcut = escape();
     // A screen recording's marking tools may already have Esc; never take it from them.
+    // They only take it during a screen recording, when Eavesy doesn't talk (B5), so
+    // the check and the register below can't race with them.
     if HOLDS_ESC.load(Ordering::SeqCst) || app.global_shortcut().is_registered(shortcut) {
         return;
     }
@@ -196,41 +214,62 @@ fn release_esc(app: &AppHandle) {
 }
 
 /// One or two sentences of `reply`, at most `SPOKEN_CHARS`, saying when there's more
-/// on screen (B4). Lists, paths and code are left to the screen.
+/// on screen (B4). Lists, code, paths and links are left to the screen: a sentence
+/// with any of them isn't said.
 fn spoken_line(reply: &str) -> String {
-    let prose: String = reply
+    let prose = reply
         .lines()
         .map(str::trim)
         .take_while(|line| !line.starts_with("```"))
         .filter(|line| !line.is_empty() && !line.starts_with(['-', '*', '#', '|', '>']) && !line.starts_with(|c: char| c.is_ascii_digit()))
         .collect::<Vec<_>>()
         .join(" ");
+    let sentences = sentences(&prose);
+    let sayable: Vec<&str> = sentences.iter().copied().filter(|sentence| !has_code_or_path(sentence)).collect();
     let mut said = String::new();
-    let mut sentences = 0;
-    for (i, c) in prose.char_indices() {
-        said.push(c);
-        let ends = matches!(c, '.' | '!' | '?') && prose[i + c.len_utf8()..].starts_with(char::is_whitespace);
-        if ends {
-            sentences += 1;
-            if sentences == 2 {
-                break;
+    for sentence in sayable.iter().take(2) {
+        let next = if said.is_empty() { sentence.to_string() } else { format!("{said} {sentence}") };
+        if next.chars().count() > SPOKEN_CHARS {
+            if said.is_empty() {
+                // One long sentence: cut it at a word.
+                let cut: String = sentence.chars().take(SPOKEN_CHARS).collect();
+                said = format!("{}…", cut.rfind(' ').map_or(cut.as_str(), |space| &cut[..space]));
             }
-        }
-        if said.chars().count() >= SPOKEN_CHARS {
-            // Cut at a word, not mid-word.
-            if let Some(space) = said.rfind(' ') {
-                said.truncate(space);
-            }
-            said.push('…');
             break;
         }
+        said = next;
     }
-    let said = said.trim().to_string();
     if said.is_empty() {
         return if reply.trim().is_empty() { String::new() } else { "It's on screen.".into() };
     }
-    let rest = reply.trim().len() > said.trim_end_matches('…').len() + 2;
-    if rest { format!("{said} The rest is on screen.") } else { said }
+    let all_of_it = said == reply.trim();
+    if all_of_it { said } else { format!("{said} The rest is on screen.") }
+}
+
+/// `text` split after each `.`, `!` or `?` that ends a sentence.
+fn sentences(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        let end = i + c.len_utf8();
+        if matches!(c, '.' | '!' | '?') && text[end..].starts_with(char::is_whitespace) {
+            out.push(text[start..end].trim());
+            start = end;
+        }
+    }
+    let rest = text[start..].trim();
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
+}
+
+fn has_code_or_path(sentence: &str) -> bool {
+    sentence.contains('`')
+        || sentence.split_whitespace().any(|word| {
+            let word = word.trim_start_matches(['(', '"', '\'']);
+            word.contains("://") || word.starts_with(['/', '~']) || word.contains("/.") || word.matches('/').count() >= 2
+        })
 }
 
 #[cfg(test)]
@@ -250,6 +289,12 @@ mod tests {
         assert_eq!(spoken_line(reply), "Here's what's left: The rest is on screen.");
         assert_eq!(spoken_line("- just a list"), "It's on screen.");
         assert_eq!(spoken_line("  "), "");
+    }
+
+    #[test]
+    fn code_paths_and_links_are_left_to_the_screen() {
+        let reply = "Run `bun test` in ~/Developer/eavesy or see https://eavesy.com/docs. It's quick.";
+        assert_eq!(spoken_line(reply), "It's quick. The rest is on screen.");
     }
 
     #[test]
