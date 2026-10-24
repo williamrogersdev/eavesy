@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppDb } from '@/db/client';
 import { meetings, meetingSegments, recordingImports } from '@/db/schema';
@@ -6,6 +6,14 @@ import { pid } from '@/db/ids';
 import { MAX_IMPORT_BYTES, MAX_IMPORT_SECONDS, SAMPLE_RATE, SEGMENT_SECONDS, wavDurationMs } from '@/lib/imports/wav';
 import type { ProcessingEnv } from '@/server/processing-worker';
 import type { QueueMessage } from '@/server/queue';
+
+type ImportState = (typeof recordingImports.$inferSelect)['state'];
+const CANCELLED: ImportState[] = ['cancelled', 'freeing'];
+
+/** An import whose audio is being freed is still a cancelled import to the user; resuming it waits for the sweep. */
+export function shownImportState(state: ImportState): ImportState {
+  return state === 'freeing' ? 'cancelled' : state;
+}
 
 const createSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/), title: z.string().trim().min(1).max(200),
@@ -23,7 +31,7 @@ export async function createImport(db: AppDb, userId: string, input: unknown) {
     .where(and(eq(recordingImports.userId, userId), eq(recordingImports.fingerprint, args.fingerprint))).limit(1))[0];
   if (existing) {
     if (existing.meetings.deletedAt) return json('This file was deleted. Restore its meeting before importing again.', 409);
-    return Response.json({ meetingId: existing.meetings.id, status: existing.meetings.status, state: existing.recording_imports.state, duplicate: true });
+    return Response.json({ meetingId: existing.meetings.id, status: existing.meetings.status, state: shownImportState(existing.recording_imports.state), duplicate: true });
   }
   const id = pid('meet');
   const now = Date.now();
@@ -35,7 +43,7 @@ export async function createImport(db: AppDb, userId: string, input: unknown) {
     ]);
   } catch (error) {
     const winner = (await db.select().from(recordingImports).where(and(eq(recordingImports.userId, userId), eq(recordingImports.fingerprint, args.fingerprint))).limit(1))[0];
-    if (winner) return Response.json({ meetingId: winner.meetingId, state: winner.state, duplicate: true });
+    if (winner) return Response.json({ meetingId: winner.meetingId, state: shownImportState(winner.state), duplicate: true });
     throw error;
   }
   return Response.json({ meetingId: id, state: 'uploading', duplicate: false }, { status: 201 });
@@ -51,26 +59,36 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
   const meeting = record.meetings;
   const segments = await db.select().from(meetingSegments).where(eq(meetingSegments.meetingId, id)).orderBy(meetingSegments.idx);
   if (request.method === 'GET' && !action) return Response.json({
-    meetingId: id, state: job.state, status: meeting.status, error: meeting.statusError,
+    meetingId: id, state: shownImportState(job.state), status: meeting.status, error: meeting.statusError,
     uploaded: segments.map(s => s.idx), complete: segments.filter(s => s.transcribeStatus === 'complete').length,
     failed: segments.filter(s => s.transcribeStatus === 'failed').length, total: job.segmentCount,
   });
   if (request.method === 'DELETE' && !action) {
     if (meeting.status === 'complete') return json('Import already completed', 409);
+    // Already cancelled: touch nothing, so the sweep's claim and its week's
+    // clock (meetings.updated_at) stay as they are.
+    if (CANCELLED.includes(job.state)) return Response.json({ ok: true });
     await db.batch([
-      db.update(recordingImports).set({ state: 'cancelled' }).where(eq(recordingImports.meetingId, id)),
-      db.update(meetings).set({ status: 'failed', statusError: 'Import cancelled', updatedAt: Date.now() }).where(eq(meetings.id, id)),
+      db.update(recordingImports).set({ state: 'cancelled' }).where(and(eq(recordingImports.meetingId, id), notInArray(recordingImports.state, CANCELLED))),
+      db.update(meetings).set({ status: 'failed', statusError: 'Import cancelled', updatedAt: Date.now() })
+        .where(and(eq(meetings.id, id), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'cancelled')`)),
     ]);
     return Response.json({ ok: true });
   }
-  if (request.method === 'POST' && action === 'resume' && job.state === 'cancelled') {
-    await db.batch([
-      db.update(recordingImports).set({ state: 'uploading' }).where(eq(recordingImports.meetingId, id)),
-      db.update(meetings).set({ status: 'uploading', statusError: null, updatedAt: Date.now() }).where(eq(meetings.id, id)),
+  if (request.method === 'POST' && action === 'resume' && CANCELLED.includes(job.state)) {
+    // Only a 'cancelled' import resumes, checked in the write itself: the
+    // sweep may have claimed it since it was read.
+    const [resumed] = await db.batch([
+      db.update(recordingImports).set({ state: 'uploading' })
+        .where(and(eq(recordingImports.meetingId, id), eq(recordingImports.state, 'cancelled')))
+        .returning({ id: recordingImports.meetingId }),
+      db.update(meetings).set({ status: 'uploading', statusError: null, updatedAt: Date.now() })
+        .where(and(eq(meetings.id, id), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'uploading')`)),
     ]);
+    if (!resumed.length) return json('This import’s old upload is still being cleared. Try again later.', 409);
     return Response.json({ ok: true });
   }
-  if (job.state === 'cancelled') return json('Import cancelled. Select the file again to resume.', 409);
+  if (CANCELLED.includes(job.state)) return json('Import cancelled. Select the file again to resume.', 409);
   if (request.method === 'PUT' && action === 'segments') {
     if (job.state !== 'uploading') return json('Upload already finalized', 409);
     const idx = Number(indexText);
@@ -110,7 +128,7 @@ export async function importRequest(db: AppDb, env: ProcessingEnv, userId: strin
     if (segments.length !== job.segmentCount || segments.some((s, i) => s.idx !== i) || !meeting.audioR2Key) return json('Upload all segments and the original audio first', 409);
     if (action === 'retry') await db.update(meetingSegments).set({ transcribeStatus: 'pending' }).where(and(eq(meetingSegments.meetingId, id), eq(meetingSegments.transcribeStatus, 'failed')));
     await db.batch([
-      db.update(recordingImports).set({ state: 'processing' }).where(and(eq(recordingImports.meetingId, id), ne(recordingImports.state, 'cancelled'))),
+      db.update(recordingImports).set({ state: 'processing' }).where(and(eq(recordingImports.meetingId, id), notInArray(recordingImports.state, CANCELLED))),
       db.update(meetings).set({ status: 'processing', statusError: null, durationSec: Math.round(job.durationMs / 1000), audioDurationSec: Math.round(job.durationMs / 1000), endedAt: Date.now(), updatedAt: Date.now() }).where(and(eq(meetings.id, id), isNull(meetings.deletedAt), sql`EXISTS (SELECT 1 FROM recording_imports WHERE meeting_id = ${id} AND state = 'processing')`)),
     ]);
     const active = (await db.select().from(recordingImports).where(eq(recordingImports.meetingId, id)).limit(1))[0];

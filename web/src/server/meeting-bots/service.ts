@@ -9,7 +9,7 @@ import * as projectsRepo from '@/db/repo/projects';
 import type { AppDb } from '@/db/client';
 import { type ProcessingEnv, runBatched } from '@/server/processing/shared';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
-import { parseSpeakerNames } from '@/lib/transcription/two-track';
+import { PARTIAL_ATTRIBUTION_KEY, parseSpeakerNames } from '@/lib/transcription/two-track';
 import { type MeetingBotsEnv, type SpeakerSpan, attributeSpeakers, parseSpeakerSpans } from './control';
 
 /**
@@ -24,6 +24,7 @@ export type BotEnv = ProcessingEnv & MeetingBotsEnv;
 /** What the meeting-bot Worker needs to take a bot's reports. */
 export type BotIngestEnv = Pick<ProcessingEnv, 'AUDIO_BUCKET' | 'PROCESSING_QUEUE'>;
 export type MeetingBot = typeof meetingBots.$inferSelect;
+type MeetingStatus = (typeof meetings.$inferSelect)['status'];
 export type BotStatus = MeetingBot['status'];
 export type BotPlatform = MeetingBot['platform'];
 
@@ -42,9 +43,14 @@ export const BOT_STATUS_ORDER: Record<BotStatus, number> = {
   cancelled: 8,
 };
 export const TERMINAL_BOT_STATUSES: BotStatus[] = ['done', 'failed', 'cancelled'];
-const IN_CALL_STATUSES: BotStatus[] = ['joining', 'waiting_room', 'in_call', 'recording', 'call_ended'];
+/**
+ * `in_call` is in the enum for rows from the Recall.ai days; Eavesy's bot goes
+ * straight from the waiting room to `recording` (`statusForCode`), so no live
+ * list names it.
+ */
+const IN_CALL_STATUSES: BotStatus[] = ['joining', 'waiting_room', 'recording', 'call_ended'];
 /** The bot only sends audio once it is in the call; `call_ended` covers its last segments. */
-const SEGMENT_STATUSES: BotStatus[] = ['in_call', 'recording', 'call_ended'];
+const SEGMENT_STATUSES: BotStatus[] = ['recording', 'call_ended'];
 
 /** Bots one account may have scheduled or in calls at once. */
 export const ACTIVE_BOT_LIMIT = 10;
@@ -263,6 +269,7 @@ const FAILURE_TEXT: Record<string, string> = {
   bot_never_reported: 'The notetaker did not start.',
   start_failed: 'The notetaker could not be started. Please try again.',
   lost_track: 'The notetaker stopped reporting before the meeting finished.',
+  provider_retired: 'The notetaker was sent through a service Eavesy no longer uses.',
 };
 
 export function failureText(detail: string | null) {
@@ -337,10 +344,10 @@ export async function applyStatus(db: AppDb, env: Pick<BotIngestEnv, 'PROCESSING
   return status;
 }
 
-async function failMeeting(db: AppDb, meetingId: string, message: string) {
+async function failMeeting(db: AppDb, meetingId: string, message: string, from: MeetingStatus[] = ['recording', 'queued', 'uploading', 'processing']) {
   await db.update(meetings)
     .set({ status: 'failed', statusError: message, updatedAt: Date.now() })
-    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, ['recording', 'queued', 'uploading', 'processing'])));
+    .where(and(eq(meetings.id, meetingId), inArray(meetings.status, from)));
 }
 
 /** Keeps how many names a canary read, never the names: the test meeting's people aren't Eavesy's to store. */
@@ -357,22 +364,34 @@ async function noteCanaryNames(db: AppDb, bot: MeetingBot, speakers: unknown, pa
 
 const speakersKey = (bot: MeetingBot, meetingId: string) => `users/${bot.userId}/meetings/${meetingId}/bot/speakers.json`;
 
-interface Timeline { speakers: SpeakerSpan[]; participants: string[] }
+interface Timeline { speakers: SpeakerSpan[]; participants: string[]; truncated?: boolean }
 
 const participantList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string').slice(0, MAX_PARTICIPANTS) : [];
 
-/** The speaking timeline stored so far; one that can't be read counts as empty. */
-async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise<Timeline> {
+/**
+ * The speaking timeline stored so far, with the etag it was read at (`null`
+ * when nothing is stored yet) so a write can say what it was based on. One
+ * that can't be read counts as empty, but keeps its etag: the write replaces it.
+ */
+async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise<Timeline & { etag: string | null }> {
   const object = await bucket.get(key);
-  if (!object) return { speakers: [], participants: [] };
+  if (!object) return { speakers: [], participants: [], etag: null };
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(await object.arrayBuffer())) as { speakers?: unknown; participants?: unknown } | null;
-    return { speakers: parseSpeakerSpans(parsed?.speakers), participants: participantList(parsed?.participants) };
+    const parsed = JSON.parse(new TextDecoder().decode(await object.arrayBuffer())) as { speakers?: unknown; participants?: unknown; truncated?: unknown } | null;
+    return {
+      speakers: parseSpeakerSpans(parsed?.speakers),
+      participants: participantList(parsed?.participants),
+      ...(parsed?.truncated === true && { truncated: true }),
+      etag: object.etag,
+    };
   } catch {
-    return { speakers: [], participants: [] };
+    return { speakers: [], participants: [], etag: object.etag };
   }
 }
+
+/** Times a report is merged again after another one wrote the timeline first. */
+const TIMELINE_WRITE_ATTEMPTS = 5;
 
 /**
  * Keeps the timeline a report carries. Bots send the spans from the first one
@@ -387,31 +406,57 @@ async function readTimeline(bucket: Pick<R2Bucket, 'get'>, key: string): Promise
  * at all is the whole timeline, from before incremental reports (#205). Both
  * can be dropped once no bot from before #210 can still be in a call. A
  * `speakersFrom` that is neither is ignored, timeline and all.
+ *
+ * A merge is written only if the timeline is still the one it was read from
+ * (R2 conditional put), else it is read and merged again: a slow request that
+ * finishes after a later one must not take that one's spans back out, and the
+ * bot never resends what it has sent. A report that loses every attempt is
+ * refused (false), so the bot, which retries a 5xx, sends it again. A timeline
+ * past `MAX_SPANS` is cut and marked `truncated`, for collection to pass on.
+ * A report without `speakersFrom` replaces the spans and participants, but
+ * goes through the same check and keeps the flag.
  */
-async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }) {
+async function storeTimeline(env: Pick<BotIngestEnv, 'AUDIO_BUCKET'>, key: string, body: { speakers?: unknown; speakersFrom?: unknown; speakersFromUnit?: unknown; participants?: unknown }): Promise<boolean> {
   const spans = parseSpeakerSpans(body.speakers);
   const participants = participantList(body.participants);
   const from = body.speakersFrom;
-  let timeline: Timeline = { speakers: spans, participants };
-  if (from !== undefined) {
-    if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) {
-      // Malformed: better to miss this report than to guess what it replaces.
-      console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
-      return;
-    }
+  /** Stores a timeline; given `expected`, only if the object still has that etag (null: still absent). False when it doesn't. */
+  const put = async (timeline: Timeline, expected?: { etag: string | null }) => {
+    // R2 has no "absent" field in `R2Conditional`; `If-None-Match: *` is its create-once.
+    const onlyIf = !expected ? undefined : expected.etag === null ? new Headers({ 'if-none-match': '*' }) : { etagMatches: expected.etag };
+    // `never` on `onlyIf` alone: this build's `Headers` isn't the Workers one `R2PutOptions` names.
+    const options: NonNullable<Parameters<BotIngestEnv['AUDIO_BUCKET']['put']>[2]> = { httpMetadata: { contentType: 'application/json' }, ...(onlyIf && { onlyIf: onlyIf as never }) };
+    const capped = cap(timeline);
+    // `put` gives null, and stores nothing, when `onlyIf` fails.
+    const stored = (await env.AUDIO_BUCKET.put(key, JSON.stringify(capped), options)) !== null;
+    // When a write makes the cut, not on every attempt or on later writes to a timeline already cut.
+    if (stored && capped !== timeline && !timeline.truncated) console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
+    return stored;
+  };
+  if (from !== undefined && (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0)) {
+    // Malformed: better to miss this report than to guess what it replaces.
+    console.warn(JSON.stringify({ message: 'notetaker report ignored', key, speakersFrom: from }));
+    return true;
+  }
+  for (let attempt = 1; attempt <= TIMELINE_WRITE_ATTEMPTS; attempt += 1) {
     const stored = await readTimeline(env.AUDIO_BUCKET, key);
-    const kept = body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
-    timeline = {
+    // No `speakersFrom`: the whole timeline, which keeps nothing of what is stored (but a cut it made).
+    const kept = from === undefined ? [] : body.speakersFromUnit === 'ms' ? stored.speakers.filter(([, start]) => start < from) : stored.speakers.slice(0, from);
+    const written = await put({
       speakers: [...kept, ...spans],
-      participants: [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
-    };
+      participants: from === undefined ? participants : [...new Set([...stored.participants, ...participants])].slice(0, MAX_PARTICIPANTS),
+      ...(stored.truncated && { truncated: true }),
+    }, stored);
+    if (written) return true;
   }
-  if (timeline.speakers.length > MAX_SPANS) {
-    // The bot has sent these for good and won't again: the call's end goes unattributed.
-    console.warn(JSON.stringify({ message: 'notetaker timeline capped', key, spans: timeline.speakers.length, kept: MAX_SPANS }));
-    timeline.speakers = timeline.speakers.slice(0, MAX_SPANS);
-  }
-  await env.AUDIO_BUCKET.put(key, JSON.stringify(timeline), { httpMetadata: { contentType: 'application/json' } });
+  console.warn(JSON.stringify({ message: 'notetaker timeline write lost the race', key, attempts: TIMELINE_WRITE_ATTEMPTS }));
+  return false;
+}
+
+/** Cuts a timeline to `MAX_SPANS`, marking it `truncated` (and staying so); the same object when it fits. */
+function cap(timeline: Timeline): Timeline {
+  // The bot has sent the cut spans for good and won't again: the call's end goes unattributed.
+  return timeline.speakers.length <= MAX_SPANS ? timeline : { ...timeline, speakers: timeline.speakers.slice(0, MAX_SPANS), truncated: true };
 }
 
 /** A status report from the bot: `{ code, subCode, at, speakers?, speakersFrom?, speakersFromUnit?, participants? }` (`storeTimeline` says how the timeline fields read). */
@@ -442,15 +487,50 @@ export async function handleBotEvent(db: AppDb, env: BotIngestEnv, botId: string
     if (Array.isArray(body.speakers) || Array.isArray(body.participants)) await noteCanaryNames(db, bot, body.speakers, body.participants);
   } else if (Array.isArray(body.speakers)) {
     const meetingId = bot.meetingId ?? (SEGMENT_STATUSES.includes(bot.status) ? await ensureMeeting(db, bot, bot.statusAt ?? Date.now()) : null);
-    if (meetingId) await storeTimeline(env, speakersKey(bot, meetingId), body);
+    // Refused rather than dropped when it can't be stored: the bot retries a 5xx, and never resends what it thinks was taken.
+    if (meetingId && !(await storeTimeline(env, speakersKey(bot, meetingId), body))) return json({ error: 'timeline_busy' }, 503);
   }
   if (code === 'done' && Array.isArray(body.lostSegments) && body.lostSegments.length) {
     // Segments the bot gave up delivering; the meeting has a gap there.
-    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, lostSegments: body.lostSegments.slice(0, 100) }));
+    const valid = body.lostSegments.filter((idx): idx is number => Number.isSafeInteger(idx) && idx >= 0 && idx <= 100_000);
+    const lost = valid.slice(0, MAX_LOST_SEGMENTS);
+    console.warn(JSON.stringify({ message: 'notetaker lost segments', botId, total: body.lostSegments.length, recorded: lost.length, lostSegments: lost }));
+    // Only on the `done` that ends the call, before the move to `collecting`,
+    // so collection finds them; a late or replayed one changes nothing. Past
+    // the cap the brief still says it has gaps, from the rows recorded.
+    if (!bot.canary && bot.meetingId && SEGMENT_STATUSES.includes(bot.status) && lost.length) await recordLostSegments(db, bot, bot.meetingId, lost);
   }
   // The watchdog reads either as the bot being alive (noted above).
   if (code === 'heartbeat' || code === 'speakers') return json({ ok: true });
   return json({ ok: true, status: await applyStatus(db, env, bot, code, subCode, at) });
+}
+
+/** Lost segments noted per `done` report; a bot that lost more than this has lost the call. */
+const MAX_LOST_SEGMENTS = 100;
+
+/**
+ * A segment the bot could not deliver is a failed segment of the meeting: a
+ * row that was never transcribed, so the final brief says the transcript has
+ * gaps (the `partial` note in processing/summarize.ts) instead of reading as
+ * complete. Nothing retries a failed segment, and no object is stored under
+ * its key. A segment that did arrive keeps its row.
+ */
+async function recordLostSegments(db: AppDb, bot: MeetingBot, meetingId: string, lost: number[]) {
+  const now = Date.now();
+  await runBatched(db, lost.map((idx) =>
+    db.insert(meetingSegments).values({
+      id: pid('mseg'),
+      meetingId,
+      idx,
+      track: 'mixed',
+      r2Key: `users/${bot.userId}/meetings/${meetingId}/segments/${String(idx).padStart(5, '0')}.wav`,
+      bytes: 0,
+      offsetMs: 0,
+      durationMs: 0,
+      transcribeStatus: 'failed',
+      createdAt: now,
+    }).onConflictDoNothing(),
+  ));
 }
 
 /** One segment of the call from the bot: 16 kHz mono WAV, about a minute. */
@@ -467,7 +547,7 @@ export async function handleBotSegment(db: AppDb, env: BotIngestEnv, botId: stri
   const activeMs = int(request.headers.get('x-segment-active-ms'), 10 * 60 * 1_000);
   if (idx === null || startMs === null || !durationMs) return json({ error: 'invalid_segment_metadata' }, 400);
   if (Number(request.headers.get('content-length') ?? '0') > MAX_SEGMENT_BYTES) return json({ error: 'segment_too_large' }, 413);
-  if (BOT_STATUS_ORDER[bot.status] < BOT_STATUS_ORDER.in_call) {
+  if (BOT_STATUS_ORDER[bot.status] < BOT_STATUS_ORDER.recording) {
     // The report saying it got in is still on its way (it travels on its own
     // queue). Every bot image retries a 5xx; a 4xx would drop the segment.
     return json({ error: 'bot_not_recording_yet' }, 503, { 'retry-after': '5' });
@@ -543,9 +623,12 @@ export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string,
   const segments = await db.select({
     status: meetingSegments.transcribeStatus,
     end: sql<number>`${meetingSegments.offsetMs} + ${meetingSegments.durationMs}`,
+    bytes: meetingSegments.bytes,
     createdAt: meetingSegments.createdAt,
   }).from(meetingSegments).where(eq(meetingSegments.meetingId, meeting.id));
-  if (!segments.length) {
+  // Rows for lost segments (`recordLostSegments`) hold no audio; a delivered
+  // one always does, as `handleBotSegment` refuses an empty segment.
+  if (!segments.some((s) => s.bytes > 0)) {
     if (await finishBot(db, bot.id, 'failed', bot.statusDetail ?? 'no_recording', 'collecting')) await failMeeting(db, meeting.id, failureText(bot.statusDetail));
     return;
   }
@@ -599,7 +682,7 @@ export async function collectBotRecording(db: AppDb, env: BotEnv, botId: string,
  */
 async function nameSpeakers(db: AppDb, env: Pick<BotEnv, 'AUDIO_BUCKET'>, bot: MeetingBot, meetingId: string): Promise<Record<string, string>> {
   try {
-    const { speakers } = await readTimeline(env.AUDIO_BUCKET, speakersKey(bot, meetingId));
+    const { speakers, truncated } = await readTimeline(env.AUDIO_BUCKET, speakersKey(bot, meetingId));
     if (!speakers.length) return {};
     const lines = await db.select({ id: transcriptSegments.id, startMs: transcriptSegments.startMs, endMs: transcriptSegments.endMs })
       .from(transcriptSegments)
@@ -607,6 +690,8 @@ async function nameSpeakers(db: AppDb, env: Pick<BotEnv, 'AUDIO_BUCKET'>, bot: M
     const { assignments, speakerNames } = attributeSpeakers(lines, speakers);
     await runBatched(db, [...assignments].map(([id, speakerId]) =>
       db.update(transcriptSegments).set({ speakerId }).where(and(eq(transcriptSegments.id, id), eq(transcriptSegments.isEdited, false)))));
+    // Where the timeline stops, for the page to say the rest has no names (kept beside them, not in a column of its own).
+    if (truncated) speakerNames[PARTIAL_ATTRIBUTION_KEY] = String(speakers.reduce((max, [, , end]) => Math.max(max, end), 0));
     return speakerNames;
   } catch (error) {
     console.error(JSON.stringify({ message: 'notetaker speaker names failed', botId: bot.id, error: error instanceof Error ? error.message : String(error) }));
@@ -660,6 +745,30 @@ export async function requeueStaleCollections(env: Pick<ProcessingEnv, 'DB' | 'P
   let requeued = 0;
   for (const bot of stale) if (await requeueCollection(db, env, bot.id, staleBefore)) requeued += 1;
   return requeued;
+}
+
+/**
+ * For the processing Worker's hourly cron: fails every Recall.ai bot still
+ * on its way. That service is gone, so such a bot (from before Eavesy ran its
+ * own) can never report, be collected, or leave; left alone it would count
+ * toward ACTIVE_BOT_LIMIT and show as live forever. Returns how many.
+ */
+export async function retireRecallBots(env: Pick<ProcessingEnv, 'DB'>) {
+  const db = botDatabase(env.DB);
+  // A handful of old rows at most; any past the batch go on the next run. A
+  // collecting one is left to collection, which retires it the same way
+  // (`collectBotRecording`), and the stale-collection sweep re-sends it.
+  const stuck = await db.select({ id: meetingBots.id, status: meetingBots.status, meetingId: meetingBots.meetingId }).from(meetingBots)
+    .where(and(eq(meetingBots.provider, 'recall'), notInArray(meetingBots.status, [...TERMINAL_BOT_STATUSES, 'collecting'])))
+    .limit(200);
+  let retired = 0;
+  for (const bot of stuck) {
+    if (!(await finishBot(db, bot.id, 'failed', 'provider_retired', bot.status))) continue;
+    retired += 1;
+    // A meeting already being summarized has its audio; the pipeline finishes it.
+    if (bot.meetingId) await failMeeting(db, bot.meetingId, failureText('provider_retired'), ['recording', 'queued', 'uploading']);
+  }
+  return retired;
 }
 
 /**

@@ -93,7 +93,7 @@ function SettingsPage() {
       return;
     }
     if (params.get('connected') === 'openrouter') {
-      setNotice({ kind: 'ok', text: 'OpenRouter connected — AI usage now bills to your account.' });
+      setNotice({ kind: 'ok', text: 'OpenRouter connected — chat, translation, regenerated briefs and screenshot descriptions now bill to your account.' });
     } else if (params.get('error')?.startsWith('openrouter')) {
       setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Please try again.' });
     }
@@ -429,7 +429,7 @@ function SettingsPage() {
       <AppSection title="AI providers" description="Optional. Without these, Eavesy’s own AI is used.">
         <Row
           label="OpenRouter"
-          hint={me.hasOpenRouterKey ? 'Connected — AI usage bills to your OpenRouter credits.' : 'Run on your own account across OpenAI, Anthropic, Google and more.'}
+          hint={me.hasOpenRouterKey ? 'Connected — chat, translation, regenerated briefs and screenshot descriptions bill to your OpenRouter credits. Recordings are still summarized on Eavesy\'s account, or your Anthropic key.' : 'Run chat, translation, regenerated briefs and screenshot descriptions on your own account.'}
         >
           {me.hasOpenRouterKey ? (
             <button

@@ -705,7 +705,8 @@ export const recordingImports = sqliteTable('recording_imports', {
   fingerprint: text('fingerprint').notNull(),
   segmentCount: integer('segment_count').notNull(),
   durationMs: integer('duration_ms').notNull(),
-  state: text('state', { enum: ['uploading', 'processing', 'cancelled'] }).notNull().default('uploading'),
+  // 'freeing': a cancelled import whose audio the hourly sweep is deleting; nothing may resume or finalize it until it is 'cancelled' again.
+  state: text('state', { enum: ['uploading', 'processing', 'cancelled', 'freeing'] }).notNull().default('uploading'),
   createdAt: integer('created_at').notNull(),
 }, (t) => [uniqueIndex('recording_imports_owner_fingerprint_uq').on(t.userId, t.fingerprint)]);
 
@@ -734,9 +735,12 @@ export const personalDictionary = sqliteTable('personal_dictionary', {
 
 /**
  * A notetaker bot sent to an online meeting: Eavesy's own (`eavesy`), or a
- * Recall.ai bot from before it (`recall`, kept for old rows).
+ * Recall.ai bot from before it (`recall`, kept for old rows; the hourly cron
+ * fails any still on its way, since that service is gone). `provider_bot_id`
+ * is the bot's own id for Eavesy's bots; it named the Recall bot before.
  * The meeting row is created once the bot starts recording; until then this row
- * is the user's request. Status only moves forward (see `BOT_STATUS_ORDER`).
+ * is the user's request. Status only moves forward (see `BOT_STATUS_ORDER`);
+ * `in_call` is only ever on old Recall rows.
  */
 export const meetingBots = sqliteTable('meeting_bots', {
   id: text('id').primaryKey(),
@@ -754,7 +758,7 @@ export const meetingBots = sqliteTable('meeting_bots', {
   }).notNull(),
   /** The provider's machine-readable reason for the latest status, when it gave one. */
   statusDetail: text('status_detail'),
-  /** Provider time of the newest status applied; older webhook deliveries are ignored. */
+  /** The bot's clock at the newest status applied; a report from before it is ignored. */
   statusAt: integer('status_at'),
   collectAttempts: integer('collect_attempts').notNull().default(0),
   /** The daily canary (meeting-bots/canary.ts): it never makes a meeting or keeps audio. */

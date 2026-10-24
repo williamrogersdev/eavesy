@@ -4,7 +4,7 @@ import { resolveActor } from '@/server/auth';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { meetings, recordingImports } from '@/db/schema';
 import { guardSpend, guardUserQuota } from '@/server/rate-limit';
-import { createImport } from '@/server/imports/service';
+import { createImport, shownImportState } from '@/server/imports/service';
 export const Route = createFileRoute('/api/imports/')({ server: { handlers: {
   GET: async () => {
     let actor;
@@ -12,7 +12,7 @@ export const Route = createFileRoute('/api/imports/')({ server: { handlers: {
     const rows = await getDb().select({ meetingId: meetings.id, title: meetings.title, status: meetings.status, state: recordingImports.state, error: meetings.statusError })
       .from(recordingImports).innerJoin(meetings, eq(meetings.id, recordingImports.meetingId))
       .where(and(eq(recordingImports.userId, actor.userId), isNull(meetings.deletedAt))).orderBy(desc(recordingImports.createdAt)).limit(50);
-    return Response.json({ imports: rows });
+    return Response.json({ imports: rows.map((row) => ({ ...row, state: shownImportState(row.state) })) });
   },
   POST: async ({ request }) => {
     let actor;

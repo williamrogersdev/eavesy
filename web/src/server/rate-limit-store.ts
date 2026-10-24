@@ -70,6 +70,69 @@ export async function consumeRateLimit(
   }
 }
 
+const DAY_SEC = 24 * 60 * 60;
+
+/**
+ * Daily per-user quotas. `failMode` is per scope: segment uploads carry a
+ * user's live recording, so they stay up if the counter is unavailable; every
+ * other scope spends AI capacity or produces large downloads and fails closed.
+ * The web app and the MCP Worker count against the same rows, so a scope's
+ * limit holds however the user reaches it.
+ */
+export const USER_DAILY_QUOTAS = {
+  // One-minute segments, two tracks: 2,400 is 20 hours of recording a day.
+  segment: { limit: 2_400, failMode: 'open' },
+  transcribe: { limit: 300, failMode: 'closed' },
+  process: { limit: 100, failMode: 'closed' },
+  dictation: { limit: 500, failMode: 'closed' },
+  capture: { limit: 300, failMode: 'closed' },
+  // Mac screenshots synced to the user's other Macs: storage only, no AI.
+  'capture-sync': { limit: 2_000, failMode: 'closed' },
+  drop: { limit: 500, failMode: 'closed' },
+  chat: { limit: 300, failMode: 'closed' },
+  regenerate: { limit: 60, failMode: 'closed' },
+  translate: { limit: 600, failMode: 'closed' },
+  'library-reindex': { limit: 20, failMode: 'closed' },
+  search: { limit: 1_000, failMode: 'closed' },
+  export: { limit: 10, failMode: 'closed' },
+  'meeting-export': { limit: 200, failMode: 'closed' },
+} as const satisfies Record<string, { limit: number; failMode: FailMode }>;
+
+export type QuotaScope = keyof typeof USER_DAILY_QUOTAS;
+
+/**
+ * The per-UTC-day policy for one user's quota scope. `vars` is the Worker's
+ * environment: `QUOTA_<SCOPE>_PER_DAY` (say `QUOTA_CAPTURE_SYNC_PER_DAY`)
+ * overrides the limit, read the same way by every Worker that charges it.
+ */
+export function userQuotaPolicy(scope: QuotaScope, userId: string, vars: Record<string, unknown> = {}): RateLimitPolicy {
+  const override = Number(vars[`QUOTA_${scope.toUpperCase().replaceAll('-', '_')}_PER_DAY`]);
+  const limit = Number.isFinite(override) && override > 0 ? override : USER_DAILY_QUOTAS[scope].limit;
+  return { key: `budget:user:${scope}:${userId}`, limit, windowSec: DAY_SEC, failMode: USER_DAILY_QUOTAS[scope].failMode };
+}
+
+/**
+ * Gives back one use counted by `consumeRateLimit` for a request that ended up
+ * doing nothing (an interrupted upload, a duplicate, a failed model call).
+ * `chargedAt` is the `now` the use was counted at, so the refund lands in
+ * that window even when the request ends in the next one. Best effort: a
+ * refund that can't be written leaves the user one use short until then.
+ */
+export async function refundRateLimit(
+  db: D1Database | null | undefined,
+  policy: Pick<RateLimitPolicy, 'key' | 'windowSec'>,
+  chargedAt: number,
+): Promise<void> {
+  if (!db) return;
+  const windowId = Math.floor(chargedAt / (policy.windowSec * 1000));
+  try {
+    await db.prepare('UPDATE rate_limits SET count = count - 1 WHERE key = ? AND count > 0')
+      .bind(`${policy.key}:${windowId}`).run();
+  } catch (error) {
+    console.warn(JSON.stringify({ message: 'rate limit refund failed', key: policy.key.split(':')[0], error: error instanceof Error ? error.message : 'unknown error' }));
+  }
+}
+
 const PRUNE_BATCH = 10_000;
 const PRUNE_MAX_PASSES = 100;
 
