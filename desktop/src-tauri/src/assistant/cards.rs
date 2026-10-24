@@ -50,9 +50,11 @@ pub enum TakeError {
 
 impl<A> Cards<A> {
     /// Adds a card and returns what the panel shows, plus any card it pushed out.
+    /// Expired cards are cleared first, so only a live card is ever pushed out.
     pub fn add(&mut self, now_ms: u64, mut view: CardView, action: A) -> (CardView, Option<CardView>) {
         view.id = uuid::Uuid::new_v4().simple().to_string();
         view.expires_ms = now_ms + CARD_LIFETIME_MS;
+        self.pending.retain(|card| now_ms < card.view.expires_ms);
         let dropped = (self.pending.len() >= MAX_PENDING).then(|| self.pending.remove(0).view);
         self.pending.push(Pending { view: view.clone(), action });
         (view, dropped)
@@ -116,6 +118,17 @@ mod tests {
         let (live, expired) = cards.list(CARD_LIFETIME_MS);
         assert!(live.is_empty());
         assert_eq!(expired[0].id, second.id);
+    }
+
+    #[test]
+    fn expired_cards_go_before_a_live_one_is_pushed_out() {
+        let mut cards = Cards::default();
+        for n in 0..MAX_PENDING {
+            cards.add(0, view(&[]), n);
+        }
+        let (_, dropped) = cards.add(CARD_LIFETIME_MS, view(&[]), MAX_PENDING);
+        assert_eq!(dropped, None);
+        assert_eq!(cards.list(CARD_LIFETIME_MS).0.len(), 1);
     }
 
     #[test]

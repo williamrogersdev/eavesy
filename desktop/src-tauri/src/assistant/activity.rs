@@ -50,8 +50,12 @@ pub fn append(dir: &Path, entry: &Entry) -> Result<(), String> {
 /// The most recent `limit` entries, newest first, across the last few days' files.
 pub fn recent(dir: &Path, limit: usize) -> Vec<Entry> {
     let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut files: Vec<PathBuf> =
-        read.filter_map(|entry| entry.ok().map(|entry| entry.path())).filter(|path| path.extension().is_some_and(|ext| ext == "jsonl")).collect();
+    // Only `YYYY-MM-DD.jsonl`, so the names sort by date.
+    let dated = |path: &PathBuf| {
+        path.extension().is_some_and(|ext| ext == "jsonl")
+            && path.file_stem().and_then(|stem| stem.to_str()).is_some_and(|stem| chrono::NaiveDate::parse_from_str(stem, "%Y-%m-%d").is_ok())
+    };
+    let mut files: Vec<PathBuf> = read.filter_map(|entry| entry.ok().map(|entry| entry.path())).filter(dated).collect();
     files.sort();
     let mut entries = Vec::new();
     for file in files.iter().rev() {

@@ -81,7 +81,8 @@ pub struct Facts {
     pub tier: Tier,
     /// The tool can put things back (Undo).
     pub undoable: bool,
-    /// On Auto's safe list (C8): undoable and local.
+    /// On Auto's safe list (C8): local, and each row checked again right before it
+    /// runs. Doesn't need to be undoable.
     pub safe_listed: bool,
     /// Can't be taken back: revoke a key, push, post publicly.
     pub irreversible: bool,
@@ -176,7 +177,8 @@ pub fn decide(facts: &Facts, requester: &Requester, policy: &Effective, check: &
         (Mode::Bypass, _) if unattended_ok => {
             if facts.undoable { Decision::RunWithUndo { undo_for } } else { Decision::Run }
         }
-        // Voice can open a card but never press it; nothing changes that here.
+        // In Ask, voice opens the card and only a click presses it. Bypass and Auto
+        // apply to what you ask, typed or spoken, by your own choice (C8).
         _ if spoken => Decision::Card { warning: None },
         _ => Decision::Card { warning: breaker.tripped().then(|| "That's a lot at once, so Eavesy is asking.".to_string()) },
     }

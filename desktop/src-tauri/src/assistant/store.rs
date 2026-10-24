@@ -94,6 +94,9 @@ pub fn load(file: &Path, keys: &impl KeyStore) -> Loaded {
 
 /// Signs and writes the policy atomically (a partial file, then a rename), owner-only.
 pub fn save(file: &Path, keys: &impl KeyStore, policy: &Policy) -> Result<(), String> {
+    // One save at a time, so the Keychain's MAC and the file always come from the same one.
+    static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _saving = SAVING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let key = match keys.key()? {
         Some(key) => key,
         None => keys.create_key()?,

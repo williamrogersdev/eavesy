@@ -107,11 +107,7 @@ fn log(requester: &str, tool: &str, summary: &str, decision: &str, outcome: Opti
 }
 
 fn emit_cards(app: &AppHandle, core: &Core) {
-    let (live, expired) = core.cards.lock().unwrap().list(now_ms());
-    for card in expired {
-        log(&card.requester, &card.tool, &card.title, "expired", None);
-    }
-    let _ = app.emit("assistant:cards", &live);
+    let _ = app.emit("assistant:cards", &live_cards(core));
 }
 
 /// Runs `action` if the policy allows it now, or puts up a card. Blocking: call it off
@@ -122,15 +118,7 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
     let core = app.state::<Core>();
     let facts = action.facts();
     let effective = core.policy.lock().unwrap().effective(now_ms());
-    // One guard across deciding and recording, so requests arriving together can't all
-    // slip under the breaker before any of them counts.
-    let mut breaker = core.breaker.lock().unwrap();
-    let decision = policy::decide(&facts, requester, &effective, check, &breaker);
-    let unattended = matches!(decision, Decision::Run | Decision::RunWithUndo { .. }) && matches!(facts.tier, policy::Tier::Say | policy::Tier::Click);
-    if unattended {
-        breaker.record();
-    }
-    drop(breaker);
+    let decision = gate(&facts, requester, &effective, check, &mut core.breaker.lock().unwrap());
     let who = requester.label();
     let title = action.title();
     match decision {
@@ -138,8 +126,9 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
             log(&who, action.tool(), &title, "refused", Some(reason.into()));
             Submitted::Refused { reason: reason.into() }
         }
-        // Undo arrives with the first tier 1 tool; until then nothing returns RunWithUndo
-        // without also being safe to run plainly.
+        // Undo arrives with the first tool that can undo. Until then RunWithUndo comes
+        // only from tier 1 (none registered yet) and from undoable tools in Auto and
+        // Bypass, which run without the Undo button rather than not at all.
         Decision::Run | Decision::RunWithUndo { .. } => {
             let rows: Vec<String> = action.rows().into_iter().map(|row| row.id).collect();
             let ran = action.run(&rows);
@@ -162,6 +151,17 @@ pub fn submit(app: &AppHandle, action: Box<dyn Action>, requester: &Requester, c
             Submitted::Card { card }
         }
     }
+}
+
+/// Decides, and counts an unattended tier 2 or 3 run, under one breaker guard so
+/// requests arriving together can't all slip under it before any of them counts.
+fn gate(facts: &Facts, requester: &Requester, effective: &policy::Effective, check: &Check, breaker: &mut Breaker) -> Decision {
+    let decision = policy::decide(facts, requester, effective, check, breaker);
+    let unattended = matches!(decision, Decision::Run | Decision::RunWithUndo { .. }) && matches!(facts.tier, policy::Tier::Say | policy::Tier::Click);
+    if unattended {
+        breaker.record();
+    }
+    decision
 }
 
 /// For a confirm card Eavesy's own UI already showed (machine cleanup in Settings): the
@@ -198,7 +198,17 @@ fn confirm(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
                 let _ = tx.send(answer);
             });
     });
-    shown.is_ok() && rx.recv().unwrap_or(false)
+    // An alert nobody answers in ten minutes counts as Cancel, so the command can't hang.
+    shown.is_ok() && rx.recv_timeout(std::time::Duration::from_secs(600)).unwrap_or(false)
+}
+
+/// Waiting cards; any that expired go to the log as they're cleared.
+fn live_cards(core: &Core) -> Vec<CardView> {
+    let (live, expired) = core.cards.lock().unwrap().list(now_ms());
+    for card in expired {
+        log(&card.requester, &card.tool, &card.title, "expired", None);
+    }
+    live
 }
 
 fn save(core: &Core, policy: Policy) -> Result<(), String> {
@@ -226,7 +236,7 @@ pub fn assistant_state(app: AppHandle, window: WebviewWindow) -> Result<State, S
     from_ui(&window)?;
     let core = app.state::<Core>();
     let policy = core.policy.lock().unwrap().clone();
-    let (cards, _) = core.cards.lock().unwrap().list(now_ms());
+    let cards = live_cards(&core);
     Ok(State {
         effective: policy.effective(now_ms()).mode,
         mode: policy.mode,
@@ -241,9 +251,12 @@ pub fn assistant_state(app: AppHandle, window: WebviewWindow) -> Result<State, S
 #[tauri::command]
 pub async fn set_assistant_mode(app: AppHandle, window: WebviewWindow, mode: Mode, minutes: Option<u64>) -> Result<(), String> {
     from_ui(&window)?;
+    // A timed mode lasts a day at most.
+    let minutes = minutes.map(|m| m.clamp(1, 24 * 60));
     tauri::async_runtime::spawn_blocking(move || {
         if mode == Mode::Bypass {
             let how_long = match minutes {
+                Some(60) => "for an hour".into(),
                 Some(m) => format!("for {m} minutes"),
                 None => "until you turn it off".into(),
             };
@@ -259,7 +272,7 @@ pub async fn set_assistant_mode(app: AppHandle, window: WebviewWindow, mode: Mod
         policy.mode = mode;
         policy.until_ms = match mode {
             Mode::Ask => None,
-            _ => minutes.map(|m| now_ms() + m.min(24 * 60) * 60_000),
+            _ => minutes.map(|m| now_ms() + m * 60_000),
         };
         save(&core, policy)?;
         log("You", "assistant.mode", &format!("{mode:?}"), "ran", minutes.map(|m| format!("for {m} min")));
@@ -285,8 +298,8 @@ pub async fn set_trusted_agent_folders(app: AppHandle, window: WebviewWindow, fo
             }
         }
         let core = app.state::<Core>();
-        let mut policy = core.policy.lock().unwrap().clone();
-        let added: Vec<String> = clean.iter().filter(|path| !policy.trusted_folders.contains(path)).map(|path| path.display().to_string()).collect();
+        let before = core.policy.lock().unwrap().trusted_folders.clone();
+        let added: Vec<String> = clean.iter().filter(|path| !before.contains(path)).map(|path| path.display().to_string()).collect();
         if !added.is_empty() {
             let message = format!(
                 "Outside Ask, agents working in {} will act as you: in Bypass they send and change things without a card. Secrets, passwords and payments still always ask.",
@@ -296,6 +309,8 @@ pub async fn set_trusted_agent_folders(app: AppHandle, window: WebviewWindow, fo
                 return Err("cancelled".to_string());
             }
         }
+        // Read again after the dialog, so a mode change made meanwhile isn't undone.
+        let mut policy = core.policy.lock().unwrap().clone();
         policy.trusted_folders = clean.clone();
         save(&core, policy)?;
         log("You", "assistant.trust", &format!("{} folders", clean.len()), "ran", None);
@@ -336,4 +351,25 @@ pub async fn assistant_card_decide(app: AppHandle, window: WebviewWindow, card_i
 pub fn assistant_activity(window: WebviewWindow, limit: Option<usize>) -> Result<Vec<activity::Entry>, String> {
     from_ui(&window)?;
     Ok(activity::dir().map(|dir| activity::recent(&dir, limit.unwrap_or(100).min(1000))).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use policy::{Effective, Tier};
+
+    #[test]
+    fn unattended_runs_trip_the_breaker_for_the_next_one() {
+        let facts = Facts { tier: Tier::Click, undoable: true, safe_listed: true, irreversible: false, grants_power: false, remote_allowed: false, items: 1 };
+        let you = Requester::You { spoken: false };
+        let bypass = Effective { mode: Mode::Bypass, trusted_folders: vec![] };
+        let mut breaker = Breaker::new(std::time::Duration::from_secs(60), 3);
+        for _ in 0..3 {
+            assert!(matches!(gate(&facts, &you, &bypass, &Check::Pass, &mut breaker), Decision::RunWithUndo { .. }));
+        }
+        assert!(matches!(gate(&facts, &you, &bypass, &Check::Pass, &mut breaker), Decision::Card { warning: Some(_) }));
+        // Cards don't count: looking doesn't trip it either.
+        let look = Facts { tier: Tier::Look, ..facts };
+        assert_eq!(gate(&look, &you, &bypass, &Check::NotRun, &mut breaker), Decision::Run);
+    }
 }
