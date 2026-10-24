@@ -25,26 +25,28 @@ pub fn settings_file() -> Option<PathBuf> {
 
 /// Writes the hooks for `exe`, with the Stop hook allowed to wait `hold_secs`.
 pub fn install(file: &Path, exe: &Path, hold_secs: u32) -> Result<(), String> {
-    let current = read(file)?;
-    check_shape(file, &current)?;
-    let next = with_hooks(current.clone(), &exe.to_string_lossy(), hold_secs);
-    if next != current {
-        write(file, &next)?;
-    }
-    Ok(())
+    update(file, |current| with_hooks(current, &exe.to_string_lossy(), hold_secs))
 }
 
 pub fn uninstall(file: &Path) -> Result<(), String> {
     if !file.exists() {
         return Ok(());
     }
-    let current = read(file)?;
-    check_shape(file, &current)?;
-    let next = without_hooks(current.clone());
-    if next != current {
-        write(file, &next)?;
+    update(file, without_hooks)
+}
+
+/// Reads, changes and writes the file. If Claude Code wrote it in the
+/// meantime, the change is made again on top of its version instead.
+fn update(file: &Path, change: impl Fn(Value) -> Value) -> Result<(), String> {
+    for _ in 0..3 {
+        let current = read(file)?;
+        check_shape(file, &current)?;
+        let next = change(current.clone());
+        if next == current || write(file, &current, &next)? {
+            return Ok(());
+        }
     }
-    Ok(())
+    Err(format!("{} kept changing while Eavesy updated it. Try again.", file.display()))
 }
 
 /// Whether the file already has Eavesy's hooks for exactly this app and hold.
@@ -135,7 +137,8 @@ fn read(file: &Path) -> Result<Value, String> {
 }
 
 /// Written aside and renamed over, so Claude Code never reads half a file.
-fn write(file: &Path, value: &Value) -> Result<(), String> {
+/// Returns false, writing nothing, when the file no longer holds `was`.
+fn write(file: &Path, was: &Value, value: &Value) -> Result<bool, String> {
     // A settings file linked in from a dotfiles repo stays a link: write its target.
     let resolved = std::fs::canonicalize(file).ok();
     let file = resolved.as_deref().unwrap_or(file);
@@ -145,11 +148,19 @@ fn write(file: &Path, value: &Value) -> Result<(), String> {
     let mut raw = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
     raw.push('\n');
     let partial = file.with_extension(format!("json.eavesy-{}", uuid::Uuid::new_v4().simple()));
-    let result = std::fs::write(&partial, raw).and_then(|()| std::fs::rename(&partial, file));
-    if result.is_err() {
+    if let Err(error) = std::fs::write(&partial, raw) {
         let _ = std::fs::remove_file(&partial);
+        return Err(format!("Couldn't update {}: {error}", file.display()));
     }
-    result.map_err(|error| format!("Couldn't update {}: {error}", file.display()))
+    // Checked last, right before the rename, so the window for a lost write is tiny.
+    if read(file).ok().as_ref() != Some(was) {
+        let _ = std::fs::remove_file(&partial);
+        return Ok(false);
+    }
+    std::fs::rename(&partial, file).map(|()| true).map_err(|error| {
+        let _ = std::fs::remove_file(&partial);
+        format!("Couldn't update {}: {error}", file.display())
+    })
 }
 
 #[cfg(test)]
@@ -224,6 +235,18 @@ mod tests {
         install(&link, Path::new(EXE), 300).unwrap();
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert!(installed(&target, Path::new(EXE), 300));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_file_changed_underneath_is_not_overwritten() {
+        let dir = std::env::temp_dir().join(format!("eavesy-install-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        std::fs::write(&file, r#"{"model":"opus"}"#).unwrap();
+        assert!(!write(&file, &json!({}), &json!({ "hooks": {} })).unwrap());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), r#"{"model":"opus"}"#);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "the partial file is cleaned up");
         let _ = std::fs::remove_dir_all(dir);
     }
 

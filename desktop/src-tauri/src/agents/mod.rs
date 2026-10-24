@@ -162,6 +162,8 @@ async fn handle(app: AppHandle, stream: UnixStream) {
                 enqueue(&app, &message, Kind::Approval, None);
             }
         }
+        // An approval you denied runs no tool; the session's next prompt or
+        // stop replaces its card instead (push and remove_session).
         Event::ToolDone => {
             let _ = write(&mut stream, &Answer::Ack { hold: false }).await;
             if with_queue(|queue| queue.clear_approval(&message.session_id)).is_some() {
