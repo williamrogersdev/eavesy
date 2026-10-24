@@ -127,6 +127,16 @@ describe('fallback', () => {
     expect(fallbackReply({ kind: 'stop', session: 's', message: 'Should I say "ship it?"' }).needsYou).toBe(true);
   });
 
+  test('a question ending in ?! still needs the user', () => {
+    expect(fallbackReply({ kind: 'stop', session: 's', message: 'Really ship it?!  ' }).needsYou).toBe(true);
+  });
+
+  test('an overlong model summary is cut, not discarded', async () => {
+    const { body } = await call(stop, JSON.stringify({ summary: 'x'.repeat(1000), needsYou: true, suggestedReply: 'Ship it.' }));
+    expect(body.summary).toHaveLength(400);
+    expect(body.suggestedReply).toBe('Ship it.');
+  });
+
   test('a notification still needs the user when the answer is unreadable', async () => {
     const { body } = await call({ kind: 'notification', session: 's', message: 'Claude needs your permission to use Bash' }, 'not json');
     expect(body).toEqual({ summary: 'Claude needs your permission to use Bash', needsYou: true, suggestedReply: null });

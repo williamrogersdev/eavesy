@@ -42,9 +42,10 @@ export interface AgentReplyClient {
 }
 
 const modelReply = z.object({
-  summary: z.string().trim().min(1).max(SUMMARY_CHARS),
+  // Overlong text is cut rather than rejected, so a good answer isn't lost to its length.
+  summary: z.string().trim().min(1).transform((text) => keepStart(text, SUMMARY_CHARS)),
   needsYou: z.boolean(),
-  suggestedReply: z.string().trim().max(REPLY_CHARS).nullable(),
+  suggestedReply: z.string().trim().transform((text) => keepStart(text, REPLY_CHARS)).nullable(),
 });
 
 const SCHEMA = {
@@ -111,7 +112,7 @@ export function fallbackReply(input: AgentReplyInput): AgentReply {
     const space = cut.lastIndexOf(' ');
     summary = `${space > FALLBACK_SUMMARY_CHARS / 2 ? cut.slice(0, space) : cut}…`;
   }
-  return { summary: summary || 'sent a message.', needsYou: input.kind === 'notification' || /\?["'”’)\]]*$/.test(text), suggestedReply: null };
+  return { summary: summary || 'sent a message.', needsYou: input.kind === 'notification' || /\?["'”’)\]!.…]*$/.test(text), suggestedReply: null };
 }
 
 /** Applies the rules the model is asked to follow, whatever it answered. */
