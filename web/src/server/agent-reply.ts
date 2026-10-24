@@ -198,7 +198,8 @@ export async function agentReplyResponse(
     return Response.json(await suggestAgentReply(client(), input), { headers: { 'cache-control': 'no-store' } });
   } catch {
     // Never forward provider responses or submitted text to logs or clients.
-    await onFailure();
+    // A failed refund must not turn the 502 into a 500.
+    await onFailure().catch(() => undefined);
     return Response.json({ error: 'Reply suggestions are unavailable right now. Please try again.' }, { status: 502 });
   }
 }

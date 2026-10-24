@@ -18,7 +18,8 @@ export const Route = createFileRoute('/api/agents/reply-suggestion')({ server: {
     if (quota) return quota;
     const limited = await guardSpend(request, 'agent-reply', { perMin: 30, perDay: 5000 });
     if (limited) { await refund(); return limited; }
-    // Refunds never throw: refundRateLimit logs a failed write and carries on.
-    return agentReplyResponse(input, anthropic, async () => { await refund(); await refundSpend('agent-reply', chargedAt); });
+    return agentReplyResponse(input, anthropic, async () => {
+      await Promise.allSettled([refund(), refundSpend('agent-reply', chargedAt)]);
+    });
   },
 } } });
