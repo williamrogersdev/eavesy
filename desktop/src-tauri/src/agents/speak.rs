@@ -10,7 +10,7 @@ static PLAYING: Mutex<Option<Child>> = Mutex::new(None);
 const MAX_SPOKEN: usize = 600;
 
 pub fn say(text: &str) {
-    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_SPOKEN).collect();
+    let text = speakable(text);
     if text.trim().is_empty() {
         return;
     }
@@ -23,6 +23,17 @@ pub fn say(text: &str) {
     }
 }
 
+/// What `say` is given: no control characters, and no `[[ … ]]` embedded
+/// speech commands (`say` would change its voice or rate or go silent on
+/// them), since the text can come from an agent.
+fn speakable(text: &str) -> String {
+    let mut text: String = text.chars().filter(|c| !c.is_control()).take(MAX_SPOKEN).collect();
+    while text.contains("[[") || text.contains("]]") {
+        text = text.replace("[[", "[").replace("]]", "]");
+    }
+    text
+}
+
 /// Stops speaking at once, so you can talk.
 pub fn stop() {
     let mut playing = PLAYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -33,5 +44,16 @@ fn stop_locked(playing: &mut Option<Child>) {
     if let Some(mut child) = playing.take() {
         let _ = child.kill();
         let _ = child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::speakable;
+
+    #[test]
+    fn embedded_speech_commands_are_read_as_text() {
+        assert_eq!(speakable("hi [[slnc 99999]] there [[[volm 0]]]"), "hi [slnc 99999] there [volm 0]");
+        assert_eq!(speakable("a\u{7}b\nc"), "abc");
     }
 }

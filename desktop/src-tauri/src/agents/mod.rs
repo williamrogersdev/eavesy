@@ -14,6 +14,7 @@ pub mod install;
 pub mod naming;
 pub mod protocol;
 pub mod queue;
+pub mod remote;
 pub mod speak;
 pub mod suggest;
 
@@ -78,8 +79,10 @@ pub fn socket_path() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("com.eavesy.desktop").join(NAME))
 }
 
-/// Starts listening for hooks, and keeps installed hooks pointing at this app.
+/// Starts listening for hooks and for remote agents' messages, and keeps
+/// installed hooks pointing at this app.
 pub fn start(app: &AppHandle) {
+    remote::start(app);
     let settings = crate::settings::load(app);
     if settings.agent_voice() {
         if let Err(error) = install_hooks(settings.agent_hold_secs()) {
@@ -344,6 +347,7 @@ pub fn agents_later(app: AppHandle, id: u64) {
 /// Lets the session end its turn without a reply.
 #[tauri::command]
 pub fn agents_dismiss(app: AppHandle, id: u64) {
+    remote::dismissed(&app, id);
     with_queue(|queue| queue.remove(id));
     release(id, Answer::Release);
     speak::stop();
@@ -375,7 +379,8 @@ pub fn set_agent_voice(app: AppHandle, enabled: bool) -> Result<(), String> {
     } else {
         // Off first: until the hooks are gone, the app tells them not to hold.
         crate::settings::update(&app, |config| config.agent_voice = Some(false))?;
-        for item in with_queue(|queue| queue.ordered().into_iter().map(|item| item.id).collect::<Vec<_>>()) {
+        // Remote agents' messages have their own switch.
+        for item in with_queue(|queue| queue.ordered().into_iter().filter(|item| !remote::is_remote(&item.session_id)).map(|item| item.id).collect::<Vec<_>>()) {
             with_queue(|queue| queue.remove(item));
             release(item, Answer::Release);
         }

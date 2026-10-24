@@ -12,6 +12,7 @@ import {
   users,
 } from '@/db/schema';
 import { DROP_TTL_MS } from '@/db/repo/drops';
+import { RETAIN_MS as AGENT_MESSAGE_RETAIN_MS } from '@/server/agent-inbox';
 import { type Db, type ProcessingEnv, runBatched } from './shared';
 import { deleteEmbeddings, deletePrefix } from './embed';
 import { chunked, D1_IN_LIST_SIZE, sendMessages } from './queue-batch';
@@ -82,6 +83,8 @@ export const ACCOUNT_TABLES = [
   'folders',
   'prompt_templates',
   'saved_prompts',
+  'agent_messages',
+  'agent_listeners',
   'personal_dictionary',
   'mcp_tokens',
   'oauth_codes',
@@ -136,11 +139,16 @@ export async function purgeDeleted(env: ProcessingEnv, now = Date.now()) {
   await deleteObjects(env, expiredDrops.map((drop) => drop.r2Key));
   await deleteRows(db, drops, drops.id, expiredDrops.map((drop) => drop.id));
 
+  // Agent messages are only useful while someone waits on them.
+  const oldMessages = await env.DB.prepare('DELETE FROM agent_messages WHERE expires_at <= ?').bind(now - AGENT_MESSAGE_RETAIN_MS).run();
+  await env.DB.prepare('DELETE FROM agent_listeners WHERE seen_at <= ?').bind(now - AGENT_MESSAGE_RETAIN_MS).run();
+
   return {
     meetings: deletedMeetings.length,
     captures: deletedCaptures.length,
     dictations: deletedDictations.length,
     drops: expiredDrops.length,
+    agentMessages: oldMessages.meta.changes ?? 0,
   };
 }
 

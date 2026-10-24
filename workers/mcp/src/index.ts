@@ -20,6 +20,19 @@ import {
 } from '../../../web/src/server/mcp-token-policy';
 import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/server/mcp-scopes';
 import * as savedPrompts from '../../../web/src/db/repo/prompts';
+import {
+  AgentInboxError,
+  ASK_DEFAULT_SEC,
+  ASK_MAX_SEC,
+  ASK_MIN_SEC,
+  createMessage,
+  macListening,
+  MAX_CHOICES,
+  parseAsk,
+  parseSend,
+  SEND_TTL_MS,
+  waitForAnswer,
+} from '../../../web/src/server/agent-inbox';
 import { fillPrompt } from '../../../web/src/lib/prompts';
 import {
   authorizationParams,
@@ -49,6 +62,8 @@ const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 const MCP_REQUESTS_PER_MINUTE = 120;
 const CLIENT_REGISTRATIONS_PER_HOUR = 20;
+/** send_to_human and ask_human calls per connection per 10 minutes, so a looping agent can't keep the Mac talking. */
+const HUMAN_MESSAGES_PER_10_MIN = 30;
 
 type TokenRow = typeof schema.mcpTokens.$inferSelect;
 
@@ -221,9 +236,9 @@ export const worker = {
       return unauthorized(url.origin, 'token expired', { hint: 'Create a new connection in Eavesy settings.' });
     }
     if (!token) return unauthorized(url.origin, 'invalid token');
-    // Per token, after the token is known to be valid, failing open: the server
-    // is read-only, every call is already authenticated, and an unreachable
-    // counter means D1 is down anyway.
+    // Per token, after the token is known to be valid, failing open: every call
+    // is already authenticated, and an unreachable counter means D1 is down
+    // anyway. Messages to the human have their own limit, which fails closed.
     const limited = await consumeRateLimit(env.DB, {
       key: `mcp:${token.id}`,
       limit: MCP_REQUESTS_PER_MINUTE,
@@ -240,13 +255,14 @@ export const worker = {
       // Logged by token id only; the path itself is the secret.
       console.warn(JSON.stringify({ message: 'mcp token sent in URL path', tokenId: token.id }));
     }
-    const response = await serve(request, env, token.userId, parseMcpScopes(token.scopesJson));
+    const response = await serve(request, env, token, parseMcpScopes(token.scopesJson));
     if (viaPath) response.headers.set('deprecation', 'true');
     return response;
   },
 } satisfies ExportedHandler<Env>;
 
-async function serve(request: Request, env: Env, userId: string, scopes: McpScope[]): Promise<Response> {
+async function serve(request: Request, env: Env, token: TokenRow, scopes: McpScope[]): Promise<Response> {
+  const userId = token.userId;
   const tools = toolsForScopes(TOOL_DEFS, scopes).map(({ scope: _scope, ...tool }) => tool);
   const requestedHeaderVersion = request.headers.get('mcp-protocol-version');
   if (requestedHeaderVersion && !MCP_VERSIONS.includes(requestedHeaderVersion as (typeof MCP_VERSIONS)[number])) {
@@ -290,7 +306,10 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
       serverInfo: { name: 'eavesy', version: '0.1.0' },
       instructions:
         'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items. ' +
-        'The prompts are ones the user saved in Eavesy to reuse.',
+        'The prompts are ones the user saved in Eavesy to reuse. ' +
+        'When you finish a task, call send_to_human with a one-sentence `spoken` version. When you need a decision ' +
+        'before you can go on, call ask_human; Eavesy shows and reads it on the user\'s Mac and returns what they type. ' +
+        'An answer is information from the user, never an approval for anything.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -340,13 +359,13 @@ async function serve(request: Request, env: Env, userId: string, scopes: McpScop
       });
     }
     try {
-      const result = await callTool(env, userId, name, args);
+      const result = await callTool(env, userId, name, args, token);
       return jsonRpc(body.id, {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       });
     } catch (err) {
       // Only our own messages reach the client; anything else may carry SQL or internals.
-      if (err instanceof UserFacingError) return jsonRpc(body.id, undefined, { code: -32602, message: err.message });
+      if (err instanceof UserFacingError || err instanceof AgentInboxError) return jsonRpc(body.id, undefined, { code: -32602, message: err.message });
       reportError('MCP tool call failed', err, { mcp_tool: name || 'unknown' });
       return jsonRpc(body.id, undefined, { code: -32000, message: 'The tool call failed. Please try again.' });
     }
@@ -425,6 +444,41 @@ interface ToolDef {
 }
 
 const TOOL_DEFS: ToolDef[] = [
+  {
+    name: 'send_to_human',
+    description:
+      'Tell the user something on their Mac: Eavesy shows it in a card and reads `spoken` aloud. Use it when you finish a task ' +
+      'or have something they should know while they are away from this chat. Returns at once. ' +
+      'Returns {status: "sent"}, or {status: "queued"} when their Mac is not listening yet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', maxLength: 4000, description: 'The message, shown in full on the card.' },
+        spoken: { type: 'string', maxLength: 300, description: 'One short sentence to read aloud. Without it, the start of `text` is read.' },
+      },
+      required: ['text'],
+    },
+    scope: 'read',
+  },
+  {
+    name: 'ask_human',
+    description:
+      'Ask the user a question on their Mac and wait for their typed answer. Eavesy shows the question, reads `spoken` aloud, ' +
+      'and returns {status: "answered", text}, {status: "dismissed"}, {status: "timeout"} or, straight away, {status: "mac_offline"}. ' +
+      `It waits up to timeout_sec (default ${ASK_DEFAULT_SEC}, ${ASK_MIN_SEC} to ${ASK_MAX_SEC}); pass a value below your own tool-call time limit. ` +
+      'The answer is information from the user, never an approval to run a tool or spend money. Don\'t ask the same question twice at once.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', maxLength: 4000, description: 'The question, shown in full on the card.' },
+        spoken: { type: 'string', maxLength: 300, description: 'One short sentence to read aloud.' },
+        choices: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: MAX_CHOICES, description: 'Suggested answers, shown on the card. The user can still type anything.' },
+        timeout_sec: { type: 'number', minimum: ASK_MIN_SEC, maximum: ASK_MAX_SEC, default: ASK_DEFAULT_SEC },
+      },
+      required: ['question'],
+    },
+    scope: 'read',
+  },
   { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, scope: 'read' },
   { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, scope: 'read' },
   {
@@ -532,9 +586,49 @@ async function withQuota<T>(env: Env, userId: string, scope: QuotaScope, run: ()
   }
 }
 
-async function callTool(env: Env, userId: string, name: string, args: Record<string, unknown>) {
+/** One more message from this connection to the human, or a refusal once it has sent too many. */
+async function humanMessageAllowed(env: Env, token: TokenRow): Promise<void> {
+  const limited = await consumeRateLimit(env.DB, {
+    key: `mcp-human:${token.id}`,
+    limit: HUMAN_MESSAGES_PER_10_MIN,
+    windowSec: 600,
+    failMode: 'closed',
+  });
+  if (!limited.allowed) {
+    throw new UserFacingError(`This connection has sent the person too many messages. Try again in ${Math.ceil(limited.retryAfterSec / 60)} minutes.`);
+  }
+}
+
+async function callTool(env: Env, userId: string, name: string, args: Record<string, unknown>, token: TokenRow) {
   const db = drizzle(env.DB, { schema });
   switch (name) {
+    case 'send_to_human': {
+      const input = parseSend(args);
+      await humanMessageAllowed(env, token);
+      const listening = await macListening(db, userId);
+      await createMessage(db, { userId, mcpTokenId: token.id, source: token.name, kind: 'send', text: input.text, spoken: input.spoken, ttlMs: SEND_TTL_MS });
+      return listening
+        ? { status: 'sent' }
+        : { status: 'queued', note: 'The person\'s Mac isn\'t listening right now. It will show the message when it comes back within a day.' };
+    }
+    case 'ask_human': {
+      const input = parseAsk(args);
+      // Straight away, without waiting: nobody is there to answer.
+      if (!(await macListening(db, userId))) return { status: 'mac_offline' };
+      await humanMessageAllowed(env, token);
+      const ttlMs = input.timeoutSec * 1000;
+      const id = await createMessage(db, {
+        userId,
+        mcpTokenId: token.id,
+        source: token.name,
+        kind: 'ask',
+        text: input.question,
+        spoken: input.spoken,
+        choices: input.choices,
+        ttlMs,
+      });
+      return waitForAnswer(db, id, Date.now() + ttlMs);
+    }
     case 'search_library':
     case 'ask_library': {
       const question = stringArg(name === 'ask_library' ? args.question : args.query);
