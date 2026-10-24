@@ -151,7 +151,10 @@ describe('glossary read-back', () => {
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 })).toBe(true);
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.1 })).toBe(false);
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.4 }, { lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.5 }, { lenient: true })).toBe(false);
     expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 }, { lenient: true })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.35 })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.4 }, { lenient: true, quiet: true })).toBe(true);
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary: ['Kubernetes'] })).toBe(true);
     expect(isHallucination({ text: 'Open Eavesy.', noSpeechProb: 0.6 })).toBe(false);
   });

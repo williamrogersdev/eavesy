@@ -115,7 +115,7 @@ export function isHallucination(
   // the prompt read back, not someone saying it. A voice note's own words
   // need more doubt, as with every other short line on one.
   const doubt = opts.lenient && !opts.quiet ? 0.5 : 0.3;
-  if (line.noSpeechProb !== undefined && line.noSpeechProb > doubt && BUILT_IN_TERMS.some((term) => normalize(text) === normalize(term))) return true;
+  if (line.noSpeechProb !== undefined && line.noSpeechProb > doubt && isBareAppName(text)) return true;
   if (/^[[(*♪].*[\])*♪]$/.test(text)) return true;
   if (line.noSpeechProb !== undefined && line.noSpeechProb > 0.85) return true;
   if (line.compressionRatio !== undefined && line.compressionRatio > 2.4) return true;
@@ -132,12 +132,19 @@ export function isHallucination(
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }
 
+const BUILT_IN_NAMES = BUILT_IN_TERMS.map(normalize);
+
+function isBareAppName(text: string): boolean {
+  return BUILT_IN_NAMES.includes(normalize(text));
+}
+
 /**
  * Whisper can read its prompt back on near-silent audio, which for the custom
  * words is a bare list: "Eavesy, Priya Raman, Kubernetes." A line counts as
  * that only when it is nothing but `minTerms` or more of the user's words and
- * Whisper scored it as likely not speech; with no score it is kept. One word, or a word in a sentence, is
- * always kept.
+ * Whisper scored it as likely not speech; with no score it is kept. One of the
+ * user's words, or a word in a sentence, is always kept. The app's own name
+ * alone is the exception, judged in `isHallucination`: every prompt has it.
  */
 function readsBackGlossary(line: WhisperLine, glossary: readonly string[], minTerms: number): boolean {
   if (line.noSpeechProb === undefined || line.noSpeechProb <= 0.3) return false;
