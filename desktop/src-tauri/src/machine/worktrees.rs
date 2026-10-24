@@ -154,11 +154,14 @@ pub fn merged(repo: &Path, head: &str, bases: &[Base]) -> bool {
     })
 }
 
-/// Ignored folders and files that a build or an install makes again.
+/// Ignored folders a package manager, compiler or test runner owns outright
+/// and makes again. Git reports a wholly ignored folder as one line, so a
+/// name here vouches for everything inside it. Generic names (`build`, `out`,
+/// `dist`, `.cache`) aren't here: people keep their own files in those, and
+/// `.wrangler` and `.vercel` hold local databases and project settings.
 const REBUILDABLE: &[&str] = &[
-    "node_modules", "target", "dist", "build", "out", ".next", ".nuxt", ".output", ".svelte-kit", ".turbo", ".vite",
-    ".wrangler", ".vercel", ".netlify", ".parcel-cache", ".cache", ".tanstack", ".vinxi", ".expo", "coverage",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", ".gradle", "DerivedData", ".build", ".DS_Store",
+    "node_modules", "target", ".next", ".nuxt", ".svelte-kit", ".turbo", ".vite", ".parcel-cache", ".tanstack", ".vinxi",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", ".gradle", "DerivedData", ".DS_Store",
 ];
 
 /// One `git status --porcelain --ignored` line that removing the worktree
@@ -246,6 +249,10 @@ mod tests {
         assert!(would_lose("!! .env"));
         assert!(would_lose("!! web/.dev.vars"));
         assert!(would_lose("!! desktop/src-tauri/binaries/"));
+        // A collapsed generic folder could hold anything, a .env included.
+        assert!(would_lose("!! out/"));
+        assert!(would_lose("!! build/"));
+        assert!(would_lose("!! .wrangler/"));
         assert!(would_lose("?? notes.md"));
         assert!(would_lose(" M src/lib.rs"));
         assert!(!would_lose(""));

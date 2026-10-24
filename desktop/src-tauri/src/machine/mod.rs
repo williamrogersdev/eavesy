@@ -283,6 +283,9 @@ fn clean(worktree_paths: Vec<String>, processes: Vec<ProcessRef>) -> Vec<Outcome
     }
 
     let home = dirs::home_dir().unwrap_or_default();
+    // One look at what's running for all of them. A process that starts in a
+    // worktree during the next few milliseconds isn't seen; git still refuses
+    // changes, and nothing it could have written yet is ignored output.
     let now = if worktree_paths.is_empty() { Vec::new() } else { procs::snapshot() };
     for path in worktree_paths {
         let row = inventory.worktrees.iter().find(|row| row.path == path);
@@ -314,6 +317,38 @@ pub async fn machine_clean(window: tauri::WebviewWindow, worktrees: Vec<String>,
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success();
+        assert!(ok, "git {args:?}");
+    }
+
+    /// A merged, clean worktree is stale until a process runs in it or a
+    /// session writes a transcript for it.
+    #[test]
+    fn a_running_process_or_a_recent_session_keeps_a_worktree() {
+        let root = std::env::temp_dir().join(format!("eavesy-in-use-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let (repo, worktree, home) = (root.join("repo"), root.join("wt"), root.join("home"));
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&repo, &["worktree", "add", "-q", "-b", "wt", &worktree.to_string_lossy()]);
+        let entries = super::worktrees::list(&repo);
+        let status = |cwds: &[&str]| super::repo_rows(&home, &entries, cwds).unwrap().1[0].status;
+        assert_eq!(status(&[]), super::Status::Stale);
+        let inside = worktree.join("web").to_string_lossy().into_owned();
+        assert_eq!(status(&[inside.as_str()]), super::Status::InUse);
+        let transcripts = super::worktrees::transcript_dir(&home, &worktree.to_string_lossy());
+        std::fs::create_dir_all(&transcripts).unwrap();
+        std::fs::write(transcripts.join("s.jsonl"), "{}\n").unwrap();
+        assert_eq!(status(&[]), super::Status::InUse);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn restore_lines_quote_for_the_shell() {
         assert_eq!(super::shell_quote("/r/it's here"), "'/r/it'\\''s here'");

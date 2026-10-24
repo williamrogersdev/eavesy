@@ -92,8 +92,12 @@ A worktree is **stale** when all of these hold:
 3. Nothing would be lost: no staged, unstaged or untracked files, and no
    ignored file other than build output. `git worktree remove` without
    `--force` refuses changes and untracked files, but it deletes ignored ones,
-   so an ignored `.env` or `.dev.vars` keeps the worktree. Rebuildable output
-   (`node_modules`, `target/`, `dist/`, `.next/`, …) doesn't count.
+   so an ignored `.env` or `.dev.vars` keeps the worktree. Folders a tool owns
+   outright and makes again (`node_modules`, `target/`, `.next/`,
+   `__pycache__`, …) don't count. Generic ones (`build/`, `out/`, `dist/`,
+   `.cache/`) do, because git reports a wholly ignored folder as one line and
+   people keep their own files in those. `.wrangler/` and `.vercel/` count too,
+   since they hold local databases and project settings.
 4. **No open session** uses it: no running process has its cwd inside it, and
    no Claude Code session in it has been active recently (a transcript in
    `~/.claude/projects/<slug>` modified in the last 24 h).
@@ -143,14 +147,16 @@ everyone, so those can't be traced to a session; the usual leftovers
 (Homebrew `node`, `bun`, `git`, `cargo`) can. A process whose environment
 can't be read is never labelled.
 
-**Never orphans**, whatever the evidence: processes of other users, launchd
-jobs (they start with launchd's environment, so they don't carry a
-session's tag unless someone ran `launchctl setenv` with it; there's no
-separate check yet), apps (`.app` bundles),
+**Never orphans**, whatever the evidence: processes of other users, apps (`.app` bundles),
 system binaries (`/System`, `/usr/libexec`, `/usr/sbin`), daemons every
 session shares (`gpg-agent`, `keyboxd`, `ssh-agent`), anything whose
 executable path can't be read, Eavesy itself and everything it started, the
 shells and terminals you're using, and anything you marked "keep".
+
+**A known gap: launchd jobs.** They start with launchd's environment, so they
+don't carry a session's tag, unless someone ran `launchctl setenv` with one.
+There's no separate launchd check yet; a later slice adds one with
+`launchctl print`.
 
 **Zombies** (state `Z`) are a separate label. They hold no memory and can't
 be killed; only their parent can reap them. The row explains that and offers
