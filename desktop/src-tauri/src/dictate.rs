@@ -159,6 +159,9 @@ fn note_press_in_background() {
 }
 
 fn start(app: &AppHandle, pressed_at: Instant) {
+    // Decided before Eavesy stops talking: a dictation that starts over (or
+    // just after) a question it read out answers that question's card.
+    let answering = crate::agents::claim_dictation();
     // You're talking: Eavesy stops talking.
     crate::agents::speak::stop();
     // Say "Starting…" at once: the engine takes a moment to open the mic. The
@@ -183,6 +186,9 @@ fn start(app: &AppHandle, pressed_at: Instant) {
     );
     match result {
         Ok(session) => {
+            if let Some(claim) = answering {
+                crate::agents::answer_with(&session.session_id, claim);
+            }
             crate::telemetry::track("dictation_started", serde_json::json!({}));
             crate::projects::assign_in_background(app, &session.session_id);
             let stop_now = std::mem::take(&mut press().stop_when_ready);

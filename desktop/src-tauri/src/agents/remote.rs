@@ -232,6 +232,22 @@ pub fn clear(app: &AppHandle) {
     }
 }
 
+/// A reply to a remote ask said by voice (mod.rs `send_reply`): goes to the
+/// agent that asked, in the background, and never to the clipboard. None for
+/// an item that isn't a remote ask.
+pub fn send(app: &AppHandle, id: u64, text: &str) -> Option<Result<&'static str, String>> {
+    let cloud_id = with_asks(|asks| asks.remove(&id))?;
+    with_queue(|queue| queue.remove(id));
+    let app = app.clone();
+    let text = text.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = resolve(&app, &cloud_id, Outcome::Answered { text: &text }).await {
+            tracing::warn!("agent inbox: voice answer: {error}");
+        }
+    });
+    Some(Ok("sent"))
+}
+
 /// Sends what you typed to the agent that asked. The card keeps it if that fails.
 #[tauri::command]
 pub async fn agents_answer(app: AppHandle, id: u64, text: String) -> Result<(), String> {
