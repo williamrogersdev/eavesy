@@ -97,6 +97,12 @@ impl Queue {
         Some(self.items.remove(at))
     }
 
+    /// Takes the session's approval off, once the tool it asked about has run.
+    pub fn clear_approval(&mut self, session_id: &str) -> Option<Item> {
+        let at = self.items.iter().position(|item| item.session_id == session_id && item.kind == Kind::Approval)?;
+        Some(self.items.remove(at))
+    }
+
     /// Puts an item behind the others of its kind.
     pub fn later(&mut self, id: u64, now: u64) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {

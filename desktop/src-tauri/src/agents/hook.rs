@@ -1,4 +1,4 @@
-//! `Eavesy --agent-hook <stop|notification|prompt>`: the command Claude Code
+//! `Eavesy --agent-hook <stop|notification|prompt|tool_done>`: the command Claude Code
 //! runs for its hooks. It runs before Tauri starts (no window, no telemetry,
 //! no single-instance check), hands the event to the running app over the
 //! agents socket, and for a held stop waits for your reply.
@@ -30,6 +30,7 @@ pub fn maybe_run() -> bool {
         Some("stop") => Event::Stop,
         Some("notification") => Event::Notification,
         Some("prompt") => Event::Prompt,
+        Some("tool_done") => Event::ToolDone,
         _ => return true,
     };
     let mut input = Vec::new();
@@ -49,13 +50,19 @@ pub fn maybe_run() -> bool {
 
 /// The hook's stdin as the app wants it, or None when it isn't a hook payload.
 pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Option<String>) -> Option<HookMessage> {
-    let value: Value = serde_json::from_slice(input).ok()?;
+    let value: Value = match serde_json::from_slice(input) {
+        Ok(value) => value,
+        // A tool's output can be past the read cap; only the session id is needed.
+        Err(_) if event == Event::ToolDone => serde_json::json!({ "session_id": leading_session_id(input)? }),
+        Err(_) => return None,
+    };
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
     let session_id = text("session_id").filter(|id| !id.is_empty())?;
     let (message, prompt) = match event {
         Event::Stop => (text("last_assistant_message").map(|m| protocol::tail(&m, protocol::MAX_MESSAGE_CHARS)), None),
         Event::Notification => (text("message").map(|m| protocol::head(&m, protocol::MAX_PROMPT_CHARS)), None),
         Event::Prompt => (None, text("prompt").map(|p| protocol::head(&p, protocol::MAX_PROMPT_CHARS))),
+        Event::ToolDone => (None, None),
     };
     Some(HookMessage {
         v: protocol::VERSION,
@@ -68,6 +75,16 @@ pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Opti
         attended,
         host_session_id: host_session_id.filter(|id| !id.is_empty()),
     })
+}
+
+/// Claude Code writes `session_id` first, so it's found even in cut-off input.
+fn leading_session_id(input: &[u8]) -> Option<String> {
+    const KEY: &[u8] = br#""session_id":""#;
+    let start = input.windows(KEY.len()).position(|window| window == KEY)? + KEY.len();
+    let rest = &input[start..];
+    let end = rest.iter().position(|&byte| byte == b'"')?;
+    let id = std::str::from_utf8(&rest[..end]).ok()?;
+    (!id.is_empty() && id.len() <= 128).then(|| id.to_string())
 }
 
 /// Sends the event, and if the app holds it, waits for your reply. None means
@@ -126,6 +143,9 @@ mod tests {
         let prompt = message(Event::Prompt, br#"{"session_id":"s1","prompt":"fix it"}"#, false, Some("local_1".into())).unwrap();
         assert_eq!(prompt.prompt.as_deref(), Some("fix it"));
         assert_eq!(prompt.host_session_id.as_deref(), Some("local_1"));
+        let cut = message(Event::ToolDone, br#"{"session_id":"s2","tool_response":"aaaa"#, false, None).unwrap();
+        assert_eq!(cut.session_id, "s2");
+        assert!(message(Event::Stop, br#"{"session_id":"s2","last_assistant_message":"aa"#, false, None).is_none());
     }
 
     #[test]

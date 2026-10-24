@@ -62,7 +62,7 @@ function Agents() {
   const send = () => {
     setBusy(true);
     setNote(null);
-    void invoke('agents_send', { id: head.id, text: draft })
+    void invoke('agents_send', { id: head.id, sessionId: head.session_id, text: draft })
       .then((how) => { if (how === 'copied') setNote('This session stopped waiting, so your reply is copied. Paste it into the session.'); })
       .catch((error: unknown) => setNote(errMsg(error, 'Couldn’t send that reply.')))
       .finally(() => setBusy(false));
@@ -84,6 +84,7 @@ function Agents() {
           value={draft}
           placeholder="Your reply to Claude"
           rows={3}
+          maxLength={20000}
           onFocus={() => void invoke('agents_edit')}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter' && event.metaKey && draft.trim()) send(); }}

@@ -162,6 +162,14 @@ async fn handle(app: AppHandle, stream: UnixStream) {
                 enqueue(&app, &message, Kind::Approval, None);
             }
         }
+        Event::ToolDone => {
+            let _ = write(&mut stream, &Answer::Ack { hold: false }).await;
+            if with_queue(|queue| queue.clear_approval(&message.session_id)).is_some() {
+                refresh(&app);
+            }
+        }
+        // A turn that your reply started is held again when it stops: that's
+        // the conversation going on, so `stop_hook_active` doesn't change it.
         Event::Stop => {
             let hold_secs = settings.agent_hold_secs();
             let hold = message.attended && hold_secs > 0;
@@ -257,11 +265,8 @@ fn refresh(app: &AppHandle) {
         return;
     };
     card::show(app);
-    if head.spoken || crate::hud::current().is_live() {
-        return;
-    }
-    let others = state.items.iter().skip(1).filter(|item| item.kind != Kind::Finished).count();
-    speak::say(&queue::speech(&head, if head.kind == Kind::Finished { 0 } else { others }));
+    let Some(line) = utterance(&state.items, crate::hud::current().is_live()) else { return };
+    speak::say(&line);
     with_queue(|queue| queue.mark_spoken(head.id));
     if head.kind == Kind::Finished {
         let app = app.clone();
@@ -272,6 +277,18 @@ fn refresh(app: &AppHandle) {
             }
         });
     }
+}
+
+/// What to say about the front of the queue, if anything: never while you're
+/// dictating, and never the same item twice. Only questions and approvals
+/// count the others still waiting.
+fn utterance(items: &[queue::Item], dictating: bool) -> Option<String> {
+    let head = items.first()?;
+    if head.spoken || dictating {
+        return None;
+    }
+    let others = if head.kind == Kind::Finished { 0 } else { items.iter().skip(1).filter(|item| item.kind != Kind::Finished).count() };
+    Some(queue::speech(head, others))
 }
 
 /// A dictation ended: say whatever waited while you talked.
@@ -293,20 +310,26 @@ pub fn agents_state() -> Snapshot {
 /// Sends your reply to the session, through its held hook. When the session
 /// stopped waiting, the reply is copied for you to paste instead.
 #[tauri::command]
-pub fn agents_send(app: AppHandle, id: u64, text: String) -> Result<&'static str, String> {
+pub fn agents_send(app: AppHandle, id: u64, session_id: String, text: String) -> Result<&'static str, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Write a reply first.".into());
     }
-    let item = with_queue(|queue| queue.remove(id)).ok_or("That session isn't waiting any more.")?;
-    let sent = item.held && with_holds(|holds| holds.remove(&id)).is_some_and(|tx| tx.send(Answer::Reply { text: text.clone() }).is_ok());
-    refresh(&app);
-    if sent {
-        return Ok("sent");
+    if text.chars().count() > protocol::MAX_REPLY_CHARS {
+        return Err(format!("That reply is too long to send. Keep it under {} characters.", protocol::MAX_REPLY_CHARS));
     }
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    app.clipboard().write_text(text).map_err(|error| error.to_string())?;
-    Ok("copied")
+    // The card names the session it showed you, so a reply never lands in another one.
+    let held = with_queue(|queue| queue.get(id).filter(|item| item.session_id == session_id).map(|item| item.held))
+        .ok_or("That session isn't waiting any more.")?;
+    let sent = held && with_holds(|holds| holds.remove(&id)).is_some_and(|tx| tx.send(Answer::Reply { text: text.clone() }).is_ok());
+    if !sent {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        // Copied before the card goes, so a failed copy leaves your reply on it.
+        app.clipboard().write_text(text).map_err(|error| error.to_string())?;
+    }
+    with_queue(|queue| queue.remove(id));
+    refresh(&app);
+    Ok(if sent { "sent" } else { "copied" })
 }
 
 #[tauri::command]
@@ -342,10 +365,14 @@ pub fn agents_edit(app: AppHandle) {
 
 #[tauri::command]
 pub fn set_agent_voice(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let settings = crate::settings::update(&app, |config| config.agent_voice = Some(enabled))?;
     if enabled {
-        install_hooks(settings.agent_hold_secs())
+        // Hooks first: the setting only says on once Claude Code will call us.
+        install_hooks(crate::settings::load(&app).agent_hold_secs())?;
+        crate::settings::update(&app, |config| config.agent_voice = Some(true))?;
+        Ok(())
     } else {
+        // Off first: until the hooks are gone, the app tells them not to hold.
+        crate::settings::update(&app, |config| config.agent_voice = Some(false))?;
         for item in with_queue(|queue| queue.ordered().into_iter().map(|item| item.id).collect::<Vec<_>>()) {
             with_queue(|queue| queue.remove(item));
             release(item, Answer::Release);
@@ -359,9 +386,57 @@ pub fn set_agent_voice(app: AppHandle, enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn set_agent_hold(app: AppHandle, seconds: u32) -> Result<(), String> {
     let seconds = seconds.min(crate::settings::MAX_AGENT_HOLD_SECS);
-    let settings = crate::settings::update(&app, |config| config.agent_hold_secs = Some(seconds))?;
-    if settings.agent_voice() {
+    if crate::settings::load(&app).agent_voice() {
         install_hooks(seconds)?;
     }
+    crate::settings::update(&app, |config| config.agent_hold_secs = Some(seconds))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use queue::Queue;
+
+    fn items(queue: &Queue) -> Vec<queue::Item> {
+        queue.ordered().into_iter().cloned().collect()
+    }
+
+    #[test]
+    fn says_the_front_once_and_never_over_dictation() {
+        let mut queue = Queue::default();
+        let (a, _) = queue.push("a", "eavesy".into(), Kind::Finished, None, true, 1);
+        queue.resolve(a, "wants to know about the flag".into(), Some("No flag".into()), true);
+        let (b, _) = queue.push("b", "repackify".into(), Kind::Approval, None, false, 2);
+        queue.resolve(b, "needs approval to run a command".into(), None, true);
+        let (c, _) = queue.push("c", "docs".into(), Kind::Finished, None, false, 3);
+        queue.resolve(c, "finished the docs".into(), None, false);
+
+        let front = items(&queue);
+        assert_eq!(front[0].id, b);
+        assert_eq!(utterance(&front, true), None);
+        let line = utterance(&front, false).unwrap();
+        assert!(line.starts_with("2 sessions need you. First, repackify"), "{line}");
+
+        queue.mark_spoken(b);
+        assert_eq!(utterance(&items(&queue), false), None);
+    }
+
+    #[test]
+    fn a_finished_session_is_said_alone() {
+        let mut queue = Queue::default();
+        let (a, _) = queue.push("a", "docs".into(), Kind::Finished, None, false, 1);
+        queue.resolve(a, "finished the docs".into(), None, false);
+        assert_eq!(utterance(&items(&queue), false).as_deref(), Some("docs: finished the docs."));
+    }
+
+    #[test]
+    fn a_tool_running_clears_only_its_approval() {
+        let mut queue = Queue::default();
+        queue.push("a", "eavesy".into(), Kind::Approval, None, false, 1);
+        queue.push("b", "docs".into(), Kind::Finished, None, false, 2);
+        assert!(queue.clear_approval("b").is_none());
+        assert!(queue.clear_approval("a").is_some());
+        assert!(queue.clear_approval("a").is_none());
+    }
 }

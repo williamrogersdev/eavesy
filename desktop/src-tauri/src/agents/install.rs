@@ -9,7 +9,13 @@ use serde_json::{json, Map, Value};
 
 /// Every hook command Eavesy writes has this in it, which is how it finds its own.
 const MARK: &str = "--agent-hook";
-const EVENTS: [(&str, &str); 3] = [("Stop", "stop"), ("Notification", "notification"), ("UserPromptSubmit", "prompt")];
+const EVENTS: [(&str, &str); 4] = [
+    ("Stop", "stop"),
+    ("Notification", "notification"),
+    ("UserPromptSubmit", "prompt"),
+    // Only to take an approval off the card once you've given it in Claude.
+    ("PostToolUse", "tool_done"),
+];
 /// Seconds Claude Code waits for a hook that doesn't hold.
 const QUICK_TIMEOUT: u64 = 5;
 
@@ -20,6 +26,7 @@ pub fn settings_file() -> Option<PathBuf> {
 /// Writes the hooks for `exe`, with the Stop hook allowed to wait `hold_secs`.
 pub fn install(file: &Path, exe: &Path, hold_secs: u32) -> Result<(), String> {
     let current = read(file)?;
+    check_shape(file, &current)?;
     let next = with_hooks(current.clone(), &exe.to_string_lossy(), hold_secs);
     if next != current {
         write(file, &next)?;
@@ -32,6 +39,7 @@ pub fn uninstall(file: &Path) -> Result<(), String> {
         return Ok(());
     }
     let current = read(file)?;
+    check_shape(file, &current)?;
     let next = without_hooks(current.clone());
     if next != current {
         write(file, &next)?;
@@ -43,6 +51,21 @@ pub fn uninstall(file: &Path) -> Result<(), String> {
 #[cfg(test)]
 fn installed(file: &Path, exe: &Path, hold_secs: u32) -> bool {
     read(file).map(|current| with_hooks(current.clone(), &exe.to_string_lossy(), hold_secs) == current).unwrap_or(false)
+}
+
+/// Settings that aren't an object, or whose `hooks` isn't one, are left alone
+/// rather than replaced: Eavesy only rewrites a file it understands.
+fn check_shape(file: &Path, settings: &Value) -> Result<(), String> {
+    let hooks_ok = match settings.get("hooks") {
+        None => true,
+        Some(Value::Object(hooks)) => EVENTS.iter().all(|(name, _)| hooks.get(*name).is_none_or(Value::is_array)),
+        Some(_) => false,
+    };
+    if settings.is_object() && hooks_ok {
+        Ok(())
+    } else {
+        Err(format!("{} isn't laid out the way Claude Code expects, so Eavesy left it alone.", file.display()))
+    }
 }
 
 fn command(exe: &str, event: &str) -> String {
@@ -74,19 +97,23 @@ pub fn without_hooks(settings: Value) -> Value {
         _ => Map::new(),
     };
     if let Some(Value::Object(hooks)) = root.get_mut("hooks") {
+        let mut touched = false;
         for (name, _) in EVENTS {
             let Some(Value::Array(list)) = hooks.get_mut(name) else { continue };
-            for entry in list.iter_mut() {
-                if let Some(Value::Array(inner)) = entry.get_mut("hooks") {
-                    inner.retain(|hook| !is_ours(hook));
-                }
-            }
-            list.retain(|entry| entry.get("hooks").and_then(Value::as_array).is_none_or(|inner| !inner.is_empty()));
-            if list.is_empty() {
+            let before = list.len();
+            // Only entries that held one of Eavesy's hooks are pruned; yours stay as they are.
+            list.retain_mut(|entry| {
+                let Some(Value::Array(inner)) = entry.get_mut("hooks") else { return true };
+                let had = inner.len();
+                inner.retain(|hook| !is_ours(hook));
+                inner.len() == had || !inner.is_empty()
+            });
+            if list.is_empty() && before > 0 {
+                touched = true;
                 hooks.remove(name);
             }
         }
-        if hooks.is_empty() {
+        if hooks.is_empty() && touched {
             root.remove("hooks");
         }
     }
@@ -109,6 +136,9 @@ fn read(file: &Path) -> Result<Value, String> {
 
 /// Written aside and renamed over, so Claude Code never reads half a file.
 fn write(file: &Path, value: &Value) -> Result<(), String> {
+    // A settings file linked in from a dotfiles repo stays a link: write its target.
+    let resolved = std::fs::canonicalize(file).ok();
+    let file = resolved.as_deref().unwrap_or(file);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     }
@@ -160,6 +190,41 @@ mod tests {
         let back = without_hooks(with_hooks(mine.clone(), EXE, 300));
         assert_eq!(back, mine);
         assert_eq!(without_hooks(with_hooks(json!({}), EXE, 300)), json!({}));
+    }
+
+    #[test]
+    fn your_empty_entries_are_left_alone() {
+        let mine = json!({ "hooks": { "Stop": [{ "matcher": "x", "hooks": [] }], "PreToolUse": [] } });
+        assert_eq!(without_hooks(with_hooks(mine.clone(), EXE, 300)), mine);
+        assert_eq!(without_hooks(json!({ "hooks": {} })), json!({ "hooks": {} }));
+    }
+
+    #[test]
+    fn a_file_laid_out_oddly_is_left_alone() {
+        let dir = std::env::temp_dir().join(format!("eavesy-install-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for odd in [r#"[1, 2]"#, r#"{"hooks": "none"}"#, r#"{"hooks": {"Stop": "afplay"}}"#] {
+            let file = dir.join("settings.json");
+            std::fs::write(&file, odd).unwrap();
+            assert!(install(&file, Path::new(EXE), 300).is_err());
+            assert!(uninstall(&file).is_err());
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), odd);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_linked_settings_file_stays_a_link() {
+        let dir = std::env::temp_dir().join(format!("eavesy-install-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("dotfiles-settings.json");
+        let link = dir.join("settings.json");
+        std::fs::write(&target, "{}").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        install(&link, Path::new(EXE), 300).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(installed(&target, Path::new(EXE), 300));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

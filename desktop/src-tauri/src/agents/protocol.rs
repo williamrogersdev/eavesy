@@ -11,6 +11,8 @@ pub const MAX_LINE: usize = 1024 * 1024;
 /// The app keeps the end of Claude's message: that's where its question is.
 pub const MAX_MESSAGE_CHARS: usize = 12_000;
 pub const MAX_PROMPT_CHARS: usize = 4_000;
+/// Your reply to a session; far below `MAX_LINE`, so the hook can always read it.
+pub const MAX_REPLY_CHARS: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,6 +23,8 @@ pub enum Event {
     Notification,
     /// You sent Claude a prompt (`UserPromptSubmit`).
     Prompt,
+    /// A tool finished (`PostToolUse`), so an approval it waited on was given.
+    ToolDone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
