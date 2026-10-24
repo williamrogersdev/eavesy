@@ -115,6 +115,7 @@ export function AssistantSettings({ active, settings, onSettings }: {
   const rateOptions = RATES.some((option) => option.value === rate) ? RATES : [...RATES, { value: rate, label: `${rate} words a minute` }];
   // Saves run one after another, so an older one can never land last.
   const saving = useRef<Promise<void>>(Promise.resolve());
+  const latestPick = useRef(0);
   const voiceOptions = useMemo(() => [
     { value: SYSTEM_VOICE, label: 'System voice' },
     ...sortVoices(voices ?? [], typeof navigator === 'undefined' ? 'en' : navigator.language)
@@ -122,12 +123,15 @@ export function AssistantSettings({ active, settings, onSettings }: {
   ], [voices]);
   const changeVoice = (patch: { name?: string; rate?: Rate }) => {
     const next = { name: voiceName, rate, ...patch };
+    const pick = ++latestPick.current;
     setPicked(next);
     setError(null);
     const rateValue = next.rate === 'default' ? null : Number(next.rate);
     saving.current = saving.current.then(() => setAssistantVoice(next.name || null, rateValue)
       .then(() => onSettings((current) => ({ ...current, assistant_voice: next.name || undefined, assistant_voice_rate: rateValue ?? undefined })))
-      .catch((e: unknown) => { setPicked(null); setError(errMsg(e, 'Couldn’t change the voice.')); }));
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change the voice.')))
+      // Once the newest pick has landed (or failed), show the saved settings again.
+      .finally(() => { if (latestPick.current === pick) setPicked(null); }));
   };
 
   const chooseMode = (choice: ModeChoice) => {
