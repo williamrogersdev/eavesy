@@ -211,12 +211,17 @@ fn live_cards(core: &Core) -> Vec<CardView> {
     live
 }
 
-fn save(core: &Core, policy: Policy) -> Result<(), String> {
+/// Changes the policy and saves it under one lock, so two changes can't overwrite each
+/// other. Never call it while a dialog is up.
+fn update(core: &Core, change: impl FnOnce(&mut Policy)) -> Result<Policy, String> {
     let path = store::path().ok_or("no home folder")?;
+    let mut current = core.policy.lock().unwrap();
+    let mut policy = current.clone();
+    change(&mut policy);
     store::save(&path, &keys(), &policy)?;
-    *core.policy.lock().unwrap() = policy;
+    *current = policy.clone();
     core.tampered.store(false, Ordering::SeqCst);
-    Ok(())
+    Ok(policy)
 }
 
 #[derive(Serialize)]
@@ -268,13 +273,13 @@ pub async fn set_assistant_mode(app: AppHandle, window: WebviewWindow, mode: Mod
             }
         }
         let core = app.state::<Core>();
-        let mut policy = core.policy.lock().unwrap().clone();
-        policy.mode = mode;
-        policy.until_ms = match mode {
-            Mode::Ask => None,
-            _ => minutes.map(|m| now_ms() + m * 60_000),
-        };
-        save(&core, policy)?;
+        update(&core, |policy| {
+            policy.mode = mode;
+            policy.until_ms = match mode {
+                Mode::Ask => None,
+                _ => minutes.map(|m| now_ms() + m * 60_000),
+            };
+        })?;
         log("You", "assistant.mode", &format!("{mode:?}"), "ran", minutes.map(|m| format!("for {m} min")));
         Ok(())
     })
@@ -309,10 +314,8 @@ pub async fn set_trusted_agent_folders(app: AppHandle, window: WebviewWindow, fo
                 return Err("cancelled".to_string());
             }
         }
-        // Read again after the dialog, so a mode change made meanwhile isn't undone.
-        let mut policy = core.policy.lock().unwrap().clone();
-        policy.trusted_folders = clean.clone();
-        save(&core, policy)?;
+        // Only the folders change, so a mode change made while the dialog was up stays.
+        update(&core, |policy| policy.trusted_folders = clean.clone())?;
         log("You", "assistant.trust", &format!("{} folders", clean.len()), "ran", None);
         Ok(clean)
     })

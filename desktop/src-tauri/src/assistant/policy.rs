@@ -380,6 +380,22 @@ mod tests {
         assert!(matches!(decide(&many, &you(), &mode(Mode::Bypass), &pass, &quiet), Decision::Card { .. }));
     }
 
+    /// assistant.md C8: Bypass "applies to what *you* ask, typed or spoken", and Auto
+    /// runs tier 2 for you either way. Voice reaches Eavesy only through its talk
+    /// shortcut. In Ask, voice opens the card and only a click presses it.
+    #[test]
+    fn your_voice_counts_as_you_outside_ask() {
+        let said = Requester::You { spoken: true };
+        let quiet = Breaker::default();
+        let trash = Facts { undoable: true, safe_listed: true, ..facts(Tier::Click) };
+        assert_eq!(decide(&facts(Tier::Say), &said, &mode(Mode::Ask), &Check::Pass, &quiet), Decision::ReadBack);
+        assert_eq!(decide(&facts(Tier::Click), &said, &mode(Mode::Ask), &Check::Pass, &quiet), Decision::Card { warning: None });
+        assert_eq!(decide(&facts(Tier::Say), &said, &mode(Mode::Auto), &Check::Pass, &quiet), Decision::Run);
+        assert_eq!(decide(&trash, &said, &mode(Mode::Bypass), &Check::Pass, &quiet), Decision::RunWithUndo { undo_for: UNDO_FOR_BYPASS });
+        // The floor still holds for voice: a flag is a card.
+        assert!(matches!(decide(&trash, &said, &mode(Mode::Bypass), &Check::Flagged("x".into()), &quiet), Decision::Card { .. }));
+    }
+
     #[test]
     fn a_folder_is_trusted_only_inside_a_trusted_root() {
         let roots = vec![PathBuf::from("/Users/w/Developer/eavesy")];
