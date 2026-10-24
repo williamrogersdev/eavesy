@@ -33,13 +33,10 @@ pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you
                 url: String,
             }
             let Input { url } = serde_json::from_value(input.clone()).map_err(|_| "open_link needs a url.".to_string())?;
-            let url = url.trim().to_string();
-            if !is_web_link(&url) {
-                return Err("Eavesy only opens https links.".into());
-            }
-            // A link the model found in a tool result or a page isn't yours to open (assistant.md tier 1).
-            let bare = url.trim_start_matches("https://").trim_end_matches('/');
-            if !said_by_you.iter().any(|text| text.contains(&url) || text.contains(bare)) {
+            let url = normalize_link(url.trim()).filter(|url| is_web_link(url)).ok_or("Eavesy only opens https links.")?;
+            // A link the model found in a tool result or a page isn't yours to open (assistant.md
+            // tier 1), so it must be one of the links in your own words, exactly.
+            if !said_by_you.iter().flat_map(|text| links_in(text)).any(|yours| yours == url) {
                 return Err("Eavesy only opens a link you typed or said in this conversation.".into());
             }
             Ok(Box::new(OpenLink { app: app.clone(), url }))
@@ -56,10 +53,30 @@ pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you
             if worktrees.is_empty() && processes.is_empty() {
                 return Err("There's nothing in that request to clean up.".into());
             }
-            Ok(Box::new(crate::machine::Clean { worktrees, processes }))
+            Ok(Box::new(crate::machine::Clean::described(&worktrees, &processes)?))
         }
         _ => Err(format!("Eavesy has no tool called {name}.")),
     }
+}
+
+/// `https://` added when there's no scheme, the host lowercased, a trailing `/` dropped.
+/// Anything with another scheme is kept as it is, so `is_web_link` refuses it.
+fn normalize_link(token: &str) -> Option<String> {
+    let with_scheme = if token.contains("://") { token.to_string() } else { format!("https://{token}") };
+    let (scheme, rest) = with_scheme.split_once("://")?;
+    let split = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (host, path) = rest.split_at(split);
+    let url = format!("{}://{}{}", scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), path);
+    Some(url.strip_suffix('/').map(str::to_string).unwrap_or(url))
+}
+
+/// The links in what you wrote: whole words that look like a host or a URL.
+fn links_in(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| word.trim_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'' | '“' | '”' | '‘' | '’')))
+        .filter_map(normalize_link)
+        .filter(|url| is_web_link(url))
+        .collect()
 }
 
 fn is_web_link(url: &str) -> bool {
@@ -176,6 +193,20 @@ mod tests {
         assert!(!is_web_link("https://"));
         assert!(!is_web_link("https:///x"));
         assert!(!is_web_link("https://a.com/\nx"));
+    }
+
+    #[test]
+    fn a_link_must_be_one_you_wrote_exactly() {
+        let yours = |text: &str| links_in(text);
+        assert_eq!(yours("open posthog.com please"), ["https://posthog.com"]);
+        assert_eq!(yours("see (https://PostHog.com/docs/)."), ["https://posthog.com/docs"]);
+        assert_eq!(normalize_link("https://posthog.com/").as_deref(), Some("https://posthog.com"));
+        // A shorter host inside a longer one you typed isn't yours.
+        assert!(!yours("github.com").contains(&"https://b.com".to_string()));
+        assert!(!yours("posthog.com/docs").contains(&"https://g.com/docs".to_string()));
+        assert!(!yours("go to eavesy.com").contains(&"https://vesy.com".to_string()));
+        assert!(yours("ftp://files.example.com and http://plain.example.com").is_empty());
+        assert!(yours("I said hello.").is_empty());
     }
 
     #[test]

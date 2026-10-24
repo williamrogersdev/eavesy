@@ -324,10 +324,10 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     cards: empty ? [] : [{
       id: 'card-1', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees and stop 2 leftover processes', warning: null, expires_ms: now + 300_000,
       rows: [
-        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/hud-fix', label: '/Users/w/Developer/eavesy/.claude/worktrees/hud-fix' },
-        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/settings-race', label: '/Users/w/Developer/eavesy/.claude/worktrees/settings-race' },
-        { id: 'process:4191:1', label: 'process 4191 (node · vite)' },
-        { id: 'process:4207:1', label: 'process 4207 (node · vite)' },
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/hud-fix', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/hud-fix · claude/hud-fix, merged' },
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/settings-race', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/settings-race · claude/settings-race, merged' },
+        { id: 'process:4191:1', label: 'Stop node (pid 4191) in ~/Developer/eavesy/.claude/worktrees/hud-fix/web · port 5173' },
+        { id: 'process:4207:1', label: 'Stop node (pid 4207) in ~/Developer/eavesy/.claude/worktrees/settings-race/web · port 5174' },
       ],
     }],
   };

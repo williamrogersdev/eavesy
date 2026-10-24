@@ -16,6 +16,11 @@ use super::policy::Requester;
 const MAX_STEPS: usize = 8;
 /// Messages sent to the model: the latest ones, starting at something you said.
 const SENT_MESSAGES: usize = 40;
+/// And no more than this much JSON, under the cloud's 256 KB cap.
+const SENT_BYTES: usize = 180 * 1024;
+/// Your turns the check (C7) compares an action with: enough for "yes, do that" to carry
+/// what "that" was, and never Eavesy's own words.
+const CHECKED_TURNS: usize = 3;
 /// Messages kept in the thread.
 const KEPT_MESSAGES: usize = 200;
 const TEXT_CHARS: usize = 4_000;
@@ -47,12 +52,26 @@ struct Turn {
     at_ms: u64,
     /// Your turns: said or typed (B7).
     spoken: bool,
+    /// What happened since the last turn (a card you decided), sent to the model ahead
+    /// of your words but never counted as them.
+    notes: Vec<String>,
+}
+
+impl Turn {
+    /// The message as the model gets it: notes first, then the turn itself.
+    fn for_model(&self) -> Message {
+        let mut content: Vec<Block> = self.notes.iter().map(|note| Block::Text { text: format!("[Eavesy app note: {note}]") }).collect();
+        content.extend(self.message.content.iter().cloned());
+        Message { role: self.message.role, content }
+    }
 }
 
 #[derive(Default)]
 pub struct Thread {
     turns: Vec<Turn>,
     busy: bool,
+    /// Notes waiting for your next turn.
+    notes: Vec<String>,
 }
 
 /// What the panel draws: your words, Eavesy's words, and the tools between them.
@@ -97,6 +116,22 @@ fn window(messages: &[Message], limit: usize) -> &[Message] {
         start += 1;
     }
     &messages[start..]
+}
+
+/// Like `window`, and also no more than `bytes` of JSON, so a long tool result can't
+/// make every later request too large.
+fn window_within(messages: &[Message], limit: usize, bytes: usize) -> &[Message] {
+    let recent = window(messages, limit);
+    let mut size = 0;
+    let mut start = recent.len();
+    while start > 0 {
+        size += serde_json::to_string(&recent[start - 1]).map_or(0, |json| json.len());
+        if size > bytes {
+            break;
+        }
+        start -= 1;
+    }
+    window(&recent[start..], usize::MAX)
 }
 
 fn view(thread: &Thread) -> View {
@@ -145,7 +180,8 @@ fn push(app: &AppHandle, message: Message, spoken: bool) {
     {
         let state = app.state::<Mutex<Thread>>();
         let mut thread = state.lock().unwrap();
-        thread.turns.push(Turn { message, at_ms: super::now_ms(), spoken });
+        let notes = if is_your_words(&message) { std::mem::take(&mut thread.notes) } else { Vec::new() };
+        thread.turns.push(Turn { message, at_ms: super::now_ms(), spoken, notes });
         if thread.turns.len() > KEPT_MESSAGES {
             let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
             let keep = window(&messages, KEPT_MESSAGES).len();
@@ -181,6 +217,10 @@ async fn ask(app: &AppHandle, messages: &[Message]) -> Result<Vec<Block>, String
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err("That's today's limit for talking to me. It resets at midnight UTC.".into());
     }
+    if response.status().is_client_error() {
+        tracing::warn!("assistant turn refused: {}", response.status());
+        return Err("This conversation got too big for me to send. Press Clear to start fresh.".into());
+    }
     if !response.status().is_success() {
         tracing::warn!("assistant turn unavailable: {}", response.status());
         return Err("I can't reach my model right now. Try again in a moment.".into());
@@ -198,10 +238,11 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
-            let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
+            let messages: Vec<Message> = thread.turns.iter().map(Turn::for_model).collect();
             let said: Vec<String> = thread.turns.iter().filter(|turn| is_your_words(&turn.message)).map(|turn| text_of(&turn.message)).collect();
-            (window(&messages, SENT_MESSAGES).to_vec(), said)
+            (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
+        let request = said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n");
         let content = match tauri::async_runtime::block_on(ask(app, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
@@ -224,7 +265,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             let result = if step + 1 == MAX_STEPS {
                 super::tools::ToolResult { content: "Stopped: that took too many steps.".into(), is_error: true }
             } else {
-                super::tools::call(app, &name, &input, &requester, &said_by_you, &text)
+                super::tools::call(app, &name, &input, &requester, &said_by_you, &request)
             };
             results.push(Block::ToolResult { tool_use_id: id, content: result.content, is_error: result.is_error });
         }
@@ -235,6 +276,16 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
 
 pub fn init(app: &AppHandle) {
     app.manage(Mutex::new(Thread::default()));
+}
+
+/// Tells the model, with your next message, how a card ended, so it doesn't offer the
+/// same thing again.
+pub fn note(app: &AppHandle, text: String) {
+    let state = app.state::<Mutex<Thread>>();
+    let mut thread = state.lock().unwrap();
+    if !thread.turns.is_empty() {
+        thread.notes.push(text);
+    }
 }
 
 #[tauri::command]
@@ -282,6 +333,7 @@ pub fn assistant_clear(app: AppHandle, window: WebviewWindow) -> Result<(), Stri
             return Err("Eavesy is still answering.".into());
         }
         thread.turns.clear();
+        thread.notes.clear();
     }
     emit(&app);
     Ok(())
@@ -310,12 +362,30 @@ mod tests {
 
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
-        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { message, at_ms: 1, spoken: false }).collect();
-        let view = view(&Thread { turns, busy: true });
+        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { message, at_ms: 1, spoken: false, notes: Vec::new() }).collect();
+        let view = view(&Thread { turns, busy: true, notes: Vec::new() });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
         assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true }]);
+    }
+
+    #[test]
+    fn a_big_result_drops_older_turns_but_keeps_the_pairing() {
+        let big = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "1".into(), content: "x".repeat(5_000), is_error: false }] };
+        let messages = vec![said("a"), call("1"), big, said("b"), call("2"), result("2")];
+        let sent = window_within(&messages, 40, 2_000);
+        assert_eq!(sent, &messages[3..]);
+        // Nothing fits: nothing is sent rather than a broken thread.
+        assert!(window_within(&messages, 40, 10).is_empty());
+    }
+
+    #[test]
+    fn notes_go_to_the_model_but_are_not_your_words() {
+        let turn = Turn { message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into()] };
+        let sent = turn.for_model();
+        assert_eq!(sent.content.len(), 2);
+        assert_eq!(text_of(&turn.message), "and the other one?");
     }
 
     #[test]

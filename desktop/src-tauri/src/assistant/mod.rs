@@ -341,11 +341,13 @@ pub async fn assistant_card_decide(app: AppHandle, window: WebviewWindow, card_i
             Err(TakeError::Expired) => Err("That card expired. Ask again.".to_string()),
             Ok((card, _, rows)) if rows.is_empty() => {
                 log(&card.requester, &card.tool, &card.title, "declined", None);
+                thread::note(&app, format!("the user declined the card \"{}\"", card.title));
                 Ok(None)
             }
             Ok((card, action, rows)) => {
                 let ran = action.run(&rows);
                 log(&card.requester, &card.tool, &card.title, "accepted", Some(ran.summary.clone()));
+                thread::note(&app, format!("the user accepted {} of {} rows on the card \"{}\": {}", rows.len(), card.rows.len(), card.title, ran.summary));
                 Ok(Some(ran))
             }
         };
