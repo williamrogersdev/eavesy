@@ -271,7 +271,7 @@ pub struct Snapshot {
 /// summary is still drawn from them, so both texts are cut short.
 pub fn overview() -> Vec<serde_json::Value> {
     fn short(text: &str, max: usize) -> String {
-        text.chars().take(max).collect()
+        text.chars().filter(|c| !c.is_control()).take(max).collect()
     }
     with_queue(|queue| {
         queue

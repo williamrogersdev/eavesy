@@ -109,8 +109,11 @@ pub struct Step {
     pub ok: bool,
 }
 
+/// Your words, and nothing that answers a tool call: a window can start there.
 fn is_your_words(message: &Message) -> bool {
-    message.role == Role::User && message.content.iter().any(|block| matches!(block, Block::Text { .. }))
+    message.role == Role::User
+        && message.content.iter().any(|block| matches!(block, Block::Text { .. }))
+        && !message.content.iter().any(|block| matches!(block, Block::ToolResult { .. }))
 }
 
 fn text_of(message: &Message) -> String {
@@ -291,9 +294,16 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
 }
 
 /// What the model is sent: every turn but the errors shown in Eavesy's place. Dropping
-/// one can leave two user messages in a row, which the API joins into one turn.
+/// one can leave two user messages in a row, so those are joined into one.
 fn sent(turns: &[Turn]) -> Vec<Message> {
-    turns.iter().filter(|turn| !turn.failed).map(Turn::for_model).collect()
+    let mut messages: Vec<Message> = Vec::new();
+    for message in turns.iter().filter(|turn| !turn.failed).map(Turn::for_model) {
+        match messages.last_mut() {
+            Some(last) if last.role == message.role => last.content.extend(message.content),
+            _ => messages.push(message),
+        }
+    }
+    messages
 }
 
 /// The end of `text`, at most `max` characters: the check takes 4,000 (checkInput in
@@ -430,8 +440,9 @@ mod tests {
             Turn { message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false },
         ];
         let messages = sent(&turns);
-        assert_eq!(messages.len(), 2);
-        assert!(messages.iter().all(|message| message.role == Role::User));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content.len(), 2);
     }
 
     #[test]
