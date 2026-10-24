@@ -120,10 +120,18 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `recent_meetings` | List the most recent recordings. |
 | `search_dictations` | Search your dictations. |
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
+| `send_to_human` | Show a message on your Mac and read a one-sentence version aloud. Needs *Claude chat and ChatGPT* turned on in the Mac app. |
+| `ask_human` | Ask you a question on your Mac and wait (2 minutes by default) for the answer you type. Returns `mac_offline` at once when no Mac is listening. |
 
 Library retrieval does not guarantee exhaustive coverage. Inspect quoted passages and retain any warnings about unanswered parts or context limits. Cloud answer availability depends on the deployment and account configuration.
 
-These tools only read. The tool names say "meetings" because that is the name
+`send_to_human` and `ask_human` read nothing from your library: they reach
+you. Your answer goes back only to the agent that asked, as text, and never
+approves anything. To get Claude or ChatGPT to use them, paste the
+instructions from the Mac app's Settings → Dictation → *Claude chat and
+ChatGPT* into a Claude project or ChatGPT's custom instructions.
+
+The other tools only read. The tool names say "meetings" because that is the name
 of a recording in the data model. Recordings need to be in your account, so
 recordings made on a Mac that isn't signed in are not available. Screenshots,
 clipboard captures and notes from the Mac app are not available over MCP
@@ -133,7 +141,9 @@ can still [read them from disk](/docs/session-folder-format).
 
 <Callout type="note">
 Requests are rate limited per connection. A read-only connection can't create,
-edit, or delete anything.
+edit, or delete anything in your library. It can send you messages with
+`send_to_human` and `ask_human`, which show only when you've turned them on in
+the Mac app.
 </Callout>
 
 ## Local media and client checks

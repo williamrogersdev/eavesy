@@ -107,6 +107,55 @@ a voice field and the instructions that get agents to use them:
   with a one-sentence spoken version." That makes desktop chat and ChatGPT
   work without hooks.
 
+**First slice, as built (remote MCP + desktop `agents/remote.rs`):**
+
+- Both tools are on the remote MCP (`workers/mcp`). Every connection sees
+  them, read-only ones too: OAuth clients like ChatGPT get `read` unless they
+  ask for more, the tools read nothing from the library, and nothing shows on
+  a Mac until you turn on Settings → Dictation → *Claude chat and ChatGPT*
+  (off by default).
+- **Cloud to Mac is a poll, not a push.** Nothing pushes to the Mac today:
+  meetings come down through `cloud_pull` every 30 s, and the `DropsHub`
+  socket is only used by the web app. So a message waits in D1
+  (`agent_messages`), and the Mac asks `POST /api/agents/inbox` every 3 s
+  while the setting is on, with its device token. Each poll also marks the
+  Mac as listening (`agent_listeners`, written at most every 15 s), and
+  `ask_human` returns `mac_offline` at once when no Mac polled in the last
+  45 s.
+- `ask_human` holds the MCP call open and reads its own row every 1.5 s.
+  Workers have no wall-time limit while the client stays connected, and the
+  reads stay far under the subrequest limit. **The wait defaults to 2 minutes
+  (30 s to 10 min), not the architecture's 10 minutes**, because the call is
+  held and clients cut tool calls off at limits of their own. On timeout the
+  row closes, and the next poll takes the card off the Mac. The held call
+  marks its row every 10 s (`held_at`). If a client cuts the call off sooner,
+  the marks stop: after 25 s the Mac drops the card, and an answer is
+  refused, so nobody is told "sent" for an answer no agent gets.
+- `send_to_human` keeps nothing for a user with no Mac that polled in the last
+  day (`not_enabled`), and a queued message waits 2 hours, so a Mac turned on
+  later doesn't read out a backlog.
+- **The first Mac that polls takes a message.** No other Mac shows it, so two
+  Macs never both speak. If you're at the other Mac, you miss it. The Mac
+  link fixes that.
+- The answer is typed on the card (`agents_answer` →
+  `POST /api/agents/inbox/:id`). Only the Mac that showed the ask can answer
+  it, and only while the ask is still waiting. The result goes back only to
+  the held call that created the row, and there's no tool for reading other
+  rows. Voice answers come with piece 3d.
+- Limits: 30 calls per connection per 10 minutes, about 20 waiting messages per
+  user, text clipped to 4,000 characters and `spoken` to 300. Remote text
+  skips the summarize model. It's said as "*ChatGPT*: …", using the
+  connection's name, and `say` gets it with `[[ … ]]` speech commands taken
+  out.
+- The instruction snippet is in `docs/agent-instructions.md`. Settings has a
+  Copy button for it. The server's MCP `instructions` only describe the
+  tools: they go to every connection, so they don't tell each one to use them.
+- **Next, the push path:** the architecture's MacLink Durable Object (step 7).
+  The Mac holds an outbound WebSocket to the DO, `workers/mcp` gets a DO
+  binding, and an ask is pushed and answered over the socket, with no D1
+  polling. `DropsHub` is the template. It's a new cross-worker binding, so
+  it's left for that step. The D1 rows stay as the offline queue.
+
 ### 3. Claude Code hooks (no cooperation needed)
 
 Shipped in `plugins/eavesy` and through `eavesy hooks install` (architecture
@@ -389,7 +438,9 @@ need step 3, and the tools need steps 4 and 5.
    will notice.**
 3. **"Hey Eavesy"** (piece 3d) and the voice commands.
 4. **Voice on `send_to_human` / `ask_human`, plus the instruction snippets.**
-   This is what brings in desktop chat and ChatGPT.
+   This is what brings in desktop chat and ChatGPT. *First slice built (piece
+   2): remote MCP tools, the Mac polling for them, typed answers. Voice
+   answers wait for step 3, and push waits for the Mac link.*
 5. **Clarify mode.**
 6. **CLI channel delivery.**
 7. **Full-duplex engine**, if steps 1 to 5 get real use.

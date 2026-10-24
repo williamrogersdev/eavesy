@@ -774,7 +774,7 @@ describe('purging deleted data', () => {
 
     const purged = await purgeDeleted(fake.env, now);
 
-    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0, drops: 1 });
+    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0, drops: 1, agentMessages: 0 });
     expect(fake.sqlite.query(`SELECT id FROM drops`).all()).toEqual([{ id: 'd-new' }]);
     expect(fake.objects.has('users/u1/drops/d-old/notes.docx')).toBe(false);
     expect(fake.objects.has('users/u1/drops/d-new/notes.docx')).toBe(true);

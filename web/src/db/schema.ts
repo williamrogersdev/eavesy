@@ -593,6 +593,53 @@ export const devices = sqliteTable(
   (t) => [index('devices_user_idx').on(t.userId), index('devices_created_idx').on(t.createdAt)],
 );
 
+/**
+ * What an agent on a remote MCP connection asked the user (`ask_human`) or told
+ * them (`send_to_human`). A Mac with agent messages on picks each one up and
+ * shows and speaks it; an answer goes back only to the call that asked. All
+ * text here is the agent's and is shown and spoken, never run.
+ */
+export const agentMessages = sqliteTable(
+  'agent_messages',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** The MCP connection that sent it. */
+    mcpTokenId: text('mcp_token_id').notNull(),
+    /** The connection's name when it was sent ("ChatGPT"), said before the message. */
+    source: text('source').notNull(),
+    kind: text('kind', { enum: ['send', 'ask'] }).notNull(),
+    text: text('text').notNull(),
+    spoken: text('spoken'),
+    choicesJson: text('choices_json'),
+    status: text('status', { enum: ['pending', 'delivered', 'answered', 'dismissed', 'timeout'] }).notNull(),
+    answer: text('answer'),
+    /** The Mac that showed it; no other Mac picks it up. */
+    deviceId: text('device_id'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+    /** An ask's held call last said it's still waiting; an answer is taken only while it is. */
+    heldAt: integer('held_at'),
+  },
+  (t) => [index('agent_messages_user_status_idx').on(t.userId, t.status, t.createdAt)],
+);
+
+/** Macs that are listening for agent messages, by when each last asked for them. */
+export const agentListeners = sqliteTable(
+  'agent_listeners',
+  {
+    deviceId: text('device_id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    seenAt: integer('seen_at').notNull(),
+  },
+  (t) => [index('agent_listeners_user_idx').on(t.userId, t.seenAt)],
+);
+
 export const deviceTokens = sqliteTable(
   'device_tokens',
   {

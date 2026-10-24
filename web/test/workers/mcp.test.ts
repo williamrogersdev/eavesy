@@ -5,6 +5,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { worker as mcpWorker } from '../../../workers/mcp/src/index';
 import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
 import { MCP_TOKEN_TTL_MS } from '../../src/server/mcp-token-policy';
+import { drizzle } from 'drizzle-orm/d1';
+import * as schema from '../../src/db/schema';
+import { pollForDevice, resolveForDevice } from '../../src/server/agent-inbox';
 
 interface TestEnv {
   DB: D1Database;
@@ -210,6 +213,8 @@ describe('MCP scopes', () => {
     const { token } = await mint();
     const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
     expect(tools.map((tool) => tool.name)).toEqual([
+      'send_to_human',
+      'ask_human',
       'search_library',
       'ask_library',
       'search_meetings',
@@ -234,7 +239,7 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(8);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(10);
   });
 });
 
@@ -450,5 +455,76 @@ Then debug each one.', ?, ?),
     const { token } = await mint();
     expect((await rpc(token, 'prompts/get', { name: 'not-yours' })).error?.message).toContain('No saved prompt');
     expect((await rpc(token, 'prompts/get', { name: 'nope' })).error?.message).toContain('No saved prompt');
+  });
+});
+
+describe('MCP messages to the human', () => {
+  const call = async (token: string, name: string, args: Record<string, unknown>) => {
+    const body = await (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { content?: { text: string }[] }; error?: { message: string } }>();
+    return body.error ? { error: body.error.message } : (JSON.parse(body.result?.content?.[0]?.text ?? 'null') as Record<string, unknown>);
+  };
+  const db = () => drizzle(testEnv.DB, { schema });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM agent_messages'),
+      testEnv.DB.prepare('DELETE FROM agent_listeners'),
+      testEnv.DB.prepare('DELETE FROM rate_limits'),
+    ]);
+  });
+
+  it('say the Mac is offline at once when none is listening', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'ask_human', { question: 'Ship it?' })).toEqual({ status: 'mac_offline' });
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
+  it('keep nothing for someone who never turned messages on', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'send_to_human', { text: 'Done.' })).toEqual({ status: 'not_enabled' });
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
+  it('queue a message for a Mac that comes back, under the connection’s name', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare("INSERT INTO agent_listeners (device_id, user_id, seen_at) VALUES ('mac-a', 'user_mcp', ?)").bind(Date.now() - 60 * 60 * 1000).run();
+    expect(await call(token, 'send_to_human', { text: 'The report is ready.', spoken: 'Report ready.' })).toMatchObject({ status: 'queued' });
+    const { items } = await pollForDevice(db(), 'user_mcp', 'mac-a');
+    expect(items).toEqual([expect.objectContaining({ kind: 'send', source: 'Claude', text: 'The report is ready.', spoken: 'Report ready.' })]);
+    expect(await call(token, 'send_to_human', {})).toEqual({ error: 'text is required' });
+  });
+
+  it('refuse once too many wait, without spending the connection’s rate limit', async () => {
+    const { token } = await mint();
+    await pollForDevice(db(), 'user_mcp', 'mac-a');
+    const now = Date.now();
+    for (let i = 0; i < 20; i += 1) {
+      await testEnv.DB.prepare(
+        "INSERT INTO agent_messages (id, user_id, mcp_token_id, source, kind, text, status, created_at, expires_at) VALUES (?, 'user_mcp', 't', 'x', 'send', 'hi', 'pending', ?, ?)",
+      ).bind(`m${i}`, now, now + 60_000).run();
+    }
+    expect(await call(token, 'send_to_human', { text: 'One more.' })).toEqual({ error: expect.stringContaining('Too many messages') });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'mcp-human:%'").first('n')).toBe(0);
+  });
+
+  it('return the answer typed on the Mac to the call that asked', async () => {
+    const { token } = await mint();
+    await pollForDevice(db(), 'user_mcp', 'mac-a');
+    const asking = call(token, 'ask_human', { question: 'Flag or not?', choices: ['flag', 'no flag'], timeout_sec: 30 });
+    let id: string | undefined;
+    for (let i = 0; i < 50 && !id; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      id = (await pollForDevice(db(), 'user_mcp', 'mac-a')).waiting[0];
+    }
+    expect(id).toBeDefined();
+    expect(await resolveForDevice(db(), 'user_mcp', 'mac-a', id!, { status: 'answered', text: 'no flag' })).toBe(true);
+    expect(await asking).toEqual({ status: 'answered', text: 'no flag' });
   });
 });

@@ -111,6 +111,8 @@ pub fn run() {
             agents::agents_edit,
             agents::set_agent_voice,
             agents::set_agent_hold,
+            agents::remote::agents_answer,
+            agents::remote::set_agent_messages,
             commands::set_capture_sounds,
             commands::set_hud_look,
             commands::set_dictation_in_panel,
