@@ -83,33 +83,32 @@ Every rule below is a *classification*. It labels a row; it never acts.
 A worktree is **stale** when all of these hold:
 
 1. It's a linked worktree (not the repo's main checkout).
-2. Its branch is **merged** into the default branch, **or deleted** (detached
-   HEAD whose commit is reachable from the default branch, or a branch ref
-   that no longer exists locally and whose upstream is gone).
+2. Its **work is already in the default branch**: HEAD is an ancestor of it,
+   or merging HEAD into it would change nothing (`git merge-tree
+   --write-tree <default> HEAD` gives back the default branch's own tree).
+   The second case is how a squash-merged PR looks: its commits never become
+   ancestors of `main`, and once its remote branch is deleted they're on no
+   remote either, but every change in them is in `main`.
 3. `git status --porcelain` is empty: no staged, unstaged or untracked files
    (ignored files like `node_modules` and `target/` don't count).
-4. It has **no commits that aren't on the default branch or a remote**
-   (`git rev-list HEAD --not --remotes --branches=<default>` is empty).
-5. **No open session** uses it: no running process has its cwd inside it, and
-   no Claude Code session in it has been active recently (hooks, or a
-   transcript modified in the last 24 h).
-6. It isn't locked (`git worktree lock`).
+4. **No open session** uses it: no running process has its cwd inside it, and
+   no Claude Code session in it has been active recently (a transcript in
+   `~/.claude/projects/<slug>` modified in the last 24 h).
+5. It isn't locked (`git worktree lock`).
 
-Merged-ness is checked against the **local** default branch and its upstream
-ref, without fetching. A squash-merged PR leaves a branch whose commits aren't
-ancestors of `main`; we treat a branch as merged when its upstream is gone
-(`[gone]` after a fetch by the user or the IDE), or when merging it into the
-default branch would change nothing (`git merge-tree --write-tree main
-<branch>` gives back `main`'s own tree). If neither proves it, the row says
-"not merged", and it isn't stale.
-
-A gone upstream alone isn't enough when the branch has commits nowhere else:
-rule 4 still applies, so a branch whose remote was deleted unmerged stays
-"unpushed".
+Rule 2 replaces "merged or deleted, and nothing unpushed": a branch whose
+remote was deleted but whose changes aren't in `main` is **unmerged**, never
+stale, whatever its upstream says. Merged-ness is checked against the remote's
+default branch and its local copy, without fetching, so a PR merged since
+your last fetch shows as unmerged until the next one.
 
 Other labels, shown but never offered for removal: **dirty** (has changes),
-**unpushed** (has commits nowhere else), **in use**, **locked**,
-**missing** (the folder is gone; `git worktree prune` would clean the entry).
+**unmerged** (its changes aren't all in the default branch), **in use**,
+**locked**, **missing** (the folder is gone; `git worktree prune` would clean
+the entry).
+
+Every git call Eavesy makes runs with `core.fsmonitor=false`, so a scan never
+starts fsmonitor daemons of its own (see below: they pile up).
 
 ### Processes
 
@@ -124,11 +123,28 @@ A process is an **orphan** when:
 
 Typical orphans: `vite`/`next dev`/`wrangler dev` servers, `bun --watch`,
 `tsc --watch`, `cargo watch`, a `bun test` that hung, a `node` MCP server whose
-client went away.
+client went away. The first scan of William's Mac (2026-10-24) found 98
+`git fsmonitor--daemon` processes started from ended sessions, one per
+worktree a session touched; they're harmless to stop (git starts one again
+when it's needed).
+
+**How the session is found, as built:** Claude Code runs every command with
+`CLAUDE_PID`, `CLAUDECODE=1` and `CLAUDE_CODE_SESSION_ID` in its environment,
+and children inherit them. Eavesy reads them with `KERN_PROCARGS2` for your
+own processes. A process is an orphan when its `CLAUDE_PID` isn't a running
+`claude` that started before it, and no `claude` is among its ancestors.
+macOS hides other processes' environments from sandboxed callers, so this
+only works from an unsandboxed app (Eavesy isn't sandboxed). It also hides
+the environment of Apple's own binaries (`/bin/sleep`, `/bin/zsh`) from
+everyone, so those can't be traced to a session; the usual leftovers
+(Homebrew `node`, `bun`, `git`, `cargo`) can. A process whose environment
+can't be read is never labelled.
 
 **Never orphans**, whatever the evidence: processes of other users, anything
 run by launchd as a job (`launchctl` shows it), apps (`.app` bundles),
-system binaries (`/System`, `/usr/libexec`, `/usr/sbin`), Eavesy itself, the
+system binaries (`/System`, `/usr/libexec`, `/usr/sbin`), daemons every
+session shares (`gpg-agent`, `keyboxd`, `ssh-agent`), anything whose
+executable path can't be read, Eavesy itself and everything it started, the
 shells and terminals you're using, and anything you marked "keep".
 
 **Zombies** (state `Z`) are a separate label. They hold no memory and can't
@@ -148,7 +164,7 @@ The rules, in order of importance:
 
 1. **Never delete uncommitted or unpushed work.** Only worktrees labelled
    stale can be selected. Right before removing one, Eavesy re-checks rules
-   2 to 6; any change drops it from the batch with a note.
+   2 to 5; any change drops it from the batch with a note.
 2. **`git worktree remove` without `--force`.** Git itself refuses a worktree
    with changes or untracked files, which is a second check that doesn't
    depend on our code. The branch is left alone; deleting merged branches is
@@ -269,6 +285,11 @@ beyond the session id it yields.
    clean stale worktrees with `git worktree remove` (no force) and sends
    SIGTERM to the selected orphans. No background work, nothing automatic.
    Tests for the classification.
+   *As built:* `desktop/src-tauri/src/machine/` and Settings → This Mac. It
+   scans when you open the section or press Refresh (about 10 s for 270
+   worktrees in 49 repos), groups leftovers by program, and the confirm card
+   lists each worktree and process. The app checks every one again before it
+   acts and returns a `git worktree add` line for each removed worktree.
 2. **The log and undo:** events for every action, the "bring it back"
    command for removed worktrees, a log view in Settings.
 3. **Attention queue notices:** "3 leftover dev servers from ended sessions,
