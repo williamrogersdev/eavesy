@@ -29,9 +29,6 @@ import { acceptLabel, modeIsLoud, modeLabel, rulesWaitingLine, toolLabel } from 
 
 type Flash = (text: string, ms?: number, tone?: 'warn') => void;
 
-/** What the Mac says when the notes Clear would forget changed (assistant/thread.rs CHANGED). */
-const CLEAR_CHANGED = 'The conversation changed. Look again.';
-
 /**
  * The Eavesy tab (docs/plans/assistant.md B and C): the conversation, the cards
  * waiting for a click, and the permission mode. Everything Eavesy says is shown
@@ -88,17 +85,20 @@ export function EavesyTab({ flash }: { flash: Flash }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [turnCount, cardCount, thread.busy]);
 
-  // Clear asks first when the conversation taught Eavesy notes it still keeps (H3).
+  // Clear asks first when the conversation taught Eavesy notes it still keeps (H3):
+  // `taught` is the count it asked about, and `clearing` covers the request after.
   const [taught, setTaught] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const asking = taught !== null || clearing;
   const send = useCallback(() => {
     const text = draft.trim();
-    if (!text || thread.busy || taught !== null) return;
+    if (!text || thread.busy || asking) return;
     setDraft('');
     sendToAssistant(text).catch((error: unknown) => {
       setDraft((current) => current || text);
       flash(errMsg(error, 'Couldn’t send that'), 5000, 'warn');
     });
-  }, [draft, flash, thread.busy, taught]);
+  }, [draft, flash, thread.busy, asking]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -115,25 +115,29 @@ export function EavesyTab({ flash }: { flash: Flash }) {
       });
   }, [flash, reloadState]);
 
-  const clear = (forget: boolean, shown?: number) => {
-    setTaught(null);
-    clearAssistantThread(forget, forget ? shown : undefined)
-      .then((line) => { if (line) flash(line, 4000); })
+  const clear = (forget: boolean, instead?: string) => {
+    setClearing(true);
+    // The Mac forgets only if the count you were shown still holds.
+    clearAssistantThread(forget, forget ? taught ?? undefined : undefined)
+      .then((line) => {
+        setTaught(null);
+        setUndone(new Set());
+        if (instead) flash(instead, 5000, 'warn');
+        else if (line) flash(line, 4000);
+      })
       .catch((error: unknown) => {
-        // The notes changed while you were deciding: ask again with the new count.
-        if (errMsg(error, '') === CLEAR_CHANGED) startClear();
-        else flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn');
-      });
+        flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn');
+        // Ask again with what's kept now, in case the notes changed while you decided.
+        if (forget) getAssistantTaught().then((notes) => setTaught(notes.length || null)).catch(() => setTaught(null));
+      })
+      .finally(() => setClearing(false));
   };
-  function startClear() {
+  const startClear = () => {
     getAssistantTaught()
       .then((notes) => { if (notes.length) setTaught(notes.length); else clear(false); })
       // Nothing is forgotten without asking: clear, keep every note, and say so.
-      .catch(() => {
-        clear(false);
-        flash('Cleared. Eavesy couldn’t check its notes, so it kept them all; Settings shows them.', 5000, 'warn');
-      });
-  }
+      .catch(() => clear(false, 'Cleared. Eavesy couldn’t check its notes, so it kept them all; Settings shows them.'));
+  };
   const dontRemember = (id: number) => {
     dontRememberTurn(id)
       .then((line) => flash(line, 4000))
@@ -175,7 +179,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
           </Button>
         )}
         {turnCount > 0 && (
-          <Button variant="quiet" size="sm" disabled={thread.busy || taught !== null} onClick={startClear}>
+          <Button variant="quiet" size="sm" disabled={thread.busy || asking} onClick={startClear}>
             Clear
           </Button>
         )}
@@ -184,9 +188,9 @@ export function EavesyTab({ flash }: { flash: Flash }) {
         <div role="alertdialog" aria-label="Clear the conversation" className="ev-banner ev-clear-ask" data-tone="quiet">
           <span>{taught === 1 ? 'Eavesy kept a note from this conversation.' : `Eavesy kept ${taught} notes from this conversation.`} Forget {taught === 1 ? 'it' : 'them'} too?</span>
           <span className="ev-clear-actions">
-            <Button variant="primary" size="sm" onClick={() => clear(true, taught)}>Clear and Forget</Button>
-            <Button variant="outline" size="sm" onClick={() => clear(false)}>Keep {taught === 1 ? 'It' : 'Them'}</Button>
-            <Button variant="quiet" size="sm" onClick={() => setTaught(null)}>Cancel</Button>
+            <Button variant="primary" size="sm" disabled={clearing} onClick={() => clear(true)}>Clear and Forget</Button>
+            <Button variant="outline" size="sm" disabled={clearing} onClick={() => clear(false)}>Keep {taught === 1 ? 'It' : 'Them'}</Button>
+            <Button variant="quiet" size="sm" disabled={clearing} onClick={() => setTaught(null)}>Cancel</Button>
           </span>
         </div>
       )}
@@ -226,7 +230,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
                 {turn.who === 'you' ? (turn.spoken ? 'Said' : 'Typed') : turn.spoken ? 'Spoken' : null}
                 {turn.who === 'you' && turn.unremembered && <span>Not remembered</span>}
                 {turn.who === 'you' && !turn.unremembered && !offRecord && (
-                  <button type="button" className="ev-link" disabled={thread.busy || taught !== null} onClick={() => dontRemember(turn.id)}>Don’t Remember</button>
+                  <button type="button" className="ev-link" disabled={thread.busy || asking} onClick={() => dontRemember(turn.id)}>Don’t Remember</button>
                 )}
                 {turn.who === 'eavesy' && turn.text && (
                   <button type="button" className="ev-link" aria-label="Say it again" onClick={() => void repeatAssistantReply(turn.id).catch((error: unknown) => flash(errMsg(error, 'Couldn’t say it'), 4000, 'warn'))}>
@@ -265,7 +269,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <IconButton icon={ArrowUp} label="Send" disabled={!draft.trim() || thread.busy || taught !== null} onClick={send} />
+        <IconButton icon={ArrowUp} label="Send" disabled={!draft.trim() || thread.busy || asking} onClick={send} />
       </div>
     </div>
   );
