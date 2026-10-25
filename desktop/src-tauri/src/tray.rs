@@ -22,6 +22,12 @@ fn menu_accel(accelerator: &str) -> Option<String> {
 
 pub(crate) fn glyphs(accelerator: &str) -> String {
     if accelerator == crate::hotkeys::FN { return "fn".into(); }
+    // fn with a key: "fn Space", "fn ⇧K".
+    let tokens: Vec<&str> = accelerator.split('+').collect();
+    if tokens.len() > 1 && tokens.iter().any(|t| t.trim().eq_ignore_ascii_case(crate::hotkeys::FN)) {
+        let rest: Vec<&str> = tokens.into_iter().filter(|t| !t.trim().eq_ignore_ascii_case(crate::hotkeys::FN)).collect();
+        return format!("fn {}", glyphs(&rest.join("+")));
+    }
     accelerator
         .split('+')
         .map(|part| match part.trim().to_ascii_lowercase().as_str() {
@@ -160,5 +166,8 @@ mod tests {
         assert!(menu_accel("Cmd+Shift+D").is_some());
         assert!(menu_accel("Fn").is_none());
         assert!(menu_accel("").is_none());
+        assert_eq!(glyphs("Fn+Space"), "fn Space");
+        assert_eq!(glyphs("Fn+Shift+K"), "fn ⇧K");
+        assert!(menu_accel("Fn+Space").is_none());
     }
 }

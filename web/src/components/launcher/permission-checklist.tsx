@@ -28,7 +28,10 @@ const TAG: Record<Need, string | null> = {
   'not-needed': 'not needed',
 };
 
-/** Whether the Talk or Open Eavesy shortcut is the fn key, which needs Input Monitoring. */
+/**
+ * Whether a shortcut is the fn key on its own, which needs Input Monitoring.
+ * fn held with a key ("Fn+Space", shown "fn Space") doesn't: it needs Accessibility instead.
+ */
 export function usesFnKey(...accelerators: string[]): boolean {
   return accelerators.some((accel) => accel.trim().toLowerCase() === 'fn');
 }

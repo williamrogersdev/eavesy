@@ -10,9 +10,10 @@ export type KbdProps = {
 
 const MODIFIERS = new Set(['⌘', '⇧', '⌥', '⌃']);
 
-/** Splits "⌘⇧Space" into ["⌘", "⇧", "Space"]. Plain words stay whole. */
+/** Splits "⌘⇧Space" into ["⌘", "⇧", "Space"] and "fn Space" into ["fn", "Space"]. Plain words stay whole. */
 export function splitKeys(keys: string | string[]): string[] {
   if (Array.isArray(keys)) return keys;
+  if (keys.startsWith('fn ')) return ['fn', ...splitKeys(keys.slice(3))];
   const caps: string[] = [];
   let rest = '';
   for (const ch of keys) {

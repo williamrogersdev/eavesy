@@ -5,9 +5,13 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
-/// Talk to Eavesy. fn+Space (assistant.md B6) needs an event tap that can swallow the
-/// Space, so it waits for that; ⌥Space is free in macOS itself.
-pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Space";
+/// Talk to Eavesy. Not ⌥Space, which Raycast, ChatGPT and Alfred all default
+/// to; not ⌃Space or ⌃⌥Space, which macOS uses to switch input sources (and
+/// ⌃⌥ is VoiceOver's key); not ⌘⌥Space, Finder search.
+pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
+/// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
+/// moves it when another app also uses it.
+pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
 /// Recording segment length. Each sealed segment is uploaded and transcribed on
 /// its own, so this bounds how stale the cloud transcript is while recording.
 pub const DEFAULT_SEGMENT_SEC: u32 = 60;
@@ -120,6 +124,14 @@ pub struct Settings {
     /// Eavesy keeps notes and sends them with your messages (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub assistant_memory: Option<bool>,
+    /// Set once the Talk to Eavesy shortcut is the person's own choice, or
+    /// Eavesy moved it off the old ⌥Space default: never move it again.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_hotkey_settled: Option<bool>,
+    /// "action:accelerator:app" for each shortcut another app also uses that
+    /// Eavesy has already said so about at startup, so it says so once.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub shortcut_conflicts_noted: Option<Vec<String>>,
 }
 
 /// Reads a field that can't be trusted to be well formed: anything unreadable is unset.
@@ -231,6 +243,8 @@ impl Default for Settings {
             assistant_voice: None,
             assistant_voice_rate: None,
             assistant_memory: None,
+            assistant_hotkey_settled: None,
+            shortcut_conflicts_noted: None,
         }
     }
 }
@@ -752,6 +766,27 @@ mod tests {
         )
         .unwrap();
         assert!(saved.live_captions(), "settings saved before this existed");
+    }
+
+    #[test]
+    fn talk_to_eavesy_keeps_a_saved_shortcut_and_defaults_off_option_space() {
+        assert_eq!(Settings::default().assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_ne!(DEFAULT_ASSISTANT_HOTKEY, OLD_ASSISTANT_HOTKEY);
+        // Saved before Talk to Eavesy existed: the current default.
+        let before: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
+        assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_eq!(before.assistant_hotkey_settled, None);
+        // A saved ⌥Space is read as it is; moving it is the migration's call.
+        let old: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey":"Alt+Space"}"#).unwrap();
+        assert_eq!(old.assistant_hotkey, OLD_ASSISTANT_HOTKEY);
+        let settled: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey_settled":true,"shortcut_conflicts_noted":["assistant:Alt+Space:Raycast"]}"#).unwrap();
+        assert_eq!(settled.assistant_hotkey_settled, Some(true));
+        assert_eq!(settled.shortcut_conflicts_noted.as_deref(), Some(&["assistant:Alt+Space:Raycast".to_string()][..]));
+        // Unset markers stay out of the file; a damaged one reads as unset.
+        let written = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!written.contains("assistant_hotkey_settled") && !written.contains("shortcut_conflicts_noted"), "{written}");
+        let damaged: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey_settled":"yes"}"#).unwrap();
+        assert_eq!(damaged.assistant_hotkey_settled, None);
     }
 
     #[test]
