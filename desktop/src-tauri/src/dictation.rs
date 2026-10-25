@@ -524,18 +524,30 @@ fn front_app_and_role() -> Option<(Target, Option<String>)> {
         }
         let system = Owned(AXUIElementCreateSystemWide());
         AXUIElementSetMessagingTimeout(system.0, 0.25);
-        let Some(app) = copy_attribute(system.0, "AXFocusedApplication").map(Owned) else {
-            // Electron apps with a long transcript (Claude, Slack) can miss
-            // the timeout. Without a target nothing is pasted, so fall back to
-            // the frontmost app, which needs no accessibility call, and paste
-            // without knowing the focused role.
-            let front = crate::app_menu::frontmost().map(|(pid, _)| pid);
-            tracing::info!(?front, "focused app unreadable; using the frontmost app");
-            return front.filter(|&pid| is_other_app(true, pid)).map(|pid| (Target { pid }, None));
+        let (app, pid) = match copy_attribute(system.0, "AXFocusedApplication").map(Owned) {
+            Some(app) => {
+                let mut pid = 0;
+                if AXUIElementGetPid(app.0, &mut pid) != 0 {
+                    tracing::info!("no paste target: couldn't read the focused app's pid");
+                    return None;
+                }
+                (app, pid)
+            }
+            None => {
+                // Electron apps with a long transcript (Claude, Slack) can miss
+                // the timeout. Without a target nothing is pasted, so fall back
+                // to the frontmost app (read now from NSWorkspace, which needs
+                // no accessibility call) and still check its focused element.
+                let Some((pid, _)) = crate::app_menu::frontmost() else {
+                    tracing::info!("no paste target: focused app unreadable and no other app in front");
+                    return None;
+                };
+                tracing::info!(pid, "focused app unreadable; using the frontmost app");
+                (Owned(AXUIElementCreateApplication(pid)), pid)
+            }
         };
-        let mut pid = 0;
-        if !is_other_app(AXUIElementGetPid(app.0, &mut pid) == 0, pid) {
-            tracing::info!(pid, "no paste target: the focused app is Eavesy or unreadable");
+        if !is_other_app(true, pid) {
+            tracing::info!(pid, "no paste target: the focused app is Eavesy");
             return None;
         }
         let role = copy_attribute(app.0, "AXFocusedUIElement")
@@ -589,6 +601,7 @@ mod ax {
     extern "C" {
         pub fn AXIsProcessTrusted() -> bool;
         pub fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        pub fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
         fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
         pub fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> i32;
         pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
