@@ -7,6 +7,8 @@ describe('splitKeys', () => {
     expect(splitKeys('⌘⇧Space')).toEqual(['⌘', '⇧', 'Space']);
     expect(splitKeys('⌘V')).toEqual(['⌘', 'V']);
     expect(splitKeys('fn')).toEqual(['fn']);
+    expect(splitKeys('fn Space')).toEqual(['fn', 'Space']);
+    expect(splitKeys('fn ⌥Space')).toEqual(['fn', '⌥', 'Space']);
     expect(splitKeys(['⌃', '/'])).toEqual(['⌃', '/']);
   });
 });

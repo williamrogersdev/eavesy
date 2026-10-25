@@ -177,10 +177,13 @@ other docs and PRs can cite them (`A3`, `C2`…).
 - **B6. Talking to Eavesy and dictating are different gestures**, and you can
   always tell which one is live:
   - `fn` (tap or hold) stays **dictation**: words go to your cursor.
-  - **Talk to Eavesy** is its own shortcut (default `⌥Space`, settable; fn
-    can be chosen too) or "Hey Eavesy" (opt-in, voice-conversation piece 3d).
-    `fn` + `Space` waits for an event tap that can swallow the Space: the
-    fn tap today only listens, so the Space would also be typed.
+  - **Talk to Eavesy** is its own shortcut (default `⌥⇧Space`, settable; fn,
+    or fn held with a letter, digit or Space, can be chosen too) or "Hey
+    Eavesy" (opt-in, voice-conversation piece 3d). It used to default to
+    `⌥Space`, which Raycast, ChatGPT and Alfred also default to; an untouched
+    `⌥Space` moves to the new default once, when one of those apps holds it.
+    `fn` + `Space` uses an active event tap (Accessibility) that swallows the
+    Space, so it isn't also typed (`fn_key.rs`).
   - The HUD shows which by its **label**: "Listening" (dictation) vs
     "Eavesy's listening" (conversation), plus a small manila mark on the
     conversation pill. The **live-mic signal is the same in both**: coral

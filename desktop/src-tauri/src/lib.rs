@@ -201,6 +201,7 @@ pub fn run() {
             commands::complete_setup,
             commands::set_hotkey,
             commands::check_hotkey,
+            commands::check_all_hotkeys,
             commands::get_hotkey_defaults,
             commands::reset_hotkey,
             commands::reset_all_hotkeys,
@@ -311,13 +312,20 @@ pub fn run() {
             // A spare capture engine, so the first dictation does not wait for one.
             audio::prepare_standby(&handle);
             audio::prepare_speech_model(&handle);
+            let (settings, moved) = hotkeys::migrate_defaults(&handle, settings);
             let failures = hotkeys::register_all(&handle, &settings);
-            if let Some(body) = hotkeys::startup_notice(&failures) {
-                telemetry::capture("hotkeys.register", &body);
+            let notes: Vec<String> = moved.into_iter().collect();
+            if let Some(body) = hotkeys::startup_notice(&failures, &notes) {
+                if !failures.is_empty() { telemetry::capture("hotkeys.register", &body); }
                 use tauri_plugin_notification::NotificationExt;
-                let title = if failures.len() > 1 { "Eavesy couldn't set your shortcuts" } else { "Eavesy couldn't set a shortcut" };
+                let title = match failures.len() {
+                    0 => "Eavesy changed a shortcut",
+                    1 => "Eavesy couldn't set a shortcut",
+                    _ => "Eavesy couldn't set your shortcuts",
+                };
                 let _ = handle.notification().builder().title(title).body(body).show();
             }
+            hotkeys::notice_app_conflicts(&handle);
 
             let location = install_location::label();
             telemetry::track(

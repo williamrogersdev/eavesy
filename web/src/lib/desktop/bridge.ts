@@ -966,19 +966,22 @@ export async function completeSetup(): Promise<void> {
 }
 
 export type HotkeyAction = 'toggle' | 'dictation' | 'assistant';
-/** Both shortcuts; "" means unbound, "Fn" the fn / 🌐 key on its own. */
+/** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
 export type HotkeyError =
   | { kind: 'needsModifier' }
   | { kind: 'taken'; by: HotkeyAction | 'other' }
   | { kind: 'inputMonitoring' }
+  | { kind: 'accessibility' }
   | { kind: 'invalid'; message: string };
-/** A shortcut that works but that macOS or most apps already use. */
-export type HotkeyConflict = { kind: 'system'; name: string } | { kind: 'common'; name: string };
+/** A shortcut that works but that macOS, another app or most apps already use. */
+export type HotkeyConflict = { kind: 'system' | 'app' | 'globe' | 'common'; name: string };
 export type GlobeAction = 'do_nothing' | 'input_source' | 'emoji' | 'dictation' | 'unknown';
 export interface FnStatus {
   input_monitoring: boolean;
+  /** fn held with a key needs Accessibility. Missing from older Mac apps. */
+  accessibility?: boolean;
   globe_action: GlobeAction;
 }
 
@@ -998,8 +1001,14 @@ export async function checkHotkey(action: HotkeyAction, accelerator: string): Pr
   return invoke<HotkeyConflict | null>('check_hotkey', { action, accelerator });
 }
 
+/** What else uses each saved shortcut (macOS, another app, a 🌐 shortcut). Empty from older Mac apps. */
+export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, HotkeyConflict | null>>> {
+  if (!isDesktop()) return {};
+  return (await invoke<Partial<Record<HotkeyAction, HotkeyConflict | null>> | null>('check_all_hotkeys').catch(() => null)) ?? {};
+}
+
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }
@@ -1024,6 +1033,13 @@ export async function onFnTap(cb: () => void): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<unknown>('hotkeys:fn-tap', () => cb());
+}
+
+/** fn held with a key ("Fn+Space") while recording; WebKit never reports fn itself. */
+export async function onFnChord(cb: (accelerator: string) => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<string>('hotkeys:fn-chord', (event) => { if (typeof event.payload === 'string') cb(event.payload); });
 }
 
 export async function openKeyboardSettings(inputMonitoring = false): Promise<void> {

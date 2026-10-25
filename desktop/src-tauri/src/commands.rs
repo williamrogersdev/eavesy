@@ -497,6 +497,8 @@ pub fn reset_all_hotkeys(app: AppHandle) -> Result<(), HotkeyError> {
 #[derive(Serialize)]
 pub struct FnStatus {
     input_monitoring: bool,
+    /// fn held with a key needs Accessibility (an event tap that can drop the key).
+    accessibility: bool,
     globe_action: &'static str,
 }
 
@@ -512,10 +514,14 @@ pub fn fn_status() -> FnStatus {
             crate::fn_key::GlobeAction::Dictation => "dictation",
             crate::fn_key::GlobeAction::Unknown => "unknown",
         };
-        FnStatus { input_monitoring: crate::fn_key::input_monitoring_granted(), globe_action: globe }
+        FnStatus {
+            input_monitoring: crate::fn_key::input_monitoring_granted(),
+            accessibility: crate::permissions::accessibility_granted(),
+            globe_action: globe,
+        }
     }
     #[cfg(not(target_os = "macos"))]
-    FnStatus { input_monitoring: false, globe_action: "unknown" }
+    FnStatus { input_monitoring: false, accessibility: false, globe_action: "unknown" }
 }
 
 #[tauri::command]
@@ -822,6 +828,15 @@ pub fn check_hotkey(app: AppHandle, action: String, accelerator: String) -> Resu
     let settings = settings::load(&app);
     let current = hotkeys::Bindings::of(&settings);
     crate::shortcut_conflicts::check(&current, action, &accelerator)
+}
+
+/// What else uses each saved shortcut (macOS, another app, a 🌐 shortcut),
+/// for the notes Settings keeps under them.
+/// Runs off the main thread: it shells out to `defaults` and `plutil`.
+#[tauri::command(async)]
+pub fn check_all_hotkeys(app: AppHandle) -> crate::shortcut_conflicts::SavedConflicts {
+    let settings = settings::load(&app);
+    crate::shortcut_conflicts::check_saved(&hotkeys::Bindings::of(&settings))
 }
 
 #[tauri::command]
