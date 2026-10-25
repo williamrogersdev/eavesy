@@ -32,6 +32,9 @@ describe('usesFnKey', () => {
     expect(usesFnKey('fn')).toBe(true);
     expect(usesFnKey('⌘⇧D', '⌘⇧Space')).toBe(false);
   });
+  test('fn held with a key is not the fn key on its own', () => {
+    expect(usesFnKey('Fn+Space', 'fn Space')).toBe(false);
+  });
 });
 
 describe('permissionSpecs', () => {

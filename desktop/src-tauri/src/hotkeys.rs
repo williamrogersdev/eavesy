@@ -6,11 +6,14 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::panel;
-use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_TOGGLE_HOTKEY};
+use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
 /// A lone fn tap while shortcuts are suspended for recording one in Settings.
 pub const EVENT_FN_TAP: &str = "hotkeys:fn-tap";
+/// fn held with a key ("Fn+Space") while recording: WebKit never reports fn,
+/// so the Mac app sends the accelerator itself.
+pub const EVENT_FN_CHORD: &str = "hotkeys:fn-chord";
 
 /// The accelerator that means "the fn / Globe key on its own".
 pub const FN: &str = "Fn";
@@ -83,23 +86,32 @@ pub enum HotkeyError {
     Taken { by: TakenBy },
     /// fn needs Input Monitoring, which macOS applies after a relaunch.
     InputMonitoring,
+    /// fn with a key needs Accessibility, so Eavesy can keep the key from
+    /// reaching the app in front.
+    Accessibility,
     Invalid { message: String },
 }
 
 impl HotkeyError {
     pub fn invalid(message: impl Into<String>) -> Self { HotkeyError::Invalid { message: message.into() } }
 
+    /// Saved anyway: the shortcut starts working once macOS allows it.
+    pub fn waits_for_permission(&self) -> bool {
+        matches!(self, HotkeyError::InputMonitoring | HotkeyError::Accessibility)
+    }
+
     /// One line for a notification or log, naming the shortcut that failed.
     pub fn describe(&self, action: Action, accelerator: &str) -> String {
         let keys = crate::tray::glyphs(accelerator);
         let name = action.label();
         match self {
-            HotkeyError::NeedsModifier => format!("Your {name} shortcut ({keys}) needs ⌘, ⌃ or ⌥."),
+            HotkeyError::NeedsModifier => format!("Your {name} shortcut ({keys}) needs ⌘, ⌃, ⌥ or fn."),
             HotkeyError::Taken { by } => match by.action() {
                 Some(other) => format!("Your {name} shortcut ({keys}) is also set for {}.", other.label()),
                 None => format!("Your {name} shortcut ({keys}) is in use by another app."),
             },
             HotkeyError::InputMonitoring => format!("Your {name} shortcut (fn) needs Input Monitoring for Eavesy."),
+            HotkeyError::Accessibility => format!("Your {name} shortcut ({keys}) needs Accessibility for Eavesy."),
             HotkeyError::Invalid { message } => format!("Your {name} shortcut ({keys}) couldn't be set: {message}"),
         }
     }
@@ -108,12 +120,13 @@ impl HotkeyError {
 impl std::fmt::Display for HotkeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HotkeyError::NeedsModifier => f.write_str("Use ⌘, ⌃ or ⌥ with a key, or fn on its own."),
+            HotkeyError::NeedsModifier => f.write_str(MODIFIER_RULE),
             HotkeyError::Taken { by } => match by.action() {
                 Some(other) => write!(f, "Already used for {}.", other.label()),
                 None => f.write_str("Another app is using that shortcut."),
             },
             HotkeyError::InputMonitoring => f.write_str("fn needs Input Monitoring. Allow Eavesy in Privacy & Security, then relaunch."),
+            HotkeyError::Accessibility => f.write_str("fn with a key needs Accessibility. Allow Eavesy in Privacy & Security."),
             HotkeyError::Invalid { message } => f.write_str(message),
         }
     }
@@ -128,23 +141,101 @@ pub(crate) fn parse_accelerator(accelerator: &str) -> Result<Shortcut, String> {
         .map_err(|e| format!("invalid accelerator '{accelerator}': {e}"))
 }
 
-/// The one rule for what a shortcut may be: empty (unbound), fn alone, F1–F12
-/// alone, or anything else with ⌘, ⌃ or ⌥.
-pub fn validate(accelerator: &str) -> Result<(), HotkeyError> {
-    if accelerator.is_empty() || accelerator == FN { return Ok(()); }
-    let shortcut = parse_accelerator(accelerator).map_err(HotkeyError::invalid)?;
-    if shortcut.mods.intersects(Modifiers::SUPER | Modifiers::CONTROL | Modifiers::ALT) { return Ok(()); }
-    use Code::*;
-    if matches!(shortcut.key, F1 | F2 | F3 | F4 | F5 | F6 | F7 | F8 | F9 | F10 | F11 | F12) { return Ok(()); }
-    Err(HotkeyError::NeedsModifier)
+/// The rule, in the words Settings shows.
+pub const MODIFIER_RULE: &str = "Use ⌘, ⌃, ⌥ or fn with a key, or fn on its own.";
+
+/// An accelerator taken apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keys {
+    /// The fn / 🌐 key on its own.
+    Fn,
+    /// fn held with a key, maybe with other modifiers too: "Fn+Space", "Fn+Shift+K".
+    FnChord { mods: Modifiers, key: Code },
+    /// Anything the global-shortcut plugin registers.
+    Plain { mods: Modifiers, key: Code },
 }
 
-/// Whether two accelerators name the same keys ("Cmd+Shift+D" = "Shift+Cmd+D").
-/// Unbound never collides with anything.
+/// What `accelerator` names; `None` for unbound ("").
+pub fn keys(accelerator: &str) -> Result<Option<Keys>, String> {
+    if accelerator.trim().is_empty() { return Ok(None); }
+    let tokens: Vec<&str> = accelerator.split('+').map(str::trim).collect();
+    let (fns, rest): (Vec<&str>, Vec<&str>) = tokens.into_iter().partition(|t| t.eq_ignore_ascii_case(FN));
+    if fns.len() > 1 { return Err(format!("invalid accelerator '{accelerator}': fn is named twice")); }
+    if rest.is_empty() { return Ok(Some(Keys::Fn)); }
+    let shortcut = parse_accelerator(&rest.join("+"))?;
+    Ok(Some(if fns.is_empty() {
+        Keys::Plain { mods: shortcut.mods, key: shortcut.key }
+    } else {
+        Keys::FnChord { mods: shortcut.mods, key: shortcut.key }
+    }))
+}
+
+/// Whether `accelerator` is fn held with a key.
+pub fn is_fn_chord(accelerator: &str) -> bool {
+    matches!(keys(accelerator), Ok(Some(Keys::FnChord { .. })))
+}
+
+/// The keys fn may be held with, as accelerators spell them. Only keys whose
+/// keycode never changes under fn: arrows, F-keys, Home/End and Page Up/Down
+/// carry the fn flag on their own, and fn turns Delete and Return into other
+/// keys on a laptop keyboard.
+const CHORD_KEYS: [(Code, &str); 37] = {
+    use Code::*;
+    [
+        (KeyA, "A"), (KeyB, "B"), (KeyC, "C"), (KeyD, "D"), (KeyE, "E"), (KeyF, "F"), (KeyG, "G"),
+        (KeyH, "H"), (KeyI, "I"), (KeyJ, "J"), (KeyK, "K"), (KeyL, "L"), (KeyM, "M"), (KeyN, "N"),
+        (KeyO, "O"), (KeyP, "P"), (KeyQ, "Q"), (KeyR, "R"), (KeyS, "S"), (KeyT, "T"), (KeyU, "U"),
+        (KeyV, "V"), (KeyW, "W"), (KeyX, "X"), (KeyY, "Y"), (KeyZ, "Z"),
+        (Digit0, "0"), (Digit1, "1"), (Digit2, "2"), (Digit3, "3"), (Digit4, "4"),
+        (Digit5, "5"), (Digit6, "6"), (Digit7, "7"), (Digit8, "8"), (Digit9, "9"),
+        (Space, "Space"),
+    ]
+};
+
+/// The macOS keycode for a key fn may be held with.
+pub fn chord_keycode(key: Code) -> Option<u16> {
+    if !CHORD_KEYS.iter().any(|(code, _)| *code == key) { return None; }
+    crate::shortcut_conflicts::keycode(key).map(|code| code as u16)
+}
+
+/// The accelerator for fn held with `keycode` and the modifiers in `flags`
+/// (Quartz event flags), or `None` for a key fn can't be held with.
+pub fn chord_accelerator(keycode: u16, flags: u64) -> Option<String> {
+    let name = CHORD_KEYS.iter().find(|(code, _)| crate::shortcut_conflicts::keycode(*code) == Some(u64::from(keycode)))?.1;
+    let mut parts = vec![FN];
+    for (flag, label) in [(1u64 << 20, "Cmd"), (1 << 18, "Ctrl"), (1 << 19, "Alt"), (1 << 17, "Shift")] {
+        if flags & flag != 0 { parts.push(label); }
+    }
+    parts.push(name);
+    Some(parts.join("+"))
+}
+
+/// The one rule for what a shortcut may be: empty (unbound), fn alone, fn with
+/// a letter, digit or Space, F1–F12 alone, or anything else with ⌘, ⌃ or ⌥.
+pub fn validate(accelerator: &str) -> Result<(), HotkeyError> {
+    match keys(accelerator).map_err(HotkeyError::invalid)? {
+        None | Some(Keys::Fn) => Ok(()),
+        Some(Keys::FnChord { key, .. }) => match chord_keycode(key) {
+            Some(_) => Ok(()),
+            None => Err(HotkeyError::invalid(CHORD_RULE)),
+        },
+        Some(Keys::Plain { mods, key }) => {
+            if mods.intersects(Modifiers::SUPER | Modifiers::CONTROL | Modifiers::ALT) { return Ok(()); }
+            use Code::*;
+            if matches!(key, F1 | F2 | F3 | F4 | F5 | F6 | F7 | F8 | F9 | F10 | F11 | F12) { return Ok(()); }
+            Err(HotkeyError::NeedsModifier)
+        }
+    }
+}
+
+const CHORD_RULE: &str = "fn works with a letter, a number or Space.";
+
+/// Whether two accelerators name the same keys ("Cmd+Shift+D" = "Shift+Cmd+D",
+/// "Fn+Space" = "fn+space"). Unbound never collides with anything.
 fn same_keys(a: &str, b: &str) -> bool {
     if a.is_empty() || b.is_empty() { return false; }
     if a == b { return true; }
-    matches!((Shortcut::from_str(a), Shortcut::from_str(b)), (Ok(x), Ok(y)) if x.mods == y.mods && x.key == y.key)
+    matches!((keys(a), keys(b)), (Ok(Some(x)), Ok(Some(y))) if x == y)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -223,14 +314,26 @@ fn unregister_everything(app: &AppHandle) {
 
 fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), HotkeyError> {
     if action != Action::Toggle { crate::dictate::reset_key(); }
-    if accelerator.is_empty() { return Ok(()); }
-    if accelerator == FN {
-        #[cfg(target_os = "macos")]
-        return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant => crate::fn_key::TALK });
-        #[cfg(not(target_os = "macos"))]
-        return Err(HotkeyError::invalid("fn works on macOS only"));
-    }
-    let shortcut = parse_accelerator(accelerator).map_err(HotkeyError::invalid)?;
+    let shortcut = match keys(accelerator).map_err(HotkeyError::invalid)? {
+        None => return Ok(()),
+        Some(Keys::Fn) => {
+            #[cfg(target_os = "macos")]
+            return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant => crate::fn_key::TALK });
+            #[cfg(not(target_os = "macos"))]
+            return Err(HotkeyError::invalid("fn works on macOS only"));
+        }
+        Some(Keys::FnChord { mods, key }) => {
+            let keycode = chord_keycode(key).ok_or_else(|| HotkeyError::invalid(CHORD_RULE))?;
+            #[cfg(target_os = "macos")]
+            return crate::fn_key::bind_chord(app, action, keycode, crate::shortcut_conflicts::flags(mods));
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (mods, keycode);
+                return Err(HotkeyError::invalid("fn works on macOS only"));
+            }
+        }
+        Some(Keys::Plain { .. }) => parse_accelerator(accelerator).map_err(HotkeyError::invalid)?,
+    };
     if app.global_shortcut().is_registered(shortcut) {
         return Err(HotkeyError::Taken { by: TakenBy::Other });
     }
@@ -345,11 +448,14 @@ pub fn set_hotkey(app: &AppHandle, action: Action, accelerator: &str, swap: bool
         apply(app, &mut settings, &current, &next)?;
         *suspended = false;
     }
-    // Choosing fn is when to ask for Input Monitoring: only for that choice,
-    // only once it's saved, and outside the registry lock.
+    // Choosing fn is when to ask for Input Monitoring (fn alone) or
+    // Accessibility (fn with a key): only for that choice, only once it's
+    // saved, and outside the registry lock.
     #[cfg(target_os = "macos")]
     if accelerator == FN && !crate::fn_key::input_monitoring_granted() {
         crate::permissions::request_input_monitoring_inner(app);
+    } else if is_fn_chord(accelerator) && !crate::permissions::accessibility_granted() {
+        crate::permissions::request_accessibility(app.clone());
     }
     Ok(())
 }
@@ -367,9 +473,10 @@ pub fn reset_all(app: &AppHandle) -> Result<(), HotkeyError> {
 fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bindings) -> Result<(), HotkeyError> {
     unregister_everything(app);
     let failures = register_bindings(app, next);
-    // fn without Input Monitoring is still saved: it starts working once
-    // Eavesy relaunches with the permission, and Settings shows how to get there.
-    let blocking = failures.into_iter().find(|(_, _, e)| *e != HotkeyError::InputMonitoring);
+    // fn without Input Monitoring (or fn with a key without Accessibility) is
+    // still saved: it starts working once the permission is there, and
+    // Settings shows how to get there.
+    let blocking = failures.into_iter().find(|(_, _, e)| !e.waits_for_permission());
     if let Some((_, _, error)) = blocking {
         unregister_everything(app);
         let _ = register_bindings(app, current);
@@ -381,6 +488,8 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
         config.toggle_hotkey = next.toggle.clone();
         config.dictation_hotkey = next.dictation.clone();
         config.assistant_hotkey = next.assistant.clone();
+        // Someone who chose their Talk to Eavesy shortcut keeps it.
+        if next.assistant != current.assistant { config.assistant_hotkey_settled = Some(true); }
     });
     match saved {
         Ok(config) => {
@@ -395,11 +504,70 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
     }
 }
 
-/// The startup notification body for shortcuts that failed to register.
-pub fn startup_notice(failures: &[(Action, String, HotkeyError)]) -> Option<String> {
-    let lines: Vec<String> = failures.iter().map(|(action, accelerator, error)| error.describe(*action, accelerator)).collect();
+/// The startup notification body: shortcuts that failed to register, then
+/// anything else worth saying about them (`notes`: a moved default, a
+/// shortcut another app also uses).
+pub fn startup_notice(failures: &[(Action, String, HotkeyError)], notes: &[String]) -> Option<String> {
+    let mut lines: Vec<String> = failures.iter().map(|(action, accelerator, error)| error.describe(*action, accelerator)).collect();
+    lines.extend(notes.iter().cloned());
     if lines.is_empty() { return None; }
-    Some(format!("{} Open Settings from the Eavesy menu bar icon to fix it.", lines.join(" ")))
+    Some(format!("{} Open Settings from the Eavesy menu bar icon to change it.", lines.join(" ")))
+}
+
+/// Talk to Eavesy used to default to ⌥Space, which Raycast, ChatGPT and Alfred
+/// also default to. Someone who never chose it and has one of those apps on
+/// that shortcut gets the new default instead, once. Returns the sentence
+/// that says so. `holder` names the app that uses an accelerator, if any.
+pub fn migrate_assistant_default(settings: &mut Settings, holder: impl FnOnce(&str) -> Option<String>) -> Option<String> {
+    if settings.assistant_hotkey != OLD_ASSISTANT_HOTKEY || settings.assistant_hotkey_settled == Some(true) { return None; }
+    let app = holder(OLD_ASSISTANT_HOTKEY)?;
+    let next = plan(&Bindings::of(settings), Action::Assistant, DEFAULT_ASSISTANT_HOTKEY, false).ok()?;
+    settings.assistant_hotkey = next.assistant;
+    settings.assistant_hotkey_settled = Some(true);
+    Some(format!(
+        "Talk to Eavesy is now {}, because {app} also uses {}.",
+        crate::tray::glyphs(DEFAULT_ASSISTANT_HOTKEY),
+        crate::tray::glyphs(OLD_ASSISTANT_HOTKEY),
+    ))
+}
+
+/// Moves an old ⌥Space default (see `migrate_assistant_default`) before the
+/// shortcuts are registered. Returns the settings to register and what to say.
+pub fn migrate_defaults(app: &AppHandle, settings: Settings) -> (Settings, Option<String>) {
+    let mut moved = settings.clone();
+    let Some(note) = migrate_assistant_default(&mut moved, crate::shortcut_conflicts::app_holding) else { return (settings, None) };
+    let saved = settings::update(app, |config| {
+        config.assistant_hotkey = moved.assistant_hotkey.clone();
+        config.assistant_hotkey_settled = Some(true);
+    });
+    match saved {
+        Ok(saved) => (saved, Some(note)),
+        Err(error) => {
+            crate::telemetry::capture("hotkeys.migrate_default", &error);
+            (settings, None)
+        }
+    }
+}
+
+/// Off the main thread (it asks Launch Services and reads other apps'
+/// preferences): says once, in a notification, when a saved shortcut is also
+/// another installed app's, like Raycast's ⌥Space.
+pub fn notice_app_conflicts(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let settings = settings::load(&app);
+        let mut noted = settings.shortcut_conflicts_noted.clone().unwrap_or_default();
+        let lines = crate::shortcut_conflicts::new_app_conflicts(&Bindings::of(&settings), &mut noted, crate::shortcut_conflicts::app_holding);
+        if lines.is_empty() { return; }
+        if let Err(error) = settings::update(&app, |config| config.shortcut_conflicts_noted = Some(noted)) {
+            // Better quiet than the same notice every launch.
+            crate::telemetry::capture("hotkeys.conflicts_noted", &error);
+            return;
+        }
+        let Some(body) = startup_notice(&[], &lines) else { return };
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app.notification().builder().title("A shortcut may not reach Eavesy").body(body).show();
+    });
 }
 
 #[cfg(test)]
@@ -468,12 +636,87 @@ mod tests {
 
     #[test]
     fn startup_notice_names_the_failing_shortcut_and_why() {
-        assert_eq!(startup_notice(&[]), None);
+        assert_eq!(startup_notice(&[], &[]), None);
         let notice = startup_notice(&[
             (Action::Dictation, "Fn".into(), HotkeyError::InputMonitoring),
             (Action::Toggle, "Cmd+Shift+Space".into(), HotkeyError::Taken { by: TakenBy::Other }),
-        ]).unwrap();
+            (Action::Assistant, "Fn+Space".into(), HotkeyError::Accessibility),
+        ], &[]).unwrap();
         assert!(notice.contains("Talk shortcut (fn) needs Input Monitoring"), "{notice}");
         assert!(notice.contains("Open Eavesy shortcut (⌘⇧Space) is in use by another app"), "{notice}");
+        assert!(notice.contains("Talk to Eavesy shortcut (fn Space) needs Accessibility"), "{notice}");
+        let moved = startup_notice(&[], &["Talk to Eavesy is now ⌥⇧Space.".into()]).unwrap();
+        assert!(moved.starts_with("Talk to Eavesy is now ⌥⇧Space."), "{moved}");
+    }
+
+    #[test]
+    fn fn_chords_parse_validate_and_collide_like_any_shortcut() {
+        assert_eq!(keys(""), Ok(None));
+        assert_eq!(keys("Fn"), Ok(Some(Keys::Fn)));
+        assert_eq!(keys("Fn+Space"), Ok(Some(Keys::FnChord { mods: Modifiers::empty(), key: Code::Space })));
+        assert_eq!(keys("fn+Shift+K"), Ok(Some(Keys::FnChord { mods: Modifiers::SHIFT, key: Code::KeyK })));
+        assert_eq!(keys("Alt+Space"), Ok(Some(Keys::Plain { mods: Modifiers::ALT, key: Code::Space })));
+        assert!(keys("Fn+Fn+Space").is_err());
+        for ok in ["Fn+Space", "Fn+K", "Fn+7", "Fn+Ctrl+Space", "Fn+Cmd+Shift+A"] {
+            assert_eq!(validate(ok), Ok(()), "{ok}");
+        }
+        // Keys that carry the fn flag on their own, or change under fn.
+        for refused in ["Fn+Left", "Fn+ArrowUp", "Fn+F5", "Fn+Enter", "Fn+Backspace", "Fn+Home", "Fn+Tab"] {
+            assert!(matches!(validate(refused), Err(HotkeyError::Invalid { .. })), "{refused}");
+        }
+        assert!(same_keys("Fn+Space", "fn+space"));
+        assert!(same_keys("Fn+Shift+Ctrl+K", "fn+ctrl+shift+k"));
+        assert!(!same_keys("Fn+Space", "Space"));
+        assert!(!same_keys("Fn", "Fn+Space"));
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Fn+Space".into() };
+        assert_eq!(plan(&now, Action::Toggle, "fn+space", false), Err(HotkeyError::Taken { by: TakenBy::Assistant }));
+        assert_eq!(plan(&now, Action::Toggle, "Fn+K", false).map(|b| b.toggle), Ok("Fn+K".to_string()));
+        assert!(is_fn_chord("Fn+Space") && !is_fn_chord("Fn") && !is_fn_chord("Alt+Space"));
+    }
+
+    #[test]
+    fn a_recorded_fn_chord_spells_its_accelerator() {
+        const SHIFT: u64 = 1 << 17;
+        const CTRL: u64 = 1 << 18;
+        const FN_FLAG: u64 = 1 << 23;
+        assert_eq!(chord_accelerator(49, FN_FLAG).as_deref(), Some("Fn+Space"));
+        assert_eq!(chord_accelerator(40, FN_FLAG | CTRL | SHIFT).as_deref(), Some("Fn+Ctrl+Shift+K"));
+        assert_eq!(chord_accelerator(126, FN_FLAG), None, "arrows carry fn on their own");
+        assert_eq!(chord_accelerator(36, FN_FLAG), None, "Return is not a chord key");
+        assert_eq!(chord_keycode(Code::Space), Some(49));
+        assert_eq!(chord_keycode(Code::ArrowUp), None);
+        for spelled in ["Fn+Space", "Fn+Ctrl+Shift+K"] {
+            assert_eq!(validate(spelled), Ok(()));
+        }
+    }
+
+    #[test]
+    fn errors_that_wait_for_a_permission_do_not_block_saving() {
+        assert!(HotkeyError::InputMonitoring.waits_for_permission());
+        assert!(HotkeyError::Accessibility.waits_for_permission());
+        assert!(!HotkeyError::Taken { by: TakenBy::Other }.waits_for_permission());
+        assert_eq!(serde_json::to_value(HotkeyError::Accessibility).unwrap(), serde_json::json!({"kind": "accessibility"}));
+    }
+
+    #[test]
+    fn the_old_option_space_default_moves_once_and_only_when_an_app_holds_it() {
+        let raycast = |_: &str| Some("Raycast".to_string());
+        let nobody = |_: &str| None;
+        let mut old = Settings { assistant_hotkey: OLD_ASSISTANT_HOTKEY.into(), ..Settings::default() };
+        assert_eq!(migrate_assistant_default(&mut old.clone(), nobody), None, "no app on ⌥Space: leave it");
+        let note = migrate_assistant_default(&mut old, raycast).unwrap();
+        assert_eq!(old.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_eq!(old.assistant_hotkey_settled, Some(true));
+        assert!(note.contains("Raycast also uses ⌥Space"), "{note}");
+        // Picking ⌥Space again afterwards sticks.
+        old.assistant_hotkey = OLD_ASSISTANT_HOTKEY.into();
+        assert_eq!(migrate_assistant_default(&mut old, raycast), None);
+        // A shortcut the person chose is never moved.
+        let mut chosen = Settings { assistant_hotkey: "Cmd+Alt+K".into(), ..Settings::default() };
+        assert_eq!(migrate_assistant_default(&mut chosen, raycast), None);
+        // Nor is it moved onto a shortcut another action already has.
+        let mut clash = Settings { assistant_hotkey: OLD_ASSISTANT_HOTKEY.into(), toggle_hotkey: DEFAULT_ASSISTANT_HOTKEY.into(), ..Settings::default() };
+        assert_eq!(migrate_assistant_default(&mut clash, raycast), None);
+        assert_eq!(clash.assistant_hotkey, OLD_ASSISTANT_HOTKEY);
     }
 }

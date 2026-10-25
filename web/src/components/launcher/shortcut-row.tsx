@@ -4,6 +4,7 @@ import { RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, IconButton, Kbd, Mascot, StatusDisc } from '@/components/launcher/ui';
 import {
+  checkAllHotkeys,
   checkHotkey,
   errMsg,
   fnStatus,
@@ -11,10 +12,12 @@ import {
   getSettings,
   isDesktop,
   isHotkeyError,
+  onFnChord,
   onFnTap,
   openKeyboardSettings,
   openPrivacySettings,
   relaunchApp,
+  requestAccessibility,
   requestInputMonitoring,
   resetAllHotkeys,
   setHotkey,
@@ -29,22 +32,33 @@ import {
   SHORTCUT_LABELS,
   acceleratorFromEvent,
   conflictText,
+  fnChordFromEvent,
   heldCaps,
   hotkeyErrorText,
+  isFnChord,
   keyCaps,
   keysText,
+  mayBeFnChord,
+  savedConflictText,
   type HeldModifiers,
 } from './shortcut-keys';
 
 export { SHORTCUT_LABELS, talkHint } from './shortcut-keys';
 
-const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
+const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space' };
 const NOTHING_HELD: HeldModifiers = { meta: false, ctrl: false, alt: false, shift: false };
+/**
+ * How long a key the Mac app may report as an fn chord waits for that report:
+ * the webview sees fn+Space as plain Space.
+ */
+const FN_CHORD_GRACE_MS = 150;
 
 /** Shared state for every ShortcutRow on a screen: the bindings, the defaults, fn readiness, and which row is recording. */
 export type Shortcuts = {
   bindings: HotkeyBindings | null;
   defaults: HotkeyBindings;
+  /** What else uses each saved shortcut (macOS, another app), re-checked whenever they load. */
+  saved: Partial<Record<HotkeyAction, HotkeyConflict | null>>;
   fn: FnStatus | null;
   recording: HotkeyAction | null;
   /** While recording: whether the Mac app will report a lone fn tap. */
@@ -65,6 +79,8 @@ function fnReady(fn: FnStatus | null): boolean {
 export function useShortcuts(onChanged?: () => void): Shortcuts {
   const [bindings, setBindings] = useState<HotkeyBindings | null>(null);
   const [defaults, setDefaults] = useState<HotkeyBindings>(FALLBACK_DEFAULTS);
+  const [saved, setSaved] = useState<Partial<Record<HotkeyAction, HotkeyConflict | null>>>({});
+  const savedCheck = useRef(0);
   const [fn, setFn] = useState<FnStatus | null>(null);
   const [recording, setRecording] = useState<HotkeyAction | null>(null);
   const [fnArmed, setFnArmed] = useState(false);
@@ -79,6 +95,10 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
     const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '', assistant: settings.assistant_hotkey ?? '' } : FALLBACK_DEFAULTS;
     bindingsRef.current = next;
     setBindings(next);
+    // Shells out in the Mac app, so it never holds up the rows; only the latest check counts.
+    const check = ++savedCheck.current;
+    setSaved({});
+    void checkAllHotkeys().then((conflicts) => { if (check === savedCheck.current) setSaved(conflicts); });
   }, []);
 
   const recheckFn = useCallback(async () => {
@@ -86,10 +106,12 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
     const before = fnRef.current;
     fnRef.current = next;
     setFn(next);
-    // An fn shortcut saved before Input Monitoring was allowed isn't
-    // listening yet; register it now that it can.
-    const usesFn = bindingsRef.current?.toggle === FN || bindingsRef.current?.dictation === FN;
-    if (usesFn && next?.input_monitoring && before && !before.input_monitoring && !recordingRef.current) {
+    // An fn shortcut saved before Input Monitoring (fn alone) or Accessibility
+    // (fn with a key) was allowed isn't listening yet; register it now that it can.
+    const all = bindingsRef.current ? Object.values(bindingsRef.current) : [];
+    const loneFnReady = all.includes(FN) && next?.input_monitoring && before && !before.input_monitoring;
+    const chordReady = all.some(isFnChord) && next?.accessibility && before && before.accessibility === false;
+    if ((loneFnReady || chordReady) && !recordingRef.current) {
       await suspendHotkeys(false).catch(() => {});
     }
   }, []);
@@ -126,7 +148,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   const changed = useCallback(() => changedRef.current?.(), []);
 
-  return { bindings, defaults, fn, recording, fnArmed, startRecording, stopRecording, reload, recheckFn, changed };
+  return { bindings, defaults, saved, fn, recording, fnArmed, startRecording, stopRecording, reload, recheckFn, changed };
 }
 
 type Notice =
@@ -216,11 +238,14 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
   const stopRef = useRef(stopRecording);
   // Set while recording: takes the shortcut, once. "Use fn" goes through it too.
   const captureRef = useRef<(accelerator: string) => void>(() => {});
+  // Whether the Mac app is listening while recording, so it can report fn chords.
+  const fnArmedRef = useRef(shortcuts.fnArmed);
   useEffect(() => {
     proposeRef.current = propose;
     cancelRef.current = cancel;
     stopRef.current = stopRecording;
-  }, [propose, cancel, stopRecording]);
+    fnArmedRef.current = shortcuts.fnArmed;
+  }, [propose, cancel, stopRecording, shortcuts.fnArmed]);
 
   useEffect(() => {
     if (!recording) return;
@@ -239,15 +264,31 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     // when Input Monitoring is on.
     let fnDown = false;
     let chorded = false;
+    // fn+Space reaches the webview as plain Space; while the Mac app listens,
+    // such a key waits briefly for its "Fn+Space" report before counting as itself.
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const settle = () => { if (pending) clearTimeout(pending); pending = null; };
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setHeld({ meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
       if (e.key === 'Fn') { fnDown = true; chorded = false; return; }
-      if (fnDown) chorded = true;
+      if (e.repeat) return;
+      if (fnDown) {
+        chorded = true;
+        // This Mac's webview reports fn itself.
+        const chord = fnChordFromEvent(e);
+        if (chord) { settle(); void capture(chord); return; }
+      }
       if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) { cancelRef.current(); return; }
       const accelerator = acceleratorFromEvent(e);
-      if (accelerator) void capture(accelerator);
+      if (!accelerator) return;
+      settle();
+      if (fnArmedRef.current && mayBeFnChord(e)) {
+        pending = setTimeout(() => { pending = null; void capture(accelerator); }, FN_CHORD_GRACE_MS);
+        return;
+      }
+      void capture(accelerator);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
@@ -264,20 +305,25 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
     document.addEventListener('pointerdown', onPointerDown, true);
-    let unlisten: (() => void) | null = null;
+    const unlisten: (() => void)[] = [];
     let gone = false;
-    void onFnTap(() => { void capture(FN); }).then((stop) => { if (gone) stop(); else unlisten = stop; });
+    const keep = (stop: () => void) => { if (gone) stop(); else unlisten.push(stop); };
+    void onFnTap(() => { void capture(FN); }).then(keep);
+    void onFnChord((accelerator) => { settle(); void capture(accelerator); }).then(keep);
     return () => {
       gone = true;
+      settle();
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
-      unlisten?.();
+      unlisten.forEach((stop) => stop());
       captureRef.current = () => {};
     };
   }, [recording]);
 
   const liveCaps = heldCaps(held);
+  // Only a note about the shortcut as it is now; the Mac app re-checks after every change.
+  const savedConflict = value ? shortcuts.saved[action] ?? null : null;
   // Only promise "tap fn" when the Mac app confirmed it's listening for one.
   const fnHearable = !desktop || shortcuts.fnArmed;
 
@@ -322,7 +368,7 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
         </div>
       </div>
 
-      {recording && fnHearable ? <p className="ev-shortcut-note">Press a shortcut, or tap fn. Esc to cancel.</p> : null}
+      {recording && fnHearable ? <p className="ev-shortcut-note">Press a shortcut (fn+Space works too), or tap fn on its own. Esc to cancel.</p> : null}
       {recording && !fnHearable ? (
         <p className="ev-shortcut-note">
           Press a shortcut. Esc to cancel.{' '}
@@ -353,6 +399,40 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       ) : null}
 
       {value === FN && !recording && shortcuts.fn && !fnReady(shortcuts.fn) ? <FnSetupCard fn={shortcuts.fn} onRecheck={recheckFn} /> : null}
+
+      {isFnChord(value) && !recording && shortcuts.fn?.accessibility === false ? (
+        <div className="ev-shortcut-card" data-tone="steps">
+          <p>{keysText(value)} needs Accessibility, so Eavesy can catch it before the app you’re in does.</p>
+          <div className="ev-shortcut-actions">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void requestAccessibility()
+                  .catch(() => false)
+                  .then((granted) => (granted ? undefined : openPrivacySettings('accessibility')))
+                  .catch(() => {})
+                  .finally(() => { void recheckFn(); });
+              }}
+            >
+              Open Privacy settings
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* A saved shortcut something else also uses: stays until it's changed. */}
+      {savedConflict && !notice && !recording ? (
+        <div className="ev-shortcut-card">
+          <p>{savedConflictText(savedConflict, value)}</p>
+          <div className="ev-shortcut-actions">
+            {savedConflict.kind === 'system' ? (
+              <Button variant="outline" size="sm" onClick={() => { void openKeyboardSettings().catch(() => {}); }}>Open Keyboard Shortcuts</Button>
+            ) : null}
+            <Button variant="outline" size="sm" disabled={!desktop || busy} onClick={record}>Pick another</Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
