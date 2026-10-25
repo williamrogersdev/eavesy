@@ -70,7 +70,8 @@ fn gh_path() -> &'static str {
 
 pub fn list(repo: &Path) -> Prs {
     let spawned = Command::new(gh_path())
-        .args(["pr", "list", "--state", "all", "--limit", "300", "--json", "number,state,headRefName,url"])
+        // A repo with more PRs than this loses its oldest ones: their branches just show as git sees them.
+        .args(["pr", "list", "--state", "all", "--limit", "1000", "--json", "number,state,headRefName,url"])
         .current_dir(repo)
         .env("GH_PROMPT_DISABLED", "1")
         .env("NO_COLOR", "1")
@@ -81,12 +82,13 @@ pub fn list(repo: &Path) -> Prs {
     let Ok(mut child) = spawned else { return Prs::default() };
     // Read on a thread so a full pipe can't stall `gh` while we wait for it.
     let mut stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut text = String::new();
         if let Some(out) = stdout.as_mut() {
             let _ = std::io::Read::read_to_string(out, &mut text);
         }
-        text
+        let _ = sender.send(text);
     });
     let started = Instant::now();
     let status = loop {
@@ -100,7 +102,9 @@ pub fn list(repo: &Path) -> Prs {
             }
         }
     };
-    let text = reader.join().unwrap_or_default();
+    // A helper `gh` started can keep the pipe open after `gh` is gone, so don't
+    // wait on the reader for ever; a reader that's late is left to finish alone.
+    let text = receiver.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
     match status.filter(|status| status.success()).and_then(|_| parse(&text)) {
         Some(prs) => Prs { available: true, prs },
         None => Prs::default(),

@@ -94,6 +94,8 @@ function useWorktreeInfo(worktrees: MachineWorktree[], token: number) {
   const pump = useCallback((mine: number) => {
     while (sizeRunning.current < SIZE_WORKERS && sizeQueue.current.length > 0) {
       const path = sizeQueue.current.shift() as string;
+      // Asked only once it starts, so a path dropped from the queue by a filter change is wanted again later.
+      sizeAsked.current.add(path);
       sizeRunning.current += 1;
       void getWorktreeSize(path)
         .catch(() => null)
@@ -109,10 +111,9 @@ function useWorktreeInfo(worktrees: MachineWorktree[], token: number) {
     }
   }, []);
 
-  /** Sizes of these, soonest first, replacing what was waiting. Each is read once. */
+  /** Sizes of these, soonest first, replacing what was waiting. Each is read once, once it has started. */
   const wantSizes = useCallback((paths: string[]) => {
     sizeQueue.current = paths.filter((path) => !sizeAsked.current.has(path));
-    for (const path of sizeQueue.current) sizeAsked.current.add(path);
     pump(generation.current);
   }, [pump]);
 
