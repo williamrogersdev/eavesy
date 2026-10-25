@@ -271,6 +271,8 @@ impl Action for Remember {
             return nothing("this conversation is off the record");
         }
         let Some(file) = self.book.path() else { return nothing("no home folder") };
+        // Steps run one at a time, so two remembers don't race to merge; if they ever
+        // did, apply_merge refuses the second (its notes changed) and nothing is lost.
         let mut merged = None;
         if self.book == Book::Setup && memory::is_full(Book::Setup, &file) {
             match memory::consolidate(&self.app) {

@@ -205,15 +205,25 @@ pub fn forget(file: &Path, note: &str) -> Result<(), String> {
 pub fn forget_all(book: Book, file: &Path) -> Result<(), String> {
     let _guard = lock();
     let text = read_for_edit(file)?;
-    if !text.is_empty() {
-        write_text(file, &without(&text, |line| note_on(line).is_some()))?;
-    }
-    // Only once the notes are gone: until then Undo still has them.
+    // The backup goes first, so a failure can't leave Undo able to bring the notes
+    // back; it's put back if clearing the notes then fails.
     let backup = backup_path(file);
-    if book == Book::Setup && backup.exists() {
+    let previous = if book == Book::Setup { std::fs::read_to_string(&backup).ok() } else { None };
+    if previous.is_some() {
         std::fs::remove_file(&backup).map_err(|e| format!("Couldn't remove the merge backup: {e}"))?;
     }
-    Ok(())
+    if text.is_empty() {
+        return Ok(());
+    }
+    write_text(file, &without(&text, |line| note_on(line).is_some())).inspect_err(|_| put_back(&backup, previous))
+}
+
+/// Restores a backup file to what it held before, or removes it if there was none.
+fn put_back(backup: &Path, previous: Option<String>) {
+    let _ = match previous {
+        Some(json) => write_text(backup, &json),
+        None => std::fs::remove_file(backup).map_err(|e| e.to_string()),
+    };
 }
 
 /// What a merge replaced, kept beside memory.md until you undo or keep it.
@@ -265,13 +275,13 @@ pub fn apply_merge(file: &Path, from: &[String], merged: &[String], at_ms: u64) 
     }
     let backup = Backup { at_ms, before: text.clone(), merged: kept.clone() };
     let json = serde_json::to_string(&backup).map_err(|e| e.to_string())?;
-    write_text(&backup_path(file), &json)?;
+    // A new merge replaces the last one's backup: Undo is for the last merge only.
+    let backup_file = backup_path(file);
+    let previous = std::fs::read_to_string(&backup_file).ok();
+    write_text(&backup_file, &json)?;
     let rest = without(&text, |line| note_on(line).is_some());
-    if let Err(error) = write_text(file, &with_notes(rest, Book::Setup.header(), &kept)) {
-        // No merge happened, so there's nothing for Settings to offer to undo.
-        let _ = std::fs::remove_file(backup_path(file));
-        return Err(error);
-    }
+    // No merge happened if this fails, so the earlier backup (if any) comes back.
+    write_text(file, &with_notes(rest, Book::Setup.header(), &kept)).inspect_err(|_| put_back(&backup_file, previous))?;
     Ok(MergeInfo { at_ms, before, after: kept.len() })
 }
 
@@ -583,6 +593,12 @@ mod tests {
     fn forgetting_everything_drops_the_merge_backup() {
         let file = full_memory();
         merge(&file, &["Merged".into()], 1).unwrap();
+        // A file that can't be cleared keeps the backup, so Undo still works.
+        let merged = std::fs::read(&file).unwrap();
+        std::fs::write(&file, b"- ok\n\xff\n").unwrap();
+        assert!(forget_all(Book::Setup, &file).is_err());
+        assert!(last_merge(&file).is_some());
+        std::fs::write(&file, merged).unwrap();
         forget_all(Book::Setup, &file).unwrap();
         assert_eq!(last_merge(&file), None);
         // Keeping a merge drops its backup too, and keeping when there's none is fine.
