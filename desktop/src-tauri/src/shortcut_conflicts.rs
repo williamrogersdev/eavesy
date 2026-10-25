@@ -103,7 +103,8 @@ pub fn new_app_conflicts(current: &Bindings, noted: &mut Vec<String>, holder: im
         let accelerator = current.get(action);
         if accelerator.is_empty() { continue; }
         let Some(app) = holder(accelerator) else { continue };
-        let key = format!("{}:{accelerator}:{app}", serde_json::to_value(action).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default());
+        let name = match action { Action::Toggle => "toggle", Action::Dictation => "dictation", Action::Assistant => "assistant" };
+        let key = format!("{name}:{accelerator}:{app}");
         if noted.contains(&key) { continue; }
         noted.push(key);
         lines.push(format!(

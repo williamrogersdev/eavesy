@@ -23,7 +23,7 @@ const MODIFIER_GLYPHS: Record<string, string> = {
 /** Whether an accelerator is fn held with a key ("Fn+Space"), not fn on its own. */
 export function isFnChord(accelerator: string): boolean {
   const parts = accelerator.split('+').map((part) => part.trim().toLowerCase()).filter(Boolean);
-  return parts.length > 1 && parts.includes('fn');
+  return parts.includes('fn') && parts.some((part) => part !== 'fn');
 }
 
 /** Key caps for an accelerator, in the order it's written: "Cmd+Shift+D" → ["⌘", "⇧", "D"], "Fn+Space" → ["fn", "Space"]. */

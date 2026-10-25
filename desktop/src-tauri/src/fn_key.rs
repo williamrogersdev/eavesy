@@ -199,6 +199,8 @@ extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info:
         }
         if event.is_null() || (kind != KEY_DOWN && kind != KEY_UP) { return false; }
         let Ok(keycode) = u16::try_from(CGEventGetIntegerValueField(event, FIELD_KEYCODE)) else { return false };
+        // Separate loads can see a binding change half done; at worst one key
+        // event is judged against the old binding, and the next one is right.
         let chords = [0, 1, 2].map(|slot| CHORDS[slot].load(Ordering::SeqCst));
         let held = [0, 1, 2].map(|slot| HELD[slot].load(Ordering::SeqCst));
         let repeat = CGEventGetIntegerValueField(event, FIELD_AUTOREPEAT) != 0;
@@ -245,7 +247,8 @@ pub fn bind_chord(app: &AppHandle, action: Action, keycode: u16, flags: u64) -> 
     if !crate::permissions::accessibility_granted() { return Err(HotkeyError::Accessibility); }
     ensure_chord_tap(app).map_err(HotkeyError::invalid)?;
     let slot = slot(action);
-    HELD[slot].store(false, Ordering::SeqCst);
+    // A chord rebound while its key is down: let go of it first.
+    if HELD[slot].swap(false, Ordering::SeqCst) { chord_up(app, slot); }
     CHORDS[slot].store(BOUND | FN | (flags & MODIFIERS) | u64::from(keycode), Ordering::SeqCst);
     if let Some(tap) = CHORD_TAP.get() { unsafe { CGEventTapEnable(*tap as *mut c_void, true); } }
     Ok(())
@@ -430,6 +433,15 @@ mod tests {
     fn a_missed_key_up_never_leaves_the_key_swallowed() {
         let chords = talk_on_fn_space();
         assert_eq!(step(chords, [false, false, true], KEY_DOWN, SPACE, 0, false), Step::Forget(2));
+    }
+
+    #[test]
+    fn changing_modifiers_mid_hold_keeps_the_hold() {
+        // Pressing or releasing fn/⇧ while the key is held only sends repeats
+        // (a fresh key-down needs a new press), and those stay swallowed.
+        let chords = talk_on_fn_space();
+        assert_eq!(step(chords, [false, false, true], KEY_DOWN, SPACE, SHIFT, true), Step::Swallow);
+        assert_eq!(step(chords, [false, false, true], KEY_DOWN, SPACE, 0, true), Step::Swallow);
     }
 
     #[test]

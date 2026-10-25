@@ -37,6 +37,8 @@ describe('shortcut keys', () => {
     expect(isFnChord('Fn+Space')).toBe(true);
     expect(isFnChord('fn+k')).toBe(true);
     expect(isFnChord('Fn')).toBe(false);
+    expect(isFnChord('Fn+')).toBe(false);
+    expect(isFnChord('Fn+fn')).toBe(false);
     expect(isFnChord('Alt+Space')).toBe(false);
   });
 
