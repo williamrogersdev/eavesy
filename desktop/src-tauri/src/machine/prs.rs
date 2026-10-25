@@ -104,7 +104,9 @@ pub fn list(repo: &Path) -> Prs {
     };
     // A helper `gh` started can keep the pipe open after `gh` is gone, so don't
     // wait on the reader for ever; a reader that's late is left to finish alone.
-    let text = receiver.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+    // After a clean exit the output is all there, so give it longer to arrive.
+    let reader_wait = if status.is_some_and(|status| status.success()) { Duration::from_secs(5) } else { Duration::from_secs(2) };
+    let text = receiver.recv_timeout(reader_wait).unwrap_or_default();
     match status.filter(|status| status.success()).and_then(|_| parse(&text)) {
         Some(prs) => Prs { available: true, prs },
         None => Prs::default(),
