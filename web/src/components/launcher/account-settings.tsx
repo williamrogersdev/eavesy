@@ -525,9 +525,9 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
     <>
       <Card title="How projects work">
         <ol className="ev-howto">
-          <li><span><b>One per codebase, client or topic.</b> Give it a name and the words it uses.</span></li>
-          <li><span><b>Picked from the window you’re in.</b> When you record or dictate, Eavesy looks at the app and window title and picks the matching project.</span></li>
-          <li><span><b>Used for that recording.</b> It’s filed under the project, its words are spelled right, and dictation can use the project’s own style.</span></li>
+          <li><span><b>Make one for each thing you work on.</b> A repo, a client or a team, with the names and terms that come up.</span></li>
+          <li><span><b>Eavesy switches to it on its own.</b> When the window you’re in matches the project, that project is used.</span></li>
+          <li><span><b>Your words come out right.</b> Recordings are filed under it, its terms are spelled correctly, and dictation can use its own style.</span></li>
         </ol>
       </Card>
       <Card title="Your projects">
@@ -540,7 +540,7 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
                 <span className="ev-set-label block truncate">{project.name}</span>
                 <span className="ev-set-hint block truncate">
                   {[
-                    `Picked for “${(project.match.length ? project.match : [project.name]).join('”, “')}”`,
+                    `Used in “${(project.match.length ? project.match : [project.name]).join('”, “')}”`,
                     project.vocabulary.length === 1 ? '1 word' : project.vocabulary.length ? `${project.vocabulary.length} words` : null,
                     ownStyle(project) ?? 'default dictation style',
                   ].filter(Boolean).join(' · ')}
