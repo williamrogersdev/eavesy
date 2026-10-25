@@ -29,6 +29,9 @@ import { acceptLabel, modeIsLoud, modeLabel, rulesWaitingLine, toolLabel } from 
 
 type Flash = (text: string, ms?: number, tone?: 'warn') => void;
 
+/** What the Mac says when the notes Clear would forget changed (assistant/thread.rs CHANGED). */
+const CLEAR_CHANGED = 'The conversation changed. Look again.';
+
 /**
  * The Eavesy tab (docs/plans/assistant.md B and C): the conversation, the cards
  * waiting for a click, and the permission mode. Everything Eavesy says is shown
@@ -112,18 +115,25 @@ export function EavesyTab({ flash }: { flash: Flash }) {
       });
   }, [flash, reloadState]);
 
-  const clear = (forget: boolean) => {
-    const shown = taught ?? undefined;
+  const clear = (forget: boolean, shown?: number) => {
     setTaught(null);
     clearAssistantThread(forget, forget ? shown : undefined)
       .then((line) => { if (line) flash(line, 4000); })
-      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn'));
+      .catch((error: unknown) => {
+        // The notes changed while you were deciding: ask again with the new count.
+        if (errMsg(error, '') === CLEAR_CHANGED) startClear();
+        else flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn');
+      });
   };
-  const startClear = () => {
+  function startClear() {
     getAssistantTaught()
       .then((notes) => { if (notes.length) setTaught(notes.length); else clear(false); })
-      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t check what this conversation taught Eavesy'), 4000, 'warn'));
-  };
+      // Nothing is forgotten without asking: clear, keep every note, and say so.
+      .catch(() => {
+        clear(false);
+        flash('Cleared. Eavesy couldn’t check its notes, so it kept them all; Settings shows them.', 5000, 'warn');
+      });
+  }
   const dontRemember = (id: number) => {
     dontRememberTurn(id)
       .then((line) => flash(line, 4000))
@@ -174,7 +184,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
         <div role="alertdialog" aria-label="Clear the conversation" className="ev-banner ev-clear-ask" data-tone="quiet">
           <span>{taught === 1 ? 'Eavesy kept a note from this conversation.' : `Eavesy kept ${taught} notes from this conversation.`} Forget {taught === 1 ? 'it' : 'them'} too?</span>
           <span className="ev-clear-actions">
-            <Button variant="primary" size="sm" onClick={() => clear(true)}>Clear and Forget</Button>
+            <Button variant="primary" size="sm" onClick={() => clear(true, taught)}>Clear and Forget</Button>
             <Button variant="outline" size="sm" onClick={() => clear(false)}>Keep {taught === 1 ? 'It' : 'Them'}</Button>
             <Button variant="quiet" size="sm" onClick={() => setTaught(null)}>Cancel</Button>
           </span>
