@@ -829,8 +829,13 @@ Each step ships on its own and is useful alone.
    notes until it's cleared, and merging `memory.md` when it's full: the
    cloud merges the notes, the Mac keeps them only if that leaves room,
    saves a backup, and Settings offers Undo Merge (notes added since are
-   kept). Next: standing instructions in `rules.md`, "Don't remember this"
-   on a turn, and offering to delete what a deleted conversation taught.
+   kept). Then standing instructions (H1): an **Instructions** section in
+   `rules.md`, 20 lines of 300 characters, kept in the signed `policy.json`
+   like rules. Edits outside Settings wait in the review list; accepting one
+   is a click, not a dialog, since an instruction grants nothing. They go to
+   the model fenced, before the limits, never to the check, and off the
+   record too (they're settings, not memory). Next: "Don't remember this" on
+   a turn, and offering to delete what a deleted conversation taught.
    Connections and Monitors come with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).

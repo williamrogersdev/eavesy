@@ -11,12 +11,14 @@ import {
   forgetAssistantNote,
   getAssistantActivity,
   getAssistantMemory,
+  addAssistantInstruction,
   getAssistantRules,
   getAssistantState,
   getAssistantVoices,
   keepAssistantMerge,
   openAssistantMemory,
   openAssistantRules,
+  removeAssistantInstruction,
   onAssistantRules,
   pickFolder,
   removeAssistantRule,
@@ -41,6 +43,10 @@ import { errMsg } from '@/lib/desktop/errors';
 import { Button, Card, IconButton, Menu, Row, Segmented, Select, Switch } from './ui';
 import { activityLine, modeLabel, ruleChangeLine, sortVoices, toolLabel } from './eavesy-model';
 import { formatRelative } from './format';
+
+/** As desktop assistant/rules.rs keeps them. */
+const MAX_INSTRUCTIONS = 20;
+const INSTRUCTION_CHARS = 300;
 
 const PRESETS = [
   { value: 'plain', label: 'Plain' },
@@ -195,6 +201,15 @@ export function AssistantSettings({ active, settings, onSettings }: {
     void pickFolder(title)
       .then((folder) => { if (folder) ruleAction(() => addAssistantRule(kind, folder), 'Couldn’t add that rule.'); })
       .catch((e: unknown) => { if (!isCancel(e)) setError(errMsg(e, 'Couldn’t open the folder picker.')); });
+  };
+  const [instruction, setInstruction] = useState('');
+  const addInstruction = () => {
+    const text = instruction.trim();
+    if (!text) return;
+    setError(null);
+    void addAssistantInstruction(text)
+      .then((next) => { setRules(next); setInstruction(''); })
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t add that instruction.')));
   };
   const acceptChange = (change: AssistantRuleChange) => ruleAction(() => acceptAssistantRuleChange(change), 'Couldn’t accept that.');
   const discardChange = (change: AssistantRuleChange) => ruleAction(() => discardAssistantRuleChange(change), 'Couldn’t discard that.');
@@ -385,6 +400,34 @@ export function AssistantSettings({ active, settings, onSettings }: {
             </ul>
           )}
         </div>
+        <div className="ev-set-row flex-col">
+          <div>
+            <div className="ev-set-label">Instructions</div>
+            <div className="ev-set-hint">What Eavesy keeps in mind every time you talk, like “Answer in British English”. They shape its answers, never what it’s allowed to do.</div>
+          </div>
+          {rules && rules.instructions.length > 0 && (
+            <ul className="ev-assistant-folders">
+              {rules.instructions.map((text) => (
+                <li key={text}>
+                  <span className="ev-set-label ev-assistant-note">{text}</span>
+                  <IconButton label={`Remove the instruction “${text}”`} icon={X} size={24} onClick={() => ruleAction(() => removeAssistantInstruction(text), 'Couldn’t remove that instruction.')} />
+                </li>
+              ))}
+            </ul>
+          )}
+          <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); addInstruction(); }}>
+            <input
+              className="ev-field-input min-w-0 flex-1"
+              aria-label="New instruction"
+              value={instruction}
+              maxLength={INSTRUCTION_CHARS}
+              placeholder="One line"
+              disabled={!rules || rules.instructions.length >= MAX_INSTRUCTIONS}
+              onChange={(event) => setInstruction(event.target.value)}
+            />
+            <Button variant="outline" size="sm" type="submit" disabled={!rules || !instruction.trim() || rules.instructions.length >= MAX_INSTRUCTIONS}>Add</Button>
+          </form>
+        </div>
         {rules && rules.pending.length > 0 && (
           <div className="ev-set-row flex-col">
             <div>
@@ -400,6 +443,9 @@ export function AssistantSettings({ active, settings, onSettings }: {
                   </div>
                   {(change.kind === 'add' || change.kind === 'remove') && (
                     <Button variant="primary" size="sm" onClick={() => acceptChange(change)}>{change.kind === 'add' ? 'Allow…' : 'Remove'}</Button>
+                  )}
+                  {(change.kind === 'add_instruction' || change.kind === 'remove_instruction') && (
+                    <Button variant="primary" size="sm" onClick={() => acceptChange(change)}>{change.kind === 'add_instruction' ? 'Accept' : 'Remove'}</Button>
                   )}
                   {change.kind !== 'unreadable' && <Button variant="quiet" size="sm" onClick={() => discardChange(change)}>Discard</Button>}
                 </li>

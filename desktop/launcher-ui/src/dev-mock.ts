@@ -338,10 +338,14 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
   // What an agent wrote into rules.md, waiting for review.
   let pendingRules: MockRule[] = empty ? [] : [{ kind: 'stop_leftovers', under: '/Users/w/Developer/eavesy' }];
   let badLine = !empty;
+  let instructions: string[] = empty ? [] : ['Answer in British English'];
+  let pendingInstructions: string[] = empty ? [] : ['Mention open PRs when I say good morning'];
   const rulesView = () => ({
     rules: rules.map((rule) => ({ rule, text: ruleText(rule) })),
+    instructions,
     pending: [
       ...pendingRules.map((rule) => ({ kind: 'add', rule, text: ruleText(rule) })),
+      ...pendingInstructions.map((text) => ({ kind: 'add_instruction', text })),
       ...(badLine ? [{ kind: 'invalid', line: 9, text: 'Delete everything under ~/Developer', reason: 'Eavesy doesn’t know this rule.' }] : []),
     ],
     path: '/Users/w/Eavesy/assistant/rules.md',
@@ -417,14 +421,35 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
       rules = rules.filter((kept) => !sameRule(kept, rule as MockRule));
       return rulesView();
     },
+    add_assistant_instruction: ({ text }: Record<string, unknown>) => {
+      const line = String(text).trim();
+      if ([...line].length > 300) throw new Error('Keep an instruction under 300 characters.');
+      if (instructions.includes(line)) return rulesView();
+      if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+      instructions.push(line);
+      return rulesView();
+    },
+    remove_assistant_instruction: ({ text }: Record<string, unknown>) => {
+      instructions = instructions.filter((kept) => kept !== text);
+      return rulesView();
+    },
     accept_assistant_rule_change: ({ change }: Record<string, unknown>) => {
-      const accepted = change as { kind: string; rule?: MockRule };
+      const accepted = change as { kind: string; rule?: MockRule; text?: string };
+      if (accepted.kind === 'add_instruction' && accepted.text) {
+        if (!instructions.includes(accepted.text)) {
+          if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+          instructions.push(accepted.text);
+        }
+        pendingInstructions = pendingInstructions.filter((text) => text !== accepted.text);
+        return rulesView();
+      }
       if (accepted.kind === 'add' && accepted.rule) rules.push(accepted.rule);
       pendingRules = pendingRules.filter((rule) => !accepted.rule || !sameRule(rule, accepted.rule));
       return rulesView();
     },
     discard_assistant_rule_change: ({ change }: Record<string, unknown>) => {
-      const dropped = change as { kind: string; rule?: MockRule };
+      const dropped = change as { kind: string; rule?: MockRule; text?: string };
+      pendingInstructions = pendingInstructions.filter((text) => dropped.kind !== 'add_instruction' || text !== dropped.text);
       pendingRules = pendingRules.filter((rule) => !dropped.rule || !sameRule(rule, dropped.rule));
       if (dropped.kind === 'invalid') badLine = false;
       return rulesView();

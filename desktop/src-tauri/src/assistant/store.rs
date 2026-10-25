@@ -31,6 +31,9 @@ pub struct Policy {
     /// rules existed still matches its signature.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<Rule>,
+    /// Standing instructions (H1), left out while empty for the same reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instructions: Vec<String>,
 }
 
 impl Policy {
@@ -235,7 +238,7 @@ mod tests {
         let (file, keys) = (temp(), Memory::default());
         assert_eq!(load(&file, &keys), Loaded::Missing);
         let rule = Rule { kind: super::super::rules::Kind::RemoveWorktrees, under: "/a".into() };
-        let policy = Policy { mode: Mode::Bypass, until_ms: Some(10), trusted_folders: vec!["/a".into()], rules: vec![rule] };
+        let policy = Policy { mode: Mode::Bypass, until_ms: Some(10), trusted_folders: vec!["/a".into()], rules: vec![rule], instructions: vec!["Answer in British English".into()] };
         save(&file, &keys, &policy).unwrap();
         assert_eq!(load(&file, &keys), Loaded::Valid(policy));
         #[cfg(unix)]
@@ -266,7 +269,7 @@ mod tests {
     #[test]
     fn an_old_copy_put_back_loads_as_ask() {
         let (file, keys) = (temp(), Memory::default());
-        save(&file, &keys, &Policy { mode: Mode::Bypass, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![] }).unwrap();
+        save(&file, &keys, &Policy { mode: Mode::Bypass, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![], instructions: vec![] }).unwrap();
         let copy = std::fs::read(&file).unwrap();
         save(&file, &keys, &Policy::default()).unwrap();
         std::fs::write(&file, copy).unwrap();
@@ -285,7 +288,7 @@ mod tests {
         let text = format!(r#"{{"policy":{},"mac":"{mac}"}}"#, std::str::from_utf8(body).unwrap());
         std::fs::write(&file, text).unwrap();
         let loaded = load(&file, &keys);
-        assert_eq!(loaded, Loaded::Valid(Policy { mode: Mode::Auto, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![] }));
+        assert_eq!(loaded, Loaded::Valid(Policy { mode: Mode::Auto, until_ms: None, trusted_folders: vec!["/a".into()], rules: vec![], instructions: vec![] }));
     }
 
     /// Editing a rule in the file outside Eavesy breaks the signature like any other edit.
@@ -302,7 +305,7 @@ mod tests {
 
     #[test]
     fn an_expired_mode_is_ask() {
-        let policy = Policy { mode: Mode::Bypass, until_ms: Some(100), trusted_folders: vec![], rules: vec![] };
+        let policy = Policy { mode: Mode::Bypass, until_ms: Some(100), trusted_folders: vec![], rules: vec![], instructions: vec![] };
         assert_eq!(policy.effective(99).mode, Mode::Bypass);
         assert_eq!(policy.effective(100).mode, Mode::Ask);
         assert_eq!(Policy { until_ms: None, ..policy }.effective(u64::MAX).mode, Mode::Bypass);

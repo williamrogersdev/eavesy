@@ -239,6 +239,9 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
 #[derive(Serialize)]
 struct TurnRequest<'a> {
     style: super::style::Style,
+    /// Your standing instructions from rules.md, as accepted in Settings. Sent off the
+    /// record too: they're settings, not memory.
+    instructions: &'a [String],
     /// Eavesy's notes (memory.md and about-you.md); the server sends them as data, not
     /// instructions.
     memory: &'a [String],
@@ -252,14 +255,14 @@ struct TurnResponse {
     content: Vec<Block>,
 }
 
-async fn ask(app: &AppHandle, style: super::style::Style, notes: &super::memory::ForTurn, messages: &[Message]) -> Result<Vec<Block>, String> {
+async fn ask(app: &AppHandle, style: super::style::Style, instructions: &[String], notes: &super::memory::ForTurn, messages: &[Message]) -> Result<Vec<Block>, String> {
     let credential = crate::settings::device_credential(app).ok_or("Sign in to Eavesy to talk to it.")?;
     let client = crate::sync::http_client().map_err(|e| e.to_string())?;
     let response = client
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { style, memory: &notes.memory, about: &notes.about, messages })
+        .json(&TurnRequest { style, instructions, memory: &notes.memory, about: &notes.about, messages })
         .send()
         .await
         .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;
@@ -285,6 +288,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
     let requester = Requester::You { spoken };
     // Read once: every step of one answer talks the same way.
     let style = crate::settings::load(app).assistant_style.unwrap_or_default();
+    let instructions = super::rules::instructions(app);
     for step in 0..MAX_STEPS {
         // Read each step, so a note kept a step ago is in the next one. Off the record,
         // none go.
@@ -297,7 +301,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
         let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
-        let content = match tauri::async_runtime::block_on(ask(app, style, &notes, &messages)) {
+        let content = match tauri::async_runtime::block_on(ask(app, style, &instructions, &notes, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
             Err(error) => {

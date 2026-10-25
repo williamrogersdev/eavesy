@@ -448,11 +448,15 @@ export interface AssistantRule {
 export type AssistantRuleChange =
   | { kind: 'add'; rule: AssistantRule; text: string }
   | { kind: 'remove'; rule: AssistantRule; text: string }
+  | { kind: 'add_instruction'; text: string }
+  | { kind: 'remove_instruction'; text: string }
   | { kind: 'invalid'; line: number; text: string; reason: string }
   | { kind: 'unreadable'; reason: string };
 
 export interface AssistantRules {
   rules: { rule: AssistantRule; text: string }[];
+  /** Standing instructions in force, sent with every turn. */
+  instructions: string[];
   pending: AssistantRuleChange[];
   path: string | null;
 }
@@ -468,6 +472,15 @@ export async function addAssistantRule(kind: AssistantRuleKind, folder: string):
 
 export async function removeAssistantRule(rule: AssistantRule): Promise<AssistantRules> {
   return invoke<AssistantRules>('remove_assistant_rule', { rule });
+}
+
+/** An instruction you wrote in Settings: one line, under 300 characters. */
+export async function addAssistantInstruction(text: string): Promise<AssistantRules> {
+  return invoke<AssistantRules>('add_assistant_instruction', { text });
+}
+
+export async function removeAssistantInstruction(text: string): Promise<AssistantRules> {
+  return invoke<AssistantRules>('remove_assistant_instruction', { text });
 }
 
 /** Accepting an added rule opens a native confirm first; cancelling rejects with "cancelled". */

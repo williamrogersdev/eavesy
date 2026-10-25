@@ -139,6 +139,8 @@ pub fn run() {
             assistant::rules::assistant_rules,
             assistant::rules::add_assistant_rule,
             assistant::rules::remove_assistant_rule,
+            assistant::rules::add_assistant_instruction,
+            assistant::rules::remove_assistant_instruction,
             assistant::rules::accept_assistant_rule_change,
             assistant::rules::discard_assistant_rule_change,
             assistant::rules::open_assistant_rules,
