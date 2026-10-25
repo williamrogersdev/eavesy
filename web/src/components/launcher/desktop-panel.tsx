@@ -26,7 +26,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { learnedLabel } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
-import { CaptureHistory, focusSearchQuietly } from './capture-history';
+import { CaptureHistory, focusSearch, focusSearchQuietly } from './capture-history';
 import { CaptureToolbar } from './capture-toolbar';
 import { EavesyTab } from './eavesy-tab';
 import { LauncherToast } from './launcher-toast';
@@ -92,6 +92,7 @@ export function DesktopPanel() {
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
+  // Before the history has loaded there is no search yet, so the panel itself takes focus.
   const focusPanel = useCallback(() => {
     if (searchRef.current) focusSearchQuietly(searchRef.current);
     else panelRef.current?.focus({ preventScroll: true });
@@ -313,7 +314,7 @@ export function DesktopPanel() {
         pasteFromClipboard();
       } else if (!meta && !e.altKey && e.key === '/') {
         e.preventDefault();
-        searchRef.current?.focus();
+        if (searchRef.current) focusSearch(searchRef.current);
       } else if (!meta && !e.altKey && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         composerRef.current?.focus();

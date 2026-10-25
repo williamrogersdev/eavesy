@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Recording } from '@/lib/launcher/types';
-import { clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, visibleRecordings } from './history-model';
+import { clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, visibleRecordings } from './history-model';
 
 const NOW = new Date(2026, 9, 17, 15, 0).getTime();
 const at = (daysAgo: number, hour = 10) => new Date(2026, 9, 17 - daysAgo, hour).getTime();
@@ -108,5 +108,21 @@ describe('kinds', () => {
     expect(filterOf(rec('a', 'image', 0))).toBe('screens');
     expect(filterOf({ ...rec('a', 'upload', 0), hasVideo: true })).toBe('screens');
     expect(filterOf(rec('a', 'upload', 0))).toBe('voice');
+  });
+});
+
+describe('searchFocusOpens', () => {
+  test('"/" opens search wherever focus came from', () => {
+    expect(searchFocusOpens({ asked: true, quiet: false, fromElement: false })).toBe(true);
+  });
+  test('Tab or a closing filter menu opens it', () => {
+    expect(searchFocusOpens({ asked: false, quiet: false, fromElement: true })).toBe(true);
+  });
+  test('the quiet focus on open leaves it an icon', () => {
+    expect(searchFocusOpens({ asked: false, quiet: true, fromElement: true })).toBe(false);
+    expect(searchFocusOpens({ asked: false, quiet: true, fromElement: false })).toBe(false);
+  });
+  test('the window getting focus back leaves it an icon', () => {
+    expect(searchFocusOpens({ asked: false, quiet: false, fromElement: false })).toBe(false);
   });
 });

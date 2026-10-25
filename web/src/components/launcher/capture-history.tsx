@@ -55,6 +55,7 @@ import {
   historyView,
   kindLabel,
   plainTranscript,
+  searchFocusOpens,
   timeOfDay,
   type HistoryFilter,
 } from './history-model';
@@ -583,15 +584,23 @@ function PromptRow({ prompt, query, first, onPaste, flash, runTask }: {
 }
 
 const NO_ROWS: Recording[] = [];
-const quietFocus = new WeakSet<HTMLElement>();
-/** Focuses search so typing lands there, without opening the field until something is typed. */
-export function focusSearchQuietly(input: HTMLInputElement) {
-  quietFocus.add(input);
+const quietFocus = new WeakSet<EventTarget>();
+const askedFocus = new WeakSet<EventTarget>();
+function focusMarked(input: HTMLInputElement, marks: WeakSet<EventTarget>) {
+  marks.add(input);
   try {
     input.focus({ preventScroll: true });
   } finally {
-    quietFocus.delete(input);
+    marks.delete(input);
   }
+}
+/** Focuses search so typing lands there, without opening the field until something is typed. */
+export function focusSearchQuietly(input: HTMLInputElement) {
+  focusMarked(input, quietFocus);
+}
+/** Opens search and focuses it ("/"). */
+export function focusSearch(input: HTMLInputElement) {
+  focusMarked(input, askedFocus);
 }
 const NO_COUNTS: Record<HistoryFilter, number> = { all: 0, voice: 0, meetings: 0, screens: 0, notes: 0 };
 const FILTER_ICONS: Record<HistoryFilter, LucideIcon> = { all: Layers, voice: AudioLines, meetings: Users, screens: Clapperboard, notes: StickyNote };
@@ -695,6 +704,7 @@ export const CaptureHistory = memo(function CaptureHistory({
   const [filterMenu, setFilterMenu] = useState(false);
   // Opened by a click or "/"; the quiet focus when the panel opens leaves it an icon until you type.
   const [opened, setOpened] = useState(false);
+  // Each opening starts as an icon. This runs after the commit, before the panel's quiet focus (next frame).
   useEffect(() => setOpened(false), [openKey]);
   const expanded = opened || searching || filterMenu;
   const filterLabel = FILTERS.find((f) => f.value === filter)?.label ?? 'All';
@@ -712,8 +722,15 @@ export const CaptureHistory = memo(function CaptureHistory({
           className="ev-search"
           data-open={expanded}
           data-active={searching}
-          onFocus={(e) => { if (!quietFocus.has(e.target)) setOpened(true); }}
-          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpened(false); }}
+          onPointerDown={() => setOpened(true)}
+          onFocus={(e) => {
+            if (searchFocusOpens({ asked: askedFocus.has(e.target), quiet: quietFocus.has(e.target), fromElement: e.relatedTarget !== null })) setOpened(true);
+          }}
+          onBlur={(e) => {
+            // Focus moving into the filter menu (a portal outside the field) keeps it open.
+            if (e.currentTarget.contains(e.relatedTarget) || e.relatedTarget?.closest('[role="menu"]')) return;
+            setOpened(false);
+          }}
           title={prompts?.length ? 'Search captures (/), or start with / for prompts' : 'Search captures (/)'}
         >
           <Search size={15} strokeWidth={1.75} aria-hidden />
