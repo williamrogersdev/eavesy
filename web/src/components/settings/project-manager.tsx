@@ -148,7 +148,7 @@ export function ProjectManager() {
     <>
       <AppPageHeader
         title="Projects"
-        description="One for each client, codebase or team you record about. A recording's project tells Eavesy which words to spell right, and the Mac app picks it from the window you're in."
+        description="One for each repo, client or team you work on. A project tells Eavesy which names and terms to spell right, and the Mac app switches to it when the window you’re in matches."
         action={items && items.length > 0 && editing !== 'new' ? (
           <button type="button" onClick={startNew} className={appButton('primary')}>
             <Plus className="h-4 w-4" /> New project

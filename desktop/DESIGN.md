@@ -460,13 +460,13 @@ row enters recording mode: the keys become a dashed coat outline reading
 "Press keys…", the mascot (16px) is listening, and Esc cancels.
 
 **Settings:** a separate, resizable native window (840 × 680, minimum 640 ×
-480), independent of the capture panel and HUD. It is the case file: a manila
-folder sidebar (the open section is a raised paper tab with a manila notch),
-cream index cards on paper (one level, never nested), and leather-brown
-actions and switches (`--ev-manila-ink`) instead of charcoal. After hours it
-mixes the dark tokens with manila into walnut and lamplight, with manila
-actions, so it never reads as black and white. All of it lives in
-`preferences.css` as mixes of `--ev-*` tokens; coral stays for recording only.
+480), independent of the capture panel and HUD. It uses the same tokens as the
+rest of the app: a well-tinted sidebar (the open section is a raised paper tab
+with a manila notch), cream index cards on paper (one level, never nested),
+and charcoal coat actions and switches. Dark mode uses the plain dark tokens;
+there is no extra manila mixing. Manila stays a highlight (the notch, step
+numbers, tags). All of it lives in `preferences.css`; coral stays for
+recording only.
 
 The sidebar switches between Capture, Dictation, Transcription, Dictionary,
 Shortcuts, Projects, Permissions and Account. Every change saves as it is made

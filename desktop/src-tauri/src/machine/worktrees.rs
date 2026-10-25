@@ -142,16 +142,31 @@ pub fn bases(repo: &Path) -> Vec<Base> {
     bases
 }
 
-/// True when HEAD's changes are all in one of `bases` already.
-pub fn merged(repo: &Path, head: &str, bases: &[Base]) -> bool {
-    bases.iter().any(|base| {
-        if git(repo, &["merge-base", "--is-ancestor", head, &base.name]).is_some() {
-            return true;
-        }
-        // A squash merge leaves the branch's commits outside the base, but
-        // merging them in would give back the base's own tree.
-        git(repo, &["merge-tree", "--write-tree", &base.name, head]).is_some_and(|out| out.lines().next() == Some(base.tree.as_str()))
-    })
+/// How a worktree's work reached the default branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergedVia {
+    /// HEAD is in the default branch's history.
+    Ancestor,
+    /// A squash merge: the commits aren't in the base, but merging them in
+    /// would give back the base's own tree.
+    Squash,
+}
+
+/// The cheap check: HEAD is in one of `bases`' history (one `git merge-base`
+/// each). The quick first pass uses only this.
+pub fn merged_by_ancestry(repo: &Path, head: &str, bases: &[Base]) -> bool {
+    bases.iter().any(|base| git(repo, &["merge-base", "--is-ancestor", head, &base.name]).is_some())
+}
+
+/// How HEAD's changes are in one of `bases`, if they are. The squash check is
+/// a `git merge-tree`, so it only runs when the ancestry check fails.
+pub fn merged_via(repo: &Path, head: &str, bases: &[Base]) -> Option<MergedVia> {
+    if merged_by_ancestry(repo, head, bases) {
+        return Some(MergedVia::Ancestor);
+    }
+    let squashed = bases.iter().any(|base| git(repo, &["merge-tree", "--write-tree", &base.name, head]).is_some_and(|out| out.lines().next() == Some(base.tree.as_str())));
+    squashed.then_some(MergedVia::Squash)
 }
 
 /// Ignored folders a package manager, compiler or test runner owns outright
@@ -175,9 +190,59 @@ pub fn would_lose(line: &str) -> bool {
     !(REBUILDABLE.contains(&name) || name.ends_with(".tsbuildinfo") || name.ends_with(".pyc"))
 }
 
+/// What `git status` found in a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Changes {
+    /// Staged, unstaged and untracked files (ignored ones aren't counted).
+    pub changed: usize,
+    /// Removing the worktree would lose something: a change, or (when ignored
+    /// files were looked at) an ignored file that isn't build output.
+    pub would_lose: bool,
+}
+
+/// `git status`. Looking at ignored files is what makes it slow in a worktree
+/// with `node_modules`, so only the removal check asks for it.
+pub fn changes(worktree: &Path, ignored: bool) -> Option<Changes> {
+    let mut args = vec!["status", "--porcelain", "--untracked-files=normal"];
+    if ignored {
+        args.push("--ignored=matching");
+    }
+    let out = git(worktree, &args)?;
+    Some(Changes {
+        changed: out.lines().filter(|line| !line.trim().is_empty() && !line.starts_with("!! ")).count(),
+        would_lose: out.lines().any(would_lose),
+    })
+}
+
 pub fn dirty(worktree: &Path) -> bool {
     // A status that fails is treated as dirty: never remove what we can't read.
-    git(worktree, &["status", "--porcelain", "--untracked-files=normal", "--ignored=matching"]).is_none_or(|out| out.lines().any(would_lose))
+    changes(worktree, true).is_none_or(|changes| changes.would_lose)
+}
+
+/// When the checked-out commit was made, in ms since the epoch.
+pub fn last_commit_ms(worktree: &Path) -> Option<u64> {
+    git(worktree, &["log", "-1", "--format=%ct", "HEAD"])?.trim().parse::<u64>().ok().map(|secs| secs * 1000)
+}
+
+/// When a Claude Code session last wrote to this folder's transcripts.
+pub fn last_session_ms(home: &Path, worktree: &str) -> Option<u64> {
+    let newest = std::fs::read_dir(transcript_dir(home, worktree)).ok()?.flatten().filter_map(|entry| entry.metadata().and_then(|meta| meta.modified()).ok()).max()?;
+    newest.duration_since(std::time::UNIX_EPOCH).ok().map(|since| since.as_millis() as u64)
+}
+
+/// Commits `HEAD` is ahead of and behind `base`.
+pub fn ahead_behind(worktree: &Path, base: &str) -> Option<(u32, u32)> {
+    let out = git(worktree, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
+    let (behind, ahead) = out.split_once(char::is_whitespace)?;
+    Some((ahead.trim().parse().ok()?, behind.trim().parse().ok()?))
+}
+
+/// Disk the folder takes, in bytes (`du`, so build output counts: that's what
+/// removing it frees).
+pub fn size_bytes(worktree: &Path) -> Option<u64> {
+    let output = Command::new("du").arg("-skx").arg(worktree).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    // du exits non-zero on one unreadable file but still totals the rest.
+    String::from_utf8_lossy(&output.stdout).split_whitespace().next()?.parse::<u64>().ok().map(|kib| kib * 1024)
 }
 
 /// Claude Code keeps each folder's transcripts in `~/.claude/projects/<slug>`,
@@ -348,8 +413,23 @@ mod tests {
         assert_eq!(bases.iter().map(|base| base.name.as_str()).collect::<Vec<_>>(), vec!["main"]);
         let facts = |path: &Path| {
             let entry = entries.iter().find(|entry| Path::new(&entry.path) == path).expect("listed");
-            Facts { exists: true, locked: entry.locked, dirty: dirty(path), in_use: false, merged: merged(&repo, entry.head.as_deref().unwrap(), &bases) }
+            Facts { exists: true, locked: entry.locked, dirty: dirty(path), in_use: false, merged: merged_via(&repo, entry.head.as_deref().unwrap(), &bases).is_some() }
         };
+        let head = |path: &Path| entries.iter().find(|entry| Path::new(&entry.path) == path).and_then(|entry| entry.head.clone()).unwrap();
+        // The ancestry check alone misses a squash merge; merge-tree finds it.
+        assert!(!merged_by_ancestry(&repo, &head(&squashed), &bases));
+        assert_eq!(merged_via(&repo, &head(&squashed), &bases), Some(MergedVia::Squash));
+        assert_eq!(merged_via(&repo, &head(&dirty_wt), &bases), Some(MergedVia::Ancestor));
+        assert_eq!(merged_via(&repo, &head(&unmerged), &bases), None);
+        // The plain status counts changes without walking ignored folders; the
+        // removal check also sees the ignored .env.
+        assert_eq!(changes(&dirty_wt, false), Some(Changes { changed: 1, would_lose: true }));
+        assert_eq!(changes(&secrets, false), Some(Changes { changed: 0, would_lose: false }));
+        assert_eq!(changes(&secrets, true), Some(Changes { changed: 0, would_lose: true }));
+        assert_eq!(changes(&squashed, true), Some(Changes { changed: 0, would_lose: false }));
+        assert_eq!(ahead_behind(&unmerged, "main"), Some((1, 2)));
+        assert_eq!(ahead_behind(&squashed, "main"), Some((2, 2)));
+        assert!(last_commit_ms(&unmerged).is_some_and(|ms| ms > 1_000_000_000_000));
         assert_eq!(classify(&facts(&squashed)), Status::Stale);
         assert_eq!(classify(&facts(&unmerged)), Status::Unmerged);
         // Its branch has nothing new, so it's merged, but the untracked file wins.

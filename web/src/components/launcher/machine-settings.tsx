@@ -1,11 +1,12 @@
 'use client';
 
 import { RefreshCw, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cleanMachine, getMachineInventory, type MachineInventory, type MachineOutcome } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
 import { Button, Card, Row } from './ui';
-import { cleanLabel, groupLeftovers, homeOf, keptSummary, shortPath, stopWhat } from './machine-model';
+import { cleanLabel, groupLeftovers, homeOf, shortPath, stopWhat } from './machine-model';
+import { WorktreeManager } from './worktree-manager';
 
 const OWNER_LABEL = { leftover: 'Left over', session: 'Running session', other: '' } as const;
 
@@ -14,7 +15,7 @@ function Check({ checked, onChange, label }: { checked: boolean; onChange: (next
 }
 
 /**
- * What agent sessions left on this Mac: worktrees whose work has landed,
+ * What agent sessions left on this Mac: worktrees (merged ones can go),
  * processes whose session ended, and the ports your processes hold. It only
  * reads until you confirm; the confirm lists exactly what goes.
  */
@@ -27,12 +28,16 @@ export function MachineSettings({ active }: { active: boolean }) {
   const [confirming, setConfirming] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [outcomes, setOutcomes] = useState<MachineOutcome[] | null>(null);
+  /** Changes on every full look, so the worktree list starts its closer look over. */
+  const [token, setToken] = useState(0);
+  const confirmRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setInventory(await getMachineInventory());
+      setToken((current) => current + 1);
       setWorktrees(new Set());
       setGroups(new Set());
       setConfirming(false);
@@ -46,11 +51,9 @@ export function MachineSettings({ active }: { active: boolean }) {
   useEffect(() => { if (active && !inventory && !loading && !error) void load(); }, [active, inventory, loading, error, load]);
 
   const home = inventory ? homeOf(inventory) : null;
-  const stale = useMemo(() => inventory?.worktrees.filter((w) => w.status === 'stale') ?? [], [inventory]);
-  const kept = useMemo(() => keptSummary(inventory?.worktrees.map((w) => w.status) ?? []), [inventory]);
   const leftoverGroups = useMemo(() => groupLeftovers(inventory?.leftovers ?? []), [inventory]);
   const chosenProcesses = leftoverGroups.filter((group) => groups.has(group.key)).flatMap((group) => group.processes);
-  const chosenWorktrees = stale.filter((w) => worktrees.has(w.path));
+  const chosenWorktrees = (inventory?.worktrees ?? []).filter((w) => worktrees.has(w.path));
   const processCount = leftoverGroups.filter((group) => groups.has(group.key)).reduce((sum, group) => sum + group.total, 0);
   const nothingChosen = chosenWorktrees.length === 0 && chosenProcesses.length === 0;
 
@@ -60,13 +63,31 @@ export function MachineSettings({ active }: { active: boolean }) {
     return next;
   };
 
+  /** Opens the confirm card for these worktrees. */
+  const askToRemove = (paths: string[]) => {
+    setWorktrees(new Set(paths));
+    setOutcomes(null);
+    setConfirming(true);
+  };
+  useEffect(() => { if (confirming) confirmRef.current?.scrollIntoView({ block: 'nearest' }); }, [confirming]);
+
   const clean = async () => {
     setCleaning(true);
     setError(null);
     try {
       const results = await cleanMachine(chosenWorktrees.map((w) => w.path), chosenProcesses.map(({ pid, started_us }) => ({ pid, started_us })));
       setOutcomes(results);
-      await load();
+      // Take what went off the list instead of looking at the whole Mac again.
+      const gone = new Set(results.filter((outcome) => outcome.ok).map((outcome) => outcome.target));
+      setInventory((current) => current && {
+        ...current,
+        worktrees: current.worktrees.filter((w) => !gone.has(w.path)),
+        leftovers: current.leftovers.filter((l) => !gone.has(String(l.pid))),
+        ports: current.ports.filter((port) => !gone.has(String(port.pid))),
+      });
+      setWorktrees(new Set());
+      setGroups(new Set());
+      setConfirming(false);
     } catch (err) {
       setError(errMsg(err, 'Couldn’t clean up.'));
     } finally {
@@ -99,25 +120,35 @@ export function MachineSettings({ active }: { active: boolean }) {
         </div>
       )}
 
+      {inventory && confirming && (
+        <div ref={confirmRef} role="dialog" aria-label="Confirm clean up" className="ev-machine-card">
+          <p className="ev-set-label">This will:</p>
+          <ul className="ev-machine-list">
+            {chosenWorktrees.map((w) => <li key={w.path}>Remove the worktree {shortPath(w.path, home)} with <code>git worktree remove</code>. Its branch stays.</li>)}
+            {leftoverGroups.filter((group) => groups.has(group.key)).map((group) => (
+              <li key={group.key}>Ask {stopWhat(group)} to stop.</li>
+            ))}
+          </ul>
+          <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Build output like node_modules goes with a worktree; one with changes or local files such as .env is never offered.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
+          </div>
+        </div>
+      )}
+
       {inventory && (
         <>
-          <Card title="Worktrees you can remove">
-            {stale.length === 0
-              ? <p className="ev-set-hint">None. A worktree shows up here once its branch is merged, it has no changes or local files, and no session is using it.</p>
-              : stale.map((w) => (
-                <Row key={w.path} label={shortPath(w.path, home)} hint={w.branch ? `${w.branch}, merged` : 'merged'}>
-                  <Check checked={worktrees.has(w.path)} label={`Remove ${w.path}`} onChange={(on) => setWorktrees((set) => toggle(set, w.path, on))} />
-                </Row>
-              ))}
-            {stale.length > 1 && (
-              <div className="ev-set-body">
-                <Button variant="ghost" size="sm" onClick={() => setWorktrees(worktrees.size === stale.length ? new Set() : new Set(stale.map((w) => w.path)))}>
-                  {worktrees.size === stale.length ? 'Select none' : `Select all ${stale.length}`}
-                </Button>
-              </div>
-            )}
-            {kept && <p className="ev-set-hint">Kept: {kept}.</p>}
-          </Card>
+          <WorktreeManager
+            worktrees={inventory.worktrees}
+            token={token}
+            home={home}
+            selected={worktrees}
+            busy={cleaning}
+            onSelect={(path, on) => setWorktrees((set) => toggle(set, path, on))}
+            onRemove={askToRemove}
+            onError={setError}
+          />
 
           <Card title="Left over from ended sessions">
             {leftoverGroups.length === 0
@@ -147,24 +178,7 @@ export function MachineSettings({ active }: { active: boolean }) {
           </Card>
 
           <div className="ev-machine-confirm">
-            {confirming ? (
-              <div role="dialog" aria-label="Confirm clean up" className="ev-machine-card">
-                <p className="ev-set-label">This will:</p>
-                <ul className="ev-machine-list">
-                  {chosenWorktrees.map((w) => <li key={w.path}>Remove the worktree {shortPath(w.path, home)} with <code>git worktree remove</code>. Its branch stays.</li>)}
-                  {leftoverGroups.filter((group) => groups.has(group.key)).map((group) => (
-                    <li key={group.key}>Ask {stopWhat(group)} to stop.</li>
-                  ))}
-                </ul>
-                <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Build output like node_modules goes with a worktree; one with changes or local files such as .env is never offered.</p>
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>Cancel</Button>
-                  <Button variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
-                </div>
-              </div>
-            ) : (
-              <Button variant="outline" size="sm" disabled={nothingChosen} onClick={() => { setOutcomes(null); setConfirming(true); }}>Clean up…</Button>
-            )}
+            <Button variant="outline" size="sm" disabled={nothingChosen || confirming} onClick={() => { setOutcomes(null); setConfirming(true); }}>Clean up…</Button>
           </div>
         </>
       )}

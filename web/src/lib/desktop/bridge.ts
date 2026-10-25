@@ -298,10 +298,49 @@ export async function setAgentHold(seconds: number): Promise<void> {
 /** Why a worktree can or can't be removed (machine/worktrees.rs `Status`). */
 export type WorktreeStatus = 'stale' | 'missing' | 'locked' | 'dirty' | 'in_use' | 'unmerged';
 
+/** One worktree from the quick first pass (machine/mod.rs `WorktreeRow`). */
+export interface MachineWorktree {
+  path: string;
+  repo: string;
+  branch: string | null;
+  status: WorktreeStatus;
+  /**
+   * False while the status is a first guess: a squash-merged branch looks
+   * unmerged and a merged one hasn't been checked for changes until
+   * `getWorktreeDetails` answers.
+   */
+  settled: boolean;
+}
+
+/** The closer look at one worktree (machine/mod.rs `WorktreeDetail`). */
+export interface WorktreeDetail {
+  path: string;
+  /** The final status. */
+  status: WorktreeStatus;
+  merged_via: 'ancestor' | 'squash' | null;
+  /** Staged, unstaged and untracked files, not ignored ones. */
+  changes: number;
+  last_commit_ms: number | null;
+  /** The later of the last commit and the last Claude Code session there. */
+  last_activity_ms: number | null;
+  /** The default branch it's compared with. */
+  base: string | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+/** A pull request for a branch (machine/prs.rs). */
+export interface RepoPr {
+  number: number;
+  state: 'open' | 'merged' | 'closed';
+  branch: string;
+  url: string;
+}
+
 /** What agent sessions left on this Mac (machine/mod.rs `Inventory`). */
 export interface MachineInventory {
   repos: string[];
-  worktrees: { path: string; repo: string; branch: string | null; status: WorktreeStatus }[];
+  worktrees: MachineWorktree[];
   /** Processes whose Claude Code session ended, each with the leftovers it started. */
   leftovers: { pid: number; started_us: number; name: string; exe: string; cwd: string | null; session_id: string | null; helpers: number; ports: number[] }[];
   zombies: { pid: number; parent_pid: number; parent_name: string | null }[];
@@ -316,9 +355,34 @@ export interface MachineOutcome {
   restore: string | null;
 }
 
-/** Reads the inventory. It changes nothing. */
+/** Reads the inventory, quickly: see `MachineWorktree.settled`. It changes nothing. */
 export async function getMachineInventory(): Promise<MachineInventory> {
   return invoke<MachineInventory>('machine_inventory');
+}
+
+/** The closer look at worktrees the last inventory listed. Read-only. */
+export async function getWorktreeDetails(paths: string[]): Promise<WorktreeDetail[]> {
+  return invoke<WorktreeDetail[]>('machine_worktree_details', { paths });
+}
+
+/** Bytes a listed worktree takes on disk, or null if unknown. Slow for big folders. */
+export async function getWorktreeSize(path: string): Promise<number | null> {
+  return invoke<number | null>('machine_worktree_size', { path });
+}
+
+/** Pull requests for a repo's branches. `available` is false without the GitHub CLI. */
+export async function getRepoPrs(repo: string): Promise<{ available: boolean; prs: RepoPr[] }> {
+  return invoke<{ available: boolean; prs: RepoPr[] }>('machine_repo_prs', { repo });
+}
+
+/** Opens a GitHub pull request's page in the browser. */
+export async function openPr(url: string): Promise<void> {
+  await invoke('machine_open_pr', { url });
+}
+
+/** Shows a listed worktree in Finder, or opens Terminal in it. */
+export async function openWorktree(path: string, how: 'reveal' | 'terminal'): Promise<void> {
+  await invoke('machine_open_worktree', { path, how });
 }
 
 /**
