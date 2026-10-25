@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, ShieldAlert, Volume2 } from 'lucide-react';
+import { ArrowUp, EyeOff, ShieldAlert, Volume2 } from 'lucide-react';
 import {
   clearAssistantThread,
   decideAssistantCard,
@@ -14,6 +14,8 @@ import {
   repeatAssistantReply,
   sendToAssistant,
   setAssistantMode,
+  setAssistantOffRecord,
+  type AssistantBook,
   type AssistantCard,
   type AssistantMode,
   type AssistantState,
@@ -37,8 +39,8 @@ export function EavesyTab({ flash }: { flash: Flash }) {
   const [now, setNow] = useState(() => Date.now());
   // Notes undone from this tab, so their line says so.
   const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
-  const undo = (note: string) => {
-    forgetAssistantNote(note)
+  const undo = (note: string, book: AssistantBook = 'setup') => {
+    forgetAssistantNote(note, book)
       .then(() => setUndone((current) => new Set(current).add(note)))
       .catch((error: unknown) => flash(errMsg(error, 'Couldn’t undo that'), 4000, 'warn'));
   };
@@ -106,6 +108,11 @@ export function EavesyTab({ flash }: { flash: Flash }) {
       });
   }, [flash, reloadState]);
 
+  const offRecord = thread.off_record === true;
+  const toggleOffRecord = () => {
+    setAssistantOffRecord(!offRecord).catch((error: unknown) => flash(errMsg(error, 'Couldn’t change that'), 5000, 'warn'));
+  };
+
   const effective = state?.effective ?? 'ask';
   const loud = modeIsLoud(effective);
 
@@ -129,12 +136,23 @@ export function EavesyTab({ flash }: { flash: Flash }) {
           ]}
         />
         <span className="ev-eavesy-spacer" />
+        {/* Once you've said something off the record, only Clear ends it. */}
+        {(!offRecord || turnCount === 0) && (
+          <Button variant="quiet" size="sm" aria-pressed={offRecord} onClick={toggleOffRecord}>
+            <EyeOff size={13} strokeWidth={1.75} aria-hidden /> {offRecord ? 'On the Record' : 'Off the Record'}
+          </Button>
+        )}
         {turnCount > 0 && (
           <Button variant="quiet" size="sm" disabled={thread.busy} onClick={() => void clearAssistantThread().catch((error: unknown) => flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn'))}>
             Clear
           </Button>
         )}
       </div>
+      {offRecord && (
+        <div role="status" className="ev-banner" data-tone="quiet">
+          <span>Off the record: Eavesy doesn’t read or keep notes in this conversation. Clear it to go back on the record.</span>
+        </div>
+      )}
       {state?.tampered && (
         <div role="alert" className="ev-banner">
           <span>Your rules changed outside Eavesy, so it’s on Ask. Choose a mode to confirm.</span>
@@ -157,7 +175,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
                     ? `Forgot: ${step.remembered}`
                     : <>{toolLabel(step.tool)}{step.line ? ` · ${step.line}` : '…'}</>}
                   {step.remembered && !undone.has(step.remembered) && (
-                    <> · <button type="button" className="ev-link" onClick={() => undo(step.remembered ?? '')}>Undo</button></>
+                    <> · <button type="button" className="ev-link" onClick={() => undo(step.remembered ?? '', step.book)}>Undo</button></>
                   )}
                 </span>
               ))}

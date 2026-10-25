@@ -59,16 +59,21 @@ pub fn build(app: &AppHandle, name: &str, input: &serde_json::Value, said_by_you
             #[derive(Deserialize)]
             struct Input {
                 note: String,
+                #[serde(default)]
+                about: super::memory::Book,
             }
-            let Input { note } = serde_json::from_value(input.clone()).map_err(|_| "remember needs a note.".to_string())?;
+            let Input { note, about } = serde_json::from_value(input.clone()).map_err(|_| "remember needs a note.".to_string())?;
             if !crate::settings::load(app).assistant_memory() {
                 return Err("Memory is off in Settings → Assistant, so I can't keep notes.".into());
+            }
+            if super::thread::off_record(app) {
+                return Err(OFF_RECORD.into());
             }
             let note = super::memory::clean(&note);
             if note.is_empty() {
                 return Err("There's nothing in that to remember.".into());
             }
-            Ok(Box::new(Remember { app: app.clone(), note }))
+            Ok(Box::new(Remember { app: app.clone(), note, book: about }))
         }
         "suggest_rule" => {
             #[derive(Deserialize)]
@@ -236,10 +241,14 @@ fn asked_only(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Applies at once and shows a "Remembered" line you can undo (H4).
+const OFF_RECORD: &str = "This conversation is off the record, so I'm not keeping notes from it.";
+
+/// Applies at once and shows a "Remembered" line you can undo (H4). When memory.md is
+/// full, its notes are merged first to make room, with a backup Settings can restore.
 struct Remember {
     app: AppHandle,
     note: String,
+    book: super::memory::Book,
 }
 
 impl Action for Remember {
@@ -251,16 +260,43 @@ impl Action for Remember {
         if rows.is_empty() {
             return Ran { summary: "Nothing remembered".into(), detail: serde_json::Value::Null };
         }
-        // Looked at again: memory may have been turned off since the call was built.
+        use super::memory::{self, Book};
+        let nothing = |why: &str| Ran { summary: format!("Couldn't remember that: {why}"), detail: serde_json::Value::Null };
+        // Looked at again: memory may have been turned off, or the conversation taken
+        // off the record, since the call was built.
         if !crate::settings::load(&self.app).assistant_memory() {
-            return Ran { summary: "Couldn't remember that: memory is off in Settings".into(), detail: serde_json::Value::Null };
+            return nothing("memory is off in Settings");
         }
-        let added = super::memory::path().ok_or_else(|| "No home folder.".to_string()).and_then(|file| super::memory::add(&file, &self.note));
-        let summary = match added {
-            Ok(note) => format!("Remembered: {note}"),
-            Err(error) => format!("Couldn't remember that: {error}"),
-        };
+        if super::thread::off_record(&self.app) {
+            return nothing("this conversation is off the record");
+        }
+        let Some(file) = self.book.path() else { return nothing("no home folder") };
+        // Steps run one at a time, so two remembers don't race to merge; if they ever
+        // did, apply_merge refuses the second (its notes changed) and nothing is lost.
+        let mut merged = None;
+        if self.book == Book::Setup && memory::is_full(Book::Setup, &file) {
+            match memory::consolidate(&self.app) {
+                Ok(info) => merged = Some(info),
+                Err(error) => tracing::warn!(%error, "assistant: couldn't merge notes"),
+            }
+        }
+        let summary = remembered(self.book, memory::add(self.book, &file, &self.note), merged);
         Ran { summary, detail: serde_json::Value::Null }
+    }
+}
+
+/// The Remember line. The first line is what the thread shows and where Undo finds the
+/// note; a merge is reported even when the note then couldn't be added.
+fn remembered(book: super::memory::Book, added: Result<String, String>, merged: Option<super::memory::MergeInfo>) -> String {
+    use super::memory::Book;
+    let first = match (added, book) {
+        (Ok(note), Book::Setup) => format!("Remembered: {note}"),
+        (Ok(note), Book::You) => format!("Remembered about you: {note}"),
+        (Err(error), _) => format!("Couldn't remember that: {error}"),
+    };
+    match merged {
+        Some(info) => format!("{first}\nMerged {} notes into {} to make room; Settings can undo that.", info.before, info.after),
+        None => first,
     }
 }
 
@@ -318,6 +354,15 @@ mod tests {
             assert!(refusal(asked_only("remember"), &check).is_some(), "{check:?}");
             assert_eq!(refusal(asked_only("open_link"), &check), None);
         }
+    }
+
+    #[test]
+    fn a_merge_is_reported_even_when_the_note_then_fails() {
+        use crate::assistant::memory::{Book, MergeInfo};
+        let info = MergeInfo { at_ms: 1, before: 50, after: 30 };
+        assert_eq!(remembered(Book::You, Ok("Likes tea".into()), None), "Remembered about you: Likes tea");
+        assert_eq!(remembered(Book::Setup, Ok("Uses bun".into()), Some(info.clone())), "Remembered: Uses bun\nMerged 50 notes into 30 to make room; Settings can undo that.");
+        assert!(remembered(Book::Setup, Err("full".into()), Some(info)).starts_with("Couldn't remember that: full\nMerged 50 notes"));
     }
 
     #[test]

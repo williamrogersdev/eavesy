@@ -823,9 +823,15 @@ Each step ships on its own and is useful alone.
    accepting a new rule asks in a native dialog. A rule runs an action
    without a card only for what you typed (or said, outside Ask), after a
    passing check, never past the breaker or for anything that grants power.
-   Next: "off the record", `about-you.md`, consolidating memory when full,
-   and standing instructions in `rules.md`. Connections and Monitors come
-   with step 6.
+   Then the memory extras (H1, H3): `about-you.md` beside `memory.md`
+   (the `remember` tool picks one; 20 notes about you, 50 about your
+   setup), an **Off the Record** conversation that sends and keeps no
+   notes until it's cleared, and merging `memory.md` when it's full: the
+   cloud merges the notes, the Mac keeps them only if that leaves room,
+   saves a backup, and Settings offers Undo Merge (notes added since are
+   kept). Next: standing instructions in `rules.md`, "Don't remember this"
+   on a turn, and offering to delete what a deleted conversation taught.
+   Connections and Monitors come with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
 8. **Hands** (L): Eavesy's browser and app grants, then accessibility

@@ -100,6 +100,7 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/assistant/consolidate': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Merges only the caller-submitted notes for the authenticated paired-device quota; reads and stores no user data' } },
   '/api/assistant/check': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Compares only the caller-submitted request and action for the authenticated paired-device quota; reads and stores no user data' } },
   '/api/assistant/turn': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Runs one model step over the caller-submitted conversation for the authenticated paired-device quota; reads and stores no user data' } },
   '/api/agents/reply-suggestion': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Summarizes only the caller-submitted agent message for the authenticated browser or paired-device quota; reads and stores no user data' } },
