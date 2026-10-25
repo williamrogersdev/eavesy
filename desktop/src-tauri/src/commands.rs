@@ -467,10 +467,11 @@ pub fn set_hotkey(app: AppHandle, action: String, accelerator: String, swap: Opt
     result
 }
 
-/// The tray menu and the HUD both show the current shortcuts; tell them.
+/// The tray menu, the HUD and the panel's Eavesy tab show the current shortcuts; tell them.
 fn hotkeys_changed(app: &AppHandle) {
     crate::tray::refresh(app);
     let _ = app.emit_to("hud", "hotkeys:changed", ());
+    let _ = app.emit_to("main", "hotkeys:changed", ());
 }
 
 #[tauri::command]

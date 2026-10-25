@@ -94,7 +94,7 @@ fn active_session(app: &AppHandle) -> (Option<String>, bool) {
 
 /// The dictation hotkey went down.
 pub fn key_down(app: &AppHandle) {
-    if KEY_DOWN.swap(true, Ordering::SeqCst) {
+    if KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app) {
         return;
     }
     pressed(app, true, false);
@@ -102,10 +102,22 @@ pub fn key_down(app: &AppHandle) {
 
 /// The Talk to Eavesy shortcut went down: like dictation, but the words go to Eavesy.
 pub fn talk_key_down(app: &AppHandle) {
-    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) {
+    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app) {
         return;
     }
     pressed(app, true, true);
+}
+
+/// A second press with the key still marked down: either a repeat while it's held
+/// (a recording is open or opening) or a release that never arrived, say because
+/// another app grabbed the same combo. Ignoring the latter left the shortcut dead.
+fn release_was_lost(app: &AppHandle) -> bool {
+    let (active, starting) = active_session(app);
+    let lost = active.is_none() && !starting;
+    if lost {
+        tracing::info!("shortcut pressed again without a release; treating it as a new press");
+    }
+    lost
 }
 
 /// The Talk to Eavesy shortcut came up.
@@ -169,8 +181,7 @@ pub fn toggle(app: &AppHandle) {
     pressed(app, false, false);
 }
 
-/// Talk to Eavesy as a toggle (fn tap).
-#[cfg(target_os = "macos")]
+/// Talk to Eavesy as a toggle (fn tap, the Eavesy tab's mic button).
 pub fn toggle_talk(app: &AppHandle) {
     pressed(app, false, true);
 }

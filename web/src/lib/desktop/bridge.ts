@@ -594,6 +594,11 @@ export async function dontRememberTurn(id: number): Promise<string> {
 }
 
 /** Says one of Eavesy's replies again. */
+/** Starts a spoken message to Eavesy, or stops the one being recorded (the mic button). */
+export async function talkToAssistant(): Promise<void> {
+  await invoke('assistant_talk');
+}
+
 export async function repeatAssistantReply(id: number): Promise<void> {
   await invoke('assistant_repeat', { id });
 }
@@ -1008,6 +1013,13 @@ export async function onCaptureState(cb: (state: CaptureStatus) => void): Promis
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<CaptureStatus>('capture:state', (event) => cb(event.payload));
+}
+
+/** The shortcuts were changed (Settings → Shortcuts). */
+export async function onHotkeysChanged(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen('hotkeys:changed', () => cb());
 }
 
 export async function captureScreenshot(): Promise<void> {
