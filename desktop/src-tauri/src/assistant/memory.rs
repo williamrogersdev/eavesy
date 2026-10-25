@@ -57,7 +57,8 @@ impl Book {
         }
     }
 
-    fn full(self) -> String {
+    /// What `add` says when the book has no room: Remember merges on exactly this.
+    pub fn full(self) -> String {
         match self {
             Book::Setup => format!("I'm already keeping {MAX_NOTES} notes and couldn't merge them. Clear some out in Settings → Assistant → Memory first."),
             Book::You => format!("I already know {MAX_ABOUT} things about you, which is all I keep. Clear some out in Settings → Assistant → Memory first."),
@@ -163,11 +164,6 @@ fn with_notes(mut text: String, header: &str, notes: &[String]) -> String {
 /// The notes the book holds now; none when it can't be read.
 pub fn kept(book: Book) -> Vec<String> {
     book.path().map(|file| read(&file, book.max())).unwrap_or_default()
-}
-
-/// True when the book holds as many notes as it keeps.
-pub fn is_full(book: Book, file: &Path) -> bool {
-    read_for_edit(file).map(|text| notes_in(&text).len() >= book.max()).unwrap_or(false)
 }
 
 /// What `add` did with a note.
@@ -567,6 +563,10 @@ mod tests {
         apply_merge(file, &notes_in(&read_for_edit(file)?), merged, at_ms)
     }
 
+    fn is_full(book: Book, file: &Path) -> bool {
+        notes_in(&read_for_edit(file).unwrap()).len() >= book.max()
+    }
+
     fn full_memory() -> PathBuf {
         let file = temp_file();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -580,6 +580,9 @@ mod tests {
         let file = full_memory();
         let before = std::fs::read_to_string(&file).unwrap();
         assert!(is_full(Book::Setup, &file));
+        // A note already kept needs no room, so a full book still finds it.
+        assert_eq!(add(Book::Setup, &file, "NOTE 3").unwrap(), Added { note: "note 3".into(), new: false });
+        assert_eq!(add(Book::Setup, &file, "new one").unwrap_err(), Book::Setup.full());
         let info = merge(&file, &["Merged A".into(), "merged a".into(), "Merged B".into(), " ".into()], 7).unwrap();
         assert_eq!(info, MergeInfo { at_ms: 7, before: MAX_NOTES, after: 2 });
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n\nKeep this line.\n- Merged A\n- Merged B\n");

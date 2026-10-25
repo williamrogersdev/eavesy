@@ -541,6 +541,9 @@ pub fn set_assistant_off_record(app: AppHandle, window: WebviewWindow, on: bool)
     Ok(())
 }
 
+/// What Clear says when the notes it would forget changed while you were deciding.
+const CHANGED: &str = "The conversation changed. Look again.";
+
 /// A note this conversation taught Eavesy, still in its file.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Taught {
@@ -619,9 +622,10 @@ pub fn assistant_dont_remember(app: AppHandle, window: WebviewWindow, id: u64) -
 }
 
 /// Clears the conversation. With `forget`, the notes it taught Eavesy go too, worked out
-/// here from the thread, never taken from the UI.
+/// here from the thread, never taken from the UI. `expected` is how many you were shown:
+/// if that changed since, nothing is cleared, so you never forget notes you didn't see.
 #[tauri::command(async)]
-pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<bool>) -> Result<String, String> {
+pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<bool>, expected: Option<usize>) -> Result<String, String> {
     super::from_ui(&window)?;
     let notes = {
         let state = app.state::<Mutex<Thread>>();
@@ -630,6 +634,9 @@ pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<boo
             return Err("Eavesy is still answering.".into());
         }
         let notes = if forget == Some(true) { taught(&thread.turns, None) } else { Vec::new() };
+        if forget == Some(true) && expected.is_some_and(|shown| still_kept(notes.clone()).len() != shown) {
+            return Err(CHANGED.into());
+        }
         thread.turns.clear();
         thread.notes.clear();
         // A new conversation is on the record again.

@@ -575,9 +575,12 @@ export async function sendToAssistant(text: string, spoken = false): Promise<voi
   await invoke('assistant_send', { text, spoken });
 }
 
-/** Clears the conversation; with `forget`, the notes it taught Eavesy go too. Resolves to a line saying what was forgotten, or "". */
-export async function clearAssistantThread(forget = false): Promise<string> {
-  return invoke<string>('assistant_clear', { forget });
+/**
+ * Clears the conversation; with `forget`, the notes it taught Eavesy go too, and `expected` is how many you were shown
+ * (it rejects, clearing nothing, if that changed). Resolves to a line saying what was forgotten, or "".
+ */
+export async function clearAssistantThread(forget = false, expected?: number): Promise<string> {
+  return invoke<string>('assistant_clear', { forget, expected: expected ?? null });
 }
 
 /** The notes this conversation taught Eavesy that are still kept: what Clear offers to forget. */

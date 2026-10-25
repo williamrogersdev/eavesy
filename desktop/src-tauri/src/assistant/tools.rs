@@ -115,15 +115,16 @@ fn is_web_link(url: &str) -> bool {
     host.contains('.') && !host.starts_with('.') && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// Runs one tool call for the conversation: builds it, checks tier 2 and 3 actions
-/// against your words (C7), and submits it. Blocking.
 /// What the check (C7) compares an action with: your newest words, and for a note or a
-/// rule, the same less any turn you marked "Don't remember this".
+/// rule, the same less any turn you marked "Don't remember this" (thread.rs builds it
+/// with `asked_for_notes`, which its tests cover).
 pub struct Words<'a> {
     pub request: &'a str,
     pub asked: &'a str,
 }
 
+/// Runs one tool call for the conversation: builds it, checks tier 2 and 3 actions
+/// against your words (C7), and submits it. Blocking.
 pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &Requester, said_by_you: &[String], words: Words) -> ToolResult {
     let action = match build(app, name, input, said_by_you) {
         Ok(action) => action,
@@ -144,6 +145,7 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
         return ToolResult { content: reason, is_error: true };
     }
     let request = if asked_only.is_some() { words.asked } else { words.request };
+    // An asked-only tool is always checked, whatever its tier, and against `asked`.
     let check = match action.facts().tier {
         _ if asked_only.is_some() => super::check::run(app, request, action.as_ref()),
         Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
@@ -281,14 +283,19 @@ impl Action for Remember {
         let Some(file) = self.book.path() else { return nothing("no home folder") };
         // Steps run one at a time, so two remembers don't race to merge; if they ever
         // did, apply_merge refuses the second (its notes changed) and nothing is lost.
+        // Merged only when the note needs the room: one already kept never rewrites the file.
         let mut merged = None;
-        if self.book == Book::Setup && memory::is_full(Book::Setup, &file) {
+        let mut added = memory::add(self.book, &file, &self.note);
+        if self.book == Book::Setup && added.as_ref().err() == Some(&Book::Setup.full()) {
             match memory::consolidate(&self.app) {
-                Ok(info) => merged = Some(info),
+                Ok(info) => {
+                    merged = Some(info);
+                    added = memory::add(self.book, &file, &self.note);
+                }
                 Err(error) => tracing::warn!(%error, "assistant: couldn't merge notes"),
             }
         }
-        let summary = remembered(self.book, memory::add(self.book, &file, &self.note), merged);
+        let summary = remembered(self.book, added, merged);
         Ran { summary, detail: serde_json::Value::Null }
     }
 }

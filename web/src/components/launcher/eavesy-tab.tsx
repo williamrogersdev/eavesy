@@ -85,15 +85,17 @@ export function EavesyTab({ flash }: { flash: Flash }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [turnCount, cardCount, thread.busy]);
 
+  // Clear asks first when the conversation taught Eavesy notes it still keeps (H3).
+  const [taught, setTaught] = useState<number | null>(null);
   const send = useCallback(() => {
     const text = draft.trim();
-    if (!text || thread.busy) return;
+    if (!text || thread.busy || taught !== null) return;
     setDraft('');
     sendToAssistant(text).catch((error: unknown) => {
       setDraft((current) => current || text);
       flash(errMsg(error, 'Couldn’t send that'), 5000, 'warn');
     });
-  }, [draft, flash, thread.busy]);
+  }, [draft, flash, thread.busy, taught]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -110,18 +112,17 @@ export function EavesyTab({ flash }: { flash: Flash }) {
       });
   }, [flash, reloadState]);
 
-  // Clear asks first when the conversation taught Eavesy notes it still keeps (H3).
-  const [taught, setTaught] = useState<number | null>(null);
   const clear = (forget: boolean) => {
+    const shown = taught ?? undefined;
     setTaught(null);
-    clearAssistantThread(forget)
+    clearAssistantThread(forget, forget ? shown : undefined)
       .then((line) => { if (line) flash(line, 4000); })
       .catch((error: unknown) => flash(errMsg(error, 'Couldn’t clear it'), 4000, 'warn'));
   };
   const startClear = () => {
     getAssistantTaught()
       .then((notes) => { if (notes.length) setTaught(notes.length); else clear(false); })
-      .catch(() => clear(false));
+      .catch((error: unknown) => flash(errMsg(error, 'Couldn’t check what this conversation taught Eavesy'), 4000, 'warn'));
   };
   const dontRemember = (id: number) => {
     dontRememberTurn(id)
@@ -215,7 +216,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
                 {turn.who === 'you' ? (turn.spoken ? 'Said' : 'Typed') : turn.spoken ? 'Spoken' : null}
                 {turn.who === 'you' && turn.unremembered && <span>Not remembered</span>}
                 {turn.who === 'you' && !turn.unremembered && !offRecord && (
-                  <button type="button" className="ev-link" disabled={thread.busy} onClick={() => dontRemember(turn.id)}>Don’t Remember</button>
+                  <button type="button" className="ev-link" disabled={thread.busy || taught !== null} onClick={() => dontRemember(turn.id)}>Don’t Remember</button>
                 )}
                 {turn.who === 'eavesy' && turn.text && (
                   <button type="button" className="ev-link" aria-label="Say it again" onClick={() => void repeatAssistantReply(turn.id).catch((error: unknown) => flash(errMsg(error, 'Couldn’t say it'), 4000, 'warn'))}>
@@ -254,7 +255,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <IconButton icon={ArrowUp} label="Send" disabled={!draft.trim() || thread.busy} onClick={send} />
+        <IconButton icon={ArrowUp} label="Send" disabled={!draft.trim() || thread.busy || taught !== null} onClick={send} />
       </div>
     </div>
   );
