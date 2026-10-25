@@ -556,6 +556,8 @@ export interface AssistantThread {
     id: number;
     who: 'you' | 'eavesy';
     spoken: boolean;
+    /** Your turn, marked "Don't remember this". Missing from older builds. */
+    unremembered?: boolean;
     at_ms: number;
     text: string;
     /** Tools Eavesy used for this turn: `line` is the first line of the result, null while running. */
@@ -573,8 +575,22 @@ export async function sendToAssistant(text: string, spoken = false): Promise<voi
   await invoke('assistant_send', { text, spoken });
 }
 
-export async function clearAssistantThread(): Promise<void> {
-  await invoke('assistant_clear');
+/**
+ * Clears the conversation; with `forget`, the notes it taught Eavesy go too, and `expected` is how many you were shown
+ * (it rejects, clearing nothing, if that changed). Resolves to a line saying what was forgotten, or "".
+ */
+export async function clearAssistantThread(forget = false, expected?: number): Promise<string> {
+  return invoke<string>('assistant_clear', { forget, expected: expected ?? null });
+}
+
+/** The notes this conversation taught Eavesy that are still kept: what Clear offers to forget. */
+export async function getAssistantTaught(): Promise<{ note: string; book: AssistantBook }[]> {
+  return invoke<{ note: string; book: AssistantBook }[]>('assistant_taught');
+}
+
+/** "Don't remember this" on one of your turns. Resolves to a line saying what was forgotten. */
+export async function dontRememberTurn(id: number): Promise<string> {
+  return invoke<string>('assistant_dont_remember', { id });
 }
 
 /** Says one of Eavesy's replies again. */

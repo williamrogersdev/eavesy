@@ -136,6 +136,8 @@ pub fn run() {
             assistant::memory::assistant_undo_merge,
             assistant::memory::assistant_keep_merge,
             assistant::thread::set_assistant_off_record,
+            assistant::thread::assistant_dont_remember,
+            assistant::thread::assistant_taught,
             assistant::rules::assistant_rules,
             assistant::rules::add_assistant_rule,
             assistant::rules::remove_assistant_rule,

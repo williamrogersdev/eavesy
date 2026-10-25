@@ -115,9 +115,17 @@ fn is_web_link(url: &str) -> bool {
     host.contains('.') && !host.starts_with('.') && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// What the check (C7) compares an action with: your newest words, and for a note or a
+/// rule, the same less any turn you marked "Don't remember this" (thread.rs builds it
+/// with `asked_for_notes`, which its tests cover).
+pub struct Words<'a> {
+    pub request: &'a str,
+    pub asked: &'a str,
+}
+
 /// Runs one tool call for the conversation: builds it, checks tier 2 and 3 actions
 /// against your words (C7), and submits it. Blocking.
-pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &Requester, said_by_you: &[String], request: &str) -> ToolResult {
+pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &Requester, said_by_you: &[String], words: Words) -> ToolResult {
     let action = match build(app, name, input, said_by_you) {
         Ok(action) => action,
         Err(reason) => {
@@ -136,9 +144,11 @@ pub fn call(app: &AppHandle, name: &str, input: &serde_json::Value, requester: &
         super::log(&requester.label(), action.tool(), &action.title(), "refused", Some(reason.clone()));
         return ToolResult { content: reason, is_error: true };
     }
+    let request = if asked_only.is_some() { words.asked } else { words.request };
+    // An asked-only tool is always checked, whatever its tier, and against `asked`.
     let check = match action.facts().tier {
-        Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
         _ if asked_only.is_some() => super::check::run(app, request, action.as_ref()),
+        Tier::Say | Tier::Click => super::check::run(app, request, action.as_ref()),
         _ => Check::NotRun,
     };
     if let Some(reason) = refusal(asked_only, &check) {
@@ -273,25 +283,33 @@ impl Action for Remember {
         let Some(file) = self.book.path() else { return nothing("no home folder") };
         // Steps run one at a time, so two remembers don't race to merge; if they ever
         // did, apply_merge refuses the second (its notes changed) and nothing is lost.
+        // Merged only when the note needs the room: one already kept never rewrites the file.
         let mut merged = None;
-        if self.book == Book::Setup && memory::is_full(Book::Setup, &file) {
+        let mut added = memory::add(self.book, &file, &self.note);
+        if self.book == Book::Setup && added.as_ref().err() == Some(&Book::Setup.full()) {
             match memory::consolidate(&self.app) {
-                Ok(info) => merged = Some(info),
+                Ok(info) => {
+                    merged = Some(info);
+                    added = memory::add(self.book, &file, &self.note);
+                }
                 Err(error) => tracing::warn!(%error, "assistant: couldn't merge notes"),
             }
         }
-        let summary = remembered(self.book, memory::add(self.book, &file, &self.note), merged);
+        let summary = remembered(self.book, added, merged);
         Ran { summary, detail: serde_json::Value::Null }
     }
 }
 
 /// The Remember line. The first line is what the thread shows and where Undo finds the
 /// note; a merge is reported even when the note then couldn't be added.
-fn remembered(book: super::memory::Book, added: Result<String, String>, merged: Option<super::memory::MergeInfo>) -> String {
+fn remembered(book: super::memory::Book, added: Result<super::memory::Added, String>, merged: Option<super::memory::MergeInfo>) -> String {
     use super::memory::Book;
+    // A note that was already there isn't credited to this conversation: no Undo, and
+    // forgetting the conversation leaves it alone.
     let first = match (added, book) {
-        (Ok(note), Book::Setup) => format!("Remembered: {note}"),
-        (Ok(note), Book::You) => format!("Remembered about you: {note}"),
+        (Ok(added), _) if !added.new => format!("Already remembered: {}", added.note),
+        (Ok(added), Book::Setup) => format!("Remembered: {}", added.note),
+        (Ok(added), Book::You) => format!("Remembered about you: {}", added.note),
         (Err(error), _) => format!("Couldn't remember that: {error}"),
     };
     match merged {
@@ -360,8 +378,11 @@ mod tests {
     fn a_merge_is_reported_even_when_the_note_then_fails() {
         use crate::assistant::memory::{Book, MergeInfo};
         let info = MergeInfo { at_ms: 1, before: 50, after: 30 };
-        assert_eq!(remembered(Book::You, Ok("Likes tea".into()), None), "Remembered about you: Likes tea");
-        assert_eq!(remembered(Book::Setup, Ok("Uses bun".into()), Some(info.clone())), "Remembered: Uses bun\nMerged 50 notes into 30 to make room; Settings can undo that.");
+        use crate::assistant::memory::Added;
+        let new = |note: &str| Ok(Added { note: note.into(), new: true });
+        assert_eq!(remembered(Book::You, new("Likes tea"), None), "Remembered about you: Likes tea");
+        assert_eq!(remembered(Book::Setup, new("Uses bun"), Some(info.clone())), "Remembered: Uses bun\nMerged 50 notes into 30 to make room; Settings can undo that.");
+        assert_eq!(remembered(Book::You, Ok(Added { note: "Likes tea".into(), new: false }), None), "Already remembered: Likes tea");
         assert!(remembered(Book::Setup, Err("full".into()), Some(info)).starts_with("Couldn't remember that: full\nMerged 50 notes"));
     }
 

@@ -834,8 +834,13 @@ Each step ships on its own and is useful alone.
    like rules. Edits outside Settings wait in the review list; accepting one
    is a click, not a dialog, since an instruction grants nothing. They go to
    the model fenced, before the limits, never to the check, and off the
-   record too (they're settings, not memory). Next: "Don't remember this" on
-   a turn, and offering to delete what a deleted conversation taught.
+   record too (they're settings, not memory). Then forgetting (H3): a
+   `remember` that finds a note already kept says "Already remembered" and
+   is never credited to the conversation. **Don't Remember** on one of your
+   turns forgets the notes kept answering it and leaves its words out when a
+   later note or rule is checked. **Clear** offers to forget the notes the
+   conversation taught that are still kept; the Mac works them out from the
+   thread, never from the UI.
    Connections and Monitors come with step 6.
 6. **Eavesy sets up its own connections** (F2) and the digest (D4).
 7. **"Hey Eavesy"** (voice-conversation 3d).
