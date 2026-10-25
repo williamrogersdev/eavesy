@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-25 - desktop
+
+### Added
+
+- Mac app: centre the panel's title, move the project chip, and make search an icon ([#247](https://github.com/williamrogersdev/eavesy/pull/247))
+
 ## [0.7.0] - 2026-10-25 - desktop
 
 ### Fixed
