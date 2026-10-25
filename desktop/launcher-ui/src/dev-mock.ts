@@ -316,16 +316,19 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
   const now = Date.now();
   const thread = {
     busy: false,
+    off_record: false,
     turns: empty ? [] : [
       { id: 0, who: 'you', spoken: true, at_ms: now - 60_000, text: 'Which of my Claude sessions are still running from yesterday?', steps: [] },
       { id: 1, who: 'eavesy', spoken: false, at_ms: now - 55_000, text: 'Two dev servers outlived their sessions, both in worktrees you already merged: hud-fix and settings-race. Want me to show them out?', steps: [{ tool: 'machine_overview', line: '2 stale worktrees, 2 leftover processes', ok: true }] },
       { id: 3, who: 'you', spoken: false, at_ms: now - 30_000, text: 'Yes, and clear out their worktrees.', steps: [] },
       { id: 4, who: 'eavesy', spoken: false, at_ms: now - 28_000, text: 'It’s on the card below. Untick anything you want to keep.', steps: [{ tool: 'clean_machine', line: 'Waiting for your click', ok: true }] },
       { id: 5, who: 'you', spoken: false, at_ms: now - 20_000, text: 'Remember that I use bun, not npm.', steps: [] },
-      { id: 6, who: 'eavesy', spoken: false, at_ms: now - 18_000, text: 'Noted.', steps: [{ tool: 'remember', line: 'Remembered: Uses bun, not npm', ok: true, remembered: 'Uses bun, not npm' }] },
+      { id: 6, who: 'eavesy', spoken: false, at_ms: now - 18_000, text: 'Noted.', steps: [{ tool: 'remember', line: 'Remembered: Uses bun, not npm', ok: true, remembered: 'Uses bun, not npm', book: 'setup' }] },
     ],
   };
   let notes = empty ? [] : ['Uses bun, not npm', 'Ships risky changes behind a flag', 'Robin reviews PRs in the afternoon'];
+  let about = empty ? [] : ['Goes by Robin', 'Works from Leeds, UK time'];
+  let merged: { at_ms: number; before: number; after: number } | null = empty ? null : { at_ms: now - 3_600_000, before: 50, after: 31 };
   let memoryOn = true;
   type RuleKind = 'remove_worktrees' | 'stop_leftovers';
   type MockRule = { kind: RuleKind; under: string };
@@ -369,7 +372,12 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
         resolve(null);
       }, 1200));
     },
-    assistant_clear: () => { thread.turns = []; emit('assistant:thread', { ...thread }); },
+    assistant_clear: () => { thread.turns = []; thread.off_record = false; emit('assistant:thread', { ...thread }); },
+    set_assistant_off_record: ({ on }: Record<string, unknown>) => {
+      if (on !== true && thread.turns.length) throw new Error('Clear the conversation to go back on the record.');
+      thread.off_record = on === true;
+      emit('assistant:thread', { ...thread });
+    },
     assistant_card_decide: ({ cardId, acceptedRowIds }: Record<string, unknown>) => {
       state.cards = state.cards.filter((card) => card.id !== cardId);
       emit('assistant:cards', state.cards);
@@ -383,9 +391,20 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     },
     set_trusted_agent_folders: ({ folders }: Record<string, unknown>) => (state.trusted_folders = folders as string[]),
     set_assistant_style: () => null,
-    assistant_memory: () => ({ on: memoryOn, notes: [...notes], path: '/Users/w/Eavesy/assistant/memory.md' }),
-    assistant_forget: ({ note }: Record<string, unknown>) => { notes = notes.filter((kept) => kept !== note); },
-    assistant_forget_all: () => { notes = []; },
+    assistant_memory: () => ({
+      on: memoryOn, notes: [...notes], about: [...about], merged,
+      path: '/Users/w/Eavesy/assistant/memory.md', about_path: '/Users/w/Eavesy/assistant/about-you.md',
+    }),
+    assistant_forget: ({ note, book }: Record<string, unknown>) => {
+      if (book === 'you') about = about.filter((kept) => kept !== note);
+      else notes = notes.filter((kept) => kept !== note);
+    },
+    assistant_forget_all: ({ book }: Record<string, unknown>) => {
+      if (book === 'you') about = [];
+      else { notes = []; merged = null; }
+    },
+    assistant_undo_merge: () => { merged = null; },
+    assistant_keep_merge: () => { merged = null; },
     set_assistant_memory: ({ on }: Record<string, unknown>) => { memoryOn = on === true; },
     open_assistant_memory: () => null,
     assistant_rules: () => rulesView(),

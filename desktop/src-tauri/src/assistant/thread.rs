@@ -84,12 +84,15 @@ pub struct Thread {
     busy: bool,
     /// Notes waiting for your next turn.
     notes: Vec<String>,
+    /// Off the record (H3): memory is neither sent nor written until the thread is cleared.
+    off_record: bool,
 }
 
 /// What the panel draws: your words, Eavesy's words, and the tools between them.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct View {
     pub busy: bool,
+    pub off_record: bool,
     pub turns: Vec<TurnView>,
 }
 
@@ -113,6 +116,9 @@ pub struct Step {
     /// A note `remember` kept, so the thread can offer Undo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remembered: Option<String>,
+    /// Which file it went to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book: Option<super::memory::Book>,
 }
 
 /// Your words, and nothing that answers a tool call: a window can start there.
@@ -178,10 +184,9 @@ fn view(thread: &Thread) -> View {
                         Block::ToolUse { id, name, .. } => {
                             let (line, ok) = results.get(id.as_str()).cloned().map_or((None, true), |(line, ok)| (Some(line), ok));
                             // The note as kept (a duplicate keeps its first spelling), so Undo finds it.
-                            let remembered = (name == "remember" && ok)
-                                .then(|| line.as_deref().and_then(|line| line.strip_prefix("Remembered: ")).map(super::memory::clean))
-                                .flatten();
-                            Some(Step { tool: name.clone(), line, ok, remembered })
+                            let kept = (name == "remember" && ok).then(|| line.as_deref().and_then(remembered_on)).flatten();
+                            let (remembered, book) = kept.map_or((None, None), |(note, book)| (Some(note), Some(book)));
+                            Some(Step { tool: name.clone(), line, ok, remembered, book })
                         }
                         _ => None,
                     })
@@ -190,7 +195,17 @@ fn view(thread: &Thread) -> View {
             }
         }
     }
-    View { busy: thread.busy, turns }
+    View { busy: thread.busy, off_record: thread.off_record, turns }
+}
+
+/// The note and its file from a `remember` result's first line.
+fn remembered_on(line: &str) -> Option<(String, super::memory::Book)> {
+    use super::memory::{clean, Book};
+    match (line.strip_prefix("Remembered about you: "), line.strip_prefix("Remembered: ")) {
+        (Some(note), _) => Some((clean(note), Book::You)),
+        (None, Some(note)) => Some((clean(note), Book::Setup)),
+        _ => None,
+    }
 }
 
 fn emit(app: &AppHandle) {
@@ -224,8 +239,10 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
 #[derive(Serialize)]
 struct TurnRequest<'a> {
     style: super::style::Style,
-    /// Eavesy's notes (memory.md); the server sends them as data, not instructions.
+    /// Eavesy's notes (memory.md and about-you.md); the server sends them as data, not
+    /// instructions.
     memory: &'a [String],
+    about: &'a [String],
     messages: &'a [Message],
 }
 
@@ -235,14 +252,14 @@ struct TurnResponse {
     content: Vec<Block>,
 }
 
-async fn ask(app: &AppHandle, style: super::style::Style, memory: &[String], messages: &[Message]) -> Result<Vec<Block>, String> {
+async fn ask(app: &AppHandle, style: super::style::Style, notes: &super::memory::ForTurn, messages: &[Message]) -> Result<Vec<Block>, String> {
     let credential = crate::settings::device_credential(app).ok_or("Sign in to Eavesy to talk to it.")?;
     let client = crate::sync::http_client().map_err(|e| e.to_string())?;
     let response = client
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { style, memory, messages })
+        .json(&TurnRequest { style, memory: &notes.memory, about: &notes.about, messages })
         .send()
         .await
         .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;
@@ -269,8 +286,9 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
     // Read once: every step of one answer talks the same way.
     let style = crate::settings::load(app).assistant_style.unwrap_or_default();
     for step in 0..MAX_STEPS {
-        // Read each step, so a note kept a step ago is in the next one.
-        let memory = super::memory::for_turn(app);
+        // Read each step, so a note kept a step ago is in the next one. Off the record,
+        // none go.
+        let notes = if off_record(app) { super::memory::ForTurn::default() } else { super::memory::for_turn(app) };
         let (messages, said_by_you) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
@@ -279,7 +297,7 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
         };
         let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
-        let content = match tauri::async_runtime::block_on(ask(app, style, &memory, &messages)) {
+        let content = match tauri::async_runtime::block_on(ask(app, style, &notes, &messages)) {
             Ok(content) if !content.is_empty() => content,
             Ok(_) => vec![Block::Text { text: "I don't have anything to add.".into() }],
             Err(error) => {
@@ -446,6 +464,28 @@ pub fn assistant_repeat(app: AppHandle, window: WebviewWindow, id: u64) -> Resul
     super::voice::say(&app, Some(id), &text)
 }
 
+pub fn off_record(app: &AppHandle) -> bool {
+    app.state::<Mutex<Thread>>().lock().unwrap().off_record
+}
+
+/// Takes this conversation off the record. It stays off until it's cleared, so nothing
+/// said off the record is ever sent with memory or kept; before you've said anything,
+/// you can change your mind.
+#[tauri::command]
+pub fn set_assistant_off_record(app: AppHandle, window: WebviewWindow, on: bool) -> Result<(), String> {
+    super::from_ui(&window)?;
+    {
+        let state = app.state::<Mutex<Thread>>();
+        let mut thread = state.lock().unwrap();
+        if !on && thread.off_record && !thread.turns.is_empty() {
+            return Err("Clear the conversation to go back on the record.".into());
+        }
+        thread.off_record = on;
+    }
+    emit(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn assistant_clear(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     super::from_ui(&window)?;
@@ -457,6 +497,8 @@ pub fn assistant_clear(app: AppHandle, window: WebviewWindow) -> Result<(), Stri
         }
         thread.turns.clear();
         thread.notes.clear();
+        // A new conversation is on the record again.
+        thread.off_record = false;
     }
     emit(&app);
     Ok(())
@@ -486,11 +528,11 @@ mod tests {
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
         let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
-        let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new() });
+        let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new(), off_record: false });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
-        assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true, remembered: None }]);
+        assert_eq!(view.turns[1].steps, vec![Step { tool: "agent_sessions".into(), line: Some("3 sessions".into()), ok: true, remembered: None, book: None }]);
     }
 
     #[test]
@@ -500,9 +542,12 @@ mod tests {
         let refused = Message { role: Role::Assistant, content: vec![Block::ToolUse { id: "s".into(), name: "remember".into(), input: serde_json::json!({ "note": "x" }) }] };
         let no = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "s".into(), content: "I only keep notes you ask me to keep.".into(), is_error: true }] };
         let turns = [said("remember I use bun"), remember, kept, refused, no].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
-        let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new() });
+        let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new(), off_record: false });
         assert_eq!(view.turns[1].steps[0].remembered.as_deref(), Some("Prefers Bun"));
+        assert_eq!(view.turns[1].steps[0].book, Some(super::super::memory::Book::Setup));
         assert_eq!(view.turns[2].steps[0].remembered, None);
+        assert_eq!(remembered_on("Remembered about you: Lives in Leeds"), Some(("Lives in Leeds".into(), super::super::memory::Book::You)));
+        assert_eq!(remembered_on("Couldn't remember that: full"), None);
     }
 
     #[test]

@@ -14,6 +14,7 @@ import {
   getAssistantRules,
   getAssistantState,
   getAssistantVoices,
+  keepAssistantMerge,
   openAssistantMemory,
   openAssistantRules,
   onAssistantRules,
@@ -24,6 +25,8 @@ import {
   setAssistantStyle,
   setAssistantVoice,
   setTrustedAgentFolders,
+  undoAssistantMerge,
+  type AssistantBook,
   type AssistantActivity,
   type AssistantMemory,
   type AssistantRuleChange,
@@ -74,6 +77,48 @@ const RULE_KINDS: { kind: AssistantRuleKind; label: string; pick: string }[] = [
   { kind: 'stop_leftovers', label: 'Stop leftover processes under…', pick: 'Stop leftover processes in this folder without a card' },
 ];
 const isCancel = (e: unknown) => errMsg(e, '') === 'cancelled';
+/** The caps in desktop assistant/memory.rs. */
+const MAX_ABOUT = 20;
+const MAX_NOTES = 50;
+
+/** One notebook: its notes, each deletable, with Forget All behind a second click. */
+function NoteList({ title, hint, notes, path, book, act }: {
+  title: string;
+  hint: string;
+  notes: string[];
+  path: string | null;
+  book: AssistantBook;
+  act: (run: () => Promise<void>, failed: string) => void;
+}) {
+  const [confirmForget, setConfirmForget] = useState(false);
+  return (
+    <div className="ev-set-row flex-col">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="ev-set-label">{title} · {notes.length === 1 ? '1 note' : `${notes.length} notes`}</div>
+          <div className="ev-set-hint">{hint}</div>
+          {path && <div className="ev-set-hint ev-set-path" title={path}>{path}</div>}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => act(() => openAssistantMemory(book), 'Couldn’t open the file.')}>Open in Editor</Button>
+        {notes.length > 0 && (
+          confirmForget
+            ? <Button variant="primary" size="sm" onClick={() => { setConfirmForget(false); act(() => forgetAllAssistantNotes(book), 'Couldn’t forget everything.'); }}>Forget All {notes.length}</Button>
+            : <Button variant="quiet" size="sm" onClick={() => setConfirmForget(true)}>Forget All…</Button>
+        )}
+      </div>
+      {notes.length > 0 && (
+        <ul className="ev-assistant-folders">
+          {notes.map((note, index) => (
+            <li key={`${index}-${note}`}>
+              <span className="ev-set-label ev-assistant-note">{note}</span>
+              <IconButton label={`Forget “${note}”`} icon={Trash2} size={24} onClick={() => act(() => forgetAssistantNote(note, book), 'Couldn’t forget that.')} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function modeChoice(state: AssistantState): ModeChoice {
   if (state.effective === 'bypass') return state.until_ms === null ? 'bypass' : 'bypass-hour';
@@ -97,7 +142,6 @@ export function AssistantSettings({ active, settings, onSettings }: {
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [memory, setMemory] = useState<AssistantMemory | null>(null);
-  const [confirmForget, setConfirmForget] = useState(false);
 
   const loadState = useCallback(() => getAssistantState().then(setState).catch((e: unknown) => setError(errMsg(e, 'Couldn’t read Eavesy’s mode.'))), []);
   const loadActivity = useCallback(() => {
@@ -121,14 +165,9 @@ export function AssistantSettings({ active, settings, onSettings }: {
   useEffect(() => {
     if (active) loadMemory();
   }, [active, loadMemory]);
-  const forgetNote = (note: string) => {
+  const memoryAction = (run: () => Promise<void>, failed: string) => {
     setError(null);
-    void forgetAssistantNote(note).then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t forget that.')));
-  };
-  const forgetAll = () => {
-    setConfirmForget(false);
-    setError(null);
-    void forgetAllAssistantNotes().then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t forget everything.')));
+    void run().then(loadMemory).catch((e: unknown) => setError(errMsg(e, failed)));
   };
   const toggleMemory = (on: boolean) => {
     setError(null);
@@ -136,7 +175,6 @@ export function AssistantSettings({ active, settings, onSettings }: {
       .then(() => { onSettings((current) => ({ ...current, assistant_memory: on })); loadMemory(); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t change that setting.')));
   };
-  const notes = memory?.notes ?? [];
 
   const [rules, setRules] = useState<AssistantRules | null>(null);
   const loadRules = useCallback(() => {
@@ -261,30 +299,32 @@ export function AssistantSettings({ active, settings, onSettings }: {
           label="Remember things I ask it to"
           hint="Eavesy keeps short notes when you ask it to remember something, and sends them to its model with each message. Off: no notes are sent or added."
         />
-        <div className="ev-set-row flex-col">
-          <div className="flex items-center gap-2">
+        {memory?.merged && (
+          <div className="ev-set-row">
             <div className="min-w-0 flex-1">
-              <div className="ev-set-label">{notes.length === 1 ? '1 note' : `${notes.length} notes`}</div>
-              {memory?.path && <div className="ev-set-hint ev-set-path" title={memory.path}>{memory.path}</div>}
+              <div className="ev-set-label">Merged {memory.merged.before} notes into {memory.merged.after}</div>
+              <div className="ev-set-hint">Your setup notes filled up {formatRelative(memory.merged.at_ms, now)}, so Eavesy merged them to make room.</div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void openAssistantMemory().then(loadMemory).catch((e: unknown) => setError(errMsg(e, 'Couldn’t open the file.')))}>Open in Editor</Button>
-            {notes.length > 0 && (
-              confirmForget
-                ? <Button variant="primary" size="sm" onClick={forgetAll}>Forget All {notes.length}</Button>
-                : <Button variant="quiet" size="sm" onClick={() => setConfirmForget(true)}>Forget All…</Button>
-            )}
+            <Button variant="outline" size="sm" onClick={() => memoryAction(undoAssistantMerge, 'Couldn’t undo the merge.')}>Undo Merge</Button>
+            <Button variant="quiet" size="sm" onClick={() => memoryAction(keepAssistantMerge, 'Couldn’t keep the merge.')}>Keep</Button>
           </div>
-          {notes.length > 0 && (
-            <ul className="ev-assistant-folders">
-              {notes.map((note, index) => (
-                <li key={`${index}-${note}`}>
-                  <span className="ev-set-label ev-assistant-note">{note}</span>
-                  <IconButton label={`Forget “${note}”`} icon={Trash2} size={24} onClick={() => forgetNote(note)} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        )}
+        <NoteList
+          title="About you"
+          hint={`Kept short so you can read it all: ${MAX_ABOUT} at most.`}
+          notes={memory?.about ?? []}
+          path={memory?.about_path ?? null}
+          book="you"
+          act={memoryAction}
+        />
+        <NoteList
+          title="Your setup"
+          hint={`Tools, projects and how you work. Past ${MAX_NOTES}, Eavesy merges them to make room.`}
+          notes={memory?.notes ?? []}
+          path={memory?.path ?? null}
+          book="setup"
+          act={memoryAction}
+        />
       </Card>
 
       <Card title="Permission">

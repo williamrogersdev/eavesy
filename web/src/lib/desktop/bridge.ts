@@ -386,32 +386,54 @@ export async function pickFolder(title: string): Promise<string | null> {
   return typeof picked === 'string' ? picked : null;
 }
 
+/** Which file a note lives in: memory.md (setup) or about-you.md (you). */
+export type AssistantBook = 'setup' | 'you';
+
 /** Eavesy's notes (assistant/memory.rs `MemoryView`). */
 export interface AssistantMemory {
   on: boolean;
   notes: string[];
+  about: string[];
   path: string | null;
+  about_path: string | null;
+  /** The last time memory.md was merged to make room, while it can be undone. */
+  merged: { at_ms: number; before: number; after: number } | null;
 }
 
 export async function getAssistantMemory(): Promise<AssistantMemory> {
   return invoke<AssistantMemory>('assistant_memory');
 }
 
-export async function forgetAssistantNote(note: string): Promise<void> {
-  await invoke('assistant_forget', { note });
+export async function forgetAssistantNote(note: string, book: AssistantBook = 'setup'): Promise<void> {
+  await invoke('assistant_forget', { note, book });
 }
 
-export async function forgetAllAssistantNotes(): Promise<void> {
-  await invoke('assistant_forget_all');
+export async function forgetAllAssistantNotes(book: AssistantBook = 'setup'): Promise<void> {
+  await invoke('assistant_forget_all', { book });
+}
+
+/** Puts memory.md back as it was before the last merge, keeping notes added since. */
+export async function undoAssistantMerge(): Promise<void> {
+  await invoke('assistant_undo_merge');
+}
+
+/** Keeps the last merge and drops its backup. */
+export async function keepAssistantMerge(): Promise<void> {
+  await invoke('assistant_keep_merge');
+}
+
+/** Off the record: no notes are sent or kept until the conversation is cleared. Turning it off only works before you've said anything. */
+export async function setAssistantOffRecord(on: boolean): Promise<void> {
+  await invoke('set_assistant_off_record', { on });
 }
 
 export async function setAssistantMemory(on: boolean): Promise<void> {
   await invoke('set_assistant_memory', { on });
 }
 
-/** Opens memory.md in the default editor. */
-export async function openAssistantMemory(): Promise<void> {
-  await invoke('open_assistant_memory');
+/** Opens memory.md (or about-you.md) in the default editor. */
+export async function openAssistantMemory(book: AssistantBook = 'setup'): Promise<void> {
+  await invoke('open_assistant_memory', { book });
 }
 
 /** What an always-allow rule lets Eavesy do (assistant/rules.rs `Kind`). */
@@ -515,6 +537,8 @@ export async function onAssistantCards(cb: (cards: AssistantCard[]) => void): Pr
 /** Eavesy's conversation (assistant/thread.rs `View`). */
 export interface AssistantThread {
   busy: boolean;
+  /** Off the record: no notes are sent or kept until it's cleared. Missing from older builds. */
+  off_record?: boolean;
   turns: {
     id: number;
     who: 'you' | 'eavesy';
@@ -522,8 +546,8 @@ export interface AssistantThread {
     at_ms: number;
     text: string;
     /** Tools Eavesy used for this turn: `line` is the first line of the result, null while running. */
-    /** `remembered`: the note a `remember` step kept, for Undo. */
-    steps: { tool: string; line: string | null; ok: boolean; remembered?: string }[];
+    /** `remembered`: the note a `remember` step kept, for Undo, and `book` the file it went to. */
+    steps: { tool: string; line: string | null; ok: boolean; remembered?: string; book?: AssistantBook }[];
   }[];
 }
 
