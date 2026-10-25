@@ -424,7 +424,9 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     add_assistant_instruction: ({ text }: Record<string, unknown>) => {
       const line = String(text).trim();
       if ([...line].length > 300) throw new Error('Keep an instruction under 300 characters.');
-      if (!instructions.includes(line)) instructions.push(line);
+      if (instructions.includes(line)) return rulesView();
+      if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+      instructions.push(line);
       return rulesView();
     },
     remove_assistant_instruction: ({ text }: Record<string, unknown>) => {
@@ -434,7 +436,10 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     accept_assistant_rule_change: ({ change }: Record<string, unknown>) => {
       const accepted = change as { kind: string; rule?: MockRule; text?: string };
       if (accepted.kind === 'add_instruction' && accepted.text) {
-        instructions.push(accepted.text);
+        if (!instructions.includes(accepted.text)) {
+          if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+          instructions.push(accepted.text);
+        }
         pendingInstructions = pendingInstructions.filter((text) => text !== accepted.text);
         return rulesView();
       }

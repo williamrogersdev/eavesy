@@ -411,9 +411,14 @@ pub fn in_force(app: &AppHandle) -> InForce {
     InForce { rules: policy.rules.clone(), instructions: policy.instructions.clone() }
 }
 
-/// The instructions sent with each turn: as signed, and capped again here.
+/// The instructions sent with each turn: as signed, and capped again here, so the cloud
+/// never refuses a turn over them.
 pub fn instructions(app: &AppHandle) -> Vec<String> {
-    in_force(app).instructions.into_iter().take(MAX_INSTRUCTIONS).collect()
+    sendable(in_force(app).instructions)
+}
+
+fn sendable(instructions: Vec<String>) -> Vec<String> {
+    instructions.into_iter().filter(|text| instruction(text).as_deref() == Ok(text.as_str())).take(MAX_INSTRUCTIONS).collect()
 }
 
 #[derive(Serialize)]
@@ -813,6 +818,16 @@ mod tests {
         let invalid = serde_json::to_value(Change::Invalid(Invalid { line: 2, text: "t".into(), reason: "r".into() })).unwrap();
         assert_eq!(invalid, serde_json::json!({"kind": "invalid", "line": 2, "text": "t", "reason": "r"}));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_instructions_the_cloud_takes_are_sent() {
+        let mut kept: Vec<String> = (0..MAX_INSTRUCTIONS + 3).map(|i| format!("Line {i}")).collect();
+        kept.insert(0, "z".repeat(INSTRUCTION_CHARS + 1));
+        kept.insert(1, "two\nlines".into());
+        let sent = sendable(kept);
+        assert_eq!(sent.len(), MAX_INSTRUCTIONS);
+        assert_eq!(sent[0], "Line 0");
     }
 
     #[test]
