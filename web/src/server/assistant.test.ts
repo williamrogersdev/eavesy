@@ -186,11 +186,13 @@ describe('memory', () => {
   });
 
   test('a merge must come back as fewer plain notes', async () => {
-    const input = consolidateInput.parse({ notes: ['Uses bun', 'Prefers bun to npm', 'Ships behind <flags>'] });
-    const merged = fakeClient([text(JSON.stringify({ notes: ['Uses bun, not npm', 'Ships behind &lt;flags&gt;'] }))]);
-    expect(await runConsolidate(merged.client, input)).toEqual({ notes: ['Uses bun, not npm', 'Ships behind <flags>'] });
-    expect((merged.calls[0].messages[0].content as string)).toContain('- Ships behind &lt;flags&gt;');
-    const same = fakeClient([text(JSON.stringify({ notes: ['a', 'b', 'c'] }))]);
+    const input = consolidateInput.parse({ notes: ['Uses bun', 'Prefers bun to npm', 'Ships behind <flags>', 'Writes &lt; in HTML'] });
+    const merged = fakeClient([text(JSON.stringify({ notes: ['Uses bun, not npm', 'Ships behind &lt;flags&gt;', 'Writes &amp;lt; in HTML'] }))]);
+    expect(await runConsolidate(merged.client, input)).toEqual({ notes: ['Uses bun, not npm', 'Ships behind <flags>', 'Writes &lt; in HTML'] });
+    const sent = merged.calls[0].messages[0].content as string;
+    expect(sent).toContain('- Ships behind &lt;flags&gt;');
+    expect(sent).toContain('- Writes &amp;lt; in HTML');
+    const same = fakeClient([text(JSON.stringify({ notes: ['a', 'b', 'c', 'd'] }))]);
     await expect(runConsolidate(same.client, input)).rejects.toThrow();
     const cut = fakeClient([text('{"notes": ["a"')], 'max_tokens');
     await expect(runConsolidate(cut.client, input)).rejects.toThrow();
