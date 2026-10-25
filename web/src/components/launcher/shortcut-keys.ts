@@ -126,7 +126,7 @@ export function conflictText(conflict: HotkeyConflict, accelerator: string): str
     case 'app':
       return `${keys} is also ${conflict.name}’s shortcut. Only one of them will get it.`;
     case 'globe':
-      return `${keys} opens ${conflict.name} in macOS. Eavesy would take it over.`;
+      return `${keys} is also ${conflict.name} in macOS. Only one of them will get it.`;
     case 'common':
       return `${keys} is ${conflict.name} in most apps. Eavesy would take it over everywhere.`;
   }
@@ -141,7 +141,7 @@ export function savedConflictText(conflict: HotkeyConflict, accelerator: string)
     case 'app':
       return `${keys} is also ${conflict.name}’s shortcut, so it may not reach Eavesy. Pick another here or in ${conflict.name}.`;
     case 'globe':
-      return `Eavesy takes ${keys} over from ${conflict.name} in macOS.`;
+      return `${keys} is also ${conflict.name} in macOS, so it may not reach Eavesy.`;
     case 'common':
       return `${keys} is ${conflict.name} in most apps.`;
   }

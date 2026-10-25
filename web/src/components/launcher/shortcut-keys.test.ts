@@ -69,7 +69,7 @@ describe('shortcut keys', () => {
     expect(conflictText({ kind: 'system', name: 'Spotlight' }, 'Cmd+Space')).toMatch(/^⌘Space is used by Spotlight\./);
     expect(conflictText({ kind: 'common', name: 'Copy' }, 'Cmd+C')).toMatch(/^⌘C is Copy in most apps\./);
     expect(conflictText({ kind: 'app', name: 'Raycast' }, 'Alt+Space')).toBe('⌥Space is also Raycast’s shortcut. Only one of them will get it.');
-    expect(conflictText({ kind: 'globe', name: 'Emoji & Symbols' }, 'Fn+E')).toBe('fn E opens Emoji & Symbols in macOS. Eavesy would take it over.');
+    expect(conflictText({ kind: 'globe', name: 'Emoji & Symbols' }, 'Fn+E')).toBe('fn E is also Emoji & Symbols in macOS. Only one of them will get it.');
     expect(savedConflictText({ kind: 'app', name: 'ChatGPT' }, 'Alt+Space')).toMatch(/^⌥Space is also ChatGPT’s shortcut, so it may not reach Eavesy\./);
   });
 });

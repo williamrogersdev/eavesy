@@ -310,7 +310,7 @@ pub fn run() {
             let failures = hotkeys::register_all(&handle, &settings);
             let notes: Vec<String> = moved.into_iter().collect();
             if let Some(body) = hotkeys::startup_notice(&failures, &notes) {
-                telemetry::capture("hotkeys.register", &body);
+                if !failures.is_empty() { telemetry::capture("hotkeys.register", &body); }
                 use tauri_plugin_notification::NotificationExt;
                 let title = match failures.len() {
                     0 => "Eavesy changed a shortcut",

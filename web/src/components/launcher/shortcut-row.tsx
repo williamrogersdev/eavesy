@@ -181,11 +181,16 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
     setNotice(null);
   }
   const rowRef = useRef<HTMLDivElement>(null);
+  // Whether the Mac app is listening while recording, so it can report fn chords.
+  const fnArmedRef = useRef(shortcuts.fnArmed);
   const { reload, recheckFn, changed, startRecording, stopRecording } = shortcuts;
 
   const fail = useCallback((error: unknown, accelerator: string) => {
     if (isHotkeyError(error) && error.kind === 'taken' && error.by !== 'other') {
       setNotice({ kind: 'taken', accelerator, by: error.by });
+    } else if (isHotkeyError(error) && error.kind === 'needsModifier' && !fnArmedRef.current && /^([A-Z0-9]|Space)$/.test(accelerator)) {
+      // fn+Space arrives as plain Space when the Mac app can't hear fn.
+      setNotice({ kind: 'error', text: `${hotkeyErrorText(error, accelerator)} Holding fn? Eavesy needs Input Monitoring to see it while you record.` });
     } else {
       setNotice({ kind: 'error', text: isHotkeyError(error) ? hotkeyErrorText(error, accelerator) : errMsg(error, 'Couldn’t change the shortcut.') });
     }
@@ -238,8 +243,6 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
   const stopRef = useRef(stopRecording);
   // Set while recording: takes the shortcut, once. "Use fn" goes through it too.
   const captureRef = useRef<(accelerator: string) => void>(() => {});
-  // Whether the Mac app is listening while recording, so it can report fn chords.
-  const fnArmedRef = useRef(shortcuts.fnArmed);
   useEffect(() => {
     proposeRef.current = propose;
     cancelRef.current = cancel;
