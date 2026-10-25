@@ -42,6 +42,8 @@
   --ev-hud-ink-2: rgb(246 239 228 / 0.62);
 
   --ev-focus: 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-coat);
+  /* Text fields: a hairline and a soft glow. Typing is focus enough; the coat ring stays for keyboard focus on controls. */
+  --ev-focus-field: 0 0 0 1px var(--ev-ink-3), 0 0 0 4px color-mix(in srgb, var(--ev-ink-3) 18%, transparent);
   --ev-hover: color-mix(in srgb, var(--ev-ink) 5%, transparent);
   --ev-press: color-mix(in srgb, var(--ev-ink) 9%, transparent);
 

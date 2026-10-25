@@ -26,7 +26,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { learnedLabel } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
-import { CaptureHistory } from './capture-history';
+import { CaptureHistory, focusSearch, focusSearchQuietly } from './capture-history';
 import { CaptureToolbar } from './capture-toolbar';
 import { EavesyTab } from './eavesy-tab';
 import { LauncherToast } from './launcher-toast';
@@ -34,6 +34,7 @@ import { usesFnKey } from './permission-checklist';
 import { ResizeHandles } from './resize-handles';
 import { SetupView } from './setup-view';
 import { TitleBar } from './title-bar';
+import { ProjectChip } from './project-chip';
 import { Composer, type ComposerHandle } from './ui';
 import { useAccount } from './use-account';
 import { useCaptureSession } from './use-capture-session';
@@ -87,11 +88,14 @@ export function DesktopPanel() {
   const [dictationHotkey, setDictationHotkey] = useState('');
   const composerRef = useRef<ComposerHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Search sits in the tab row, but its state belongs to the history it filters.
+  const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
+  // Before the history has loaded there is no search yet, so the panel itself takes focus.
   const focusPanel = useCallback(() => {
-    const target = searchRef.current ?? panelRef.current;
-    target?.focus({ preventScroll: true });
+    if (searchRef.current) focusSearchQuietly(searchRef.current);
+    else panelRef.current?.focus({ preventScroll: true });
     searchRef.current?.select();
   }, []);
 
@@ -310,7 +314,7 @@ export function DesktopPanel() {
         pasteFromClipboard();
       } else if (!meta && !e.altKey && e.key === '/') {
         e.preventDefault();
-        searchRef.current?.focus();
+        if (searchRef.current) focusSearch(searchRef.current);
       } else if (!meta && !e.altKey && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         composerRef.current?.focus();
@@ -380,17 +384,23 @@ export function DesktopPanel() {
           connect={connect}
           disconnect={disconnect}
           runTask={runTask}
-          project={project}
-          onManageProjects={manageProjects}
           mascot={!live ? 'idle' : live.phase === 'thinking' ? 'thinking' : live.sessionId !== null ? 'listening' : 'idle'}
         />
         {view === 'list' && (
-          <div className="ev-tabs" role="tablist" aria-label="Panel">
-            {PANEL_TABS.map(([value, label]) => (
-              <button key={value} type="button" role="tab" className="ev-tab" aria-selected={tab === value} onClick={() => pickTab(value)}>
-                {label}
-              </button>
-            ))}
+          <div className="ev-tabs">
+            <div className="ev-tabs-list" role="tablist" aria-label="Panel">
+              {PANEL_TABS.map(([value, label]) => (
+                <button key={value} type="button" role="tab" className="ev-tab" aria-selected={tab === value} onClick={() => pickTab(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {tab === 'captures' && (
+              <div className="ev-tabs-end">
+                {account && project && <ProjectChip choice={project} runTask={runTask} onManage={manageProjects} />}
+                <div ref={setSearchSlot} className="ev-search-slot" />
+              </div>
+            )}
           </div>
         )}
         {view === 'list' && tab === 'captures' && (
@@ -469,6 +479,7 @@ export function DesktopPanel() {
               flash={flash}
               runTask={runTask}
               searchRef={searchRef}
+              searchSlot={searchSlot}
               scrollRef={historyRef}
             />
             <Composer

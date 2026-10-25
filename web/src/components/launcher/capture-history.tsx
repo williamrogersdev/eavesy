@@ -6,12 +6,15 @@ import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import {
   AudioLines,
   Camera,
+  Check,
   Clapperboard,
   Copy,
   ClipboardPaste,
   FolderOpen,
   MessageSquareText,
   Image as ImageIcon,
+  Layers,
+  ListFilter,
   MoreHorizontal,
   MousePointerClick,
   Pause,
@@ -52,12 +55,13 @@ import {
   historyView,
   kindLabel,
   plainTranscript,
+  searchFocusOpens,
   timeOfDay,
   type HistoryFilter,
 } from './history-model';
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
-import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu, Select } from './ui';
+import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
 
 const ICON: Record<Recording['source'], LucideIcon> = {
   mic: AudioLines,
@@ -580,7 +584,26 @@ function PromptRow({ prompt, query, first, onPaste, flash, runTask }: {
 }
 
 const NO_ROWS: Recording[] = [];
+const quietFocus = new WeakSet<EventTarget>();
+const askedFocus = new WeakSet<EventTarget>();
+function focusMarked(input: HTMLInputElement, marks: WeakSet<EventTarget>) {
+  marks.add(input);
+  try {
+    input.focus({ preventScroll: true });
+  } finally {
+    marks.delete(input);
+  }
+}
+/** Focuses search so typing lands there, without opening the field until something is typed. */
+export function focusSearchQuietly(input: HTMLInputElement) {
+  focusMarked(input, quietFocus);
+}
+/** Opens search and focuses it ("/"). */
+export function focusSearch(input: HTMLInputElement) {
+  focusMarked(input, askedFocus);
+}
 const NO_COUNTS: Record<HistoryFilter, number> = { all: 0, voice: 0, meetings: 0, screens: 0, notes: 0 };
+const FILTER_ICONS: Record<HistoryFilter, LucideIcon> = { all: Layers, voice: AudioLines, meetings: Users, screens: Clapperboard, notes: StickyNote };
 
 /**
  * Search, the day-grouped captures and the empty state. Memoized and fed only
@@ -597,6 +620,7 @@ export const CaptureHistory = memo(function CaptureHistory({
   flash,
   runTask,
   searchRef,
+  searchSlot,
   scrollRef,
   prompts = null,
   promptsError = null,
@@ -626,6 +650,8 @@ export const CaptureHistory = memo(function CaptureHistory({
   flash: Flash;
   runTask: RunTask;
   searchRef: RefObject<HTMLInputElement | null>;
+  /** Where the search field goes: the panel's tab row, which belongs to the panel. */
+  searchSlot: HTMLElement | null;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const [query, setQuery] = useState('');
@@ -674,6 +700,14 @@ export const CaptureHistory = memo(function CaptureHistory({
 
   const view = historyView(history.page, history.error, hasLive);
   const searching = query.trim() !== '' || filter !== 'all';
+  // Keeps the search open while its filter menu has focus.
+  const [filterMenu, setFilterMenu] = useState(false);
+  // Opened by a click or "/"; the quiet focus when the panel opens leaves it an icon until you type.
+  const [opened, setOpened] = useState(false);
+  // Each opening starts as an icon. This runs after the commit, before the panel's quiet focus (next frame).
+  useEffect(() => setOpened(false), [openKey]);
+  const expanded = opened || searching || filterMenu;
+  const filterLabel = FILTERS.find((f) => f.value === filter)?.label ?? 'All';
 
   return (
     <>
@@ -683,15 +717,28 @@ export const CaptureHistory = memo(function CaptureHistory({
           <button type="button" className="ev-link" onClick={history.retry}>Try again</button>
         </div>
       )}
-      {view !== 'empty' && (
-        <label className="ev-search" data-active={searching}>
+      {view !== 'empty' && searchSlot && createPortal(
+        <label
+          className="ev-search"
+          data-open={expanded}
+          data-active={searching}
+          onPointerDown={() => setOpened(true)}
+          onFocus={(e) => {
+            if (searchFocusOpens({ asked: askedFocus.has(e.target), quiet: quietFocus.has(e.target), fromElement: e.relatedTarget !== null })) setOpened(true);
+          }}
+          onBlur={(e) => {
+            // Focus moving into the filter menu (a portal outside the field) keeps it open.
+            if (e.currentTarget.contains(e.relatedTarget) || e.relatedTarget?.closest('[role="menu"]')) return;
+            setOpened(false);
+          }}
+          title={prompts?.length ? 'Search captures (/), or start with / for prompts' : 'Search captures (/)'}
+        >
           <Search size={15} strokeWidth={1.75} aria-hidden />
           <input
             ref={searchRef}
             type="search"
             value={query}
             placeholder="Search"
-            title={prompts?.length ? 'Search captures (/), or start with / for prompts' : 'Search captures (/)'}
             aria-label="Search captures"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -705,14 +752,26 @@ export const CaptureHistory = memo(function CaptureHistory({
               }
             }}
           />
-          <Select
-            className="ev-search-filter"
-            label="Show"
-            value={filter}
-            onChange={setFilter}
-            options={FILTERS.map((f) => ({ value: f.value, label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label }))}
+          <Menu
+            align="end"
+            open={filterMenu}
+            onOpenChange={setFilterMenu}
+            header={<div className="ev-menu-header-sub">Show</div>}
+            items={FILTERS.map((f) => ({
+              id: f.value,
+              label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label,
+              icon: f.value === filter ? Check : FILTER_ICONS[f.value],
+              onSelect: () => setFilter(f.value),
+            }))}
+            trigger={
+              <button type="button" className="ev-search-filter" data-on={filter !== 'all'} aria-label={`Show: ${filterLabel}`} title="Show">
+                <ListFilter size={14} strokeWidth={1.75} aria-hidden />
+                {filter !== 'all' && <span>{filterLabel}</span>}
+              </button>
+            }
           />
-        </label>
+        </label>,
+        searchSlot,
       )}
       {view === 'empty' ? (
         <div className="ev-empty">

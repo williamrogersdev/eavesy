@@ -10,6 +10,16 @@ export function plainTranscript(text: string): string {
 
 export type HistoryFilter = 'all' | 'voice' | 'meetings' | 'screens' | 'notes';
 
+/**
+ * Whether focus arriving in the search field opens it from an icon into a
+ * field. Asked for ("/") or moved there from another control (Tab, a closing
+ * filter menu) opens it; the panel's quiet focus on open and the window
+ * getting focus back (nothing to come from) leave it an icon until you type.
+ */
+export function searchFocusOpens({ asked, quiet, fromElement }: { asked: boolean; quiet: boolean; fromElement: boolean }): boolean {
+  return asked || (!quiet && fromElement);
+}
+
 export const FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'voice', label: 'Voice' },
