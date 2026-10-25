@@ -278,21 +278,23 @@ impl Action for Remember {
                 Err(error) => tracing::warn!(%error, "assistant: couldn't merge notes"),
             }
         }
-        let summary = match memory::add(self.book, &file, &self.note) {
-            // The first line is what the thread shows and where Undo finds the note.
-            Ok(note) => {
-                let first = match self.book {
-                    Book::Setup => format!("Remembered: {note}"),
-                    Book::You => format!("Remembered about you: {note}"),
-                };
-                match merged {
-                    Some(info) => format!("{first}\nMerged {} notes into {} to make room; Settings can undo that.", info.before, info.after),
-                    None => first,
-                }
-            }
-            Err(error) => format!("Couldn't remember that: {error}"),
-        };
+        let summary = remembered(self.book, memory::add(self.book, &file, &self.note), merged);
         Ran { summary, detail: serde_json::Value::Null }
+    }
+}
+
+/// The Remember line. The first line is what the thread shows and where Undo finds the
+/// note; a merge is reported even when the note then couldn't be added.
+fn remembered(book: super::memory::Book, added: Result<String, String>, merged: Option<super::memory::MergeInfo>) -> String {
+    use super::memory::Book;
+    let first = match (added, book) {
+        (Ok(note), Book::Setup) => format!("Remembered: {note}"),
+        (Ok(note), Book::You) => format!("Remembered about you: {note}"),
+        (Err(error), _) => format!("Couldn't remember that: {error}"),
+    };
+    match merged {
+        Some(info) => format!("{first}\nMerged {} notes into {} to make room; Settings can undo that.", info.before, info.after),
+        None => first,
     }
 }
 
@@ -350,6 +352,15 @@ mod tests {
             assert!(refusal(asked_only("remember"), &check).is_some(), "{check:?}");
             assert_eq!(refusal(asked_only("open_link"), &check), None);
         }
+    }
+
+    #[test]
+    fn a_merge_is_reported_even_when_the_note_then_fails() {
+        use crate::assistant::memory::{Book, MergeInfo};
+        let info = MergeInfo { at_ms: 1, before: 50, after: 30 };
+        assert_eq!(remembered(Book::You, Ok("Likes tea".into()), None), "Remembered about you: Likes tea");
+        assert_eq!(remembered(Book::Setup, Ok("Uses bun".into()), Some(info.clone())), "Remembered: Uses bun\nMerged 50 notes into 30 to make room; Settings can undo that.");
+        assert!(remembered(Book::Setup, Err("full".into()), Some(info)).starts_with("Couldn't remember that: full\nMerged 50 notes"));
     }
 
     #[test]

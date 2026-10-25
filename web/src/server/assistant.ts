@@ -304,8 +304,10 @@ export async function runCheck(client: AssistantClient, input: CheckInput): Prom
 }
 
 export const MAX_CONSOLIDATE_BYTES = 64 * 1024;
-/** What a merge aims for: well under the cap, so it's worth doing (the Mac wants room for 10 more). */
+/** What a merge aims for: well under the cap, so it's worth doing. */
 const MERGE_TARGET = 35;
+/** The most a merge may return: the Mac refuses one that leaves room for fewer than 10 more. */
+const MERGE_MAX = MAX_NOTES - 10;
 
 export const consolidateInput = z.object({
   notes: z.array(note).min(2).max(MAX_NOTES + 10),
@@ -342,7 +344,8 @@ export async function runConsolidate(client: AssistantClient, input: Consolidate
     .map((value) => keepStart(value.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replace(/[\p{Cc}\u2028\u2029]/gu, ' ').trim(), NOTE_CHARS))
     .filter(Boolean);
   if (!notes.length || notes.length >= input.notes.length) throw new Error('merge saved nothing');
-  // Never cut to the target: a dropped note is a lost fact. The Mac refuses a merge that leaves too little room.
+  // Never cut to size: a dropped note is a lost fact. Too many left is a failed merge.
+  if (notes.length > MERGE_MAX) throw new Error('merge left too little room');
   return { notes };
 }
 

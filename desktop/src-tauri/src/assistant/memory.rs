@@ -243,8 +243,9 @@ pub fn last_merge(file: &Path) -> Option<MergeInfo> {
 }
 
 /// Replaces the file's notes with `merged`, keeping your other lines and a backup to
-/// undo it. Refused unless it's fewer notes than before and leaves room for more.
-pub fn apply_merge(file: &Path, merged: &[String], at_ms: u64) -> Result<MergeInfo, String> {
+/// undo it. Refused unless it's fewer notes than before and leaves room for more, and
+/// when the notes changed after `from` was sent to be merged.
+pub fn apply_merge(file: &Path, from: &[String], merged: &[String], at_ms: u64) -> Result<MergeInfo, String> {
     let mut kept: Vec<String> = Vec::new();
     for note in merged.iter().map(|note| clean(note)).filter(|note| !note.is_empty()) {
         if !kept.iter().any(|seen| seen.eq_ignore_ascii_case(&note)) {
@@ -253,7 +254,11 @@ pub fn apply_merge(file: &Path, merged: &[String], at_ms: u64) -> Result<MergeIn
     }
     let _guard = lock();
     let text = read_for_edit(file)?;
-    let before = notes_in(&text).len();
+    let now = notes_in(&text);
+    if now != from {
+        return Err("My notes changed while I was merging them, so I kept them as they were.".into());
+    }
+    let before = now.len();
     if kept.is_empty() || kept.len() >= before || kept.len() > MAX_NOTES - MERGE_ROOM {
         return Err("The merge didn't leave enough room, so I kept your notes as they were.".into());
     }
@@ -306,7 +311,7 @@ pub fn consolidate(app: &AppHandle) -> Result<MergeInfo, String> {
     let file = path().ok_or("No home folder.")?;
     let notes = notes_in(&read_for_edit(&file)?);
     let merged = tauri::async_runtime::block_on(ask_merge(app, &notes))?;
-    let info = apply_merge(&file, &merged, super::now_ms())?;
+    let info = apply_merge(&file, &notes, &merged, super::now_ms())?;
     super::log("Eavesy", "assistant.merge", &format!("{} notes into {}", info.before, info.after), "ran", None);
     Ok(info)
 }
@@ -501,7 +506,7 @@ mod tests {
         std::fs::write(&file, b"- ok\n\xff\xfe\n").unwrap();
         assert!(add(Book::Setup, &file, "new").is_err());
         assert!(forget_all(Book::Setup, &file).is_err());
-        assert!(apply_merge(&file, &["x".into()], 1).is_err());
+        assert!(apply_merge(&file, &["ok".into()], &["x".into()], 1).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"- ok\n\xff\xfe\n");
         // Too big to edit: refused, though the start still reads for a turn.
         let big = format!("- first\n{}", "x".repeat(MAX_EDIT_BYTES as usize));
@@ -525,6 +530,11 @@ mod tests {
         cleanup(&file);
     }
 
+    /// Merges what the file holds now.
+    fn merge(file: &Path, merged: &[String], at_ms: u64) -> Result<MergeInfo, String> {
+        apply_merge(file, &notes_in(&read_for_edit(file)?), merged, at_ms)
+    }
+
     fn full_memory() -> PathBuf {
         let file = temp_file();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -538,7 +548,7 @@ mod tests {
         let file = full_memory();
         let before = std::fs::read_to_string(&file).unwrap();
         assert!(is_full(Book::Setup, &file));
-        let info = apply_merge(&file, &["Merged A".into(), "merged a".into(), "Merged B".into(), " ".into()], 7).unwrap();
+        let info = merge(&file, &["Merged A".into(), "merged a".into(), "Merged B".into(), " ".into()], 7).unwrap();
         assert_eq!(info, MergeInfo { at_ms: 7, before: MAX_NOTES, after: 2 });
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n\nKeep this line.\n- Merged A\n- Merged B\n");
         assert_eq!(last_merge(&file), Some(info));
@@ -555,8 +565,10 @@ mod tests {
         let file = full_memory();
         let before = std::fs::read_to_string(&file).unwrap();
         let too_many: Vec<String> = (0..MAX_NOTES - MERGE_ROOM + 1).map(|i| format!("m{i}")).collect();
-        assert!(apply_merge(&file, &too_many, 1).is_err());
-        assert!(apply_merge(&file, &[], 1).is_err());
+        assert!(merge(&file, &too_many, 1).is_err());
+        assert!(merge(&file, &[], 1).is_err());
+        // Notes changed after they were sent: the merge would lose the new one.
+        assert!(apply_merge(&file, &["note 0".into()], &["m".into()], 1).is_err());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
         assert_eq!(last_merge(&file), None);
         cleanup(&file);
@@ -565,7 +577,7 @@ mod tests {
     #[test]
     fn forgetting_everything_drops_the_merge_backup() {
         let file = full_memory();
-        apply_merge(&file, &["Merged".into()], 1).unwrap();
+        merge(&file, &["Merged".into()], 1).unwrap();
         forget_all(Book::Setup, &file).unwrap();
         assert_eq!(last_merge(&file), None);
         // Keeping a merge drops its backup too, and keeping when there's none is fine.

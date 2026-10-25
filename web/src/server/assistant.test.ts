@@ -194,6 +194,9 @@ describe('memory', () => {
     await expect(runConsolidate(same.client, input)).rejects.toThrow();
     const cut = fakeClient([text('{"notes": ["a"')], 'max_tokens');
     await expect(runConsolidate(cut.client, input)).rejects.toThrow();
+    const full = consolidateInput.parse({ notes: Array.from({ length: 50 }, (_, i) => `note ${i}`) });
+    const roomless = fakeClient([text(JSON.stringify({ notes: Array.from({ length: 41 }, (_, i) => `m ${i}`) }))]);
+    await expect(runConsolidate(roomless.client, full)).rejects.toThrow('room');
     expect(consolidateInput.safeParse({ notes: ['only one'] }).success).toBe(false);
   });
 
