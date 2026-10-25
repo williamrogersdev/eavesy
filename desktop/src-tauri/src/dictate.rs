@@ -33,8 +33,10 @@ static TALK_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 /// a fresh press after a release that never arrived.
 static KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
 static TALK_KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
-/// Presses closer together than this are the key repeating while it's held.
-const REPEAT_GAP_MS: u64 = 1_000;
+/// Presses closer together than this are the key repeating while it's held. Longer
+/// than macOS's slowest "Delay until repeat" (about 2 s), so a held key's first
+/// repeat never looks like a fresh press.
+const REPEAT_GAP_MS: u64 = 2_500;
 
 static PRESS: Mutex<Press> = Mutex::new(Press { started_by: None, stop_when_ready: false });
 
@@ -116,11 +118,17 @@ pub fn talk_key_down(app: &AppHandle) {
     pressed(app, true, true);
 }
 
-/// Milliseconds since this key last went down, recording now as its latest press.
+/// Milliseconds since this key last went down (press to press, not from the release),
+/// recording now as its latest press.
 fn since_last(at: &AtomicU64) -> u64 {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let now = EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + REPEAT_GAP_MS + 1;
     now.saturating_sub(at.swap(now, Ordering::SeqCst))
+}
+
+/// Whether a press this long after the previous one could be the key repeating.
+fn is_repeat(gap_ms: u64) -> bool {
+    gap_ms <= REPEAT_GAP_MS
 }
 
 /// A second press with the key still marked down: either the key repeating while
@@ -128,7 +136,7 @@ fn since_last(at: &AtomicU64) -> u64 {
 /// that never arrived, say because another app grabbed the same combo. Ignoring the
 /// latter left the shortcut dead.
 fn release_was_lost(app: &AppHandle, gap_ms: u64) -> bool {
-    if gap_ms <= REPEAT_GAP_MS {
+    if is_repeat(gap_ms) {
         return false;
     }
     let (active, starting) = active_session(app);
@@ -294,8 +302,12 @@ mod tests {
     #[test]
     fn a_first_press_is_fresh_and_a_quick_second_is_a_repeat() {
         let at = AtomicU64::new(0);
-        assert!(since_last(&at) > REPEAT_GAP_MS);
-        assert!(since_last(&at) <= REPEAT_GAP_MS);
+        assert!(!is_repeat(since_last(&at)));
+        assert!(is_repeat(since_last(&at)));
+        assert!(is_repeat(REPEAT_GAP_MS));
+        assert!(!is_repeat(REPEAT_GAP_MS + 1));
+        // macOS's slowest delay before a held key repeats.
+        assert!(is_repeat(2_000));
     }
 
     #[test]
