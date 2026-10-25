@@ -593,12 +593,12 @@ export async function dontRememberTurn(id: number): Promise<string> {
   return invoke<string>('assistant_dont_remember', { id });
 }
 
-/** Says one of Eavesy's replies again. */
 /** Starts a spoken message to Eavesy, or stops the one being recorded (the mic button). */
 export async function talkToAssistant(): Promise<void> {
   await invoke('assistant_talk');
 }
 
+/** Says one of Eavesy's replies again. */
 export async function repeatAssistantReply(id: number): Promise<void> {
   await invoke('assistant_repeat', { id });
 }

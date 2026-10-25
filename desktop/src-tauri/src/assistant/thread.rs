@@ -320,7 +320,7 @@ async fn ask(app: &AppHandle, style: super::style::Style, instructions: &[String
         tracing::warn!("assistant turn refused: {}", response.status());
         return Err("Eavesy couldn't sign you in. Sign in again from Settings → Account.".into());
     }
-    if matches!(response.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE | reqwest::StatusCode::BAD_REQUEST) {
+    if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
         tracing::warn!("assistant turn refused: {}", response.status());
         return Err("This conversation got too big for me to send. Press Clear to start fresh.".into());
     }

@@ -298,7 +298,7 @@ function useTalk(): { listening: boolean; talkKeys: string } {
     let disposed = false;
     const loadKeys = () => void getSettings().then((settings) => {
       if (!disposed) setTalkKeys(settings?.assistant_hotkey ? keysText(settings.assistant_hotkey) : '');
-    });
+    }, () => {});
     loadKeys();
     const offState = onCaptureState((status) => setListening(status.mode === 'assistant' && status.phase === 'recording'));
     const offKeys = onHotkeysChanged(loadKeys);

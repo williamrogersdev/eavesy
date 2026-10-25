@@ -5,7 +5,7 @@
 //! A tap toggles: press to start, press again to stop. Holding the key past
 //! `HOLD_TO_TALK` turns the press into push-to-talk: letting go stops it.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,6 +29,12 @@ struct Press {
 static KEY_DOWN: AtomicBool = AtomicBool::new(false);
 /// The same for the Talk to Eavesy shortcut, which records the same way.
 static TALK_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// When each shortcut last went down (ms since `epoch()`), to tell a key repeat from
+/// a fresh press after a release that never arrived.
+static KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+static TALK_KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+/// Presses closer together than this are the key repeating while it's held.
+const REPEAT_GAP_MS: u64 = 1_000;
 
 static PRESS: Mutex<Press> = Mutex::new(Press { started_by: None, stop_when_ready: false });
 
@@ -94,7 +100,8 @@ fn active_session(app: &AppHandle) -> (Option<String>, bool) {
 
 /// The dictation hotkey went down.
 pub fn key_down(app: &AppHandle) {
-    if KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app) {
+    let gap = since_last(&KEY_DOWN_AT);
+    if KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app, gap) {
         return;
     }
     pressed(app, true, false);
@@ -102,16 +109,28 @@ pub fn key_down(app: &AppHandle) {
 
 /// The Talk to Eavesy shortcut went down: like dictation, but the words go to Eavesy.
 pub fn talk_key_down(app: &AppHandle) {
-    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app) {
+    let gap = since_last(&TALK_KEY_DOWN_AT);
+    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) && !release_was_lost(app, gap) {
         return;
     }
     pressed(app, true, true);
 }
 
-/// A second press with the key still marked down: either a repeat while it's held
-/// (a recording is open or opening) or a release that never arrived, say because
-/// another app grabbed the same combo. Ignoring the latter left the shortcut dead.
-fn release_was_lost(app: &AppHandle) -> bool {
+/// Milliseconds since this key last went down, recording now as its latest press.
+fn since_last(at: &AtomicU64) -> u64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let now = EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + REPEAT_GAP_MS + 1;
+    now.saturating_sub(at.swap(now, Ordering::SeqCst))
+}
+
+/// A second press with the key still marked down: either the key repeating while
+/// it's held (presses close together, or a recording open or opening) or a release
+/// that never arrived, say because another app grabbed the same combo. Ignoring the
+/// latter left the shortcut dead.
+fn release_was_lost(app: &AppHandle, gap_ms: u64) -> bool {
+    if gap_ms <= REPEAT_GAP_MS {
+        return false;
+    }
     let (active, starting) = active_session(app);
     let lost = active.is_none() && !starting;
     if lost {
@@ -181,7 +200,8 @@ pub fn toggle(app: &AppHandle) {
     pressed(app, false, false);
 }
 
-/// Talk to Eavesy as a toggle (fn tap, the Eavesy tab's mic button).
+/// Talk to Eavesy as a toggle: the fn tap on macOS, and the Eavesy tab's mic button
+/// on any platform.
 pub fn toggle_talk(app: &AppHandle) {
     pressed(app, false, true);
 }
@@ -270,6 +290,13 @@ fn stop(app: &AppHandle, session_id: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_first_press_is_fresh_and_a_quick_second_is_a_repeat() {
+        let at = AtomicU64::new(0);
+        assert!(since_last(&at) > REPEAT_GAP_MS);
+        assert!(since_last(&at) <= REPEAT_GAP_MS);
+    }
 
     #[test]
     fn a_press_stops_what_runs_starts_otherwise_and_never_starts_twice() {
