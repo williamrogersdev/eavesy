@@ -318,12 +318,12 @@ impl Action for SuggestRule {
     fn title(&self) -> String { format!("Suggest a rule: {}", self.rule.text()) }
     fn rows(&self) -> Vec<Row> { vec![Row { id: "rule".into(), label: self.rule.text() }] }
     fn run(&self, rows: &[String]) -> Ran {
-        use tauri::{Emitter, Manager};
+        use tauri::Emitter;
         if rows.is_empty() {
             return Ran { summary: "Nothing suggested".into(), detail: serde_json::Value::Null };
         }
-        let accepted = self.app.state::<super::Core>().policy.lock().unwrap().rules.clone();
-        if accepted.contains(&self.rule) {
+        let accepted = super::rules::in_force(&self.app);
+        if accepted.rules.contains(&self.rule) {
             return Ran { summary: format!("Already a rule: {}", self.rule.text()), detail: serde_json::Value::Null };
         }
         let summary = match super::rules::path().ok_or_else(|| "No home folder.".to_string()).and_then(|file| super::rules::append(&file, &self.rule, &accepted)) {

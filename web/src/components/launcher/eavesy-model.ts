@@ -68,6 +68,8 @@ export function ruleChangeLine(change: AssistantRuleChange): string {
   switch (change.kind) {
     case 'add': return `Added: ${change.text}`;
     case 'remove': return `Removed: ${change.text}`;
+    case 'add_instruction': return `New instruction: ${change.text}`;
+    case 'remove_instruction': return `Instruction removed: ${change.text}`;
     case 'invalid': return `Line ${change.line}: ${change.text}`;
     case 'unreadable': return 'Eavesy can’t read rules.md';
   }
