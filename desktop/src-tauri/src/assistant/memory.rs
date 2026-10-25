@@ -160,15 +160,29 @@ fn with_notes(mut text: String, header: &str, notes: &[String]) -> String {
     text
 }
 
+/// The notes the book holds now; none when it can't be read.
+pub fn kept(book: Book) -> Vec<String> {
+    book.path().map(|file| read(&file, book.max())).unwrap_or_default()
+}
+
 /// True when the book holds as many notes as it keeps.
 pub fn is_full(book: Book, file: &Path) -> bool {
     read_for_edit(file).map(|text| notes_in(&text).len() >= book.max()).unwrap_or(false)
 }
 
-/// Adds a note at the end of the file, leaving every other line alone, and returns
-/// the note as kept. A note already kept (in any case) isn't added twice: the kept
-/// one is returned, so Undo removes the right line.
-pub fn add(book: Book, file: &Path, note: &str) -> Result<String, String> {
+/// What `add` did with a note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Added {
+    /// The note as kept.
+    pub note: String,
+    /// False when it was already there: this conversation didn't teach it.
+    pub new: bool,
+}
+
+/// Adds a note at the end of the file, leaving every other line alone. A note already
+/// kept (in any case) isn't added twice: the kept one comes back, marked as not new, so
+/// Undo or forgetting a conversation never takes out a note you had before.
+pub fn add(book: Book, file: &Path, note: &str) -> Result<Added, String> {
     let note = clean(note);
     if note.is_empty() {
         return Err("There's nothing in that to remember.".into());
@@ -177,17 +191,17 @@ pub fn add(book: Book, file: &Path, note: &str) -> Result<String, String> {
     let text = read_for_edit(file)?;
     let kept = notes_in(&text);
     if let Some(same) = kept.iter().find(|kept| kept.eq_ignore_ascii_case(&note)) {
-        return Ok(same.clone());
+        return Ok(Added { note: same.clone(), new: false });
     }
     if kept.len() >= book.max() {
         return Err(book.full());
     }
     write_text(file, &with_notes(text, book.header(), std::slice::from_ref(&note)))?;
-    Ok(note)
+    Ok(Added { note, new: true })
 }
 
-/// Removes the first line holding this note; none matching is fine.
-pub fn forget(file: &Path, note: &str) -> Result<(), String> {
+/// Removes the first line holding this note; none matching is fine. True when one went.
+pub fn forget(file: &Path, note: &str) -> Result<bool, String> {
     let note = clean(note);
     let _guard = lock();
     let text = read_for_edit(file)?;
@@ -197,7 +211,10 @@ pub fn forget(file: &Path, note: &str) -> Result<(), String> {
         found |= hit;
         hit
     });
-    if found { write_text(file, &left) } else { Ok(()) }
+    if found {
+        write_text(file, &left)?;
+    }
+    Ok(found)
 }
 
 /// Removes every note line; a heading or anything else you wrote stays. For memory.md,
@@ -474,13 +491,13 @@ mod tests {
     #[test]
     fn add_forget_and_round_trip() {
         let file = temp_file();
-        assert_eq!(add(Book::Setup, &file, "Prefers bun over npm").unwrap(), "Prefers bun over npm");
-        add(Book::Setup, &file, "prefers BUN over npm").unwrap();
+        assert_eq!(add(Book::Setup, &file, "Prefers bun over npm").unwrap(), Added { note: "Prefers bun over npm".into(), new: true });
+        assert_eq!(add(Book::Setup, &file, "prefers BUN over npm").unwrap(), Added { note: "Prefers bun over npm".into(), new: false });
         add(Book::Setup, &file, "Ships behind flags").unwrap();
         assert_eq!(read(&file, MAX_NOTES), ["Prefers bun over npm", "Ships behind flags"]);
         assert!(add(Book::Setup, &file, " \n ").is_err());
-        forget(&file, "Prefers bun over npm").unwrap();
-        forget(&file, "never kept").unwrap();
+        assert!(forget(&file, "Prefers bun over npm").unwrap());
+        assert!(!forget(&file, "never kept").unwrap());
         assert_eq!(read(&file, MAX_NOTES), ["Ships behind flags"]);
         forget_all(Book::Setup, &file).unwrap();
         assert!(read(&file, MAX_NOTES).is_empty());
@@ -506,7 +523,7 @@ mod tests {
     fn a_duplicate_returns_the_kept_spelling_so_undo_finds_it() {
         let file = temp_file();
         add(Book::Setup, &file, "Prefers Bun").unwrap();
-        let kept = add(Book::Setup, &file, "prefers bun").unwrap();
+        let kept = add(Book::Setup, &file, "prefers bun").unwrap().note;
         assert_eq!(kept, "Prefers Bun");
         forget(&file, &kept).unwrap();
         assert!(read(&file, MAX_NOTES).is_empty());

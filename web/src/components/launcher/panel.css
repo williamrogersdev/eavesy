@@ -429,6 +429,8 @@
 .ev-perm-on { font: 650 12px var(--ev-font-round); color: var(--ev-leaf); padding: 0 4px; }
 .ev-banner[data-tone='quiet'] { background: var(--ev-well); color: var(--ev-ink-2); }
 .ev-banner .ev-link { flex: none; white-space: nowrap; }
+.ev-clear-ask { flex-wrap: wrap; }
+.ev-clear-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---------- onboarding (DESIGN.md §7) ---------- */
 .ev-onb { display: flex; flex: 1; min-height: 0; flex-direction: column; }

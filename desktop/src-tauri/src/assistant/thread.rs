@@ -64,6 +64,9 @@ struct Turn {
     /// An error shown in Eavesy's place. It's for you, so the model never sees it as
     /// something it said.
     failed: bool,
+    /// Your turn, marked "Don't remember this" (H3): what it taught was forgotten, and
+    /// its words no longer count when a note or rule is checked.
+    unremembered: bool,
 }
 
 impl Turn {
@@ -102,6 +105,8 @@ pub struct TurnView {
     /// `you` or `eavesy`.
     pub who: &'static str,
     pub spoken: bool,
+    /// Your turn, marked "Don't remember this".
+    pub unremembered: bool,
     pub at_ms: u64,
     pub text: String,
     pub steps: Vec<Step>,
@@ -158,21 +163,30 @@ fn window_within(messages: &[Message], limit: usize, bytes: usize) -> &[Message]
     window(&recent[start..], usize::MAX)
 }
 
-fn view(thread: &Thread) -> View {
-    let mut turns: Vec<TurnView> = Vec::new();
+/// Each tool call's result: its first line, and whether it worked.
+fn results(turns: &[Turn]) -> std::collections::HashMap<&str, (String, bool)> {
     let mut results = std::collections::HashMap::new();
-    for turn in &thread.turns {
+    for turn in turns {
         for block in &turn.message.content {
             if let Block::ToolResult { tool_use_id, content, is_error } = block {
                 results.insert(tool_use_id.as_str(), (content.lines().next().unwrap_or_default().to_string(), !is_error));
             }
         }
     }
+    results
+}
+
+fn view(thread: &Thread) -> View {
+    let mut turns: Vec<TurnView> = Vec::new();
+    let results = results(&thread.turns);
+    // In an exchange you marked "Don't remember this", its notes are already gone.
+    let mut forgotten = false;
     for turn in &thread.turns {
         let id = turn.id;
         match turn.message.role {
             Role::User if is_your_words(&turn.message) => {
-                turns.push(TurnView { id, who: "you", spoken: turn.spoken, at_ms: turn.at_ms, text: text_of(&turn.message), steps: Vec::new() });
+                forgotten = turn.unremembered;
+                turns.push(TurnView { id, who: "you", spoken: turn.spoken, unremembered: turn.unremembered, at_ms: turn.at_ms, text: text_of(&turn.message), steps: Vec::new() });
             }
             Role::User => {}
             Role::Assistant => {
@@ -184,14 +198,14 @@ fn view(thread: &Thread) -> View {
                         Block::ToolUse { id, name, .. } => {
                             let (line, ok) = results.get(id.as_str()).cloned().map_or((None, true), |(line, ok)| (Some(line), ok));
                             // The note as kept (a duplicate keeps its first spelling), so Undo finds it.
-                            let kept = (name == "remember" && ok).then(|| line.as_deref().and_then(remembered_on)).flatten();
+                            let kept = (name == "remember" && ok && !forgotten).then(|| line.as_deref().and_then(remembered_on)).flatten();
                             let (remembered, book) = kept.map_or((None, None), |(note, book)| (Some(note), Some(book)));
                             Some(Step { tool: name.clone(), line, ok, remembered, book })
                         }
                         _ => None,
                     })
                     .collect();
-                turns.push(TurnView { id, who: "eavesy", spoken: turn.spoken, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
+                turns.push(TurnView { id, who: "eavesy", spoken: turn.spoken, unremembered: false, at_ms: turn.at_ms, text: text_of(&turn.message), steps });
             }
         }
     }
@@ -206,6 +220,35 @@ fn remembered_on(line: &str) -> Option<(String, super::memory::Book)> {
         (None, Some(note)) => Some((clean(note), Book::Setup)),
         _ => None,
     }
+}
+
+/// The notes Eavesy kept in this thread, each with its file: after your turn `from` and
+/// before your next one, or, with none, from every exchange not already forgotten. Only
+/// notes it added count, never one that was already there (memory::Added).
+fn taught(turns: &[Turn], from: Option<u64>) -> Vec<(String, super::memory::Book)> {
+    let results = results(turns);
+    let mut notes: Vec<(String, super::memory::Book)> = Vec::new();
+    let mut counting = false;
+    for turn in turns {
+        if is_your_words(&turn.message) {
+            counting = match from {
+                Some(id) => turn.id == id,
+                None => !turn.unremembered,
+            };
+            continue;
+        }
+        if !counting || turn.message.role != Role::Assistant {
+            continue;
+        }
+        for block in &turn.message.content {
+            let Block::ToolUse { id, name, .. } = block else { continue };
+            let kept = results.get(id.as_str()).filter(|(_, ok)| *ok && name == "remember").and_then(|(line, _)| remembered_on(line));
+            if let Some(note) = kept.filter(|note| !notes.contains(note)) {
+                notes.push(note);
+            }
+        }
+    }
+    notes
 }
 
 fn emit(app: &AppHandle) {
@@ -225,7 +268,7 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
         let notes = if is_your_words(&message) { std::mem::take(&mut thread.notes) } else { Vec::new() };
         let id = thread.next_id;
         thread.next_id += 1;
-        thread.turns.push(Turn { id, message, at_ms: super::now_ms(), spoken, notes, failed });
+        thread.turns.push(Turn { id, message, at_ms: super::now_ms(), spoken, notes, failed, unremembered: false });
         if thread.turns.len() > KEPT_MESSAGES {
             let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
             let keep = window(&messages, KEPT_MESSAGES).len();
@@ -293,12 +336,12 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
         // Read each step, so a note kept a step ago is in the next one. Off the record,
         // none go.
         let notes = if off_record(app) { super::memory::ForTurn::default() } else { super::memory::for_turn(app) };
-        let (messages, said_by_you) = {
+        let (messages, said_by_you, asked) = {
             let state = app.state::<Mutex<Thread>>();
             let thread = state.lock().unwrap();
             let messages = sent(&thread.turns);
-            let said: Vec<String> = thread.turns.iter().filter(|turn| is_your_words(&turn.message)).map(|turn| text_of(&turn.message)).collect();
-            (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), said)
+            let yours: Vec<&Turn> = thread.turns.iter().filter(|turn| is_your_words(&turn.message)).collect();
+            (window_within(&messages, SENT_MESSAGES, SENT_BYTES).to_vec(), yours.iter().map(|turn| text_of(&turn.message)).collect::<Vec<_>>(), asked_for_notes(&yours))
         };
         let request = newest_chars(&said_by_you[said_by_you.len().saturating_sub(CHECKED_TURNS)..].join("\n"), CHECK_CHARS).to_string();
         let content = match tauri::async_runtime::block_on(ask(app, style, &instructions, &notes, &messages)) {
@@ -326,13 +369,21 @@ fn converse(app: &AppHandle, text: String, spoken: bool) {
             let result = if step + 1 == MAX_STEPS {
                 super::tools::ToolResult { content: "Stopped: that took too many steps.".into(), is_error: true }
             } else {
-                super::tools::call(app, &name, &input, &requester, &said_by_you, &request)
+                super::tools::call(app, &name, &input, &requester, &said_by_you, super::tools::Words { request: &request, asked: &asked })
             };
             results.push(Block::ToolResult { tool_use_id: id, content: result.content, is_error: result.is_error });
         }
         push(app, Message { role: Role::User, content: results }, false);
     }
     push(app, Message { role: Role::Assistant, content: vec![Block::Text { text: "That took more steps than I allow myself. Tell me how you'd like to go on.".into() }] }, false);
+}
+
+/// Your newest turns as the check sees them for a note or a rule: the same turns as for
+/// anything else, less those you marked "Don't remember this".
+fn asked_for_notes(yours: &[&Turn]) -> String {
+    let recent = &yours[yours.len().saturating_sub(CHECKED_TURNS)..];
+    let words: Vec<String> = recent.iter().filter(|turn| !turn.unremembered).map(|turn| text_of(&turn.message)).collect();
+    newest_chars(&words.join("\n"), CHECK_CHARS).to_string()
 }
 
 /// What the model is sent: every turn but the errors shown in Eavesy's place. Dropping
@@ -490,22 +541,107 @@ pub fn set_assistant_off_record(app: AppHandle, window: WebviewWindow, on: bool)
     Ok(())
 }
 
-#[tauri::command]
-pub fn assistant_clear(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+/// A note this conversation taught Eavesy, still in its file.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Taught {
+    pub note: String,
+    pub book: super::memory::Book,
+}
+
+/// Of `notes`, the ones still in their files: a note merged or removed since is gone.
+fn still_kept(notes: Vec<(String, super::memory::Book)>) -> Vec<Taught> {
+    use super::memory::{kept, Book};
+    let (setup, about) = (kept(Book::Setup), kept(Book::You));
+    notes
+        .into_iter()
+        .filter(|(note, book)| match book { Book::Setup => &setup, Book::You => &about }.iter().any(|kept| kept.eq_ignore_ascii_case(note)))
+        .map(|(note, book)| Taught { note, book })
+        .collect()
+}
+
+/// What Clear would offer to forget.
+#[tauri::command(async)]
+pub fn assistant_taught(app: AppHandle, window: WebviewWindow) -> Result<Vec<Taught>, String> {
     super::from_ui(&window)?;
-    {
+    let notes = taught(&app.state::<Mutex<Thread>>().lock().unwrap().turns, None);
+    Ok(still_kept(notes))
+}
+
+/// Forgets these notes, each in its own file. How many went, and how many were already
+/// gone (merged or removed since).
+fn forget_taught(notes: &[(String, super::memory::Book)]) -> (usize, usize) {
+    let mut forgot = 0;
+    for (note, book) in notes {
+        match book.path().map(|file| super::memory::forget(&file, note)) {
+            Some(Ok(true)) => {
+                forgot += 1;
+                super::log("You", "assistant.forget", note, "ran", Some("with its conversation".into()));
+            }
+            Some(Err(error)) => tracing::warn!(%error, "assistant: couldn't forget a note"),
+            _ => {}
+        }
+    }
+    (forgot, notes.len() - forgot)
+}
+
+fn forgot_line(forgot: usize, gone: usize) -> String {
+    let notes = |n: usize| if n == 1 { "1 note".to_string() } else { format!("{n} notes") };
+    match (forgot, gone) {
+        (0, 0) => "Nothing from that was kept.".into(),
+        (n, 0) => format!("Forgot {}.", notes(n)),
+        (0, _) => "Its notes were already merged or removed. Settings shows what's kept.".into(),
+        (n, g) => format!("Forgot {}. {} had already been merged or removed; Settings shows what's kept.", notes(n), notes(g)),
+    }
+}
+
+/// "Don't remember this" on one of your turns (H3): forgets the notes Eavesy kept while
+/// answering it, and leaves its words out when a later note or rule is checked. Not
+/// while Eavesy is answering, so nothing can be kept from it after this.
+#[tauri::command(async)]
+pub fn assistant_dont_remember(app: AppHandle, window: WebviewWindow, id: u64) -> Result<String, String> {
+    super::from_ui(&window)?;
+    let notes = {
         let state = app.state::<Mutex<Thread>>();
         let mut thread = state.lock().unwrap();
         if thread.busy {
             return Err("Eavesy is still answering.".into());
         }
+        let turn = thread.turns.iter_mut().find(|turn| turn.id == id && is_your_words(&turn.message)).ok_or("That message is gone.")?;
+        if turn.unremembered {
+            return Ok(forgot_line(0, 0));
+        }
+        turn.unremembered = true;
+        taught(&thread.turns, Some(id))
+    };
+    let (forgot, gone) = forget_taught(&notes);
+    emit(&app);
+    Ok(forgot_line(forgot, gone))
+}
+
+/// Clears the conversation. With `forget`, the notes it taught Eavesy go too, worked out
+/// here from the thread, never taken from the UI.
+#[tauri::command(async)]
+pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<bool>) -> Result<String, String> {
+    super::from_ui(&window)?;
+    let notes = {
+        let state = app.state::<Mutex<Thread>>();
+        let mut thread = state.lock().unwrap();
+        if thread.busy {
+            return Err("Eavesy is still answering.".into());
+        }
+        let notes = if forget == Some(true) { taught(&thread.turns, None) } else { Vec::new() };
         thread.turns.clear();
         thread.notes.clear();
         // A new conversation is on the record again.
         thread.off_record = false;
-    }
+        notes
+    };
     emit(&app);
-    Ok(())
+    if notes.is_empty() {
+        return Ok(String::new());
+    }
+    let (forgot, gone) = forget_taught(&notes);
+    Ok(forgot_line(forgot, gone))
 }
 
 #[cfg(test)]
@@ -531,7 +667,7 @@ mod tests {
 
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
-        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
+        let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false }).collect();
         let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new(), off_record: false });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
@@ -545,7 +681,7 @@ mod tests {
         let kept = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "r".into(), content: "Remembered: Prefers Bun".into(), is_error: false }] };
         let refused = Message { role: Role::Assistant, content: vec![Block::ToolUse { id: "s".into(), name: "remember".into(), input: serde_json::json!({ "note": "x" }) }] };
         let no = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "s".into(), content: "I only keep notes you ask me to keep.".into(), is_error: true }] };
-        let turns = [said("remember I use bun"), remember, kept, refused, no].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false }).collect();
+        let turns = [said("remember I use bun"), remember, kept, refused, no].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false }).collect();
         let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new(), off_record: false });
         assert_eq!(view.turns[1].steps[0].remembered.as_deref(), Some("Prefers Bun"));
         assert_eq!(view.turns[1].steps[0].book, Some(super::super::memory::Book::Setup));
@@ -577,9 +713,9 @@ mod tests {
     fn errors_are_not_sent_to_the_model() {
         let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
         let turns = vec![
-            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
-            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
-            Turn { id: 3, message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false },
+            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false },
+            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true, unremembered: false },
+            Turn { id: 3, message: said("try again"), at_ms: 3, spoken: false, notes: Vec::new(), failed: false, unremembered: false },
         ];
         let messages = sent(&turns);
         assert_eq!(messages.len(), 1);
@@ -591,8 +727,8 @@ mod tests {
     fn an_error_is_the_newest_reply_but_says_so() {
         let error = Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach my model right now.".into() }] };
         let turns = vec![
-            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false },
-            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true },
+            Turn { id: 1, message: said("anyone waiting?"), at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false },
+            Turn { id: 2, message: error, at_ms: 2, spoken: false, notes: Vec::new(), failed: true, unremembered: false },
         ];
         let reply = newest_reply(&turns).unwrap();
         assert_eq!((reply.id, reply.failed), (2, true));
@@ -601,7 +737,7 @@ mod tests {
 
     #[test]
     fn notes_go_to_the_model_but_are_not_your_words() {
-        let turn = Turn { id: 0, message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into(), "card declined".into()], failed: false };
+        let turn = Turn { id: 0, message: said("and the other one?"), at_ms: 1, spoken: false, notes: vec!["card accepted: 2 of 2 done".into(), "card declined".into()], failed: false, unremembered: false };
         let sent = turn.for_model();
         // However many notes, they take one block, so a message stays within the block cap.
         assert_eq!(sent.content.len(), 2);
@@ -614,5 +750,69 @@ mod tests {
         assert_eq!(json["content"][1], serde_json::json!({"type": "tool_use", "id": "t1", "name": "agent_sessions", "input": {}}));
         let back: Block = serde_json::from_value(serde_json::json!({"type": "tool_result", "tool_use_id": "t1", "content": "x"})).unwrap();
         assert_eq!(back, Block::ToolResult { tool_use_id: "t1".into(), content: "x".into(), is_error: false });
+    }
+
+    fn turn(id: u64, message: Message) -> Turn { Turn { id, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false } }
+
+    /// Eavesy calling `remember`, and its result's first line.
+    fn kept(id: &str, line: &str) -> [Message; 2] {
+        [
+            Message { role: Role::Assistant, content: vec![Block::ToolUse { id: id.into(), name: "remember".into(), input: serde_json::json!({ "note": "x" }) }] },
+            Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: id.into(), content: line.into(), is_error: false }] },
+        ]
+    }
+
+    fn conversation() -> Vec<Turn> {
+        use std::iter::once;
+        let messages: Vec<Message> = once(said("I use bun"))
+            .chain(kept("a", "Remembered: Uses bun"))
+            .chain(kept("b", "Already remembered: Prefers tea"))
+            .chain(once(said("I live in Leeds")))
+            .chain(kept("c", "Remembered about you: Lives in Leeds"))
+            .chain(once(said("thanks")))
+            .collect();
+        messages.into_iter().enumerate().map(|(id, message)| turn(id as u64, message)).collect()
+    }
+
+    #[test]
+    fn a_conversation_taught_only_the_notes_it_added() {
+        use super::super::memory::Book;
+        let turns = conversation();
+        // "Already remembered" was there before: never this conversation's to forget.
+        assert_eq!(taught(&turns, None), vec![("Uses bun".to_string(), Book::Setup), ("Lives in Leeds".to_string(), Book::You)]);
+        // From one turn: only what was kept answering it.
+        assert_eq!(taught(&turns, Some(0)), vec![("Uses bun".to_string(), Book::Setup)]);
+        assert_eq!(taught(&turns, Some(5)), vec![("Lives in Leeds".to_string(), Book::You)]);
+        assert!(taught(&turns, Some(9)).is_empty());
+        // A failed remember taught nothing.
+        let mut failed = conversation();
+        if let Block::ToolResult { is_error, .. } = &mut failed[2].message.content[0] {
+            *is_error = true;
+        }
+        assert_eq!(taught(&failed, Some(0)), vec![]);
+    }
+
+    #[test]
+    fn dont_remember_hides_undo_and_leaves_its_words_out_of_the_note_check() {
+        let mut turns = conversation();
+        turns[0].unremembered = true;
+        // Already forgotten: Clear doesn't count it again.
+        assert_eq!(taught(&turns, None).len(), 1);
+        let view = view(&Thread { turns, next_id: 9, busy: false, notes: Vec::new(), off_record: false });
+        assert!(view.turns[0].unremembered);
+        assert_eq!(view.turns[1].steps[0].remembered, None);
+        assert_eq!(view.turns[4].steps[0].remembered.as_deref(), Some("Lives in Leeds"));
+        let mut turns = conversation();
+        turns[5].unremembered = true;
+        let yours: Vec<&Turn> = turns.iter().filter(|turn| is_your_words(&turn.message)).collect();
+        assert_eq!(asked_for_notes(&yours), "I use bun\nthanks");
+    }
+
+    #[test]
+    fn the_forget_line_says_what_happened() {
+        assert_eq!(forgot_line(0, 0), "Nothing from that was kept.");
+        assert_eq!(forgot_line(1, 0), "Forgot 1 note.");
+        assert_eq!(forgot_line(2, 1), "Forgot 2 notes. 1 note had already been merged or removed; Settings shows what's kept.");
+        assert!(forgot_line(0, 2).starts_with("Its notes were already"));
     }
 }

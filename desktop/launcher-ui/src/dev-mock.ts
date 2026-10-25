@@ -376,7 +376,52 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
         resolve(null);
       }, 1200));
     },
-    assistant_clear: () => { thread.turns = []; thread.off_record = false; emit('assistant:thread', { ...thread }); },
+    // What this thread kept, still in the notes: the remember steps of exchanges not already forgotten.
+    assistant_taught: () => {
+      const kept: { note: string; book: string }[] = [];
+      let counting = false;
+      for (const turn of thread.turns as { who: string; unremembered?: boolean; steps: { remembered?: string; book?: string }[] }[]) {
+        if (turn.who === 'you') { counting = !turn.unremembered; continue; }
+        for (const step of turn.steps) {
+          const list = step.book === 'you' ? about : notes;
+          if (counting && step.remembered && list.includes(step.remembered)) kept.push({ note: step.remembered, book: step.book ?? 'setup' });
+        }
+      }
+      return kept;
+    },
+    assistant_dont_remember: ({ id }: Record<string, unknown>) => {
+      const turns = thread.turns as { id: number; who: string; unremembered?: boolean; steps: { remembered?: string; book?: string }[] }[];
+      const at = turns.findIndex((turn) => turn.id === id && turn.who === 'you');
+      if (at < 0) throw new Error('That message is gone.');
+      turns[at].unremembered = true;
+      let forgot = 0;
+      for (const turn of turns.slice(at + 1)) {
+        if (turn.who === 'you') break;
+        for (const step of turn.steps) {
+          if (!step.remembered) continue;
+          if (step.book === 'you') { if (about.includes(step.remembered)) forgot += 1; about = about.filter((note) => note !== step.remembered); } else { if (notes.includes(step.remembered)) forgot += 1; notes = notes.filter((note) => note !== step.remembered); }
+          step.remembered = undefined;
+        }
+      }
+      emit('assistant:thread', { ...thread });
+      return forgot ? `Forgot ${forgot === 1 ? '1 note' : `${forgot} notes`}.` : 'Nothing from that was kept.';
+    },
+    assistant_clear: ({ forget }: Record<string, unknown>) => {
+      let forgot = 0;
+      if (forget === true) {
+        for (const turn of thread.turns as { steps: { remembered?: string; book?: string }[] }[]) {
+          for (const step of turn.steps) {
+            if (!step.remembered) continue;
+            if (step.book === 'you') about = about.filter((note) => note !== step.remembered); else notes = notes.filter((note) => note !== step.remembered);
+            forgot += 1;
+          }
+        }
+      }
+      thread.turns = [];
+      thread.off_record = false;
+      emit('assistant:thread', { ...thread });
+      return forgot ? `Forgot ${forgot === 1 ? '1 note' : `${forgot} notes`}.` : '';
+    },
     set_assistant_off_record: ({ on }: Record<string, unknown>) => {
       if (on !== true && thread.turns.length) throw new Error('Clear the conversation to go back on the record.');
       thread.off_record = on === true;
