@@ -200,6 +200,7 @@ alias block so old classes still work.
   --ev-hud-ink-2:  rgb(246 239 228 / 0.62);
 
   --ev-focus: 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-coat);
+  --ev-focus-field: 0 0 0 1px var(--ev-ink-3), 0 0 0 4px color-mix(in srgb, var(--ev-ink-3) 18%, transparent);
 }
 @media (prefers-color-scheme: dark) { .launcher-scope, .ev { /* after hours */
   --ev-paper:      #1F1A18;  /* warm paper after hours, never a black slab */
@@ -257,8 +258,8 @@ slab).
 - Keycaps don't decorate idle controls: shortcuts live in tooltips, and a
   keycap shows only where it teaches something (onboarding, the empty state,
   a row's Return-to-paste).
-- Search is quiet until used: no well, no keycap, "Search" placeholder; it
-  takes the well on hover, focus or while it holds a query.
+- Search is an icon until used: no well, no keycap, "Search" placeholder; it
+  becomes a field in the well once opened, typed into or filtered.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
 for the voice of the product: headings, date groups, buttons, chips, mascot
@@ -311,13 +312,12 @@ robot glyph to stand for Eavesy itself.
 
 ```
 ┌──────────────────────────────────────────────┐
-│ ×  [m] Eavesy                 (W ▾)   ⚙      │ 44  title bar, drag region
+│ ×              [m] Eavesy                 ⚙  │ 44  title bar, drag region
 ├──────────────────────────────────────────────┤
+│ (Eavesy) (Captures)       (▭ eavesy ▾)   ⌕   │ 40  tabs, project chip, search icon
 │ ┌shelf (well, r12)──────────────────────────┐│
 │ │[Talk fn][Meeting][Screenshot][Video]      ││ 42  capture toolbar, 4 equal segments
 │ └───────────────────────────────────────────┘│
-│ ⌕ Search captures            /               │ 32
-│ (All) (Voice) (Meetings) (Screens) (Notes)   │ 26  chips, horizontal scroll
 │ Today                                         │
 │ ▏🎙 Voice note · 0:42          9:41  [⧉][⋯]  │ hover actions appear
 │ ▏  "Remind Sam the deck goes out…"           │ clamp 4 lines + fade + "More"
@@ -330,15 +330,24 @@ robot glyph to stand for Eavesy itself.
 └──────────────────────────────────────────────┘
 ```
 
-**Title bar (44):** close (18px circle, `--ev-ink-3`, hover `--ev-well`, not
-red), 22px mascot, "Eavesy" in round 13.5/650. Right side: the account chip
-(24px circle, manila-soft fill, manila-ink initial) opens a `Menu`: name/email,
-"Synced 2 min ago" with a leaf dot, Open eavesy.com, Settings ⌘,, Sign out.
-It also holds **Open ~/Eavesy folder** (moved here from the old footer), above
-Settings. Signed out, the chip is a ghost pill reading "Sign in" and the gear
-menu holds the folder link. The gear opens
-Settings. While recording, the title bar shows nothing new (the HUD carries
-recording state).
+**Title bar (44):** three columns. Left: close (18px circle, `--ev-ink-3`,
+hover `--ev-well`, not red). Centre: the 22px mascot and "Eavesy" in round
+13.5/700, centred on the panel. Right: the Update pill when one is ready,
+"Sign in" when signed out, and the gear, a `Menu` holding the account
+(name/email and a leaf "Syncing to eavesy.com" dot), Settings ⌘,, Open
+eavesy.com, **Open ~/Eavesy folder** and Sign out. The side columns share
+the slack, so the name stays centred until the right side outgrows its half.
+While recording, the mascot carries the capture's state; nothing else changes.
+
+**Tab row (40):** the Eavesy and Captures tabs. On Captures, the right end
+holds the project chip (next recording's project, `auto` when it follows the
+app in front) and search as a 28px icon. Clicking it or pressing `/` opens a
+field that takes the row's free width, and the project chip steps aside until
+it closes. Opening the panel focuses search quietly, so typing searches at
+once, but the field stays an icon until something is typed. "What to show"
+is a small filter icon at the field's end that opens a `Menu`; once it
+narrows the list it shows the filter's name on coat-soft. The field closes on
+blur when it holds no query and shows everything.
 
 **Capture toolbar:** one row, no sub-row and no source toggle. It sits on a
 well-coloured shelf (r12, 4px padding) split into **four equal, quiet
@@ -438,7 +447,7 @@ place to put things in.
   (no red dot) and "Drop to save". The list stays visible behind it and
   dims to 85%. Leaving the panel collapses it back. Dropping plays a one-shot
   `happy` in the composer, and the new row changes in at the top.
-- Focus: `--ev-focus` ring on the well. The placeholder dims and the `+`
+- Focus: `--ev-focus-field` on the raised well. The placeholder dims and the `+`
   icon turns coat.
 - Accessibility: `role="textbox" aria-multiline="true"`,
   `aria-label="New note, or paste or drop a file"`, and the drop state is
@@ -677,4 +686,7 @@ now" as a ghost button on the left.
 | `StatusDisc` | `status: 'granted' \| 'pending' \| 'denied' \| 'checking'` |
 
 Every interactive primitive uses `box-shadow: var(--ev-focus)` on
-`:focus-visible` and has a minimum 24px hit target.
+`:focus-visible` and has a minimum 24px hit target. Text fields (search, the
+composers) use the quieter `--ev-focus-field`, a 1px ink-3 hairline with a
+soft glow: the caret already shows where you are, and a 2px cream ring there
+read as a box drawn round the field.

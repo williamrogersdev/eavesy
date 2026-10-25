@@ -726,11 +726,13 @@ Eavesy), **Connections**, **Rules**, **Memory**, **Monitors**, **Files**,
   and the cream paper in light, with real vibrancy; wells are *lighter* than
   paper in dark mode (raised, not sunken), matching Settings' walnut.
 - **Title bar:** close, the one mascot (it carries the live state, so the
-  live card has none), the name, and Settings. The project chip moves to the
-  composer's context line; the account moves into Settings' menu.
-- **Search:** "Search" placeholder, filter as a small icon menu at the end,
-  no keycap until the field is focused. Focus ring is 1px ink-3 plus a soft
-  glow, not a 2px cream ring.
+  live card has none), the name centred, and Settings. The project chip moves
+  to the Captures tab row, beside the search icon; the account moves into
+  Settings' menu. Built.
+- **Search:** an icon in the tab row that opens into a field; "Search"
+  placeholder, filter as a small icon menu at the end, no keycap. Focus ring
+  is 1px ink-3 plus a soft glow (`--ev-focus-field`), not a 2px cream ring.
+  Built.
 - **Live bar:** the pill carried in (charcoal, coral light, up to 4 lines);
   Stop is a 28px coral pill; the `fn` hint lives in its tooltip. The ticker cuts at a word boundary with a soft fade.
 - **Keycaps:** one style, shown on hover or focus only, chords drawn as one

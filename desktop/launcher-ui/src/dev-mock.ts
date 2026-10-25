@@ -133,7 +133,7 @@ export function installDevMock(): void {
   const listeners = new Map<string, Handler[]>();
   const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
   const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
-  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), get copiedText() { return copiedText; } };
+  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), opened: () => emit('launcher:opened'), get copiedText() { return copiedText; } };
   window.__TAURI__ = {
     core: {
       convertFileSrc: () => SHOT,

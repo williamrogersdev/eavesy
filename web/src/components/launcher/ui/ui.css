@@ -321,7 +321,7 @@
     background var(--ev-d-state) var(--ev-ease-out);
 }
 .ev-composer[data-multiline='true'] { box-shadow: var(--ev-e-2); }
-.ev-composer:focus-within { background: var(--ev-raised); box-shadow: var(--ev-focus), var(--ev-e-2); }
+.ev-composer:focus-within { background: var(--ev-raised); box-shadow: var(--ev-focus-field), var(--ev-e-2); }
 .ev-composer:focus-within .ev-composer-add { color: var(--ev-coat); }
 .ev-composer-field {
   flex: 1;
