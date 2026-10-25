@@ -524,16 +524,29 @@ fn front_app_and_role() -> Option<(Target, Option<String>)> {
         }
         let system = Owned(AXUIElementCreateSystemWide());
         AXUIElementSetMessagingTimeout(system.0, 0.25);
-        let app = Owned(copy_attribute(system.0, "AXFocusedApplication")?);
+        let Some(app) = copy_attribute(system.0, "AXFocusedApplication").map(Owned) else {
+            // Electron apps with a long transcript (Claude, Slack) can miss
+            // the timeout. Without a target nothing is pasted, so fall back to
+            // the frontmost app, which needs no accessibility call, and paste
+            // without knowing the focused role.
+            let front = crate::app_menu::frontmost().map(|(pid, _)| pid);
+            tracing::info!(?front, "focused app unreadable; using the frontmost app");
+            return front.filter(|&pid| is_other_app(true, pid)).map(|pid| (Target { pid }, None));
+        };
         let mut pid = 0;
         if !is_other_app(AXUIElementGetPid(app.0, &mut pid) == 0, pid) {
+            tracing::info!(pid, "no paste target: the focused app is Eavesy or unreadable");
             return None;
         }
         let role = copy_attribute(app.0, "AXFocusedUIElement")
             .map(Owned)
             .and_then(|element| copy_attribute(element.0, "AXRole").map(Owned))
             .and_then(|role| cf_string(role.0));
-        (!rules_out_text(role.as_deref())).then_some((Target { pid }, role))
+        if rules_out_text(role.as_deref()) {
+            tracing::info!(pid, ?role, "no paste target: the focus isn't a text box");
+            return None;
+        }
+        Some((Target { pid }, role))
     }
 }
 
