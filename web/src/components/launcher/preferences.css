@@ -1,19 +1,10 @@
 /* Settings have their own native window; capture surfaces keep their existing geometry.
-   It reads as the case file: a manila folder down the side, cream index cards, and
-   leather-brown actions instead of charcoal. Everything is mixed from --ev-* tokens. */
+   It uses the same tokens as the rest of the app: charcoal actions, a well-tinted sidebar,
+   and manila only as the open section's notch. Everything is mixed from --ev-* tokens. */
 .ev-preferences-window {
   height: 100%;
   position: relative;
   color: var(--ev-ink);
-  /* The window's own token values, for the warmer mixes below. */
-  --evs-paper: var(--ev-paper);
-  --evs-well: var(--ev-well);
-  --evs-raised: var(--ev-raised);
-  --evs-line: var(--ev-line);
-  --evs-line-strong: var(--ev-line-strong);
-  --evs-ink: var(--ev-ink);
-  --evs-ink-2: var(--ev-ink-2);
-  --evs-ink-3: var(--ev-ink-3);
 }
 .ev-preferences {
   display: flex;
@@ -21,39 +12,19 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  --ev-coat: var(--ev-manila-ink);
-  --ev-coat-hover: color-mix(in srgb, var(--ev-manila-ink) 82%, var(--evs-ink));
-  --ev-coat-soft: var(--ev-manila-soft);
-  --ev-on-coat: var(--evs-paper);
-  --ev-hover: color-mix(in srgb, var(--ev-manila-shade) 12%, transparent);
-  --ev-focus: 0 0 0 2px var(--evs-paper), 0 0 0 4px color-mix(in srgb, var(--ev-manila-shade) 75%, transparent);
-  --evs-folder: color-mix(in srgb, var(--ev-manila-soft) 62%, var(--evs-well));
-  --evs-card-shadow: 0 1px 2px color-mix(in srgb, var(--ev-manila-ink) 8%, transparent);
+  --evs-folder: var(--ev-well);
+  --evs-card-shadow: 0 1px 2px color-mix(in srgb, var(--ev-ink) 6%, transparent);
   background: var(--ev-paper);
 }
-/* After hours: walnut and lamplight rather than black and white. */
 @media (prefers-color-scheme: dark) {
   .ev-preferences {
-    --ev-paper: color-mix(in srgb, var(--evs-paper) 91%, var(--ev-manila));
-    --ev-well: color-mix(in srgb, var(--evs-well) 93%, var(--ev-manila));
-    --ev-raised: color-mix(in srgb, var(--evs-raised) 89%, var(--ev-manila));
-    --ev-line: color-mix(in srgb, var(--evs-line) 82%, var(--ev-manila));
-    --ev-line-strong: color-mix(in srgb, var(--evs-line-strong) 80%, var(--ev-manila));
-    --ev-ink: color-mix(in srgb, var(--evs-ink) 90%, var(--ev-manila));
-    --ev-ink-2: color-mix(in srgb, var(--evs-ink-2) 84%, var(--ev-manila));
-    --ev-ink-3: color-mix(in srgb, var(--evs-ink-3) 84%, var(--ev-manila));
-    --ev-coat: var(--ev-manila);
-    --ev-coat-hover: var(--ev-manila-ink);
-    --ev-on-coat: var(--evs-paper);
-    --ev-hover: color-mix(in srgb, var(--ev-manila) 9%, transparent);
-    --evs-folder: color-mix(in srgb, var(--evs-well) 88%, var(--ev-manila));
-    --evs-card-shadow: 0 1px 0 color-mix(in srgb, var(--ev-manila) 6%, transparent) inset;
+    --evs-card-shadow: 0 1px 0 color-mix(in srgb, var(--ev-ink) 5%, transparent) inset;
   }
 }
 
 .ev-settings-layout { display: grid; grid-template-columns: 196px minmax(0, 1fr); flex: 1; min-height: 0; }
 
-/* The folder: manila down the side, the open section a paper tab pulled forward. */
+/* The sidebar: the open section is a paper tab pulled forward, with a manila notch. */
 .ev-settings-nav { display: flex; flex-direction: column; padding: 22px 12px 16px; background: var(--evs-folder); border-right: 1px solid var(--ev-line); overflow-y: auto; }
 .ev-settings-nav-title { display: flex; align-items: center; gap: 8px; padding: 0 10px 20px; color: var(--ev-ink); font: var(--ev-t-head); }
 .ev-settings-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin: 2px 0; border: 0; border-radius: var(--ev-r-ctl); color: var(--ev-ink-2); background: transparent; font: var(--ev-t-ui); text-align: left; position: relative; transition: background var(--ev-d-state), color var(--ev-d-state); }

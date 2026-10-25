@@ -127,9 +127,9 @@ export function PromptsSettings({ state, open, onOpen }: {
     <>
       <Card title="How prompts work">
         <ol className="ev-howto">
-          <li><span><b>Save what you keep typing.</b> A request you make every week, written the way that works best.</span></li>
-          <li><span><b>Paste it from the panel.</b> In the search, type <code>/</code> and part of its name, then press Return. It goes wherever your cursor was.</span></li>
-          <li><span><b>Or run it in Claude Code.</b> With Eavesy connected over MCP, each prompt is a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
+          <li><span><b>Write it once.</b> The instructions you give an agent again and again, worded the way that gets the best result.</span></li>
+          <li><span><b>Drop it in anywhere.</b> Open the panel, type <code>/</code> and part of its name, and press Return. It’s pasted where your cursor was.</span></li>
+          <li><span><b>Run it from Claude Code.</b> Once Eavesy is connected, each prompt is also a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
         </ol>
       </Card>
       <Card title="Your prompts">
