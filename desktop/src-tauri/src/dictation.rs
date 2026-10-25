@@ -543,7 +543,14 @@ fn front_app_and_role() -> Option<(Target, Option<String>)> {
                     return None;
                 };
                 tracing::info!(pid, "focused app unreadable; using the frontmost app");
-                (Owned(AXUIElementCreateApplication(pid)), pid)
+                let app = AXUIElementCreateApplication(pid);
+                if app.is_null() {
+                    return None;
+                }
+                // The system-wide timeout is global per Apple's docs; set it here too
+                // so a slow app can't stall delivery on the role read.
+                AXUIElementSetMessagingTimeout(app, 0.25);
+                (Owned(app), pid)
             }
         };
         if !is_other_app(true, pid) {
