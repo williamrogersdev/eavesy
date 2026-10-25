@@ -235,19 +235,37 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
     suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
     machine_inventory: () => Promise.resolve(MACHINE),
+    machine_worktree_details: ({ paths }) => later(500, (paths as string[]).flatMap((path) => { const found = MACHINE_DETAILS[path]; return found ? [{ path, ...found }] : []; })),
+    machine_repo_prs: ({ repo }) => later(1200, { available: true, prs: MACHINE_PRS[repo as string] ?? [] }),
+    machine_worktree_size: ({ path }) => later(700, MACHINE_SIZES[path as string] ?? 180_000_000),
+    machine_open_worktree: () => Promise.resolve(null),
+    machine_open_pr: () => Promise.resolve(null),
     machine_clean: ({ worktrees }) => Promise.resolve((worktrees as string[]).map((path) => ({ target: path, ok: true, message: null, restore: `git -C '/Users/w/Developer/eavesy' worktree add '${path}' 'some-branch'` }))),
   };
 }
 
-/** Settings → This Mac (machine/mod.rs `Inventory`). */
+/** Resolves after `ms`, like the real commands that look at git. */
+function later<T>(ms: number, value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+const EAVESY = '/Users/w/Developer/eavesy';
+const REPACKIFY = '/Users/w/Developer/repackify';
+const DAY = 86_400_000;
+const AT = Date.now();
+
+/** Settings → This Mac (machine/mod.rs `Inventory`). The quick pass: rows that need a closer look say `settled: false`. */
 const MACHINE = {
-  repos: ['/Users/w/Developer/eavesy', '/Users/w/Developer/repackify'],
+  repos: [EAVESY, REPACKIFY],
   worktrees: [
-    { path: '/Users/w/Developer/eavesy/.claude/worktrees/agent-a2f49f3017eaff5e0', repo: '/Users/w/Developer/eavesy', branch: 'feat/agent-reply-suggestion', status: 'stale' },
-    { path: '/private/tmp/eavesy-oxlint-pr', repo: '/Users/w/Developer/eavesy', branch: 'codex/oxlint-parity', status: 'stale' },
-    { path: '/Users/w/Developer/eavesy/.claude/worktrees/sharp-hodgkin-5cf282', repo: '/Users/w/Developer/eavesy', branch: 'claude/machine-inventory', status: 'in_use' },
-    { path: '/Users/w/Developer/repackify/.claude/worktrees/bol-timing', repo: '/Users/w/Developer/repackify', branch: 'claude/bol-timing', status: 'unmerged' },
-    { path: '/Users/w/Developer/repackify/.claude/worktrees/wip', repo: '/Users/w/Developer/repackify', branch: 'claude/wip', status: 'dirty' },
+    { path: `${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`, repo: EAVESY, branch: 'feat/agent-reply-suggestion', status: 'stale', settled: false },
+    { path: '/private/tmp/eavesy-oxlint-pr', repo: EAVESY, branch: 'codex/oxlint-parity', status: 'stale', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/hud-fix`, repo: EAVESY, branch: 'claude/hud-fix', status: 'unmerged', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/settings-race`, repo: EAVESY, branch: 'claude/settings-race', status: 'unmerged', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/sharp-hodgkin-5cf282`, repo: EAVESY, branch: 'claude/machine-inventory', status: 'in_use', settled: true },
+    { path: `${EAVESY}/.claude/worktrees/old-experiment`, repo: EAVESY, branch: null, status: 'locked', settled: true },
+    { path: `${REPACKIFY}/.claude/worktrees/bol-timing`, repo: REPACKIFY, branch: 'claude/bol-timing', status: 'unmerged', settled: false },
+    { path: `${REPACKIFY}/.claude/worktrees/wip`, repo: REPACKIFY, branch: 'claude/wip', status: 'stale', settled: false },
   ],
   leftovers: [
     ...Array.from({ length: 98 }, (_, i) => ({ pid: 8000 + i, started_us: 1_792_000_000_000_000 + i, name: 'git', exe: '/opt/homebrew/Cellar/git/2.56.0_1/bin/git', cwd: '/Users/w', session_id: null, helpers: 0, ports: [] })),
@@ -259,6 +277,32 @@ const MACHINE = {
     { port: 27925, address: '127.0.0.1', pid: 5100, name: 'convex-local-backend', cwd: '/Users/w/Developer/repackify/.claude/worktrees/lint-tooling', owner: 'session' },
     { port: 7265, address: '127.0.0.1', pid: 700, name: 'Raycast', cwd: '/', owner: 'other' },
   ],
+};
+
+/** The closer look for each mock worktree (machine/mod.rs `WorktreeDetail`). */
+const MACHINE_DETAILS: Record<string, Record<string, unknown>> = {
+  [`${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`]: { status: 'stale', merged_via: 'squash', changes: 0, last_commit_ms: AT - 9 * DAY, last_activity_ms: AT - 9 * DAY, base: 'origin/main', ahead: 3, behind: 41 },
+  '/private/tmp/eavesy-oxlint-pr': { status: 'stale', merged_via: 'ancestor', changes: 0, last_commit_ms: AT - 40 * DAY, last_activity_ms: AT - 40 * DAY, base: 'origin/main', ahead: 0, behind: 120 },
+  [`${EAVESY}/.claude/worktrees/hud-fix`]: { status: 'unmerged', merged_via: null, changes: 2, last_commit_ms: AT - 3 * 3_600_000, last_activity_ms: AT - 3_600_000, base: 'origin/main', ahead: 2, behind: 5 },
+  [`${EAVESY}/.claude/worktrees/settings-race`]: { status: 'unmerged', merged_via: null, changes: 0, last_commit_ms: AT - 2 * DAY, last_activity_ms: AT - 2 * DAY, base: 'origin/main', ahead: 1, behind: 9 },
+  [`${EAVESY}/.claude/worktrees/sharp-hodgkin-5cf282`]: { status: 'in_use', merged_via: null, changes: 4, last_commit_ms: AT - 600_000, last_activity_ms: AT - 60_000, base: 'origin/main', ahead: 1, behind: 0 },
+  [`${EAVESY}/.claude/worktrees/old-experiment`]: { status: 'locked', merged_via: null, changes: 0, last_commit_ms: AT - 90 * DAY, last_activity_ms: AT - 90 * DAY, base: 'origin/main', ahead: 6, behind: 300 },
+  [`${REPACKIFY}/.claude/worktrees/bol-timing`]: { status: 'unmerged', merged_via: null, changes: 0, last_commit_ms: AT - 5 * DAY, last_activity_ms: AT - 5 * DAY, base: 'origin/main', ahead: 4, behind: 20 },
+  [`${REPACKIFY}/.claude/worktrees/wip`]: { status: 'dirty', merged_via: 'ancestor', changes: 0, last_commit_ms: AT - 20 * DAY, last_activity_ms: AT - 20 * DAY, base: 'origin/main', ahead: 0, behind: 60 },
+};
+
+const MACHINE_PRS: Record<string, { number: number; state: 'open' | 'merged' | 'closed'; branch: string; url: string }[]> = {
+  [EAVESY]: [
+    { number: 231, state: 'merged', branch: 'feat/agent-reply-suggestion', url: 'https://github.com/eavesy/eavesy/pull/231' },
+    { number: 249, state: 'open', branch: 'claude/hud-fix', url: 'https://github.com/eavesy/eavesy/pull/249' },
+  ],
+  [REPACKIFY]: [],
+};
+
+const MACHINE_SIZES: Record<string, number> = {
+  [`${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`]: 1_450_000_000,
+  '/private/tmp/eavesy-oxlint-pr': 380_000_000,
+  [`${EAVESY}/.claude/worktrees/hud-fix`]: 910_000_000,
 };
 
 /** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */

@@ -1,0 +1,32 @@
+/* Settings → This Mac → Worktrees. Tokens only (desktop/DESIGN.md §4). */
+.ev-wt-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 4px; flex-wrap: wrap; }
+.ev-wt-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.ev-wt-summary { padding-bottom: 8px; }
+.ev-wt-group + .ev-wt-group { margin-top: 4px; }
+.ev-wt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 2px; border-top: 1px solid var(--ev-line); }
+.ev-wt-repo { display: flex; align-items: baseline; gap: 6px; margin: 0; min-width: 0; font: var(--ev-t-group); color: var(--ev-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-wt-count { font: var(--ev-t-small); color: var(--ev-ink-3); font-variant-numeric: tabular-nums; }
+.ev-wt-list { margin: 0; padding: 0; list-style: none; }
+.ev-wt-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; }
+.ev-wt-row + .ev-wt-row { border-top: 1px solid var(--ev-line); }
+.ev-wt-pick { flex: none; display: grid; place-items: center; width: 16px; height: 20px; }
+.ev-wt-main { flex: 1; min-width: 0; }
+.ev-wt-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ev-wt-branch { min-width: 0; overflow-wrap: anywhere; }
+.ev-wt-facts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.ev-wt-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+.ev-wt-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ev-wt-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border: 0; border-radius: var(--ev-r-pill); font: var(--ev-t-small); background: var(--ev-well); color: var(--ev-ink-2); white-space: nowrap; }
+.ev-wt-chip[data-tone='ok'] { background: var(--ev-leaf-soft); color: var(--ev-leaf); }
+.ev-wt-chip[data-tone='busy'] { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
+.ev-wt-chip[data-tone='warn'] { background: var(--ev-warn-soft); color: var(--ev-warn-ink); }
+.ev-wt-chip[data-tone='wait'] { color: var(--ev-ink-3); }
+.ev-wt-chip-link { cursor: pointer; }
+.ev-wt-chip-link:hover { box-shadow: inset 0 0 0 1px var(--ev-line-strong); }
+.ev-wt-chip-link:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-wt-skel { display: inline-block; width: 64px; height: 8px; border-radius: var(--ev-r-pill); background: var(--ev-well); }
+.ev-wt-skel-short { width: 36px; }
+@media (prefers-reduced-motion: no-preference) {
+  .ev-wt-skel { animation: ev-wt-pulse 1.4s ease-in-out infinite; }
+  @keyframes ev-wt-pulse { 50% { opacity: 0.45; } }
+}
