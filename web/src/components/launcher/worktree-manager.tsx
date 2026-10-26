@@ -7,9 +7,9 @@ import {
   type MachineWorktree, type RepoPr, type WorktreeDetail,
 } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
-import { Button, Card, Chip, IconButton } from './ui';
+import { Card, Chip, IconButton } from './ui';
 import {
-  factsLine, filterCounts, groupByRepo, matchesFilter, removeMergedLabel, viewWorktree,
+  factsLine, filterCounts, folderName, formatSize, groupByRepo, matchesFilter, shortPath, viewWorktree,
   type WorktreeFilter, type WorktreeView,
 } from './machine-model';
 import './machine.css';
@@ -136,36 +136,54 @@ function Chipped({ view, onError }: { view: WorktreeView; onError: (message: str
   );
 }
 
-/**
- * Every worktree agent sessions left, by repo: what state it's in, when it was
- * last touched, how big it is, and a way to look at it. The list is on screen
- * after the quick pass; activity, size and pull requests fill in as they
- * arrive. Removing goes through the page's confirm card.
- */
-export function WorktreeManager({ worktrees, token, home, selected, busy, onSelect, onRemove, onError }: {
-  worktrees: MachineWorktree[];
-  token: number;
-  home: string | null;
-  selected: Set<string>;
-  busy: boolean;
-  onSelect: (path: string, on: boolean) => void;
-  /** Asks to remove these; the confirm card names them. */
-  onRemove: (paths: string[]) => void;
-  onError: (message: string) => void;
+/** A checkbox in the rows' left column. `mixed` draws the dash a repo's box shows when only some of it is picked. */
+export function Pick({ checked, mixed = false, disabled = false, label, onChange }: {
+  checked: boolean;
+  mixed?: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (next: boolean) => void;
 }) {
-  const { details, failed, prs, sizes, wantSizes } = useWorktreeInfo(worktrees, token);
-  const [filter, setFilter] = useState<WorktreeFilter>('all');
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { setNow(Date.now()); }, [details]);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = mixed; }, [mixed]);
+  return <input ref={ref} type="checkbox" className="ev-machine-check" checked={checked} disabled={disabled} aria-label={label} onChange={(event) => onChange(event.target.checked)} />;
+}
 
+/** The rows, with what the closer look, GitHub and `du` have said so far, and which still wait for it. */
+export function useWorktreeViews(worktrees: MachineWorktree[], token: number) {
+  const { details, failed, prs, sizes, wantSizes } = useWorktreeInfo(worktrees, token);
   const views = useMemo(
     () => worktrees.map((row) => viewWorktree(row, details.get(row.path), prs.get(row.repo), sizes.get(row.path), failed.has(row.path))),
     [worktrees, details, prs, sizes, failed],
   );
+  const checking = views.filter((view) => !view.settled && !failed.has(view.path)).length;
+  return { views, checking, wantSizes };
+}
+
+/**
+ * Every worktree agent sessions left, by repo. Each row is one line of name
+ * and state over one line of small print, with its size in a column of its
+ * own so nothing shifts as sizes arrive. Removable rows have a box; a repo's
+ * box picks all of its removable ones. Removing goes through the page's
+ * selection bar.
+ */
+export function WorktreeManager({ views, checking, wantSizes, home, selected, busy, onSelect, onError }: {
+  views: WorktreeView[];
+  checking: number;
+  wantSizes: (paths: string[]) => void;
+  home: string | null;
+  selected: Set<string>;
+  busy: boolean;
+  onSelect: (paths: string[], on: boolean) => void;
+  onError: (message: string) => void;
+}) {
+  const [filter, setFilter] = useState<WorktreeFilter>('all');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { setNow(Date.now()); }, [views]);
+
   const counts = filterCounts(views);
   const shown = useMemo(() => views.filter((view) => matchesFilter(view, filter)), [views, filter]);
   const groups = useMemo(() => groupByRepo(shown), [shown]);
-  const checking = views.filter((view) => !view.settled && !failed.has(view.path)).length;
 
   // Sizes for what's on screen, once its closer look is in.
   const wanted = shown.filter((view) => view.detailed && view.exists && view.size === undefined).map((view) => view.path);
@@ -173,63 +191,62 @@ export function WorktreeManager({ worktrees, token, home, selected, busy, onSele
   useEffect(() => { if (wantedKey) wantSizes(wantedKey.split('\n')); }, [wantedKey, wantSizes]);
 
   const act = (run: Promise<void>, fallback: string) => void run.catch((err: unknown) => onError(errMsg(err, fallback)));
-  const removableAll = views.filter((view) => view.removable).map((view) => view.path);
-  const picked = [...selected].filter((path) => views.some((view) => view.path === path && view.removable));
-
-  const summary = [
-    counts.removable > 0 ? `${counts.removable} can be removed` : null,
-    counts.attention > 0 ? `${counts.attention} need a look` : null,
-    `${counts.all} in total`,
-  ].filter(Boolean).join(', ');
 
   return (
     <Card title="Worktrees">
-      {worktrees.length === 0 ? <p className="ev-set-hint">None. Worktrees show up here when a repo in ~/Developer has one.</p> : (
+      {views.length === 0 ? <p className="ev-set-hint">None. Worktrees show up here when a repo in ~/Developer has one.</p> : (
         <>
-          <div className="ev-wt-toolbar">
-            <div className="ev-wt-filters" role="group" aria-label="Show">
-              <Chip selected={filter === 'removable'} count={counts.removable} onClick={() => setFilter('removable')}>Removable</Chip>
-              <Chip selected={filter === 'attention'} count={counts.attention} onClick={() => setFilter('attention')}>Needs attention</Chip>
-              <Chip selected={filter === 'all'} count={counts.all} onClick={() => setFilter('all')}>All</Chip>
-            </div>
-            {picked.length > 0
-              ? <Button variant="primary" size="sm" disabled={busy} onClick={() => onRemove(picked)}>{`Remove ${picked.length} selected…`}</Button>
-              : removableAll.length > 0 && <Button variant="outline" size="sm" disabled={busy} onClick={() => onRemove(removableAll)}>{`${removeMergedLabel(removableAll.length)}…`}</Button>}
+          <div className="ev-wt-toolbar ev-wt-filters" role="group" aria-label="Show">
+            <Chip selected={filter === 'all'} count={counts.all} onClick={() => setFilter('all')}>All</Chip>
+            <Chip selected={filter === 'removable'} count={counts.removable} onClick={() => setFilter('removable')}>Can go</Chip>
+            <Chip selected={filter === 'attention'} count={counts.attention} onClick={() => setFilter('attention')}>Needs a look</Chip>
           </div>
-          <p className="ev-set-hint ev-wt-summary" aria-live="polite">{checking > 0 ? `${summary}. Checking ${checking}…` : `${summary}.`}</p>
 
-          {groups.length === 0 && <p className="ev-set-hint">{filter === 'removable' ? (checking > 0 ? 'Nothing yet. Still checking.' : 'None. A worktree shows up here once its branch is merged, it has no changes or local files, and no session is using it.') : 'Nothing needs a look.'}</p>}
+          {groups.length === 0 && <p className="ev-set-hint">{filter === 'removable' ? (checking > 0 ? 'Nothing yet. Still checking.' : 'None. A worktree can go once its branch is merged, it has no changes or local files, and no session is using it.') : 'Nothing needs a look.'}</p>}
           {groups.map((group) => {
             const removable = group.views.filter((view) => view.removable).map((view) => view.path);
+            const picked = removable.filter((path) => selected.has(path)).length;
             return (
               <section key={group.repo} className="ev-wt-group" aria-label={group.name}>
-                <header className="ev-wt-head">
-                  <h4 className="ev-wt-repo" title={group.repo}>{group.name}<span className="ev-wt-count">{group.views.length}</span></h4>
-                  {removable.length > 0 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(removable)}>{`${removeMergedLabel(removable.length)}…`}</Button>}
+                <header className="ev-wt-row ev-wt-head">
+                  <span className="ev-wt-pick">
+                    {removable.length > 0 && (
+                      <Pick
+                        checked={picked > 0 && picked === removable.length}
+                        mixed={picked > 0 && picked < removable.length}
+                        disabled={busy}
+                        label={`Select the ${removable.length} that can go in ${group.name}`}
+                        onChange={(on) => onSelect(removable, on)}
+                      />
+                    )}
+                  </span>
+                  <h4 className="ev-wt-repo" title={shortPath(group.repo, home)}>{group.name}</h4>
+                  <span className="ev-wt-count">{removable.length > 0 ? `${removable.length} of ${group.views.length} can go` : group.views.length}</span>
                 </header>
                 <ul className="ev-wt-list">
                   {group.views.map((view) => (
-                    <li key={view.path} className="ev-wt-row" data-removable={view.removable || undefined}>
+                    <li key={view.path} className="ev-wt-row" data-picked={selected.has(view.path) || undefined}>
                       <span className="ev-wt-pick">
-                        {view.removable && <input type="checkbox" className="ev-machine-check" checked={selected.has(view.path)} aria-label={`Remove ${view.path}`} onChange={(event) => onSelect(view.path, event.target.checked)} />}
+                        {view.removable && <Pick checked={selected.has(view.path)} disabled={busy} label={`Remove ${view.branch ?? folderName(view.path)}`} onChange={(on) => onSelect([view.path], on)} />}
                       </span>
-                      <div className="ev-wt-main">
+                      <div className="ev-wt-main" title={[shortPath(view.path, home), view.base && !view.removable && view.ahead !== null ? `Ahead and behind ${view.base}` : null].filter(Boolean).join('\n')}>
                         <div className="ev-wt-line">
                           <span className="ev-set-label ev-wt-branch">{view.branch ?? 'detached'}</span>
                           <Chipped view={view} onError={onError} />
                         </div>
-                        <div className="ev-set-hint ev-wt-facts">
-                          {factsLine(view, now, home)}
-                          {view.exists && !view.detailed && !view.settled && <span className="ev-wt-skel" aria-hidden />}
-                          {view.exists && view.detailed && view.size === undefined && <span className="ev-wt-skel ev-wt-skel-short" aria-hidden />}
-                        </div>
+                        <div className="ev-set-hint ev-wt-facts">{factsLine(view, now)}</div>
                       </div>
-                      {view.exists && (
-                        <div className="ev-wt-actions">
-                          <IconButton size={24} icon={FolderOpen} label="Show in Finder" onClick={() => act(openWorktree(view.path, 'reveal'), 'Couldn’t show it in Finder.')} />
-                          <IconButton size={24} icon={SquareTerminal} label="Open in Terminal" onClick={() => act(openWorktree(view.path, 'terminal'), 'Couldn’t open Terminal.')} />
-                        </div>
-                      )}
+                      <span className="ev-wt-size" aria-label={typeof view.size === 'number' ? `Size ${formatSize(view.size)}` : undefined}>
+                        {typeof view.size === 'number' ? formatSize(view.size) : view.exists && view.size === undefined ? <span className="ev-wt-skel" aria-hidden /> : null}
+                      </span>
+                      <div className="ev-wt-actions">
+                        {view.exists && (
+                          <>
+                            <IconButton size={24} icon={FolderOpen} label="Show in Finder" onClick={() => act(openWorktree(view.path, 'reveal'), 'Couldn’t show it in Finder.')} />
+                            <IconButton size={24} icon={SquareTerminal} label="Open in Terminal" onClick={() => act(openWorktree(view.path, 'terminal'), 'Couldn’t open Terminal.')} />
+                          </>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>

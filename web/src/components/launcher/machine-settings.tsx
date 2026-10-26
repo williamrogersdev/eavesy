@@ -1,23 +1,25 @@
 'use client';
 
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cleanMachine, getMachineInventory, type MachineInventory, type MachineOutcome } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
-import { Button, Card, Row } from './ui';
-import { cleanLabel, groupLeftovers, homeOf, shortPath, stopWhat } from './machine-model';
-import { WorktreeManager } from './worktree-manager';
+import { Button, Card, IconButton } from './ui';
+import { cleanLabel, folderName, groupLeftovers, homeOf, overview, selectionLabel, shortPath, stopWhat } from './machine-model';
+import { Pick, WorktreeManager, useWorktreeViews } from './worktree-manager';
 
-const OWNER_LABEL = { leftover: 'Left over', session: 'Running session', other: '' } as const;
-
-function Check({ checked, onChange, label }: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
-  return <input type="checkbox" className="ev-machine-check" checked={checked} aria-label={label} onChange={(event) => onChange(event.target.checked)} />;
-}
+const OWNER = {
+  leftover: { label: 'Left over', tone: 'warn' },
+  session: { label: 'Running session', tone: 'busy' },
+  other: null,
+} as const;
 
 /**
  * What agent sessions left on this Mac: worktrees (merged ones can go),
- * processes whose session ended, and the ports your processes hold. It only
- * reads until you confirm; the confirm lists exactly what goes.
+ * processes whose session ended, and the ports your processes hold. The top
+ * says what can go and cleans it up in one go; the lists below are for
+ * picking. It only reads until you confirm, and the confirm lists exactly
+ * what goes.
  */
 export function MachineSettings({ active }: { active: boolean }) {
   const [inventory, setInventory] = useState<MachineInventory | null>(null);
@@ -31,6 +33,7 @@ export function MachineSettings({ active }: { active: boolean }) {
   /** Changes on every full look, so the worktree list starts its closer look over. */
   const [token, setToken] = useState(0);
   const confirmRef = useRef<HTMLDivElement>(null);
+  const goRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,26 +53,51 @@ export function MachineSettings({ active }: { active: boolean }) {
   // Look once, the first time the section is opened; after that only on Refresh.
   useEffect(() => { if (active && !inventory && !loading && !error) void load(); }, [active, inventory, loading, error, load]);
 
+  const { views, checking, wantSizes } = useWorktreeViews(inventory?.worktrees ?? EMPTY, token);
   const home = inventory ? homeOf(inventory) : null;
   const leftoverGroups = useMemo(() => groupLeftovers(inventory?.leftovers ?? []), [inventory]);
-  const chosenProcesses = leftoverGroups.filter((group) => groups.has(group.key)).flatMap((group) => group.processes);
-  const chosenWorktrees = (inventory?.worktrees ?? []).filter((w) => worktrees.has(w.path));
-  const processCount = leftoverGroups.filter((group) => groups.has(group.key)).reduce((sum, group) => sum + group.total, 0);
-  const nothingChosen = chosenWorktrees.length === 0 && chosenProcesses.length === 0;
+  const removable = views.filter((view) => view.removable);
+  const chosenWorktrees = views.filter((view) => view.removable && worktrees.has(view.path));
+  const chosenGroups = leftoverGroups.filter((group) => groups.has(group.key));
+  const chosenProcesses = chosenGroups.flatMap((group) => group.processes);
+  const processCount = chosenGroups.reduce((sum, group) => sum + group.total, 0);
+  const anyChosen = chosenWorktrees.length > 0 || chosenProcesses.length > 0;
+  const leftoverTotal = leftoverGroups.reduce((sum, group) => sum + group.total, 0);
+  const summary = overview({
+    removable: removable.length,
+    processes: leftoverTotal,
+    checking,
+    bytes: removable.reduce((sum, view) => sum + (typeof view.size === 'number' ? view.size : 0), 0),
+    measuring: removable.some((view) => view.exists && view.size === undefined),
+    worktrees: views.length,
+  });
 
-  const toggle = (set: Set<string>, key: string, on: boolean) => {
+  const toggle = (set: Set<string>, keys: string[], on: boolean) => {
     const next = new Set(set);
-    if (on) next.add(key); else next.delete(key);
+    for (const key of keys) if (on) next.add(key); else next.delete(key);
     return next;
   };
 
-  /** Opens the confirm card for these worktrees. */
-  const askToRemove = (paths: string[]) => {
-    setWorktrees(new Set(paths));
+  /** Everything that can go, picked, with the confirm open. */
+  const cleanUpAll = () => {
+    setWorktrees(new Set(removable.map((view) => view.path)));
+    setGroups(new Set(leftoverGroups.map((group) => group.key)));
     setOutcomes(null);
     setConfirming(true);
   };
-  useEffect(() => { if (confirming) confirmRef.current?.scrollIntoView({ block: 'nearest' }); }, [confirming]);
+  const clearChoice = () => {
+    setWorktrees(new Set());
+    setGroups(new Set());
+    setConfirming(false);
+  };
+  // The confirm opens at the bottom of the pane; take focus to its button so the keyboard is there too.
+  useEffect(() => {
+    if (!confirming) return;
+    confirmRef.current?.scrollIntoView({ block: 'nearest' });
+    goRef.current?.focus();
+  }, [confirming]);
+  // Nothing left to confirm once the last pick is undone.
+  useEffect(() => { if (!anyChosen) setConfirming(false); }, [anyChosen]);
 
   const clean = async () => {
     setCleaning(true);
@@ -85,9 +113,7 @@ export function MachineSettings({ active }: { active: boolean }) {
         leftovers: current.leftovers.filter((l) => !gone.has(String(l.pid))),
         ports: current.ports.filter((port) => !gone.has(String(port.pid))),
       });
-      setWorktrees(new Set());
-      setGroups(new Set());
-      setConfirming(false);
+      clearChoice();
     } catch (err) {
       setError(errMsg(err, 'Couldn’t clean up.'));
     } finally {
@@ -97,16 +123,32 @@ export function MachineSettings({ active }: { active: boolean }) {
 
   const failed = outcomes?.filter((outcome) => !outcome.ok) ?? [];
   const restores = outcomes?.flatMap((outcome) => outcome.restore ? [outcome.restore] : []) ?? [];
+  const pickedGroups = leftoverGroups.filter((group) => groups.has(group.key)).length;
+  const somethingToClean = removable.length > 0 || leftoverGroups.length > 0;
 
   return (
-    <>
-      <div className="ev-machine-bar">
-        <p className="ev-set-hint">
-          {loading ? 'Looking at worktrees and processes…' : inventory ? `Looked in ${inventory.repos.length} repos in ~/Developer and your running Claude Code sessions.` : 'Nothing here changes until you confirm.'}
-        </p>
-        <Button variant="outline" size="sm" icon={RefreshCw} loading={loading} onClick={() => void load()}>Refresh</Button>
-      </div>
-      {error && <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{error}</p>}
+    <div className="ev-mac">
+      <section className="ev-mac-overview" aria-live="polite">
+        <div className="ev-mac-summary">
+          <h2 className="ev-mac-headline">{inventory ? summary.headline : loading ? 'Looking at this Mac…' : 'This Mac'}</h2>
+          <p className="ev-set-hint">
+            {inventory
+              ? summary.detail || `Looked in ${inventory.repos.length} repos and your running Claude Code sessions.`
+              : 'Worktrees and processes your agent sessions left behind. Nothing changes until you confirm.'}
+          </p>
+          {inventory && somethingToClean && (
+            <p className="ev-set-hint ev-mac-ask"><Sparkles size={12} strokeWidth={1.75} aria-hidden /> You can also ask Eavesy to “clean up my Mac”.</p>
+          )}
+        </div>
+        <div className="ev-mac-actions">
+          <IconButton size={28} icon={RefreshCw} label={loading ? 'Looking…' : 'Look again'} disabled={loading || cleaning} onClick={() => void load()} />
+          {inventory && somethingToClean && (
+            <Button variant="primary" size="md" icon={Trash2} disabled={cleaning} onClick={cleanUpAll}>Clean up…</Button>
+          )}
+        </div>
+      </section>
+
+      {error && <p role="alert" className="ev-set-hint ev-mac-error">{error}</p>}
       {outcomes && (
         <div role="status" className="ev-machine-card">
           <p>{failed.length === 0 ? 'Done.' : `${outcomes.length - failed.length} done, ${failed.length} skipped.`}</p>
@@ -120,68 +162,113 @@ export function MachineSettings({ active }: { active: boolean }) {
         </div>
       )}
 
-      {inventory && confirming && (
-        <div ref={confirmRef} role="dialog" aria-label="Confirm clean up" className="ev-machine-card">
-          <p className="ev-set-label">This will:</p>
-          <ul className="ev-machine-list">
-            {chosenWorktrees.map((w) => <li key={w.path}>Remove the worktree {shortPath(w.path, home)} with <code>git worktree remove</code>. Its branch stays.</li>)}
-            {leftoverGroups.filter((group) => groups.has(group.key)).map((group) => (
-              <li key={group.key}>Ask {stopWhat(group)} to stop.</li>
-            ))}
-          </ul>
-          <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Build output like node_modules goes with a worktree; one with changes or local files such as .env is never offered.</p>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>Cancel</Button>
-            <Button variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
-          </div>
-        </div>
-      )}
-
       {inventory && (
         <>
           <WorktreeManager
-            worktrees={inventory.worktrees}
-            token={token}
+            views={views}
+            checking={checking}
+            wantSizes={wantSizes}
             home={home}
             selected={worktrees}
             busy={cleaning}
-            onSelect={(path, on) => setWorktrees((set) => toggle(set, path, on))}
-            onRemove={askToRemove}
+            onSelect={(paths, on) => setWorktrees((set) => toggle(set, paths, on))}
             onError={setError}
           />
 
           <Card title="Left over from ended sessions">
             {leftoverGroups.length === 0
               ? <p className="ev-set-hint">None. Processes show up here when the Claude Code session that started them has ended.</p>
-              : leftoverGroups.map((group) => {
-                const cwd = group.processes.length === 1 ? shortPath(group.processes[0]?.cwd ?? null, home) : null;
-                const hint = [
-                  group.total > 1 ? `${group.total} processes` : `pid ${group.processes[0]?.pid}`,
-                  group.ports.length ? `port ${group.ports.join(', ')}` : null,
-                  cwd || null,
-                ].filter(Boolean).join(' · ');
-                return (
-                  <Row key={group.key} label={group.name} hint={hint}>
-                    <Check checked={groups.has(group.key)} label={`Stop ${group.name}`} onChange={(on) => setGroups((set) => toggle(set, group.key, on))} />
-                  </Row>
-                );
-              })}
+              : (
+                <ul className="ev-wt-list">
+                  <li className="ev-wt-row ev-wt-head">
+                    <span className="ev-wt-pick">
+                      <Pick
+                        checked={pickedGroups === leftoverGroups.length}
+                        mixed={pickedGroups > 0 && pickedGroups < leftoverGroups.length}
+                        disabled={cleaning}
+                        label="Select every leftover process"
+                        onChange={(on) => setGroups((set) => toggle(set, leftoverGroups.map((group) => group.key), on))}
+                      />
+                    </span>
+                    <h4 className="ev-wt-repo">All</h4>
+                    <span className="ev-wt-count">{leftoverTotal}</span>
+                  </li>
+                  {leftoverGroups.map((group) => {
+                    const cwd = group.processes.length === 1 ? group.processes[0]?.cwd ?? null : null;
+                    const facts = [
+                      group.total > 1 ? `${group.total} processes` : `pid ${group.processes[0]?.pid}`,
+                      group.ports.length ? `port ${group.ports.join(', ')}` : null,
+                      cwd && cwd !== '/' ? folderName(cwd) : null,
+                    ].filter(Boolean).join(' · ');
+                    return (
+                      <li key={group.key} className="ev-wt-row" data-picked={groups.has(group.key) || undefined}>
+                        <span className="ev-wt-pick">
+                          <Pick checked={groups.has(group.key)} disabled={cleaning} label={`Stop ${group.name}`} onChange={(on) => setGroups((set) => toggle(set, [group.key], on))} />
+                        </span>
+                        <div className="ev-wt-main" title={[group.exe, cwd ? shortPath(cwd, home) : null].filter(Boolean).join('\n')}>
+                          <div className="ev-wt-line"><span className="ev-set-label ev-wt-branch">{group.name}</span></div>
+                          <div className="ev-set-hint ev-wt-facts">{facts}</div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             {inventory.zombies.length > 0 && <p className="ev-set-hint">{inventory.zombies.length} finished processes are waiting for their parent to collect them. They use no memory and can’t be stopped.</p>}
           </Card>
 
           <Card title="Listening ports">
             {inventory.ports.length === 0
               ? <p className="ev-set-hint">None of your processes are listening.</p>
-              : inventory.ports.map((port) => (
-                <Row key={`${port.port}-${port.pid}`} label={`${port.port}  ${port.name}`} hint={[OWNER_LABEL[port.owner], shortPath(port.cwd, home)].filter(Boolean).join(' · ') || undefined} />
-              ))}
+              : (
+                <ul className="ev-wt-list">
+                  {inventory.ports.map((port) => {
+                    const owner = OWNER[port.owner];
+                    const where = port.cwd && port.cwd !== '/' ? folderName(port.cwd) : null;
+                    return (
+                      <li key={`${port.port}-${port.pid}`} className="ev-wt-row ev-port-row">
+                        <span className="ev-port-num">{port.port}</span>
+                        <div className="ev-wt-main" title={port.cwd ? shortPath(port.cwd, home) : undefined}>
+                          <div className="ev-wt-line">
+                            <span className="ev-set-label ev-wt-branch">{port.name}</span>
+                            {owner && <span className="ev-wt-chip" data-tone={owner.tone}>{owner.label}</span>}
+                          </div>
+                          {where && <div className="ev-set-hint ev-wt-facts">{where}</div>}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
           </Card>
-
-          <div className="ev-machine-confirm">
-            <Button variant="outline" size="sm" disabled={nothingChosen || confirming} onClick={() => { setOutcomes(null); setConfirming(true); }}>Clean up…</Button>
-          </div>
         </>
       )}
-    </>
+
+      {inventory && anyChosen && (
+        <div ref={confirmRef} className="ev-mac-bar" role="region" aria-label={confirming ? 'Confirm clean up' : 'Selection'}>
+          {confirming && (
+            <div className="ev-mac-confirm">
+              <p className="ev-set-label">This will:</p>
+              <ul className="ev-machine-list">
+                {chosenWorktrees.map((w) => <li key={w.path}>Remove the worktree {shortPath(w.path, home)} with <code>git worktree remove</code>. Its branch stays.</li>)}
+                {chosenGroups.map((group) => <li key={group.key}>Ask {stopWhat(group)} to stop.</li>)}
+              </ul>
+              <p className="ev-set-hint">Each one is checked again first, and anything that changed is skipped. Build output like node_modules goes with a worktree; one with changes or local files such as .env is never offered.</p>
+            </div>
+          )}
+          <div className="ev-mac-bar-row">
+            <span className="ev-set-label ev-mac-bar-label">{confirming ? 'Go ahead?' : selectionLabel(chosenWorktrees.length, processCount)}</span>
+            <div className="ev-mac-bar-actions">
+              <Button variant="ghost" size="sm" disabled={cleaning} onClick={confirming ? () => setConfirming(false) : clearChoice}>{confirming ? 'Back' : 'Clear'}</Button>
+              {confirming
+                ? <Button ref={goRef} variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
+                : <Button variant="primary" size="sm" onClick={() => { setOutcomes(null); setConfirming(true); }}>Clean up…</Button>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
+
+const EMPTY: MachineInventory['worktrees'] = [];

@@ -52,6 +52,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open_item = MenuItem::with_id(app, "open", "Open Eavesy", true, menu_accel(&settings.toggle_hotkey))?;
     let control_item = MenuItem::with_id(app, "show_control", "Show Capture Control", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let machine_item = MenuItem::with_id(app, "this_mac", "Clean Up This Mac…", true, None::<&str>)?;
     let setup_item = MenuItem::with_id(app, "setup", "Run Setup Again…", true, None::<&str>)?;
     let updates_item = MenuItem::with_id(app, "check_updates", "Check for Updates…", true, None::<&str>)?;
     let about_item = MenuItem::with_id(app, "about", "About Eavesy", true, None::<&str>)?;
@@ -65,6 +66,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &open_item,
             &control_item,
             &separator()?,
+            &machine_item,
             &settings_item,
             &setup_item,
             &updates_item,
@@ -125,6 +127,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "open" => hotkeys::show_launcher(app),
             "show_control" => crate::hud::set_hidden_on_main(app, false),
             "settings" => { let _ = crate::commands::show_settings(app.clone()); },
+            "this_mac" => { let _ = crate::settings_window::show_section(app, "machine"); },
             "setup" => crate::commands::show_setup(app.clone()),
             "check_updates" => crate::updates::check_interactively(app),
             "about" => crate::app_menu::show_about(app),

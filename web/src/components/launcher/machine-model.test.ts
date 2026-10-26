@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { MachineWorktree, RepoPr, WorktreeDetail } from '@/lib/desktop/bridge';
-import { ageLabel, cleanLabel, factsLine, filterCounts, formatSize, groupByRepo, groupLeftovers, homeOf, matchesFilter, prFor, removeMergedLabel, shortPath, stopWhat, viewWorktree } from './machine-model';
+import { ageLabel, cleanLabel, factsLine, filterCounts, formatSize, groupByRepo, groupLeftovers, homeOf, matchesFilter, prFor, overview, selectionLabel, shortPath, stopWhat, viewWorktree } from './machine-model';
 
 const leftover = (pid: number, name: string, exe: string, extra: { helpers?: number; ports?: number[] } = {}) => ({
   pid, started_us: pid * 10, name, exe, cwd: null, session_id: null, helpers: extra.helpers ?? 0, ports: extra.ports ?? [],
@@ -87,7 +87,6 @@ describe('machine model', () => {
     expect(filterCounts(views)).toEqual({ removable: 1, attention: 1, all: 3 });
     expect(views.filter((view) => matchesFilter(view, 'removable')).map((view) => view.path)).toEqual(['/r/a']);
     expect(groupByRepo(views).map((group) => [group.name, group.views.length])).toEqual([['eavesy', 2], ['other', 1]]);
-    expect(removeMergedLabel(12)).toBe('Remove 12 merged');
   });
 
   test('says how long ago and how big in plain numbers', () => {
@@ -109,11 +108,24 @@ describe('machine model', () => {
   test('the small print only says what is known', () => {
     const now = 1_000_000_000_000;
     const bare = viewWorktree(row('/Users/w/Developer/eavesy/wt', 'unmerged', false), undefined, undefined, undefined);
-    expect(factsLine(bare, now, '/Users/w')).toBe('~/Developer/eavesy/wt');
+    expect(factsLine(bare, now)).toBe('wt');
     const full = viewWorktree(row('/Users/w/Developer/eavesy/wt', 'unmerged', false), detail('/Users/w/Developer/eavesy/wt', 'unmerged', { last_activity_ms: now - 2 * 86_400_000, ahead: 2, behind: 14, changes: 1 }), undefined, 420 * 1024 * 1024);
-    expect(factsLine(full, now, '/Users/w')).toBe('~/Developer/eavesy/wt · active 2 days ago · 2 ahead of origin/main, 14 behind · 1 changed file · 420 MB');
+    expect(factsLine(full, now)).toBe('wt · active 2 days ago · 2 ahead, 14 behind · 1 changed file');
     // A merged one's distance from main says nothing useful.
     const merged = viewWorktree(row('/r/m', 'stale', false), detail('/r/m', 'stale', { ahead: 3, behind: 40 }), undefined, null);
-    expect(factsLine(merged, now, null)).toBe('/r/m');
+    expect(factsLine(merged, now)).toBe('m');
+  });
+
+  test('the overview says what can go, or that all is tidy', () => {
+    expect(overview({ removable: 2, processes: 101, checking: 0, bytes: 1.8 * 1024 ** 3, worktrees: 8 }))
+      .toEqual({ headline: '2 worktrees and 101 leftover processes can go.', detail: 'Frees about 1.8 GB.' });
+    expect(overview({ removable: 2, processes: 0, checking: 0, bytes: 400 * 1024 ** 2, measuring: true, worktrees: 8 }).detail).toBe('Frees at least 400 MB.');
+    expect(overview({ removable: 1, processes: 0, checking: 3, bytes: 0, worktrees: 8 }))
+      .toEqual({ headline: '1 worktree can go.', detail: 'Still checking 3 worktrees.' });
+    expect(overview({ removable: 0, processes: 0, checking: 0, bytes: 0, worktrees: 8 }))
+      .toEqual({ headline: 'All tidy.', detail: '8 worktrees, nothing left over.' });
+    expect(overview({ removable: 0, processes: 0, checking: 2, bytes: 0, worktrees: 8 }).headline).toBe('Looking closer…');
+    expect(selectionLabel(2, 98)).toBe('2 worktrees and 98 processes selected');
+    expect(selectionLabel(0, 1)).toBe('1 process selected');
   });
 });

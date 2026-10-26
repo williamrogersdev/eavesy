@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDownCircle, FolderOpen, Globe, LogOut, Settings, X } from 'lucide-react';
-import { hidePanel, installUpdate, openRecordingsFolder, openWebApp } from '@/lib/desktop/bridge';
+import { ArrowDownCircle, FolderOpen, Globe, Laptop, LogOut, Settings, X } from 'lucide-react';
+import { hidePanel, installUpdate, openRecordingsFolder, openSettingsWindow, openWebApp } from '@/lib/desktop/bridge';
 import { type AccountState } from '@/components/launcher/settings-view';
 import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
 import { type RunTask } from './types';
@@ -75,6 +75,11 @@ export function TitleBar({
     onSelect: () => runTask(openRecordingsFolder, 'Couldn’t open your Eavesy folder'),
   };
   const settingsItem: MenuItem = { label: 'Settings', icon: Settings, kbd: '⌘,', onSelect: goSettings };
+  const machineItem: MenuItem = {
+    label: 'Clean up this Mac',
+    icon: Laptop,
+    onSelect: () => runTask(() => openSettingsWindow('machine'), 'Couldn’t open settings'),
+  };
 
   return (
     <div data-tauri-drag-region className="ev-tb">
@@ -118,11 +123,12 @@ export function TitleBar({
           ) : undefined}
           items={account ? [
             settingsItem,
+            machineItem,
             { label: 'Open eavesy.com', icon: Globe, onSelect: () => runTask(openWebApp, 'Couldn’t open the web app') },
             folderItem,
             'separator',
             { label: 'Sign out', icon: LogOut, tone: 'warn', onSelect: disconnect },
-          ] : [settingsItem, folderItem]}
+          ] : [settingsItem, machineItem, folderItem]}
         />
       </div>
     </div>

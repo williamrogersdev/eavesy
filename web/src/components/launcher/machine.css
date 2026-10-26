@@ -1,22 +1,51 @@
-/* Settings → This Mac → Worktrees. Tokens only (desktop/DESIGN.md §4). */
-.ev-wt-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 4px; flex-wrap: wrap; }
+/* Settings → This Mac. Tokens only (desktop/DESIGN.md §4). */
+
+/* The top: what can go, in one sentence, and the one button that cleans it up. */
+.ev-mac-overview { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 16px; border-radius: var(--ev-r-pop); background: var(--ev-raised); box-shadow: 0 0 0 1px var(--ev-line), var(--evs-card-shadow); }
+.ev-mac-summary { min-width: 0; }
+.ev-mac-headline { margin: 0 0 2px; font: var(--ev-t-head); color: var(--ev-ink); }
+.ev-mac-summary .ev-set-hint { margin: 0; }
+.ev-mac-ask { display: flex; align-items: center; gap: 5px; margin-top: 6px !important; color: var(--ev-ink-3); }
+.ev-mac-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+.ev-mac-error { margin: -6px 0 12px; color: var(--ev-warn-ink); }
+
+/* The selection bar, held at the bottom of the pane while something is picked. */
+.ev-mac-bar { position: sticky; bottom: -32px; z-index: 2; margin: 18px 0 -32px; padding: 12px 0 32px; background: linear-gradient(to bottom, transparent, var(--ev-paper) 12px); }
+.ev-mac-bar > * { border-radius: var(--ev-r-pop); }
+.ev-mac-bar-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 16px; background: var(--ev-raised); box-shadow: 0 0 0 1px var(--ev-line), var(--ev-e-2); }
+.ev-mac-bar-actions { display: flex; align-items: center; gap: 6px; }
+.ev-mac-confirm { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; padding: 14px 16px; background: var(--ev-raised); box-shadow: 0 0 0 1px var(--ev-line), var(--ev-e-2); font: var(--ev-t-body); color: var(--ev-ink); }
+.ev-mac-confirm p { margin: 0; }
+
+/* Lists: a box column, the row, a size column, then actions that show on hover. */
+.ev-wt-toolbar { padding: 12px 0; }
 .ev-wt-filters { display: flex; gap: 4px; flex-wrap: wrap; }
-.ev-wt-summary { padding-bottom: 8px; }
-.ev-wt-group + .ev-wt-group { margin-top: 4px; }
-.ev-wt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 2px; border-top: 1px solid var(--ev-line); }
-.ev-wt-repo { display: flex; align-items: baseline; gap: 6px; margin: 0; min-width: 0; font: var(--ev-t-group); color: var(--ev-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ev-wt-count { font: var(--ev-t-small); color: var(--ev-ink-3); font-variant-numeric: tabular-nums; }
 .ev-wt-list { margin: 0; padding: 0; list-style: none; }
-.ev-wt-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; }
-.ev-wt-row + .ev-wt-row { border-top: 1px solid var(--ev-line); }
-.ev-wt-pick { flex: none; display: grid; place-items: center; width: 16px; height: 20px; }
-.ev-wt-main { flex: 1; min-width: 0; }
-.ev-wt-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ev-wt-branch { min-width: 0; overflow-wrap: anywhere; }
-.ev-wt-facts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
-.ev-wt-actions { flex: none; display: flex; align-items: center; gap: 2px; }
-.ev-wt-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.ev-wt-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border: 0; border-radius: var(--ev-r-pill); font: var(--ev-t-small); background: var(--ev-well); color: var(--ev-ink-2); white-space: nowrap; }
+.ev-wt-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 9px 0; }
+.ev-wt-list > .ev-wt-row + .ev-wt-row { border-top: 1px solid var(--ev-line); }
+.ev-wt-head { grid-template-columns: 16px minmax(0, 1fr) auto; padding: 12px 0 4px; }
+.ev-wt-list > .ev-wt-head + .ev-wt-row { border-top: 0; }
+.ev-wt-repo { margin: 0; min-width: 0; font: var(--ev-t-group); color: var(--ev-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-wt-count { font: var(--ev-t-small); color: var(--ev-ink-3); font-variant-numeric: tabular-nums; }
+.ev-wt-pick { display: grid; place-items: center; width: 16px; }
+.ev-wt-main { min-width: 0; }
+.ev-wt-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ev-wt-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-wt-facts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-wt-size { min-width: 52px; text-align: right; font: var(--ev-t-small); color: var(--ev-ink-2); font-variant-numeric: tabular-nums; }
+.ev-wt-actions { display: flex; align-items: center; gap: 2px; width: 50px; justify-content: flex-end; opacity: 0; transition: opacity var(--ev-d-state); }
+.ev-wt-row:hover .ev-wt-actions, .ev-wt-row:focus-within .ev-wt-actions { opacity: 1; }
+.ev-wt-row[data-picked] .ev-wt-branch { color: var(--ev-ink); }
+.ev-machine-check:disabled { opacity: 0.5; cursor: default; }
+.ev-machine-check:indeterminate { background: var(--ev-coat); box-shadow: none; }
+.ev-machine-check:indeterminate::after { content: ''; width: 8px; height: 1.75px; background: var(--ev-on-coat); }
+
+/* Ports put their number where the box would be. */
+.ev-port-row { grid-template-columns: 52px minmax(0, 1fr); }
+.ev-port-num { font: var(--ev-t-ui); color: var(--ev-ink-2); font-variant-numeric: tabular-nums; }
+
+.ev-wt-chips { display: inline-flex; flex: none; align-items: center; gap: 4px; }
+.ev-wt-chip { display: inline-flex; flex: none; align-items: center; height: 18px; padding: 0 7px; border: 0; border-radius: var(--ev-r-pill); font: var(--ev-t-small); background: var(--ev-well); color: var(--ev-ink-2); white-space: nowrap; }
 .ev-wt-chip[data-tone='ok'] { background: var(--ev-leaf-soft); color: var(--ev-leaf); }
 .ev-wt-chip[data-tone='busy'] { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
 .ev-wt-chip[data-tone='warn'] { background: var(--ev-warn-soft); color: var(--ev-warn-ink); }
@@ -24,9 +53,9 @@
 .ev-wt-chip-link { cursor: pointer; }
 .ev-wt-chip-link:hover { box-shadow: inset 0 0 0 1px var(--ev-line-strong); }
 .ev-wt-chip-link:focus-visible { outline: none; box-shadow: var(--ev-focus); }
-.ev-wt-skel { display: inline-block; width: 64px; height: 8px; border-radius: var(--ev-r-pill); background: var(--ev-well); }
-.ev-wt-skel-short { width: 36px; }
+.ev-wt-skel { display: inline-block; width: 36px; height: 8px; border-radius: var(--ev-r-pill); background: var(--ev-well); vertical-align: middle; }
 @media (prefers-reduced-motion: no-preference) {
   .ev-wt-skel { animation: ev-wt-pulse 1.4s ease-in-out infinite; }
   @keyframes ev-wt-pulse { 50% { opacity: 0.45; } }
 }
+.ev-mac-bar-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
