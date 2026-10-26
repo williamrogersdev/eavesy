@@ -41,7 +41,7 @@ impl Verb {
             Verb::Firewall => "Turn on the firewall",
             Verb::Stealth => "Turn on stealth mode",
             Verb::Gatekeeper => "Turn on Gatekeeper",
-            Verb::AutoLogin => "Turn off automatic login",
+            Verb::AutoLogin => "Turn off automatic login and delete its saved password",
         }
     }
 
@@ -50,8 +50,8 @@ impl Verb {
             Verb::Firewall => "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on",
             Verb::Stealth => "/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on",
             Verb::Gatekeeper => "/usr/sbin/spctl --global-enable",
-            // The saved password goes with the setting.
-            Verb::AutoLogin => "/usr/bin/defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser && /bin/rm -f /etc/kcpassword",
+            // The saved password goes with the setting, even if the setting was already gone.
+            Verb::AutoLogin => "/usr/bin/defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser; /bin/rm -f /etc/kcpassword",
         }
     }
 }
@@ -161,7 +161,7 @@ mod tests {
             script(&[Verb::Gatekeeper, Verb::Firewall, Verb::Gatekeeper]),
             "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on; /usr/sbin/spctl --global-enable"
         );
-        assert_eq!(prompt(&[Verb::Firewall, Verb::AutoLogin]), "Eavesy wants to turn on the firewall, turn off automatic login.");
+        assert_eq!(prompt(&[Verb::Firewall, Verb::AutoLogin]), "Eavesy wants to turn on the firewall, turn off automatic login and delete its saved password.");
         let source = applescript(&[Verb::Stealth]);
         assert!(source.starts_with("do shell script \"/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on\" with prompt "));
         assert!(source.ends_with(" with administrator privileges"));

@@ -286,8 +286,13 @@ impl Action for SecurityStatus {
 /// Splits a fix request: settings Eavesy turns on, or panes to open. Never both at once,
 /// so a card always shows one kind of thing.
 fn security_fix(checks: Vec<CheckId>) -> Result<Box<dyn Action>, String> {
-    let mut seen = Vec::new();
-    let checks: Vec<CheckId> = checks.into_iter().filter(|id| !seen.contains(id) && { seen.push(*id); true }).collect();
+    let mut unique: Vec<CheckId> = Vec::new();
+    for id in checks {
+        if !unique.contains(&id) {
+            unique.push(id);
+        }
+    }
+    let checks = unique;
     if checks.is_empty() {
         return Err("Say which checks to fix.".into());
     }
@@ -316,9 +321,14 @@ struct SecurityFix {
 impl Action for SecurityFix {
     fn tool(&self) -> &'static str { "security.fix" }
     // Only ever tightens a setting and checks it again first, so one setting on its own
-    // is on Auto's safe list (the plan's decision 9); a batch shows a card. There's no
-    // Undo, since that would loosen it again. An agent never runs it without your click.
-    fn facts(&self) -> Facts { Facts { safe_listed: self.verbs.len() == 1, you_only: true, ..facts(Tier::Click, self.verbs.len()) } }
+    // is on Auto's safe list (the plan's decision 9); a batch shows a card. Turning off
+    // automatic login also deletes its saved password, which can't be put back, so it
+    // always shows one. There's no Undo, since that would loosen it again. An agent
+    // never runs it without your click.
+    fn facts(&self) -> Facts {
+        let safe = self.verbs.len() == 1 && !self.verbs.contains(&Verb::AutoLogin);
+        Facts { safe_listed: safe, you_only: true, ..facts(Tier::Click, self.verbs.len()) }
+    }
     fn title(&self) -> String {
         let labels: Vec<&str> = self.verbs.iter().map(|verb| verb.label()).collect();
         labels.join(", ")
@@ -349,7 +359,11 @@ impl Action for SecurityFix {
         }
         let admin = fix::run_admin(&needed);
         let after = crate::security::read_all(&ids);
-        let summary = fixed_summary(&needed, &admin, &after);
+        let mut summary = fixed_summary(&needed, &admin, &after);
+        let already: Vec<&str> = chosen.iter().filter(|verb| !needed.contains(verb)).map(|verb| verb.check().title()).collect();
+        if !already.is_empty() {
+            summary = format!("{summary}. Already on: {}", already.join(", "));
+        }
         // Whatever is still off opens where you can change it yourself.
         if admin != Admin::Cancelled {
             if let Some(left) = after.iter().find(|f| f.state != State::Good) {
@@ -634,6 +648,9 @@ mod tests {
         // A batch always gets a card in Auto; one setting on its own may not.
         let Ok(one) = security_fix(vec![CheckId::Firewall]) else { panic!() };
         assert!(one.facts().safe_listed);
+        // Deleting the saved login password can't be put back: always a card.
+        let Ok(login) = security_fix(vec![CheckId::AutoLogin]) else { panic!() };
+        assert!(!login.facts().safe_listed);
     }
 
     #[test]
