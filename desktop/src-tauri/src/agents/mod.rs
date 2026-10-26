@@ -90,8 +90,9 @@ pub fn socket_path() -> Option<PathBuf> {
 
 /// The socket's folder must be yours alone before the socket exists, because
 /// its own mode is only set right after `bind`. The per-user temp folder
-/// already is; Eavesy's own Application Support folder is tightened here.
-/// Anything else (a symlink, someone else's folder) refuses the socket.
+/// normally is already; Eavesy's own Application Support folder is tightened
+/// here. Anything else that's open to other users, a symlink or someone
+/// else's folder refuses the socket, and agents can't connect.
 fn private_folder(dir: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let meta = std::fs::symlink_metadata(dir)?;
@@ -600,6 +601,34 @@ pub fn set_agent_hold(app: AppHandle, seconds: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_socket_folder_must_be_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |dir: &std::path::Path| std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        let set = |dir: &std::path::Path, mode: u32| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        let root = std::env::temp_dir().join(format!("eavesy-socket-folder-{}", std::process::id()));
+        let other = root.join("other");
+        let ours = root.join("com.eavesy.desktop");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::create_dir_all(&ours).unwrap();
+
+        set(&other, 0o700);
+        assert!(private_folder(&other).is_ok());
+        // A shared folder that isn't ours is refused, not changed.
+        set(&other, 0o755);
+        assert!(private_folder(&other).is_err());
+        assert_eq!(mode(&other), 0o755);
+        // Our own folder is tightened.
+        set(&ours, 0o755);
+        assert!(private_folder(&ours).is_ok());
+        assert_eq!(mode(&ours), 0o700);
+        // A symlink is refused even when it points somewhere private.
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&ours, &link).unwrap();
+        assert!(private_folder(&link).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
     use queue::Queue;
 
     fn items(queue: &Queue) -> Vec<queue::Item> {
