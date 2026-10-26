@@ -223,6 +223,8 @@ describe('MCP scopes', () => {
       'list_projects',
       'search_dictations',
       'get_action_items',
+      'get_account_info',
+      'sign_out',
     ]);
     expect(tools.every((tool) => tool.scope === undefined)).toBe(true);
   });
@@ -239,7 +241,62 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(10);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(12);
+  });
+});
+
+describe('MCP account tools', () => {
+  const rpc = async (token: string, method: string, params?: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      }),
+      mcpEnv(),
+    )).json<{
+      result?: { tools?: { name: string; annotations?: Record<string, boolean> }[]; content?: { text: string }[] };
+      error?: unknown;
+    }>();
+  const callJson = async (token: string, name: string) =>
+    JSON.parse((await rpc(token, 'tools/call', { name, arguments: {} })).result?.content?.[0]?.text ?? 'null');
+
+  it('mark only the library tools as read-only', async () => {
+    const { token } = await mint();
+    const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
+    const hints = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
+    expect(hints.search_meetings).toEqual({ readOnlyHint: true, openWorldHint: false });
+    expect(hints.get_account_info?.readOnlyHint).toBe(true);
+    expect(hints.send_to_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(hints.ask_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(hints.sign_out).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    expect(tools.every((tool) => tool.annotations !== undefined)).toBe(true);
+  });
+
+  it('say which account and connection the token belongs to', async () => {
+    await testEnv.DB.prepare(`UPDATE users SET email = 'ada@example.com', display_name = 'Ada' WHERE id = 'user_mcp'`).run();
+    const minted = await mint(['write']);
+    const info = await callJson(minted.token, 'get_account_info');
+    expect(info).toEqual({
+      email: 'ada@example.com',
+      name: 'Ada',
+      connection: {
+        name: 'Claude',
+        access: ['read', 'write'],
+        kind: 'token',
+        created_at: expect.any(String),
+        expires_at: new Date(minted.expiresAt).toISOString(),
+      },
+    });
+  });
+
+  it('sign out only the calling connection', async () => {
+    const first = await mint();
+    const second = await mint();
+    expect((await callJson(first.token, 'sign_out')).status).toBe('signed_out');
+    const after = await call('https://mcp.eavesy.com/', { authorization: `Bearer ${first.token}` });
+    expect(after.status).toBe(401);
+    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(12);
   });
 });
 
