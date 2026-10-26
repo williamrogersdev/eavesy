@@ -192,7 +192,8 @@ jobs:
             if /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" > /dev/null 2>&1; then
               /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
             else
-              test -s "$PLIST" && plutil -lint "$PLIST"
+              # Recording always needs this one, so the file itself was read.
+              /usr/libexec/PlistBuddy -c "Print :com.apple.security.device.audio-input" "$PLIST" > /dev/null
               echo "$key isn't in the checked-in entitlements"
             fi
           done
