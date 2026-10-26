@@ -6,6 +6,25 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-26 - desktop
+
+### Added
+
+- Mac app: security checkup with security_status and security_fix ([#272](https://github.com/williamrogersdev/eavesy/pull/272))
+- Mac app: drop the JIT and unsigned-memory entitlements ([#269](https://github.com/williamrogersdev/eavesy/pull/269))
+- Mac app: cancel a recording without saving it ([#265](https://github.com/williamrogersdev/eavesy/pull/265))
+- Mac app: phase 0 hardening — trusted capture engine, private socket folder, pinned update key, cargo audit ([#264](https://github.com/williamrogersdev/eavesy/pull/264))
+- Mac app: calmer This Mac with one clean-up action, and a way in from the menus ([#260](https://github.com/williamrogersdev/eavesy/pull/260))
+- Mac app: calmer Settings design and a way back to Eavesy ([#263](https://github.com/williamrogersdev/eavesy/pull/263))
+- Mac app: Connections page and search in Settings ([#258](https://github.com/williamrogersdev/eavesy/pull/258))
+
+### Fixed
+
+- Mac app: security_fix says "already set", not "already on" ([#275](https://github.com/williamrogersdev/eavesy/pull/275))
+- Mac app: a setting that couldn't be read isn't reported as already on ([#274](https://github.com/williamrogersdev/eavesy/pull/274))
+- Mac app: turning off automatic login always asks and always clears the password ([#273](https://github.com/williamrogersdev/eavesy/pull/273))
+- Mac app: refuse the capture engine when Eavesy can't read its own signature ([#266](https://github.com/williamrogersdev/eavesy/pull/266))
+
 ## [0.8.0] - 2026-10-26 - desktop
 
 ### Added
