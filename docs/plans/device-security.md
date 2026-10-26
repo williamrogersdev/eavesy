@@ -80,7 +80,7 @@ performance, "from the AI or anything, really".
    [The assistant does the work](#the-assistant-does-the-work).
 5. **Local by default; every off-device feature is its own switch.** Each
    feature that sends anything off the Mac is marked ☁ below, is off by
-   default, and is listed in [Decisions](#decisions-for-william).
+   default, and is listed in [Decisions](#decisions-william-2026-10-25).
 6. **Honest coverage.** Eavesy says "this looks unusual", not "this is
    malware". The Security section shows what it can't see without more
    access, and which permission would let it.
@@ -256,7 +256,7 @@ path for undo).
 - **Quarantine.** Files you downloaded carry `com.apple.quarantine`. An
   executable in Downloads that had the attribute stripped before it ran is a
   classic sign of someone talking you past Gatekeeper. Notice.
-- ☁ **Known-vulnerable apps** (later, opt-in). Compare installed app
+- ☁ **Known-vulnerable apps** (opt-in, in 1.0). Compare installed app
   versions with a public vulnerability feed. Only app names and versions
   would leave the Mac. Decision 4.
 
@@ -514,8 +514,8 @@ each behind the Security section's own switch until 1.0 is complete:
    opt-in.
 4. **App trust and network** (pillars 4 and 5): the signature cache, new
    executable checks, listener and outbound rules, Wi-Fi and quarantine
-   checks.
-5. **Secrets** (pillar 6): the local scan, secret-looking captures kept out
+   checks, and the opt-in ☁ known-vulnerable apps check.
+5. **Secrets** (pillar 6): the opt-in ☁ breach checks, the local scan, secret-looking captures kept out
    of uploads, and the agent credential-path cards.
 Each phase ships its assistant tools with it (see the "Phase" column in
 [The assistant does the work](#the-assistant-does-the-work)), so you can ask
@@ -532,44 +532,38 @@ After 1.0, each its own decision:
    notify-only events.
 8. **Network Extension filter**: prototype on macOS 26 first, given the
    reported activation problems.
-9. ☁ **Known-vulnerable apps** and ☁ **breach checks**, if William says yes.
+9. Nothing else yet. Known-vulnerable apps and breach checks moved into
+   1.0 (decisions 4 and 5).
 
 Every phase has unit tests for its classification rules (the same style as
 `machine/` today) and a run in the VM (`docs/TESTING-ENVIRONMENTS.md`), where
 we can plant a LaunchAgent, a profile, an unsigned listener and a fake key
 and check that each produces exactly one notice.
 
-## Decisions for William
+## Decisions (William, 2026-10-25)
 
-1. **Full Disk Access.** Ask for it to unlock the grants audit (recommended:
-   yes, as an explicit opt-in in the Security section, never during
-   onboarding), or skip the grants audit?
-2. **Daily background checkup.** On by default (recommended), or only when
-   you open the Security section?
-3. **Phase 0 entitlements.** Remove `allow-jit` and
-   `allow-unsigned-executable-memory` if the VM test passes without them
-   (recommended), or leave them?
-4. ☁ **Known-vulnerable apps.** Send app names and versions to a public
-   vulnerability feed? Recommended: later, opt-in.
-5. ☁ **Breach checks.** Password check by k-anonymity (only a 5-character
-   hash prefix leaves the Mac) and the email check (sends your address).
-   Recommended: password check opt-in, email check opt-in and separate.
-6. **Endpoint Security and Network Extension.** Apply for the ES entitlement
-   now (it takes Apple time), or wait until 1.0 is out?
-7. ☁ **"Explain this".** Allow the optional cloud explanation on a security
-   card (names and numbers only, no paths or file contents), or keep
-   explanations local and rule-written? Recommended: rule-written only.
-8. **Admin prompt or a privileged helper.** One macOS password prompt per
-   batch of admin fixes (recommended), or a root helper registered with
-   `SMAppService`, which would mean no prompts after setup. The helper is the
-   biggest privilege increase Eavesy could make, against the spirit of
-   phase 0. If it's ever built, it accepts only the fixed tighten-only
-   verbs, takes no command strings, and checks its caller by audit token and
-   code-signing requirement, not by pid.
-9. **Auto mode and settings fixes.** Let Auto mode run single-setting
-   tightenings (firewall on and the like) after the password prompt without
-   a card (recommended), or keep a card for every security change in every
-   mode?
+1. **Full Disk Access:** an explicit opt-in in the Security section, never
+   during onboarding. Without it, everything except the grants audit works.
+2. **Daily background checkup:** on by default, with the deferral rules.
+3. **Phase 0 entitlements:** remove `allow-jit` and
+   `allow-unsigned-executable-memory` if the VM test passes without them.
+   If it doesn't, keep them and write down why.
+4. ☁ **Known-vulnerable apps:** in 1.0, opt-in (off by default). It's built
+   with phase 4 (app trust). Only app names and versions leave the Mac.
+5. ☁ **Breach checks:** both, opt-in, as two separate switches. The
+   password check uses k-anonymity, so only a 5-character hash prefix leaves
+   the Mac. The email check says plainly that your address leaves the Mac.
+   Built with phase 5 (secrets).
+6. **Endpoint Security:** apply for the entitlement now. Building waits
+   until after 1.0. Applying is William's step, from the Apple Developer
+   account.
+7. **"Explain this":** rule-written explanations only. Nothing leaves the
+   Mac. The assistant can still talk about a finding when you ask.
+8. **Admin rights:** one macOS password prompt per batch. No privileged
+   helper.
+9. **Auto mode:** single-setting tightenings (`safe_listed`) run after the
+   password prompt without a card. Removals, quarantine, grant resets and
+   updates always show a card.
 
 ## Sources
 
