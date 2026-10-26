@@ -162,6 +162,13 @@ pub(super) fn discard_recording_on(conn: &Connection, id: &str, now: i64) -> Res
 /// Drops a discarded recording's row once nothing of it is left in the cloud.
 pub fn forget_discarded<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
     let conn = open(app)?;
+    // Segments the engine queued as it was killed go with it, cascade or not.
+    conn.execute(
+        "DELETE FROM recording_segments WHERE session_id=?1
+         AND EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=1)",
+        params![id],
+    )
+    .map_err(|e| format!("forget discarded recording's segments: {e}"))?;
     conn.execute("DELETE FROM recording_sessions WHERE id=?1 AND discarded=1", params![id])
         .map_err(|e| format!("forget discarded recording: {e}"))?;
     // Finals still being stored as the engine was killed land after the discard.

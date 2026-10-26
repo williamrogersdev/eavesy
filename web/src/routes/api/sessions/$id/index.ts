@@ -47,8 +47,9 @@ export const Route = createFileRoute('/api/sessions/$id/')({
       },
       // A recording cancelled on the Mac: the meeting its live segments made
       // goes, the way a delete from the web does. Only an unfinished one, and
-      // only from the Mac that recorded it: a device token can't delete the
-      // rest of the account's meetings.
+      // a device token only the ones its own Mac recorded: it can't delete the
+      // rest of the account's meetings. A signed-in web session (no device)
+      // can already delete any of its meetings via DELETE /api/meetings/:id.
       DELETE: async ({ request, params }) => {
         let actor;
         try {

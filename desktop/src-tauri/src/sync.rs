@@ -1459,6 +1459,37 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_segment_queued_after_the_cancel_is_never_uploaded() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 0);
+            sqlite::discard_recording(harness.handle(), "meeting").unwrap();
+            // As the engine dies: a late segment, and a second discard that didn't happen.
+            let file = harness.root.join("meeting").join("late.m4a");
+            std::fs::write(&file, b"segment").unwrap();
+            let manifest: sqlite::SegmentManifest = serde_json::from_value(serde_json::json!({
+                "path": file, "index": 0, "startMs": 0, "durationMs": 1_000, "bytes": 7,
+            }))
+            .unwrap();
+            sqlite::record_segment(harness.handle(), "meeting", &manifest).unwrap();
+            Mock::given(method("PUT")).respond_with(ResponseTemplate::new(202)).expect(0).mount(&harness.server).await;
+            Mock::given(method("DELETE"))
+                .and(path("/api/sessions/remote-meeting"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert!(!harness.session_exists("meeting"));
+            let segments: i64 = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row("SELECT count(*) FROM recording_segments WHERE session_id='meeting'", [], |row| row.get(0))
+                    .unwrap()
+            });
+            assert_eq!(segments, 0);
+            assert_eq!(harness.pass().await, Pass::Idle);
+        }
+
+        #[tokio::test]
         async fn a_cancelled_recording_the_cloud_already_lost_is_forgotten() {
             let harness = Harness::new().await;
             harness.session("meeting", "recording", 0);

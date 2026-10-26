@@ -401,9 +401,10 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     Ok(rows)
 }
 
-fn discarded(conn: &Connection, session_id: &str) -> Result<bool, String> {
+/// Whether lines may still be stored for this recording: it exists and was not cancelled.
+fn still_recording(conn: &Connection, session_id: &str) -> Result<bool, String> {
     conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=1)",
+        "SELECT EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=0)",
         params![session_id],
         |row| row.get(0),
     )
@@ -452,6 +453,10 @@ pub async fn run(app: AppHandle) {
             let since = crate::sqlite::with_open(&app, |conn| cursor(conn, &session_id)).unwrap_or(0);
             match api.transcript_delta(&token, &remote_id, since).await {
                 Ok(Fetched::Delta(delta)) => {
+                    // A recording cancelled while this poll was out gets nothing from it.
+                    if !crate::sqlite::with_open(&app, |conn| still_recording(conn, &session_id)).is_ok_and(|live| live.unwrap_or(false)) {
+                        continue;
+                    }
                     if !delta.lines.is_empty() {
                         report_first(&app, &session_id, Milestone::CloudLine);
                     }
@@ -462,9 +467,9 @@ pub async fn run(app: AppHandle) {
                             hinted.insert(session_id.clone(), language);
                         }
                     }
-                    // A recording cancelled while this poll was out keeps no lines.
+                    // Checked again with the write: the cancel may land in between.
                     let changed = crate::sqlite::with_open_mut(&app, |conn| {
-                        if discarded(conn, &session_id)? { Ok(false) } else { apply_delta(conn, &session_id, &delta) }
+                        if still_recording(conn, &session_id)? { apply_delta(conn, &session_id, &delta) } else { Ok(false) }
                     });
                     match changed {
                         Ok(Ok(true)) => {
