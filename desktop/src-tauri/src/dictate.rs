@@ -5,7 +5,7 @@
 //! A tap toggles: press to start, press again to stop. Holding the key past
 //! `HOLD_TO_TALK` turns the press into push-to-talk: letting go stops it.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,6 +29,15 @@ struct Press {
 static KEY_DOWN: AtomicBool = AtomicBool::new(false);
 /// The same for the Talk to Eavesy shortcut, which records the same way.
 static TALK_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// When each shortcut last went down (ms since `epoch()`), to tell a key repeat from
+/// a fresh press after a release that never arrived.
+static KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+static TALK_KEY_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+/// Key-downs within this of the last press acted on may be the key repeating while
+/// held. Set above the slowest "Delay until repeat" in Keyboard settings (an
+/// estimate of about 2 s, not a documented figure), so a held key's first repeat
+/// never looks like a fresh press.
+const REPEAT_GAP_MS: u64 = 2_500;
 
 static PRESS: Mutex<Press> = Mutex::new(Press { started_by: None, stop_when_ready: false });
 
@@ -94,7 +103,7 @@ fn active_session(app: &AppHandle) -> (Option<String>, bool) {
 
 /// The dictation hotkey went down.
 pub fn key_down(app: &AppHandle) {
-    if KEY_DOWN.swap(true, Ordering::SeqCst) {
+    if !take_press(app, &KEY_DOWN, &KEY_DOWN_AT) {
         return;
     }
     pressed(app, true, false);
@@ -102,10 +111,40 @@ pub fn key_down(app: &AppHandle) {
 
 /// The Talk to Eavesy shortcut went down: like dictation, but the words go to Eavesy.
 pub fn talk_key_down(app: &AppHandle) {
-    if TALK_KEY_DOWN.swap(true, Ordering::SeqCst) {
+    if !take_press(app, &TALK_KEY_DOWN, &TALK_KEY_DOWN_AT) {
         return;
     }
     pressed(app, true, true);
+}
+
+/// Whether this key-down is a press to act on, marking the key down and, if so, when.
+fn take_press(app: &AppHandle, down: &AtomicBool, accepted_at: &AtomicU64) -> bool {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let now = EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + REPEAT_GAP_MS + 1;
+    let was_down = down.swap(true, Ordering::SeqCst);
+    let gap = now.saturating_sub(accepted_at.load(Ordering::SeqCst));
+    let busy = was_down && {
+        let (active, starting) = active_session(app);
+        active.is_some() || starting
+    };
+    let take = accept_press(was_down, gap, busy);
+    if take {
+        if was_down {
+            tracing::info!("shortcut pressed again without a release; treating it as a new press");
+        }
+        accepted_at.store(now, Ordering::SeqCst);
+    }
+    take
+}
+
+/// A key-down while the key is still marked down is either the key repeating while
+/// it's held or a release that never arrived (say another app grabbed the same
+/// combo). Ignoring the latter left the shortcut dead, so it's taken as a new press
+/// once nothing is recording or opening and the last press acted on (not the last
+/// repeat, so steady tapping still gets through) is longer ago than a held key takes
+/// to start repeating.
+fn accept_press(was_down: bool, gap_since_accepted_ms: u64, busy: bool) -> bool {
+    !was_down || (gap_since_accepted_ms > REPEAT_GAP_MS && !busy)
 }
 
 /// The Talk to Eavesy shortcut came up.
@@ -169,8 +208,8 @@ pub fn toggle(app: &AppHandle) {
     pressed(app, false, false);
 }
 
-/// Talk to Eavesy as a toggle (fn tap).
-#[cfg(target_os = "macos")]
+/// Talk to Eavesy as a toggle: the fn tap on macOS, and the Eavesy tab's mic button
+/// on any platform.
 pub fn toggle_talk(app: &AppHandle) {
     pressed(app, false, true);
 }
@@ -259,6 +298,20 @@ fn stop(app: &AppHandle, session_id: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_release_recovers_but_a_held_key_repeating_does_not() {
+        // A normal press.
+        assert!(accept_press(false, 0, false));
+        // The key repeating while held, or anything while a recording is open or opening.
+        assert!(!accept_press(true, 300, false));
+        assert!(!accept_press(true, REPEAT_GAP_MS, false));
+        assert!(!accept_press(true, 10_000, true));
+        // Release lost: the next press after the repeat window gets through, and so
+        // does each later tap, since the gap runs from the last press acted on.
+        assert!(accept_press(true, REPEAT_GAP_MS + 1, false));
+        assert!(accept_press(true, 2 * REPEAT_GAP_MS, false));
+    }
 
     #[test]
     fn a_press_stops_what_runs_starts_otherwise_and_never_starts_twice() {

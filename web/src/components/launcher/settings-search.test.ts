@@ -11,6 +11,11 @@ describe('settingsMatch', () => {
     expect(settingsMatch('mcp', shortcuts)).toBe(false);
   });
 
+  test('matches the start of a word, not the middle', () => {
+    expect(settingsMatch('hot', shortcuts)).toBe(true);
+    expect(settingsMatch('otkey', shortcuts)).toBe(false);
+  });
+
   test('ignores case and needs every word', () => {
     expect(settingsMatch('Claude CODE', connections)).toBe(true);
     expect(settingsMatch('claude hotkey', connections)).toBe(false);

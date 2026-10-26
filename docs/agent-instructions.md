@@ -17,7 +17,7 @@ tools itself:
 
 ## Set it up
 
-1. **On the Mac:** Settings → Dictation → *Claude chat and ChatGPT* → turn on
+1. **On the Mac:** Settings → Connections → *Messages from your agents* → turn on
    *Show and say what your agents send you*. It's off until you turn it on. The
    Mac then checks your Eavesy account every few seconds.
 2. **In Claude or ChatGPT:** add Eavesy's MCP server (`https://mcp.eavesy.com`)
