@@ -348,8 +348,17 @@ async fn hide_panel_on_main_thread(app: &AppHandle) -> Result<(), String> {
 // the control never waits on the disk.
 #[tauri::command(async)]
 pub fn get_settings(app: AppHandle) -> Settings {
-    settings::load(&app)
+    let settings = settings::load(&app);
+    // Only a page's own code calls this (the launcher, as it mounts), so the
+    // first call means a web view's JavaScript is running.
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| tracing::info!("{WEB_VIEW_RUNNING}: first settings read"));
+    settings
 }
+
+/// Logged once a web view's JavaScript has called into Rust. The release
+/// workflow's launch test (macos-release.yml) greps for this exact text.
+pub const WEB_VIEW_RUNNING: &str = "web view is running";
 
 #[tauri::command(async)]
 pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPosition) -> Result<(), String> {
@@ -989,7 +998,13 @@ pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyEr
 
 #[cfg(test)]
 mod tests {
-    use super::Restore;
+    use super::{Restore, WEB_VIEW_RUNNING};
+
+    #[test]
+    fn the_release_launch_test_waits_for_the_web_view_line() {
+        let workflow = include_str!("../../../.github/workflows/macos-release.yml");
+        assert!(workflow.contains(&format!("grep -qh \"{WEB_VIEW_RUNNING}\"")));
+    }
 
     #[test]
     fn the_users_clipboard_comes_back_after_a_paste() {

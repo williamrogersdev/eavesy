@@ -216,25 +216,51 @@ jobs:
           TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
           [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
           codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
-          "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
+          # Only this launch's log counts.
+          LOGS=~/Library/Logs/com.eavesy.desktop
+          rm -f "$LOGS"/*.log
+          EAVESY_NO_TELEMETRY=1 "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
           PID=$!
-          sleep 25
-          if ! kill -0 "$PID" 2>/dev/null; then
-            wait "$PID" || echo "exit status $?"
-            cat "${RUNNER_TEMP}/launch.log"
-            ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
-            echo "::error::The signed app quit within 25 seconds of launch"
-            exit 1
-          fi
+          # Staying up isn't enough: the web view's JavaScript runs in WebKit's
+          # own process, so a broken one leaves the app alive with a blank
+          # window. Wait, while the app is still running, for both 25 s up and
+          # the line it logs once a page's code has called into Rust
+          # (commands::WEB_VIEW_RUNNING). Give up after 90 s.
+          ready=""
+          for second in $(seq 1 90); do
+            sleep 1
+            if [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null; then
+              ready=$second
+              echo "Web view ran its JavaScript after $second s"
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              wait "$PID" || echo "exit status $?"
+              cat "${RUNNER_TEMP}/launch.log"
+              ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
+              echo "::error::The signed app quit $second seconds after launch"
+              exit 1
+            fi
+            [[ -n "$ready" && $second -ge 25 ]] && break
+          done
           kill "$PID"
           wait "$PID" 2>/dev/null || true
           tail -50 "${RUNNER_TEMP}/launch.log"
+          # One last look, now the app has flushed its log on the way out.
+          [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null && ready=late
+          if [[ -z "$ready" ]]; then
+            # Until a dispatched candidate has shown this line fires on a signed
+            # build, a tag build only warns (docs/plans/device-security.md, phase 0).
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              echo "::warning::The signed app's web view didn't log that its JavaScript ran within 90 s"
+            else
+              echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
+              exit 1
+            fi
+          fi
           # The app checks its own capture engine at launch (sidecar_trust::warm,
           # finished well inside the 25 s: codesign is cut off at 15 s) and logs
-          # any refusal, so this tests the app's real requirement too.
-          LOGS=~/Library/Logs/com.eavesy.desktop
-          ls "$LOGS"/*.log > /dev/null || { echo "::error::The signed app wrote no log to $LOGS"; exit 1; }
-          # Both are only ever logged as errors (sidecar_trust.rs).
+          # any refusal, so this tests the app's real requirement too. Both
+          # names are only ever logged as errors (sidecar_trust.rs).
           if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
             echo "::error::The signed app refused its own capture engine"
             exit 1
