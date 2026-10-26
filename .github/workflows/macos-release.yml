@@ -202,14 +202,19 @@ jobs:
 
       # The hardened runtime only applies to a signed build, so this is where a
       # missing entitlement shows: the web view's JavaScript engine is killed
-      # at launch. Run the signed app and fail if it doesn't stay up.
+      # at launch. Run the signed app and fail if it doesn't stay up. This only
+      # catches a crash in the first 25 seconds, which is when that happens.
       - name: Launch the signed app
         run: |
           APP=desktop/src-tauri/target/release/bundle/macos/Eavesy.app
           EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          test -x "$EXE" || { echo "::error::No executable at $EXE"; exit 1; }
           codesign -d --entitlements - "$APP"
-          # The app refuses a capture engine that fails this (sidecar_trust.rs).
+          # The app refuses a capture engine that fails this: keep it the same as
+          # requirement() in sidecar_trust.rs. The app runs the engine next to
+          # its executable (capture_bin in audio.rs).
           TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
           codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
           "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
           PID=$!
@@ -222,7 +227,18 @@ jobs:
             exit 1
           fi
           kill "$PID"
+          wait "$PID" 2>/dev/null || true
           tail -50 "${RUNNER_TEMP}/launch.log"
+          # The app checks its own capture engine at launch (sidecar_trust::warm,
+          # finished well inside the 25 s: codesign is cut off at 15 s) and logs
+          # any refusal, so this tests the app's real requirement too.
+          LOGS=~/Library/Logs/com.eavesy.desktop
+          ls "$LOGS"/*.log > /dev/null || { echo "::error::The signed app wrote no log to $LOGS"; exit 1; }
+          # Both are only ever logged as errors (sidecar_trust.rs).
+          if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
+            echo "::error::The signed app refused its own capture engine"
+            exit 1
+          fi
 
       - name: Notarize and validate release candidate
         env:

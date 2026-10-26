@@ -57,7 +57,8 @@ deliberate.
   owned by you; the app refuses to listen otherwise), and it only accepts
   connections from your own user.
 - **Updates** are signed. The update key is pinned in `tauri.conf.json`, and
-  a test fails if it changes, so changing it is always a deliberate commit.
+  a test holds a second copy of it, so changing the key means editing that
+  test too, which shows up in review.
 - **Dependencies.** CI runs `cargo audit` on the app's Rust crates. Each
   ignored advisory, with why it can't reach the Mac app, is in
   `desktop/src-tauri/.cargo/audit.toml`.
