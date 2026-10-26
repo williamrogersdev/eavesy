@@ -216,7 +216,7 @@ jobs:
           TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
           [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
           codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
-          "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
+          EAVESY_NO_TELEMETRY=1 "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
           PID=$!
           sleep 25
           if ! kill -0 "$PID" 2>/dev/null; then
@@ -237,6 +237,13 @@ jobs:
           # Both are only ever logged as errors (sidecar_trust.rs).
           if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
             echo "::error::The signed app refused its own capture engine"
+            exit 1
+          fi
+          # Staying up isn't enough: the web view's JavaScript runs in WebKit's
+          # own process, so a broken one leaves the app alive with a blank
+          # window. The launcher logs this once its code has called into Rust.
+          if ! grep -h "web view is running" "$LOGS"/*.log; then
+            echo "::error::The signed app's web view never ran its JavaScript"
             exit 1
           fi
 

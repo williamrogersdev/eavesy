@@ -348,6 +348,10 @@ async fn hide_panel_on_main_thread(app: &AppHandle) -> Result<(), String> {
 // the control never waits on the disk.
 #[tauri::command(async)]
 pub fn get_settings(app: AppHandle) -> Settings {
+    // The launcher asks for settings as it mounts, so this line means the web
+    // view's JavaScript is running. The release workflow's launch test waits for it.
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| tracing::info!("web view is running: first settings read"));
     settings::load(&app)
 }
 
