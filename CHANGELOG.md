@@ -6,6 +6,21 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26 - desktop
+
+### Added
+
+- Mac app: fn+key shortcuts, warn when another app holds a shortcut, move Talk to Eavesy off ⌥Space ([#254](https://github.com/williamrogersdev/eavesy/pull/254))
+- Mac app: turn This Mac's worktrees into a fast manager ([#251](https://github.com/williamrogersdev/eavesy/pull/251))
+
+### Fixed
+
+- Mac app: keep talking to Eavesy after its first answer ([#252](https://github.com/williamrogersdev/eavesy/pull/252))
+- Mac app: paste into the frontmost app when its focus can't be read ([#250](https://github.com/williamrogersdev/eavesy/pull/250))
+- Mac app: give gh's PR list longer to arrive after a clean exit ([#255](https://github.com/williamrogersdev/eavesy/pull/255))
+- Mac app: worktree sizes survive a filter change, and gh can't hang the PR lookup ([#253](https://github.com/williamrogersdev/eavesy/pull/253))
+- Mac app: plainer Projects and Prompts copy, and drop Settings' brown palette ([#249](https://github.com/williamrogersdev/eavesy/pull/249))
+
 ## [0.7.1] - 2026-10-25 - desktop
 
 ### Added
