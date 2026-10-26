@@ -229,6 +229,10 @@ jobs:
           ready=""
           for second in $(seq 1 90); do
             sleep 1
+            if [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null; then
+              ready=$second
+              echo "Web view ran its JavaScript after $second s"
+            fi
             if ! kill -0 "$PID" 2>/dev/null; then
               wait "$PID" || echo "exit status $?"
               cat "${RUNNER_TEMP}/launch.log"
@@ -236,18 +240,22 @@ jobs:
               echo "::error::The signed app quit $second seconds after launch"
               exit 1
             fi
-            if [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null; then
-              ready=$second
-              echo "Web view ran its JavaScript after $second s"
-            fi
             [[ -n "$ready" && $second -ge 25 ]] && break
           done
           kill "$PID"
           wait "$PID" 2>/dev/null || true
           tail -50 "${RUNNER_TEMP}/launch.log"
+          # One last look, now the app has flushed its log on the way out.
+          [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null && ready=late
           if [[ -z "$ready" ]]; then
-            echo "::error::The signed app's web view never ran its JavaScript"
-            exit 1
+            # Until a dispatched candidate has shown this line fires on a signed
+            # build, a tag build only warns (docs/plans/device-security.md, phase 0).
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              echo "::warning::The signed app's web view didn't log that its JavaScript ran within 90 s"
+            else
+              echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
+              exit 1
+            fi
           fi
           # The app checks its own capture engine at launch (sidecar_trust::warm,
           # finished well inside the 25 s: codesign is cut off at 15 s) and logs
