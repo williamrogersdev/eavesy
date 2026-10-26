@@ -357,7 +357,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   // ⌘F finds a setting, like in System Settings.
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+      // Only while the search field is on screen (the narrow layout hides it).
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f' && searchRef.current?.offsetParent) {
         event.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -366,7 +367,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     window.addEventListener('keydown', find);
     return () => window.removeEventListener('keydown', find);
   }, []);
-  const go = (id: SettingsSection) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
+  const go = (id: SettingsSection) => { setQuery(''); setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);

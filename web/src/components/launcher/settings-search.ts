@@ -12,15 +12,16 @@ const SECTION_KEYWORDS: Record<SettingsSection, string> = {
   shortcuts: 'hotkey keyboard keys fn talk push to talk toggle panel',
   prompts: 'snippets templates slash commands saved text',
   projects: 'codebase client topic folder group',
-  connections: 'mcp claude code chatgpt connector integration plugin agents hooks sessions token oauth api send_to_human ask_human apps cursor codex',
+  connections: 'mcp claude code chatgpt connector integration plugin agents hooks sessions token oauth api send_to_human ask_human apps cursor codex say when a session finishes needs you messages from your agents instructions',
   assistant: 'voice talk to eavesy speak memory rules actions',
   machine: 'worktrees processes cleanup clean up disk leftover',
   permissions: 'microphone screen recording accessibility input monitoring speech privacy',
   account: 'sign in sign out login email updates version',
 };
 
+/** Every word of the query starts some word of the page, so "mic" finds microphone but "a" doesn't match everything inside other words. */
 export function settingsMatch(query: string, item: { id: SettingsSection; label: string; hint: string }): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const haystack = `${item.label} ${item.hint} ${SECTION_KEYWORDS[item.id]}`.toLowerCase();
-  return words.every((word) => haystack.includes(word));
+  const vocabulary = `${item.label} ${item.hint} ${SECTION_KEYWORDS[item.id]}`.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
+  return words.every((word) => vocabulary.some((known) => known.startsWith(word)));
 }
