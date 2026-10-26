@@ -347,14 +347,11 @@ impl Action for SecurityFix {
         let state = |findings: &[Finding], verb: Verb| findings.iter().find(|f| f.id == verb.check()).map(|f| f.state);
         let needed: Vec<Verb> = chosen.iter().copied().filter(|&verb| matches!(state(&before, verb), Some(State::Fix | State::Suggest))).collect();
         if needed.is_empty() {
-            let unread = chosen.iter().find(|&&verb| state(&before, verb) == Some(State::Unknown));
-            let summary = match unread {
-                Some(verb) => {
-                    open_settings(verb.check());
-                    format!("Couldn't read {}, so nothing changed. System Settings is open there", verb.check().title())
-                }
-                None => "Already on: nothing to change".into(),
-            };
+            let mut summary = format!("Nothing changed{}", left_alone(&chosen, &before));
+            if let Some(verb) = chosen.iter().find(|&&verb| state(&before, verb) == Some(State::Unknown)) {
+                open_settings(verb.check());
+                summary.push_str(&format!(". System Settings is open at {}", verb.check().title()));
+            }
             return Ran { summary, detail: findings_detail(&before) };
         }
         let admin = fix::run_admin(&needed);
@@ -376,8 +373,9 @@ fn open_settings(id: CheckId) {
     }
 }
 
-/// The chosen settings that weren't run, by what the read before said: already on, or
-/// unreadable and so left as they were.
+/// The chosen settings that weren't run, by what the read before said: already set the
+/// way the fix would set them (on, or off for automatic login), or unreadable and so
+/// left as they were.
 fn left_alone(chosen: &[Verb], before: &[Finding]) -> String {
     let named = |wanted: State| -> Vec<&str> {
         chosen.iter().filter(|verb| before.iter().any(|f| f.id == verb.check() && f.state == wanted)).map(|verb| verb.check().title()).collect()
@@ -385,7 +383,7 @@ fn left_alone(chosen: &[Verb], before: &[Finding]) -> String {
     let (on, unread) = (named(State::Good), named(State::Unknown));
     let mut said = String::new();
     if !on.is_empty() {
-        said.push_str(&format!(". Already on: {}", on.join(", ")));
+        said.push_str(&format!(". Already set: {}", on.join(", ")));
     }
     if !unread.is_empty() {
         said.push_str(&format!(". Couldn't read, so not changed: {}", unread.join(", ")));
@@ -663,7 +661,7 @@ mod tests {
         assert!(one.facts().safe_listed);
         // Settings not run are named by what was read, never guessed.
         let before = [found(CheckId::Firewall, State::Fix), found(CheckId::Stealth, State::Good), found(CheckId::Gatekeeper, State::Unknown)];
-        assert_eq!(left_alone(&[Verb::Firewall, Verb::Stealth, Verb::Gatekeeper], &before), ". Already on: Stealth mode. Couldn't read, so not changed: Gatekeeper");
+        assert_eq!(left_alone(&[Verb::Firewall, Verb::Stealth, Verb::Gatekeeper], &before), ". Already set: Stealth mode. Couldn't read, so not changed: Gatekeeper");
         assert_eq!(left_alone(&[Verb::Firewall], &before), "");
         // Deleting the saved login password can't be put back: always a card.
         let Ok(login) = security_fix(vec![CheckId::AutoLogin]) else { panic!() };
