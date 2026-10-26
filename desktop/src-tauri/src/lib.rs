@@ -28,6 +28,7 @@ mod install_location;
 mod stray_copies;
 #[cfg(target_os = "macos")]
 mod cf;
+mod cmd;
 mod cloud_pull;
 mod dictate;
 mod dictation;
@@ -42,6 +43,7 @@ mod recovery;
 mod screenshot_watcher;
 mod settings;
 mod settings_window;
+mod security;
 mod sidecar_trust;
 mod sounds;
 mod history;

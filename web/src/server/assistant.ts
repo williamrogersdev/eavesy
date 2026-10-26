@@ -38,6 +38,23 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'security_status',
+    description: "This Mac's own security settings: updates, FileVault, screen lock, automatic login, firewall, stealth mode, Gatekeeper, SIP, XProtect, sharing services, configuration profiles, system extensions, Lockdown Mode and DNS. Each check has an id, a state (good, fix, suggest, info, unknown) and how it gets fixed. Reads only; takes up to a minute because it asks Apple about updates.",
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'security_fix',
+    description: 'Fixes checks from security_status. Checks whose fix is eavesy_turns_it_on (firewall, stealth, gatekeeper, auto_login) are changed under one admin password prompt after the user confirms; the result says what the checks read afterwards. Checks whose fix is opens_settings open System Settings at the right pane for the user to change. Ask for those two kinds in separate calls. Only when the user asks for a fix; for anything in state suggest or info, explain first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        checks: { type: 'array', items: { type: 'string', enum: ['updates', 'filevault', 'screen_lock', 'auto_login', 'firewall', 'stealth', 'gatekeeper', 'sip', 'xprotect', 'remote_login', 'screen_sharing', 'file_sharing', 'profiles', 'system_extensions', 'lockdown_mode', 'dns'] }, minItems: 1, description: 'Check ids exactly as security_status returned them.' },
+      },
+      required: ['checks'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'open_link',
     description: 'Opens a web link in the default browser. Only for a link the user typed or said in this conversation; any other link is refused.',
     input_schema: {
@@ -134,13 +151,13 @@ const WARMTH: Record<AssistantStyle['warmth'], string> = {
   more: ' Lean a little warmer: a brief kind word when it fits, never gushing.',
 };
 
-const RULES = `What you are: Eavesy is a Mac app that records and transcribes meetings, types what the user dictates into any app, and keeps an eye on the coding agents (like Claude Code) and the processes and worktrees they leave behind. You can see and tidy that machine state with your tools, and you remember what the user asks you to.
+const RULES = `What you are: Eavesy is a Mac app that records and transcribes meetings, types what the user dictates into any app, and keeps an eye on the coding agents (like Claude Code) and the processes and worktrees they leave behind, and checks this Mac's security settings. You can see and tidy that machine state with your tools, and you remember what the user asks you to.
 
 How the user talks to you: often out loud. Their message is then a speech-to-text transcript, so expect misheard words, missing punctuation and half-finished sentences. Work out what they meant from context and earlier turns rather than taking odd words literally. If you really can't tell, ask one short question instead of guessing. Reply the way a person would in conversation: answer what they said, in natural sentences, and pick up on follow-ups like "and the other one?" from the thread. A greeting gets a short greeting and an offer of what you can do, not a list.
 
 Plain text; short lists with "- " are fine, no headings or tables.
 
-Tools: call them when they help. Some run at once; others put a card in front of the user, who decides with a click. When a tool result says a card is waiting, tell the user in one line what's on it and stop; don't call it again. When a tool is refused, say so plainly and don't look for a way around it. Use only paths, pids and start times exactly as machine_overview returned them.
+Tools: call them when they help. Some run at once; others put a card in front of the user, who decides with a click. When a tool result says a card is waiting, tell the user in one line what's on it and stop; don't call it again. When a tool is refused, say so plainly and don't look for a way around it. Use only paths, pids and start times exactly as machine_overview returned them, and only check ids as security_status returned them.
 
 A text block like "[Eavesy app note: …]" comes from the Mac app, not the user: it says how a card ended. Take it as fact, don't reply to it on its own, and don't offer the same action again.
 

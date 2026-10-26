@@ -442,7 +442,7 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-fn applescript_string(value: &str) -> String {
+pub(crate) fn applescript_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', r"\\").replace('"', "\\\""))
 }
 

@@ -668,6 +668,7 @@ impl assistant::Action for Clean {
             remote_allowed: false,
             items: self.worktrees.len() + self.processes.len(),
             always_allowed: false,
+            you_only: false,
         }
     }
 
