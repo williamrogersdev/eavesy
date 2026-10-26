@@ -473,6 +473,10 @@ export const calendarConnections = sqliteTable(
     accountEmail: text('account_email').notNull(),
     refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
     lastSyncAt: integer('last_sync_at'),
+    /** When a sync last ran, whatever came of it; `lastSyncAt` only moves on success. */
+    lastAttemptAt: integer('last_attempt_at'),
+    /** How that attempt went: `reconnect` means Google refused the grant. */
+    lastSyncStatus: text('last_sync_status', { enum: ['ok', 'reconnect', 'failed'] }),
   },
   (t) => [index('connections_user_idx').on(t.userId)],
 );

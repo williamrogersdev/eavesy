@@ -52,6 +52,9 @@ export function installDevMock(): void {
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
   const account = mockAccount(params.has('noprojects'), params.has('manywords'));
   let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
+  let calendars = params.has('noconnections') ? [] : [
+    { id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false },
+  ];
   let mcpTokens = params.has('noconnections') ? [] : [
     { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
     { id: 'mcp-2', name: 'ChatGPT', createdAt: Date.now() - 86_400_000 * 20, lastUsedAt: null, expiresAt: Date.now() + 86_400_000 * 70, scopes: ['read', 'write'], usesLegacyUrl: false },
@@ -101,6 +104,10 @@ export function installDevMock(): void {
     account_call: (args: Record<string, unknown>) => {
       if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures > 0) { preferencesLoadFailures--; throw new Error('Could not reach eavesy.com'); }
       if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/calendar-connections') {
+        if (args.method === 'DELETE') { calendars = calendars.filter((c) => c.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
+        return { available: { google: true, outlook: false }, connections: calendars };
+      }
       if (args.path === '/api/mcp-tokens') {
         if (args.method === 'DELETE') { mcpTokens = mcpTokens.filter((token) => token.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
         return mcpTokens;

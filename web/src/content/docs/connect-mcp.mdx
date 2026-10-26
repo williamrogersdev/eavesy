@@ -122,6 +122,8 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
 | `send_to_human` | Show a message on your Mac and read a one-sentence version aloud. Needs *Claude chat and ChatGPT* turned on in the Mac app. |
 | `ask_human` | Ask you a question on your Mac and wait (2 minutes by default) for the answer you type. Returns `mac_offline` at once when no Mac is listening. |
+| `get_account_info` | Show which Eavesy account and connection the agent is using, its access, and when it expires. Useful when results look like they come from the wrong account. |
+| `sign_out` | Disconnect this connection. The agent only calls it when you ask; your other connections keep working. |
 
 Library retrieval does not guarantee exhaustive coverage. Inspect quoted passages and retain any warnings about unanswered parts or context limits. Cloud answer availability depends on the deployment and account configuration.
 
@@ -131,8 +133,15 @@ approves anything. To get Claude or ChatGPT to use them, paste the
 instructions from the Mac app's Settings → Connections → *Messages from your
 agents* into a Claude project or ChatGPT's custom instructions.
 
-The other tools only read. The tool names say "meetings" because that is the name
-of a recording in the data model. Recordings need to be in your account, so
+`sign_out` ends the connection it's called from, the same as removing it in
+Settings.
+
+The other tools only read, and are marked read-only so a client can choose to
+run them without asking each time; whether it asks is up to the client.
+`ask_library` counts against your daily AI answer quota.
+
+The tool names say "meetings" because that is the name of a recording in the
+data model. Recordings need to be in your account, so
 recordings made on a Mac that isn't signed in are not available. Screenshots,
 clipboard captures and notes from the Mac app are not available over MCP
 (screenshots and images sync between your signed-in Macs, but MCP doesn't read
@@ -143,7 +152,7 @@ can still [read them from disk](/docs/session-folder-format).
 Requests are rate limited per connection. A read-only connection can't create,
 edit, or delete anything in your library. It can send you messages with
 `send_to_human` and `ask_human`, which show only when you've turned them on in
-the Mac app.
+the Mac app, and it can disconnect itself with `sign_out`.
 </Callout>
 
 ## Local media and client checks

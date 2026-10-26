@@ -440,9 +440,22 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** MCP tool hints. Clients use readOnlyHint to decide whether to ask the user before a call. */
+  annotations: ToolAnnotations;
   /** The scope a connection needs to see and call this tool. */
   scope: McpScope;
 }
+
+interface ToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint: boolean;
+}
+
+const READ_ONLY: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
+/** Reaches the user on their Mac: changes nothing in the library, but isn't a plain read either. */
+const MESSAGES_HUMAN: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 const TOOL_DEFS: ToolDef[] = [
   {
@@ -460,6 +473,7 @@ const TOOL_DEFS: ToolDef[] = [
       },
       required: ['text'],
     },
+    annotations: MESSAGES_HUMAN,
     scope: 'read',
   },
   {
@@ -479,10 +493,11 @@ const TOOL_DEFS: ToolDef[] = [
       },
       required: ['question'],
     },
+    annotations: MESSAGES_HUMAN,
     scope: 'read',
   },
-  { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, scope: 'read' },
-  { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, scope: 'read' },
+  { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, annotations: READ_ONLY, scope: 'read' },
+  { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient. Each call counts against the user\'s daily AI answer quota.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, annotations: READ_ONLY, scope: 'read' },
   {
     name: 'search_meetings',
     description: "Search the user's meetings by title or transcript content. Returns matching meetings with an excerpt.",
@@ -494,6 +509,7 @@ const TOOL_DEFS: ToolDef[] = [
       },
       required: ['query'],
     },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   {
@@ -508,6 +524,7 @@ const TOOL_DEFS: ToolDef[] = [
       },
       required: ['id'],
     },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   {
@@ -517,6 +534,7 @@ const TOOL_DEFS: ToolDef[] = [
       type: 'object',
       properties: { limit: { type: 'number', minimum: 1, maximum: 50, default: 10 }, project: { type: 'string' } },
     },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   {
@@ -524,6 +542,7 @@ const TOOL_DEFS: ToolDef[] = [
     description:
       "List the user's projects (the codebases or clients they record about) with a short description, key terms and how many recordings each has.",
     inputSchema: { type: 'object', properties: {} },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   {
@@ -537,6 +556,7 @@ const TOOL_DEFS: ToolDef[] = [
       },
       required: ['query'],
     },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   {
@@ -549,6 +569,25 @@ const TOOL_DEFS: ToolDef[] = [
         owner: { type: 'string' },
       },
     },
+    annotations: READ_ONLY,
+    scope: 'read',
+  },
+  {
+    name: 'get_account_info',
+    description:
+      'Say which Eavesy account and connection this is: the email and name it is signed in as, the connection\'s name and access, ' +
+      'and when it stops working unless renewed. Use it when results look like they come from the wrong account.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: READ_ONLY,
+    scope: 'read',
+  },
+  {
+    name: 'sign_out',
+    description:
+      'Disconnect this connection from the user\'s Eavesy account. Every later call fails until the user connects again. ' +
+      'Only call it when the user asks to sign out or disconnect Eavesy. Other connections are not affected.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     scope: 'read',
   },
 ];
@@ -915,6 +954,39 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         }
       }
       return out;
+    }
+    case 'get_account_info': {
+      const user = (
+        await db
+          .select({ email: schema.users.email, displayName: schema.users.displayName })
+          .from(schema.users)
+          .where(eq(schema.users.id, userId))
+          .limit(1)
+      )[0];
+      // An OAuth connection lasts as long as its refresh token; its access token is renewed well before.
+      const connectionExpiresAt = token.clientId ? token.refreshExpiresAt : mcpTokenExpiresAt(token);
+      return {
+        email: user?.email ?? null,
+        name: user?.displayName ?? null,
+        connection: {
+          name: token.name,
+          access: parseMcpScopes(token.scopesJson),
+          kind: token.clientId ? 'oauth' : 'token',
+          created_at: new Date(token.createdAt).toISOString(),
+          expires_at: connectionExpiresAt ? new Date(connectionExpiresAt).toISOString() : null,
+        },
+      };
+    }
+    case 'sign_out': {
+      // Revoking the row ends the access token and, for OAuth, its refresh token too.
+      await db
+        .update(schema.mcpTokens)
+        .set({ revokedAt: Date.now() })
+        .where(and(eq(schema.mcpTokens.id, token.id), eq(schema.mcpTokens.userId, userId), isNull(schema.mcpTokens.revokedAt)));
+      return {
+        status: 'signed_out',
+        note: 'This connection no longer works. To use Eavesy again, connect it again from this app or from Eavesy settings.',
+      };
     }
     default:
       throw new UserFacingError(`unknown tool: ${name}`);
