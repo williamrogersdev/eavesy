@@ -117,15 +117,15 @@ function ClaudeCodeStep({ active }: { active: boolean }) {
   };
   const add = () => {
     start('add');
-    void connectClaudeCode()
-      .then(setStatus)
-      .catch((e: unknown) => {
+    void connectClaudeCode().then(
+      (next) => { done(); setStatus(next); },
+      (e: unknown) => {
+        done();
         setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.'));
         // Half of it may have gone in; show what's there now.
-        running.current = false;
         refresh();
-      })
-      .finally(done);
+      },
+    );
   };
   const signIn = () => {
     start('sign-in');
@@ -141,7 +141,7 @@ function ClaudeCodeStep({ active }: { active: boolean }) {
       : !added
         ? 'Adds the Eavesy plugin to Claude Code: your meetings, dictations and saved prompts, plus a skill that tells Claude when to look them up.'
         : opened
-          ? 'Approve Claude Code in the browser window that opened. It shows up under Connected apps once it’s signed in.'
+          ? 'Terminal opened to sign in. When your browser asks, approve Claude Code; it shows up under Connected apps once it’s signed in.'
           : 'Added to Claude Code. Sign in once so it can read your Eavesy account: Terminal opens and your browser asks you to approve it.';
   return (
     <Step title="Claude Code" hint={hint}>

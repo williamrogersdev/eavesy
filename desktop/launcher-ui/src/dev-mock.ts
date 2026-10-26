@@ -4,7 +4,7 @@ import { version } from '../../src-tauri/tauri.conf.json';
 // &live for a recording in progress, &setup for first-run onboarding with
 // nothing allowed yet, &perms-missing for Screen Recording off, &fn=ready for
 // a Mac where fn is fully set up). Settings is its own page: /settings.html?mock
-// (&noclaude for a Mac without Claude Code).
+// (&noclaude for a Mac without Claude Code, &mcpserver for one with the bare server).
 // Never active in a production build.
 
 type Handler = (e: { payload: unknown }) => void;
@@ -56,7 +56,7 @@ export function installDevMock(): void {
     { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
     { id: 'mcp-2', name: 'ChatGPT', createdAt: Date.now() - 86_400_000 * 20, lastUsedAt: null, expiresAt: Date.now() + 86_400_000 * 70, scopes: ['read', 'write'], usesLegacyUrl: false },
   ];
-  const claudeCode = { cli: params.has('noclaude') ? null : '/Users/you/.local/bin/claude', plugin: false, server: false };
+  const claudeCode = { cli: params.has('noclaude') ? null : '/Users/you/.local/bin/claude', plugin: false, server: params.has('mcpserver') };
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
     claude_code_status: () => ({ ...claudeCode }),

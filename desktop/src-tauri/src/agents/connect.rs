@@ -9,7 +9,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -22,6 +22,7 @@ const MARKETPLACE: &str = "williamrogersdev/eavesy";
 const PLUGIN: &str = "eavesy@eavesy";
 /// Adding the marketplace clones a GitHub repo, which can be slow on a bad network.
 const TIMEOUT: Duration = Duration::from_secs(120);
+const SHELL_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -42,15 +43,23 @@ fn cli_path() -> Option<PathBuf> {
         .into_iter()
         .filter_map(|rel| home.as_ref().map(|home| home.join(rel)))
         .chain(["/opt/homebrew/bin/claude", "/usr/local/bin/claude"].map(PathBuf::from));
-    known.into_iter().find(|path| path.is_file()).or_else(|| from_login_shell().clone())
+    known.into_iter().find(|path| path.is_file()).or_else(from_login_shell)
 }
 
-/// Asked once per run: status is checked every time you come back to Settings,
-/// and a login shell reads all your rc files. Claude Code's installers put it in
-/// one of the known places, so a later install is still found without this.
-fn from_login_shell() -> &'static Option<PathBuf> {
-    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
-    FOUND.get_or_init(ask_login_shell)
+/// Status is checked every time you come back to Settings, and a login shell
+/// reads all your rc files, so a path it found is kept and a miss is asked
+/// again at most once a minute (soon enough to notice a fresh install).
+fn from_login_shell() -> Option<PathBuf> {
+    static FOUND: Mutex<(Option<PathBuf>, Option<Instant>)> = Mutex::new((None, None));
+    let mut found = FOUND.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(path) = found.0.as_ref().filter(|path| path.is_file()) {
+        return Some(path.clone());
+    }
+    if found.1.is_some_and(|asked| asked.elapsed() < SHELL_RETRY) {
+        return None;
+    }
+    *found = (ask_login_shell(), Some(Instant::now()));
+    found.0.clone()
 }
 
 fn ask_login_shell() -> Option<PathBuf> {
@@ -95,6 +104,8 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < timeout => std::thread::sleep(Duration::from_millis(100)),
             _ => {
+                // The readers aren't waited for here: once the group is gone they
+                // finish on their own, and this call returns either way.
                 // SAFETY: kill(2) on the group this child leads; no memory is touched.
                 unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
@@ -190,10 +201,19 @@ pub fn sign_in_claude_code(window: WebviewWindow) -> Result<(), String> {
     if opened.success() { Ok(()) } else { Err("macOS couldn't open Terminal.".into()) }
 }
 
+const SCRIPT_DIR_PREFIX: &str = "eavesy-sign-in-";
+
 /// A fresh folder only you can open, made new each time, so nothing else can
-/// have put a file (or a link) where Terminal will run it.
+/// have put a file (or a link) where Terminal will run it. Terminal reads the
+/// file after `open` returns, so the last one stays until the next sign-in.
 fn write_script(script: &str) -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("eavesy-sign-in-{}", uuid::Uuid::new_v4().simple()));
+    let temp = std::env::temp_dir();
+    for entry in std::fs::read_dir(&temp).into_iter().flatten().flatten() {
+        if entry.file_name().to_string_lossy().starts_with(SCRIPT_DIR_PREFIX) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    let dir = temp.join(format!("{SCRIPT_DIR_PREFIX}{}", uuid::Uuid::new_v4().simple()));
     std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
     let file = dir.join("Sign in to Eavesy.command");
     let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&file)?;
@@ -250,13 +270,12 @@ mod tests {
     #[test]
     fn the_script_goes_in_a_new_private_folder() {
         let one = write_script("echo hi").unwrap();
-        let two = write_script("echo hi").unwrap();
-        assert_ne!(one.parent(), two.parent());
         let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(one.parent().unwrap()).unwrap().permissions());
         assert_eq!(mode & 0o777, 0o700);
         assert_eq!(std::fs::read_to_string(&one).unwrap(), "echo hi");
-        for file in [one, two] {
-            let _ = std::fs::remove_dir_all(file.parent().unwrap());
-        }
+        let two = write_script("echo hi").unwrap();
+        assert_ne!(one.parent(), two.parent());
+        assert!(!one.exists(), "the last sign-in's folder is cleared");
+        let _ = std::fs::remove_dir_all(two.parent().unwrap());
     }
 }
