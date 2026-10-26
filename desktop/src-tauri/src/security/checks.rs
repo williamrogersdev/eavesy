@@ -413,6 +413,7 @@ mod tests {
 
     fn state(finding: &Finding) -> State { finding.state }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn every_tool_is_where_the_checkup_runs_it() {
         for tool in TOOLS {

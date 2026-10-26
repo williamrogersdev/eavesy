@@ -3,7 +3,9 @@
 //!
 //! The admin commands are fixed strings with nothing from a request in them, and
 //! every one only tightens a setting. All the ones in a batch run under a single
-//! password prompt, each reporting its own success with a marker line.
+//! password prompt. What they changed is read back from the checks afterwards,
+//! never from their output: `do shell script` drops stdout when the last command
+//! fails.
 
 use std::time::Duration;
 
@@ -13,7 +15,6 @@ const OSASCRIPT: &str = "/usr/bin/osascript";
 const OPEN: &str = "/usr/bin/open";
 /// Long enough for you to find your password; then it counts as cancelled.
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
-const MARKER: &str = "eavesy:ok:";
 
 /// A setting Eavesy turns on with your admin password.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -31,15 +32,6 @@ impl Verb {
             Verb::Stealth => CheckId::Stealth,
             Verb::Gatekeeper => CheckId::Gatekeeper,
             Verb::AutoLogin => CheckId::AutoLogin,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Verb::Firewall => "firewall",
-            Verb::Stealth => "stealth",
-            Verb::Gatekeeper => "gatekeeper",
-            Verb::AutoLogin => "auto_login",
         }
     }
 
@@ -107,13 +99,13 @@ pub fn open_pane(id: CheckId) -> Result<(), String> {
     if out.status.success() { Ok(()) } else { Err(format!("couldn't open System Settings: {}", String::from_utf8_lossy(&out.stderr).trim())) }
 }
 
-/// The shell script: each command then its marker, one after another, so one
-/// failing doesn't stop the rest. Always in the same order.
+/// The shell script: the commands one after another, so one failing doesn't stop
+/// the rest. Always in the same order.
 fn script(verbs: &[Verb]) -> String {
     let mut verbs = verbs.to_vec();
     verbs.sort();
     verbs.dedup();
-    verbs.iter().map(|verb| format!("{} && echo {MARKER}{}", verb.command(), verb.name())).collect::<Vec<_>>().join("; ")
+    verbs.iter().map(|verb| verb.command()).collect::<Vec<_>>().join("; ")
 }
 
 /// What the password prompt says: only fixed labels.
@@ -132,31 +124,31 @@ fn applescript(verbs: &[Verb]) -> String {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Admin {
-    /// The verbs whose command reported success.
-    Done(Vec<Verb>),
+    /// The password was given and the commands ran; the checks say what changed.
+    Ran,
     Cancelled,
+    /// osascript couldn't run, or a command failed. Some may still have changed.
     Failed(String),
 }
 
 /// Runs the verbs under one admin password prompt. Blocks until it's answered.
 pub fn run_admin(verbs: &[Verb]) -> Admin {
     match crate::cmd::output(OSASCRIPT, &["-e", &applescript(verbs)], PROMPT_TIMEOUT) {
-        Ok(out) => outcome(verbs, out.status.success(), &String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr)),
+        Ok(out) => outcome(out.status.success(), &String::from_utf8_lossy(&out.stderr)),
         Err(error) => Admin::Failed(error),
     }
 }
 
-fn outcome(verbs: &[Verb], success: bool, stdout: &str, stderr: &str) -> Admin {
+fn outcome(success: bool, stderr: &str) -> Admin {
+    if success {
+        return Admin::Ran;
+    }
     // osascript reports a cancelled password prompt as error -128.
-    if !success && stderr.contains("(-128)") {
+    if stderr.contains("(-128)") {
         return Admin::Cancelled;
     }
-    let done: Vec<Verb> = verbs.iter().copied().filter(|verb| stdout.lines().any(|line| line.trim() == format!("{MARKER}{}", verb.name()))).collect();
-    if done.is_empty() && !success {
-        let stderr = stderr.trim();
-        return Admin::Failed(if stderr.is_empty() { "the admin command failed".into() } else { stderr.to_string() });
-    }
-    Admin::Done(done)
+    let stderr = stderr.trim();
+    Admin::Failed(if stderr.is_empty() { "the admin command failed".into() } else { stderr.to_string() })
 }
 
 #[cfg(test)]
@@ -167,24 +159,30 @@ mod tests {
     fn the_script_is_fixed_and_in_order() {
         assert_eq!(
             script(&[Verb::Gatekeeper, Verb::Firewall, Verb::Gatekeeper]),
-            "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on && echo eavesy:ok:firewall; /usr/sbin/spctl --global-enable && echo eavesy:ok:gatekeeper"
+            "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on; /usr/sbin/spctl --global-enable"
         );
         assert_eq!(prompt(&[Verb::Firewall, Verb::AutoLogin]), "Eavesy wants to turn on the firewall, turn off automatic login.");
         let source = applescript(&[Verb::Stealth]);
-        assert!(source.starts_with("do shell script \"/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on && echo eavesy:ok:stealth\" with prompt "));
+        assert!(source.starts_with("do shell script \"/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on\" with prompt "));
         assert!(source.ends_with(" with administrator privileges"));
     }
 
     #[test]
-    fn each_verb_answers_for_itself() {
-        let both = [Verb::Firewall, Verb::Stealth];
-        assert_eq!(outcome(&both, true, "eavesy:ok:firewall\neavesy:ok:stealth\n", ""), Admin::Done(both.to_vec()));
-        // The last command failing makes osascript fail, but the first still went through.
-        assert_eq!(outcome(&both, false, "eavesy:ok:firewall\n", "execution error: oops (1)"), Admin::Done(vec![Verb::Firewall]));
-        assert_eq!(outcome(&both, false, "", "execution error: User canceled. (-128)"), Admin::Cancelled);
-        assert_eq!(outcome(&both, false, "", "execution error: nope (1)"), Admin::Failed("execution error: nope (1)".into()));
-        // A marker for something not asked for isn't counted.
-        assert_eq!(outcome(&[Verb::Gatekeeper], true, "eavesy:ok:firewall\n", ""), Admin::Done(vec![]));
+    fn a_cancelled_prompt_is_told_apart() {
+        assert_eq!(outcome(true, ""), Admin::Ran);
+        assert_eq!(outcome(false, "execution error: User canceled. (-128)"), Admin::Cancelled);
+        assert_eq!(outcome(false, "0:59: execution error: nope (1)"), Admin::Failed("0:59: execution error: nope (1)".into()));
+    }
+
+    /// The AppleScript compiles, prompt and all, without running anything.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_applescript_compiles() {
+        let out = std::env::temp_dir().join(format!("eavesy-fix-{}.scpt", std::process::id()));
+        let all = [Verb::Firewall, Verb::Stealth, Verb::Gatekeeper, Verb::AutoLogin];
+        let compiled = std::process::Command::new("/usr/bin/osacompile").args(["-e", &applescript(&all), "-o"]).arg(&out).output().unwrap();
+        let _ = std::fs::remove_file(&out);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     }
 
     #[test]

@@ -315,10 +315,10 @@ struct SecurityFix {
 
 impl Action for SecurityFix {
     fn tool(&self) -> &'static str { "security.fix" }
-    // Only ever tightens a setting and checks each again first, so it's on Auto's safe
-    // list (the plan's decision 9); there's no Undo, since that would loosen it again.
-    // An agent never changes these without your click.
-    fn facts(&self) -> Facts { Facts { safe_listed: true, you_only: true, ..facts(Tier::Click, self.verbs.len()) } }
+    // Only ever tightens a setting and checks it again first, so one setting on its own
+    // is on Auto's safe list (the plan's decision 9); a batch shows a card. There's no
+    // Undo, since that would loosen it again. An agent never runs it without your click.
+    fn facts(&self) -> Facts { Facts { safe_listed: self.verbs.len() == 1, you_only: true, ..facts(Tier::Click, self.verbs.len()) } }
     fn title(&self) -> String {
         let labels: Vec<&str> = self.verbs.iter().map(|verb| verb.label()).collect();
         labels.join(", ")
@@ -329,24 +329,40 @@ impl Action for SecurityFix {
         if chosen.is_empty() {
             return Ran { summary: "Nothing changed".into(), detail: serde_json::Value::Null };
         }
-        // Read again right before acting: what's already on needs no password.
-        let before = crate::security::read_all(&chosen.iter().map(|verb| verb.check()).collect::<Vec<_>>());
-        let needed: Vec<Verb> = chosen.iter().copied().filter(|verb| before.iter().any(|f| f.id == verb.check() && f.state != State::Good)).collect();
+        // Read again right before acting. Only a setting read as off is changed: one that
+        // couldn't be read might be stricter than what the command sets (the firewall's
+        // block-all mode), so that opens Settings instead.
+        let ids: Vec<CheckId> = chosen.iter().map(|verb| verb.check()).collect();
+        let before = crate::security::read_all(&ids);
+        let state = |findings: &[Finding], verb: Verb| findings.iter().find(|f| f.id == verb.check()).map(|f| f.state);
+        let needed: Vec<Verb> = chosen.iter().copied().filter(|&verb| matches!(state(&before, verb), Some(State::Fix | State::Suggest))).collect();
         if needed.is_empty() {
-            return Ran { summary: "Already on: nothing to change".into(), detail: findings_detail(&before) };
+            let unread = chosen.iter().find(|&&verb| state(&before, verb) == Some(State::Unknown));
+            let summary = match unread {
+                Some(verb) => {
+                    open_settings(verb.check());
+                    format!("Couldn't read {}, so nothing changed. System Settings is open there", verb.check().title())
+                }
+                None => "Already on: nothing to change".into(),
+            };
+            return Ran { summary, detail: findings_detail(&before) };
         }
         let admin = fix::run_admin(&needed);
-        let after = crate::security::read_all(&chosen.iter().map(|verb| verb.check()).collect::<Vec<_>>());
+        let after = crate::security::read_all(&ids);
         let summary = fixed_summary(&needed, &admin, &after);
         // Whatever is still off opens where you can change it yourself.
-        if !matches!(admin, Admin::Cancelled) {
+        if admin != Admin::Cancelled {
             if let Some(left) = after.iter().find(|f| f.state != State::Good) {
-                if let Err(error) = fix::open_pane(left.id) {
-                    tracing::warn!(%error, "security: couldn't open System Settings");
-                }
+                open_settings(left.id);
             }
         }
         Ran { summary, detail: findings_detail(&after) }
+    }
+}
+
+fn open_settings(id: CheckId) {
+    if let Err(error) = fix::open_pane(id) {
+        tracing::warn!(%error, "security: couldn't open System Settings");
     }
 }
 
@@ -354,15 +370,19 @@ impl Action for SecurityFix {
 fn fixed_summary(needed: &[Verb], admin: &Admin, after: &[Finding]) -> String {
     match admin {
         Admin::Cancelled => "You cancelled the password prompt; nothing changed".into(),
-        Admin::Failed(error) => format!("Couldn't change it: {error}"),
-        Admin::Done(_) => {
+        // A failed command may still have changed some: the checks say which.
+        Admin::Ran | Admin::Failed(_) => {
             let state = |verb: &Verb| after.iter().find(|f| f.id == verb.check()).map(|f| f.state);
             let (good, left): (Vec<&Verb>, Vec<&Verb>) = needed.iter().partition(|verb| state(verb) == Some(State::Good));
             let names = |verbs: &[&Verb]| verbs.iter().map(|verb| verb.check().title()).collect::<Vec<_>>().join(", ");
-            match (good.is_empty(), left.is_empty()) {
+            let said = match (good.is_empty(), left.is_empty()) {
                 (_, true) => format!("Done: {}", names(&good)),
                 (true, false) => format!("Still not changed: {}. System Settings is open there", names(&left)),
                 (false, false) => format!("Done: {}. Still not changed: {}. System Settings is open there", names(&good), names(&left)),
+            };
+            match admin {
+                Admin::Failed(error) if !left.is_empty() => format!("{said} ({error})"),
+                _ => said,
             }
         }
     }
@@ -585,7 +605,7 @@ mod tests {
         assert_eq!(admin.tool(), "security.fix");
         assert_eq!(admin.title(), "Turn on the firewall, Turn on stealth mode");
         let facts = admin.facts();
-        assert!(facts.you_only && facts.safe_listed && !facts.undoable && facts.tier == Tier::Click && !facts.remote_allowed);
+        assert!(facts.you_only && !facts.safe_listed && !facts.undoable && facts.tier == Tier::Click && !facts.remote_allowed);
         let Ok(pane) = security_fix(vec![CheckId::Filevault]) else { panic!() };
         assert_eq!(pane.tool(), "security.open_settings");
         assert_eq!(pane.facts().tier, Tier::Do);
@@ -598,7 +618,7 @@ mod tests {
     fn a_fix_reports_what_the_checks_read_afterwards() {
         let found = |id, state| Finding::new(id, state, String::new());
         let both = [Verb::Firewall, Verb::Stealth];
-        let done = Admin::Done(both.to_vec());
+        let done = Admin::Ran;
         assert_eq!(fixed_summary(&both, &done, &[found(CheckId::Firewall, State::Good), found(CheckId::Stealth, State::Good)]), "Done: Firewall, Stealth mode");
         // The command said yes but the check disagrees: the check wins.
         assert_eq!(
@@ -606,6 +626,14 @@ mod tests {
             "Done: Firewall. Still not changed: Stealth mode. System Settings is open there"
         );
         assert_eq!(fixed_summary(&both, &Admin::Cancelled, &[]), "You cancelled the password prompt; nothing changed");
+        // The last command failing doesn't hide that the first one worked.
+        assert_eq!(
+            fixed_summary(&both, &Admin::Failed("nope (1)".into()), &[found(CheckId::Firewall, State::Good), found(CheckId::Stealth, State::Suggest)]),
+            "Done: Firewall. Still not changed: Stealth mode. System Settings is open there (nope (1))"
+        );
+        // A batch always gets a card in Auto; one setting on its own may not.
+        let Ok(one) = security_fix(vec![CheckId::Firewall]) else { panic!() };
+        assert!(one.facts().safe_listed);
     }
 
     #[test]

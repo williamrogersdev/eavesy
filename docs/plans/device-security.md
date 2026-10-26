@@ -457,9 +457,9 @@ of that login item" always shows the card first.
 - The four admin verbs `security_fix` runs today, under one prompt:
   `socketfilterfw --setglobalstate on`, `socketfilterfw --setstealthmode on`,
   `spctl --global-enable`, and removing `autoLoginUser` with
-  `/etc/kcpassword`. Their parsing and the marker each prints are unit
-  tested, and the checkup's reads were run on a real Mac, but no verb has run
-  yet: running them on William's Mac would change his settings.
+  `/etc/kcpassword`. The generated AppleScript compiles in a test, and the
+  checkup's reads were run on a real Mac, but no verb has run yet: running
+  them on William's Mac would change his settings.
 
 A verb that doesn't work by command falls back to opening the pane.
 
