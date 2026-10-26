@@ -188,7 +188,13 @@ jobs:
               com.apple.security.cs.allow-jit|com.apple.security.cs.allow-unsigned-executable-memory) ;;
               *) echo "::error::$key can't be left out by this workflow"; exit 1 ;;
             esac
-            /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" 2>/dev/null || echo "$key isn't in the checked-in entitlements"
+            # Only a missing key is fine; a missing or broken plist still fails.
+            if /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" > /dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
+            else
+              test -s "$PLIST" && plutil -lint "$PLIST"
+              echo "$key isn't in the checked-in entitlements"
+            fi
           done
           cat "$PLIST"
 

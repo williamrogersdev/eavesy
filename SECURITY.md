@@ -44,8 +44,9 @@ deliberate.
   - `files.user-selected.read-write`: exports and imports you pick.
 
   The app has no JIT or unsigned-memory exceptions. The web view's JavaScript
-  runs in WebKit's own process, and every signed build is launched in CI and
-  must show its JavaScript running before it can ship.
+  runs in WebKit's own process. Every signed build is launched in CI ("Launch
+  the signed app" in `macos-release.yml`), and it can't ship unless it stays
+  up and its web view's code calls into the app within 90 s.
 - **Private API** (`macOSPrivateApi`): only for transparent windows (the
   recording HUD and assistant cards). Tauri needs it for window transparency
   on macOS.
