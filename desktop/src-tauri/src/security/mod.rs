@@ -199,12 +199,18 @@ mod on_this_mac {
         use super::{read_all, State};
         let how = std::env::var("EAVESY_VM_ADMIN_TEST").unwrap_or_default();
         assert!(how == "1" || how == "sudo", "only in a throwaway VM");
+        // And refuse on real hardware, whatever the variable says.
+        let vm = std::process::Command::new("/usr/sbin/sysctl").args(["-n", "kern.hv_vmm_present"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&vm.stdout).trim(), "1", "this Mac isn't a VM: refusing to change its settings");
         let verbs = [Verb::Firewall, Verb::Stealth, Verb::Gatekeeper, Verb::AutoLogin];
         let ids: Vec<_> = verbs.iter().map(|verb| verb.check()).collect();
         for finding in read_all(&ids) {
             println!("before: {finding:?}");
+            assert_ne!(finding.state, State::Unknown, "couldn't read it: {finding:?}");
             assert!(matches!(finding.state, State::Fix | State::Suggest), "loosen the VM first: {finding:?}");
         }
+        // `sudo` checks the commands only: it skips the AppleScript and the prompt, so
+        // only `1` with a password typed in shows the shipped path end to end.
         let admin = if how == "sudo" {
             let out = std::process::Command::new("/usr/bin/sudo").args(["-n", "/bin/sh", "-c", &fix::script(&verbs)]).output().unwrap();
             println!("sudo: {out:?}");
@@ -213,11 +219,11 @@ mod on_this_mac {
             fix::run_admin(&verbs)
         };
         println!("admin: {admin:?}");
+        assert_eq!(admin, Admin::Ran);
         for finding in read_all(&ids) {
             println!("after: {finding:?}");
             assert_eq!(finding.state, State::Good, "{finding:?}");
         }
         assert!(!std::path::Path::new("/etc/kcpassword").exists(), "the saved login password is still there");
-        assert_eq!(admin, Admin::Ran);
     }
 }

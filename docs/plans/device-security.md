@@ -461,17 +461,23 @@ of that login item" always shows the card first.
 
 A verb that doesn't work by command falls back to opening the pane.
 
-**Verified in the VM (2026-10-26, macOS 26.6.2, Cirrus Labs' Tahoe image).**
+**Checked in the VM (2026-10-26, macOS 26.6.2, Cirrus Labs' Tahoe image).**
 The image starts loose: firewall, stealth mode and Gatekeeper off, and
 automatic login on with `/etc/kcpassword` present. The ignored test
-`security::on_this_mac::admin_verbs_tighten_a_vm` read all four as needing
-a fix, then ran `security_fix`'s own command string as root. It read all four
-as good afterwards, and `/etc/kcpassword` was gone. The real prompt came up
-with the right wording ("Eavesy wants to turn on the firewall, … turn on
-Gatekeeper, turn off automatic login and delete its saved password."). With no
-password given, nothing changed. The checkup's reads parsed on the VM as well,
-apart from XProtect, which reads Unknown because the VM has no install
-history.
+`security::on_this_mac::admin_verbs_tighten_a_vm` refuses to run unless
+`kern.hv_vmm_present` is 1. It read all four as needing a fix.
+
+- **The commands (`EAVESY_VM_ADMIN_TEST=sudo`).** `security_fix`'s own
+  command string, run as root, turned all four good, and `/etc/kcpassword`
+  was gone. This skips the AppleScript wrapper and the prompt.
+- **The prompt (`=1`).** The real prompt came up with the right wording
+  ("Eavesy wants to turn on the firewall, … turn on Gatekeeper, turn off
+  automatic login and delete its saved password."). It was ended without a
+  password: the result was `Failed` and nothing changed.
+- **Not done:** completing that prompt with a password. That step is still in
+  the list above.
+- **Reads:** the checkup's reads parsed on the VM as well, apart from
+  XProtect. It reads Unknown because the VM has no install history.
 
 ## Phase 0: harden Eavesy itself
 
