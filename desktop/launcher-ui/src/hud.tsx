@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
+import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
@@ -10,9 +10,13 @@ import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
 import { DICTATION_STYLES, FOR_AGENTS_HINT, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
+import { requestTranslation } from '@/lib/translation/client';
+import { languageName, type Language } from '@/lib/translation/languages';
+import { joinTranslatedChunks, translationChunks } from '@/lib/translation/use-inline-translation';
 import { clicksLabel, invoke, NO_MARKING, tauri, useEvent, useMarking, type MarkingState } from './marking';
 import { HELD_PHASES, holdMs, type Receipt } from './hud-hold';
 import { changeOutcome, needsRewrite, PLAIN, toneRow, type TonePick, type WrittenAs } from './hud-writing';
+import { findLanguages, loadRecentLanguages, rememberLanguage, saveRecentLanguages } from './hud-language';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -45,6 +49,7 @@ const ERROR_COPY: [RegExp, string][] = [
   [/pasting is only supported on macOS/i, 'Couldn’t paste here'],
   [/^Could not change the tone:/, 'Couldn’t change the tone. Try again?'],
   [/^Could not put the rewrite in place:/, 'Couldn’t put the rewrite in place'],
+  [/^Choose a language and enter up to/, 'Couldn’t translate that. Try again?'],
 ];
 
 /** What the control says when an action fails: `errMsg`'s text, mapped to user copy. */
@@ -78,6 +83,17 @@ interface ToneChange extends TonePick {
   sessionId: string;
   /** The words as pasted, which every rewrite starts from; null once typed over (the words as they are now). */
   base: string | null;
+  busy: boolean;
+  landed: 'replaced' | 'copied' | null;
+}
+
+/** A finished dictation's translation: what it's translated from, into which language, and where it went. */
+interface TranslationChange {
+  sessionId: string;
+  /** The words before any translation, which "Original" goes back to; null once typed over or rewritten. */
+  base: string | null;
+  /** The language the words are in now, or null for the original. */
+  language: Language | null;
   busy: boolean;
   landed: 'replaced' | 'copied' | null;
 }
@@ -352,6 +368,12 @@ function Hud() {
   // The finished dictation whose transcript drawer is open: hovering its pill opens it.
   const [peek, setPeek] = useState<string | null>(browserPreviewPeek);
   const [tone, setTone] = useState<ToneChange | null>(null);
+  const [translation, setTranslation] = useState<TranslationChange | null>(null);
+  // The language finder, open in place of the words while a language is being picked.
+  const [finding, setFinding] = useState(false);
+  const [languageQuery, setLanguageQuery] = useState('');
+  const [languageActive, setLanguageActive] = useState(0);
+  const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
   const [prefs, setPrefs] = useWriting(state);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
@@ -458,7 +480,7 @@ function Hud() {
   };
   useEvent('hud:release-editor', releaseFromRust);
   useEffect(() => {
-    const release = () => { editorRef.current?.blur(); setEditing(false); };
+    const release = () => { editorRef.current?.blur(); setEditing(false); setFinding(false); };
     window.addEventListener('blur', release);
     return () => window.removeEventListener('blur', release);
   }, []);
@@ -608,13 +630,20 @@ function Hud() {
   const toneRequest = useRef<number | null>(null);
   const toneSeq = useRef(0);
   const toneBefore = useRef<ToneChange | null>(null);
+  const translateRequest = useRef<number | null>(null);
+  const translationBefore = useRef<TranslationChange | null>(null);
   const cancelRestyle = () => {
+    setFinding(false);
+    if (translateRequest.current !== null) {
+      translateRequest.current = null;
+      setTranslation((now) => now?.busy ? translationBefore.current : now);
+    }
     if (toneRequest.current === null) return;
     toneRequest.current = null;
     setTone((now) => now?.busy ? toneBefore.current : now);
   };
 
-  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); toneRequest.current = null; setTone(null); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
+  useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); toneRequest.current = null; setTone(null); translateRequest.current = null; setTranslation(null); setFinding(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
     setImageSrc(null);
@@ -633,7 +662,9 @@ function Hud() {
   // Words being corrected, or a correction that didn't save, keep the drawer
   // open: folding them into a stamp would hide the editor or the Retry.
   const ownTone = tone && tone.sessionId === state?.sessionId ? tone : null;
-  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || !!ownTone?.busy);
+  const ownTranslation = translation && translation.sessionId === state?.sessionId ? translation : null;
+  const rewriting = !!ownTone?.busy || !!ownTranslation?.busy;
+  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || rewriting || finding);
   // With the words shown after dictation (the default), a pasted or copied
   // dictation opens straight into its drawer; Not pasted keeps its Allow pill.
   const finished = state ? receiptFor(state) : null;
@@ -646,7 +677,7 @@ function Hud() {
   const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
 
   useEffect(() => {
-    if (!state || editing || saving || saveError || ownTone?.busy || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
+    if (!state || editing || finding || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
     const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
@@ -655,7 +686,7 @@ function Hud() {
       else setState({ ...state, phase: 'idle', message: null, notice: null });
     }, hold);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, saving, saveError, draft, saveRevision, receipt, ownTone?.busy]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, finding, saving, saveError, draft, saveRevision, receipt, rewriting]);
 
   const cancelPeekDwell = () => {
     if (peekDwell.current !== null) window.clearTimeout(peekDwell.current);
@@ -860,6 +891,7 @@ function Hud() {
     // Typed over a rewrite: that's now the words, and the next tone starts
     // from them. The row keeps showing the tone picked.
     if (ownTone && !ownTone.busy && ownTone.base !== null) setTone({ ...ownTone, base: null, landed: null });
+    if (ownTranslation && !ownTranslation.busy && ownTranslation.base !== null) setTranslation({ ...ownTranslation, base: null, landed: null });
     if (record) {
       const typed = inputType === 'insertText' && before.start === before.end && text.length === words.length + 1;
       const group = typingGroup.current;
@@ -906,7 +938,7 @@ function Hud() {
     value={composition?.text ?? words}
     placeholder={hint}
     spellCheck
-    readOnly={!state.sessionId || !!ownTone?.busy}
+    readOnly={!state.sessionId || rewriting}
     onFocus={() => {
       if (!state.sessionId) return;
       setEditing(true);
@@ -970,7 +1002,7 @@ function Hud() {
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
     const todo = needsRewrite(next, row);
-    if (!sessionId || toneRequest.current !== null || todo === 'none') return;
+    if (!sessionId || toneRequest.current !== null || translateRequest.current !== null || todo === 'none') return;
     setActionError(null);
     const token = ++toneSeq.current;
     toneRequest.current = token;
@@ -1022,12 +1054,131 @@ function Hud() {
       setDraft({ sessionId, source: null, text });
       setCopied(false);
       setTone((now) => now?.sessionId === sessionId ? { ...now, busy: false, landed } : now);
+      // Rewritten in a new tone: "Original" can't go back past that.
+      setTranslation((now) => now?.sessionId === sessionId ? { ...now, base: null, landed: null } : now);
     } finally {
       if (toneRequest.current === token) toneRequest.current = null;
       // However it ended, this dictation's row is no longer rewriting.
       setTone((now) => now?.sessionId === sessionId && now.busy ? { ...now, busy: false } : now);
     }
   };
+  // Translating works like a tone: the words go where they went, saved as the
+  // transcript without teaching the dictionary. Each language starts from the
+  // words before any translation, so going back and forth never compounds, and
+  // "Original" puts them back without asking the server.
+  const translateText = async (text: string, target: Language): Promise<string> => {
+    if (!tauri()) return `(${languageName(target)}) ${text}`;
+    const chunks = translationChunks(text);
+    const translated: string[] = [];
+    for (const chunk of chunks) translated.push((await requestTranslation({ text: chunk, source: 'auto', target })).translation);
+    return joinTranslatedChunks(chunks, translated);
+  };
+  const translate = async (next: Language | null) => {
+    const sessionId = state.sessionId;
+    closeFinder();
+    if (!sessionId || translateRequest.current !== null || toneRequest.current !== null) return;
+    const from = ownTranslation?.language ?? null;
+    const base = ownTranslation?.base ?? words;
+    if (next === from && (next === null || ownTranslation?.base !== null)) return;
+    if (next === null && ownTranslation?.base == null) return;
+    if (next) {
+      const recent = rememberLanguage(recentLanguages, next);
+      setRecentLanguages(recent);
+      saveRecentLanguages(recent);
+    }
+    setActionError(null);
+    const token = ++toneSeq.current;
+    translateRequest.current = token;
+    const wanted = () => translateRequest.current === token && currentSession.current === sessionId;
+    translationBefore.current = ownTranslation;
+    setTranslation({ sessionId, base, language: next, busy: true, landed: null });
+    try {
+      const released = releaseEditor(sessionId);
+      const text = next === null ? base : await translateText(base, next);
+      await within(released, 500);
+      if (!wanted()) return;
+      const landed = tauri() ? (await invoke('replace_dictation', { sessionId, text })) === 'replaced' ? 'replaced' : 'copied' : 'replaced';
+      const edit: Edit = { sessionId, text, learn: false };
+      latestEdit.current = edit; pendingEdit.current = edit;
+      void flushEdit();
+      if (!wanted()) return;
+      setDraft({ sessionId, source: null, text });
+      setCopied(false);
+      // A tone picked next rewrites the words as they are now, in this language.
+      setTone((now) => now?.sessionId === sessionId && !now.busy ? { ...now, base: null, landed: null } : now);
+      setTranslation({ sessionId, base, language: next, busy: false, landed });
+    } catch (error) {
+      if (!wanted()) return;
+      setTranslation(translationBefore.current);
+      setActionError(hudError(error, 'Couldn’t translate it. Try again?'));
+    } finally {
+      if (translateRequest.current === token) translateRequest.current = null;
+    }
+  };
+  const openFinder = () => {
+    if (!state.sessionId || rewriting) return;
+    setLanguageQuery('');
+    setLanguageActive(0);
+    setFinding(true);
+    // The search box needs the keyboard, as the editor does.
+    if (tauri()) void invoke('focus_preview_editor', { sessionId: state.sessionId }).catch(() => {});
+  };
+  const closeFinder = () => {
+    if (!finding) return;
+    setFinding(false);
+    void releaseEditor(state.sessionId);
+  };
+  // "Original" leads while there is one to go back to.
+  const canRestore = !!ownTranslation?.language && ownTranslation.base !== null;
+  const languageMatches = findLanguages(languageQuery, recentLanguages);
+  const languageChoices: (Language | null)[] = [...(canRestore && !languageQuery.trim() ? [null] : []), ...languageMatches];
+  const activeChoice = Math.min(languageActive, Math.max(0, languageChoices.length - 1));
+  const translateButton = (
+    <button type="button" className="ctl-tone ctl-translate" aria-pressed={finding} aria-haspopup="listbox" disabled={rewriting}
+      title="Translate these words. They replace the pasted ones." onClick={() => finding ? closeFinder() : openFinder()}>
+      <Languages className="h-3.5 w-3.5" aria-hidden />{ownTranslation?.language ? languageName(ownTranslation.language) : 'Translate'}
+    </button>
+  );
+  const languageFinder = (
+    <div className="ctl-finder">
+      <input
+        autoFocus
+        className="ctl-find"
+        type="search"
+        aria-label="Search languages"
+        placeholder="Search languages"
+        spellCheck={false}
+        value={languageQuery}
+        role="combobox"
+        aria-expanded
+        aria-controls="ctl-langs"
+        aria-activedescendant={languageChoices.length ? `ctl-lang-${activeChoice}` : undefined}
+        onChange={(event) => { setLanguageQuery(event.target.value); setLanguageActive(0); }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === 'Escape') { event.preventDefault(); closeFinder(); }
+          else if (event.key === 'Enter') { event.preventDefault(); if (languageChoices.length) void translate(languageChoices[activeChoice]); }
+          else if (event.key === 'ArrowDown' || event.key === 'ArrowRight' && event.currentTarget.selectionStart === languageQuery.length) { event.preventDefault(); setLanguageActive(Math.min(activeChoice + 1, languageChoices.length - 1)); }
+          else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft' && event.currentTarget.selectionStart === 0) { event.preventDefault(); setLanguageActive(Math.max(activeChoice - 1, 0)); }
+        }}
+      />
+      <div id="ctl-langs" role="listbox" aria-label="Languages" className="ctl-langs">
+        {languageChoices.length === 0 && <span className="ctl-say ctl-quiet">No language called “{languageQuery.trim()}”</span>}
+        {languageChoices.map((code, index) => (
+          <button key={code ?? 'original'} id={`ctl-lang-${index}`} type="button" role="option" tabIndex={-1}
+            aria-selected={(ownTranslation?.language ?? null) === code}
+            data-active={index === activeChoice || undefined}
+            data-recent={(code !== null && recentLanguages.includes(code) && !languageQuery.trim()) || undefined}
+            className="ctl-lang"
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseEnter={() => setLanguageActive(index)}
+            onClick={() => void translate(code)}>
+            {code === null ? 'Original' : languageName(code)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
   const tooLong = words.length > MAX_REWRITE_CHARS;
   const toneControls = !!state.sessionId && (tooLong ? (
     <div className="ctl-tones">
@@ -1040,22 +1191,25 @@ function Hud() {
       <label className="ctl-field" title={`${DICTATION_STYLES.find((style) => style.id === picked.style)?.hint ?? ''} Your tone for every dictation.`}>
         <span>Tone</span>
         <span className="ctl-select">
-          <select aria-label="Dictation tone" value={picked.style} disabled={!!ownTone?.busy} onChange={(event) => void change({ ...picked, style: event.target.value as DictationStyle })}>
+          <select aria-label="Dictation tone" value={picked.style} disabled={rewriting} onChange={(event) => void change({ ...picked, style: event.target.value as DictationStyle })}>
             {DICTATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
           </select>
           <ChevronsUpDown className="ctl-select-icon" aria-hidden />
         </span>
       </label>
       <span className="ctl-sep" aria-hidden />
-      <button type="button" role="switch" aria-checked={picked.forAgents} disabled={!!ownTone?.busy} className="ctl-switch-row" title={FOR_AGENTS_HINT}
+      <button type="button" role="switch" aria-checked={picked.forAgents} disabled={rewriting} className="ctl-switch-row" title={FOR_AGENTS_HINT}
         onClick={() => void change({ ...picked, forAgents: !picked.forAgents })}>
         For AI<span className="ctl-switch" aria-hidden />
       </button>
       <span className="ctl-fill" />
-      <span className="ctl-say ctl-quiet ctl-tones-note" title="What you pick here is your default: every dictation from now on is written this way, and this one is rewritten to match.">Sets your default</span>
+      {translateButton}
     </div>
   ));
-  const toneStamp = ownTone?.busy ? <span className="ctl-say ctl-quiet">Rewriting<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>
+  const toneStamp = ownTranslation?.busy ? <span className="ctl-say ctl-quiet">Translating<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>
+    : ownTranslation?.landed === 'replaced' ? <Stamp tone="leaf">{ownTranslation.language ? languageName(ownTranslation.language) : 'Original'}</Stamp>
+    : ownTranslation?.landed === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
+    : ownTone?.busy ? <span className="ctl-say ctl-quiet">Rewriting<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>
     : ownTone?.landed === 'replaced' ? <Stamp tone="leaf">Updated</Stamp>
     : ownTone?.landed === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
     : null;
@@ -1172,7 +1326,7 @@ function Hud() {
         {close}
       </>
     );
-    below = editable ? transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
+    below = editable ? finding && size === 'result' ? languageFinder : transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
     if (size === 'result' && editable) foot = toneControls;
   } else if (state.phase === 'saved' && notice) {
     // Saved, but not typed where the cursor was: say so, and why, never a plain "Saved".
@@ -1234,7 +1388,7 @@ function Hud() {
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>
-      {below && <div className="ctl-below" data-busy={ownTone?.busy || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
+      {below && <div className="ctl-below" data-busy={rewriting || undefined} data-finding={finding || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
   );

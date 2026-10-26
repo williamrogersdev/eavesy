@@ -505,7 +505,7 @@ the pill can't jitter or flip while words arrive.
 | bar | 264 × 40 | recording and writing with live words off (the default) |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
-| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch). Opens by itself unless that switch is off; then hovering the receipt opens it |
+| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **How it looks while recording** is the user's call (Settings → General → Recording
@@ -552,8 +552,7 @@ dictation setting itself (Settings → Dictation), not a one-off: a **Tone**
 pop-up (As spoken · Professional · Friendly · Concise, a native `<select>`
 whose list opens over the control, so the window never has to hold it), a
 1px rule, a **For AI** switch (written as a prompt for an AI agent; the
-track lights cream when on) and, at the row's end, "Sets your default" in
-quiet ink. The row shows the tone in force for the words (the server tells
+track lights cream when on) and, at the row's end, **Translate**. The row shows the tone in force for the words (the server tells
 the app with them; a project's own tone counts, and the saved choice stands
 in when the server didn't say). Changing it keeps the choice first, for
 every dictation to come, on the account or on the project when the tone was
@@ -572,7 +571,22 @@ the typed words the new starting point while the row keeps its choice. When
 the server can't rewrite it (the model fails, or the rewrite strays from
 what was said) the stamp area says "Kept for next time, but this one
 couldn't be rewritten" and the words stay. It never claims **Updated** for
-the plain cleanup. The drawer reads
+the plain cleanup.
+
+**Translate** opens a language finder in place of the words: a search box
+that has the keyboard, then the languages as chips, the ones last used
+first (kept on this Mac), so someone who goes back and forth between two
+languages finds theirs in one click. Typing narrows them (names that start
+with it first, a code like "pt" exactly); arrows move, Enter picks the
+first, Esc closes it and leaves the drawer. Picking one translates the words
+and they go where the words went, like a tone: replaced in the app while
+they're still there as pasted, otherwise copied; saved as the transcript,
+never taught to the dictionary. Each language starts from the words before
+any translation, so they never compound, and **Original** (first while
+there is one to go back to) puts them back without asking the server. The
+button and the stamp name the language the words are in. Typing over them
+or changing the tone makes those the new starting point. A translation that
+fails says why in the stamp area and leaves the words as they were. The drawer reads
 a long dictation from its start, fades its last line while more is below,
 and its stamp counts the words; past 20,000 characters the tone row gives
 way to "Too long to change the tone here" and **Open in Eavesy**, which the
@@ -587,11 +601,13 @@ control stays; the next tone click clears a tone's error. A receipt goes
 back to the pill after 1.6s (Pasted) or 6s (Copied), whatever the pointer
 does; Not pasted stays until Accessibility is allowed or it's collapsed.
 Otherwise the HUD collapses to the pill 3.5s (pill), 6s (a failure, or Not
-typed) or 10s (drawer) after the result, 2.5s after the pointer leaves it,
-or on Esc.
+typed) or 30s (drawer) after the result, 2.5s after the pointer leaves it
+(10s for the drawer, which is often left to read or click something
+else), or on Esc.
 It stays while the pointer is over it
 (up to 30s after it last moves, and 2 min at most from when it came over),
-while you edit, and while a correction is saving. Stopping a recording hands the keyboard back to the app you were in
+while you edit, while the language finder is open, while a tone or
+translation is being written, and while a correction is saving. Stopping a recording hands the keyboard back to the app you were in
 before anything is pasted, even if you were editing the live words, so the
 paste (or your own ⌘V after Copied) never lands in Eavesy's own box. Leaving
 the drawer's editor (Esc, a click elsewhere in the control, a tone, Copy)
