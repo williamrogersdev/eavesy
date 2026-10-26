@@ -44,7 +44,7 @@ Server: `https://mcp.eavesy.com` (streamable HTTP). Add it by URL: the server su
 Claude Code:
 
 ```bash
-claude mcp add --transport http eavesy https://mcp.eavesy.com
+claude mcp add --scope user --transport http eavesy https://mcp.eavesy.com
 ```
 
 Or the Claude Code plugin (adds the server plus a skill for when to use it): `/plugin marketplace add williamrogersdev/eavesy`, then `/plugin install eavesy@eavesy`.

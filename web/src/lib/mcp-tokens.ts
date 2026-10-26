@@ -2,8 +2,10 @@ import { isRecord } from '@/lib/json';
 
 /** The hosted MCP server agents add by URL. They sign in with OAuth, so there is no token to paste. */
 export const MCP_URL = 'https://mcp.eavesy.com';
-export const CLAUDE_CODE_ADD = `claude mcp add --transport http eavesy ${MCP_URL}`;
-export const CLAUDE_CODE_PLUGIN = '/plugin marketplace add williamrogersdev/eavesy\n/plugin install eavesy@eavesy';
+/** `--scope user` so it works in every folder, not just the one you ran it in. */
+export const CLAUDE_CODE_ADD = `claude mcp add --scope user --transport http eavesy ${MCP_URL}`;
+/** The plugin from your terminal, the same thing the desktop app's button runs. */
+export const CLAUDE_CODE_PLUGIN_CLI = 'claude plugin marketplace add williamrogersdev/eavesy && claude plugin install eavesy@eavesy --scope user';
 
 /** An app the account approved (OAuth) or a token made by hand, as `/api/mcp-tokens` lists it. */
 export interface McpToken {

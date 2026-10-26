@@ -309,6 +309,13 @@
       "when": 1792866257487,
       "tag": "0043_agent_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1793042190174,
+      "tag": "0044_calendar_sync_status",
+      "breakpoints": true
     }
   ]
 }
