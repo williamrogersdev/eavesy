@@ -1,8 +1,8 @@
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
-import { parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
+import { MCP_URL, parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
@@ -14,6 +14,7 @@ import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocab
 import { ChipInput } from '@/components/ui/chip-input';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
 import { Link } from '@/components/ui/app-link';
+import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
 
 interface Me {
   id: string;
@@ -88,6 +89,8 @@ function SettingsPage() {
     } else if (params.get('error')?.startsWith('openrouter')) {
       setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Please try again.' });
     }
+    const googleNotice = googleOutcome(params);
+    if (googleNotice) setNotice(googleNotice);
     if (params.has('connected') || params.has('error')) {
       window.history.replaceState({}, '', '/app/settings');
     }
@@ -417,6 +420,10 @@ function SettingsPage() {
         </Row>
       </AppSection>
 
+      <AppSection title="Accounts" description="Calendars Eavesy can read.">
+        <GoogleCalendarRows onError={setError} />
+      </AppSection>
+
       <AppSection title="AI providers" description="Optional. Without these, Eavesy’s own AI is used.">
         <Row
           label="OpenRouter"
@@ -463,8 +470,8 @@ function SettingsPage() {
       </AppSection>
 
       <AppSection
-        title="AI assistants (MCP)"
-        description="A connection that lets Claude, Codex or another assistant search your recordings. Connections are read-only unless you allow writes, and last 90 days."
+        title="AI apps (MCP)"
+        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, make a token here: read-only unless you allow writes, and it lasts 90 days.`}
         action={
           <span className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
@@ -551,6 +558,83 @@ function SettingsPage() {
 
       <SaveToast text={toast.text} />
     </AppPage>
+  );
+}
+
+const GOOGLE_ERRORS: Record<string, string> = {
+  google_cancelled: 'Google wasn’t connected: the Google screen was closed or cancelled.',
+  google_no_calendar: 'Google was connected without calendar access. Connect again and leave the calendar box ticked.',
+  google_expired: 'That Google sign-in took too long. Connect again.',
+  google_unavailable: 'Google isn’t set up on this Eavesy server yet.',
+  google_failed: 'Couldn’t connect Google. Try again.',
+};
+
+/** The notice for `?connected=google` or `?error=google_…`, pointing back to the Mac app when it started there. */
+function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; text: string } | null {
+  const back = params.get('from') === 'mac' ? ' You can go back to the Eavesy app.' : '';
+  if (params.get('connected') === 'google') return { kind: 'ok', text: `Google Calendar connected.${back}` };
+  const error = params.get('error');
+  if (error && error in GOOGLE_ERRORS) return { kind: 'error', text: GOOGLE_ERRORS[error] + back };
+  return null;
+}
+
+/** Google Calendar in Settings → Accounts: Connect, or each linked account with Disconnect. */
+function GoogleCalendarRows({ onError }: { onError: (message: string) => void }) {
+  const [status, setStatus] = useState<CalendarStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  /** The connection Google couldn't be told about, so Disconnect kept it. */
+  const [stuck, setStuck] = useState<string | null>(null);
+  const load = useCallback(() => {
+    void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
+  }, [onError]);
+  useEffect(load, [load]);
+  if (!status) return <p className="text-xs text-ev-ink-2">Checking…</p>;
+  const google = status.connections.filter((connection) => connection.provider === 'google');
+  const disconnect = (id: string, force = false) => {
+    setBusy(id);
+    setStuck(null);
+    void disconnectCalendar(id, force)
+      .then((done) => { if (done) load(); else setStuck(id); })
+      .catch(() => onError('Could not disconnect Google.'))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <>
+      {google.map((connection) => (
+        <Row
+          key={connection.id}
+          label="Google Calendar"
+          hint={connection.needsReconnect
+            ? `${connection.accountEmail} · Google stopped sharing this calendar. Connect it again.`
+            : `${connection.accountEmail} · ${connection.upcoming} upcoming ${connection.upcoming === 1 ? 'meeting' : 'meetings'}`}
+        >
+          {connection.needsReconnect ? (
+            <a href="/api/connections/google" className={appButton('primary', 'sm')}>Reconnect</a>
+          ) : (
+            <button type="button" disabled={busy === connection.id} onClick={() => disconnect(connection.id)} className={appButton('ghost', 'sm')}>
+              {busy === connection.id ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          )}
+        </Row>
+      ))}
+      {stuck ? (
+        <AppAlert tone="danger">
+          <p className="text-xs">{NOT_REVOKED}</p>
+          <span className="mt-2 flex gap-2">
+            <button type="button" onClick={() => disconnect(stuck)} className={appButton('secondary', 'sm')}>Try again</button>
+            <button type="button" onClick={() => disconnect(stuck, true)} className={appButton('ghost', 'sm')}>Remove anyway</button>
+          </span>
+        </AppAlert>
+      ) : null}
+      <Row
+        label={google.length ? 'Another Google account' : 'Google Calendar'}
+        hint={status.available.google ? 'Read-only access to your upcoming meetings.' : 'Google isn’t set up on this Eavesy server yet.'}
+      >
+        {status.available.google ? (
+          <a href="/api/connections/google" className={appButton(google.length ? 'secondary' : 'primary', 'sm')}>Connect</a>
+        ) : null}
+      </Row>
+    </>
   );
 }
 
