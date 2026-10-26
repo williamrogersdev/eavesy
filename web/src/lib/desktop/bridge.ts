@@ -107,6 +107,11 @@ export async function closeSettingsWindow(): Promise<void> {
   if (isDesktop()) await invoke('close_settings_window');
 }
 
+/** Opens the Eavesy panel (the main window), on its history. */
+export async function showLauncher(): Promise<void> {
+  if (isDesktop()) await invoke('show_launcher');
+}
+
 export async function openSetup(): Promise<void> {
   if (isDesktop()) await invoke('show_setup');
 }

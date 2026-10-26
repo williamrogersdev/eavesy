@@ -7,14 +7,19 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         window.show().map_err(|error| error.to_string())?;
         return window.set_focus().map_err(|error| error.to_string());
     }
-    WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+    let builder = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
         .title("Eavesy Settings")
-        .inner_size(840.0, 680.0)
+        .inner_size(880.0, 680.0)
         .min_inner_size(640.0, 480.0)
         .resizable(true)
-        .center()
-        .build()
-        .map_err(|error| error.to_string())?;
+        .center();
+    // Like System Settings: no title bar strip, the traffic lights sit over the
+    // sidebar, and the page draws (and drags) the window's top edge.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    builder.build().map_err(|error| error.to_string())?;
     Ok(())
 }
 

@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "Settings use native app commands; only event subscriptions are needed in this webview.",
+  "description": "Settings use native app commands; this webview only needs event subscriptions and to drag its window by the top edge.",
   "windows": [
     "settings"
   ],
   "permissions": [
     "core:event:allow-listen",
-    "core:event:allow-unlisten"
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging"
   ]
 }
