@@ -5,6 +5,8 @@ name: macOS release
 # R2 + the updater manifest and open a Homebrew cask bump PR.
 # Tags are pushed by tag-desktop-release.yml when a version bump lands on main.
 # Manual dispatch: release candidate only (CI artifacts, nothing published).
+# It can also build a candidate without some entitlements, to test whether the
+# signed app still runs without them (docs/plans/device-security.md, phase 0).
 # Secrets and setup: docs/RELEASING.md.
 
 on:
@@ -12,6 +14,11 @@ on:
     tags:
       - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      without_entitlements:
+        description: "Space-separated entitlements to leave out of this candidate (test builds only)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -168,6 +175,23 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
+      # Only on a manual run, and only these two: a tag build always ships the
+      # checked-in entitlements.
+      - name: Leave out entitlements for this test candidate
+        if: github.event_name == 'workflow_dispatch' && inputs.without_entitlements != ''
+        env:
+          WITHOUT: ${{ inputs.without_entitlements }}
+        run: |
+          PLIST=desktop/src-tauri/entitlements.plist
+          for key in $WITHOUT; do
+            case "$key" in
+              com.apple.security.cs.allow-jit|com.apple.security.cs.allow-unsigned-executable-memory) ;;
+              *) echo "::error::$key can't be left out by this workflow"; exit 1 ;;
+            esac
+            /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
+          done
+          cat "$PLIST"
+
       # Apple credentials are deliberately absent here so Tauri does not
       # notarize the .app; the next step notarizes the exact final DMG.
       - name: Build signed release candidate
@@ -175,6 +199,30 @@ jobs:
           EAVESY_POSTHOG_KEY: ${{ vars.DESKTOP_POSTHOG_KEY }}
           EAVESY_POSTHOG_HOST: ${{ vars.DESKTOP_POSTHOG_HOST }}
         run: desktop/scripts/build-macos-release.sh
+
+      # The hardened runtime only applies to a signed build, so this is where a
+      # missing entitlement shows: the web view's JavaScript engine is killed
+      # at launch. Run the signed app and fail if it doesn't stay up.
+      - name: Launch the signed app
+        run: |
+          APP=desktop/src-tauri/target/release/bundle/macos/Eavesy.app
+          EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          codesign -d --entitlements - "$APP"
+          # The app refuses a capture engine that fails this (sidecar_trust.rs).
+          TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
+          "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
+          PID=$!
+          sleep 25
+          if ! kill -0 "$PID" 2>/dev/null; then
+            wait "$PID" || echo "exit status $?"
+            cat "${RUNNER_TEMP}/launch.log"
+            ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
+            echo "::error::The signed app quit within 25 seconds of launch"
+            exit 1
+          fi
+          kill "$PID"
+          tail -50 "${RUNNER_TEMP}/launch.log"
 
       - name: Notarize and validate release candidate
         env:
