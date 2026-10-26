@@ -108,8 +108,10 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
       if (Date.now() - waiting > WAIT_LIMIT_MS) setWaiting(null);
       else load();
     }, WAIT_POLL_MS);
-    window.addEventListener('focus', load);
-    return () => { clearInterval(timer); window.removeEventListener('focus', load); };
+    // Coming back to this window means the browser part is over, whichever way it went.
+    const back = () => { load(); setWaiting(null); };
+    window.addEventListener('focus', back);
+    return () => { clearInterval(timer); window.removeEventListener('focus', back); };
   }, [waiting, load]);
   // Any new account, or a change to one (a reconnect syncs it again), means Google sent you back.
   const snapshot = JSON.stringify(status?.connections.map((c) => [c.id, c.lastSyncAt, c.needsReconnect]) ?? []);
@@ -132,7 +134,7 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
     setBusy(id);
     setError(null);
     void disconnectCalendar(id)
-      .then(load)
+      .then(({ warning }) => { load(); if (warning) setError(warning); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t disconnect Google.')))
       .finally(() => setBusy(null));
   };

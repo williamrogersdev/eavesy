@@ -59,12 +59,13 @@ export async function deleteConnection(db: AppDb, userId: string, id: string): P
 
 /**
  * Makes the stored events between `from` and `to` match `events`: new ones are
- * added, changed ones updated (keeping `autoRecord` and the recorded meeting),
- * and ones that went away are dropped unless a recording points at them.
+ * added and changed ones updated (the update leaves `autoRecord` and the
+ * recorded meeting alone). With `complete`, ones that went away are dropped
+ * unless a recording points at them; a truncated listing deletes nothing.
  */
 export async function replaceEvents(
   db: AppDb,
-  args: { userId: string; connectionId: string; from: number; to: number; events: CalendarEventInput[]; now: number },
+  args: { userId: string; connectionId: string; from: number; to: number; events: CalendarEventInput[]; complete: boolean; now: number },
 ): Promise<void> {
   const { userId, connectionId } = args;
   const current = await db
@@ -79,7 +80,7 @@ export async function replaceEvents(
       ),
     );
   const keep = new Set(args.events.map((e) => e.providerEventId));
-  const gone = current.filter((row) => !keep.has(row.providerEventId)).map((row) => row.id);
+  const gone = args.complete ? current.filter((row) => !keep.has(row.providerEventId)).map((row) => row.id) : [];
 
   const writes = args.events.map((event) => {
     const fields = {

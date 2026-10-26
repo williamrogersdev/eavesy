@@ -591,7 +591,7 @@ function GoogleCalendarRows({ onError }: { onError: (message: string) => void })
   const disconnect = (id: string) => {
     setBusy(id);
     void disconnectCalendar(id)
-      .then(load)
+      .then(({ warning }) => { load(); if (warning) onError(warning); })
       .catch(() => onError('Could not disconnect Google.'))
       .finally(() => setBusy(null));
   };

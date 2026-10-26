@@ -4,7 +4,7 @@ import * as calendarRepo from '@/db/repo/calendar';
 import { resolveActor } from '@/server/auth';
 import { syncConnection } from '@/server/calendar-sync';
 import { exchangeGoogleCode, GOOGLE_SCOPES, googleCredentials } from '@/server/google-calendar';
-import { clearStateCookie, googleRedirectUri, readStateCookie, settingsRedirect } from '@/server/google-oauth-flow';
+import { clearStateCookie, googleRedirectUri, readStateCookie, settingsRedirect, userTag } from '@/server/google-oauth-flow';
 import { sealSecret } from '@/server/secret-box';
 
 const CALENDAR_SCOPE = GOOGLE_SCOPES[2];
@@ -30,6 +30,7 @@ export const Route = createFileRoute('/api/connections/google/callback')({
         const code = url.searchParams.get('code');
         if (!code) return done('error=google_failed');
         if (!saved || saved.state !== url.searchParams.get('state')) return done('error=google_expired');
+        if (saved.user !== (await userTag(actor.userId))) return done('error=google_expired');
         const creds = googleCredentials();
         if (!creds) return done('error=google_unavailable');
 
@@ -46,8 +47,11 @@ export const Route = createFileRoute('/api/connections/google/callback')({
             accountEmail: grant.email,
             refreshTokenEncrypted: sealed,
           });
-          const connection = await calendarRepo.getConnection(db, actor.userId, id);
-          if (connection) await syncConnection(db, connection, Date.now(), grant.accessToken);
+          // Linked from here on: a failed first sync is retried when Settings next loads.
+          await calendarRepo
+            .getConnection(db, actor.userId, id)
+            .then((connection) => (connection ? syncConnection(db, connection, Date.now(), grant.accessToken) : null))
+            .catch((error: unknown) => console.error('[google/callback] first sync', error));
           return done('connected=google');
         } catch (error) {
           console.error('[google/callback]', error);

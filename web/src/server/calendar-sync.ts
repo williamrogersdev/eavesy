@@ -14,6 +14,8 @@ export const SYNC_BEHIND_MS = DAY_MS;
 export const SYNC_AHEAD_MS = 14 * DAY_MS;
 /** How old a sync may be before opening Settings refreshes it. */
 export const SYNC_STALE_MS = 15 * 60 * 1000;
+/** How long Settings waits on Google before showing what it has; the Mac app gives up at 8s. */
+export const SYNC_TIMEOUT_MS = 4000;
 
 export type SyncResult = 'ok' | 'reconnect' | 'failed';
 
@@ -23,6 +25,7 @@ export async function syncConnection(
   connection: calendarRepo.CalendarConnection,
   now = Date.now(),
   accessToken?: string,
+  signal?: AbortSignal,
 ): Promise<SyncResult> {
   const creds = googleCredentials();
   if (connection.provider !== 'google' || !creds) return 'failed';
@@ -31,12 +34,12 @@ export async function syncConnection(
     if (!token) {
       const refresh = await openSecret(connection.refreshTokenEncrypted);
       if (!refresh) return 'reconnect';
-      token = await refreshGoogleAccess(creds, refresh);
+      token = await refreshGoogleAccess(creds, refresh, signal);
     }
     const from = now - SYNC_BEHIND_MS;
     const to = now + SYNC_AHEAD_MS;
-    const events = await listGoogleEvents(token, from, to);
-    await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, now });
+    const { events, complete } = await listGoogleEvents(token, from, to, signal);
+    await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, complete, now });
     return 'ok';
   } catch (error) {
     if (error instanceof GoogleAccessRevoked) return 'reconnect';

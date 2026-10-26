@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { resolveIngestActor } from '@/server/device-auth';
-import { SYNC_AHEAD_MS, SYNC_STALE_MS, syncConnection, type SyncResult } from '@/server/calendar-sync';
+import { SYNC_AHEAD_MS, SYNC_STALE_MS, SYNC_TIMEOUT_MS, syncConnection, type SyncResult } from '@/server/calendar-sync';
 import { googleCredentials, revokeGoogleToken } from '@/server/google-calendar';
 import { openSecret } from '@/server/secret-box';
 
@@ -28,7 +28,9 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const connections = await Promise.all(
           rows.map(async (row) => {
             let sync: SyncResult = 'ok';
-            if (!row.lastSyncAt || now - row.lastSyncAt > SYNC_STALE_MS) sync = await syncConnection(db, row, now);
+            if (!row.lastSyncAt || now - row.lastSyncAt > SYNC_STALE_MS) {
+              sync = await syncConnection(db, row, now, undefined, AbortSignal.timeout(SYNC_TIMEOUT_MS));
+            }
             return {
               id: row.id,
               provider: row.provider,
@@ -54,10 +56,14 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const db = getDb();
         const row = await calendarRepo.getConnection(db, actor.userId, parsed.data.id);
         if (!row) return Response.json({ ok: true });
-        const refresh = await openSecret(row.refreshTokenEncrypted).catch(() => null);
-        if (refresh && row.provider === 'google') await revokeGoogleToken(refresh);
+        // Disconnect always removes Eavesy's copy; when Google couldn't be told, say so.
+        const refresh = await openSecret(row.refreshTokenEncrypted).catch((error: unknown) => {
+          console.error('[calendar-connections] open secret', error);
+          return null;
+        });
+        const revoked = row.provider === 'google' && refresh ? await revokeGoogleToken(refresh) : false;
         await calendarRepo.deleteConnection(db, actor.userId, row.id);
-        return Response.json({ ok: true });
+        return Response.json(revoked ? { ok: true } : { ok: true, warning: 'google_not_revoked' });
       },
     },
   },

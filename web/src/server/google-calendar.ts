@@ -43,9 +43,10 @@ export function buildGoogleAuthorizeUrl(opts: {
   return `${AUTH_URL}?${params.toString()}`;
 }
 
-async function tokenRequest(body: Record<string, string>): Promise<Record<string, unknown>> {
+async function tokenRequest(body: Record<string, string>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body),
   });
@@ -58,13 +59,18 @@ async function tokenRequest(body: Record<string, string>): Promise<Record<string
   return json;
 }
 
-/** The email in an id_token. It came straight from Google's token endpoint over TLS, so it isn't re-verified. */
-export function emailFromIdToken(idToken: string): string | null {
+/**
+ * The email in an id_token. It came straight from Google's token endpoint over
+ * TLS, so the signature isn't re-verified, but it must be Google's and ours.
+ */
+export function emailFromIdToken(idToken: string, clientId: string): string | null {
   const payload = idToken.split('.')[1];
   if (!payload) return null;
   try {
     const json: unknown = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
-    return isRecord(json) && typeof json.email === 'string' ? json.email : null;
+    if (!isRecord(json) || typeof json.email !== 'string') return null;
+    if (json.aud !== clientId || (json.iss !== 'https://accounts.google.com' && json.iss !== 'accounts.google.com')) return null;
+    return json.email;
   } catch {
     return null;
   }
@@ -84,26 +90,39 @@ export async function exchangeGoogleCode(
   });
   const refreshToken = typeof json.refresh_token === 'string' ? json.refresh_token : null;
   const accessToken = typeof json.access_token === 'string' ? json.access_token : null;
-  const email = typeof json.id_token === 'string' ? emailFromIdToken(json.id_token) : null;
+  const email = typeof json.id_token === 'string' ? emailFromIdToken(json.id_token, creds.clientId) : null;
   if (!refreshToken || !accessToken || !email) throw new Error('google_token_incomplete');
   const scopes = typeof json.scope === 'string' ? json.scope.split(' ') : [];
   return { refreshToken, accessToken, email, scopes };
 }
 
-export async function refreshGoogleAccess(creds: GoogleCredentials, refreshToken: string): Promise<string> {
+export async function refreshGoogleAccess(creds: GoogleCredentials, refreshToken: string, signal?: AbortSignal): Promise<string> {
   const json = await tokenRequest({
     client_id: creds.clientId,
     client_secret: creds.clientSecret,
     refresh_token: refreshToken,
     grant_type: 'refresh_token',
-  });
+  }, signal);
   if (typeof json.access_token !== 'string') throw new Error('google_token_incomplete');
   return json.access_token;
 }
 
-/** Best effort: Google forgets the grant, so the account's "Third-party access" list drops Eavesy. */
-export async function revokeGoogleToken(token: string): Promise<void> {
-  await fetch(`${REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: 'POST' }).catch(() => undefined);
+/** Asks Google to forget the grant, so the account's "Third-party access" list drops Eavesy. True when it did. */
+export async function revokeGoogleToken(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(REVOKE_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }),
+    });
+    // 400 invalid_token: Google had already forgotten it.
+    if (res.ok || res.status === 400) return true;
+    console.error('[google-revoke] http', res.status);
+    return false;
+  } catch (error) {
+    console.error('[google-revoke]', error);
+    return false;
+  }
 }
 
 export type CalendarEventInput = {
@@ -116,7 +135,7 @@ export type CalendarEventInput = {
   participants: { email: string; name: string | null }[];
 };
 
-const MEETING_LINK = /https:\/\/(?:meet\.google\.com\/[a-z-]+|[\w.-]*zoom\.us\/[jw]\/[^\s"<>]+|teams\.microsoft\.com\/l\/meetup-join\/[^\s"<>]+|teams\.live\.com\/meet\/[^\s"<>]+)/i;
+const MEETING_LINK = /https:\/\/(?:meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b|(?:[a-z0-9-]+\.)?zoom\.us\/[jw]\/\d+[^\s"<>]*|teams\.microsoft\.com\/l\/meetup-join\/[^\s"<>]+|teams\.live\.com\/meet\/\d+[^\s"<>]*)/i;
 
 export function meetingLinkOf(event: Record<string, unknown>): { url: string; platform: 'meet' | 'zoom' | 'teams' } | null {
   const candidates: string[] = [];
@@ -129,6 +148,7 @@ export function meetingLinkOf(event: Record<string, unknown>): { url: string; pl
   }
   if (typeof event.location === 'string') candidates.push(event.location);
   if (typeof event.description === 'string') candidates.push(event.description);
+  // In order: the event's own conference link first, free text last.
   for (const text of candidates) {
     const url = MEETING_LINK.exec(text)?.[0];
     if (!url) continue;
@@ -168,11 +188,22 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
   };
 }
 
-/** Events on the primary calendar between `from` and `to`, recurring ones expanded. */
-export async function listGoogleEvents(accessToken: string, from: number, to: number): Promise<CalendarEventInput[]> {
+const MAX_PAGES = 4;
+
+/**
+ * Events on the primary calendar between `from` and `to`, recurring ones
+ * expanded. `complete` is false when the listing stopped at the page cap, so
+ * the caller must not treat a missing event as deleted.
+ */
+export async function listGoogleEvents(
+  accessToken: string,
+  from: number,
+  to: number,
+  signal?: AbortSignal,
+): Promise<{ events: CalendarEventInput[]; complete: boolean }> {
   const out: CalendarEventInput[] = [];
   let pageToken: string | undefined;
-  for (let page = 0; page < 4; page++) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const params = new URLSearchParams({
       timeMin: new Date(from).toISOString(),
       timeMax: new Date(to).toISOString(),
@@ -181,11 +212,11 @@ export async function listGoogleEvents(accessToken: string, from: number, to: nu
       maxResults: '250',
     });
     if (pageToken) params.set('pageToken', pageToken);
-    const res = await fetch(`${EVENTS_URL}?${params.toString()}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    const res = await fetch(`${EVENTS_URL}?${params.toString()}`, { headers: { authorization: `Bearer ${accessToken}` }, signal });
     if (res.status === 401) throw new GoogleAccessRevoked('unauthorized');
     if (!res.ok) throw new Error(`google_events_http_${res.status}`);
     const json: unknown = await res.json();
-    if (!isRecord(json)) break;
+    if (!isRecord(json)) return { events: out, complete: false };
     if (Array.isArray(json.items)) {
       for (const item of json.items) {
         const parsed = parseGoogleEvent(item);
@@ -193,7 +224,7 @@ export async function listGoogleEvents(accessToken: string, from: number, to: nu
       }
     }
     pageToken = typeof json.nextPageToken === 'string' ? json.nextPageToken : undefined;
-    if (!pageToken) break;
+    if (!pageToken) return { events: out, complete: true };
   }
-  return out;
+  return { events: out, complete: false };
 }
