@@ -391,7 +391,7 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     let mut statement = conn
         .prepare(
             "SELECT id, remote_meeting_id FROM recording_sessions
-             WHERE status='recording' AND remote_meeting_id IS NOT NULL",
+             WHERE status='recording' AND discarded=0 AND remote_meeting_id IS NOT NULL",
         )
         .map_err(|e| format!("list live recordings: {e}"))?;
     let rows = statement
@@ -399,6 +399,16 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         .map_err(|e| format!("list live recordings: {e}"))?;
     Ok(rows)
+}
+
+/// Whether lines may still be stored for this recording: it exists and was not cancelled.
+fn still_recording(conn: &Connection, session_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=0)",
+        params![session_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("check cancelled recording: {e}"))
 }
 
 fn midpoint(start_ms: i64, end_ms: i64) -> i64 {
@@ -443,6 +453,10 @@ pub async fn run(app: AppHandle) {
             let since = crate::sqlite::with_open(&app, |conn| cursor(conn, &session_id)).unwrap_or(0);
             match api.transcript_delta(&token, &remote_id, since).await {
                 Ok(Fetched::Delta(delta)) => {
+                    // A recording cancelled while this poll was out gets nothing from it.
+                    if !crate::sqlite::with_open(&app, |conn| still_recording(conn, &session_id)).is_ok_and(|live| live.unwrap_or(false)) {
+                        continue;
+                    }
                     if !delta.lines.is_empty() {
                         report_first(&app, &session_id, Milestone::CloudLine);
                     }
@@ -453,7 +467,10 @@ pub async fn run(app: AppHandle) {
                             hinted.insert(session_id.clone(), language);
                         }
                     }
-                    let changed = crate::sqlite::with_open_mut(&app, |conn| apply_delta(conn, &session_id, &delta));
+                    // Checked again with the write: the cancel may land in between.
+                    let changed = crate::sqlite::with_open_mut(&app, |conn| {
+                        if still_recording(conn, &session_id)? { apply_delta(conn, &session_id, &delta) } else { Ok(false) }
+                    });
                     match changed {
                         Ok(Ok(true)) => {
                             let _ = app.emit("recording:live_transcript", &session_id);

@@ -342,6 +342,13 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   },
   '/api/sessions/$id/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/sessions/${RECORDING}`, params: { id: RECORDING } }, status: 404 } },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/sessions/${RECORDING}`, params: { id: RECORDING } },
+        unchanged: () => row('SELECT deleted_at FROM meetings WHERE id = ?', RECORDING),
+      },
+    },
   },
   '/api/sessions/$id/parts/$n': {
     PUT: {

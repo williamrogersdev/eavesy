@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
+  cancelCapture,
   captureScreenshot,
   checkPermissions,
   errMsg,
@@ -15,6 +16,7 @@ import {
 } from '@/lib/desktop/bridge';
 import type { CaptureKind, LiveCapture } from './capture-toolbar';
 import {
+  cancelFailureNotice,
   captureNeeds,
   deniedNotice,
   noticeResolved,
@@ -133,6 +135,20 @@ export function useCaptureSession({ flash, runTask, projectIdRef, permissions, s
     }
   }, [recording, flash, runTask]);
 
+  const cancel = useCallback(async () => {
+    if (!recording || busy.current) return;
+    busy.current = true;
+    try {
+      await cancelCapture(recording.session.session_id);
+      setRecording(null);
+      flash('Discarded');
+    } catch (error) {
+      setNotice({ ...cancelFailureNotice(errMsg(error, '')), retry: () => runTask(cancel) });
+    } finally {
+      busy.current = false;
+    }
+  }, [recording, flash, runTask]);
+
   const screenshot = useCallback(() => {
     runTask(async () => {
       if (busy.current) return;
@@ -207,6 +223,7 @@ export function useCaptureSession({ flash, runTask, projectIdRef, permissions, s
     clearNotice,
     begin,
     stop,
+    cancel,
     screenshot,
   };
 }

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AudioLines, Camera, Clapperboard, Square, Users } from 'lucide-react';
+import { AudioLines, Camera, Clapperboard, Square, Users, X } from 'lucide-react';
+import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from './discard';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
 import { ToolbarSegment, ToolbarShelf } from './ui';
@@ -51,6 +52,7 @@ export function CaptureToolbar({
   onScreenshot,
   onVideo,
   onStop,
+  onCancel,
 }: {
   /** The capture running now, if any. */
   live: LiveCapture | null;
@@ -62,11 +64,13 @@ export function CaptureToolbar({
   onScreenshot: () => void;
   onVideo: () => void;
   onStop: () => void;
+  /** Ends the capture without saving it. */
+  onCancel: () => void;
 }) {
   const fn = dictationHotkey === FN || dictationHotkey === 'fn';
   return (
     <div className="ev-toolbar">
-      {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} /> : <ToolbarShelf>
+      {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} onCancel={onCancel} /> : <ToolbarShelf>
         <ToolbarSegment
           icon={AudioLines}
           label="Talk"
@@ -93,9 +97,21 @@ export const LIVE_CARD_LINES = 4;
  * newest lines, in place of the capture shelf. The title bar's mascot is the
  * only mascot while it runs.
  */
-function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
+function LiveBar({ live, stopKey, onStop, onCancel }: { live: LiveCapture; stopKey: string; onStop: () => void; onCancel: () => void }) {
   const lines = useLiveLines(live.sessionId, LIVE_CARD_LINES);
   const elapsed = useElapsed(live.sessionId !== null ? live.startedAtMs : null);
+  // Past a short note, Cancel asks first: the × turns into Discard for a moment.
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), DISCARD_CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+  const cancel = () => {
+    if (elapsed >= DISCARD_ASKS_AFTER_SEC && !confirming) { setConfirming(true); return; }
+    setConfirming(false);
+    onCancel();
+  };
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
   const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
@@ -107,6 +123,12 @@ function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string
         <span className="ev-livebar-label" role="status">{label}</span>
         {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
         <span className="ev-livebar-spacer" />
+        {!thinking && started && (confirming
+          ? <button type="button" className="ev-livebar-discard" onClick={cancel} title="Click again to throw this recording away">Discard</button>
+          : <button type="button" className="ev-livebar-cancel" onClick={cancel} title="Cancel: throw this recording away without saving" aria-label="Cancel recording">
+            <X size={14} aria-hidden />
+          </button>
+        )}
         {!thinking && started && (
           <button type="button" className="ev-livebar-stop" onClick={onStop} title={stopTitle} aria-label={stopTitle}>
             <Square size={9} strokeWidth={0} fill="currentColor" aria-hidden />
