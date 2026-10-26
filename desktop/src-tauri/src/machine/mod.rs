@@ -506,7 +506,7 @@ pub struct Outcome {
 }
 
 /// `'…'` for a shell, so a path or branch with a quote in it stays one word.
-fn shell_quote(text: &str) -> String {
+pub(crate) fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 

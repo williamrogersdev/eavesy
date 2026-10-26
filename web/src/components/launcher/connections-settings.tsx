@@ -1,11 +1,20 @@
 'use client';
 
-import { Check, Copy, PlugZap } from 'lucide-react';
+import { Check, Copy, PlugZap, Terminal } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button, Card } from '@/components/launcher/ui';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
-import { copyText, errMsg, isDesktop, openWebApp } from '@/lib/desktop/bridge';
-import { CLAUDE_CODE_ADD, CLAUDE_CODE_PLUGIN, MCP_URL, type McpToken } from '@/lib/mcp-tokens';
+import {
+  claudeCodeStatus,
+  connectClaudeCode,
+  copyText,
+  errMsg,
+  isDesktop,
+  openWebApp,
+  signInClaudeCode,
+  type ClaudeCodeStatus,
+} from '@/lib/desktop/bridge';
+import { CLAUDE_CODE_ADD, CLAUDE_CODE_PLUGIN_CLI, MCP_URL, type McpToken } from '@/lib/mcp-tokens';
 
 /** A command or URL to copy, with a Copy button that says when it worked. */
 function CopyLine({ label, text }: { label: string; text: string }) {
@@ -47,6 +56,111 @@ function usedLine(token: McpToken): string {
   return `${access} · ${used}${expired ? ' · expired, sign in again from the app' : ''}`;
 }
 
+/** Runs `refresh` again whenever you come back to this window, e.g. from approving in the browser. */
+function useOnReturn(active: boolean, refresh: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [active, refresh]);
+}
+
+/** The commands to type yourself, folded away when the app can run them for you. */
+function ByHand() {
+  return (
+    <>
+      <CopyLine label="Claude Code plugin commands" text={CLAUDE_CODE_PLUGIN_CLI} />
+      <p className="ev-set-hint ev-conn-then">
+        Or just the connection, without the skill: <code>{CLAUDE_CODE_ADD}</code>. Then start Claude Code, run <code>/mcp</code>, pick <b>eavesy</b> and sign in.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Claude Code on this Mac: one button adds Eavesy (the plugin: the connection
+ * plus a skill for when to look things up), the next opens Terminal to sign
+ * in. On the web, or with no `claude` to run, the commands to type instead.
+ */
+function ClaudeCodeStep({ active }: { active: boolean }) {
+  const [status, setStatus] = useState<ClaudeCodeStatus | null>(null);
+  const [busy, setBusy] = useState<'add' | 'sign-in' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+  const refresh = useCallback(() => { void claudeCodeStatus().then(setStatus).catch(() => {}); }, []);
+  useEffect(() => { if (active) refresh(); }, [active, refresh]);
+  useOnReturn(active, refresh);
+
+  if (!isDesktop()) {
+    return (
+      <Step title="Claude Code" hint="Run this in your terminal. It adds the Eavesy plugin: the connection plus a skill that tells Claude when to look up your meetings and dictations. Then start Claude Code, run /mcp, pick eavesy and sign in.">
+        <ByHand />
+      </Step>
+    );
+  }
+  const added = !!status && (status.plugin || status.server);
+  const add = () => {
+    setBusy('add');
+    setError(null);
+    void connectClaudeCode()
+      .then(setStatus)
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.')))
+      .finally(() => setBusy(null));
+  };
+  const signIn = () => {
+    setBusy('sign-in');
+    setError(null);
+    void signInClaudeCode()
+      .then(() => setOpened(true))
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open Terminal.')))
+      .finally(() => setBusy(null));
+  };
+  const hint = status === null
+    ? 'Checking Claude Code on this Mac…'
+    : !status.cli
+      ? 'Eavesy couldn’t find Claude Code on this Mac. Install it, or run these commands in your terminal.'
+      : !added
+        ? 'Adds the Eavesy plugin to Claude Code: your meetings, dictations and saved prompts, plus a skill that tells Claude when to look them up.'
+        : opened
+          ? 'Approve Claude Code in the browser window that opened. It shows up under Connected apps once it’s signed in.'
+          : 'Added to Claude Code. Sign in once so it can read your Eavesy account: Terminal opens and your browser asks you to approve it.';
+  return (
+    <Step title="Claude Code" hint={hint}>
+      {status?.cli && (
+        <div className="ev-conn-actions">
+          {added ? (
+            <>
+              <span className="ev-conn-done"><Check className="h-4 w-4" aria-hidden /> Added</span>
+              <Button variant="primary" size="sm" icon={Terminal} loading={busy === 'sign-in'} disabled={busy !== null} onClick={signIn}>
+                {opened ? 'Open sign-in again' : 'Sign in'}
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" size="sm" loading={busy === 'add'} disabled={busy !== null} onClick={add}>
+              {busy === 'add' ? 'Adding…' : 'Add to Claude Code'}
+            </Button>
+          )}
+        </div>
+      )}
+      {error && <p role="alert" className="ev-set-hint">{error}</p>}
+      {status && (status.cli ? (
+        <>
+          <button type="button" className="ev-link ev-conn-more" aria-expanded={showCommands} onClick={() => setShowCommands(!showCommands)}>
+            {showCommands ? 'Hide the commands' : 'Or run it yourself'}
+          </button>
+          {showCommands && <ByHand />}
+        </>
+      ) : <ByHand />)}
+    </Step>
+  );
+}
+
 /** The AI apps signed in to this account over MCP, each one revocable. */
 function ConnectedApps({ signedIn, active }: { signedIn: boolean; active: boolean }) {
   const [tokens, setTokens] = useState<McpToken[] | null>(null);
@@ -60,6 +174,7 @@ function ConnectedApps({ signedIn, active }: { signedIn: boolean; active: boolea
   }, []);
   // Reloaded each time the page is shown, so an app approved a moment ago appears.
   useEffect(() => { if (signedIn && active) load(); }, [signedIn, active, load]);
+  useOnReturn(signedIn && active, load);
   if (!signedIn) {
     return <p className="ev-set-hint">Sign in to see the apps connected to your Eavesy account.</p>;
   }
@@ -108,18 +223,7 @@ export function ConnectionsSettings({ signedIn, active, children }: { signedIn: 
   return (
     <>
       <Card title="Connect an AI tool">
-        <Step
-          title="Claude Code"
-          hint={<>Run this in your terminal, then run <code>/mcp</code> in Claude Code, pick <b>eavesy</b> and sign in. Your saved prompts become slash commands.</>}
-        >
-          <CopyLine label="Claude Code command" text={CLAUDE_CODE_ADD} />
-        </Step>
-        <Step
-          title="Claude Code plugin"
-          hint="Or install the plugin: the same connection plus a skill that tells Claude when to look up your meetings and dictations. Paste both lines into Claude Code."
-        >
-          <CopyLine label="Claude Code plugin commands" text={CLAUDE_CODE_PLUGIN} />
-        </Step>
+        <ClaudeCodeStep active={active} />
         <Step
           title="Claude, ChatGPT and other apps"
           hint={<>Add a custom connector with this URL (Claude: Settings → Connectors. ChatGPT: Settings → Apps &amp; Connectors, in developer mode). The app opens Eavesy so you can approve it.</>}

@@ -13,6 +13,7 @@
 //! anything.
 
 pub mod card;
+pub mod connect;
 pub mod hook;
 pub mod install;
 pub mod naming;
