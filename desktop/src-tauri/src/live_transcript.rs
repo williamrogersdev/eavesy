@@ -391,7 +391,7 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     let mut statement = conn
         .prepare(
             "SELECT id, remote_meeting_id FROM recording_sessions
-             WHERE status='recording' AND remote_meeting_id IS NOT NULL",
+             WHERE status='recording' AND discarded=0 AND remote_meeting_id IS NOT NULL",
         )
         .map_err(|e| format!("list live recordings: {e}"))?;
     let rows = statement

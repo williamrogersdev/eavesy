@@ -160,6 +160,7 @@ pub fn run() {
             commands::ack_dictation_text,
             audio::start_screen_capture,
             audio::stop_capture,
+            audio::cancel_capture,
             audio::capture_state,
             audio::check_permissions,
             visual::capture_screenshot,

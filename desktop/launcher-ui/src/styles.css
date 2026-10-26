@@ -377,6 +377,7 @@ body {
   font-weight: 650;
 }
 .ctl-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 86%, #fff); color: #fff; }
+.ctl-discard { color: #ffc870; padding: 0 8px; font-weight: 650; }
 
 .ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
 .ctl-quiet { color: var(--ctl-ink-2); }

@@ -400,6 +400,25 @@
 .ev-livebar-stop:hover { filter: brightness(0.95); }
 .ev-livebar-stop:active { transform: scale(0.97); }
 .ev-livebar-stop:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ev-hud), 0 0 0 4px var(--ev-hud-ink); }
+.ev-livebar-cancel,
+.ev-livebar-discard {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 0;
+  border-radius: var(--ev-r-pill);
+  background: transparent;
+  color: var(--ev-hud-ink-2);
+  font: 600 12.5px/1 var(--ev-font-round);
+}
+.ev-livebar-cancel { width: 28px; }
+.ev-livebar-discard { padding: 0 10px; color: #ffc870; }
+.ev-livebar-cancel:hover,
+.ev-livebar-discard:hover { background: rgb(255 248 238 / 0.08); color: var(--ev-hud-ink); }
+.ev-livebar-cancel:focus-visible,
+.ev-livebar-discard:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ev-hud), 0 0 0 4px var(--ev-hud-ink); }
 
 /* ---------- empty ---------- */
 .ev-empty {

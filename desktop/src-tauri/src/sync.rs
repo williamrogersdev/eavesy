@@ -661,6 +661,9 @@ async fn sync_session<R: Runtime>(
     token: &str,
     mut session: sqlite::PendingSession,
 ) -> Result<Step> {
+    if session.discarded {
+        return discard_session(app, api, token, &session).await;
+    }
     if session.remote_meeting_id.is_none() {
         // A dictation's project is read from the app in front just after it
         // starts, and a cloud session cannot change project later: wait for it.
@@ -738,6 +741,36 @@ async fn sync_session<R: Runtime>(
     } else {
         upload_archive(app, api, token, &remote_id, &session).await?;
     }
+    Ok(Step::Progressed)
+}
+
+/// A recording cancelled while capturing: deletes the cloud meeting its live
+/// segments made, if they made one, then forgets it here. A meeting the
+/// cloud no longer has, or refuses for good, is as gone as it will get.
+async fn discard_session<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
+    token: &str,
+    session: &sqlite::PendingSession,
+) -> Result<Step> {
+    if let Some(remote_id) = &session.remote_meeting_id {
+        let response = api
+            .client
+            .delete(api.url(&format!("/api/sessions/{remote_id}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("delete cancelled recording")?;
+        if !response.status().is_success() && response.status() != StatusCode::NOT_FOUND {
+            let error = http_error("delete cancelled recording", response).await;
+            if is_unauthorized(&error) || !is_permanent(&error) {
+                return Err(error);
+            }
+            tracing::warn!("desktop ingest: could not delete cancelled recording {}: {error:#}", session.id);
+            crate::telemetry::capture("cancelled recording delete gave up", &format!("{error:#}"));
+        }
+    }
+    sqlite::forget_discarded(app, &session.id).map_err(|e| anyhow!(e))?;
     Ok(Step::Progressed)
 }
 
@@ -1206,6 +1239,7 @@ mod tests {
             next_archive_offset: 0,
             ended_at: None,
             archive_missing: false,
+            discarded: false,
         };
         assert_eq!(
             super::session_body(&session),

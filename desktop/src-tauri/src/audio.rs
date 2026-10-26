@@ -1132,6 +1132,82 @@ pub fn stop_capture(
     result
 }
 
+/// Ends a capture and throws it away: nothing is saved, pasted, uploaded or
+/// kept in History, and the cloud meeting its live segments made is deleted
+/// by the sync loop.
+#[tauri::command(async)]
+pub fn cancel_capture(
+    app: AppHandle,
+    state: State<'_, Captures>,
+    session_id: String,
+) -> Result<(), String> {
+    let (session, _stopping) = {
+        let mut captures = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let session = captures.remove(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
+        // Out of the map and marked as stopping together, so neither the
+        // engine exiting nor a racing Stop reports it as stopped early.
+        (session, Stopping::start(&session_id))
+    };
+    let Session { mut child, stdin, events, out_path, mode, .. } = session;
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    // The reader drops its sender once it has read the engine's last line, so
+    // no segment is queued after the rows below are gone.
+    while events.recv_timeout(STOP_TIMEOUT).is_ok() {}
+
+    crate::moments::end(&app, &session_id);
+    crate::dictation::disarm(&session_id);
+    crate::assistant::voice::take(&session_id);
+    crate::agents::take_answer(&session_id);
+    if mode == "audio" {
+        if let Err(error) = crate::sqlite::discard_recording(&app, &session_id) {
+            // The files still go below, so a recovery at the next launch
+            // finds nothing to bring back.
+            crate::telemetry::capture("capture.cancel", &error);
+        }
+        crate::sync::wake();
+        prepare_standby(&app);
+    }
+    remove_cancelled_files(&app, &session_id, &out_path, &mode);
+    crate::telemetry::track("recording_cancelled", serde_json::json!({ "kind": mode }));
+    crate::hud::advance_from(
+        &app,
+        &session_id,
+        &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing],
+        crate::hud::HudState { session_id: Some(session_id.clone()), ..crate::hud::HudState::idle() },
+    );
+    crate::agents::dictation_ended(&app);
+    Ok(())
+}
+
+/// What a cancelled capture wrote: its folder in the recordings folder (only
+/// ever one made for it), or its video and stats, and its segment queue.
+fn remove_cancelled_files(app: &AppHandle, session_id: &str, out_path: &std::path::Path, mode: &str) {
+    let remove = |result: std::io::Result<()>, what: &str| match result {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!(%session_id, "could not remove a cancelled recording's {what}: {error}");
+        }
+        _ => {}
+    };
+    if mode == "audio" {
+        let root = fs_writer::recordings_root(app).ok().and_then(|root| root.canonicalize().ok());
+        let folder = out_path.parent().and_then(|folder| folder.canonicalize().ok());
+        match (folder, root) {
+            (Some(folder), Some(root)) if folder != root && folder.starts_with(&root) => {
+                remove(std::fs::remove_dir_all(&folder), "folder");
+            }
+            _ => remove(std::fs::remove_file(out_path), "audio"),
+        }
+    } else {
+        remove(std::fs::remove_file(out_path), "video");
+        remove(std::fs::remove_file(format!("{}.capture.json", out_path.display())), "stats");
+    }
+    if let Ok(dir) = captures_dir(app) {
+        remove(std::fs::remove_dir_all(dir.join(session_id)), "segments");
+    }
+}
+
 /// The sessions some stop is finishing right now, and the ones a stop just
 /// finished, so a second stop racing either (and finding no capture) leaves
 /// the HUD to the first: its words may still be on their way to the paste.

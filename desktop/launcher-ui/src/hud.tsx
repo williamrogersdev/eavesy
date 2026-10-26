@@ -68,6 +68,10 @@ type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
 
 const DEFAULT_LOOK: Look = { lines: 0, translucent: true };
 
+/** A recording at least this long asks before Cancel throws it away. */
+const DISCARD_ASKS_AFTER_SEC = 30;
+/** How long Cancel's "Discard" waits for the second click. */
+const DISCARD_CONFIRM_MS = 3000;
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */
@@ -531,6 +535,27 @@ function Hud() {
       setStopping(null);
     }
   }, [state?.sessionId, state?.phase]);
+
+  // Cancel throws the recording away. Past a short note it asks first: the
+  // first click turns the × into Discard, which goes back if it isn't clicked.
+  const [discarding, setDiscarding] = useState<string | null>(null);
+  useEffect(() => {
+    if (!discarding) return;
+    const timer = window.setTimeout(() => setDiscarding(null), DISCARD_CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [discarding]);
+  const cancelRecording = (sessionId: string | null | undefined, elapsedSec: number) => {
+    if (!sessionId || stoppingRef.current === sessionId) return;
+    if (elapsedSec >= DISCARD_ASKS_AFTER_SEC && discarding !== sessionId) { setDiscarding(sessionId); return; }
+    setDiscarding(null);
+    stoppingRef.current = sessionId;
+    setStopping(sessionId);
+    void act('cancel_capture', { sessionId }).then((cancelled) => {
+      if (cancelled || stoppingRef.current !== sessionId) return;
+      stoppingRef.current = null;
+      setStopping(null);
+    });
+  };
 
   const copy = (cmd: string, args: Record<string, unknown>) => {
     setActionError(null);
@@ -1046,19 +1071,24 @@ function Hud() {
   const errorSay = actionError ? <span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span> : null;
 
   if (state.phase === 'recording') {
+    const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
+    const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
     top = (
       <>
         {mark}
         {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe">Starting…</span> : (
           <>
             <span className="ctl-rec" aria-hidden />
-            <span className="ctl-timer">{clock(Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000)))}</span>
+            <span className="ctl-timer">{clock(elapsedSec)}</span>
             {video && marking.tool ? null : video ? <MicState heard={mic.heard} silent={mic.silent} /> : errorSay ?? <VoiceBars level={voice} />}
           </>
         )}
         {video && !opening && <Marking state={marking} act={act} />}
         {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
         <span className="ctl-fill" />
+        {discarding === state.sessionId
+          ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
+          : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}
         <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : eavesy ? ' and send to Eavesy' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );

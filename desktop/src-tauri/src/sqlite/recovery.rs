@@ -19,7 +19,7 @@ pub struct InterruptedSession {
 
 pub(super) fn recover_interrupted<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let ids = open(app)?
-        .prepare("SELECT id FROM recording_sessions WHERE status='recording'")
+        .prepare("SELECT id FROM recording_sessions WHERE status='recording' AND discarded=0")
         .and_then(|mut statement| {
             statement
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -37,7 +37,7 @@ pub(super) fn recover_interrupted<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 /// disk that is not mounted); `recovery::retry_deferred` tries them again.
 pub fn deferred_recoveries<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
     open(app)?
-        .prepare("SELECT id FROM recording_sessions WHERE status='recording' AND last_error LIKE ?1")
+        .prepare("SELECT id FROM recording_sessions WHERE status='recording' AND discarded=0 AND last_error LIKE ?1")
         .and_then(|mut statement| {
             statement
                 .query_map(params![format!("{}%", crate::recovery::DEFERRED_NOTE)], |row| row.get::<_, String>(0))?
