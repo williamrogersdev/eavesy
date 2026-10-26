@@ -2,8 +2,8 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RotateCcw, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Cable, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RotateCcw, Search, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Mascot, Row, Segmented, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
@@ -41,6 +41,8 @@ import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
 import { AssistantSettings } from './assistant-settings';
+import { settingsMatch } from './settings-search';
+import { ConnectionsSettings } from './connections-settings';
 import { MachineSettings } from './machine-settings';
 import { PromptsSettings } from './prompts-settings';
 import { useSavedPrompts } from './use-saved-prompts';
@@ -342,13 +344,30 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
     { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
+    { id: 'connections', label: 'Connections', icon: Cable, hint: 'Claude Code, Claude, ChatGPT and other AI tools connected to Eavesy over MCP.' },
     ...(isDesktop() ? [{ id: 'assistant' as const, label: 'Assistant', icon: MessageCircle, hint: 'How Eavesy talks, its voice, how much it does without asking, and what it did.' }] : []),
     ...(isDesktop() ? [{ id: 'machine' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
     { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
   const activeSection = sections.find((item) => item.id === section) ?? sections[0];
-  const go = (id: SettingsSection) => { setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const shown = query.trim() ? sections.filter((item) => settingsMatch(query, item)) : sections;
+  // ⌘F finds a setting, like in System Settings.
+  useEffect(() => {
+    const find = (event: KeyboardEvent) => {
+      // Only while the search field is on screen (the narrow layout hides it).
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f' && searchRef.current?.offsetParent) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', find);
+    return () => window.removeEventListener('keydown', find);
+  }, []);
+  const go = (id: SettingsSection) => { setQuery(''); setSection(id); if (id !== 'projects') setOpenProject(null); if (id !== 'prompts') setOpenPrompt(null); };
   const shortcuts = useShortcuts(onShortcutsChanged);
   const [positionBusy, setPositionBusy] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -487,7 +506,23 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       <div className="ev-settings-layout">
         <nav className="ev-settings-nav" aria-label="Settings sections">
           <div className="ev-settings-nav-title"><Mascot state="idle" size={22} />Settings</div>
-          {sections.map(({ id, label, icon: Icon }) => (
+          <label className="ev-settings-search">
+            <Search size={14} strokeWidth={1.75} aria-hidden />
+            <input
+              ref={searchRef}
+              type="search"
+              placeholder="Search settings"
+              aria-label="Search settings"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && shown[0]) go(shown[0].id);
+                if (event.key === 'Escape' && query) { event.preventDefault(); setQuery(''); }
+              }}
+            />
+          </label>
+          {!shown.length && <p className="ev-settings-nav-empty">No settings match “{query.trim()}”.</p>}
+          {shown.map(({ id, label, icon: Icon }) => (
             <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => go(id)}>
               <Icon size={17} strokeWidth={1.75} aria-hidden />{label}
             </button>
@@ -515,43 +550,6 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           {account
             ? <DictationCard account={accountPrefs} projects={projects.projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
             : signInFirst('choose how dictation is written')}
-          {isDesktop() && (
-            <Section title="Claude Code sessions">
-              <Switch
-                checked={agentsOn}
-                onCheckedChange={toggleAgents}
-                disabled={!settings || agentsBusy}
-                label="Say when a session finishes or needs you"
-                hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send or say “send it”. Right after Eavesy reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
-              />
-              {agentsOn && (
-                <div className="mt-3">
-                  <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
-                  <p className="ev-set-hint mt-2">While it waits, the session looks busy in Claude. Press Esc there to take it back.</p>
-                </div>
-              )}
-              {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
-            </Section>
-          )}
-          {isDesktop() && (
-            <Section title="Claude chat and ChatGPT">
-              <Switch
-                checked={messagesOn}
-                onCheckedChange={toggleMessages}
-                disabled={!settings || !account || messagesBusy}
-                label="Show and say what your agents send you"
-                hint="Agents connected to Eavesy’s MCP can tell you when they finish (send_to_human) or ask you something (ask_human). This Mac checks your Eavesy account every few seconds, shows each message at the top right and reads it aloud. Your typed answer goes back only to the agent that asked, as text: it never approves anything."
-              />
-              {!account && <p className="ev-set-hint mt-2">Sign in first: messages come through your Eavesy account.</p>}
-              {messagesOn && (
-                <div className="mt-3">
-                  <p className="ev-set-hint">Add Eavesy as a connector in Claude or ChatGPT, then paste these instructions so the model uses it.</p>
-                  <Button variant="outline" size="sm" className="mt-2" onClick={copyInstructions}>Copy instructions</Button>
-                </div>
-              )}
-              {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
-            </Section>
-          )}
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
           {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}
@@ -561,13 +559,55 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
         <div id="settings-prompts" hidden={section !== 'prompts'}>
           {account
-            ? <PromptsSettings state={prompts} open={openPrompt} onOpen={setOpenPrompt} />
+            ? <PromptsSettings state={prompts} open={openPrompt} onOpen={setOpenPrompt} onOpenConnections={() => go('connections')} />
             : signInFirst('save prompts')}
         </div>
         <div id="settings-projects" hidden={section !== 'projects'}>
           {account
             ? <ProjectsSettings account={accountPrefs.prefs} state={projects} open={openProject} onOpen={setOpenProject} onOpenDictation={() => go('dictation')} />
             : signInFirst('make projects')}
+        </div>
+
+        <div id="settings-connections" hidden={section !== 'connections'}>
+          <ConnectionsSettings signedIn={!!account} active={section === 'connections'}>
+            {isDesktop() && (
+              <Section title="Claude Code sessions">
+                <Switch
+                  checked={agentsOn}
+                  onCheckedChange={toggleAgents}
+                  disabled={!settings || agentsBusy}
+                  label="Say when a session finishes or needs you"
+                  hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send or say “send it”. Right after Eavesy reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
+                />
+                {agentsOn && (
+                  <div className="mt-3">
+                    <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
+                    <p className="ev-set-hint mt-2">While it waits, the session looks busy in Claude. Press Esc there to take it back.</p>
+                  </div>
+                )}
+                {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
+              </Section>
+            )}
+            {isDesktop() && (
+              <Section title="Messages from your agents">
+                <Switch
+                  checked={messagesOn}
+                  onCheckedChange={toggleMessages}
+                  disabled={!settings || !account || messagesBusy}
+                  label="Show and say what your agents send you"
+                  hint="Agents connected to Eavesy’s MCP can tell you when they finish (send_to_human) or ask you something (ask_human). This Mac checks your Eavesy account every few seconds, shows each message at the top right and reads it aloud. Your typed answer goes back only to the agent that asked, as text: it never approves anything."
+                />
+                {!account && <p className="ev-set-hint mt-2">Sign in first: messages come through your Eavesy account.</p>}
+                {messagesOn && (
+                  <div className="mt-3">
+                    <p className="ev-set-hint">Add Eavesy as a connector in Claude or ChatGPT, then paste these instructions so the model uses it.</p>
+                    <Button variant="outline" size="sm" className="mt-2" onClick={copyInstructions}>Copy instructions</Button>
+                  </div>
+                )}
+                {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
+              </Section>
+            )}
+          </ConnectionsSettings>
         </div>
 
         {isDesktop() && (

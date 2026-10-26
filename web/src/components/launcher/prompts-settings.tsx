@@ -111,10 +111,12 @@ function PromptPage({ prompt, state, onBack }: {
 }
 
 /** Saved prompts: a list, and a page for each. `open` is the prompt whose page shows, or 'new'. */
-export function PromptsSettings({ state, open, onOpen }: {
+export function PromptsSettings({ state, open, onOpen, onOpenConnections }: {
   state: SavedPromptsState;
   open: string | null;
   onOpen: (id: string | null) => void;
+  /** Goes to Settings → Connections, where Claude Code is connected. */
+  onOpenConnections?: () => void;
 }) {
   const { prompts, error } = state;
   const current = open === 'new' ? null : prompts?.find((p) => p.id === open);
@@ -129,7 +131,7 @@ export function PromptsSettings({ state, open, onOpen }: {
         <ol className="ev-howto">
           <li><span><b>Write it once.</b> The instructions you give an agent again and again, worded the way that gets the best result.</span></li>
           <li><span><b>Drop it in anywhere.</b> Open the panel, type <code>/</code> and part of its name, and press Return. It’s pasted where your cursor was.</span></li>
-          <li><span><b>Run it from Claude Code.</b> Once Eavesy is connected, each prompt is also a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
+          <li><span><b>Run it from Claude Code.</b> Once Eavesy is {onOpenConnections ? <button type="button" className="ev-link" onClick={onOpenConnections}>connected</button> : 'connected'}, each prompt is also a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
         </ol>
       </Card>
       <Card title="Your prompts">
