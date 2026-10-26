@@ -58,7 +58,7 @@ export async function getCalendarStatus(): Promise<CalendarStatus> {
 export async function disconnectCalendar(id: string): Promise<{ warning: string | null }> {
   const answer = await call('DELETE', { id });
   return { warning: isRecord(answer) && answer.warning === 'google_not_revoked'
-    ? 'Disconnected. Google may still list Eavesy under Third-party access in your Google Account; you can remove it there.'
+    ? 'Disconnected from Eavesy, but Google couldn’t be told. Remove Eavesy under Security → Third-party access in your Google Account to finish.'
     : null };
 }
 

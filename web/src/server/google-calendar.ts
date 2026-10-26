@@ -135,7 +135,7 @@ export type CalendarEventInput = {
   participants: { email: string; name: string | null }[];
 };
 
-const MEETING_LINK = /https:\/\/(?:meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b|(?:[a-z0-9-]+\.)?zoom\.us\/[jw]\/\d+[^\s"<>]*|teams\.microsoft\.com\/l\/meetup-join\/[^\s"<>]+|teams\.live\.com\/meet\/\d+[^\s"<>]*)/i;
+const MEETING_LINK = /(?<![^\s"'<(])https:\/\/(?:meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b|(?:[a-z0-9-]+\.)?zoom\.us\/[jw]\/\d+[^\s"<>)]*|teams\.microsoft\.com\/l\/meetup-join\/[^\s"<>]+|teams\.live\.com\/meet\/\d+[^\s"<>]*)/i;
 
 export function meetingLinkOf(event: Record<string, unknown>): { url: string; platform: 'meet' | 'zoom' | 'teams' } | null {
   const candidates: string[] = [];
@@ -188,7 +188,8 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
   };
 }
 
-const MAX_PAGES = 4;
+/** 2,500 events in the 15-day window; past that the listing is marked incomplete and nothing is deleted. */
+const MAX_PAGES = 10;
 
 /**
  * Events on the primary calendar between `from` and `to`, recurring ones

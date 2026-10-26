@@ -25,19 +25,24 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const db = getDb();
         const now = Date.now();
         const rows = await calendarRepo.listConnections(db, actor.userId);
+        // At most one Google round trip per load: the stalest connection is refreshed,
+        // the rest show what was last synced and catch up on a later load.
+        const stale = rows
+          .filter((row) => !row.lastSyncAt || now - row.lastSyncAt > SYNC_STALE_MS)
+          .sort((a, b) => (a.lastSyncAt ?? 0) - (b.lastSyncAt ?? 0))[0];
+        const sync: SyncResult | null = stale
+          ? await syncConnection(db, stale, now, undefined, AbortSignal.timeout(SYNC_TIMEOUT_MS))
+          : null;
         const connections = await Promise.all(
           rows.map(async (row) => {
-            let sync: SyncResult = 'ok';
-            if (!row.lastSyncAt || now - row.lastSyncAt > SYNC_STALE_MS) {
-              sync = await syncConnection(db, row, now, undefined, AbortSignal.timeout(SYNC_TIMEOUT_MS));
-            }
+            const synced = row === stale && sync === 'ok';
             return {
               id: row.id,
               provider: row.provider,
               accountEmail: row.accountEmail,
-              lastSyncAt: sync === 'ok' && !row.lastSyncAt ? now : row.lastSyncAt,
+              lastSyncAt: synced ? now : row.lastSyncAt,
               upcoming: await calendarRepo.countUpcoming(db, row.id, now, now + SYNC_AHEAD_MS),
-              needsReconnect: sync === 'reconnect',
+              needsReconnect: row === stale && sync === 'reconnect',
             };
           }),
         );

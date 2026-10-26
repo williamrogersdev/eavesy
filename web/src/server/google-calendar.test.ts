@@ -9,6 +9,8 @@ import {
   refreshGoogleAccess,
   revokeGoogleToken,
 } from './google-calendar';
+import type { AppDb } from '@/db/client';
+import { syncConnection } from './calendar-sync';
 import { readStateCookie, settingsRedirect, stateCookie, userTag } from './google-oauth-flow';
 
 const realFetch = globalThis.fetch;
@@ -84,6 +86,22 @@ describe('Google OAuth', () => {
   });
 });
 
+describe('syncConnection', () => {
+  test('a refresh token Google refused asks to connect again', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'cid';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    try {
+      mockFetch(() => Response.json({ error: 'invalid_grant' }, { status: 400 }));
+      // Unsealed tokens open as themselves, and the refused refresh stops it before the database.
+      const connection = { id: 'cal', userId: 'u', provider: 'google' as const, accountEmail: 'a@example.com', refreshTokenEncrypted: 'rt', lastSyncAt: null };
+      expect(await syncConnection({} as AppDb, connection)).toBe('reconnect');
+    } finally {
+      delete process.env.GOOGLE_CLIENT_ID;
+      delete process.env.GOOGLE_CLIENT_SECRET;
+    }
+  });
+});
+
 describe('Google events', () => {
   test('keeps a Meet event with its people', () => {
     const event = parseGoogleEvent({
@@ -115,7 +133,7 @@ describe('Google events', () => {
     mockFetch(() => Response.json({ items: [event], nextPageToken: 'more' }));
     const capped = await listGoogleEvents('at', 0, 1);
     expect(capped.complete).toBe(false);
-    expect(capped.events).toHaveLength(4);
+    expect(capped.events).toHaveLength(10);
     mockFetch(() => Response.json({ items: [event] }));
     expect((await listGoogleEvents('at', 0, 1)).complete).toBe(true);
     mockFetch(() => new Response(null, { status: 401 }));
@@ -126,6 +144,8 @@ describe('Google events', () => {
     expect(meetingLinkOf({ hangoutLink: 'https://meet.google.com/abc-defg-hij', description: 'https://zoom.us/j/123' })?.platform).toBe('meet');
     expect(meetingLinkOf({ location: 'https://notzoom.us.evil.example/j/123' })).toBeNull();
     expect(meetingLinkOf({ location: 'https://zoom.us/w/webinar-signup' })).toBeNull();
+    expect(meetingLinkOf({ description: 'https://evil.example/?next=https://zoom.us/j/123' })).toBeNull();
+    expect(meetingLinkOf({ description: 'Join (https://zoom.us/j/123)' })?.url).toBe('https://zoom.us/j/123');
   });
 
   test('finds Zoom and Teams links in the location or description', () => {
