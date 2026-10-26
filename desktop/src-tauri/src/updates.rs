@@ -303,6 +303,17 @@ async fn download_and_install(app: &AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// Every installed copy trusts updates signed by this Minisign key (C0F27E06D477B704).
+    /// Changing it orphans them all, so a change has to touch this test too and is
+    /// visible in review (docs/RELEASING.md, docs/plans/device-security.md phase 0).
+    const UPDATER_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwRjI3RTA2RDQ3N0I3MDQKUldRRXQzZlVCbjd5d0FUZC96djBqcVlSL25xbFozSXhBTWlPbStvamVod2tHR1V6Sk5mVDJWZWUK";
+
+    #[test]
+    fn the_updater_key_is_the_pinned_one() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["plugins"]["updater"]["pubkey"].as_str(), Some(UPDATER_PUBKEY));
+    }
+
     fn status(state: UpdateState) -> UpdateStatus {
         UpdateStatus { current_version: "0.2.0".into(), state, checked_at_ms: Some(1) }
     }

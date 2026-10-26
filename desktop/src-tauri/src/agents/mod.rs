@@ -88,6 +88,26 @@ pub fn socket_path() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("com.eavesy.desktop").join(NAME))
 }
 
+/// The socket's folder must be yours alone before the socket exists, because
+/// its own mode is only set right after `bind`. The per-user temp folder
+/// already is; Eavesy's own Application Support folder is tightened here.
+/// Anything else (a symlink, someone else's folder) refuses the socket.
+fn private_folder(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() || meta.uid() != unsafe { libc::getuid() } {
+        return Err(std::io::Error::other("the agent socket's folder isn't a folder you own"));
+    }
+    if meta.mode() & 0o077 != 0 {
+        if dir.file_name().is_some_and(|name| name == "com.eavesy.desktop") {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        } else {
+            return Err(std::io::Error::other("the agent socket's folder can be read by other users"));
+        }
+    }
+    Ok(())
+}
+
 /// Starts listening for hooks and for remote agents' messages, and keeps
 /// installed hooks pointing at this app.
 pub fn start(app: &AppHandle) {
@@ -110,6 +130,10 @@ async fn listen(app: AppHandle) -> std::io::Result<()> {
     let path = socket_path().ok_or_else(|| std::io::Error::other("no Application Support folder"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
+        // A test server's socket (EAVESY_AGENTS_SOCKET, dev builds only) lives wherever the test put it.
+        if !(cfg!(debug_assertions) && std::env::var_os("EAVESY_AGENTS_SOCKET").is_some()) {
+            private_folder(dir)?;
+        }
     }
     // A socket left by a crash would refuse the bind. Single-instance means
     // no other Eavesy is listening on it.

@@ -169,3 +169,11 @@ jobs:
       - name: Clippy
         working-directory: desktop/src-tauri
         run: cargo clippy --locked -- -D warnings
+      # Known-vulnerable crates fail the build. Exceptions, each with its
+      # reason, live in desktop/src-tauri/.cargo/audit.toml.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+      - name: Audit dependencies
+        working-directory: desktop/src-tauri
+        run: cargo audit

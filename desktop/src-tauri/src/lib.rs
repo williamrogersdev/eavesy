@@ -42,6 +42,7 @@ mod recovery;
 mod screenshot_watcher;
 mod settings;
 mod settings_window;
+mod sidecar_trust;
 mod sounds;
 mod history;
 mod store;
@@ -252,6 +253,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             assistant::init(&handle);
+            // Check the capture engine's signature now, off the main thread, so the first capture doesn't wait.
+            if let Some(engine) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("SwiftAudio"))).filter(|path| path.exists()) {
+                sidecar_trust::warm(engine);
+            }
 
             if let Err(error) = sqlite::initialize(&handle) {
                 telemetry::capture("sqlite.initialize", &error);
