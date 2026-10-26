@@ -454,14 +454,24 @@ of that login item" always shows the card first.
 - `launchctl bootout` for `/Library/LaunchDaemons` behind the admin prompt.
 - `profiles remove` for a user-installed profile.
 - Which sharing services can be turned off by command on macOS 26.
-- The four admin verbs `security_fix` runs today, under one prompt:
-  `socketfilterfw --setglobalstate on`, `socketfilterfw --setstealthmode on`,
-  `spctl --global-enable`, and removing `autoLoginUser` with
-  `/etc/kcpassword`. The generated AppleScript compiles in a test, and the
-  checkup's reads were run on a real Mac, but no verb has run yet: running
-  them on William's Mac would change his settings.
+- Typing the password into `security_fix`'s real prompt. An agent doesn't
+  type passwords into macOS's own prompts, even in the VM, so this one is a
+  person's step: `desktop/scripts/vm-test.sh view`, password `admin`, with
+  the test below run with `EAVESY_VM_ADMIN_TEST=1`.
 
 A verb that doesn't work by command falls back to opening the pane.
+
+**Verified in the VM (2026-10-26, macOS 26.6.2, Cirrus Labs' Tahoe image).**
+The image starts loose: firewall, stealth mode and Gatekeeper off, and
+automatic login on with `/etc/kcpassword` present. The ignored test
+`security::on_this_mac::admin_verbs_tighten_a_vm` read all four as needing
+a fix, then ran `security_fix`'s own command string as root. It read all four
+as good afterwards, and `/etc/kcpassword` was gone. The real prompt came up
+with the right wording ("Eavesy wants to turn on the firewall, … turn on
+Gatekeeper, turn off automatic login and delete its saved password."). With no
+password given, nothing changed. The checkup's reads parsed on the VM as well,
+apart from XProtect, which reads Unknown because the VM has no install
+history.
 
 ## Phase 0: harden Eavesy itself
 

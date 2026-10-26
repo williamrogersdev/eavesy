@@ -186,4 +186,38 @@ mod on_this_mac {
             assert_ne!(finding.state, super::State::Unknown, "{finding:?}");
         }
     }
+
+    /// Runs the four admin verbs for real and checks they took. Only in a throwaway VM
+    /// (docs/TESTING-ENVIRONMENTS.md): it changes the Mac's settings, so it needs
+    /// `EAVESY_VM_ADMIN_TEST` as well as `--ignored`. `=1` goes through the real password
+    /// prompt; `=sudo` runs the same command string as root with the guest's passwordless
+    /// sudo, for when nobody is there to type the password.
+    #[test]
+    #[ignore]
+    fn admin_verbs_tighten_a_vm() {
+        use super::fix::{self, Admin, Verb};
+        use super::{read_all, State};
+        let how = std::env::var("EAVESY_VM_ADMIN_TEST").unwrap_or_default();
+        assert!(how == "1" || how == "sudo", "only in a throwaway VM");
+        let verbs = [Verb::Firewall, Verb::Stealth, Verb::Gatekeeper, Verb::AutoLogin];
+        let ids: Vec<_> = verbs.iter().map(|verb| verb.check()).collect();
+        for finding in read_all(&ids) {
+            println!("before: {finding:?}");
+            assert!(matches!(finding.state, State::Fix | State::Suggest), "loosen the VM first: {finding:?}");
+        }
+        let admin = if how == "sudo" {
+            let out = std::process::Command::new("/usr/bin/sudo").args(["-n", "/bin/sh", "-c", &fix::script(&verbs)]).output().unwrap();
+            println!("sudo: {out:?}");
+            if out.status.success() { Admin::Ran } else { Admin::Failed(String::from_utf8_lossy(&out.stderr).into()) }
+        } else {
+            fix::run_admin(&verbs)
+        };
+        println!("admin: {admin:?}");
+        for finding in read_all(&ids) {
+            println!("after: {finding:?}");
+            assert_eq!(finding.state, State::Good, "{finding:?}");
+        }
+        assert!(!std::path::Path::new("/etc/kcpassword").exists(), "the saved login password is still there");
+        assert_eq!(admin, Admin::Ran);
+    }
 }

@@ -102,7 +102,7 @@ pub fn open_pane(id: CheckId) -> Result<(), String> {
 
 /// The shell script: the commands one after another, so one failing doesn't stop
 /// the rest. Always in the same order.
-fn script(verbs: &[Verb]) -> String {
+pub(super) fn script(verbs: &[Verb]) -> String {
     let mut verbs = verbs.to_vec();
     verbs.sort();
     verbs.dedup();
@@ -111,8 +111,14 @@ fn script(verbs: &[Verb]) -> String {
 
 /// What the password prompt says: only fixed labels.
 fn prompt(verbs: &[Verb]) -> String {
-    let labels: Vec<String> = verbs.iter().map(|verb| verb.label().to_lowercase()).collect();
+    // Only the first letter drops to lower case, so "Gatekeeper" keeps its capital.
+    let labels: Vec<String> = verbs.iter().map(|verb| lower_first(verb.label())).collect();
     format!("Eavesy wants to {}.", labels.join(", "))
+}
+
+fn lower_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|first| first.to_lowercase().chain(chars).collect()).unwrap_or_default()
 }
 
 fn applescript(verbs: &[Verb]) -> String {
@@ -163,6 +169,7 @@ mod tests {
             "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on; /usr/sbin/spctl --global-enable"
         );
         assert_eq!(prompt(&[Verb::Firewall, Verb::AutoLogin]), "Eavesy wants to turn on the firewall, turn off automatic login and delete its saved password.");
+        assert_eq!(prompt(&[Verb::Gatekeeper]), "Eavesy wants to turn on Gatekeeper.");
         let source = applescript(&[Verb::Stealth]);
         assert!(source.starts_with("do shell script \"/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on\" with prompt "));
         assert!(source.ends_with(" with administrator privileges"));
