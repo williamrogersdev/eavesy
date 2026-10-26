@@ -115,14 +115,12 @@
 @media (prefers-reduced-motion: reduce) { .ev-settings-nav button, .ev-settings-nav button svg { transition: none; } }
 
 /* This Mac: leftovers from agent sessions. */
-.ev-machine-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 /* Drawn from the tokens: the system checkbox is a stark white square in the dark. */
 .ev-machine-check { appearance: none; flex: none; width: 16px; height: 16px; margin: 0; border-radius: 4px; background: var(--ev-well); box-shadow: inset 0 0 0 1px var(--ev-line-strong); cursor: pointer; display: grid; place-content: center; transition: background var(--ev-d-state), box-shadow var(--ev-d-state); }
 .ev-machine-check:hover { box-shadow: inset 0 0 0 1px var(--ev-ink-3); }
 .ev-machine-check:checked { background: var(--ev-coat); box-shadow: none; }
 .ev-machine-check:checked::after { content: ''; width: 8px; height: 4px; margin-top: -2px; border: solid var(--ev-on-coat); border-width: 0 0 1.75px 1.75px; transform: rotate(-45deg); }
 .ev-machine-check:focus-visible { outline: none; box-shadow: var(--ev-focus); }
-.ev-machine-confirm { display: flex; justify-content: flex-end; margin-top: 12px; }
 .ev-machine-card { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 12px; padding: 12px; border: 1px solid var(--ev-line); border-radius: var(--ev-r-ctl); background: var(--ev-raised); font: var(--ev-t-body); color: var(--ev-ink); }
 .ev-machine-card p { margin: 0; }
 .ev-machine-list { margin: 0; padding-left: 18px; max-height: 220px; overflow-y: auto; list-style: disc; }

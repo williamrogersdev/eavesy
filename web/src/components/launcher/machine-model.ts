@@ -163,23 +163,56 @@ export function formatSize(bytes: number): string {
   return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
-/** The small print under a worktree's branch, from what's known so far. */
-export function factsLine(view: WorktreeView, now: number, home: string | null): string {
-  const distance = !view.removable && view.ahead !== null && view.behind !== null && view.base
-    ? [view.ahead > 0 ? `${view.ahead} ahead of ${view.base}` : null, view.behind > 0 ? `${view.behind} behind` : null].filter(Boolean).join(', ')
+/** The worktree's own folder name; the full path is in the row's tooltip. */
+export function folderName(path: string): string {
+  return path.replace(/\/+$/, '').split('/').pop() || path;
+}
+
+/** The one line of small print under a worktree's branch, from what's known so far. Size has its own column. */
+export function factsLine(view: WorktreeView, now: number): string {
+  const distance = !view.removable && view.ahead !== null && view.behind !== null
+    ? [view.ahead > 0 ? `${view.ahead} ahead` : null, view.behind > 0 ? `${view.behind} behind` : null].filter(Boolean).join(', ')
     : '';
   return [
-    shortPath(view.path, home),
+    folderName(view.path),
     view.lastActivityMs !== null ? `active ${ageLabel(view.lastActivityMs, now)}` : null,
     distance || null,
     view.changes > 0 ? plural(view.changes, 'changed file', 'changed files') : null,
-    typeof view.size === 'number' ? formatSize(view.size) : null,
   ].filter(Boolean).join(' · ');
 }
 
-/** What the bulk button says: "Remove 12 merged". */
-export function removeMergedLabel(count: number): string {
-  return `Remove ${count} merged`;
+/** What the top of This Mac says: the one sentence you came for, and what's behind it. */
+export function overview({ removable, processes, checking, bytes, worktrees }: {
+  removable: number;
+  processes: number;
+  checking: number;
+  /** Known size of the removable worktrees. */
+  bytes: number;
+  worktrees: number;
+}): { headline: string; detail: string } {
+  const parts = [
+    removable > 0 ? plural(removable, 'worktree', 'worktrees') : null,
+    processes > 0 ? `${plural(processes, 'leftover process', 'leftover processes')}` : null,
+  ].filter(Boolean);
+  const still = checking > 0 ? `Still checking ${plural(checking, 'worktree', 'worktrees')}.` : null;
+  if (parts.length === 0) {
+    return {
+      headline: checking > 0 ? 'Looking closer…' : 'All tidy.',
+      detail: [checking > 0 ? null : `${plural(worktrees, 'worktree', 'worktrees')}, nothing left over.`, still].filter(Boolean).join(' '),
+    };
+  }
+  return {
+    headline: `${parts.join(' and ')} can go.`,
+    detail: [bytes > 0 ? `Frees about ${formatSize(bytes)}.` : null, still].filter(Boolean).join(' '),
+  };
+}
+
+/** The selection bar: "2 worktrees and 98 processes selected". */
+export function selectionLabel(worktrees: number, processes: number): string {
+  return `${[
+    worktrees > 0 ? plural(worktrees, 'worktree', 'worktrees') : null,
+    processes > 0 ? plural(processes, 'process', 'processes') : null,
+  ].filter(Boolean).join(' and ')} selected`;
 }
 
 function plural(count: number, one: string, many: string): string {
