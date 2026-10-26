@@ -50,7 +50,8 @@ impl Verb {
             Verb::Firewall => "/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on",
             Verb::Stealth => "/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on",
             Verb::Gatekeeper => "/usr/sbin/spctl --global-enable",
-            // The saved password goes with the setting, even if the setting was already gone.
+            // The saved password goes with the setting. `;` so it's removed even if the key
+            // vanished between the read and the prompt; the checks read afterwards report the result.
             Verb::AutoLogin => "/usr/bin/defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser; /bin/rm -f /etc/kcpassword",
         }
     }

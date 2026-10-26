@@ -359,11 +359,7 @@ impl Action for SecurityFix {
         }
         let admin = fix::run_admin(&needed);
         let after = crate::security::read_all(&ids);
-        let mut summary = fixed_summary(&needed, &admin, &after);
-        let already: Vec<&str> = chosen.iter().filter(|verb| !needed.contains(verb)).map(|verb| verb.check().title()).collect();
-        if !already.is_empty() {
-            summary = format!("{summary}. Already on: {}", already.join(", "));
-        }
+        let summary = format!("{}{}", fixed_summary(&needed, &admin, &after), left_alone(&chosen, &before));
         // Whatever is still off opens where you can change it yourself.
         if admin != Admin::Cancelled {
             if let Some(left) = after.iter().find(|f| f.state != State::Good) {
@@ -378,6 +374,23 @@ fn open_settings(id: CheckId) {
     if let Err(error) = fix::open_pane(id) {
         tracing::warn!(%error, "security: couldn't open System Settings");
     }
+}
+
+/// The chosen settings that weren't run, by what the read before said: already on, or
+/// unreadable and so left as they were.
+fn left_alone(chosen: &[Verb], before: &[Finding]) -> String {
+    let named = |wanted: State| -> Vec<&str> {
+        chosen.iter().filter(|verb| before.iter().any(|f| f.id == verb.check() && f.state == wanted)).map(|verb| verb.check().title()).collect()
+    };
+    let (on, unread) = (named(State::Good), named(State::Unknown));
+    let mut said = String::new();
+    if !on.is_empty() {
+        said.push_str(&format!(". Already on: {}", on.join(", ")));
+    }
+    if !unread.is_empty() {
+        said.push_str(&format!(". Couldn't read, so not changed: {}", unread.join(", ")));
+    }
+    said
 }
 
 /// What actually happened, from the checks read afterwards, not from the commands.
@@ -648,6 +661,10 @@ mod tests {
         // A batch always gets a card in Auto; one setting on its own may not.
         let Ok(one) = security_fix(vec![CheckId::Firewall]) else { panic!() };
         assert!(one.facts().safe_listed);
+        // Settings not run are named by what was read, never guessed.
+        let before = [found(CheckId::Firewall, State::Fix), found(CheckId::Stealth, State::Good), found(CheckId::Gatekeeper, State::Unknown)];
+        assert_eq!(left_alone(&[Verb::Firewall, Verb::Stealth, Verb::Gatekeeper], &before), ". Already on: Stealth mode. Couldn't read, so not changed: Gatekeeper");
+        assert_eq!(left_alone(&[Verb::Firewall], &before), "");
         // Deleting the saved login password can't be put back: always a card.
         let Ok(login) = security_fix(vec![CheckId::AutoLogin]) else { panic!() };
         assert!(!login.facts().safe_listed);
