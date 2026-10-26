@@ -74,6 +74,27 @@ fn a_live_segment_goes_before_an_older_sessions_archive_parts() {
 }
 
 #[test]
+fn a_cancelled_recording_drops_its_segments_and_goes_first_to_be_deleted() {
+    let conn = db();
+    session(&conn, "old-meeting", "uploading", 1, 0);
+    session(&conn, "cancelled", "recording", 2, 0);
+    segment(&conn, "cancelled", 0);
+    conn.execute("UPDATE recording_sessions SET next_attempt_at=500 WHERE id='cancelled'", []).unwrap();
+    discard_recording_on(&conn, "cancelled", 100).unwrap();
+
+    let next = next_session_on(&conn, 100).unwrap().unwrap();
+    assert_eq!(next.id, "cancelled");
+    assert!(next.discarded);
+    let segments: i64 = conn
+        .query_row("SELECT count(*) FROM recording_segments WHERE session_id='cancelled'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(segments, 0);
+    // Whatever state an in-flight upload leaves it in, it is still deleted.
+    conn.execute("UPDATE recording_sessions SET status='failed' WHERE id='cancelled'", []).unwrap();
+    assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "cancelled");
+}
+
+#[test]
 fn a_just_stopped_note_is_not_queued_behind_a_long_archive() {
     let conn = db();
     session(&conn, "old-meeting", "uploading", 1, 0);

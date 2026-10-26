@@ -413,6 +413,7 @@ export function DesktopPanel() {
             onVideo={() => runTask(() => capture.begin('screen', { mic: true }))}
             onScreenshot={capture.screenshot}
             onStop={() => runTask(capture.stop, 'Couldn’t stop the recording')}
+            onCancel={() => runTask(capture.cancel, 'Couldn’t cancel the recording')}
           />
         )}
         {view === 'list' && notice && (

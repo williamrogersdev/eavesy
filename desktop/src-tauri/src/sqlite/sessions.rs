@@ -21,6 +21,8 @@ pub struct PendingSession {
     /// Set when the continuous archive was lost; the meeting is finished from its
     /// uploaded segments instead.
     pub archive_missing: bool,
+    /// Cancelled while recording: its cloud copy is deleted, then the row.
+    pub discarded: bool,
 }
 
 // Mirrors the recordings table columns one-to-one.
@@ -139,6 +141,40 @@ pub fn advance_archive<R: Runtime>(app: &AppHandle<R>,
     Ok(())
 }
 
+/// A recording cancelled while it was capturing: its segments and live words
+/// go now, and the row stays, marked, until the sync loop has deleted the
+/// cloud copy (one may be created in the meantime) and then the row itself.
+pub fn discard_recording<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    discard_recording_on(&*open(app)?, id, chrono::Utc::now().timestamp_millis())
+}
+
+pub(super) fn discard_recording_on(conn: &Connection, id: &str, now: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE recording_sessions SET discarded=1, next_attempt_at=0, updated_at=?2 WHERE id=?1",
+        params![id, now],
+    )
+    .map_err(|e| format!("discard recording: {e}"))?;
+    conn.execute("DELETE FROM recording_segments WHERE session_id=?1", params![id])
+        .map_err(|e| format!("discard recording segments: {e}"))?;
+    crate::live_transcript::forget(conn, id)
+}
+
+/// Drops a discarded recording's row once nothing of it is left in the cloud.
+pub fn forget_discarded<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    let conn = open(app)?;
+    // Segments the engine queued as it was killed go with it, cascade or not.
+    conn.execute(
+        "DELETE FROM recording_segments WHERE session_id=?1
+         AND EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=1)",
+        params![id],
+    )
+    .map_err(|e| format!("forget discarded recording's segments: {e}"))?;
+    conn.execute("DELETE FROM recording_sessions WHERE id=?1 AND discarded=1", params![id])
+        .map_err(|e| format!("forget discarded recording: {e}"))?;
+    // Finals still being stored as the engine was killed land after the discard.
+    crate::live_transcript::forget(&conn, id)
+}
+
 pub fn mark_processing<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
     open(app)?
         .execute(
@@ -193,11 +229,14 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
     conn
         .query_row(
             "SELECT id, remote_meeting_id, archive_path, title, context_blurb,
-                    status, next_part_number, next_archive_offset, ended_at, archive_missing, project_id
+                    status, next_part_number, next_archive_offset, ended_at, archive_missing, project_id,
+                    discarded
              FROM recording_sessions
-             WHERE status IN ('recording','uploading','finalizing','processing')
+             WHERE (discarded=1 OR status IN ('recording','uploading','finalizing','processing'))
                AND next_attempt_at <= ?1
              ORDER BY
+               -- A cancelled recording's cloud copy goes before anything is sent.
+               discarded DESC,
                -- Segments first: they feed the live transcript and are small.
                EXISTS (SELECT 1 FROM recording_segments s
                        WHERE s.session_id = recording_sessions.id
@@ -224,6 +263,7 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
                     ended_at: row.get(8)?,
                     archive_missing: row.get(9)?,
                     project_id: row.get(10)?,
+                    discarded: row.get(11)?,
                 })
             },
         )

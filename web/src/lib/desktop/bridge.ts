@@ -868,6 +868,12 @@ export async function stopCapture(sessionId: string): Promise<void> {
   await invoke('stop_capture', { sessionId });
 }
 
+/** Ends a capture without saving it: nothing reaches History or the cloud. */
+export async function cancelCapture(sessionId: string): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('cancel_capture', { sessionId });
+}
+
 export interface Settings {
   toggle_hotkey: string;
   dictation_hotkey: string;

@@ -58,6 +58,11 @@ export function stopFailureNotice(reason: string): PanelNotice {
   return { text: because('Couldn’t save the recording', reason), action: 'Try again' };
 }
 
+/** A Cancel that failed: the recording may still be running. */
+export function cancelFailureNotice(reason: string): PanelNotice {
+  return { text: because('Couldn’t cancel the recording', reason), action: 'Try again' };
+}
+
 /** A screenshot that failed. Null when it was cancelled, which isn't a failure. */
 export function screenshotNotice(reason: string, permissions: Permissions | null): PanelNotice | null {
   if (/cancel/i.test(reason)) return null;
