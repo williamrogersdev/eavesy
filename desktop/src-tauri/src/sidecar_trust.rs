@@ -11,11 +11,13 @@
 //! A deep verify costs a few hundred milliseconds, so it runs once in the
 //! background at launch and is cached by the file's inode, size and ctime
 //! (ctime, unlike mtime, can't be set back with `touch`). A capture that starts
-//! during that first check waits for it; each codesign run is cut off after
-//! `CODESIGN_TIMEOUT`, so the wait is bounded. Only answers codesign actually
-//! gave are cached: a timeout or a failure to run it is tried again. There's still a moment between the
-//! check and the launch in which the file could be swapped; closing it needs
-//! `fexecve`, which macOS doesn't have.
+//! during that first check waits for it, at most `CODESIGN_TIMEOUT` (15 s).
+//! There is only one engine, so nothing else queues behind it. Only answers
+//! codesign actually gave are cached: a timeout or a failure to run it is
+//! tried again.
+//!
+//! There's still a moment between the check and the launch in which the file
+//! could be swapped; closing it needs `fexecve`, which macOS doesn't have.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -75,20 +77,25 @@ fn codesign(args: &[&std::ffi::OsStr]) -> Result<Output, String> {
                 let _ = child.wait();
                 return Err("codesign didn't answer".to_string());
             }
-            Err(error) => return Err(format!("codesign failed: {error}")),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("codesign failed: {error}"));
+            }
         }
     }
 }
 
 /// How Eavesy itself is signed. A definite answer is kept for the life of the
-/// process; `Unknown` is asked again after `UNKNOWN_RETRY`. The lock is held
-/// while asking, so concurrent callers share one codesign run.
+/// process; `Unknown` is asked again after `UNKNOWN_RETRY`. codesign runs
+/// outside the lock; two callers racing at launch may both run it, which is
+/// cheap.
 fn own_signer() -> Signer {
     static SIGNER: Mutex<Option<(Signer, Instant)>> = Mutex::new(None);
-    let mut slot = SIGNER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((known, at)) = slot.as_ref() {
-        if *known != Signer::Unknown || at.elapsed() < UNKNOWN_RETRY {
-            return known.clone();
+    let cached = SIGNER.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    if let Some((known, at)) = cached {
+        if known != Signer::Unknown || at.elapsed() < UNKNOWN_RETRY {
+            return known;
         }
     }
     let signer = match std::env::current_exe().map_err(|error| error.to_string()).and_then(|exe| codesign(&["-dv".as_ref(), "--verbose=2".as_ref(), exe.as_os_str()])) {
@@ -106,7 +113,7 @@ fn own_signer() -> Signer {
             Signer::Unknown
         }
     };
-    *slot = Some((signer.clone(), Instant::now()));
+    *SIGNER.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((signer.clone(), Instant::now()));
     signer
 }
 
@@ -157,8 +164,9 @@ impl Verdicts {
     /// file at once: the second gets the first one's answer.
     fn check(&self, path: &Path, verify: impl FnOnce(&Path) -> Checked) -> Result<(), String> {
         let stamp = Stamp::of(path)?;
-        // The slot is only ever replaced whole, after verify returns, so a
-        // panic leaves the previous entry, still keyed to its own stamp.
+        // The slot is only ever replaced whole, after verify returns. If verify
+        // panics, the lock is recovered from poisoning below and the previous
+        // entry, still keyed to its own stamp, is kept.
         let mut slot = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((seen, verdict)) = slot.as_ref() {
             if *seen == stamp {

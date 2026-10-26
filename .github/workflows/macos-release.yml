@@ -229,9 +229,13 @@ jobs:
           kill "$PID"
           wait "$PID" 2>/dev/null || true
           tail -50 "${RUNNER_TEMP}/launch.log"
-          # The app checks its own capture engine at launch (sidecar_trust::warm)
-          # and logs any refusal, so this tests the app's real requirement too.
-          if grep -h "sidecar_trust" ~/Library/Logs/com.eavesy.desktop/*.log 2>/dev/null; then
+          # The app checks its own capture engine at launch (sidecar_trust::warm,
+          # finished well inside the 25 s: codesign is cut off at 15 s) and logs
+          # any refusal, so this tests the app's real requirement too.
+          LOGS=~/Library/Logs/com.eavesy.desktop
+          ls "$LOGS"/*.log > /dev/null || { echo "::error::The signed app wrote no log to $LOGS"; exit 1; }
+          # Both are only ever logged as errors (sidecar_trust.rs).
+          if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
             echo "::error::The signed app refused its own capture engine"
             exit 1
           fi
