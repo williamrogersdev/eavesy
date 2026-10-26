@@ -119,6 +119,7 @@ describe('machine model', () => {
   test('the overview says what can go, or that all is tidy', () => {
     expect(overview({ removable: 2, processes: 101, checking: 0, bytes: 1.8 * 1024 ** 3, worktrees: 8 }))
       .toEqual({ headline: '2 worktrees and 101 leftover processes can go.', detail: 'Frees about 1.8 GB.' });
+    expect(overview({ removable: 2, processes: 0, checking: 0, bytes: 400 * 1024 ** 2, measuring: true, worktrees: 8 }).detail).toBe('Frees at least 400 MB.');
     expect(overview({ removable: 1, processes: 0, checking: 3, bytes: 0, worktrees: 8 }))
       .toEqual({ headline: '1 worktree can go.', detail: 'Still checking 3 worktrees.' });
     expect(overview({ removable: 0, processes: 0, checking: 0, bytes: 0, worktrees: 8 }))

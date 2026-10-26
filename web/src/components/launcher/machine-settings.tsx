@@ -33,6 +33,7 @@ export function MachineSettings({ active }: { active: boolean }) {
   /** Changes on every full look, so the worktree list starts its closer look over. */
   const [token, setToken] = useState(0);
   const confirmRef = useRef<HTMLDivElement>(null);
+  const goRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +68,7 @@ export function MachineSettings({ active }: { active: boolean }) {
     processes: leftoverTotal,
     checking,
     bytes: removable.reduce((sum, view) => sum + (typeof view.size === 'number' ? view.size : 0), 0),
+    measuring: removable.some((view) => view.exists && view.size === undefined),
     worktrees: views.length,
   });
 
@@ -88,7 +90,12 @@ export function MachineSettings({ active }: { active: boolean }) {
     setGroups(new Set());
     setConfirming(false);
   };
-  useEffect(() => { if (confirming) confirmRef.current?.scrollIntoView({ block: 'nearest' }); }, [confirming]);
+  // The confirm opens at the bottom of the pane; take focus to its button so the keyboard is there too.
+  useEffect(() => {
+    if (!confirming) return;
+    confirmRef.current?.scrollIntoView({ block: 'nearest' });
+    goRef.current?.focus();
+  }, [confirming]);
   // Nothing left to confirm once the last pick is undone.
   useEffect(() => { if (!anyChosen) setConfirming(false); }, [anyChosen]);
 
@@ -134,7 +141,7 @@ export function MachineSettings({ active }: { active: boolean }) {
           )}
         </div>
         <div className="ev-mac-actions">
-          <IconButton size={28} icon={RefreshCw} label={loading ? 'Looking…' : 'Look again'} disabled={loading} onClick={() => void load()} />
+          <IconButton size={28} icon={RefreshCw} label={loading ? 'Looking…' : 'Look again'} disabled={loading || cleaning} onClick={() => void load()} />
           {inventory && somethingToClean && (
             <Button variant="primary" size="md" icon={Trash2} disabled={cleaning} onClick={cleanUpAll}>Clean up…</Button>
           )}
@@ -238,7 +245,7 @@ export function MachineSettings({ active }: { active: boolean }) {
       )}
 
       {inventory && anyChosen && (
-        <div ref={confirmRef} className="ev-mac-bar" role={confirming ? 'dialog' : 'region'} aria-label={confirming ? 'Confirm clean up' : 'Selection'}>
+        <div ref={confirmRef} className="ev-mac-bar" role="region" aria-label={confirming ? 'Confirm clean up' : 'Selection'}>
           {confirming && (
             <div className="ev-mac-confirm">
               <p className="ev-set-label">This will:</p>
@@ -254,7 +261,7 @@ export function MachineSettings({ active }: { active: boolean }) {
             <div className="ev-mac-bar-actions">
               <Button variant="ghost" size="sm" disabled={cleaning} onClick={confirming ? () => setConfirming(false) : clearChoice}>{confirming ? 'Back' : 'Clear'}</Button>
               {confirming
-                ? <Button variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
+                ? <Button ref={goRef} variant="primary" size="sm" icon={Trash2} loading={cleaning} onClick={() => void clean()}>{cleanLabel(chosenWorktrees.length, processCount)}</Button>
                 : <Button variant="primary" size="sm" onClick={() => { setOutcomes(null); setConfirming(true); }}>Clean up…</Button>}
             </div>
           </div>

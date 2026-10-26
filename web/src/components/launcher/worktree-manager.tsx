@@ -229,7 +229,7 @@ export function WorktreeManager({ views, checking, wantSizes, home, selected, bu
                       <span className="ev-wt-pick">
                         {view.removable && <Pick checked={selected.has(view.path)} disabled={busy} label={`Remove ${view.branch ?? folderName(view.path)}`} onChange={(on) => onSelect([view.path], on)} />}
                       </span>
-                      <div className="ev-wt-main" title={shortPath(view.path, home)}>
+                      <div className="ev-wt-main" title={[shortPath(view.path, home), view.base && !view.removable && view.ahead !== null ? `Ahead and behind ${view.base}` : null].filter(Boolean).join('\n')}>
                         <div className="ev-wt-line">
                           <span className="ev-set-label ev-wt-branch">{view.branch ?? 'detached'}</span>
                           <Chipped view={view} onError={onError} />

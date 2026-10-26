@@ -182,12 +182,14 @@ export function factsLine(view: WorktreeView, now: number): string {
 }
 
 /** What the top of This Mac says: the one sentence you came for, and what's behind it. */
-export function overview({ removable, processes, checking, bytes, worktrees }: {
+export function overview({ removable, processes, checking, bytes, measuring = false, worktrees }: {
   removable: number;
   processes: number;
   checking: number;
   /** Known size of the removable worktrees. */
   bytes: number;
+  /** Some removable worktrees' sizes aren't in yet, so `bytes` is a floor. */
+  measuring?: boolean;
   worktrees: number;
 }): { headline: string; detail: string } {
   const parts = [
@@ -203,7 +205,7 @@ export function overview({ removable, processes, checking, bytes, worktrees }: {
   }
   return {
     headline: `${parts.join(' and ')} can go.`,
-    detail: [bytes > 0 ? `Frees about ${formatSize(bytes)}.` : null, still].filter(Boolean).join(' '),
+    detail: [bytes > 0 ? `Frees ${measuring ? 'at least' : 'about'} ${formatSize(bytes)}.` : null, still].filter(Boolean).join(' '),
   };
 }
 
