@@ -4,9 +4,12 @@
 //! Signing in still happens in Claude Code (`/mcp`), since that's where the
 //! OAuth token lives.
 
-use std::io::Read;
+use std::io::{Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -39,12 +42,21 @@ fn cli_path() -> Option<PathBuf> {
         .into_iter()
         .filter_map(|rel| home.as_ref().map(|home| home.join(rel)))
         .chain(["/opt/homebrew/bin/claude", "/usr/local/bin/claude"].map(PathBuf::from));
-    known.into_iter().find(|path| path.is_file()).or_else(from_login_shell)
+    known.into_iter().find(|path| path.is_file()).or_else(|| from_login_shell().clone())
 }
 
-fn from_login_shell() -> Option<PathBuf> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = run(Path::new(&shell), &["-lc", "command -v claude"], Duration::from_secs(5)).ok()?;
+/// Asked once per run: status is checked every time you come back to Settings,
+/// and a login shell reads all your rc files. Claude Code's installers put it in
+/// one of the known places, so a later install is still found without this.
+fn from_login_shell() -> &'static Option<PathBuf> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND.get_or_init(ask_login_shell)
+}
+
+fn ask_login_shell() -> Option<PathBuf> {
+    let shell = std::env::var("SHELL").ok().map(PathBuf::from).filter(|shell| shell.is_absolute() && shell.is_file());
+    let shell = shell.unwrap_or_else(|| PathBuf::from("/bin/zsh"));
+    let out = run(&shell, &["-lc", "command -v claude"], Duration::from_secs(5)).ok()?;
     let path = PathBuf::from(out.lines().last()?.trim());
     path.is_absolute().then_some(path).filter(|path| path.is_file())
 }
@@ -57,6 +69,8 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Its own process group, so a timeout stops any helper it started too.
+        .process_group(0)
         .spawn()
         .map_err(|error| format!("Couldn't run {}: {error}", program.display()))?;
     // Read on threads so a full pipe can't stall the command while we wait for it.
@@ -81,6 +95,8 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < timeout => std::thread::sleep(Duration::from_millis(100)),
             _ => {
+                // SAFETY: kill(2) on the group this child leads; no memory is touched.
+                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err("Claude Code took too long to answer. Check your connection and try again.".into());
@@ -93,7 +109,18 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
     }
     let said = collect(stderr);
     let said = if said.trim().is_empty() { out } else { said };
-    Err(said.trim().lines().last().unwrap_or("Claude Code couldn't add Eavesy.").to_string())
+    Err(failure(&said))
+}
+
+/// The last few lines of what a failed command said: enough to see why, short enough to read.
+fn failure(said: &str) -> String {
+    let lines: Vec<&str> = said.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(4)..].join("\n");
+    let mut text: String = tail.chars().take(600).collect();
+    if text.is_empty() {
+        text = "Claude Code couldn't add Eavesy, and didn't say why.".into();
+    }
+    text
 }
 
 fn read_json(file: &Path) -> Value {
@@ -158,13 +185,20 @@ pub fn sign_in_claude_code(window: WebviewWindow) -> Result<(), String> {
     if !status.plugin && !status.server {
         return Err("Add Eavesy to Claude Code first.".into());
     }
-    let dir = std::env::temp_dir().join("eavesy");
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let file = dir.join("Sign in to Eavesy.command");
-    std::fs::write(&file, sign_in_script(&cli, server_name(&status))).map_err(|error| error.to_string())?;
-    std::fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o700)).map_err(|error| error.to_string())?;
+    let file = write_script(&sign_in_script(&cli, server_name(&status))).map_err(|error| format!("Couldn't write the sign-in script: {error}"))?;
     let opened = Command::new("open").args(["-a", "Terminal"]).arg(&file).stdin(Stdio::null()).status().map_err(|error| error.to_string())?;
     if opened.success() { Ok(()) } else { Err("macOS couldn't open Terminal.".into()) }
+}
+
+/// A fresh folder only you can open, made new each time, so nothing else can
+/// have put a file (or a link) where Terminal will run it.
+fn write_script(script: &str) -> std::io::Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("eavesy-sign-in-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    let file = dir.join("Sign in to Eavesy.command");
+    let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&file)?;
+    out.write_all(script.as_bytes())?;
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -199,11 +233,30 @@ mod tests {
     fn a_failed_command_says_why() {
         let error = run(Path::new("/bin/sh"), &["-c", "echo nope >&2; exit 1"], Duration::from_secs(5)).unwrap_err();
         assert_eq!(error, "nope");
+        let error = run(Path::new("/bin/sh"), &["-c", "printf 'Error: clone failed\\nfatal: auth\\n' >&2; exit 1"], Duration::from_secs(5)).unwrap_err();
+        assert_eq!(error, "Error: clone failed\nfatal: auth");
+        assert!(failure("").contains("didn't say why"));
         assert_eq!(run(Path::new("/bin/sh"), &["-c", "echo ok"], Duration::from_secs(5)).unwrap().trim(), "ok");
     }
 
     #[test]
-    fn a_hung_command_is_stopped() {
-        assert!(run(Path::new("/bin/sh"), &["-c", "sleep 5"], Duration::from_millis(200)).is_err());
+    fn a_hung_command_is_stopped_with_its_helpers() {
+        let started = Instant::now();
+        // The background sleep holds the pipes open; killing the group closes them.
+        assert!(run(Path::new("/bin/sh"), &["-c", "sleep 30 & sleep 30"], Duration::from_millis(200)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_script_goes_in_a_new_private_folder() {
+        let one = write_script("echo hi").unwrap();
+        let two = write_script("echo hi").unwrap();
+        assert_ne!(one.parent(), two.parent());
+        let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(one.parent().unwrap()).unwrap().permissions());
+        assert_eq!(mode & 0o777, 0o700);
+        assert_eq!(std::fs::read_to_string(&one).unwrap(), "echo hi");
+        for file in [one, two] {
+            let _ = std::fs::remove_dir_all(file.parent().unwrap());
+        }
     }
 }

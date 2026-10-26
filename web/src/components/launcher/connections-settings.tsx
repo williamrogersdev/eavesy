@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Copy, PlugZap, Terminal } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, Card } from '@/components/launcher/ui';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
 import {
@@ -60,13 +60,8 @@ function usedLine(token: McpToken): string {
 function useOnReturn(active: boolean, refresh: () => void) {
   useEffect(() => {
     if (!active) return;
-    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
+    return () => window.removeEventListener('focus', refresh);
   }, [active, refresh]);
 }
 
@@ -93,9 +88,16 @@ function ClaudeCodeStep({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
-  const refresh = useCallback(() => { void claudeCodeStatus().then(setStatus).catch(() => {}); }, []);
+  // While a button's command runs, its own answer is the one to show.
+  const running = useRef(false);
+  const refresh = useCallback(() => {
+    if (running.current) return;
+    void claudeCodeStatus().then((next) => { if (!running.current) setStatus(next); }).catch(() => {});
+  }, []);
   useEffect(() => { if (active) refresh(); }, [active, refresh]);
   useOnReturn(active, refresh);
+  const added = !!status && (status.plugin || status.server);
+  useEffect(() => { if (!added) setOpened(false); }, [added]);
 
   if (!isDesktop()) {
     return (
@@ -104,22 +106,33 @@ function ClaudeCodeStep({ active }: { active: boolean }) {
       </Step>
     );
   }
-  const added = !!status && (status.plugin || status.server);
-  const add = () => {
-    setBusy('add');
+  const start = (which: 'add' | 'sign-in') => {
+    running.current = true;
+    setBusy(which);
     setError(null);
+  };
+  const done = () => {
+    running.current = false;
+    setBusy(null);
+  };
+  const add = () => {
+    start('add');
     void connectClaudeCode()
       .then(setStatus)
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.')))
-      .finally(() => setBusy(null));
+      .catch((e: unknown) => {
+        setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.'));
+        // Half of it may have gone in; show what's there now.
+        running.current = false;
+        refresh();
+      })
+      .finally(done);
   };
   const signIn = () => {
-    setBusy('sign-in');
-    setError(null);
+    start('sign-in');
     void signInClaudeCode()
       .then(() => setOpened(true))
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open Terminal.')))
-      .finally(() => setBusy(null));
+      .finally(done);
   };
   const hint = status === null
     ? 'Checking Claude Code on this Mac…'
