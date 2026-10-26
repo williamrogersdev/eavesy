@@ -205,6 +205,7 @@ pub(crate) fn capture_bin(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(sidecar) = exe.parent().map(|d| d.join("SwiftAudio")) {
             if sidecar.exists() {
+                crate::sidecar_trust::check(&sidecar)?;
                 return Ok(sidecar);
             }
         }
@@ -214,6 +215,7 @@ pub(crate) fn capture_bin(app: &AppHandle) -> Result<PathBuf, String> {
         .resolve("SwiftAudio", tauri::path::BaseDirectory::Resource)
     {
         if resource.exists() {
+            crate::sidecar_trust::check(&resource)?;
             return Ok(resource);
         }
     }

@@ -456,17 +456,17 @@ A verb that doesn't work by command falls back to opening the pane.
 A security product that's easy to attack is worse than none. Before pillar 1
 ships, audit Eavesy's own footprint and drop what it doesn't need:
 
-| Today | Action |
-|---|---|
-| `com.apple.security.cs.allow-jit` and `allow-unsigned-executable-memory` in `entitlements.plist` weaken the hardened runtime | Find out what needs them (WKWebView's JIT runs in its own WebKit process and shouldn't need either). Remove both if nothing breaks in the VM test (`desktop/scripts/vm-test.sh`) |
-| `macOSPrivateApi: true` in `tauri.conf.json` | List what uses it (window transparency, panels). Keep only if needed, and document why |
-| Not sandboxed (needed to read other processes' environments for the machine companion) | Keep, and document it in `SECURITY.md` as a deliberate trade-off. Every read of another process stays own-user only |
-| Apple Events automation, screen capture and microphone entitlements | Keep. They're the product. List each with its reason in the Security section's "Eavesy itself" view |
-| Capture sidecar (`binaries/`) launched by the app | Check its code signature and team ID before every launch, so a replaced binary never runs |
-| Local agent socket, which checks the peer's uid (`agents/mod.rs`) | Keep the uid check. Add the peer's code signature to the Activity log so a card can say which program asked. The socket file stays mode 0600 in a 0700 folder |
-| Updater with a minisign public key in `tauri.conf.json` | Keep it pinned. Add a CI check that the key hasn't changed without a matching `docs/RELEASING.md` entry |
-| Security Events in the local log | Make them tamper-evident: each entry carries a hash of the one before, and the Security section warns if the chain is broken |
-| No security review in CI for desktop code | Add `cargo audit` and a dependency-review step for the desktop crate and the sidecar |
+| Today | Action | Status |
+|---|---|---|
+| `com.apple.security.cs.allow-jit` and `allow-unsigned-executable-memory` in `entitlements.plist` weaken the hardened runtime | Remove each one that the signed app runs without | Testing. The VM test builds an unsigned debug app, where the hardened runtime doesn't apply, so it can't answer this. Instead `macos-release.yml` takes a `without_entitlements` input (manual runs only) and launches every signed build; an entitlement goes once a candidate without it stays up |
+| `macOSPrivateApi: true` in `tauri.conf.json` | Keep only if needed, and document why | Kept: Tauri needs it for the transparent HUD and card windows. In `SECURITY.md` |
+| Not sandboxed (needed to read other processes' environments for the machine companion) | Keep, and document it as a deliberate trade-off. Every read of another process stays own-user only | Done, in `SECURITY.md` |
+| Apple Events automation, screen capture and microphone entitlements | Keep. They're the product. List each with its reason in the Security section's "Eavesy itself" view | Listed in `SECURITY.md`; the in-app view comes with the checkup |
+| Capture sidecar (`SwiftAudio`) launched by the app | Check its signature and team ID before launch, so a replaced binary never runs | Done (`sidecar_trust.rs`). Checked once in the background at launch and again whenever the file changes. An unsigned or ad-hoc dev build skips it; if Eavesy can't read its own signature, it refuses the engine |
+| Local agent socket, which checks the peer's uid (`agents/mod.rs`) | Keep the uid check. The socket's folder must be the user's, with no group or other access. Add the peer's code signature to the Activity log | Folder check done: Eavesy refuses to listen in a folder that's shared, a symlink or someone else's. The peer signature moves to the checkup, with the Activity log work |
+| Updater with a minisign public key in `tauri.conf.json` | Keep it pinned | Done: a test holds a copy of the key, so a change has to edit the test too and shows in review. It guards against accidents, not against someone who can commit |
+| Security Events in the local log | Make them tamper-evident: each entry carries a hash of the one before, and the Security section warns if the chain is broken | Moves to the checkup, which writes the first Security Events |
+| No security review in CI for desktop code | Add `cargo audit` for the desktop crate | Done. Ignored advisories, each with its reason, are in `desktop/src-tauri/.cargo/audit.toml`. The Swift sidecar has no third-party packages, so there's nothing to audit there yet |
 
 ## Performance budgets
 

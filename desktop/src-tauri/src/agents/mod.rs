@@ -88,6 +88,27 @@ pub fn socket_path() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("com.eavesy.desktop").join(NAME))
 }
 
+/// The socket's folder must be yours alone before the socket exists, because
+/// its own mode is only set right after `bind`. The per-user temp folder
+/// normally is already; Eavesy's own Application Support folder is tightened
+/// here. Anything else that's open to other users, a symlink or someone
+/// else's folder refuses the socket, and agents can't connect.
+fn private_folder(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() || meta.uid() != unsafe { libc::getuid() } {
+        return Err(std::io::Error::other("the agent socket's folder isn't a folder you own"));
+    }
+    if meta.mode() & 0o077 != 0 {
+        if dir.file_name().is_some_and(|name| name == "com.eavesy.desktop") {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        } else {
+            return Err(std::io::Error::other("the agent socket's folder can be read by other users"));
+        }
+    }
+    Ok(())
+}
+
 /// Starts listening for hooks and for remote agents' messages, and keeps
 /// installed hooks pointing at this app.
 pub fn start(app: &AppHandle) {
@@ -110,6 +131,10 @@ async fn listen(app: AppHandle) -> std::io::Result<()> {
     let path = socket_path().ok_or_else(|| std::io::Error::other("no Application Support folder"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
+        // A test server's socket (EAVESY_AGENTS_SOCKET, dev builds only) lives wherever the test put it.
+        if !(cfg!(debug_assertions) && std::env::var_os("EAVESY_AGENTS_SOCKET").is_some()) {
+            private_folder(dir)?;
+        }
     }
     // A socket left by a crash would refuse the bind. Single-instance means
     // no other Eavesy is listening on it.
@@ -577,6 +602,36 @@ pub fn set_agent_hold(app: AppHandle, seconds: u32) -> Result<(), String> {
 mod tests {
     use super::*;
     use queue::Queue;
+
+    #[test]
+    fn the_socket_folder_must_be_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |dir: &std::path::Path| std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        let set = |dir: &std::path::Path, mode: u32| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        let root = std::env::temp_dir().join(format!("eavesy-socket-folder-{}", std::process::id()));
+        // A failed earlier run may have left its folders behind.
+        let _ = std::fs::remove_dir_all(&root);
+        let other = root.join("other");
+        let ours = root.join("com.eavesy.desktop");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::create_dir_all(&ours).unwrap();
+
+        set(&other, 0o700);
+        assert!(private_folder(&other).is_ok());
+        // A shared folder that isn't ours is refused, not changed.
+        set(&other, 0o755);
+        assert!(private_folder(&other).is_err());
+        assert_eq!(mode(&other), 0o755);
+        // Our own folder is tightened.
+        set(&ours, 0o755);
+        assert!(private_folder(&ours).is_ok());
+        assert_eq!(mode(&ours), 0o700);
+        // A symlink is refused even when it points somewhere private.
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&ours, &link).unwrap();
+        assert!(private_folder(&link).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn items(queue: &Queue) -> Vec<queue::Item> {
         queue.ordered().into_iter().cloned().collect()
