@@ -180,6 +180,15 @@ pub fn hud_assistant(app: AppHandle, window: WebviewWindow, action: String) -> R
     }
 }
 
+/// The mic button in the Eavesy tab: starts a recording for Eavesy, or stops the one
+/// that's open, exactly as tapping the Talk to Eavesy shortcut does.
+#[tauri::command]
+pub fn assistant_talk(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    super::from_ui(&window)?;
+    crate::dictate::toggle_talk(&app);
+    Ok(())
+}
+
 /// Waits for Eavesy to finish talking, stopping it should it ever run on.
 fn wait_until_quiet() {
     let deadline = std::time::Instant::now() + LONGEST_SPEECH;
@@ -207,7 +216,10 @@ fn hold_esc(app: &AppHandle) {
     }
     let registered = app.global_shortcut().on_shortcut(shortcut, |app, _, event| {
         if event.state == ShortcutState::Pressed {
-            hush(app);
+            // Off the handler: hush unregisters Esc, and the plugin holds its lock
+            // while a handler runs, so unregistering here would hang every shortcut.
+            let app = app.clone();
+            std::thread::spawn(move || hush(&app));
         }
     });
     if registered.is_err() {

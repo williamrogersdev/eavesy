@@ -43,14 +43,19 @@ fn open(app: &AppHandle, section: Option<String>) -> Result<(), String> {
     if let Some(script) = &section {
         builder = builder.initialization_script(script);
     }
-    builder
+    let builder = builder
         .title("Eavesy Settings")
-        .inner_size(840.0, 680.0)
+        .inner_size(880.0, 680.0)
         .min_inner_size(640.0, 480.0)
         .resizable(true)
-        .center()
-        .build()
-        .map_err(|error| error.to_string())?;
+        .center();
+    // Like System Settings: no title bar strip, the traffic lights sit over the
+    // sidebar, and the page draws (and drags) the window's top edge.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    builder.build().map_err(|error| error.to_string())?;
     Ok(())
 }
 

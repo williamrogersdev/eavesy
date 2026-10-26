@@ -1087,7 +1087,10 @@ function Hud() {
         {minimize}
       </>
     );
-    below = <p className="ctl-words ctl-answer" aria-live="polite">{state.message}</p>;
+    below = <>
+      <p className="ctl-words ctl-answer" aria-live="polite">{state.message}</p>
+      {talkShortcut && <p className="ctl-reply-hint">Press {talkShortcut} to reply.</p>}
+    </>;
   } else if (state.phase === 'done' && video) {
     top = <>{mark}{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
       <span className="ctl-fill" />

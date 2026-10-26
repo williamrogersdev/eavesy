@@ -2,6 +2,7 @@ import { DictionarySettings } from '@/components/dictionary/dictionary-settings'
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
+import { parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
@@ -36,16 +37,6 @@ interface Me {
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
   openRouterConnectedAt?: number | null;
-}
-
-interface McpToken {
-  id: string;
-  name: string;
-  createdAt: number;
-  lastUsedAt?: number | null;
-  expiresAt: number | null;
-  canWrite: boolean;
-  usesLegacyUrl: boolean;
 }
 
 /** A client config with the token in the Authorization header, not the URL. */
@@ -602,29 +593,6 @@ function parseMe(value: unknown): Me | null {
     hasOpenRouterKey: value.hasOpenRouterKey,
     openRouterConnectedAt: nullableNumber(value.openRouterConnectedAt),
   };
-}
-
-function parseMcpTokens(value: unknown): McpToken[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item): McpToken[] => {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== 'string' ||
-      typeof item.name !== 'string' ||
-      typeof item.createdAt !== 'number'
-    ) {
-      return [];
-    }
-    return [{
-      id: item.id,
-      name: item.name,
-      createdAt: item.createdAt,
-      lastUsedAt: nullableNumber(item.lastUsedAt),
-      expiresAt: nullableNumber(item.expiresAt),
-      canWrite: Array.isArray(item.scopes) && item.scopes.includes('write'),
-      usesLegacyUrl: item.usesLegacyUrl === true,
-    }];
-  });
 }
 
 function nullableString(value: unknown): string | null {

@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'assistant' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'assistant', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -105,6 +105,11 @@ export function onSettingsSection(cb: (section: SettingsSection) => void): () =>
 
 export async function closeSettingsWindow(): Promise<void> {
   if (isDesktop()) await invoke('close_settings_window');
+}
+
+/** Opens the Eavesy panel (the main window), on its history. */
+export async function showLauncher(): Promise<void> {
+  if (isDesktop()) await invoke('show_launcher');
 }
 
 export async function openSetup(): Promise<void> {
@@ -657,6 +662,11 @@ export async function dontRememberTurn(id: number): Promise<string> {
   return invoke<string>('assistant_dont_remember', { id });
 }
 
+/** Starts a spoken message to Eavesy, or stops the one being recorded (the mic button). */
+export async function talkToAssistant(): Promise<void> {
+  await invoke('assistant_talk');
+}
+
 /** Says one of Eavesy's replies again. */
 export async function repeatAssistantReply(id: number): Promise<void> {
   await invoke('assistant_repeat', { id });
@@ -1088,6 +1098,13 @@ export async function onCaptureState(cb: (state: CaptureStatus) => void): Promis
   const t = tauri();
   if (!t) return () => {};
   return t.event.listen<CaptureStatus>('capture:state', (event) => cb(event.payload));
+}
+
+/** The shortcuts were changed (Settings → Shortcuts). */
+export async function onHotkeysChanged(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen('hotkeys:changed', () => cb());
 }
 
 export async function captureScreenshot(): Promise<void> {

@@ -152,6 +152,7 @@ pub fn run() {
             assistant::rules::discard_assistant_rule_change,
             assistant::rules::open_assistant_rules,
             assistant::voice::hud_assistant,
+            assistant::voice::assistant_talk,
             assistant::thread::assistant_clear,
             commands::set_capture_sounds,
             commands::set_hud_look,
