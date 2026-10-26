@@ -229,6 +229,12 @@ jobs:
           kill "$PID"
           wait "$PID" 2>/dev/null || true
           tail -50 "${RUNNER_TEMP}/launch.log"
+          # The app checks its own capture engine at launch (sidecar_trust::warm)
+          # and logs any refusal, so this tests the app's real requirement too.
+          if grep -h "sidecar_trust" ~/Library/Logs/com.eavesy.desktop/*.log 2>/dev/null; then
+            echo "::error::The signed app refused its own capture engine"
+            exit 1
+          fi
 
       - name: Notarize and validate release candidate
         env:

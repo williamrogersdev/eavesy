@@ -6,24 +6,28 @@
 //! team. A binary that fails is never launched. A dev build is unsigned or
 //! ad-hoc signed, so there is no team to compare against and the check is
 //! skipped. If Eavesy can't tell which of the two it is, it refuses the engine
-//! and asks again on the next capture.
+//! and asks again a minute later.
 //!
 //! A deep verify costs a few hundred milliseconds, so it runs once in the
 //! background at launch and is cached by the file's inode, size and ctime
 //! (ctime, unlike mtime, can't be set back with `touch`). A capture that starts
-//! during that first check waits for it. There's still a moment between the
+//! during that first check waits for it; each codesign run is cut off after
+//! `CODESIGN_TIMEOUT`, so the wait is bounded. Only answers codesign actually
+//! gave are cached: a timeout or a failure to run it is tried again. There's still a moment between the
 //! check and the launch in which the file could be swapped; closing it needs
 //! `fexecve`, which macOS doesn't have.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const CODESIGN: &str = "/usr/bin/codesign";
 /// A deep verify takes well under a second; anything near this is stuck.
 const CODESIGN_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long an unreadable signature is believed before asking again.
+const UNKNOWN_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stamp {
@@ -51,37 +55,41 @@ enum Signer {
     Unknown,
 }
 
-/// Runs codesign, giving up (and killing it) after `CODESIGN_TIMEOUT`.
+/// Runs codesign, giving up (and killing it) after `CODESIGN_TIMEOUT`. Its
+/// output is a few lines, well within the pipe buffer, so polling can't stall it.
 fn codesign(args: &[&std::ffi::OsStr]) -> Result<Output, String> {
-    let child = Command::new(CODESIGN)
+    let mut child = Command::new(CODESIGN)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("couldn't run codesign: {error}"))?;
-    let pid = child.id();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    match rx.recv_timeout(CODESIGN_TIMEOUT) {
-        Ok(output) => output.map_err(|error| format!("codesign failed: {error}")),
-        Err(_) => {
-            // SAFETY: kill(2) on our own child's pid; the waiting thread reaps it.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-            Err("codesign didn't answer".to_string())
+    let deadline = Instant::now() + CODESIGN_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().map_err(|error| format!("codesign failed: {error}")),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("codesign didn't answer".to_string());
+            }
+            Err(error) => return Err(format!("codesign failed: {error}")),
         }
     }
 }
 
 /// How Eavesy itself is signed. A definite answer is kept for the life of the
-/// process; `Unknown` is asked again next time.
+/// process; `Unknown` is asked again after `UNKNOWN_RETRY`. The lock is held
+/// while asking, so concurrent callers share one codesign run.
 fn own_signer() -> Signer {
-    static SIGNER: Mutex<Option<Signer>> = Mutex::new(None);
+    static SIGNER: Mutex<Option<(Signer, Instant)>> = Mutex::new(None);
     let mut slot = SIGNER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(known) = slot.as_ref() {
-        return known.clone();
+    if let Some((known, at)) = slot.as_ref() {
+        if *known != Signer::Unknown || at.elapsed() < UNKNOWN_RETRY {
+            return known.clone();
+        }
     }
     let signer = match std::env::current_exe().map_err(|error| error.to_string()).and_then(|exe| codesign(&["-dv".as_ref(), "--verbose=2".as_ref(), exe.as_os_str()])) {
         // codesign prints the details on stderr.
@@ -98,9 +106,7 @@ fn own_signer() -> Signer {
             Signer::Unknown
         }
     };
-    if signer != Signer::Unknown {
-        *slot = Some(signer.clone());
-    }
+    *slot = Some((signer.clone(), Instant::now()));
     signer
 }
 
@@ -122,15 +128,23 @@ fn requirement(team: &str) -> String {
     format!("=anchor apple generic and certificate leaf[subject.OU] = \"{team}\"")
 }
 
-fn verify(path: &Path, team: &str) -> Result<(), String> {
+/// What a verify run found out.
+enum Checked {
+    /// codesign answered: this is the file's verdict until it changes.
+    Answered(Result<(), String>),
+    /// codesign couldn't be run or didn't answer; worth trying again.
+    Failed(String),
+}
+
+fn verify(path: &Path, team: &str) -> Checked {
     let requirement = requirement(team);
-    let output = codesign(&["--verify".as_ref(), "--strict".as_ref(), "-R".as_ref(), requirement.as_ref(), path.as_os_str()])
-        .map_err(|error| format!("couldn't check the capture engine's signature: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let why = String::from_utf8_lossy(&output.stderr);
-        Err(format!("the capture engine isn't signed by Eavesy's developer, so it won't be run ({}). Reinstall Eavesy.", why.trim()))
+    match codesign(&["--verify".as_ref(), "--strict".as_ref(), "-R".as_ref(), requirement.as_ref(), path.as_os_str()]) {
+        Err(error) => Checked::Failed(format!("couldn't check the capture engine's signature ({error}), so it won't be run this time. Try again.")),
+        Ok(output) if output.status.success() => Checked::Answered(Ok(())),
+        Ok(output) => {
+            let why = String::from_utf8_lossy(&output.stderr);
+            Checked::Answered(Err(format!("the capture engine isn't signed by Eavesy's developer, so it won't be run ({}). Reinstall Eavesy.", why.trim())))
+        }
     }
 }
 
@@ -141,18 +155,23 @@ impl Verdicts {
     /// The cached verdict while the file is unchanged; otherwise runs `verify`.
     /// The lock is held while verifying, so two callers never check the same
     /// file at once: the second gets the first one's answer.
-    fn check(&self, path: &Path, verify: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
+    fn check(&self, path: &Path, verify: impl FnOnce(&Path) -> Checked) -> Result<(), String> {
         let stamp = Stamp::of(path)?;
-        // A panic mid-check leaves at worst an old verdict, which the stamp check discards.
+        // The slot is only ever replaced whole, after verify returns, so a
+        // panic leaves the previous entry, still keyed to its own stamp.
         let mut slot = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((seen, verdict)) = slot.as_ref() {
             if *seen == stamp {
                 return verdict.clone();
             }
         }
-        let verdict = verify(path);
-        *slot = Some((stamp, verdict.clone()));
-        verdict
+        match verify(path) {
+            Checked::Answered(verdict) => {
+                *slot = Some((stamp, verdict.clone()));
+                verdict
+            }
+            Checked::Failed(error) => Err(error),
+        }
     }
 }
 
@@ -166,11 +185,11 @@ pub fn check(path: &Path) -> Result<(), String> {
         Signer::Unknown => return Err("couldn't read Eavesy's own signature, so the capture engine won't be run. Try again, or quit and reopen Eavesy.".to_string()),
     };
     VERDICTS.check(path, |path| {
-        let verdict = verify(path, &team);
-        if let Err(error) = &verdict {
+        let checked = verify(path, &team);
+        if let Checked::Answered(Err(error)) | Checked::Failed(error) = &checked {
             crate::telemetry::capture("sidecar_trust.verify", error);
         }
-        verdict
+        checked
     })
 }
 
@@ -221,13 +240,15 @@ mod tests {
         let runs = std::cell::Cell::new(0);
         let verify = |_: &Path| {
             runs.set(runs.get() + 1);
-            Err("not ours".to_string())
+            Checked::Answered(Err("not ours".to_string()))
         };
         assert!(verdicts.check(&file, verify).is_err());
         assert!(verdicts.check(&file, verify).is_err());
         assert_eq!(runs.get(), 1);
         std::fs::write(&file, b"three").unwrap();
-        assert!(verdicts.check(&file, |_| Ok(())).is_ok());
+        // A codesign that didn't answer isn't remembered.
+        assert!(verdicts.check(&file, |_| Checked::Failed("timed out".into())).is_err());
+        assert!(verdicts.check(&file, |_| Checked::Answered(Ok(()))).is_ok());
         assert!(verdicts.check(&file, verify).is_ok());
         assert_eq!(runs.get(), 1);
         let _ = std::fs::remove_dir_all(&dir);
