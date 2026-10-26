@@ -601,6 +601,7 @@ pub fn set_agent_hold(app: AppHandle, seconds: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use queue::Queue;
 
     #[test]
     fn the_socket_folder_must_be_private() {
@@ -608,6 +609,8 @@ mod tests {
         let mode = |dir: &std::path::Path| std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
         let set = |dir: &std::path::Path, mode: u32| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
         let root = std::env::temp_dir().join(format!("eavesy-socket-folder-{}", std::process::id()));
+        // A failed earlier run may have left its folders behind.
+        let _ = std::fs::remove_dir_all(&root);
         let other = root.join("other");
         let ours = root.join("com.eavesy.desktop");
         std::fs::create_dir_all(&other).unwrap();
@@ -629,7 +632,6 @@ mod tests {
         assert!(private_folder(&link).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
-    use queue::Queue;
 
     fn items(queue: &Queue) -> Vec<queue::Item> {
         queue.ordered().into_iter().cloned().collect()

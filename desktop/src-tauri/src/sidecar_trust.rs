@@ -5,7 +5,8 @@
 //! binary with `codesign --verify --strict` against a requirement naming that
 //! team. A binary that fails is never launched. A dev build is unsigned or
 //! ad-hoc signed, so there is no team to compare against and the check is
-//! skipped. If Eavesy can't tell which of the two it is, it refuses the engine.
+//! skipped. If Eavesy can't tell which of the two it is, it refuses the engine
+//! and asks again on the next capture.
 //!
 //! A deep verify costs a few hundred milliseconds, so it runs once in the
 //! background at launch and is cached by the file's inode, size and ctime
@@ -16,10 +17,13 @@
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::process::{Command, Output, Stdio};
+use std::sync::{mpsc, Mutex};
+use std::time::Duration;
 
 const CODESIGN: &str = "/usr/bin/codesign";
+/// A deep verify takes well under a second; anything near this is stuck.
+const CODESIGN_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stamp {
@@ -47,16 +51,57 @@ enum Signer {
     Unknown,
 }
 
-fn own_signer() -> &'static Signer {
-    static SIGNER: OnceLock<Signer> = OnceLock::new();
-    SIGNER.get_or_init(|| {
-        let Ok(exe) = std::env::current_exe() else { return Signer::Unknown };
-        match Command::new(CODESIGN).arg("-dv").arg("--verbose=2").arg(&exe).output() {
-            // codesign prints the details on stderr.
-            Ok(output) => signer_from_details(&String::from_utf8_lossy(&output.stderr)),
-            Err(_) => Signer::Unknown,
+/// Runs codesign, giving up (and killing it) after `CODESIGN_TIMEOUT`.
+fn codesign(args: &[&std::ffi::OsStr]) -> Result<Output, String> {
+    let child = Command::new(CODESIGN)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("couldn't run codesign: {error}"))?;
+    let pid = child.id();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(CODESIGN_TIMEOUT) {
+        Ok(output) => output.map_err(|error| format!("codesign failed: {error}")),
+        Err(_) => {
+            // SAFETY: kill(2) on our own child's pid; the waiting thread reaps it.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            Err("codesign didn't answer".to_string())
         }
-    })
+    }
+}
+
+/// How Eavesy itself is signed. A definite answer is kept for the life of the
+/// process; `Unknown` is asked again next time.
+fn own_signer() -> Signer {
+    static SIGNER: Mutex<Option<Signer>> = Mutex::new(None);
+    let mut slot = SIGNER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(known) = slot.as_ref() {
+        return known.clone();
+    }
+    let signer = match std::env::current_exe().map_err(|error| error.to_string()).and_then(|exe| codesign(&["-dv".as_ref(), "--verbose=2".as_ref(), exe.as_os_str()])) {
+        // codesign prints the details on stderr.
+        Ok(output) => {
+            let details = String::from_utf8_lossy(&output.stderr);
+            let signer = signer_from_details(&details);
+            if signer == Signer::Unknown {
+                crate::telemetry::capture("sidecar_trust.signer", &format!("unrecognised codesign output: {}", details.chars().take(300).collect::<String>()));
+            }
+            signer
+        }
+        Err(error) => {
+            crate::telemetry::capture("sidecar_trust.signer", &error);
+            Signer::Unknown
+        }
+    };
+    if signer != Signer::Unknown {
+        *slot = Some(signer.clone());
+    }
+    signer
 }
 
 /// Reads `codesign -dv` output. `TeamIdentifier=ABCDE12345` is a team;
@@ -78,11 +123,8 @@ fn requirement(team: &str) -> String {
 }
 
 fn verify(path: &Path, team: &str) -> Result<(), String> {
-    let output = Command::new(CODESIGN)
-        .args(["--verify", "--strict", "-R"])
-        .arg(requirement(team))
-        .arg(path)
-        .output()
+    let requirement = requirement(team);
+    let output = codesign(&["--verify".as_ref(), "--strict".as_ref(), "-R".as_ref(), requirement.as_ref(), path.as_os_str()])
         .map_err(|error| format!("couldn't check the capture engine's signature: {error}"))?;
     if output.status.success() {
         Ok(())
@@ -101,7 +143,8 @@ impl Verdicts {
     /// file at once: the second gets the first one's answer.
     fn check(&self, path: &Path, verify: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
         let stamp = Stamp::of(path)?;
-        let mut slot = self.0.lock().map_err(|_| "capture engine check is unavailable".to_string())?;
+        // A panic mid-check leaves at worst an old verdict, which the stamp check discards.
+        let mut slot = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((seen, verdict)) = slot.as_ref() {
             if *seen == stamp {
                 return verdict.clone();
@@ -120,14 +163,10 @@ pub fn check(path: &Path) -> Result<(), String> {
     let team = match own_signer() {
         Signer::Team(team) => team,
         Signer::Nobody => return Ok(()),
-        Signer::Unknown => {
-            let error = "couldn't read Eavesy's own signature, so the capture engine won't be run. Reinstall Eavesy.".to_string();
-            crate::telemetry::capture("sidecar_trust.signer", &error);
-            return Err(error);
-        }
+        Signer::Unknown => return Err("couldn't read Eavesy's own signature, so the capture engine won't be run. Try again, or quit and reopen Eavesy.".to_string()),
     };
     VERDICTS.check(path, |path| {
-        let verdict = verify(path, team);
+        let verdict = verify(path, &team);
         if let Err(error) = &verdict {
             crate::telemetry::capture("sidecar_trust.verify", error);
         }
@@ -157,6 +196,14 @@ mod tests {
         assert_eq!(signer_from_details(""), Signer::Unknown);
         assert_eq!(signer_from_details("codesign: something new went wrong"), Signer::Unknown);
         assert_eq!(signer_from_details("TeamIdentifier=ab12\" or true"), Signer::Unknown);
+    }
+
+    #[test]
+    fn reads_a_dev_build_with_the_real_codesign() {
+        // Test binaries are ad-hoc signed by the linker, like a dev build.
+        let exe = std::env::current_exe().unwrap();
+        let output = codesign(&["-dv".as_ref(), "--verbose=2".as_ref(), exe.as_os_str()]).unwrap();
+        assert_eq!(signer_from_details(&String::from_utf8_lossy(&output.stderr)), Signer::Nobody);
     }
 
     #[test]

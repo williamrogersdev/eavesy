@@ -210,8 +210,9 @@ jobs:
           EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
           test -x "$EXE" || { echo "::error::No executable at $EXE"; exit 1; }
           codesign -d --entitlements - "$APP"
-          # The app refuses a capture engine that fails this (sidecar_trust.rs).
-          # It runs the one next to its executable.
+          # The app refuses a capture engine that fails this: keep it the same as
+          # requirement() in sidecar_trust.rs. The app runs the engine next to
+          # its executable (capture_bin in audio.rs).
           TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
           [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
           codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
