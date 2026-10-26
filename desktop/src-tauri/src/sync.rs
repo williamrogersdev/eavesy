@@ -744,9 +744,14 @@ async fn sync_session<R: Runtime>(
     Ok(Step::Progressed)
 }
 
+/// How long a cancelled recording whose cloud copy the server refused to
+/// delete waits before asking again. Its row stays meanwhile, so the meeting
+/// is never pulled back into History.
+const DISCARD_REFUSED_RETRY_MS: i64 = 24 * 60 * 60 * 1_000;
+
 /// A recording cancelled while capturing: deletes the cloud meeting its live
 /// segments made, if they made one, then forgets it here. A meeting the
-/// cloud no longer has, or refuses for good, is as gone as it will get.
+/// cloud no longer has is as gone as it will get.
 async fn discard_session<R: Runtime>(
     app: &AppHandle<R>,
     api: &Api,
@@ -767,7 +772,10 @@ async fn discard_session<R: Runtime>(
                 return Err(error);
             }
             tracing::warn!("desktop ingest: could not delete cancelled recording {}: {error:#}", session.id);
-            crate::telemetry::capture("cancelled recording delete gave up", &format!("{error:#}"));
+            crate::telemetry::capture("cancelled recording delete refused", &format!("{error:#}"));
+            sqlite::defer_session(app, &session.id, DISCARD_REFUSED_RETRY_MS, Some(&format!("{error:#}")))
+                .map_err(|e| anyhow!(e))?;
+            return Ok(Step::Progressed);
         }
     }
     sqlite::forget_discarded(app, &session.id).map_err(|e| anyhow!(e))?;
@@ -1382,6 +1390,14 @@ mod tests {
                 self.row("SELECT status, archive_missing FROM recording_sessions WHERE id=?1", id)
             }
 
+            fn session_exists(&self, id: &str) -> bool {
+                sqlite::with_conn(self.handle(), |conn| {
+                    conn.query_row("SELECT count(*) FROM recording_sessions WHERE id=?1", [id], |row| row.get::<_, i64>(0))
+                        .unwrap()
+                        > 0
+                })
+            }
+
             fn segment_state(&self, id: &str) -> (String, i64) {
                 self.row(
                     "SELECT status || ':' || gave_up, attempts FROM recording_segments WHERE session_id=?1 AND idx=0",
@@ -1418,6 +1434,85 @@ mod tests {
 
         fn result_body(status: &str) -> serde_json::Value {
             serde_json::json!({ "status": status, "title": "Memo", "transcript": [] })
+        }
+
+        #[tokio::test]
+        async fn a_cancelled_recording_deletes_its_cloud_meeting_then_its_row() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 1);
+            sqlite::discard_recording(harness.handle(), "meeting").unwrap();
+            Mock::given(method("DELETE"))
+                .and(path("/api/sessions/remote-meeting"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert!(!harness.session_exists("meeting"));
+            assert_eq!(harness.pass().await, Pass::Idle);
+        }
+
+        #[tokio::test]
+        async fn a_cancelled_recording_the_cloud_already_lost_is_forgotten() {
+            let harness = Harness::new().await;
+            harness.session("meeting", "recording", 0);
+            sqlite::discard_recording(harness.handle(), "meeting").unwrap();
+            Mock::given(method("DELETE"))
+                .respond_with(ResponseTemplate::new(404))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert!(!harness.session_exists("meeting"));
+        }
+
+        #[tokio::test]
+        async fn a_cancelled_recording_never_sent_is_forgotten_without_asking() {
+            let harness = Harness::new().await;
+            let folder = harness.root.join("new");
+            std::fs::create_dir_all(&folder).unwrap();
+            sqlite::begin_recording(harness.handle(), "new", &folder.join("audio.m4a"), &folder, "mic", "Memo", None, 1).unwrap();
+            sqlite::discard_recording(harness.handle(), "new").unwrap();
+            Mock::given(wiremock::matchers::any())
+                .respond_with(ResponseTemplate::new(500))
+                .expect(0)
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert!(!harness.session_exists("new"));
+        }
+
+        #[tokio::test]
+        async fn a_cancelled_recording_keeps_its_row_until_the_delete_goes_through() {
+            let harness = Harness::new().await;
+            harness.session("down", "recording", 0);
+            harness.session("refused", "recording", 0);
+            sqlite::discard_recording(harness.handle(), "down").unwrap();
+            sqlite::discard_recording(harness.handle(), "refused").unwrap();
+            Mock::given(method("DELETE"))
+                .and(path("/api/sessions/remote-down"))
+                .respond_with(ResponseTemplate::new(503))
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("DELETE"))
+                .and(path("/api/sessions/remote-refused"))
+                .respond_with(ResponseTemplate::new(403))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.pass().await, Pass::Busy);
+            assert_eq!(harness.pass().await, Pass::Idle);
+            // Both still shield their meeting from being pulled back.
+            assert!(harness.session_exists("down") && harness.session_exists("refused"));
+            let refused_at: i64 = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row("SELECT next_attempt_at FROM recording_sessions WHERE id='refused'", [], |row| row.get(0))
+                    .unwrap()
+            });
+            assert!(refused_at > chrono::Utc::now().timestamp_millis() + 60 * 60 * 1_000);
         }
 
         #[tokio::test]
