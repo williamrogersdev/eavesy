@@ -2,7 +2,7 @@ import { DictionarySettings } from '@/components/dictionary/dictionary-settings'
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
-import { parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
+import { MCP_URL, parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
@@ -471,7 +471,7 @@ function SettingsPage() {
 
       <AppSection
         title="AI apps (MCP)"
-        description="Claude, ChatGPT and Claude Code connect by signing in at https://mcp.eavesy.com. For an app that can’t sign in, make a token here: read-only unless you allow writes, and it lasts 90 days."
+        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, make a token here: read-only unless you allow writes, and it lasts 90 days.`}
         action={
           <span className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
