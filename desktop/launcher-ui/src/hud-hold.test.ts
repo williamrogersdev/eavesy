@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { COPIED_HOLD_MS, DONE_HOLD_MS, HELD_PHASES, LEFT_HOLD_MS, NOTICE_HOLD_MS, OVER_HOLD_MS, OVER_MAX_MS, PASTED_HOLD_MS, SAVED_HOLD_MS, holdMs } from './hud-hold';
+import { COPIED_HOLD_MS, DONE_HOLD_MS, DRAWER_LEFT_HOLD_MS, HELD_PHASES, LEFT_HOLD_MS, NOTICE_HOLD_MS, OVER_HOLD_MS, OVER_MAX_MS, PASTED_HOLD_MS, SAVED_HOLD_MS, holdMs } from './hud-hold';
 
 test('a hover holds the result, but never past the cap', () => {
   expect(holdMs('done', 'over', 0, 0)).toBe(OVER_HOLD_MS);
@@ -15,7 +15,7 @@ test('holdMs alone: re-armed every second, it never runs past the cap', () => {
 });
 
 test('without a hover the phase decides', () => {
-  expect(holdMs('done', 'left', 0, 0)).toBe(LEFT_HOLD_MS);
+  expect(holdMs('done', 'left', 0, 0)).toBe(DRAWER_LEFT_HOLD_MS);
   expect(holdMs('done', 'away', 0, 0)).toBe(DONE_HOLD_MS);
   expect(holdMs('saved', 'away', 0, 0)).toBe(SAVED_HOLD_MS);
   expect(SAVED_HOLD_MS).toBe(3500);
@@ -41,6 +41,13 @@ test('a failure goes back to the pill by itself, with the same pointer rules', (
 test('a save that says why the words were not typed stays long enough to read', () => {
   expect(holdMs('saved', 'away', 0, 0, null, true)).toBe(NOTICE_HOLD_MS);
   expect(holdMs('saved', 'left', 0, 0, null, true)).toBe(LEFT_HOLD_MS);
+});
+
+test('a finished dictation stays long enough to read, fix and copy', () => {
+  expect(DONE_HOLD_MS).toBeGreaterThanOrEqual(30_000);
+  expect(DRAWER_LEFT_HOLD_MS).toBeGreaterThanOrEqual(10_000);
+  // A failure still gets out of the way quickly once the pointer leaves it.
+  expect(holdMs('failed', 'left', 0, 0)).toBe(LEFT_HOLD_MS);
 });
 
 test('only results are held: idle and live phases never collapse on a timer', () => {
