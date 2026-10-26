@@ -63,13 +63,16 @@ performance, "from the AI or anything, really".
    **< 1% of one core**, and each monitor has its own row in
    [Performance budgets](#performance-budgets).
 2. **No model in the detection path.** Rules in Rust classify every signal.
-   An AI explanation is something you ask for on a card ("Explain this"),
-   it's off by default, and it never runs on its own.
+   Card explanations are written in advance for each kind of finding, and
+   nothing is sent off the Mac to explain one (decision 7). The assistant
+   talks about a finding only when you ask it.
 3. **Heavy work waits.** Full checkups, signature sweeps and secret scans run
    at background QoS. They pause while you record, dictate or transcribe, on
    battery, in Low Power Mode, and when the thermal state is `serious` or
    worse. They resume later.
-4. **Fixes only tighten, and you see them before they run.** Eavesy can make
+4. **Fixes only tighten, and you see them before they run** (one exception:
+   in Auto mode, a single-setting tightening such as "firewall on" runs
+   after the macOS password prompt without a card, per decision 9). Eavesy can make
    a fix itself, from the Security section's **Fix** button or because you
    asked the assistant. Each tool is fixed in code to one direction, which
    is stricter. Admin changes go through macOS's own password dialog, which
@@ -480,7 +483,7 @@ always-on stays under **< 1% of one core** and **< 30 MB** of extra memory.
 | Outbound sample | Every 5 min at most, when monitoring is on | < 100 ms (measured ~50 ms) |
 | Full checkup | On open and daily, background QoS | < 2 s without `softwareupdate`; the update check (~4 s, network) runs on its own |
 | Secret scan | Weekly or on demand, background QoS, deferred on battery | Streams results; no budget on total time, < 5% of one core while running |
-| AI "Explain this" | Only when you click it | Off the detection path entirely |
+| Explanations | Rule-written text, shown with the card | Free; no model runs |
 
 Each budget gets a timing in the diagnostics bundle, and the deferral rules
 (recording, dictating, transcribing, battery, Low Power Mode, thermal) get a
@@ -515,21 +518,23 @@ each behind the Security section's own switch until 1.0 is complete:
 4. **App trust and network** (pillars 4 and 5): the signature cache, new
    executable checks, listener and outbound rules, Wi-Fi and quarantine
    checks, and the opt-in ☁ known-vulnerable apps check.
-5. **Secrets** (pillar 6): the opt-in ☁ breach checks, the local scan, secret-looking captures kept out
-   of uploads, and the agent credential-path cards.
+5. **Secrets** (pillar 6): the opt-in ☁ breach checks, the local scan,
+   secret-looking captures kept out of uploads, and the agent
+   credential-path cards.
+6. **Something's wrong** (pillar 7): the evidence bundle and guided steps,
+   `secure_my_mac` and `lockdown`. Voice ("Is my Mac OK?") and MCP
+   (`machine_status` gains a `security` section for the local tier only;
+   the remote tier gets "2 things to fix" and nothing more).
+
 Each phase ships its assistant tools with it (see the "Phase" column in
 [The assistant does the work](#the-assistant-does-the-work)), so you can ask
 for a fix the day you can see the problem.
 
-6. **Something's wrong** (pillar 7): the evidence bundle and guided steps,
-   `secure_my_mac` and `lockdown`. Voice ("Is my Mac OK?") and MCP (`machine_status` gains a `security`
-   section for the local tier only; the remote tier gets "2 things to fix"
-   and nothing more).
-
 After 1.0, each its own decision:
 
-7. **Endpoint Security extension**: apply for the entitlement, prototype
-   notify-only events.
+7. **Endpoint Security extension**: prototype notify-only events. The
+   entitlement application happens now, as William's step (decision 6), so
+   it can be granted by the time this starts.
 8. **Network Extension filter**: prototype on macOS 26 first, given the
    reported activation problems.
 9. Nothing else yet. Known-vulnerable apps and breach checks moved into
@@ -560,7 +565,11 @@ and check that each produces exactly one notice.
 7. **"Explain this":** rule-written explanations only. Nothing leaves the
    Mac. The assistant can still talk about a finding when you ask.
 8. **Admin rights:** one macOS password prompt per batch. No privileged
-   helper.
+   helper: a root helper registered with `SMAppService` is the biggest
+   privilege increase Eavesy could make, and it goes against phase 0. If one
+   is ever proposed, it accepts only the fixed tighten-only verbs, takes no
+   command strings, and checks its caller by audit token and code-signing
+   requirement, never by pid.
 9. **Auto mode:** single-setting tightenings (`safe_listed`) run after the
    password prompt without a card. Removals, quarantine, grant resets and
    updates always show a card.
