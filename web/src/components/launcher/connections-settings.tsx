@@ -120,10 +120,9 @@ function ClaudeCodeStep({ active }: { active: boolean }) {
     void connectClaudeCode().then(
       (next) => { done(); setStatus(next); },
       (e: unknown) => {
-        done();
         setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.'));
         // Half of it may have gone in; show what's there now.
-        refresh();
+        void claudeCodeStatus().then((next) => setStatus(next)).catch(() => {}).finally(done);
       },
     );
   };

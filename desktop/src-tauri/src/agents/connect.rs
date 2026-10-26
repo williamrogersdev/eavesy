@@ -51,15 +51,21 @@ fn cli_path() -> Option<PathBuf> {
 /// again at most once a minute (soon enough to notice a fresh install).
 fn from_login_shell() -> Option<PathBuf> {
     static FOUND: Mutex<(Option<PathBuf>, Option<Instant>)> = Mutex::new((None, None));
-    let mut found = FOUND.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(path) = found.0.as_ref().filter(|path| path.is_file()) {
-        return Some(path.clone());
+    let lock = || FOUND.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    {
+        let mut found = lock();
+        if let Some(path) = found.0.as_ref().filter(|path| path.is_file()) {
+            return Some(path.clone());
+        }
+        if found.1.is_some_and(|asked| asked.elapsed() < SHELL_RETRY) {
+            return None;
+        }
+        // Marked as asked before the shell runs, so a second caller doesn't start another.
+        found.1 = Some(Instant::now());
     }
-    if found.1.is_some_and(|asked| asked.elapsed() < SHELL_RETRY) {
-        return None;
-    }
-    *found = (ask_login_shell(), Some(Instant::now()));
-    found.0.clone()
+    let path = ask_login_shell();
+    lock().0.clone_from(&path);
+    path
 }
 
 fn ask_login_shell() -> Option<PathBuf> {
@@ -202,14 +208,17 @@ pub fn sign_in_claude_code(window: WebviewWindow) -> Result<(), String> {
 }
 
 const SCRIPT_DIR_PREFIX: &str = "eavesy-sign-in-";
+const SCRIPT_KEEP: Duration = Duration::from_secs(600);
 
 /// A fresh folder only you can open, made new each time, so nothing else can
 /// have put a file (or a link) where Terminal will run it. Terminal reads the
-/// file after `open` returns, so the last one stays until the next sign-in.
+/// file after `open` returns, so only folders from earlier sign-ins that are
+/// well past that are cleared.
 fn write_script(script: &str) -> std::io::Result<PathBuf> {
     let temp = std::env::temp_dir();
     for entry in std::fs::read_dir(&temp).into_iter().flatten().flatten() {
-        if entry.file_name().to_string_lossy().starts_with(SCRIPT_DIR_PREFIX) {
+        let old = entry.metadata().and_then(|meta| meta.modified()).is_ok_and(|at| at.elapsed().unwrap_or_default() > SCRIPT_KEEP);
+        if old && entry.file_name().to_string_lossy().starts_with(SCRIPT_DIR_PREFIX) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -275,7 +284,9 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&one).unwrap(), "echo hi");
         let two = write_script("echo hi").unwrap();
         assert_ne!(one.parent(), two.parent());
-        assert!(!one.exists(), "the last sign-in's folder is cleared");
-        let _ = std::fs::remove_dir_all(two.parent().unwrap());
+        assert!(one.exists(), "a sign-in Terminal may not have read yet is kept");
+        for file in [one, two] {
+            let _ = std::fs::remove_dir_all(file.parent().unwrap());
+        }
     }
 }
