@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { MAX_RECENT_LANGUAGES, findLanguages, rememberLanguage } from './hud-language';
+import { MAX_RECENT_LANGUAGES, RECENT_LANGUAGES_KEY, findLanguages, loadRecentLanguages, rememberLanguage } from './hud-language';
 
 test('with nothing typed, recent languages lead and nothing is repeated', () => {
   const list = findLanguages('', ['es', 'en']);
@@ -22,6 +22,15 @@ test('among equal matches a recent language wins', () => {
   const plain = findLanguages('n');
   const withRecent = findLanguages('n', ['nl']);
   expect(withRecent.indexOf('nl')).toBeLessThanOrEqual(plain.indexOf('nl'));
+});
+
+test('recent languages read back from storage are valid and never repeated', () => {
+  const store = new Map<string, string>();
+  Object.assign(globalThis, { localStorage: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value) } });
+  store.set(RECENT_LANGUAGES_KEY, JSON.stringify(['es', 'es', 'klingon', 'en', 'es']));
+  expect(loadRecentLanguages()).toEqual(['es', 'en']);
+  store.set(RECENT_LANGUAGES_KEY, 'not json');
+  expect(loadRecentLanguages()).toEqual([]);
 });
 
 test('remembering a language puts it first, once, and keeps the list short', () => {

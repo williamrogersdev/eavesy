@@ -39,7 +39,7 @@ export function rememberLanguage(recent: readonly Language[], language: Language
 export function loadRecentLanguages(): Language[] {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(RECENT_LANGUAGES_KEY) ?? '[]');
-    return Array.isArray(raw) ? raw.filter(isLanguage).slice(0, MAX_RECENT_LANGUAGES) : [];
+    return Array.isArray(raw) ? [...new Set(raw.filter(isLanguage))].slice(0, MAX_RECENT_LANGUAGES) : [];
   } catch {
     return [];
   }

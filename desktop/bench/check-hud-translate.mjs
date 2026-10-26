@@ -62,7 +62,9 @@ try {
   await page.mouse.move(-1, -1);
   await page.clock.runFor(8_000);
   assert.equal(await page.locator('[data-size="result"]').count(), 1);
-  console.log('PASS: the drawer does not vanish the moment the pointer leaves it');
+  await page.clock.runFor(2_100);
+  await page.locator('[data-phase="idle"]').waitFor();
+  console.log('PASS: the drawer does not vanish the moment the pointer leaves it, and still goes after 10s');
 
   await open();
   await translate.click();
@@ -80,7 +82,7 @@ try {
 
   await translate.click();
   await search.fill('spa');
-  assert.equal(await page.getByRole('option').first().textContent(), 'Spanish');
+  assert.equal(await page.getByRole('option').first().getAttribute('id'), await page.getByRole('option', { name: 'Spanish', exact: true }).getAttribute('id'));
   await search.press('Enter');
   await page.waitForFunction((text) => document.querySelector('textarea')?.value === text, `[es] ${original}`);
   assert.deepEqual(await page.evaluate(() => window.__qaTranslations.at(-1)), { text: original, source: 'auto', target: 'es' });

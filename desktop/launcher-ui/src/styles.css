@@ -228,6 +228,8 @@ body {
 .eavesy-control[data-size="result"] .ctl-below:hover { background: var(--ctl-hover); }
 .eavesy-control[data-size="result"] .ctl-below:focus-within { background: var(--ctl-hover); box-shadow: inset 0 0 0 1px var(--ctl-line); }
 .eavesy-control[data-size="result"] .ctl-editor:focus-visible { box-shadow: none; }
+/* The language finder takes the words' place: its list scrolls, not the well. */
+.eavesy-control[data-size="result"] .ctl-below[data-finding] { padding-top: 6px; padding-bottom: 6px; overflow: hidden; }
 /* Under the words in the drawer: how dictations are written, as the setting
    it is. The tone is a native pop-up (its list opens over the control, so
    the window never has to hold it); For AI is a switch, lit cream when on;
@@ -319,8 +321,18 @@ body {
 .ctl-find::placeholder { color: var(--ctl-ink-3); }
 .ctl-find::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 .ctl-find:focus-visible { box-shadow: inset 0 0 0 1px var(--ctl-ink-3); }
-.ctl-langs { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 3px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-.ctl-langs { padding-bottom: 8px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent); }
+.ctl-langs {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 3px;
+  min-height: 0;
+  padding-bottom: 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+}
 .ctl-lang {
   height: 22px;
   padding: 0 9px;
@@ -333,7 +345,6 @@ body {
 .ctl-lang[data-recent] { color: var(--ctl-ink); box-shadow: inset 0 0 0 1px var(--ctl-line); }
 .ctl-lang[data-active] { background: var(--ctl-hover); color: var(--ctl-ink); }
 .ctl-lang[aria-selected="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
-.eavesy-control[data-size="result"] .ctl-below[data-finding] { padding-top: 6px; padding-bottom: 6px; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .ctl-switch, .ctl-switch::after { transition: none; }
 }
