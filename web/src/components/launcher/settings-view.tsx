@@ -346,7 +346,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
     { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
-    { id: 'connections', label: 'Connections', icon: Cable, hint: 'Claude Code, Claude, ChatGPT and other AI tools connected to Eavesy over MCP.' },
+    { id: 'connections', label: 'Connections', icon: Cable, hint: 'Your Google Calendar, and the AI apps that use Eavesy.' },
     ...(isDesktop() ? [{ id: 'assistant' as const, label: 'Assistant', icon: MessageCircle, hint: 'How Eavesy talks, its voice, how much it does without asking, and what it did.' }] : []),
     ...(isDesktop() ? [{ id: 'machine' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
@@ -579,40 +579,47 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         <div id="settings-connections" hidden={section !== 'connections'}>
           <ConnectionsSettings signedIn={!!account} active={section === 'connections'}>
             {isDesktop() && (
-              <Section title="Claude Code sessions">
-                <Switch
-                  checked={agentsOn}
-                  onCheckedChange={toggleAgents}
-                  disabled={!settings || agentsBusy}
-                  label="Say when a session finishes or needs you"
-                  hint="Eavesy adds hooks to Claude Code on this Mac, says what each session needs and suggests a reply. Your reply goes in only when you press Send or say “send it”. Right after Eavesy reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion."
-                />
-                {agentsOn && (
-                  <div className="mt-3">
-                    <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
-                    <p className="ev-set-hint mt-2">While it waits, the session looks busy in Claude. Press Esc there to take it back.</p>
-                  </div>
-                )}
-                {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
-              </Section>
-            )}
-            {isDesktop() && (
-              <Section title="Messages from your agents">
-                <Switch
-                  checked={messagesOn}
-                  onCheckedChange={toggleMessages}
-                  disabled={!settings || !account || messagesBusy}
-                  label="Show and say what your agents send you"
-                  hint="Agents connected to Eavesy’s MCP can tell you when they finish (send_to_human) or ask you something (ask_human). This Mac checks your Eavesy account every few seconds, shows each message at the top right and reads it aloud. Your typed answer goes back only to the agent that asked, as text: it never approves anything."
-                />
-                {!account && <p className="ev-set-hint mt-2">Sign in first: messages come through your Eavesy account.</p>}
-                {messagesOn && (
-                  <div className="mt-3">
-                    <p className="ev-set-hint">Add Eavesy as a connector in Claude or ChatGPT, then paste these instructions so the model uses it.</p>
-                    <Button variant="outline" size="sm" className="mt-2" onClick={copyInstructions}>Copy instructions</Button>
-                  </div>
-                )}
-                {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
+              <Section title="Agent notifications">
+                <div className="ev-set-row flex-col">
+                  <Switch
+                    checked={agentsOn}
+                    onCheckedChange={toggleAgents}
+                    disabled={!settings || agentsBusy}
+                    label="Say when a Claude Code session finishes or needs you"
+                    hint="Reads out what each session needs and suggests a reply. Nothing is sent until you press Send or say “send it”."
+                  />
+                  <details className="ev-conn-about">
+                    <summary>How it works</summary>
+                    <p className="ev-set-hint">Eavesy adds hooks to Claude Code on this Mac. Right after it reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion.</p>
+                  </details>
+                  {agentsOn && (
+                    <div className="mt-3">
+                      <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
+                      <p className="ev-set-hint mt-2">While it waits, the session looks busy in Claude. Press Esc there to take it back.</p>
+                    </div>
+                  )}
+                  {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
+                </div>
+                <div className="ev-set-row flex-col">
+                  <Switch
+                    checked={messagesOn}
+                    onCheckedChange={toggleMessages}
+                    disabled={!settings || !account || messagesBusy}
+                    label="Show and say what your agents send you"
+                    hint={account ? 'Messages and questions from agents connected over MCP, at the top right of your screen.' : 'Sign in first: messages come through your Eavesy account.'}
+                  />
+                  <details className="ev-conn-about">
+                    <summary>How it works</summary>
+                    <p className="ev-set-hint">Agents tell you when they finish (send_to_human) or ask you something (ask_human). This Mac checks your Eavesy account every few seconds, shows each message and reads it aloud. Your typed answer goes back only to the agent that asked, as text: it never approves anything.</p>
+                  </details>
+                  {messagesOn && (
+                    <div className="mt-3">
+                      <p className="ev-set-hint">So Claude or ChatGPT knows to use it, paste these instructions into a project or custom instructions.</p>
+                      <Button variant="outline" size="sm" className="mt-2" onClick={copyInstructions}>Copy instructions</Button>
+                    </div>
+                  )}
+                  {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
+                </div>
               </Section>
             )}
           </ConnectionsSettings>

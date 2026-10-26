@@ -103,7 +103,15 @@ bunx wrangler secret put NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 bunx wrangler secret put ANTHROPIC_API_KEY
 bunx wrangler secret put OPS_METRICS_TOKEN     # random string, protects /api/ops/metrics
 bunx wrangler secret put BYO_KEY_SECRET        # random 32+ chars; encrypts users' own provider keys
+bunx wrangler secret put GOOGLE_CLIENT_ID      # optional: Settings → Connections → Google Calendar
+bunx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
+
+For Google Calendar, create an OAuth client (type "Web application") in Google
+Cloud Console with the redirect URI `https://<your-domain>/api/connections/google/callback`,
+enable the Google Calendar API, and add the
+`calendar.events.readonly` scope to the consent screen. Without these two
+secrets the Connect button says Google isn't set up.
 
 Processing Worker (`cd workers/processing`):
 

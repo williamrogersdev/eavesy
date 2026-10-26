@@ -40,13 +40,14 @@ pub async fn list_projects(app: AppHandle) -> Option<Vec<Value>> {
 
 /// Which account endpoints the panel may call with this Mac's sign-in, and how:
 /// the settings it shares with eavesy.com (languages, custom words), projects,
-/// saved prompts, and the AI apps connected over MCP (list and revoke only:
-/// connections are made by the app signing in, never minted from this Mac).
+/// saved prompts, the AI apps connected over MCP and the linked calendars
+/// (list and disconnect only: connections are made by signing in through the
+/// browser, never from this Mac).
 fn account_call_allowed(method: &str, path: &str) -> bool {
     match (method, path.strip_prefix("/api/")) {
         ("GET" | "PATCH", Some("me")) => true,
         ("GET" | "POST", Some("projects" | "prompts")) => true,
-        ("GET" | "DELETE", Some("mcp-tokens")) => true,
+        ("GET" | "DELETE", Some("mcp-tokens" | "calendar-connections")) => true,
         ("PATCH" | "DELETE", Some(rest)) => rest
             .strip_prefix("projects/")
             .or_else(|| rest.strip_prefix("prompts/"))
@@ -277,6 +278,9 @@ mod tests {
         assert!(account_call_allowed("POST", "/api/projects"));
         assert!(account_call_allowed("PATCH", "/api/projects/abc-123"));
         assert!(!account_call_allowed("DELETE", "/api/me"));
+        assert!(account_call_allowed("GET", "/api/calendar-connections"));
+        assert!(account_call_allowed("DELETE", "/api/calendar-connections"));
+        assert!(!account_call_allowed("POST", "/api/calendar-connections"));
         assert!(reloads_hud("PATCH", "/api/me"));
         assert!(reloads_hud("PATCH", "/api/projects/proj_1"));
         assert!(!reloads_hud("GET", "/api/me"));
