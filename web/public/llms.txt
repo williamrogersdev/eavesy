@@ -74,6 +74,8 @@ Tools, all read-only (names say "meeting" because that is the recording type in 
 - `recent_meetings` (limit): newest recordings.
 - `search_dictations` (query, limit): search dictations.
 - `get_action_items` (status: open|completed|all, owner): action items across recordings.
+- `get_account_info`: which account and connection this is, its access and expiry.
+- `sign_out`: disconnect this connection (only when the user asks).
 
 Only recordings synced to the account are available over MCP. Screenshots, clipboard captures and notes from the Mac app stay on the Mac. Docs: https://eavesy.com/docs/connect-mcp
 
