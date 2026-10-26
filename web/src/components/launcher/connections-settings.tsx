@@ -111,9 +111,10 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
     window.addEventListener('focus', load);
     return () => { clearInterval(timer); window.removeEventListener('focus', load); };
   }, [waiting, load]);
-  const known = status?.connections.length ?? 0;
-  const [before, setBefore] = useState(0);
-  useEffect(() => { if (waiting !== null && known > before) setWaiting(null); }, [waiting, known, before]);
+  // Any new account, or a change to one (a reconnect syncs it again), means Google sent you back.
+  const snapshot = JSON.stringify(status?.connections.map((c) => [c.id, c.lastSyncAt, c.needsReconnect]) ?? []);
+  const [before, setBefore] = useState(snapshot);
+  useEffect(() => { if (waiting !== null && snapshot !== before) setWaiting(null); }, [waiting, snapshot, before]);
 
   if (!signedIn) {
     return (
@@ -122,7 +123,7 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   }
   const connect = () => {
     setError(null);
-    setBefore(known);
+    setBefore(snapshot);
     void connectGoogle()
       .then(() => { if (isDesktop()) setWaiting(Date.now()); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open Google.')));
@@ -180,7 +181,7 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
               ? 'Waiting for you in the browser…'
               : unavailable
                 ? 'Google isn’t set up on this Eavesy server yet.'
-                : 'Names each meeting and who was in it, so recordings of the same meeting stay together. Read-only.'
+                : 'Read-only access to your upcoming meetings.'
           }
           action={connectButton}
         />

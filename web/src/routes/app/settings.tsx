@@ -1,6 +1,6 @@
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
 import { parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
@@ -420,7 +420,7 @@ function SettingsPage() {
         </Row>
       </AppSection>
 
-      <AppSection title="Accounts" description="Eavesy reads your calendar to name each meeting and who was in it.">
+      <AppSection title="Accounts" description="Calendars Eavesy can read.">
         <GoogleCalendarRows onError={setError} />
       </AppSection>
 
@@ -582,9 +582,10 @@ function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; text: s
 function GoogleCalendarRows({ onError }: { onError: (message: string) => void }) {
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const load = () => void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-  useEffect(load, []);
+  const load = useCallback(() => {
+    void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
+  }, [onError]);
+  useEffect(load, [load]);
   if (!status) return <p className="text-xs text-ev-ink-2">Checking…</p>;
   const google = status.connections.filter((connection) => connection.provider === 'google');
   const disconnect = (id: string) => {
@@ -615,7 +616,7 @@ function GoogleCalendarRows({ onError }: { onError: (message: string) => void })
       ))}
       <Row
         label={google.length ? 'Another Google account' : 'Google Calendar'}
-        hint={status.available.google ? 'Read-only. Recordings of the same meeting stay together.' : 'Google isn’t set up on this Eavesy server yet.'}
+        hint={status.available.google ? 'Read-only access to your upcoming meetings.' : 'Google isn’t set up on this Eavesy server yet.'}
       >
         {status.available.google ? (
           <a href="/api/connections/google" className={appButton(google.length ? 'secondary' : 'primary', 'sm')}>Connect</a>

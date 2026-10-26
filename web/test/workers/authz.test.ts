@@ -65,6 +65,7 @@ const CAPTURE = 'cap_owner';
 const TEMPLATE = 'tpl_owner';
 const PROJECT = 'proj_owner';
 const MCP_TOKEN = 'mcp_owner';
+const CALENDAR = 'cal_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
 const BOT = 'bot_owner';
@@ -180,6 +181,22 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   },
   '/api/drops/upload': {
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a drop owned by the caller' },
+  },
+  '/api/calendar-connections': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/calendar-connections' }, excludes: [CALENDAR] } },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/calendar-connections', body: json({ id: CALENDAR }) },
+        unchanged: () => row('SELECT id FROM calendar_connections WHERE id = ?', CALENDAR),
+      },
+    },
+  },
+  '/api/connections/google': {
+    GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts Google OAuth for the caller' },
+  },
+  '/api/connections/google/callback': {
+    GET: { unauthenticated: { status: 302 }, scopedToCaller: 'stores the calendar on the caller' },
   },
   '/api/connections/openrouter': {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts OAuth for the caller' },
@@ -528,6 +545,8 @@ beforeEach(async () => {
     'saved_prompts',
     'folders',
     'mcp_tokens',
+    'calendar_events',
+    'calendar_connections',
     'activity_log',
     'meetings',
     'device_pairing_codes',
@@ -578,6 +597,10 @@ async function seedOwner() {
     testEnv.DB.prepare(
       `INSERT INTO mcp_tokens (id, user_id, token_hash, name, created_at) VALUES (?, ?, 'hash_owner', 'Owner', ?)`,
     ).bind(MCP_TOKEN, OWNER, now),
+    testEnv.DB.prepare(
+      `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
+       VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
+    ).bind(CALENDAR, OWNER, now),
     // Not yet confirmed by the provider, so cancelling it makes no provider call.
     testEnv.DB.prepare(
       `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)

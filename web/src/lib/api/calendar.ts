@@ -1,20 +1,40 @@
-import { z } from 'zod';
+import { isRecord } from '@/lib/json';
 import { accountCall, isDesktop, openWebApp } from '@/lib/desktop/bridge';
 
-const connectionSchema = z.object({
-  id: z.string(),
-  provider: z.enum(['google', 'outlook']),
-  accountEmail: z.string(),
-  lastSyncAt: z.number().nullable(),
-  upcoming: z.number(),
-  needsReconnect: z.boolean(),
-});
-const statusSchema = z.object({
-  available: z.object({ google: z.boolean(), outlook: z.boolean() }),
-  connections: z.array(connectionSchema),
-});
-export type CalendarConnection = z.infer<typeof connectionSchema>;
-export type CalendarStatus = z.infer<typeof statusSchema>;
+export interface CalendarConnection {
+  id: string;
+  provider: 'google' | 'outlook';
+  accountEmail: string;
+  lastSyncAt: number | null;
+  upcoming: number;
+  needsReconnect: boolean;
+}
+export interface CalendarStatus {
+  available: { google: boolean; outlook: boolean };
+  connections: CalendarConnection[];
+}
+
+function parseConnection(item: unknown): CalendarConnection[] {
+  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.accountEmail !== 'string') return [];
+  if (item.provider !== 'google' && item.provider !== 'outlook') return [];
+  return [{
+    id: item.id,
+    provider: item.provider,
+    accountEmail: item.accountEmail,
+    lastSyncAt: typeof item.lastSyncAt === 'number' ? item.lastSyncAt : null,
+    upcoming: typeof item.upcoming === 'number' ? item.upcoming : 0,
+    needsReconnect: item.needsReconnect === true,
+  }];
+}
+
+/** `/api/calendar-connections`' answer, or null when it isn't one. */
+export function parseCalendarStatus(value: unknown): CalendarStatus | null {
+  if (!isRecord(value) || !isRecord(value.available) || !Array.isArray(value.connections)) return null;
+  return {
+    available: { google: value.available.google === true, outlook: value.available.outlook === true },
+    connections: value.connections.flatMap(parseConnection),
+  };
+}
 
 /** Calls `/api/calendar-connections` as this Mac when in the app, or as the signed-in browser. */
 async function call(method: 'GET' | 'DELETE', body?: unknown): Promise<unknown> {
@@ -29,9 +49,9 @@ async function call(method: 'GET' | 'DELETE', body?: unknown): Promise<unknown> 
 }
 
 export async function getCalendarStatus(): Promise<CalendarStatus> {
-  const parsed = statusSchema.safeParse(await call('GET'));
-  if (!parsed.success) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
-  return parsed.data;
+  const status = parseCalendarStatus(await call('GET'));
+  if (!status) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
+  return status;
 }
 
 export async function disconnectCalendar(id: string): Promise<void> {
