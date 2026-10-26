@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as mcpRepo from '@/db/repo/mcp';
 import { resolveActor } from '@/server/auth';
+import { resolveIngestActor } from '@/server/device-auth';
 import { MCP_SCOPES, normalizeMcpScopes, parseMcpScopes } from '@/server/mcp-scopes';
 import { MCP_SERVER_URL, mcpTokenExpiresAt } from '@/server/mcp-token-policy';
 
@@ -17,10 +18,13 @@ const unauthenticated = () => Response.json({ error: 'unauthenticated' }, { stat
 export const Route = createFileRoute('/api/mcp-tokens')({
   server: {
     handlers: {
-      GET: async () => {
+      // Listing and revoking also accept the Mac app's device token (Settings →
+      // Connections). Minting stays browser-only: a stolen device token must
+      // not be able to make a 90-day token that outlives signing the Mac out.
+      GET: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return unauthenticated();
         }
@@ -67,7 +71,7 @@ export const Route = createFileRoute('/api/mcp-tokens')({
       DELETE: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return unauthenticated();
         }

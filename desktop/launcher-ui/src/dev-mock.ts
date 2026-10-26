@@ -51,6 +51,10 @@ export function installDevMock(): void {
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
   const account = mockAccount(params.has('noprojects'), params.has('manywords'));
   let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
+  let mcpTokens = params.has('noconnections') ? [] : [
+    { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
+    { id: 'mcp-2', name: 'ChatGPT', createdAt: Date.now() - 86_400_000 * 20, lastUsedAt: null, expiresAt: Date.now() + 86_400_000 * 70, scopes: ['read', 'write'], usesLegacyUrl: false },
+  ];
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
     account_info: params.has('signedout') ? null : { name: 'Robin Avery', email: 'robin@example.com' },
@@ -88,6 +92,10 @@ export function installDevMock(): void {
     account_call: (args: Record<string, unknown>) => {
       if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures > 0) { preferencesLoadFailures--; throw new Error('Could not reach eavesy.com'); }
       if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/mcp-tokens') {
+        if (args.method === 'DELETE') { mcpTokens = mcpTokens.filter((token) => token.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
+        return mcpTokens;
+      }
       return account(args);
     },
     dictionary_request: ({ method, body }: Record<string, unknown>) => {

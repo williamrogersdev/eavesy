@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'assistant' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'assistant', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
