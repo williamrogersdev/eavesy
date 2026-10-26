@@ -458,7 +458,7 @@ ships, audit Eavesy's own footprint and drop what it doesn't need:
 
 | Today | Action | Status |
 |---|---|---|
-| `com.apple.security.cs.allow-jit` and `allow-unsigned-executable-memory` in `entitlements.plist` weaken the hardened runtime | Remove each one that the signed app runs without | Testing. The VM test builds an unsigned debug app, where the hardened runtime doesn't apply, so it can't answer this. Instead `macos-release.yml` takes a `without_entitlements` input (manual runs only) and launches every signed build; an entitlement goes once a candidate without it stays up |
+| `com.apple.security.cs.allow-jit` and `allow-unsigned-executable-memory` in `entitlements.plist` weaken the hardened runtime | Remove each one that the signed app runs without | Done: both removed. The VM test builds an unsigned debug app, where the hardened runtime doesn't apply, so it couldn't answer this. Instead a signed, notarized candidate without either one was launched on an Apple silicon runner, and its web view ran its JavaScript as fast as the baseline's (5 s). Every signed build now has to show that before it can ship (`macos-release.yml`) |
 | `macOSPrivateApi: true` in `tauri.conf.json` | Keep only if needed, and document why | Kept: Tauri needs it for the transparent HUD and card windows. In `SECURITY.md` |
 | Not sandboxed (needed to read other processes' environments for the machine companion) | Keep, and document it as a deliberate trade-off. Every read of another process stays own-user only | Done, in `SECURITY.md` |
 | Apple Events automation, screen capture and microphone entitlements | Keep. They're the product. List each with its reason in the Security section's "Eavesy itself" view | Listed in `SECURITY.md`; the in-app view comes with the checkup |
@@ -552,7 +552,8 @@ and check that each produces exactly one notice.
 2. **Daily background checkup:** on by default, with the deferral rules.
 3. **Phase 0 entitlements:** remove `allow-jit` and
    `allow-unsigned-executable-memory` if the VM test passes without them.
-   If it doesn't, keep them and write down why.
+   If it doesn't, keep them and write down why. *Done, with a signed-build
+   test instead of the VM test (see the phase 0 table).*
 4. ☁ **Known-vulnerable apps:** in 1.0, opt-in (off by default). It's built
    with phase 4 (app trust). Only app names and versions leave the Mac.
 5. ☁ **Breach checks:** both, opt-in, as two separate switches. The

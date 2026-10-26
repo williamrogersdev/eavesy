@@ -188,7 +188,7 @@ jobs:
               com.apple.security.cs.allow-jit|com.apple.security.cs.allow-unsigned-executable-memory) ;;
               *) echo "::error::$key can't be left out by this workflow"; exit 1 ;;
             esac
-            /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" 2>/dev/null || echo "$key isn't in the checked-in entitlements"
           done
           cat "$PLIST"
 
@@ -248,14 +248,8 @@ jobs:
           # One last look, now the app has flushed its log on the way out.
           [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null && ready=late
           if [[ -z "$ready" ]]; then
-            # Until a dispatched candidate has shown this line fires on a signed
-            # build, a tag build only warns (docs/plans/device-security.md, phase 0).
-            if [[ "$IS_RELEASE" == "true" ]]; then
-              echo "::warning::The signed app's web view didn't log that its JavaScript ran within 90 s"
-            else
-              echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
-              exit 1
-            fi
+            echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
+            exit 1
           fi
           # The app checks its own capture engine at launch (sidecar_trust::warm,
           # finished well inside the 25 s: codesign is cut off at 15 s) and logs
