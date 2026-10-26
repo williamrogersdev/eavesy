@@ -1,13 +1,14 @@
+import { waitUntil } from 'cloudflare:workers';
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { resolveIngestActor } from '@/server/device-auth';
-import { SYNC_AHEAD_MS, SYNC_STALE_MS, SYNC_TIMEOUT_MS, syncConnection, type SyncResult } from '@/server/calendar-sync';
+import { isDue, SYNC_AHEAD_MS, syncDue } from '@/server/calendar-sync';
 import { googleCredentials, revokeGoogleToken } from '@/server/google-calendar';
 import { openSecret } from '@/server/secret-box';
 
-const removeSchema = z.object({ id: z.string().min(1).max(100) });
+const removeSchema = z.object({ id: z.string().min(1).max(100), force: z.boolean().optional() });
 const unauthenticated = () => Response.json({ error: 'unauthenticated' }, { status: 401 });
 
 // Read and disconnect accept the Mac app's device token too (Settings →
@@ -25,26 +26,18 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const db = getDb();
         const now = Date.now();
         const rows = await calendarRepo.listConnections(db, actor.userId);
-        // At most one Google round trip per load: the stalest connection is refreshed,
-        // the rest show what was last synced and catch up on a later load.
-        const stale = rows
-          .filter((row) => !row.lastSyncAt || now - row.lastSyncAt > SYNC_STALE_MS)
-          .sort((a, b) => (a.lastSyncAt ?? 0) - (b.lastSyncAt ?? 0))[0];
-        const sync: SyncResult | null = stale
-          ? await syncConnection(db, stale, now, undefined, AbortSignal.timeout(SYNC_TIMEOUT_MS))
-          : null;
+        // Answer from what's stored; due connections sync after the response, so
+        // Google's speed never holds up Settings. The next load shows the result.
+        if (rows.some((row) => isDue(row, now))) waitUntil(syncDue(db, rows, now));
         const connections = await Promise.all(
-          rows.map(async (row) => {
-            const synced = row === stale && sync === 'ok';
-            return {
-              id: row.id,
-              provider: row.provider,
-              accountEmail: row.accountEmail,
-              lastSyncAt: synced ? now : row.lastSyncAt,
-              upcoming: await calendarRepo.countUpcoming(db, row.id, now, now + SYNC_AHEAD_MS),
-              needsReconnect: row === stale && sync === 'reconnect',
-            };
-          }),
+          rows.map(async (row) => ({
+            id: row.id,
+            provider: row.provider,
+            accountEmail: row.accountEmail,
+            lastSyncAt: row.lastSyncAt,
+            upcoming: await calendarRepo.countUpcoming(db, row.id, now, now + SYNC_AHEAD_MS),
+            needsReconnect: row.lastSyncStatus === 'reconnect',
+          })),
         );
         return Response.json({ available: { google: googleCredentials() !== null, outlook: false }, connections });
       },
@@ -61,14 +54,16 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const db = getDb();
         const row = await calendarRepo.getConnection(db, actor.userId, parsed.data.id);
         if (!row) return Response.json({ ok: true });
-        // Disconnect always removes Eavesy's copy; when Google couldn't be told, say so.
+        // Google keeps the grant until it's told, so Eavesy keeps the row (and the
+        // token to tell it with) until then, unless you choose to remove it anyway.
         const refresh = await openSecret(row.refreshTokenEncrypted).catch((error: unknown) => {
           console.error('[calendar-connections] open secret', error);
           return null;
         });
         const revoked = row.provider === 'google' && refresh ? await revokeGoogleToken(refresh) : false;
+        if (!revoked && !parsed.data.force) return Response.json({ ok: false, error: 'google_not_revoked' });
         await calendarRepo.deleteConnection(db, actor.userId, row.id);
-        return Response.json(revoked ? { ok: true } : { ok: true, warning: 'google_not_revoked' });
+        return Response.json({ ok: true });
       },
     },
   },

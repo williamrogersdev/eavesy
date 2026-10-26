@@ -54,12 +54,14 @@ export async function getCalendarStatus(): Promise<CalendarStatus> {
   return status;
 }
 
-/** Disconnects; the warning says Google couldn't be told, so its access list may still show Eavesy. */
-export async function disconnectCalendar(id: string): Promise<{ warning: string | null }> {
-  const answer = await call('DELETE', { id });
-  return { warning: isRecord(answer) && answer.warning === 'google_not_revoked'
-    ? 'Disconnected from Eavesy, but Google couldn’t be told. Remove Eavesy under Security → Third-party access in your Google Account to finish.'
-    : null };
+/** Why Disconnect stopped short: Google wasn't told, so the connection was kept. */
+export const NOT_REVOKED =
+  'Google couldn’t be told to stop sharing this calendar, so it’s still connected. Try again, or remove it from Eavesy anyway and then remove Eavesy from the apps connected to your Google Account at myaccount.google.com/connections.';
+
+/** Disconnects. False when Google couldn't be told and `force` wasn't set: the connection is kept. */
+export async function disconnectCalendar(id: string, force = false): Promise<boolean> {
+  const answer = await call('DELETE', force ? { id, force } : { id });
+  return !(isRecord(answer) && answer.ok === false);
 }
 
 /** Google's consent screen runs in the browser; the Mac app opens it there and checks again when you come back. */

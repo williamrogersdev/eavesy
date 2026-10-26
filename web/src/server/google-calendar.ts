@@ -135,7 +135,18 @@ export type CalendarEventInput = {
   participants: { email: string; name: string | null }[];
 };
 
-const MEETING_LINK = /(?<![^\s"'<(])https:\/\/(?:meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b|(?:[a-z0-9-]+\.)?zoom\.us\/[jw]\/\d+[^\s"<>)]*|teams\.microsoft\.com\/l\/meetup-join\/[^\s"<>]+|teams\.live\.com\/meet\/\d+[^\s"<>]*)/i;
+/** Whole URLs in free text: a URL inside another URL's query stays part of that one. */
+const URL_TOKEN = /https:\/\/[^\s"'<>()[\]]+/g;
+
+/** The platform when `url` is a call's join link, judged by its parsed host and path. */
+export function platformOf(url: URL): 'meet' | 'zoom' | 'teams' | null {
+  const host = url.hostname.toLowerCase();
+  if (host === 'meet.google.com' && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(url.pathname)) return 'meet';
+  if ((host === 'zoom.us' || host.endsWith('.zoom.us')) && /^\/[jw]\/\d+$/.test(url.pathname)) return 'zoom';
+  if (host === 'teams.microsoft.com' && url.pathname.startsWith('/l/meetup-join/')) return 'teams';
+  if (host === 'teams.live.com' && /^\/meet\/\d+$/.test(url.pathname)) return 'teams';
+  return null;
+}
 
 export function meetingLinkOf(event: Record<string, unknown>): { url: string; platform: 'meet' | 'zoom' | 'teams' } | null {
   const candidates: string[] = [];
@@ -150,10 +161,17 @@ export function meetingLinkOf(event: Record<string, unknown>): { url: string; pl
   if (typeof event.description === 'string') candidates.push(event.description);
   // In order: the event's own conference link first, free text last.
   for (const text of candidates) {
-    const url = MEETING_LINK.exec(text)?.[0];
-    if (!url) continue;
-    const platform = url.includes('meet.google.com') ? 'meet' : url.includes('zoom.us') ? 'zoom' : 'teams';
-    return { url, platform };
+    for (const match of text.matchAll(URL_TOKEN)) {
+      const raw = match[0].replace(/[.,;:!?]+$/, '');
+      let url: URL;
+      try {
+        url = new URL(raw);
+      } catch {
+        continue;
+      }
+      const platform = platformOf(url);
+      if (platform) return { url: raw, platform };
+    }
   }
   return null;
 }
@@ -188,7 +206,7 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
   };
 }
 
-/** 2,500 events in the 15-day window; past that the listing is marked incomplete and nothing is deleted. */
+/** Up to 2,500 events in the 15-day window (Google may send fewer per page); past the cap the listing is marked incomplete and nothing is deleted. */
 const MAX_PAGES = 10;
 
 /**

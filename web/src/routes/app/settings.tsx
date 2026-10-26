@@ -14,7 +14,7 @@ import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocab
 import { ChipInput } from '@/components/ui/chip-input';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
 import { Link } from '@/components/ui/app-link';
-import { disconnectCalendar, getCalendarStatus, type CalendarStatus } from '@/lib/api/calendar';
+import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
 
 interface Me {
   id: string;
@@ -582,16 +582,19 @@ function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; text: s
 function GoogleCalendarRows({ onError }: { onError: (message: string) => void }) {
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** The connection Google couldn't be told about, so Disconnect kept it. */
+  const [stuck, setStuck] = useState<string | null>(null);
   const load = useCallback(() => {
     void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
   }, [onError]);
   useEffect(load, [load]);
   if (!status) return <p className="text-xs text-ev-ink-2">Checking…</p>;
   const google = status.connections.filter((connection) => connection.provider === 'google');
-  const disconnect = (id: string) => {
+  const disconnect = (id: string, force = false) => {
     setBusy(id);
-    void disconnectCalendar(id)
-      .then(({ warning }) => { load(); if (warning) onError(warning); })
+    setStuck(null);
+    void disconnectCalendar(id, force)
+      .then((done) => { if (done) load(); else setStuck(id); })
       .catch(() => onError('Could not disconnect Google.'))
       .finally(() => setBusy(null));
   };
@@ -614,6 +617,15 @@ function GoogleCalendarRows({ onError }: { onError: (message: string) => void })
           )}
         </Row>
       ))}
+      {stuck ? (
+        <AppAlert tone="danger">
+          <p className="text-xs">{NOT_REVOKED}</p>
+          <span className="mt-2 flex gap-2">
+            <button type="button" onClick={() => disconnect(stuck)} className={appButton('secondary', 'sm')}>Try again</button>
+            <button type="button" onClick={() => disconnect(stuck, true)} className={appButton('ghost', 'sm')}>Remove anyway</button>
+          </span>
+        </AppAlert>
+      ) : null}
       <Row
         label={google.length ? 'Another Google account' : 'Google Calendar'}
         hint={status.available.google ? 'Read-only access to your upcoming meetings.' : 'Google isn’t set up on this Eavesy server yet.'}

@@ -3,7 +3,7 @@
 import { Asterisk, Check, ChevronDown, Copy, MessageCircle, Plug, SquareTerminal, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button, Card, Menu } from '@/components/launcher/ui';
-import { connectGoogle, disconnectCalendar, getCalendarStatus, type CalendarStatus } from '@/lib/api/calendar';
+import { connectGoogle, disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
 import { copyText, errMsg, isDesktop, openWebApp } from '@/lib/desktop/bridge';
 import { CLAUDE_CODE_ADD, CLAUDE_CODE_PLUGIN, MCP_URL, type McpToken } from '@/lib/mcp-tokens';
@@ -94,6 +94,8 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   const [error, setError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** The connection Google couldn't be told about, so Disconnect kept it. */
+  const [stuck, setStuck] = useState<string | null>(null);
   const load = useCallback(() => {
     void getCalendarStatus()
       .then((next) => { setStatus(next); setError(null); })
@@ -130,11 +132,12 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
       .then(() => { if (isDesktop()) setWaiting(Date.now()); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open Google.')));
   };
-  const disconnect = (id: string) => {
+  const disconnect = (id: string, force = false) => {
     setBusy(id);
     setError(null);
-    void disconnectCalendar(id)
-      .then(({ warning }) => { load(); if (warning) setError(warning); })
+    setStuck(null);
+    void disconnectCalendar(id, force)
+      .then((done) => { if (done) load(); else setStuck(id); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t disconnect Google.')))
       .finally(() => setBusy(null));
   };
@@ -187,6 +190,13 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
           }
           action={connectButton}
         />
+      )}
+      {stuck && (
+        <div className="ev-set-row">
+          <p role="alert" className="ev-set-hint min-w-0 flex-1">{NOT_REVOKED}</p>
+          <Button variant="outline" size="sm" onClick={() => disconnect(stuck)}>Try again</Button>
+          <Button variant="ghost" size="sm" onClick={() => disconnect(stuck, true)}>Remove anyway</Button>
+        </div>
       )}
       {error && (
         <div className="ev-set-row">

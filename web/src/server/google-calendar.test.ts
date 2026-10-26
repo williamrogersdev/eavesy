@@ -10,11 +10,24 @@ import {
   revokeGoogleToken,
 } from './google-calendar';
 import type { AppDb } from '@/db/client';
-import { syncConnection } from './calendar-sync';
+import { isDue, SYNC_STALE_MS, syncConnection, syncDue } from './calendar-sync';
 import { readStateCookie, settingsRedirect, stateCookie, userTag } from './google-oauth-flow';
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
+
+/** Runs `fn` with a Google OAuth client configured, then puts process.env back as it was. */
+async function withGoogleClient(fn: () => Promise<void>): Promise<void> {
+  const saved = { id: process.env.GOOGLE_CLIENT_ID, secret: process.env.GOOGLE_CLIENT_SECRET };
+  process.env.GOOGLE_CLIENT_ID = 'cid';
+  process.env.GOOGLE_CLIENT_SECRET = 'secret';
+  try {
+    await fn();
+  } finally {
+    if (saved.id === undefined) delete process.env.GOOGLE_CLIENT_ID; else process.env.GOOGLE_CLIENT_ID = saved.id;
+    if (saved.secret === undefined) delete process.env.GOOGLE_CLIENT_SECRET; else process.env.GOOGLE_CLIENT_SECRET = saved.secret;
+  }
+}
 
 /** Answers every fetch with `respond`, recording each request. */
 function mockFetch(respond: (url: string, init?: RequestInit) => Response): { url: string; init?: RequestInit }[] {
@@ -87,18 +100,45 @@ describe('Google OAuth', () => {
 });
 
 describe('syncConnection', () => {
-  test('a refresh token Google refused asks to connect again', async () => {
-    process.env.GOOGLE_CLIENT_ID = 'cid';
-    process.env.GOOGLE_CLIENT_SECRET = 'secret';
-    try {
+  const connection = {
+    id: 'cal', userId: 'u', provider: 'google' as const, accountEmail: 'a@example.com',
+    refreshTokenEncrypted: 'rt', lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null,
+  };
+
+  test('a refused refresh token is recorded as reconnect', async () => {
+    await withGoogleClient(async () => {
       mockFetch(() => Response.json({ error: 'invalid_grant' }, { status: 400 }));
-      // Unsealed tokens open as themselves, and the refused refresh stops it before the database.
-      const connection = { id: 'cal', userId: 'u', provider: 'google' as const, accountEmail: 'a@example.com', refreshTokenEncrypted: 'rt', lastSyncAt: null };
-      expect(await syncConnection({} as AppDb, connection)).toBe('reconnect');
-    } finally {
-      delete process.env.GOOGLE_CLIENT_ID;
-      delete process.env.GOOGLE_CLIENT_SECRET;
-    }
+      const writes: unknown[] = [];
+      const db = { update: () => ({ set: (fields: unknown) => ({ where: async () => { writes.push(fields); } }) }) };
+      // Unsealed tokens open as themselves.
+      expect(await syncConnection(db as unknown as AppDb, connection, 1000)).toBe('reconnect');
+      expect(writes).toEqual([{ lastAttemptAt: 1000, lastSyncStatus: 'reconnect' }]);
+    });
+  });
+
+  test('a connection another request already claimed is not synced again', async () => {
+    await withGoogleClient(async () => {
+      const calls = mockFetch(() => Response.json({ error: 'invalid_grant' }, { status: 400 }));
+      let claims = 0;
+      // The first claim wins; the second finds the attempt already stamped.
+      const db = {
+        update: () => ({
+          set: () => ({
+            where: () => Object.assign(Promise.resolve(), { returning: async () => (claims++ === 0 ? [{ id: 'cal' }] : []) }),
+          }),
+        }),
+      };
+      await syncDue(db as unknown as AppDb, [connection, { ...connection, id: 'cal2' }], 10 * SYNC_STALE_MS);
+      expect(claims).toBe(2);
+      expect(calls).toHaveLength(1);
+    });
+  });
+
+  test('a connection is due once its last attempt, good or bad, is stale', () => {
+    const now = 10 * SYNC_STALE_MS;
+    expect(isDue(connection, now)).toBe(true);
+    expect(isDue({ ...connection, lastAttemptAt: now - 1000, lastSyncStatus: 'reconnect' }, now)).toBe(false);
+    expect(isDue({ ...connection, lastAttemptAt: now - SYNC_STALE_MS - 1, lastSyncStatus: 'failed' }, now)).toBe(true);
   });
 });
 
@@ -146,6 +186,9 @@ describe('Google events', () => {
     expect(meetingLinkOf({ location: 'https://zoom.us/w/webinar-signup' })).toBeNull();
     expect(meetingLinkOf({ description: 'https://evil.example/?next=https://zoom.us/j/123' })).toBeNull();
     expect(meetingLinkOf({ description: 'Join (https://zoom.us/j/123)' })?.url).toBe('https://zoom.us/j/123');
+    // Any punctuation may sit before a link; what counts is the parsed host.
+    expect(meetingLinkOf({ description: 'Links:https://zoom.us/j/1, [https://meet.google.com/abc-defg-hij]' })?.platform).toBe('zoom');
+    expect(meetingLinkOf({ description: '[https://meet.google.com/abc-defg-hij].' })?.url).toBe('https://meet.google.com/abc-defg-hij');
   });
 
   test('finds Zoom and Teams links in the location or description', () => {

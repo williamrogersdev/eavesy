@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { encode } from '../codec';
 import { pid } from '../ids';
@@ -41,13 +41,36 @@ export async function saveConnection(
   if (existing) {
     await db
       .update(calendarConnections)
-      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted })
+      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted, lastAttemptAt: null, lastSyncStatus: null })
       .where(eq(calendarConnections.id, existing.id));
     return existing.id;
   }
   const id = pid('cal');
-  await db.insert(calendarConnections).values({ id, ...args, lastSyncAt: null });
+  await db.insert(calendarConnections).values({ id, ...args, lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null });
   return id;
+}
+
+/**
+ * Stamps the attempt's start, but only if no other request has since: true
+ * when this caller won it, so two Settings loads never sync one calendar twice.
+ */
+export async function claimAttempt(db: AppDb, id: string, now: number, staleMs: number): Promise<boolean> {
+  const claimed = await db
+    .update(calendarConnections)
+    .set({ lastAttemptAt: now })
+    .where(
+      and(
+        eq(calendarConnections.id, id),
+        or(isNull(calendarConnections.lastAttemptAt), lt(calendarConnections.lastAttemptAt, now - staleMs)),
+      ),
+    )
+    .returning({ id: calendarConnections.id });
+  return claimed.length > 0;
+}
+
+/** Records how a sync attempt went, so a broken grant shows Reconnect without asking Google again. */
+export async function markAttempt(db: AppDb, id: string, status: 'ok' | 'reconnect' | 'failed', now: number): Promise<void> {
+  await db.update(calendarConnections).set({ lastAttemptAt: now, lastSyncStatus: status }).where(eq(calendarConnections.id, id));
 }
 
 export async function deleteConnection(db: AppDb, userId: string, id: string): Promise<void> {
@@ -101,7 +124,10 @@ export async function replaceEvents(
   for (let i = 0; i < gone.length; i += 50) {
     deletes.push(db.delete(calendarEvents).where(inArray(calendarEvents.id, gone.slice(i, i + 50))));
   }
-  const touch = db.update(calendarConnections).set({ lastSyncAt: args.now }).where(eq(calendarConnections.id, connectionId));
+  const touch = db
+    .update(calendarConnections)
+    .set({ lastSyncAt: args.now, lastAttemptAt: args.now, lastSyncStatus: 'ok' })
+    .where(eq(calendarConnections.id, connectionId));
   await db.batch([touch, ...writes, ...deletes]);
 }
 
