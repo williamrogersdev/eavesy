@@ -758,6 +758,11 @@ async fn discard_session<R: Runtime>(
     token: &str,
     session: &sqlite::PendingSession,
 ) -> Result<Step> {
+    // A live-transcript poll that was under way at the cancel can store lines
+    // after the discard cleared them; they go on every pass, not only the last.
+    sqlite::with_open(app, |conn| crate::live_transcript::forget(conn, &session.id))
+        .and_then(|cleared| cleared)
+        .map_err(|e| anyhow!(e))?;
     if let Some(remote_id) = &session.remote_meeting_id {
         let response = api
             .client

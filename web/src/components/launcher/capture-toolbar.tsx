@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AudioLines, Camera, Clapperboard, Square, Users, X } from 'lucide-react';
+import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from './discard';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
 import { ToolbarSegment, ToolbarShelf } from './ui';
@@ -85,11 +86,6 @@ export function CaptureToolbar({
     </div>
   );
 }
-
-/** A capture at least this long asks before Cancel throws it away. */
-const DISCARD_ASKS_AFTER_SEC = 30;
-/** How long Discard waits for the second click. */
-const DISCARD_CONFIRM_MS = 3000;
 
 const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
 

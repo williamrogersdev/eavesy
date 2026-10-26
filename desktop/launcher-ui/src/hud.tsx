@@ -3,6 +3,7 @@ import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History,
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
+import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launcher/discard';
 import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
@@ -68,10 +69,6 @@ type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
 
 const DEFAULT_LOOK: Look = { lines: 0, translucent: true };
 
-/** A recording at least this long asks before Cancel throws it away. */
-const DISCARD_ASKS_AFTER_SEC = 30;
-/** How long Cancel's "Discard" waits for the second click. */
-const DISCARD_CONFIRM_MS = 3000;
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
 /** How long the pill confirms a word added to the dictionary. */

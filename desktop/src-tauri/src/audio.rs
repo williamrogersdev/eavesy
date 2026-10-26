@@ -1143,6 +1143,14 @@ pub fn cancel_capture(
 ) -> Result<(), String> {
     let (session, _stopping) = {
         let mut captures = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let audio = captures.get(&session_id).ok_or(NO_ACTIVE_CAPTURE)?.mode == "audio";
+        // Marked discarded before anything is thrown away: a cancel that can't
+        // say so leaves the capture running, rather than a row that launch
+        // recovery or the upload queue would bring back without its files.
+        if audio {
+            crate::sqlite::discard_recording(&app, &session_id)
+                .map_err(|error| format!("Couldn’t cancel the recording: {error}"))?;
+        }
         let session = captures.remove(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
         // Out of the map and marked as stopping together, so neither the
         // engine exiting nor a racing Stop reports it as stopped early.
@@ -1152,24 +1160,33 @@ pub fn cancel_capture(
     drop(stdin);
     let _ = child.kill();
     let _ = child.wait();
-    // The reader drops its sender once it has read the engine's last line, so
-    // no segment is queued after the rows below are gone.
-    while events.recv_timeout(STOP_TIMEOUT).is_ok() {}
+    // The reader drops its sender once it has read the engine's last line.
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        if events.recv_timeout(left).is_err() {
+            break;
+        }
+    }
 
     crate::moments::end(&app, &session_id);
     crate::dictation::disarm(&session_id);
     crate::assistant::voice::take(&session_id);
     crate::agents::take_answer(&session_id);
     if mode == "audio" {
+        // Again, for segments the reader queued while the engine was dying.
         if let Err(error) = crate::sqlite::discard_recording(&app, &session_id) {
-            // The files still go below, so a recovery at the next launch
-            // finds nothing to bring back.
             crate::telemetry::capture("capture.cancel", &error);
         }
         crate::sync::wake();
         prepare_standby(&app);
     }
-    remove_cancelled_files(&app, &session_id, &out_path, &mode);
+    remove_cancelled_files(
+        fs_writer::recordings_root(&app).ok().as_deref(),
+        captures_dir(&app).ok().as_deref(),
+        &session_id,
+        &out_path,
+        &mode,
+    );
     crate::telemetry::track("recording_cancelled", serde_json::json!({ "kind": mode }));
     crate::hud::advance_from(
         &app,
@@ -1183,7 +1200,13 @@ pub fn cancel_capture(
 
 /// What a cancelled capture wrote: its folder in the recordings folder (only
 /// ever one made for it), or its video and stats, and its segment queue.
-fn remove_cancelled_files(app: &AppHandle, session_id: &str, out_path: &std::path::Path, mode: &str) {
+fn remove_cancelled_files(
+    recordings_root: Option<&std::path::Path>,
+    captures_dir: Option<&std::path::Path>,
+    session_id: &str,
+    out_path: &std::path::Path,
+    mode: &str,
+) {
     let remove = |result: std::io::Result<()>, what: &str| match result {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             tracing::warn!(%session_id, "could not remove a cancelled recording's {what}: {error}");
@@ -1191,7 +1214,7 @@ fn remove_cancelled_files(app: &AppHandle, session_id: &str, out_path: &std::pat
         _ => {}
     };
     if mode == "audio" {
-        let root = fs_writer::recordings_root(app).ok().and_then(|root| root.canonicalize().ok());
+        let root = recordings_root.and_then(|root| root.canonicalize().ok());
         let folder = out_path.parent().and_then(|folder| folder.canonicalize().ok());
         match (folder, root) {
             (Some(folder), Some(root)) if folder != root && folder.starts_with(&root) => {
@@ -1203,7 +1226,7 @@ fn remove_cancelled_files(app: &AppHandle, session_id: &str, out_path: &std::pat
         remove(std::fs::remove_file(out_path), "video");
         remove(std::fs::remove_file(format!("{}.capture.json", out_path.display())), "stats");
     }
-    if let Ok(dir) = captures_dir(app) {
+    if let Some(dir) = captures_dir {
         remove(std::fs::remove_dir_all(dir.join(session_id)), "segments");
     }
 }
@@ -1248,6 +1271,39 @@ impl Drop for Stopping {
         let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
         recent.push((self.0.clone(), Instant::now()));
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::remove_cancelled_files;
+
+    #[test]
+    fn a_cancelled_capture_removes_its_own_folder_and_nothing_outside_the_recordings_folder() {
+        let base = std::env::temp_dir().join(format!("eavesy-cancel-{}", uuid::Uuid::new_v4()));
+        let root = base.join("Recordings");
+        let captures = base.join("captures");
+        let folder = root.join("2026-10-25 Talk");
+        let queue = captures.join("session").join("segments");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&queue).unwrap();
+        std::fs::write(folder.join("audio.m4a"), b"audio").unwrap();
+        std::fs::write(folder.join("audio.m4a.capture.json"), b"{}").unwrap();
+
+        remove_cancelled_files(Some(&root), Some(&captures), "session", &folder.join("audio.m4a"), "audio");
+        assert!(!folder.exists() && !captures.join("session").exists());
+        assert!(root.exists() && captures.exists());
+
+        // A capture whose folder isn't inside the recordings folder loses only its audio.
+        let elsewhere = base.join("Elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("audio.m4a"), b"audio").unwrap();
+        std::fs::write(elsewhere.join("keep.txt"), b"mine").unwrap();
+        remove_cancelled_files(Some(&root), Some(&captures), "other", &elsewhere.join("audio.m4a"), "audio");
+        assert!(!elsewhere.join("audio.m4a").exists());
+        assert!(elsewhere.join("keep.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
