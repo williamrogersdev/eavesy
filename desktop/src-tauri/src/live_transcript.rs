@@ -401,6 +401,15 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     Ok(rows)
 }
 
+fn discarded(conn: &Connection, session_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=1)",
+        params![session_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("check cancelled recording: {e}"))
+}
+
 fn midpoint(start_ms: i64, end_ms: i64) -> i64 {
     (start_ms + end_ms.max(start_ms)) / 2
 }
@@ -453,7 +462,10 @@ pub async fn run(app: AppHandle) {
                             hinted.insert(session_id.clone(), language);
                         }
                     }
-                    let changed = crate::sqlite::with_open_mut(&app, |conn| apply_delta(conn, &session_id, &delta));
+                    // A recording cancelled while this poll was out keeps no lines.
+                    let changed = crate::sqlite::with_open_mut(&app, |conn| {
+                        if discarded(conn, &session_id)? { Ok(false) } else { apply_delta(conn, &session_id, &delta) }
+                    });
                     match changed {
                         Ok(Ok(true)) => {
                             let _ = app.emit("recording:live_transcript", &session_id);
