@@ -120,6 +120,10 @@ describe('style', () => {
   const values = { preset: ['plain', 'eavesy', 'more'], chattiness: ['less', 'default', 'more'], warmth: ['less', 'default', 'more'] } as const;
   const all = values.preset.flatMap((preset) => values.chattiness.flatMap((chattiness) => values.warmth.map((warmth) => ({ preset, chattiness, warmth }))));
 
+  test('every combination knows it may be hearing a speech transcript', () => {
+    for (const style of all) expect(systemPrompt(style)).toContain('speech-to-text transcript');
+  });
+
   test('every combination keeps the hard limits last', () => {
     expect(all).toHaveLength(27);
     const prompts = new Set(all.map((style) => {

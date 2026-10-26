@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, EyeOff, ShieldAlert, Volume2 } from 'lucide-react';
+import { ArrowUp, EyeOff, Mic, ShieldAlert, Square, Volume2 } from 'lucide-react';
 import {
   clearAssistantThread,
   decideAssistantCard,
@@ -12,9 +12,13 @@ import {
   onAssistantCards,
   onAssistantRules,
   onAssistantThread,
+  onCaptureState,
+  onHotkeysChanged,
+  getSettings,
   openSettingsWindow,
   repeatAssistantReply,
   sendToAssistant,
+  talkToAssistant,
   setAssistantMode,
   setAssistantOffRecord,
   type AssistantBook,
@@ -25,6 +29,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { errMsg } from '@/lib/desktop/errors';
 import { Bubble, Button, IconButton, Mascot, Menu } from './ui';
+import { keysText } from './shortcut-keys';
 import { acceptLabel, modeIsLoud, modeLabel, rulesWaitingLine, toolLabel } from './eavesy-model';
 
 type Flash = (text: string, ms?: number, tone?: 'warn') => void;
@@ -38,6 +43,7 @@ export function EavesyTab({ flash }: { flash: Flash }) {
   const [thread, setThread] = useState<AssistantThread>({ busy: false, turns: [] });
   const [state, setState] = useState<AssistantState | null>(null);
   const [draft, setDraft] = useState('');
+  const { listening, talkKeys } = useTalk();
   const [now, setNow] = useState(() => Date.now());
   // Notes undone from this tab, so their line says so.
   const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
@@ -208,7 +214,10 @@ export function EavesyTab({ flash }: { flash: Flash }) {
         {turnCount === 0 && cardCount === 0 && (
           <div className="ev-eavesy-empty">
             <Mascot state="idle" />
-            <Bubble tail="left">Ask me what your agents are up to, or what they left lying around on this Mac.</Bubble>
+            <Bubble tail="left">
+              Ask me what your agents are up to, what they left lying around on this Mac, or to remember something for next time.
+              {talkKeys ? ` Press ${talkKeys} anywhere and just talk, or use the mic below.` : ' Type below, or press the mic and talk.'}
+            </Bubble>
           </div>
         )}
         <ol className="ev-turns" aria-live="polite">
@@ -269,10 +278,37 @@ export function EavesyTab({ flash }: { flash: Flash }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />
+        <IconButton
+          icon={listening ? Square : Mic}
+          label={listening ? 'Stop and send' : talkKeys ? `Talk to Eavesy (${talkKeys})` : 'Talk to Eavesy'}
+          disabled={!listening && (thread.busy || asking)}
+          onClick={() => void talkToAssistant().catch((error: unknown) => flash(errMsg(error, 'Couldn’t open the mic'), 4000, 'warn'))}
+        />
         <IconButton icon={ArrowUp} label="Send" disabled={!draft.trim() || thread.busy || asking} onClick={send} />
       </div>
     </div>
   );
+}
+
+/** Whether a recording for Eavesy is open, and the Talk to Eavesy shortcut as key caps. */
+function useTalk(): { listening: boolean; talkKeys: string } {
+  const [listening, setListening] = useState(false);
+  const [talkKeys, setTalkKeys] = useState('');
+  useEffect(() => {
+    let disposed = false;
+    const loadKeys = () => void getSettings().then((settings) => {
+      if (!disposed) setTalkKeys(settings?.assistant_hotkey ? keysText(settings.assistant_hotkey) : '');
+    }, () => {});
+    loadKeys();
+    const offState = onCaptureState((status) => setListening(status.mode === 'assistant' && status.phase === 'recording'));
+    const offKeys = onHotkeysChanged(loadKeys);
+    return () => {
+      disposed = true;
+      void offState.then((off) => off());
+      void offKeys.then((off) => off());
+    };
+  }, []);
+  return { listening, talkKeys };
 }
 
 /** A card: exactly what will happen, row by row. Only these buttons run it (C1, C2). */
