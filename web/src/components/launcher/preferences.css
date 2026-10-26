@@ -125,7 +125,7 @@
 .ev-howto b { color: var(--ev-ink); font-weight: 600; }
 .ev-proj-crumbs { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px -10px; }
 
-.ev-preferences-notice { position: absolute; bottom: 16px; left: 220px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
+.ev-preferences-notice { position: absolute; bottom: 16px; left: 232px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
 @media (max-width: 600px) {
   .ev-settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .ev-settings-nav { flex-direction: row; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--evs-divider); overflow-x: auto; }
