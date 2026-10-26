@@ -49,7 +49,7 @@ connector, sign in to Eavesy, and approve it. The agent can then search your
 recordings and dictations. Connections are read-only unless you allow writes.
 
 ```bash
-claude mcp add --transport http eavesy https://mcp.eavesy.com
+claude mcp add --scope user --transport http eavesy https://mcp.eavesy.com
 ```
 
 MCP reads from your account, so it only sees recordings that have synced. See

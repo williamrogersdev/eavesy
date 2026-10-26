@@ -1,12 +1,21 @@
 'use client';
 
-import { Asterisk, Check, ChevronDown, Copy, MessageCircle, Plug, SquareTerminal, type LucideIcon } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Asterisk, Check, ChevronDown, Copy, MessageCircle, Plug, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, Card, Menu } from '@/components/launcher/ui';
 import { connectGoogle, disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
-import { copyText, errMsg, isDesktop, openWebApp } from '@/lib/desktop/bridge';
-import { CLAUDE_CODE_ADD, CLAUDE_CODE_PLUGIN, MCP_URL, type McpToken } from '@/lib/mcp-tokens';
+import {
+  claudeCodeStatus,
+  connectClaudeCode,
+  copyText,
+  errMsg,
+  isDesktop,
+  openWebApp,
+  signInClaudeCode,
+  type ClaudeCodeStatus,
+} from '@/lib/desktop/bridge';
+import { CLAUDE_CODE_ADD, CLAUDE_CODE_PLUGIN_CLI, MCP_URL, type McpToken } from '@/lib/mcp-tokens';
 
 /** A command or URL to copy, with a Copy button that says when it worked. */
 function CopyLine({ label, text }: { label: string; text: string }) {
@@ -29,6 +38,15 @@ function CopyLine({ label, text }: { label: string; text: string }) {
       </Button>
     </div>
   );
+}
+
+/** Runs `refresh` again whenever you come back to this window, e.g. from approving in the browser. */
+function useOnReturn(active: boolean, refresh: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [active, refresh]);
 }
 
 /** Google's own mark: the one place its colours appear. */
@@ -235,8 +253,9 @@ function ConnectedApps({ signedIn, active }: { signedIn: boolean; active: boolea
       .then(setTokens)
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your connected apps.')));
   }, []);
-  // Reloaded each time the page is shown, so an app approved a moment ago appears.
+  // Reloaded each time the page is shown or you come back to it, so an app approved a moment ago appears.
   useEffect(() => { if (signedIn && active) load(); }, [signedIn, active, load]);
+  useOnReturn(signedIn && active, load);
   if (!signedIn) {
     return <p className="ev-set-hint">Sign in to see the apps connected to your Eavesy account.</p>;
   }
@@ -279,6 +298,107 @@ function ConnectedApps({ signedIn, active }: { signedIn: boolean; active: boolea
   );
 }
 
+/** The commands to type yourself, folded away when the app can run them for you. */
+function ByHand() {
+  return (
+    <>
+      <p className="ev-set-hint">Run this in your terminal. It adds the Eavesy plugin: the connection plus a skill that tells Claude when to look things up.</p>
+      <CopyLine label="Claude Code plugin commands" text={CLAUDE_CODE_PLUGIN_CLI} />
+      <p className="ev-set-hint ev-conn-then">
+        Or just the connection, without the skill: <code>{CLAUDE_CODE_ADD}</code>. Then start Claude Code, run <code>/mcp</code>, pick <b>eavesy</b> and sign in.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Claude Code on this Mac: one button adds Eavesy (the plugin: the connection
+ * plus a skill for when to look things up), the next opens Terminal to sign
+ * in. On the web, or with no `claude` to run, the commands to type instead.
+ */
+function ClaudeCodeApp({ open, toggle }: { open: boolean; toggle: () => void }) {
+  const desktop = isDesktop();
+  const [status, setStatus] = useState<ClaudeCodeStatus | null>(null);
+  const [busy, setBusy] = useState<'add' | 'sign-in' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opened, setOpened] = useState(false);
+  // While a button's command runs, its own answer is the one to show.
+  const running = useRef(false);
+  const refresh = useCallback(() => {
+    if (running.current) return;
+    void claudeCodeStatus().then((next) => { if (!running.current) setStatus(next); }).catch(() => {});
+  }, []);
+  useEffect(() => { if (desktop) refresh(); }, [desktop, refresh]);
+  useOnReturn(desktop, refresh);
+  const added = !!status && (status.plugin || status.server);
+  useEffect(() => { if (!added) setOpened(false); }, [added]);
+
+  const manual = (
+    <Button variant="outline" size="sm" aria-expanded={open} aria-label="Connect Claude Code" onClick={toggle}>
+      {open ? 'Done' : 'Connect'}
+    </Button>
+  );
+  const name = 'Claude Code';
+  const mark = <Glyph icon={SquareTerminal} />;
+  if (!desktop || !status?.cli) {
+    const detail = desktop && status && !status.cli
+      ? 'Eavesy couldn’t find Claude Code on this Mac. Install it, or run the commands yourself.'
+      : 'Your meetings and notes as context, your prompts as slash commands.';
+    return <AppRow mark={mark} name={name} detail={detail} action={manual}>{open && <ByHand />}</AppRow>;
+  }
+
+  const start = (which: 'add' | 'sign-in') => {
+    running.current = true;
+    setBusy(which);
+    setError(null);
+  };
+  const done = () => {
+    running.current = false;
+    setBusy(null);
+  };
+  const add = () => {
+    start('add');
+    void connectClaudeCode().then(
+      (next) => { done(); setStatus(next); },
+      (e: unknown) => {
+        setError(errMsg(e, 'Couldn’t add Eavesy to Claude Code.'));
+        // Half of it may have gone in; show what's there now.
+        void claudeCodeStatus().then((next) => setStatus(next)).catch(() => {}).finally(done);
+      },
+    );
+  };
+  const signIn = () => {
+    start('sign-in');
+    void signInClaudeCode()
+      .then(() => setOpened(true))
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t open Terminal.')))
+      .finally(done);
+  };
+  const detail = !added
+    ? 'Your meetings and notes as context, your prompts as slash commands.'
+    : opened
+      ? 'Terminal opened to sign in. When your browser asks, approve Claude Code; it shows up under Connected AI apps once it’s signed in.'
+      : 'Added. Sign in once so it can read your Eavesy account: Terminal opens and your browser asks you to approve it.';
+  const action = added ? (
+    <Button variant="primary" size="sm" icon={Terminal} loading={busy === 'sign-in'} disabled={busy !== null} onClick={signIn}>
+      {opened ? 'Sign in again' : 'Sign in'}
+    </Button>
+  ) : (
+    <Button variant="primary" size="sm" loading={busy === 'add'} disabled={busy !== null} onClick={add}>
+      {busy === 'add' ? 'Adding…' : 'Add'}
+    </Button>
+  );
+  return (
+    <AppRow mark={mark} name={name} detail={detail} action={action}>
+      {error && <p role="alert" className="ev-set-hint ev-conn-warn">{error}</p>}
+      <button type="button" className="ev-link ev-conn-toggle" aria-expanded={open} onClick={toggle}>
+        {open ? 'Hide the commands' : 'Or run it yourself'}
+      </button>
+      {open && <ByHand />}
+    </AppRow>
+  );
+}
+
 type AppId = 'claude-code' | 'claude' | 'chatgpt' | 'other';
 
 /** The AI apps Eavesy can be added to, each opening its own short steps. */
@@ -292,16 +412,7 @@ function AvailableApps() {
   );
   return (
     <>
-      <AppRow mark={<Glyph icon={SquareTerminal} />} name="Claude Code" detail="Your meetings and notes as context, your prompts as slash commands." action={setUp('claude-code', 'Claude Code')}>
-        {open === 'claude-code' && (
-          <>
-            <p className="ev-set-hint">Run this in your terminal, then <code>/mcp</code> in Claude Code, pick <b>eavesy</b> and sign in.</p>
-            <CopyLine label="Claude Code command" text={CLAUDE_CODE_ADD} />
-            <p className="ev-set-hint mt-3">Or install the plugin, which also teaches Claude when to look things up. Paste both lines into Claude Code.</p>
-            <CopyLine label="Claude Code plugin commands" text={CLAUDE_CODE_PLUGIN} />
-          </>
-        )}
-      </AppRow>
+      <ClaudeCodeApp open={open === 'claude-code'} toggle={() => toggle('claude-code')} />
       <AppRow mark={<Glyph icon={Asterisk} />} name="Claude" detail="Claude on the web, desktop and phone." action={setUp('claude', 'Claude')}>
         {open === 'claude' && (
           <>

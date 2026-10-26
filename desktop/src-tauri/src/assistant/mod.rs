@@ -207,7 +207,7 @@ pub fn run_clicked(action: &dyn Action, rows: &[String]) -> Ran {
 }
 
 /// Mode changes, card decisions and the log only answer Eavesy's panel and Settings.
-fn from_ui(window: &WebviewWindow) -> Result<(), String> {
+pub(crate) fn from_ui(window: &WebviewWindow) -> Result<(), String> {
     match window.label() {
         "main" | "settings" => Ok(()),
         _ => Err("This only works from Eavesy's panel or Settings.".into()),

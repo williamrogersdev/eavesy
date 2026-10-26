@@ -433,6 +433,30 @@ export interface AssistantActivity {
   outcome?: string;
 }
 
+/** Whether Claude Code on this Mac has Eavesy, and where its `claude` command is. */
+export interface ClaudeCodeStatus {
+  cli: string | null;
+  /** The Eavesy plugin is on in Claude Code. */
+  plugin: boolean;
+  /** The bare MCP server was added for every folder. */
+  server: boolean;
+}
+
+export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
+  if (!isDesktop()) return null;
+  return invoke<ClaudeCodeStatus>('claude_code_status');
+}
+
+/** Runs `claude plugin marketplace add` and `claude plugin install` for Eavesy. Can take a while: it clones the plugin. */
+export async function connectClaudeCode(): Promise<ClaudeCodeStatus> {
+  return invoke<ClaudeCodeStatus>('connect_claude_code');
+}
+
+/** Opens Terminal running `claude mcp login` for Eavesy, which opens the browser to approve it. */
+export async function signInClaudeCode(): Promise<void> {
+  await invoke('sign_in_claude_code');
+}
+
 export async function getAssistantState(): Promise<AssistantState> {
   return invoke<AssistantState>('assistant_state');
 }
