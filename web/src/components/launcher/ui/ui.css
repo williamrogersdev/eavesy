@@ -43,9 +43,9 @@
 .ev-btn[data-variant='ghost']:hover:not(:disabled) { background: var(--ev-hover); color: var(--ev-ink); }
 .ev-btn[data-variant='quiet'] { color: var(--ev-coat); }
 .ev-btn[data-variant='quiet']:hover:not(:disabled) { background: var(--ev-coat-soft); }
-.ev-btn[data-variant='outline'] { box-shadow: inset 0 0 0 1px var(--ev-line-strong); color: var(--ev-ink); }
-.ev-btn[data-variant='outline']:hover:not(:disabled) { background: var(--ev-hover); }
-.ev-btn[data-variant='outline']:focus-visible { box-shadow: inset 0 0 0 1px var(--ev-line-strong), var(--ev-focus); }
+.ev-btn[data-variant='outline'] { background: color-mix(in srgb, var(--ev-ink) 7%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--ev-ink) 10%, transparent); color: var(--ev-ink); }
+.ev-btn[data-variant='outline']:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-ink) 11%, transparent); }
+.ev-btn[data-variant='outline']:focus-visible { box-shadow: var(--ev-focus); }
 .ev-btn[data-variant='danger-rec'] { background: var(--ev-rec); color: var(--ev-on-coat); }
 .ev-btn[data-variant='danger-rec']:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 88%, #000); }
 .ev-btn > svg { flex: none; }

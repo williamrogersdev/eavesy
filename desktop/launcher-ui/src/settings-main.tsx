@@ -6,7 +6,7 @@ import { useSetupPermissions } from '@/components/launcher/use-setup-permissions
 import { useToastTasks } from '@/components/launcher/use-toast-tasks';
 import {
   cancelPairing, closeSettingsWindow, disconnectAccount, getAccountInfo, getSettings,
-  onSettingsSection, openSetup, openWebApp, pairDevice, relaunchApp, takeSettingsSection,
+  onSettingsSection, openSetup, openWebApp, pairDevice, relaunchApp, showLauncher, takeSettingsSection,
   type SettingsSection,
 } from '@/lib/desktop/bridge';
 import './styles.css';
@@ -87,6 +87,7 @@ function Preferences() {
       onOpenWeb={() => runTask(openWebApp, 'Couldn’t open your account')}
       onShortcutsChanged={() => { void refreshShortcuts(); }}
       onBack={() => runTask(closeSettingsWindow, 'Couldn’t close settings')}
+      onOpenApp={() => runTask(async () => { await showLauncher(); await closeSettingsWindow(); }, 'Couldn’t open Eavesy')}
     />
     {toast && <div className="ev-preferences-notice" role="status">{toast.message}</div>}
   </main>;

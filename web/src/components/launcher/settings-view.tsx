@@ -301,7 +301,7 @@ function PermissionsPage({ permissions, checkingPermission, fnInUse, account, co
   );
 }
 
-export function SettingsView({ standalone = false, section: shownSection, onSection, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack }: {
+export function SettingsView({ standalone = false, section: shownSection, onSection, permissions, checkingPermission, onRequestPermission, onOpenPrivacy, onRelaunch, onRunSetup, fnInUse, account, connecting, onConnect, onCancelConnect, onDisconnect, onOpenWeb, onShortcutsChanged, onProjectsChanged, onBack, onOpenApp }: {
   standalone?: boolean;
   /** The section on screen, when the window decides it (another window can ask for one). */
   section?: SettingsSection;
@@ -323,6 +323,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   onProjectsChanged?: () => void;
   /** Leaves settings: closes the window, or goes back in the panel. */
   onBack: () => void;
+  /** In the Settings window: opens the Eavesy panel and closes Settings. */
+  onOpenApp?: () => void;
 }) {
   const [settings, setSettings] = useState<(Settings & { hud_frame?: unknown }) | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -505,6 +507,12 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
 
       <div className="ev-settings-layout">
         <nav className="ev-settings-nav" aria-label="Settings sections">
+          {standalone && <div className="ev-settings-drag" data-tauri-drag-region />}
+          {onOpenApp && (
+            <button type="button" className="ev-settings-back" onClick={onOpenApp}>
+              <ArrowLeft size={15} strokeWidth={1.9} aria-hidden />Back to Eavesy
+            </button>
+          )}
           <div className="ev-settings-nav-title"><Mascot state="idle" size={22} />Settings</div>
           <label className="ev-settings-search">
             <Search size={14} strokeWidth={1.75} aria-hidden />
@@ -530,7 +538,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           <p className="ev-settings-nav-foot">Changes save as you make them.</p>
         </nav>
         <div className="ev-settings-pane">
-          <header className="ev-settings-heading">
+          <header className="ev-settings-heading" data-tauri-drag-region={standalone || undefined}>
             <div className="min-w-0 flex-1">
               <h1>{activeSection.label}</h1>
               <p>{activeSection.hint}</p>
