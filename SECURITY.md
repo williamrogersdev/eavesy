@@ -42,11 +42,10 @@ deliberate.
     using.
   - `network.client`: talking to eavesy.com and the updater.
   - `files.user-selected.read-write`: exports and imports you pick.
-  - `cs.allow-jit` and `cs.allow-unsigned-executable-memory`: the web view's
-    JavaScript engine. Apple's guidance is that WKWebView needs JIT on Apple
-    silicon. Both are under test: the release workflow can build a signed
-    candidate without them and launch it, and either one is dropped once a
-    candidate runs without it.
+
+  The app has no JIT or unsigned-memory exceptions. The web view's JavaScript
+  runs in WebKit's own process, and every signed build is launched in CI and
+  must show its JavaScript running before it can ship.
 - **Private API** (`macOSPrivateApi`): only for transparent windows (the
   recording HUD and assistant cards). Tauri needs it for window transparency
   on macOS.
