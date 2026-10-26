@@ -292,13 +292,27 @@ describe('MCP OAuth tokens', () => {
     expect(issued.refresh_token).toMatch(/^rt_/);
     const response = await toolsList(issued.access_token);
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { result: { tools: unknown[] } }).result.tools).toHaveLength(10);
+    expect(((await response.json()) as { result: { tools: unknown[] } }).result.tools).toHaveLength(12);
 
     const listed = await (await handler(McpTokensRoute, 'GET')({ request: new Request('https://eavesy.com/api/mcp-tokens'), params: {} })).json();
     expect(listed).toEqual([
       expect.objectContaining({ name: 'Claude', scopes: ['read'], expiresAt: expect.any(Number) }),
     ]);
     expect((listed as { expiresAt: number }[])[0].expiresAt).toBeGreaterThan(Date.now() + 80 * 24 * 60 * 60 * 1000);
+  });
+
+  it('stop the access and refresh tokens once the agent calls sign_out', async () => {
+    const client = await clientId();
+    const issued = await tokens(client);
+    const signedOut = await mcp('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${issued.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'sign_out', arguments: {} } }),
+    });
+    expect(await signedOut.text()).toContain('signed_out');
+    expect((await toolsList(issued.access_token)).status).toBe(401);
+    const refreshed = await token({ grant_type: 'refresh_token', refresh_token: issued.refresh_token, client_id: client });
+    expect(await refreshed.json()).toMatchObject({ error: 'invalid_grant' });
   });
 
   it('grant write only when the client asked and the user allowed it', async () => {
