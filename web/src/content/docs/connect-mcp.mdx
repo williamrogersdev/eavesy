@@ -133,7 +133,13 @@ approves anything. To get Claude or ChatGPT to use them, paste the
 instructions from the Mac app's Settings → Connections → *Messages from your
 agents* into a Claude project or ChatGPT's custom instructions.
 
-`sign_out` ends the connection it's called from, the same as removing it in Settings. The other tools only read, and tell your agent so, so clients like Claude and ChatGPT can run them without asking each time. The tool names say "meetings" because that is the name
+`sign_out` ends the connection it's called from, the same as removing it in
+Settings.
+
+The other tools only read, and are marked read-only so a client can choose to
+run them without asking each time; whether it asks is up to the client.
+`ask_library` counts against your daily AI answer quota. The tool names say
+"meetings" because that is the name
 of a recording in the data model. Recordings need to be in your account, so
 recordings made on a Mac that isn't signed in are not available. Screenshots,
 clipboard captures and notes from the Mac app are not available over MCP

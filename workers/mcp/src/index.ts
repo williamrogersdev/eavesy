@@ -497,7 +497,7 @@ const TOOL_DEFS: ToolDef[] = [
     scope: 'read',
   },
   { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, annotations: READ_ONLY, scope: 'read' },
-  { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, annotations: READ_ONLY, scope: 'read' },
+  { name: 'ask_library', description: 'Answer from completed recordings with exact source quotes, or abstain when evidence is insufficient. Each call counts against the user\'s daily AI answer quota.', inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['question'] }, annotations: READ_ONLY, scope: 'read' },
   {
     name: 'search_meetings',
     description: "Search the user's meetings by title or transcript content. Returns matching meetings with an excerpt.",
@@ -982,7 +982,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       await db
         .update(schema.mcpTokens)
         .set({ revokedAt: Date.now() })
-        .where(and(eq(schema.mcpTokens.id, token.id), eq(schema.mcpTokens.userId, userId)));
+        .where(and(eq(schema.mcpTokens.id, token.id), eq(schema.mcpTokens.userId, userId), isNull(schema.mcpTokens.revokedAt)));
       return {
         status: 'signed_out',
         note: 'This connection no longer works. To use Eavesy again, connect it again from this app or from Eavesy settings.',

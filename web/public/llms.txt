@@ -65,7 +65,7 @@ Fallback for clients without OAuth: create a connection in the web app under Set
 }
 ```
 
-Tools, all read-only (names say "meeting" because that is the recording type in the data model):
+Library tools, all read-only (names say "meeting" because that is the recording type in the data model):
 - `search_library` (query): retrieve source evidence from completed synced account recordings.
 - `ask_library` (question): answer from recording evidence when cloud answers are enabled; may abstain or report unanswered parts and context limits.
 - `list_projects`: list projects available to the connection.
@@ -75,6 +75,8 @@ Tools, all read-only (names say "meeting" because that is the recording type in 
 - `search_dictations` (query, limit): search dictations.
 - `get_action_items` (status: open|completed|all, owner): action items across recordings.
 - `get_account_info`: which account and connection this is, its access and expiry.
+
+Account tool, not read-only:
 - `sign_out`: disconnect this connection (only when the user asks).
 
 Only recordings synced to the account are available over MCP. Screenshots, clipboard captures and notes from the Mac app stay on the Mac. Docs: https://eavesy.com/docs/connect-mcp
