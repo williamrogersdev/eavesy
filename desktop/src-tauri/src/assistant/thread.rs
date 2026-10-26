@@ -279,6 +279,9 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
     emit(app);
 }
 
+/// The security checkup's tools (`security_status`, `security_fix`).
+const FEATURES: &[&str] = &["security"];
+
 #[derive(Serialize)]
 struct TurnRequest<'a> {
     style: super::style::Style,
@@ -289,6 +292,8 @@ struct TurnRequest<'a> {
     /// instructions.
     memory: &'a [String],
     about: &'a [String],
+    /// Tools this build has beyond the base set, so the server offers them.
+    features: &'static [&'static str],
     messages: &'a [Message],
 }
 
@@ -305,7 +310,7 @@ async fn ask(app: &AppHandle, style: super::style::Style, instructions: &[String
         .post(crate::base_url::join(&credential.base, "/api/assistant/turn"))
         .timeout(Duration::from_secs(60))
         .bearer_auth(credential.token)
-        .json(&TurnRequest { style, instructions, memory: &notes.memory, about: &notes.about, messages })
+        .json(&TurnRequest { style, instructions, memory: &notes.memory, about: &notes.about, features: FEATURES, messages })
         .send()
         .await
         .map_err(|error| {

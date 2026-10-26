@@ -21,7 +21,7 @@
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -57,33 +57,9 @@ enum Signer {
     Unknown,
 }
 
-/// Runs codesign, giving up (and killing it) after `CODESIGN_TIMEOUT`. Its
-/// output is a few lines, well within the pipe buffer, so polling can't stall it.
+/// Runs codesign, giving up (and killing it) after `CODESIGN_TIMEOUT`.
 fn codesign(args: &[&std::ffi::OsStr]) -> Result<Output, String> {
-    let mut child = Command::new(CODESIGN)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("couldn't run codesign: {error}"))?;
-    let deadline = Instant::now() + CODESIGN_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().map_err(|error| format!("codesign failed: {error}")),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("codesign didn't answer".to_string());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("codesign failed: {error}"));
-            }
-        }
-    }
+    crate::cmd::output(CODESIGN, args, CODESIGN_TIMEOUT)
 }
 
 /// How Eavesy itself is signed. A definite answer is kept for the life of the

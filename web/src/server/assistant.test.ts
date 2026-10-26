@@ -15,6 +15,7 @@ import {
   runConsolidate,
   runTurn,
   systemPrompt,
+  toolsFor,
   turnInput,
   type AssistantClient,
 } from './assistant';
@@ -231,6 +232,16 @@ describe('memory', () => {
     expect(turnInput.safeParse({ messages, memory: ['x'.repeat(301)] }).success).toBe(false);
     expect(turnInput.safeParse({ messages, memory: ['😀'.repeat(300)] }).success).toBe(true);
     expect(memoryBlock(['a\u0085b\u2028c'])).toContain('- a b c');
+  });
+
+  test('security tools only go to a Mac that has them', () => {
+    const names = (features?: string[]) => toolsFor(features).map((tool) => tool.name);
+    expect(names()).not.toContain('security_status');
+    expect(names(['something_else'])).not.toContain('security_fix');
+    expect(names(['security'])).toEqual(expect.arrayContaining(['security_status', 'security_fix', 'machine_overview']));
+    expect(systemPrompt(DEFAULT_STYLE, [], [])).not.toContain('security_status');
+    expect(systemPrompt(DEFAULT_STYLE, [], ['security'])).toContain('security_status');
+    expect(turnInput.parse({ messages }).features).toEqual([]);
   });
 
   test('remember is offered to the model', () => {

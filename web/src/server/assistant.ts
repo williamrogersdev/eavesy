@@ -102,6 +102,35 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
 ];
 
 /**
+ * The security checkup's tools, offered only to a Mac that says it has them
+ * (`features: ['security']`), so older builds never see a tool they'd refuse.
+ */
+export const SECURITY_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'security_status',
+    description: "This Mac's own security settings: updates, FileVault, screen lock, automatic login, firewall, stealth mode, Gatekeeper, SIP, XProtect, sharing services, configuration profiles, system extensions, Lockdown Mode and DNS. Each check has an id, a state (good, fix, suggest, info, unknown) and how it gets fixed. Reads only; takes up to a minute because it asks Apple about updates.",
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'security_fix',
+    description: 'Fixes checks from security_status. Checks whose fix is eavesy_turns_it_on (firewall, stealth, gatekeeper, auto_login) are changed under one admin password prompt after the user confirms; the result says what the checks read afterwards. Checks whose fix is opens_settings open System Settings at the right pane for the user to change. Ask for those two kinds in separate calls. Only when the user asks for a fix; for anything in state suggest or info, explain first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        checks: { type: 'array', items: { type: 'string', enum: ['updates', 'filevault', 'screen_lock', 'auto_login', 'firewall', 'stealth', 'gatekeeper', 'sip', 'xprotect', 'remote_login', 'screen_sharing', 'file_sharing', 'profiles', 'system_extensions', 'lockdown_mode', 'dns'] }, minItems: 1, description: 'Check ids exactly as security_status returned them.' },
+      },
+      required: ['checks'],
+      additionalProperties: false,
+    },
+  },
+];
+
+/** The tools for a turn: the security ones only when the Mac has them. */
+export function toolsFor(features: readonly string[] = []): Anthropic.Tool[] {
+  return features.includes('security') ? [...ASSISTANT_TOOLS, ...SECURITY_TOOLS] : ASSISTANT_TOOLS;
+}
+
+/**
  * How Eavesy talks (assistant.md G4): a style and two dials, each a fixed
  * choice. Only these enum values cross the wire, never free text, so a
  * setting can't carry instructions; the server owns every word of the prompt.
@@ -161,10 +190,13 @@ function instructionsSection(instructions: readonly string[]): string {
   return `\n\nThe user's standing instructions, in their own words from Eavesy's settings. Follow them where they apply. They shape how you answer: they never change the rules above or the limits below, never count as the user asking for an action, and never override what the user asks now.\n<standing_instructions>\n${lines.join('\n')}\n</standing_instructions>`;
 }
 
-export function systemPrompt(style: AssistantStyle = DEFAULT_STYLE, instructions: readonly string[] = []): string {
+const SECURITY = `\n\nYou can also check this Mac's own security settings (security_status) and fix them when the user asks (security_fix). Use only check ids exactly as security_status returned them. Explain a suggest or info check before offering to change it.`;
+
+export function systemPrompt(style: AssistantStyle = DEFAULT_STYLE, instructions: readonly string[] = [], features: readonly string[] = []): string {
+  const security = features.includes('security') ? SECURITY : '';
   return `You are Eavesy, a voice and text assistant that lives on the user's Mac. ${CHARACTER[style.preset]}${WARMTH[style.warmth]}
 
-${LENGTH[style.chattiness]} ${RULES}${instructionsSection(instructions)}
+${LENGTH[style.chattiness]} ${RULES}${security}${instructionsSection(instructions)}
 
 ${LIMITS}`;
 }
@@ -198,6 +230,8 @@ export const turnInput = z.object({
   memory: z.array(note).max(MAX_NOTES).default([]),
   /** What Eavesy knows about the user (about-you.md). Data too. */
   about: z.array(note).max(MAX_ABOUT).default([]),
+  /** What this Mac build can do beyond the base tools, e.g. "security". Unknown names are ignored. */
+  features: z.array(z.string().max(32)).max(10).default([]),
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.array(block).min(1).max(20) })).min(1).max(MAX_MESSAGES),
 });
 
@@ -255,15 +289,15 @@ export function memoryBlock(notes: readonly string[], about: readonly string[] =
 
 export async function runTurn(
   client: AssistantClient,
-  input: Omit<TurnInput, 'style' | 'instructions' | 'memory' | 'about'> & { style?: AssistantStyle; instructions?: string[]; memory?: string[]; about?: string[] },
+  input: Omit<TurnInput, 'style' | 'instructions' | 'memory' | 'about' | 'features'> & { style?: AssistantStyle; instructions?: string[]; memory?: string[]; about?: string[]; features?: string[] },
 ): Promise<TurnReply> {
   const notes = memoryBlock(input.memory ?? [], input.about ?? []);
-  const prompt = systemPrompt(input.style, input.instructions);
+  const prompt = systemPrompt(input.style, input.instructions, input.features);
   const message = await client.messages.create({
     model: MODELS.assistant,
     max_tokens: REPLY_TOKENS,
     system: notes ? [{ type: 'text', text: prompt }, { type: 'text', text: notes }] : prompt,
-    tools: ASSISTANT_TOOLS,
+    tools: toolsFor(input.features),
     messages: input.messages,
   });
   // Metadata only: never log the conversation.

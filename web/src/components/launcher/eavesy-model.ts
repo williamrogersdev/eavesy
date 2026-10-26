@@ -4,6 +4,8 @@ import type { AssistantActivity, AssistantCard, AssistantMode, AssistantRuleChan
 const TOOL_LABELS: Record<string, string> = {
   machine_overview: 'Looked at this Mac',
   agent_sessions: 'Checked your agent sessions',
+  security_status: 'Checked security settings',
+  security_fix: 'Security fix',
   open_link: 'Opened a link',
   clean_machine: 'Clean-up',
   remember: 'Memory',
@@ -11,6 +13,9 @@ const TOOL_LABELS: Record<string, string> = {
   // The names the action core logs to Activity.
   'machine.overview': 'Looked at this Mac',
   'agents.sessions': 'Checked your agent sessions',
+  'security.status': 'Checked security settings',
+  'security.fix': 'Security fix',
+  'security.open_settings': 'Opened System Settings',
   'open.link': 'Opened a link',
   'machine.clean': 'Clean-up',
   'assistant.mode': 'Mode change',

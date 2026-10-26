@@ -95,6 +95,9 @@ pub struct Facts {
     /// Every row is inside a rule you accepted (C3). Set by the core from the signed
     /// rules, never by the tool.
     pub always_allowed: bool,
+    /// Changes your Mac's own security settings: an agent never runs it without your
+    /// click, whatever the mode or the folder it works in.
+    pub you_only: bool,
 }
 
 /// The second-model check's answer (C7).
@@ -139,6 +142,7 @@ pub fn decide(facts: &Facts, requester: &Requester, policy: &Effective, check: &
         Tier::Look => return Decision::Run,
         Tier::Do => {
             return match requester {
+                Requester::LocalAgent { .. } if facts.you_only => Decision::Card { warning: None },
                 Requester::You { .. } | Requester::LocalAgent { .. } => Decision::RunWithUndo { undo_for },
                 Requester::Remote { .. } | Requester::Monitor { .. } => Decision::Card { warning: None },
             };
@@ -159,7 +163,7 @@ pub fn decide(facts: &Facts, requester: &Requester, policy: &Effective, check: &
     // Remote agents and monitors always get a card; agents do unless you trust their folder.
     let acts_as_you = match requester {
         Requester::You { .. } => true,
-        Requester::LocalAgent { folder, .. } => policy.mode != Mode::Ask && is_trusted(folder.as_deref(), &policy.trusted_folders),
+        Requester::LocalAgent { folder, .. } => !facts.you_only && policy.mode != Mode::Ask && is_trusted(folder.as_deref(), &policy.trusted_folders),
         Requester::Remote { .. } | Requester::Monitor { .. } => false,
     };
     if !acts_as_you {
@@ -259,7 +263,7 @@ mod tests {
     use super::*;
 
     fn facts(tier: Tier) -> Facts {
-        Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false }
+        Facts { tier, undoable: false, safe_listed: false, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false, you_only: false }
     }
 
     fn you() -> Requester { Requester::You { spoken: false } }
@@ -280,7 +284,7 @@ mod tests {
     /// Every combination of the inputs, for the invariants below.
     fn every_case(mut assert: impl FnMut(&Facts, &Requester, &Effective, &Check, bool, Decision)) {
         for tier in TIERS {
-            for bits in 0..64u8 {
+            for bits in 0..128u8 {
                 let facts = Facts {
                     tier,
                     undoable: bits & 1 != 0,
@@ -290,6 +294,7 @@ mod tests {
                     remote_allowed: bits & 16 != 0,
                     items: 1,
                     always_allowed: bits & 32 != 0,
+                    you_only: bits & 64 != 0,
                 };
                 for requester in requesters() {
                     for m in MODES {
@@ -430,6 +435,27 @@ mod tests {
             let ruled = by_rule(facts, requester, policy.mode);
             if policy.mode == Mode::Auto && facts.tier == Tier::Click && (facts.irreversible || facts.grants_power) && !ruled {
                 assert!(!runs(&decision), "{facts:?} → {decision:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn agents_never_change_your_security_settings_without_a_click() {
+        every_case(|facts, requester, _, _, _, decision| {
+            if facts.you_only && matches!(requester, Requester::LocalAgent { .. }) && facts.tier != Tier::Look {
+                assert!(!runs(&decision), "{facts:?} → {decision:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn you_only_changes_nothing_for_you() {
+        every_case(|facts, requester, policy, check, tripped, decision| {
+            if facts.you_only && matches!(requester, Requester::You { .. }) {
+                let mut breaker = Breaker::new(Duration::from_secs(60), 1);
+                if tripped { breaker.record(); }
+                let without = Facts { you_only: false, ..facts.clone() };
+                assert_eq!(decide(&without, requester, policy, check, &breaker), decision, "{facts:?}");
             }
         });
     }

@@ -191,6 +191,12 @@ Checks, in order of how much they matter for a personal Mac:
 | Lockdown Mode | Shown as information, never "fix" | Privacy & Security |
 | DNS / proxy | What your network gave you, or a resolver you chose (named, e.g. Cloudflare WARP `127.0.2.2`) | Network |
 
+**Status:** the checks and the assistant's `security_status` and
+`security_fix` are built (`desktop/src-tauri/src/security/`). Remote
+Management isn't read yet: how to tell it apart from
+Screen Sharing without root is still to check. The Settings section, Fine and the daily run
+come next.
+
 It runs when you open the section and once a day in the background (with the
 deferral rules). A check that gets worse since the last run (firewall turned
 off, a new profile) becomes a `notice`.
@@ -448,6 +454,12 @@ of that login item" always shows the card first.
 - `launchctl bootout` for `/Library/LaunchDaemons` behind the admin prompt.
 - `profiles remove` for a user-installed profile.
 - Which sharing services can be turned off by command on macOS 26.
+- The four admin verbs `security_fix` runs today, under one prompt:
+  `socketfilterfw --setglobalstate on`, `socketfilterfw --setstealthmode on`,
+  `spctl --global-enable`, and removing `autoLoginUser` with
+  `/etc/kcpassword`. The generated AppleScript compiles in a test, and the
+  checkup's reads were run on a real Mac, but no verb has run yet: running
+  them on William's Mac would change his settings.
 
 A verb that doesn't work by command falls back to opening the pane.
 

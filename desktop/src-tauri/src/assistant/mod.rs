@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn unattended_runs_trip_the_breaker_for_the_next_one() {
-        let facts = Facts { tier: Tier::Click, undoable: true, safe_listed: true, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false };
+        let facts = Facts { tier: Tier::Click, undoable: true, safe_listed: true, irreversible: false, grants_power: false, remote_allowed: false, items: 1, always_allowed: false, you_only: false };
         let you = Requester::You { spoken: false };
         let bypass = Effective { mode: Mode::Bypass, trusted_folders: vec![] };
         let mut breaker = Breaker::new(std::time::Duration::from_secs(60), 3);
