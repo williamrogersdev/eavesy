@@ -20,10 +20,17 @@ it, and for all of it in the first version:
   Both become later, opt-in phases (7 and 8 below) and come with Apple's
   entitlement and approval steps.
 
-What doesn't change: monitors only propose. Every step that changes or
-removes something takes a click on a card that names exactly what it does.
-Nothing is fixed automatically. Everything stays local unless you turn on a
-switch that says otherwise. Where this doc and the architecture doc disagree
+- **The assistant does the work.** Added 2026-10-25, again at William's
+  request: you can ask Eavesy to clean up, fix a setting or deal with a
+  threat, and it acts for you. It doesn't just open the right pane. See
+  [The assistant does the work](#the-assistant-does-the-work).
+
+What doesn't change: monitors only propose, and nothing happens because a
+monitor saw something. Changes happen when you ask, through the same
+`policy.rs` tiers and modes as every other assistant action. Eavesy only ever
+makes the Mac *stricter*: no tool can turn a security setting off or silence
+an alert. Everything stays local unless you turn on a switch that says
+otherwise. Where this doc and the architecture doc disagree
 about anything else, the architecture doc wins.
 
 ## The goal
@@ -62,11 +69,15 @@ performance, "from the AI or anything, really".
    at background QoS. They pause while you record, dictate or transcribe, on
    battery, in Low Power Mode, and when the thermal state is `serious` or
    worse. They resume later.
-4. **A fix opens the right place.** Eavesy never changes a security setting
-   with a script or admin rights. "Fix" opens the exact System Settings pane
-   (`x-apple.systempreferences:` URLs) and says what to switch. Anything that
-   changes files outside Eavesy (removing a login item, quarantining a file)
-   is Click tier in `policy.rs`: a card, then your click, and it's undoable.
+4. **Fixes only tighten, and you see them before they run.** Eavesy can make
+   a fix itself, from the Security section's **Fix** button or because you
+   asked the assistant. Each tool is fixed in code to one direction, which
+   is stricter. Admin changes go through macOS's own password dialog, which
+   you type into and Eavesy never sees. Fixes Eavesy can't or shouldn't make
+   itself (FileVault, an SSH key's passphrase) open the exact System Settings
+   pane (`x-apple.systempreferences:` URLs) and walk you through it.
+   Removing or quarantining something always shows a card first. See
+   [The assistant does the work](#the-assistant-does-the-work).
 5. **Local by default; every off-device feature is its own switch.** Each
    feature that sends anything off the Mac is marked ☁ below, is off by
    default, and is listed in [Decisions](#decisions-for-william).
@@ -151,8 +162,11 @@ secret.
 ### 1. Security checkup
 
 A Security section in Settings with one line per check: a status, one
-sentence on why it matters, and **Fix** (opens the pane) or **Fine** (accept
-the risk; this check never nags again). Plus a summary at the top ("2 things
+sentence on why it matters, and **Fix** or **Fine** (accept the risk; this
+check never nags again). **Fix** makes the change through the same
+`security_fix` action the assistant uses, or opens the pane when the table
+below says it does. Only you can press **Fine**. The assistant has no tool
+for it. Plus a summary at the top ("2 things
 to fix") rather than a gamified score. A score invites gaming and implies a
 precision we don't have.
 
@@ -188,8 +202,10 @@ off, a new profile) becomes a `notice`.
 - **Grants audit** (needs Full Disk Access, opt-in). Every app with camera,
   mic, Screen Recording, Accessibility, Input Monitoring, Full Disk Access or
   Automation, grouped by power. It flags grants to apps that are deleted,
-  unsigned, or haven't run in 90 days. "Remove" opens the right Privacy &
-  Security pane, because the TCC database is Apple's to change.
+  unsigned, or haven't run in 90 days. "Remove" resets the grant with
+  `revoke_access` (`tccutil reset`), so the app has to ask again. Where
+  that doesn't work, it opens the right Privacy & Security pane. Eavesy
+  never writes to the TCC database.
 - **Screen sharing and recording right now.** ScreenCaptureKit and the
   system's own indicator tell us when something is capturing the screen.
   Shown the same way as the camera.
@@ -269,8 +285,10 @@ path for undo).
   that aren't git-ignored in your repos, and tokens in shell history
   (`AKIA…`, `ghp_…`, `sk-…`, `xox…` patterns). It reports the file and
   the kind of secret, never the value, and stores nothing but the path and a
-  hash. "Fix" explains the fix (add a passphrase, move it to the Keychain or
-  1Password CLI, rotate the key). It never edits the file for you.
+  hash. "Fix" runs `protect_secret` for the safe, local fixes (ignore the
+  file, tighten its permissions, remove a history line, each backed up). For
+  the rest (add a passphrase, move it to the Keychain or 1Password CLI,
+  rotate the key) it explains the fix and opens the place to do it.
 - **Eavesy's own captures.** Clipboard text, dictations and screenshots that
   look like a secret (same patterns, plus credit card numbers by Luhn check)
   are kept out of uploads and MCP results and are marked in history, on top
@@ -299,7 +317,10 @@ path for undo).
    (opens Wi-Fi), stop and remove the suspicious item (Click tier), rotate
    the credentials pillar 6 found, change passwords from a different device,
    and when to get professional help or reinstall macOS.
-3. **Nothing is wiped and nothing is sent.** Eavesy guides; you act.
+3. **Nothing is wiped and nothing is sent.** Eavesy can carry out each step
+   you approve: `lockdown` turns Wi-Fi off, `remove_item` removes the item,
+   `stop_process` stops a process. But it never erases the Mac, and it
+   never sends the bundle anywhere.
 
 ### 8. Deeper visibility (later, opt-in)
 
@@ -322,6 +343,110 @@ footprint small.
   like LuLu or Little Snitch. Developer ID distribution is allowed on macOS,
   but developers report activation failures on macOS 26 Tahoe
   (*developer-forum reports, unverified*). Prototype before promising it.
+
+## The assistant does the work
+
+You can say "clean up my Mac", "fix my security", "what's that new login
+item? get rid of it" or "something's wrong, lock it down", and Eavesy acts
+for you. Each action goes through `assistant::policy::decide` like every
+other tool, so the mode you chose (Ask, Auto, Bypass) applies, along with the
+rules below, which no mode loosens.
+
+### What already exists
+
+Worktree and leftover-process cleanup through the assistant is already
+built: `machine_overview` (Look) and `clean_machine` (Click, a card listing
+each worktree and process, every row re-checked before it's touched) in
+`desktop/src-tauri/src/assistant/tools.rs` and
+`web/src/server/assistant.ts`. This plan adds security tools next to them
+and doesn't change those two.
+
+### Rules every security tool follows
+
+1. **Only stricter, fixed in code.** Every tool tightens in one direction
+   that's set in Rust. The model never passes on/off, enabled/disabled or a
+   level. There is no "loosen" verb to misuse; turning a macOS security
+   setting off stays in the **Never** row of
+   [assistant.md](assistant.md).
+2. **Silencing counts as loosening.** **Fine**, "accept risk", "allow for
+   this session" and turning off a monitor are your clicks in Eavesy's UI
+   only. No assistant, agent or MCP tool dismisses or suppresses a notice,
+   because hiding an alert is the first thing a prompt injection would want.
+3. **Targets come from Eavesy, not from the model.** Destructive tools take
+   ids that a `security_status` result handed out (the same pattern as
+   `clean_machine`'s paths and pids). Right before acting, Rust checks that
+   the id is still flagged and still points at the same file (path, inode,
+   mtime) or process (pid, start time). The model can't name an arbitrary
+   path, bundle id or service.
+4. **Monitor data is untrusted text.** Plist labels, program arguments,
+   extension names and descriptions, profile names, Wi-Fi names, process
+   names and file contents can be written by an attacker. Tool results wrap
+   them as quoted data, the model is told they're not instructions, and no
+   tool takes free text from them as a target.
+5. **Secrets stay secret.** Results about secrets carry the path and the
+   kind ("AWS access key"), never the value or any part of it.
+6. **Only you can ask for security changes.** A new `Facts` field,
+   `you_only`, is set on every security tool that changes something. With
+   it, `decide` treats a `LocalAgent` like a `Monitor`: a card in every mode,
+   trusted folder or not. A coding agent can read `security_status`, but it
+   can't remove a LaunchDaemon or change the firewall unattended. `Remote`
+   gets the summary ("2 things to fix") and no changes.
+7. **Snapshot before removing.** Any removal first writes that item's
+   evidence (the file, its signer, the process tree, connections) to the
+   Something's-wrong bundle folder, so cleaning up never destroys the
+   forensics.
+8. **Admin goes through Apple's dialog.** When a change needs admin rights,
+   Eavesy runs one constant command per verb behind macOS's own password
+   prompt, one prompt per batch. You type the password into Apple's dialog
+   and Eavesy never sees it. A model's text never becomes part of the
+   command.
+
+### Tools
+
+Every new tool goes in both `desktop/src-tauri/src/assistant/tools.rs`
+(tier and facts) and `web/src/server/assistant.ts` (name and description
+for the model), as the existing ones do.
+
+| Tool | What it does | Tier and facts | In Auto mode | Phase |
+|---|---|---|---|---|
+| `security_status` | The checkup, open notices, privacy grants and secrets found (path and kind only), each with an id | Look | Runs | 1 |
+| `security_fix` `{ check }` | Tightens one setting from a fixed list: firewall on, stealth mode on, screen lock within 5 min, automatic login off, Remote Login / Screen Sharing / File Sharing off, Gatekeeper assessments on | Click, `you_only`, `safe_listed`, undoable by you in Settings (not by the assistant, rule 1); admin prompt where needed | Runs, after the macOS password prompt | 1 |
+| `security_fix` `{ check: "updates" }` | Installs pending macOS and Safari updates | Click, `you_only`, `irreversible` (may restart) | Card | 1 |
+| `security_fix` `{ check: "filevault" }` | Opens FileVault and walks you through it. Never scripted: `fdesetup enable` prints the recovery key, and a model must never see it | Do (opens a pane) | Runs | 1 |
+| `remove_item` `{ ids }` | Removes flagged persistence items: unloads a LaunchAgent/Daemon (`launchctl bootout`) and moves its plist to the Trash; removes a browser extension's folder to the Trash; removes a configuration profile (`profiles remove`); removes an added `authorized_keys` line (backed up) | Click, `you_only`; snapshot first | **Card in every mode, Bypass too.** A 10 s undo can't catch "my VPN stopped working tomorrow" | 2 |
+| `revoke_access` `{ ids }` | Resets an app's camera, mic, screen or other privacy grant (`tccutil reset <service> <bundle id>`); the app has to ask again | Click, `you_only`, undoable (the app can ask again) | Card | 3 |
+| `quarantine_file` `{ ids }` | Moves a flagged executable to `~/Eavesy/Quarantine`, removes its execute bit and keeps the quarantine attribute. **Restore** puts it back | Click, `you_only`, undoable; snapshot first | Card | 4 |
+| `stop_process` `{ ids }` | Stops a flagged process you own: SIGTERM, then SIGKILL as its own click. The same code path as `clean_machine`'s processes | Click, `you_only` | Card | 4 |
+| `protect_secret` `{ ids }` | Safe, local fixes: adds a `.env` to `.gitignore`, tightens a key file to mode 600, removes a token line from shell history (backed up). For rotating a key or adding a passphrase, it opens the provider's page or `ssh-keygen -p` in Terminal for you to type | Do for `.gitignore` and permissions (undoable); Click, `you_only` for history | Runs / Card | 5 |
+| `secure_my_mac` | One card with every open fix, ticked by default, grouped as settings, removals and secrets, with one admin prompt for the batch. Whatever you untick stays as it is | Click, `you_only` | Card | 6 |
+| `lockdown` | For "something's wrong": freezes the evidence bundle, turns Wi-Fi off, and puts the steps from pillar 7 on one card | Click, `you_only` | Card | 6 |
+| `clean_up_everything` | "Clean up my Mac": `clean_machine`'s stale worktrees and orphans, plus Eavesy's own old caches, on one card | Click (as `clean_machine`) | Card | 2 |
+
+How a request goes:
+
+> You: "Fix my security."
+> Eavesy calls `security_status`, then `secure_my_mac`. A card lists:
+> firewall on, stealth mode on, Remote Login off, remove an unsigned
+> LaunchAgent `com.example.helper` (snapshot kept), and add `.env` in
+> `~/Developer/foo` to `.gitignore`. You untick the LaunchAgent and click
+> **Fix 4**. macOS asks for your password once. Eavesy says "Done: 4 fixed,
+> 1 left as it was." The Activity log has each change, and Settings → Security
+> shows each setting's new state.
+
+In Auto mode, "turn the firewall on" runs straight away after the password
+prompt, because it's a safe-listed tightening of a single setting. "Get rid
+of that login item" always shows the card first.
+
+**Not verified yet.** These still need a test in the VM
+(`desktop/scripts/vm-test.sh`), not on William's Mac:
+
+- `tccutil reset` for system-level services (Accessibility, Screen
+  Recording) as the user.
+- `launchctl bootout` for `/Library/LaunchDaemons` behind the admin prompt.
+- `profiles remove` for a user-installed profile.
+- Which sharing services can be turned off by command on macOS 26.
+
+A verb that doesn't work by command falls back to opening the pane.
 
 ## Phase 0: harden Eavesy itself
 
@@ -392,8 +517,12 @@ each behind the Security section's own switch until 1.0 is complete:
    checks.
 5. **Secrets** (pillar 6): the local scan, secret-looking captures kept out
    of uploads, and the agent credential-path cards.
-6. **Something's wrong** (pillar 7): the evidence bundle and guided steps.
-   Voice ("Is my Mac OK?") and MCP (`machine_status` gains a `security`
+Each phase ships its assistant tools with it (see the "Phase" column in
+[The assistant does the work](#the-assistant-does-the-work)), so you can ask
+for a fix the day you can see the problem.
+
+6. **Something's wrong** (pillar 7): the evidence bundle and guided steps,
+   `secure_my_mac` and `lockdown`. Voice ("Is my Mac OK?") and MCP (`machine_status` gains a `security`
    section for the local tier only; the remote tier gets "2 things to fix"
    and nothing more).
 
@@ -430,6 +559,17 @@ and check that each produces exactly one notice.
 7. ☁ **"Explain this".** Allow the optional cloud explanation on a security
    card (names and numbers only, no paths or file contents), or keep
    explanations local and rule-written? Recommended: rule-written only.
+8. **Admin prompt or a privileged helper.** One macOS password prompt per
+   batch of admin fixes (recommended), or a root helper registered with
+   `SMAppService`, which would mean no prompts after setup. The helper is the
+   biggest privilege increase Eavesy could make, against the spirit of
+   phase 0. If it's ever built, it accepts only the fixed tighten-only
+   verbs, takes no command strings, and checks its caller by audit token and
+   code-signing requirement, not by pid.
+9. **Auto mode and settings fixes.** Let Auto mode run single-setting
+   tightenings (firewall on and the like) after the password prompt without
+   a card (recommended), or keep a card for every security change in every
+   mode?
 
 ## Sources
 
