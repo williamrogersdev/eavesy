@@ -806,3 +806,4 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 
 /* Eavesy's answer on the pill: the full reply, scrolling when it runs long. */
 .ctl-answer { flex: 1; min-height: 0; overflow-y: auto; user-select: text; }
+.ctl-reply-hint { flex: none; margin: 4px 0 0; color: var(--ev-ink-3); font: var(--ev-t-small); }

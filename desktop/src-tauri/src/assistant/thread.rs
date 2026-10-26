@@ -308,19 +308,34 @@ async fn ask(app: &AppHandle, style: super::style::Style, instructions: &[String
         .json(&TurnRequest { style, instructions, memory: &notes.memory, about: &notes.about, messages })
         .send()
         .await
-        .map_err(|_| "I can't reach Eavesy's cloud right now.".to_string())?;
+        .map_err(|error| {
+            tracing::warn!("assistant turn not sent: {error}");
+            "I can't reach Eavesy's cloud right now.".to_string()
+        })?;
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        tracing::warn!("assistant turn rate limited");
         return Err("That's today's limit for talking to me. It resets at midnight UTC.".into());
+    }
+    if matches!(response.status(), reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN) {
+        tracing::warn!("assistant turn refused: {}", response.status());
+        return Err("Eavesy couldn't sign you in. Sign in again from Settings → Account.".into());
+    }
+    if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        tracing::warn!("assistant turn refused: {}", response.status());
+        return Err("This conversation got too big for me to send. Press Clear to start fresh.".into());
     }
     if response.status().is_client_error() {
         tracing::warn!("assistant turn refused: {}", response.status());
-        return Err("This conversation got too big for me to send. Press Clear to start fresh.".into());
+        return Err("Eavesy's cloud turned that message down. Try again in a moment.".into());
     }
     if !response.status().is_success() {
         tracing::warn!("assistant turn unavailable: {}", response.status());
         return Err("I can't reach my model right now. Try again in a moment.".into());
     }
-    let body: TurnResponse = response.json().await.map_err(|_| "I got an answer I couldn't read.".to_string())?;
+    let body: TurnResponse = response.json().await.map_err(|error| {
+        tracing::warn!("assistant turn unreadable: {error}");
+        "I got an answer I couldn't read.".to_string()
+    })?;
     // Only text and tool calls come back from the model.
     Ok(body.content.into_iter().filter(|block| matches!(block, Block::Text { .. } | Block::ToolUse { .. })).collect())
 }
