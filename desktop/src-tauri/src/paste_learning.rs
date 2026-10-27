@@ -193,9 +193,10 @@ mod mac {
             let subrole = string(field, "AXSubrole").unwrap_or_default();
             // Web pages and Electron apps type into editable groups and search
             // fields as often as text fields: any element whose text can be set
-            // counts. An empty field may have no text to read until the paste lands.
+            // and that has a caret counts (a slider's value is settable too).
+            // An empty field may have no text to read until the paste lands.
             let text_role = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(&role.as_str());
-            if subrole == "AXSecureTextField" || !(text_role || settable(field, "AXValue")) {
+            if subrole == "AXSecureTextField" || !(text_role || (settable(field, "AXValue") && caret(field).is_some())) {
                 CFRelease(field);
                 return None;
             }
@@ -303,6 +304,10 @@ mod mac {
                 let Some(value) = (unsafe { field_text(field) }) else {
                     break "unreadable";
                 };
+                // A paste that landed during the read may be in it: keep the reading before.
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    break "superseded";
+                }
                 if !watch.follow(&value, unsafe { caret(field) }) {
                     break "gone";
                 }
@@ -503,7 +508,7 @@ mod tests {
     fn web_view_spaces_and_curled_quotes_still_match() {
         let value = normalize("Hi\u{a0}there, it\u{2019}s Repackify");
         assert!(Watch::start(&value, &normalize("there, it's Repackify"), None).is_some());
-        assert_eq!(normalize("a\u{a0}b\u{201c}c\u{201d}").encode_utf16().count(), "a\u{a0}b\u{201c}c\u{201d}".encode_utf16().count());
+        assert_eq!(normalize("a\u{a0}b\u{201c}c\u{201d} \u{2018}d\u{2019}"), "a b\"c\" 'd'");
     }
 
     #[test]
