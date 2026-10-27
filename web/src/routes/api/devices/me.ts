@@ -31,14 +31,16 @@ export const Route = createFileRoute('/api/devices/me')({
         )[0];
         // Normalize in priority order, then store oldest first because the Mac
         // takes the last 100 cached words. Confirmed spellings beat manual duplicates.
-        const learnedNewestFirst = (await dictionary.listForTranscription(getDb(), actor.userId)).map(e => e.to);
+        const entries = await dictionary.listForTranscription(getDb(), actor.userId);
         const vocabulary = normalizeVocabulary([
-          ...learnedNewestFirst, ...parseVocabulary(user?.customVocabularyJson).reverse(),
+          ...entries.map(e => e.to), ...parseVocabulary(user?.customVocabularyJson).reverse(),
         ]).reverse();
         return Response.json({
           email: user?.email ?? null,
           name: user?.displayName ?? null,
           vocabulary,
+          // Newest first, for the Mac to spell dictations itself when polishing can't answer in time.
+          corrections: entries.slice(0, 200).map(({ from, to }) => ({ from, to })),
           language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },
