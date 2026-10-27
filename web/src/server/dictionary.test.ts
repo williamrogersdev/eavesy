@@ -95,6 +95,21 @@ test('a fix made once is a suggestion until it is made again or kept, and revers
   expect(await steering()).toEqual(['SEU>SEO', 'cube cuddle>Kubectl']);
 });
 
+test('a fix to a different word restarts the count, and rows from before the count are suggestions', async () => {
+  const t = setup();
+  const learn = async (to: string) => {
+    t.sqlite.run("UPDATE personal_dictionary SET updated_at = 1");
+    return dictionary.rememberCorrections(t.db, 'u1', [{ from: 'cube cuddle', to }], 'learned');
+  };
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: true }]);
+  expect(await learn('KubeCTL')).toEqual([{ from: 'cube cuddle', to: 'KubeCTL', pending: true }]);
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: true }]);
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: false }]);
+  t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, origin, created_at, updated_at) VALUES
+    ('w9', 'u1', 'yvesy', 'Yvesy', 'Eavesy', 'learned', 1, 1)`);
+  expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.to)).toEqual(['Kubectl']);
+});
+
 test('a bulk paste adds every valid replacement and counts the rest as skipped', async () => {
   const t = setup();
   const result = await t.request('PUT', { entries: [

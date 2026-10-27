@@ -5,12 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, IconButton } from '@/components/launcher/ui';
 import { dictionaryRequest } from '@/lib/desktop/bridge';
 import { MAX_BULK_REPLACEMENTS, parseReplacements } from '@/lib/dictionary/bulk';
-import { normalizeTerm } from '@/lib/dictionary/learning';
+import { isConfirmed, normalizeTerm } from '@/lib/dictionary/learning';
 
 type Entry = { id: string; from: string; to: string; origin?: 'manual' | 'learned' | null; seen?: number };
 
-/** Learned from one edit and not yet kept: listed for review, never applied (CONFIRMING_SIGHTINGS on the server). */
-const isSuggestion = (entry: Entry) => entry.origin !== 'manual' && (entry.seen ?? 1) < 2;
+/** Learned from one edit and not yet kept: listed for review, never applied. */
+const isSuggestion = (entry: Entry) => !isConfirmed(entry);
 type SaveResult = { learned?: number; skipped?: number; status?: string; message?: string };
 
 /** A list this long gets a filter box. */
@@ -184,12 +184,17 @@ export function DictionarySettings({ active = false }: { active?: boolean }) {
   const dismiss = (entry: Entry) => void run(async () => {
     await dictionaryRequest('DELETE', { id: entry.id });
     return `Dismissed “${entry.from} → ${entry.to}”.`;
-  }, entry);
+  });
   const dismissAll = () => void run(async () => {
+    let failed = 0;
     for (let at = 0; at < suggestions.length; at += 10) {
-      await Promise.all(suggestions.slice(at, at + 10).map((entry) => dictionaryRequest('DELETE', { id: entry.id })));
+      const results = await Promise.allSettled(suggestions.slice(at, at + 10).map((entry) => dictionaryRequest('DELETE', { id: entry.id })));
+      failed += results.filter((result) => result.status === 'rejected').length;
     }
-    return suggestions.length === 1 ? 'Dismissed 1 suggestion.' : `Dismissed ${suggestions.length} suggestions.`;
+    const done = suggestions.length - failed;
+    if (failed && !done) throw new Error('Couldn’t dismiss the suggestions. Check your connection and try again.');
+    const dismissed = done === 1 ? 'Dismissed 1 suggestion.' : `Dismissed ${done} suggestions.`;
+    return failed ? `${dismissed} ${failed} couldn’t be dismissed; try again.` : dismissed;
   });
 
   const query = normalizeTerm(filter);

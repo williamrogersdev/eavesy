@@ -1,5 +1,9 @@
 /** Only differences made by a person enter the dictionary. Never feed model output here. */
 export interface LearnedCorrection { from: string; to: string }
+/** A learned fix steers transcription once it has been made this many times; until then it is a suggestion. */
+export const CONFIRMING_SIGHTINGS = 2;
+/** Typed by hand, kept from a suggestion, or the same fix made more than once. */
+export const isConfirmed = (e: { origin?: string | null; seen?: number }) => e.origin === 'manual' || (e.seen ?? 1) >= CONFIRMING_SIGHTINGS;
 export const normalizeTerm = (text: string) => text.normalize('NFKC').toLocaleLowerCase('en').replace(/\s+/g, ' ').trim();
 const words = (text: string) => [...text.matchAll(/[\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*/gu)].map(m => ({ text: m[0], start: m.index, end: m.index + m[0].length }));
 const protectedWords = (text: string) => text.toLowerCase().match(/\p{N}+|\b(?:no|not|never|cannot|without|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|\w+n['’]t)\b/gu) ?? [];

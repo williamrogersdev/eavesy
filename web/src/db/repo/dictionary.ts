@@ -2,20 +2,18 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { personalDictionary } from '../schema';
 import { pid } from '../ids';
-import { isLearnableSpelling, normalizeTerm, validCorrection, type LearnedCorrection } from '@/lib/dictionary/learning';
+import { isConfirmed, isLearnableSpelling, normalizeTerm, validCorrection, type LearnedCorrection } from '@/lib/dictionary/learning';
 
 export async function list(db: AppDb, userId: string) {
   return db.select().from(personalDictionary).where(eq(personalDictionary.userId, userId))
     .orderBy(desc(personalDictionary.updatedAt)).limit(500);
 }
 
-/** A learned fix steers transcription once it has been made this many times. */
-export const CONFIRMING_SIGHTINGS = 2;
-/** The same fix arriving again this soon is a retry of one edit, not a second sighting. */
+/**
+ * The same fix arriving again this soon is a retry of one edit, not a second sighting.
+ * Only sightings and edits made by hand write a row, so `updatedAt` is the last sighting.
+ */
 const RETRY_MS = 30_000;
-
-/** Typed by hand, kept from a suggestion, or the same fix made more than once. */
-export const isConfirmed = (e: { origin: string | null; seen: number }) => e.origin === 'manual' || e.seen >= CONFIRMING_SIGHTINGS;
 
 /** Entries trusted enough to steer transcription. A fix seen once is only a suggestion. */
 export async function listForTranscription(db: AppDb, userId: string) {
@@ -48,6 +46,7 @@ export async function rememberCorrections(db: AppDb, userId: string, corrections
     keys.add(key); return true;
   });
   if (!accepted.length) return [];
+  // A fix to a different word restarts the count: the user hasn't settled on one spelling yet.
   const sighting = origin === 'learned'
     ? (c: LearnedCorrection) => sql`CASE WHEN ${personalDictionary.to} = ${c.to} THEN ${personalDictionary.seen} + 1 ELSE 1 END`
     : () => sql`${personalDictionary.seen}`;
@@ -65,11 +64,14 @@ export async function rememberCorrections(db: AppDb, userId: string, corrections
     eq(personalDictionary.userId, userId), eq(personalDictionary.sourceKey, normalizeTerm(c.to)),
     sql`lower(${personalDictionary.to}) = ${normalizeTerm(c.from)}`,
     sql`coalesce(${personalDictionary.origin}, '') <> 'manual'`,
+    // Only once the new direction was admitted, so a full dictionary never loses the old one for nothing.
+    sql`EXISTS (SELECT 1 FROM personal_dictionary WHERE user_id = ${userId} AND source_key = ${normalizeTerm(c.from)} AND to_text = ${c.to})`,
   )));
-  const rows = await db.batch([...writes, ...reversals] as [typeof writes[number], ...typeof writes[number][]]);
-  // db.batch returns one result per statement, in order, so rows[i] is accepted[i].
+  const results = await db.batch([...writes, ...reversals] as [typeof writes[number], ...typeof writes[number][]]);
+  // db.batch returns one result per statement, in order: the writes, then the reversals.
+  const rows = results.slice(0, writes.length) as { origin: string | null; seen: number }[][];
   return accepted.flatMap(({ from, to }, index) => {
-    const row = (rows[index] as { origin: string | null; seen: number }[])[0];
+    const row = rows[index][0];
     return row ? [{ from, to, pending: !isConfirmed(row) }] : [];
   });
 }
