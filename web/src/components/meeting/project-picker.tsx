@@ -2,10 +2,9 @@
 
 import { FolderOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { listProjects, setMeetingProject, type ProjectSummary } from '@/lib/api/projects';
+import { listProjects, setMeetingProject } from '@/lib/api/projects';
 import { useRouter } from '@/lib/next-compat/navigation';
-
-const MANAGE = '__manage__';
+import { chooseProject, loadPicker, projectOptions, type PickerState } from './project-options';
 
 /** Which project a recording belongs to; changing it rebuilds the cleaned transcript. */
 export function ProjectPicker({
@@ -17,33 +16,28 @@ export function ProjectPicker({
   projectId: string | null;
   onSaved: () => void;
 }) {
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [state, setState] = useState<PickerState>({ kind: 'loading' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     const controller = new AbortController();
-    void listProjects(controller.signal)
-      .then(setProjects)
-      .catch((cause: unknown) => {
-        if (cause instanceof DOMException && cause.name === 'AbortError') return;
-        setLoadFailed(true);
-      });
+    void loadPicker(listProjects, controller.signal).then((next) => {
+      if (next) setState(next);
+    });
     return () => controller.abort();
   }, []);
 
-  if (loadFailed) {
+  if (state.kind === 'unavailable') {
     return (
       <span className="inline-flex h-6 items-center gap-1 rounded-full bg-ev-well px-2.5 text-ev-ink-3" title="Your projects couldn't be loaded. Reload the page to try again.">
         <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-        Projects unavailable
+        {state.label}
       </span>
     );
   }
-  if (projects === null) return null;
-  const known = projects.some((project) => project.id === projectId);
+  if (state.kind === 'loading') return null;
 
   return (
     <span className="inline-flex h-6 items-center gap-1 rounded-full bg-ev-well px-2.5">
@@ -53,27 +47,32 @@ export function ProjectPicker({
         disabled={saving}
         aria-label="Project"
         onChange={(event) => {
-          const next = event.target.value;
-          if (next === MANAGE) {
-            event.target.value = projectId ?? '';
-            void router.push('/app/projects');
-            return;
-          }
-          setSaving(true);
+          const select = event.target;
           setError(null);
-          void setMeetingProject(meetingId, next || null)
-            .then(onSaved)
-            .catch(() => setError('Could not change the project.'))
-            .finally(() => setSaving(false));
+          void chooseProject(meetingId, select.value, {
+            manage: () => {
+              select.value = projectId ?? '';
+              void router.push('/app/projects');
+            },
+            assign: async (id, next) => {
+              setSaving(true);
+              try {
+                await setMeetingProject(id, next);
+              } finally {
+                setSaving(false);
+              }
+            },
+          })
+            .then((done) => {
+              if (done === 'assigned') onSaved();
+            })
+            .catch(() => setError('Could not change the project.'));
         }}
         className="max-w-[12rem] cursor-pointer truncate rounded bg-transparent font-round text-[12.5px] font-semibold text-ev-ink-2 outline-none hover:text-ev-ink focus-visible:shadow-[var(--ev-focus)]"
       >
-        <option value="">No project</option>
-        {projectId && !known ? <option value={projectId}>Unknown project</option> : null}
-        {projects.map((project) => (
-          <option key={project.id} value={project.id}>{project.name}</option>
+        {projectOptions(state.projects, projectId).map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
         ))}
-        <option value={MANAGE}>{projects.length ? 'Manage projects…' : 'Create a project…'}</option>
       </select>
       {error ? <span role="alert" className="text-ev-warn-ink">{error}</span> : null}
     </span>

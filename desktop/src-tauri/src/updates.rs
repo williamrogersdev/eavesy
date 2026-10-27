@@ -343,6 +343,25 @@ mod tests {
     }
 
     #[test]
+    fn only_the_exact_installed_version_is_held_back() {
+        let available = |version: &str| UpdateState::Available { version: version.into(), notes: Some("notes".into()) };
+        assert_eq!(keep_installed(Some("1.2.3"), available("1.2.3")), UpdateState::Installed { version: "1.2.3".into() });
+        for newer in ["1.2.4", "1.3.0", "2.0.0"] {
+            assert_eq!(keep_installed(Some("1.2.3"), available(newer)), available(newer));
+        }
+        for malformed in ["", "v1.2.3", "1.2.3 ", "1.2"] {
+            assert_eq!(keep_installed(Some("1.2.3"), available(malformed)), available(malformed));
+        }
+        assert_eq!(keep_installed(Some("1.2.3"), UpdateState::UpToDate), UpdateState::UpToDate);
+        assert_eq!(keep_installed(Some("1.2.3"), UpdateState::Unknown), UpdateState::Unknown);
+    }
+
+    #[test]
+    fn an_unknown_status_reads_as_up_to_date() {
+        assert_eq!(dialog_text(&status(UpdateState::Unknown)), dialog_text(&status(UpdateState::UpToDate)));
+    }
+
+    #[test]
     fn a_read_only_install_error_asks_to_move_to_applications() {
         use std::io::Error as IoError;
         for code in [18, 30] {
