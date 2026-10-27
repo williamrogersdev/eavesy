@@ -19,7 +19,7 @@ export const CLEANUP_CHUNK_CHARS = 12_000;
 const CLEANUP_CONCURRENCY = 3;
 
 const SHARED_RULES = `Do:
-- Remove every filler word and verbal tic that carries no meaning: "um", "uh", "you know", "I mean", "sort of", "kind of", "basically", "literally", "right?", and "like" whenever it isn't a verb, a comparison or "about" (as in "like five minutes"). Also drop "so", "okay", "yeah" and "and" when they only open a sentence out of habit. This is the part people notice most: when in doubt about a "like", it goes.
+- Remove every filler word and verbal tic that carries no meaning: "um", "uh", "you know", "I mean", "sort of", "kind of", "basically", "literally", "right?", and "like" whenever it isn't a verb, a comparison or "about" (as in "like five minutes"). Also drop "so", "okay" and "yeah" when they only open a sentence out of habit, not when they answer something. This is the part people notice most: when in doubt about a "like", it goes.
 - Remove stutters, repeated words and false starts.
 - When the speaker corrects themselves, keep only the corrected version. If what they ruled out is a constraint, keep it in brackets: "use Postgres (not Redis)".
 - Fix punctuation, capitalisation and sentence boundaries.
@@ -47,7 +47,7 @@ function dictationPrompt(context: string | null) {
   return `You clean up a dictation: one person speaking, whose words are typed at their cursor in whatever app they are using (a chat, an email, a coding agent, a document), as if they had typed them.
 
 ${SHARED_RULES}
-- Give your best reading of words that are hard to make out; never insert markers. The words come from speech recognition, so a word that makes no sense where it is was probably misheard: replace it with the similar-sounding word that fits, especially a name or term from the context below.
+- Give your best reading of words that are hard to make out; never insert markers. The words come from speech recognition, so a word that makes no sense where it is may be a mishearing of a name or term from the context below: use that spelling only when it sounds alike and fits. Otherwise keep the word as heard.
 - Keep a short dictation as plain sentences. Break a long one into short paragraphs by topic, and when the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.
 
 Example: "Yeah so, like, I think we should, um, you know, move the the call to like Thursday, and, like, invite Sam." becomes "I think we should move the call to Thursday and invite Sam."${contextBlock(context)}`;

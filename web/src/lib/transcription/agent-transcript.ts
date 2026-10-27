@@ -54,8 +54,13 @@ export function toTurns(
 }
 
 const FILLERS = /(^|[\s,.;:!?])(?:u+m+|u+h+m*|e+r+m+|h+m+|m+h*m+)(?=[\s,.;:!?]|$)[,.]?/gi;
-/** "like", "you know" or "I mean" opening the text or a clause, closed by a comma or the sentence's end. Not "like, 5" (about five). */
-const DISCOURSE = /(^|[,.;:!?])\s*(?:like(?!,\s*\d)|you know|i mean)(?:,|(?=[.?!]|$))\s*(\S)?/gi;
+/**
+ * "like", "you know" or "I mean" opening the text or a clause, closed by a comma or the sentence's end.
+ * Not "like, 5" (about five), and after a comma "like" goes only when the comma follows a word like
+ * "and" or "so": "a tool, like, a hammer" means "such as".
+ */
+const DISCOURSE = /(^|[,.;:!?])\s*(like(?!,\s*\d)|you know|i mean)(?:,|(?=[.?!]|$))\s*(\S)?/gi;
+const CONNECTIVE = /\b(?:and|but|so|or|yeah|okay|because|then|well)$/i;
 const STUTTER_WORDS = new Set(['i', 'a', 'the', 'and', 'so', 'we', 'it', 'to', 'you', 'but', 'is', 'in', 'of']);
 
 /**
@@ -68,8 +73,11 @@ export function stripFillers(text: string): string {
   // Neighbouring ones share a comma, so one pass can miss the next.
   for (let previous = ''; previous !== out; ) {
     previous = out;
-    out = out.replace(DISCOURSE, (_match: string, before: string, after: string | undefined) => {
+    out = out.replace(DISCOURSE, (match: string, before: string, word: string, after: string | undefined, offset: number, whole: string) => {
+      if (before === ',' && /^like$/i.test(word) && !CONNECTIVE.test(whole.slice(0, offset))) return match;
+      // One mark between the words either side: a sentence's end beats a comma.
       if (!after) return before;
+      if (/[.!?]/.test(after)) return /[.!?]/.test(before) ? before : after;
       // Dropped from the start of a sentence: the next word starts it.
       const next = /[.!?]/.test(before) ? after.toUpperCase() : after;
       return before ? `${before} ${next}` : next;

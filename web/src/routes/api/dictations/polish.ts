@@ -49,6 +49,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
         }
 
         // All at once: the Mac app waits for these words before it pastes.
+        // The lookups run even for a request over quota; they are cheap reads.
         const [overQuota, user, entries, projectRow] = await Promise.all([
           guardUserQuota(actor.userId, 'dictation'),
           usersRepo.getById(getDb(), actor.userId),

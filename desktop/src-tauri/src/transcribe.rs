@@ -140,7 +140,9 @@ pub fn drop_fillers(text: &str) -> String {
     static SPACES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
     // "like", "you know" or "I mean" opening the text or a clause and closed
     // by a comma or the sentence's end. "I like, um, apples" and "as you
-    // know, it" are not this, and nor is "like, five" (about five).
+    // know, it" are not this, nor is "like, five" (about five) or "a tool,
+    // like, a hammer" (such as): after a comma, "like" goes only when the
+    // comma follows a word like "and" or "so".
     static DISCOURSE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)(^|[,.;:!?])\s*(like|you know|i mean)(,|[.?!]|$)(\s*)(\S)?").unwrap()
     });
@@ -151,14 +153,18 @@ pub fn drop_fillers(text: &str) -> String {
         let next = DISCOURSE.replace_all(&next, |caps: &regex::Captures| {
             let before = &caps[1];
             let after = caps.get(5).map_or("", |m| m.as_str());
-            if caps[2].eq_ignore_ascii_case("like") && after.starts_with(|c: char| c.is_ascii_digit()) {
+            let like = caps[2].eq_ignore_ascii_case("like");
+            let start = caps.get(0).map_or(0, |m| m.start());
+            if like && (after.starts_with(|c: char| c.is_ascii_digit()) || (before == "," && !follows_a_connective(&next[..start]))) {
                 return caps[0].to_string();
             }
-            let end = if &caps[3] == "," { "" } else { &caps[3] };
-            let space = if after.is_empty() || before.is_empty() { "" } else { " " };
+            let terminates = matches!(before, "." | "!" | "?");
+            // One mark between the words either side: a sentence's end beats a comma.
+            let mark = if &caps[3] == "," || caps[3].is_empty() || terminates { before } else { &caps[3] };
+            let space = if after.is_empty() || mark.is_empty() { "" } else { " " };
             // Dropped from the start of a sentence: the next word starts it.
-            let after = if end.is_empty() && matches!(before, "." | "!" | "?") { after.to_uppercase() } else { after.to_string() };
-            format!("{before}{end}{space}{after}")
+            let after = if terminates { after.to_uppercase() } else { after.to_string() };
+            format!("{mark}{space}{after}")
         }).into_owned();
         if next == out { break; }
         out = next;
@@ -167,6 +173,13 @@ pub fn drop_fillers(text: &str) -> String {
     let out = DOUBLED_PUNCT.replace_all(&out, "$2");
     let out = SPACES.replace_all(&out, " ");
     out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
+}
+
+/// Whether `text` ends in a word that only joins clauses ("and", "but",
+/// "so"…): a "like" set off by commas after one is filler, not "such as".
+fn follows_a_connective(text: &str) -> bool {
+    let word = text.rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+    ["and", "but", "so", "or", "yeah", "okay", "because", "then", "well"].iter().any(|w| word.eq_ignore_ascii_case(w))
 }
 
 /// How long a tone change waits for its rewrite: asked for, and watched, but
@@ -502,6 +515,10 @@ mod tests {
         assert_eq!(strip_fillers("It costs, like, 5 dollars"), "It costs, like, 5 dollars");
         assert_eq!(strip_fillers("What I mean, is this"), "What I mean, is this");
         assert_eq!(strip_fillers("Looks like rain"), "Looks like rain");
+        assert_eq!(strip_fillers("I want a tool, like, a hammer"), "I want a tool, like, a hammer");
+        // One mark where the filler ended a sentence.
+        assert_eq!(strip_fillers("Ship it. You know. Next"), "Ship it. Next");
+        assert_eq!(strip_fillers("It works. Like."), "It works.");
     }
 
     #[test]

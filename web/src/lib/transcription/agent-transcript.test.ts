@@ -63,6 +63,9 @@ describe('stripFillers', () => {
     expect(stripFillers('As you know, it broke')).toBe('As you know, it broke');
     expect(stripFillers('It costs, like, 5 dollars')).toBe('It costs, like, 5 dollars');
     expect(stripFillers('Looks like rain')).toBe('Looks like rain');
+    expect(stripFillers('I want a tool, like, a hammer')).toBe('I want a tool, like, a hammer');
+    expect(stripFillers('Ship it. You know. Next')).toBe('Ship it. Next');
+    expect(stripFillers('It works. Like.')).toBe('It works.');
   });
 });
 
