@@ -160,21 +160,22 @@ impl History {
         }
         let cancelled = std::sync::Arc::new(cancelled);
         let check = cancelled.clone();
-        self.conn.progress_handler(100, Some(move || check()));
+        self.conn.progress_handler(100, Some(move || check())).map_err(error)?;
         let result = self.prepare_search();
-        self.conn.progress_handler(0, None::<fn() -> bool>);
+        let reset = self.conn.progress_handler(0, None::<fn() -> bool>);
         match result {
             Err(_) if cancelled() => Ok(false),
-            other => other.map(|()| true),
+            Err(e) => Err(e),
+            Ok(()) => reset.map(|()| true).map_err(error),
         }
     }
 
     pub fn rollback_uncommitted(&self) -> Result<(), String> {
-        self.conn.progress_handler(0, None::<fn() -> bool>);
+        let reset = self.conn.progress_handler(0, None::<fn() -> bool>);
         if !self.conn.is_autocommit() {
             self.conn.execute_batch("ROLLBACK").map_err(error)?;
         }
-        Ok(())
+        reset.map_err(error)
     }
 
     pub fn import_complete(&self) -> Result<bool, String> {
@@ -213,10 +214,10 @@ impl History {
         if cancelled() {
             return Err("History search superseded".into());
         }
-        self.conn.progress_handler(100, Some(cancelled));
+        self.conn.progress_handler(100, Some(cancelled)).map_err(error)?;
         let result = self.page(offset, limit, query, category);
-        self.conn.progress_handler(0, None::<fn() -> bool>);
-        result
+        let reset = self.conn.progress_handler(0, None::<fn() -> bool>);
+        result.and_then(|page| reset.map(|()| page).map_err(error))
     }
 
     pub fn get(&self, id: &str) -> Result<Option<StoredRecording>, String> {
@@ -430,7 +431,7 @@ impl History {
             .prepare("SELECT category,count(*) FROM history_recordings GROUP BY category")
             .map_err(error)?;
         for row in stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, usize::try_from(r.get::<_, i64>(1)?).unwrap_or(0))))
             .map_err(error)?
         {
             let (category, count) = row.map_err(error)?;
