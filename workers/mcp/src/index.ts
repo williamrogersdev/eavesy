@@ -712,7 +712,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       return withQuota(env, userId, 'drop', async () => {
         try {
           // Always the token owner's own inbox: no argument names a user or a device.
-          const drop = await createTextDrop(db, { userId, text, deviceLabel: `${token.name} (MCP)`.slice(0, 60), origin: null });
+          const drop = await createTextDrop(db, { userId, text, deviceLabel: `${token.name.slice(0, 54)} (MCP)`, origin: null });
           return { id: drop.id, bytes: drop.bytes };
         } catch (error) {
           if (error instanceof DropTooLargeError) throw new UserFacingError(tooLarge);

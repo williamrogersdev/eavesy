@@ -125,6 +125,11 @@ describe('MCP send_to_my_devices', () => {
     });
   });
 
+  it('adds no heading for a blank title', async () => {
+    const { result } = await send({ text: 'body', title: ' \n\t ' });
+    expect((await dropRow(result.id))?.text).toBe('body');
+  });
+
   it('ignores any user named in the arguments', async () => {
     const { result } = await send({ text: 'mine', userId: 'someone-else', user_id: 'someone-else' });
     expect((await dropRow(result.id))?.user_id).toBe('owner');
