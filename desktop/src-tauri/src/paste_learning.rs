@@ -181,18 +181,21 @@ mod mac {
         }
     }
     fn still_focused(target: &Target) -> bool {
+        focus(target) == Some(true)
+    }
+    /// Whether `target` has the keyboard, or None when the focused element
+    /// can't be found right now (an AX timeout), which says nothing either way.
+    fn focus(target: &Target) -> Option<bool> {
         // AXUIElement equality is defined by CFEqual, not pointer identity.
         #[link(name = "CoreFoundation", kind = "framework")]
         extern "C" {
             fn CFEqual(a: Ref, b: Ref) -> bool;
         }
         unsafe {
-            let focused = focused_element();
-            focused.is_some_and(|f| {
-                let equal = CFEqual(f, target.0 as Ref);
-                CFRelease(f);
-                equal
-            })
+            let focused = focused_element()?;
+            let equal = CFEqual(focused, target.0 as Ref);
+            CFRelease(focused);
+            Some(equal)
         }
     }
     pub fn observe(app: AppHandle, target: Option<Target>, pasted: String) {
@@ -245,7 +248,9 @@ mod mac {
                     // A new dictation took over the watch: this one's edit is not known to be finished.
                     return;
                 }
-                if !still_focused(&target) {
+                // Only another element taking the keyboard means the user left;
+                // a lookup that fails keeps watching.
+                if focus(&target) == Some(false) {
                     left_field = true;
                     break;
                 }
