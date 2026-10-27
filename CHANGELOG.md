@@ -6,6 +6,13 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-27 - desktop
+
+### Fixed
+
+- Mac app: spell dictionary words on the Mac when polishing can't answer ([#288](https://github.com/williamrogersdev/eavesy/pull/288))
+- Mac app: learn fixes made in any text field, not just some ([#287](https://github.com/williamrogersdev/eavesy/pull/287))
+
 ## [0.9.1] - 2026-10-27 - desktop
 
 ### Added
