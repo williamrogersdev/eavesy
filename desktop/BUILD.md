@@ -64,12 +64,16 @@ No shared API secret is compiled into the app. A Mac that has not been paired
 still saves captured media locally, but transcription asks the user to pair
 before making a network request.
 
-`SENTRY_DSN` is required for `build-macos-release.sh`, which fails without it
-(self-hosted builds can opt out with `EAVESY_ALLOW_NO_SENTRY=1`). It enables
-panic and operational error reporting: events keep the failing operation and
-error text, with recording, home, `/Volumes` and `/private` paths replaced
-by placeholders (folder names are meeting titles) and tokens, keys, emails and
-IPs removed. Audio, transcripts and notes are never attached. See
+`EAVESY_POSTHOG_KEY` (a PostHog project API key, `phc_…`) is read at compile
+time; set `EAVESY_POSTHOG_HOST` too for a non-US PostHog instance.
+`build-macos-release.sh` warns when it is missing, and the app then sends
+nothing. With it, the app reports panics and operational errors to PostHog
+error tracking, plus a few content-free product events (dictation started,
+pasted or copied; recording saved). Events use an anonymous per-install id.
+Error reports keep the failing operation and error text, with recording,
+home, `/Volumes` and `/private` paths replaced by placeholders (folder names
+are meeting titles) and tokens, keys, emails and IPs removed. Audio,
+transcripts and notes are never attached. See
 [../docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
 
 App logs rotate daily in `~/Library/Logs/com.eavesy.desktop` (seven files
@@ -165,9 +169,19 @@ hardened-runtime flags, and the permissions declared in `entitlements.plist`.
 
 ## Publish
 
+The wrangler configs no longer name an account, so set the production
+Cloudflare account before publishing. Without it, Wrangler refuses to pick one
+when your login can see several accounts:
+
 ```bash
+export CLOUDFLARE_ACCOUNT_ID=<production account id>
 desktop/scripts/release-macos.sh --publish
 ```
+
+If the build fails linking `aws-lc-sys` with `tapi error: malformed file` /
+`unknown architecture arm64e`, the Command Line Tools SDK is newer than the
+active Xcode's linker. Point `SDKROOT` at Xcode's own SDK, for example
+`export SDKROOT="$(xcrun --sdk macosx --show-sdk-platform-path)/Developer/SDKs/MacOSX.sdk"`.
 
 Verify `https://eavesy.com/download/mac` from a clean browser. Keep the exact
 DMG used for the smoke test so the published bytes are the tested artifact.

@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { notesLanguageRule } from '@/lib/transcription/language';
 import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
 import { MODELS } from './client';
 
@@ -79,7 +80,11 @@ export interface MeetingSummaryRequest {
   priorSummary: string;
   rolling: boolean;
   recorderName?: string;
+  /** Lines carry participants' names (a notetaker bot's diarization) rather than the Mac's two sides. */
+  labelled?: boolean;
   chapters?: boolean;
+  /** The language to write notes in; absent keeps the meeting's own. */
+  notesLanguage?: string | null;
 }
 
 function schemaFor(args: MeetingSummaryRequest) {
@@ -94,7 +99,9 @@ function schemaFor(args: MeetingSummaryRequest) {
 export function meetingSummarySystemPrompt(args: MeetingSummaryRequest): string {
   const speakers = args.recorderName
     ? `Lines are prefixed with the speaker. "${args.recorderName}" is the person who recorded the meeting, speaking into their own microphone; the other label is everyone they spoke with over the call.`
-    : 'No speaker labels are available. Do not invent speaker identities.';
+    : args.labelled
+      ? 'Lines are prefixed with the speaker: each participant\'s name as the meeting platform showed it, or "Speaker N" when it showed none. Attribute decisions and action items to those speakers; do not invent other identities.'
+      : 'No speaker labels are available. Do not invent speaker identities.';
   const context = args.contextBlurb
     ? `Context supplied by the user, to treat as ground truth:\n${args.contextBlurb}`
     : '';
@@ -112,7 +119,8 @@ Rules:
 - The title is 5-8 words.
 - Action items are concrete commitments; include an owner only when the transcript makes it explicit.
 - Decisions are concluded, not proposals still under debate.
-- Do not invent facts or attribution. Omit anything the transcript does not support.${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
+- Do not invent facts or attribution. Omit anything the transcript does not support.
+- ${notesLanguageRule(args.notesLanguage)}${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
 }
 
 export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reason' | 'content'>) {

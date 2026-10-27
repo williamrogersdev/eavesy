@@ -1,24 +1,36 @@
 @import "tailwindcss" source("../");
+@import "../components/launcher/ui/tokens.css";
+@import "../components/launcher/ui/ui.css";
+@import "../components/launcher/panel.css";
+@import "./marketing.css";
 
 :root {
   --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
   --font-geist-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+}
 
-  --background: #fbfbfa;
-  --foreground: #171719;
-  --muted: #f1f1ef;
-  --muted-foreground: #68686f;
-  --border: #dedee2;
-  --signal: #ff3b30;
-  --accent: #d92d20;
-  --accent-hover: #b42318;
-  --accent-soft: #fef2f2;
-  --action: #d92d20;
-  --action-hover: #b42318;
-  --danger: #dc2626;
-  --danger-soft: #fef2f2;
-  --primary: #1d1d20;
-  --primary-foreground: #fafafa;
+/*
+ * The whole site runs on the --ev tokens (desktop/DESIGN.md): <html> carries
+ * `.ev`, and the older semantic names below resolve to them. Red (--signal)
+ * means "recording right now" only; errors and destructive actions use warn.
+ */
+.ev {
+  --background: var(--ev-paper);
+  --foreground: var(--ev-ink);
+  --muted: var(--ev-well);
+  --muted-foreground: var(--ev-ink-2);
+  --border: var(--ev-line);
+  --signal: var(--ev-rec);
+  --accent: var(--ev-coat);
+  --accent-hover: var(--ev-coat-hover);
+  --accent-soft: var(--ev-coat-soft);
+  --action: var(--ev-coat);
+  --action-hover: var(--ev-coat-hover);
+  --danger: var(--ev-warn-ink);
+  --danger-soft: var(--ev-warn-soft);
+  --primary: var(--ev-coat);
+  --primary-foreground: var(--ev-on-coat);
+  color-scheme: light dark;
 }
 
 @theme inline {
@@ -37,40 +49,49 @@
   --color-danger-soft: var(--danger-soft);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--ev-font-text);
   --font-mono: var(--font-geist-mono);
-}
+  --font-round: var(--ev-font-round);
+  --font-text: var(--ev-font-text);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b0b0d;
-    --foreground: #fafafa;
-    --muted: #18181b;
-    --muted-foreground: #a1a1aa;
-    --border: #27272a;
-    --signal: #ff453a;
-    --accent: #f87171;
-    --accent-hover: #fca5a5;
-    --accent-soft: #2a1212;
-    --action: #dc2626;
-    --action-hover: #b91c1c;
-    --danger: #ef4444;
-    --danger-soft: #2a1212;
-    --primary: #fafafa;
-    --primary-foreground: #18181b;
-  }
+  --color-ev-paper: var(--ev-paper);
+  --color-ev-well: var(--ev-well);
+  --color-ev-raised: var(--ev-raised);
+  --color-ev-line: var(--ev-line);
+  --color-ev-line-strong: var(--ev-line-strong);
+  --color-ev-ink: var(--ev-ink);
+  --color-ev-ink-2: var(--ev-ink-2);
+  --color-ev-ink-3: var(--ev-ink-3);
+  --color-ev-coat: var(--ev-coat);
+  --color-ev-coat-hover: var(--ev-coat-hover);
+  --color-ev-coat-soft: var(--ev-coat-soft);
+  --color-ev-on-coat: var(--ev-on-coat);
+  --color-ev-manila: var(--ev-manila);
+  --color-ev-manila-soft: var(--ev-manila-soft);
+  --color-ev-manila-ink: var(--ev-manila-ink);
+  --color-ev-rec: var(--ev-rec);
+  --color-ev-leaf: var(--ev-leaf);
+  --color-ev-leaf-soft: var(--ev-leaf-soft);
+  --color-ev-warn-ink: var(--ev-warn-ink);
+  --color-ev-warn-soft: var(--ev-warn-soft);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-family: var(--ev-font-text);
   text-rendering: optimizeLegibility;
 }
 
+@layer base {
+  :where(h1, h2, h3, h4, button, label, th) {
+    font-family: var(--ev-font-round);
+  }
+}
+
 ::selection {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--foreground);
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
 }
 
 button:not(:disabled),
@@ -102,11 +123,6 @@ summary,
   animation: recording-pulse 1.4s ease-in-out infinite;
 }
 
-.bg-dot-grid {
-  background-image: radial-gradient(currentColor 1px, transparent 1px);
-  background-size: 22px 22px;
-}
-
 .text-gradient {
   background: linear-gradient(180deg, var(--foreground) 0%, color-mix(in oklab, var(--foreground) 55%, transparent) 100%);
   -webkit-background-clip: text;
@@ -122,39 +138,6 @@ summary,
   animation: fade-up 0.5s ease-out both;
 }
 
-.theme-dark {
-  --background: #0a0a0b;
-  --foreground: #fafafa;
-  --muted: #141416;
-  --muted-foreground: #9b9ba6;
-  --border: #232327;
-  --signal: #ff453a;
-  --accent: #f87171;
-  --accent-hover: #fca5a5;
-  --accent-soft: #2a1212;
-  --action: #dc2626;
-  --action-hover: #b91c1c;
-  --primary: #fafafa;
-  --primary-foreground: #101014;
-  background: var(--background);
-  color: var(--foreground);
-  color-scheme: dark;
-}
-
-.text-brand-gradient {
-  background-image: linear-gradient(108deg, #ffffff 0%, #ffffff 55%, #ff5c52 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-@keyframes aurora-float {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33%      { transform: translate(5%, -4%) scale(1.1); }
-  66%      { transform: translate(-4%, 5%) scale(0.94); }
-}
-.animate-aurora { animation: aurora-float 20s ease-in-out infinite; }
-
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 .animate-marquee { animation: marquee 30s linear infinite; }
 
@@ -168,25 +151,10 @@ summary,
 .animate-spin-slow { animation: spin-slow 8s linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-aurora, .animate-marquee, .animate-eq, .animate-spin-slow,
+  .animate-marquee, .animate-eq, .animate-spin-slow,
   .animate-fade-up, .animate-recording-pulse { animation: none; }
 }
 
-.launcher-scope {
-  --lr-brand: #ef4444;
-  --lr-brand-ink: #fecaca;
-  --lr-surface: color-mix(in srgb, var(--background) 86%, transparent);
-  --lr-elevated: color-mix(in srgb, var(--background) 70%, transparent);
-  --lr-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --lr-selected: color-mix(in srgb, var(--lr-brand) 16%, transparent);
-  --lr-brand-soft: color-mix(in srgb, var(--lr-brand) 20%, transparent);
-}
-@media (prefers-color-scheme: light) {
-  .launcher-scope {
-    --lr-brand: #dc2626;
-    --lr-brand-ink: #7f1d1d;
-  }
-}
 .lr-row-active {
   background: var(--lr-selected);
   box-shadow: inset 2px 0 0 0 var(--lr-brand);
@@ -226,65 +194,3 @@ summary,
   background: color-mix(in srgb, var(--foreground) 18%, transparent);
   border-radius: 9999px;
 }
-
-.prose {
-  color: color-mix(in oklab, var(--foreground) 82%, transparent);
-  font-size: 1rem;
-  line-height: 1.75;
-}
-.prose > :first-child { margin-top: 0; }
-.prose > :last-child { margin-bottom: 0; }
-.prose h1, .prose h2, .prose h3, .prose h4 {
-  color: var(--foreground);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  scroll-margin-top: 6rem;
-}
-.prose h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 1rem; }
-.prose h2 { font-size: 1.5rem; line-height: 1.25; margin: 2.5rem 0 1rem; }
-.prose h3 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
-.prose h4 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
-.prose p { margin: 1rem 0; }
-.prose a {
-  color: #fca5a5;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-color: color-mix(in oklab, #fca5a5 40%, transparent);
-}
-.prose a:hover { text-decoration-color: #fca5a5; }
-.prose strong { color: var(--foreground); font-weight: 600; }
-.prose ul, .prose ol { margin: 1rem 0; padding-left: 1.4rem; }
-.prose ul { list-style: disc; }
-.prose ol { list-style: decimal; }
-.prose li { margin: 0.4rem 0; }
-.prose li::marker { color: var(--muted-foreground); }
-.prose blockquote {
-  margin: 1.5rem 0;
-  padding: 0.25rem 0 0.25rem 1.1rem;
-  border-left: 3px solid var(--accent);
-  color: var(--muted-foreground);
-  font-style: italic;
-}
-.prose code {
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.875em;
-  background: color-mix(in oklab, var(--foreground) 8%, transparent);
-  padding: 0.15em 0.4em;
-  border-radius: 6px;
-}
-.prose pre {
-  margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #0c0c12 !important;
-  overflow-x: auto;
-  font-size: 0.85rem;
-  line-height: 1.6;
-}
-.prose pre code { background: transparent; padding: 0; font-size: inherit; }
-.prose hr { margin: 2.5rem 0; border: 0; border-top: 1px solid var(--border); }
-.prose img { border-radius: 12px; border: 1px solid var(--border); margin: 1.5rem 0; }
-.prose table { width: 100%; margin: 1.5rem 0; border-collapse: collapse; font-size: 0.9rem; }
-.prose th, .prose td { border: 1px solid var(--border); padding: 0.6rem 0.85rem; text-align: left; }
-.prose th { background: color-mix(in oklab, var(--foreground) 5%, transparent); font-weight: 600; color: var(--foreground); }

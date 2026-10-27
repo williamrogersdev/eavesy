@@ -3,6 +3,7 @@ import {
   findEchoLines,
   hasBothSides,
   isHallucination,
+  isQuietAudio,
   isSilentTrack,
   speakerForTrack,
   speakerName,
@@ -31,10 +32,18 @@ describe('speaker attribution', () => {
     expect(isSilentTrack('mixed', 0)).toBe(false);
   });
 
+  test('a mic-only recording is never skipped as silent', () => {
+    expect(isSilentTrack('mic', 0, { micOnly: true })).toBe(false);
+    expect(isSilentTrack('mic', 100, { micOnly: true })).toBe(false);
+    expect(isSilentTrack('mic', 100)).toBe(true);
+  });
+
   test('labels need both sides to have spoken', () => {
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'you' }])).toBe(false);
     expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'them' }])).toBe(true);
     expect(hasBothSides([{ speakerId: null }])).toBe(false);
+    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: 'speaker_0' }])).toBe(false);
+    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: null }, { speakerId: 'speaker_2' }])).toBe(true);
   });
 
   test('renames win over defaults', () => {
@@ -92,8 +101,77 @@ describe('hallucination filter', () => {
     expect(isHallucination({ text: 'Thank you so much for joining.' })).toBe(false);
   });
 
+  test('a mic-only note keeps a short stock phrase unless Whisper doubted it', () => {
+    const lenient = { lenient: true };
+    expect(isHallucination({ text: 'Thank you.' }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Bye!' }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.4 }, lenient)).toBe(false);
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.6 }, lenient)).toBe(true);
+    expect(isHallucination({ text: '[BLANK_AUDIO]' }, lenient)).toBe(true);
+    expect(isHallucination({ text: 'something', noSpeechProb: 0.9 }, lenient)).toBe(true);
+  });
+
+  test('on suspect audio, a line made only of stock phrases counts as one', () => {
+    const suspect = { suspect: true };
+    expect(isHallucination({ text: 'Thank you. Thank you.' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Here we go.' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Let’s go!' }, suspect)).toBe(true);
+    expect(isHallucination({ text: 'I hope you enjoyed it. See you next time!', noSpeechProb: 0.6 }, suspect)).toBe(true);
+    // A real "Let's go." the Mac missed is kept unless Whisper doubted it.
+    expect(isHallucination({ text: "Let's go." }, suspect)).toBe(false);
+    expect(isHallucination({ text: 'Here we go.', noSpeechProb: 0.2 }, suspect)).toBe(false);
+    expect(isHallucination({ text: 'Thank you. Send the deck tonight.' }, suspect)).toBe(false);
+    expect(isHallucination({ text: "Here we go, that's the plan." }, suspect)).toBe(false);
+    // Elsewhere real phrases like these are kept, and only exact stock lines count.
+    expect(isHallucination({ text: "Let's go.", noSpeechProb: 0.5 })).toBe(false);
+    expect(isHallucination({ text: 'Thank you. Thank you.' })).toBe(false);
+    // A mic-only note still keeps stock phrases Whisper did not doubt.
+    expect(isHallucination({ text: 'Thank you. Thank you.' }, { lenient: true })).toBe(false);
+  });
+
+  test('quiet audio drops stock phrases whatever their score, even on a mic-only note', () => {
+    const quiet = { lenient: true, quiet: true };
+    expect(isHallucination({ text: 'Thank you.', noSpeechProb: 0.05 }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Thank you', noSpeechProb: 0.1 }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Thank you. Here we go' }, quiet)).toBe(true);
+    expect(isHallucination({ text: 'Call the bank.' }, quiet)).toBe(false);
+    expect(isQuietAudio(120)).toBe(true);
+    expect(isQuietAudio(900)).toBe(false);
+    expect(isQuietAudio(null)).toBe(false);
+  });
+
   test('drops looping or no-speech text', () => {
     expect(isHallucination({ text: 'the the the the', compressionRatio: 3.1 })).toBe(true);
     expect(isHallucination({ text: 'something', noSpeechProb: 0.9 })).toBe(true);
+  });
+});
+
+describe('glossary read-back', () => {
+  test('drops the app name read back alone on doubtful audio, and keeps it said', () => {
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.1 })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.4 }, { lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.5 }, { lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.6 }, { lenient: true })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.35 })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy.', noSpeechProb: 0.4 }, { lenient: true, quiet: true })).toBe(true);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary: ['Kubernetes'] })).toBe(true);
+    expect(isHallucination({ text: 'Open Eavesy.', noSpeechProb: 0.6 })).toBe(false);
+  });
+
+  const glossary = ['Eavesy', 'Priya Raman', 'Kubernetes'];
+
+  test('drops a bare list of the custom words Whisper read back from its prompt', () => {
+    expect(isHallucination({ text: 'Eavesy, Priya Raman, Kubernetes.', noSpeechProb: 0.6 }, { glossary })).toBe(true);
+    expect(isHallucination({ text: 'Priya Raman, Eavesy.', noSpeechProb: 0.5 }, { glossary })).toBe(true);
+  });
+
+  test('keeps real speech that uses the custom words', () => {
+    expect(isHallucination({ text: 'Priya Raman.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Kubernetes.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Ask Priya Raman about Eavesy.' }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.05 }, { glossary })).toBe(false);
+    expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary, lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Priya Raman, Kubernetes.' }, { glossary })).toBe(false);
   });
 });

@@ -1,0 +1,124 @@
+/*
+ * eavesy.com public pages. Same standard as the app (desktop/DESIGN.md):
+ * cream surfaces, charcoal ink, the coat for actions, manila for warmth,
+ * coral only for "recording right now". The layout root carries `.ev .ev-site`.
+ */
+
+@layer base {
+  .ev-site {
+    --background: var(--ev-paper);
+    --foreground: var(--ev-ink);
+    --muted: var(--ev-well);
+    --muted-foreground: var(--ev-ink-2);
+    --border: var(--ev-line);
+    --accent: var(--ev-coat);
+    --accent-hover: var(--ev-coat-hover);
+    --accent-soft: var(--ev-coat-soft);
+    --action: var(--ev-coat);
+    --action-hover: var(--ev-coat-hover);
+    --primary: var(--ev-coat);
+    --primary-foreground: var(--ev-on-coat);
+
+    background: var(--ev-paper);
+    color: var(--ev-ink);
+    font-family: var(--ev-font-text);
+    color-scheme: light dark;
+  }
+
+  .ev-site :where(h1, h2, h3, h4) {
+    font-family: var(--ev-font-round);
+    letter-spacing: -0.015em;
+  }
+
+  .ev-site ::selection {
+    background: var(--ev-manila-soft);
+    color: var(--ev-manila-ink);
+  }
+}
+
+@layer components {
+  /* Desk-lamp glow behind page heroes. */
+  .ev-roofline {
+    background:
+      radial-gradient(60% 70% at 50% 0%, color-mix(in srgb, var(--ev-manila) 18%, transparent), transparent 70%),
+      linear-gradient(180deg, var(--ev-well), var(--ev-paper) 70%);
+  }
+
+  /* Section that sits a step lower, like the toolbar shelf. */
+  .ev-shelf-band {
+    background-color: var(--ev-well);
+  }
+
+  .ev-tile {
+    border-radius: 20px;
+    background-color: var(--ev-raised);
+    box-shadow: 0 0 0 1px var(--ev-line), var(--ev-e-2);
+  }
+}
+
+.ev-site .prose {
+  color: var(--ev-ink-2);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+.ev-site .prose > :first-child { margin-top: 0; }
+.ev-site .prose > :last-child { margin-bottom: 0; }
+.ev-site .prose :is(h1, h2, h3, h4) {
+  color: var(--ev-ink);
+  font-weight: 700;
+  scroll-margin-top: 6rem;
+}
+.ev-site .prose h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 1rem; }
+.ev-site .prose h2 { font-size: 1.5rem; line-height: 1.25; margin: 2.5rem 0 1rem; }
+.ev-site .prose h3 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
+.ev-site .prose h4 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
+.ev-site .prose p { margin: 1rem 0; }
+.ev-site .prose a {
+  color: var(--ev-coat);
+  font-weight: 550;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--ev-coat) 35%, transparent);
+}
+.ev-site .prose a:hover { text-decoration-color: var(--ev-coat); }
+.ev-site .prose strong { color: var(--ev-ink); font-weight: 650; }
+.ev-site .prose ul, .ev-site .prose ol { margin: 1rem 0; padding-left: 1.4rem; }
+.ev-site .prose ul { list-style: disc; }
+.ev-site .prose ol { list-style: decimal; }
+.ev-site .prose li { margin: 0.4rem 0; }
+.ev-site .prose li::marker { color: var(--ev-ink-3); }
+.ev-site .prose blockquote {
+  margin: 1.5rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--ev-r-pop);
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
+}
+.ev-site .prose code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  background: var(--ev-well);
+  color: var(--ev-ink);
+  padding: 0.15em 0.4em;
+  border-radius: var(--ev-r-kbd);
+}
+.ev-site .prose pre {
+  margin: 1.5rem 0;
+  padding: 1rem 1.25rem;
+  border-radius: var(--ev-r-pop);
+  background: #241e2c !important;
+  color: #f5ede3;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.ev-site .prose pre code { background: transparent; padding: 0; font-size: inherit; color: inherit; }
+.ev-site .prose hr { margin: 2.5rem 0; border: 0; border-top: 1px solid var(--ev-line); }
+.ev-site .prose img { border-radius: var(--ev-r-pop); box-shadow: 0 0 0 1px var(--ev-line); margin: 1.5rem 0; }
+.ev-site .prose table { width: 100%; margin: 1.5rem 0; border-collapse: collapse; font-size: 0.9rem; }
+.ev-site .prose :is(th, td) { border: 1px solid var(--ev-line); padding: 0.6rem 0.85rem; text-align: left; }
+.ev-site .prose th { background: var(--ev-well); font-weight: 650; color: var(--ev-ink); }
+
+@media (prefers-color-scheme: dark) {
+  .ev-site .prose pre { background: var(--ev-well) !important; box-shadow: 0 0 0 1px var(--ev-line); }
+}

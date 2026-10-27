@@ -1,18 +1,17 @@
 name = "eavesy-mcp"
-account_id = "5bc563d42299762f9b48f5dec0531954"
 main = "src/index.ts"
 compatibility_date = "2026-07-16"
 compatibility_flags = ["nodejs_compat"]
 observability = { enabled = true, logs = { invocation_logs = false } }
 
 routes = [
-  { pattern = "mcp.eavesy.com", custom_domain = true },
+  { pattern = "mcp.example.invalid", custom_domain = true },
 ]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "eavesy"
-database_id = "72c5c5f6-a2d9-4a07-b17f-15eb282e9782"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[vectorize]]
 binding = "VECTORIZE"

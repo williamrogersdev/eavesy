@@ -1,0 +1,28 @@
+/* Replacements: "heard as → type instead" pairs, added one at a time or pasted as a list. */
+.ev-dict-pair { display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.ev-dict-arrow { color: var(--ev-ink-3); justify-self: center; }
+.ev-dict-actions { display: flex; align-items: center; gap: 4px; }
+.ev-dict-bulk { display: flex; flex-direction: column; gap: 6px; }
+.ev-dict-bulk textarea { height: auto; min-height: 120px; padding: 8px 10px; line-height: 20px; resize: vertical; }
+.ev-dict-bulk-foot { display: flex; align-items: center; gap: 6px; }
+.ev-dict-bulk-foot > p { flex: 1; min-width: 0; }
+.ev-dict-filter { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: var(--ev-r-ctl); background: var(--ev-well); box-shadow: inset 0 0 0 1px var(--ev-line); color: var(--ev-ink-3); }
+.ev-dict-filter:focus-within { box-shadow: inset 0 0 0 1.5px var(--ev-coat); }
+.ev-dict-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ev-ink); font: 400 12.5px/30px var(--ev-font-text); }
+.ev-dict-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border-radius: var(--ev-r-ctl); box-shadow: inset 0 0 0 1px var(--ev-line); }
+.ev-dict-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 6px 4px 4px; }
+.ev-dict-row + .ev-dict-row { border-top: 1px solid var(--ev-line); }
+.ev-dict-row[data-editing] { padding: 6px; background: var(--ev-hover); }
+.ev-dict-row[data-editing] > form { flex: 1; min-width: 0; }
+.ev-dict-row .ev-dict-actions { opacity: 0.55; transition: opacity var(--ev-d-state); }
+.ev-dict-row:hover .ev-dict-actions, .ev-dict-row:focus-within .ev-dict-actions, .ev-dict-row[data-editing] .ev-dict-actions { opacity: 1; }
+.ev-dict-view { flex: 1; min-width: 0; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); }
+.ev-dict-view:hover:not(:disabled) { background: var(--ev-hover); }
+.ev-dict-view:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-dict-from { overflow-wrap: anywhere; color: var(--ev-ink-2); font: 400 13px/18px var(--ev-font-text); }
+.ev-dict-to { overflow-wrap: anywhere; color: var(--ev-ink); font: 600 13px/18px var(--ev-font-text); }
+@media (max-width: 600px) {
+  .ev-dict-pair { grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); }
+  .ev-dict-pair > .ev-dict-actions { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .ev-dict-row .ev-dict-actions { transition: none; } }

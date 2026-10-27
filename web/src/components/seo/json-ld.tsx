@@ -7,7 +7,7 @@ export function JsonLd({ schema }: { schema: Schema | Schema[] }) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, '\\u003c') }}
     />
   );
 }
@@ -18,7 +18,7 @@ export function organizationSchema(): Schema {
     '@type': 'Organization',
     name: siteConfig.name,
     url: siteConfig.url,
-    logo: absoluteUrl('/icon.png'),
+    logo: absoluteUrl('/apple-icon.png'),
     description: siteConfig.shortDescription,
     sameAs: [siteConfig.github],
   };
@@ -31,14 +31,7 @@ export function websiteSchema(): Schema {
     name: siteConfig.name,
     url: siteConfig.url,
     description: siteConfig.shortDescription,
-    potentialAction: {
-      '@type': 'SearchAction',
-      target: {
-        '@type': 'EntryPoint',
-        urlTemplate: `${siteConfig.url}/blog?q={search_term_string}`,
-      },
-      'query-input': 'required name=search_term_string',
-    },
+
   };
 }
 
@@ -108,7 +101,7 @@ export function articleSchema(post: {
     publisher: {
       '@type': 'Organization',
       name: siteConfig.name,
-      logo: { '@type': 'ImageObject', url: absoluteUrl('/icon.png') },
+      logo: { '@type': 'ImageObject', url: absoluteUrl('/apple-icon.png') },
     },
   };
 }

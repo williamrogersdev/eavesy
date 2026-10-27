@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as transcriptsRepo from '@/db/repo/transcripts';
+import { refreshAgentTranscriptLater } from '@/server/agent-transcript-refresh';
 import { resolveActor } from '@/server/auth';
 
 const patchSchema = z
@@ -18,6 +19,7 @@ const restoreSchema = z.object({
   speakerId: z.string().max(60).nullable(),
   text: z.string().min(1).max(10_000),
   confidence: z.number().nullable().optional(),
+  language: z.string().regex(/^[a-z]{2,3}$/).nullable().optional(),
   isEdited: z.boolean().optional(),
   isFinal: z.boolean().optional(),
 });
@@ -42,11 +44,14 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         if (meeting instanceof Response) return meeting;
         const parsed = patchSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        await transcriptsRepo.editSegment(getDb(), {
+        const saved = await transcriptsRepo.editSegment(getDb(), {
+          userId: meeting.userId,
           meetingId: meeting.id,
           segmentId: params.lineId,
           ...parsed.data,
         });
+        if (!saved) return Response.json({ error: 'not_found' }, { status: 404 });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true });
       },
 
@@ -58,6 +63,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
           segmentId: params.lineId,
         });
         if (!deleted) return Response.json({ error: 'not found' }, { status: 404 });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true, line: deleted });
       },
 
@@ -69,11 +75,14 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         await transcriptsRepo.restoreSegment(getDb(), {
           id: params.lineId,
           meetingId: meeting.id,
+          rawText: null,
           confidence: null,
+          language: null,
           isEdited: false,
           isFinal: true,
           ...parsed.data,
         });
+        refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true });
       },
     },

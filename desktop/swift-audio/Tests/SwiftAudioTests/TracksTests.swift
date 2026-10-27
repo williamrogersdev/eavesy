@@ -36,4 +36,10 @@ final class TracksTests: XCTestCase {
         XCTAssertEqual(level.activeMs, 33 * 30)
         XCTAssertEqual(level.peakRms, 0.1, accuracy: 1e-6)
     }
+
+    func testQuietSpeechStillCountsAsActive() {
+        var level = TrackLevel()
+        level.observe([Float](repeating: 0.006, count: 48_000))
+        XCTAssertEqual(level.activeMs, 33 * 30)
+    }
 }

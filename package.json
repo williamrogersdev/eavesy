@@ -7,8 +7,11 @@
     "dev": "cd web && bun dev",
     "build": "cd web && bun run build",
     "deploy": "cd web && bun run deploy",
-    "deploy:processing": "cd workers/processing && ../../scripts/cf sh -c 'bunx wrangler deploy ${SENTRY_RELEASE:+--var SENTRY_RELEASE:$SENTRY_RELEASE}'",
-    "deploy:mcp": "cd workers/mcp && ../../scripts/cf sh -c 'bunx wrangler deploy ${SENTRY_RELEASE:+--var SENTRY_RELEASE:$SENTRY_RELEASE}'",
+    "cf:render": "node scripts/render-wrangler.mjs",
+    "cf:restore": "node scripts/render-wrangler.mjs --restore",
+    "deploy:processing": "cd workers/processing && ../../scripts/cf sh -c 'bunx wrangler deploy ${RELEASE:+--var RELEASE:$RELEASE} ${POSTHOG_KEY:+--var POSTHOG_KEY:$POSTHOG_KEY}'",
+    "deploy:mcp": "cd workers/mcp && ../../scripts/cf sh -c 'bunx wrangler deploy ${RELEASE:+--var RELEASE:$RELEASE} ${POSTHOG_KEY:+--var POSTHOG_KEY:$POSTHOG_KEY}'",
+    "deploy:meeting-bot": "cd workers/meeting-bot && ../../scripts/cf bunx wrangler deploy",
     "lint": "cd web && bun run lint",
     "typecheck": "cd web && bun run typecheck",
     "test": "cd web && bun run test",
@@ -16,7 +19,11 @@
     "db:apply": "cd web && bunx wrangler d1 migrations apply eavesy",
     "db:apply:remote": "cd web && ../scripts/cf bunx wrangler d1 migrations apply eavesy --remote",
     "desktop:dev": "cd desktop/src-tauri && bunx @tauri-apps/cli dev",
-    "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build"
+    "desktop:build": "cd desktop/src-tauri && bunx @tauri-apps/cli build",
+    "typecheck:tsrs": "cd web && bun run typecheck:tsrs",
+    "typecheck:tsc": "cd web && bun run typecheck:tsc",
+    "typecheck:bench": "bun scripts/benchmark-typecheck.ts",
+    "lint:bench": "bun scripts/benchmark-lint.ts"
   },
   "devDependencies": {
     "wrangler": "^4.111.0"

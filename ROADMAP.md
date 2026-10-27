@@ -52,5 +52,18 @@ Load and abuse testing, rate limits and quotas that hold up under real traffic,
 queue and processing backpressure, and documented recovery steps for each
 service. The aim is that growth doesn't require heroics.
 
+### 7. Keep your Mac safe
+
+The Mac app gains a Security section: a checkup of your setup (FileVault,
+firewall, updates, screen lock, sharing), who can use your camera, mic and
+screen, alerts when something new starts at login or changes your network
+settings, secrets left in plain text, and help when something looks wrong.
+Ask the assistant to "clean up my Mac" or "fix my security" and it does the
+work: worktrees, leftover processes, settings and suspicious items. It only
+ever makes things stricter, and it shows you anything it would remove first.
+Everything runs locally and is event-driven, so it doesn't slow the Mac or
+the AI features down. The plan
+is in [docs/plans/device-security.md](docs/plans/device-security.md).
+
 Ideas that aren't on this list yet belong in
 [Discussions](https://github.com/williamrogersdev/eavesy/discussions/categories/ideas).

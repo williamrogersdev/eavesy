@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { ProcessingMessage } from '@/server/processing-worker';
-mock.module('cloudflare:workers', () => ({ env: {} }));
+mock.module('cloudflare:workers', () => ({ env: {}, waitUntil: () => undefined }));
 const {
   crossesRollingNotesBoundary,
   DROP_TTL_MS,
@@ -12,6 +12,7 @@ const {
   summaryRetryDelaySeconds,
   SUMMARY_WAIT_LIMIT_MS,
 } = await import('@/server/processing-worker');
+const { QUICK_NOTE_MAX_MS } = await import('@/server/processing/summarize');
 import { createFakeEnv, delivery, stubAnthropic, summaryReply } from '@/server/testing/fake-env';
 
 const SUMMARY = {
@@ -93,12 +94,14 @@ describe('final summary', () => {
     expect(outcome.acked).toBe(true);
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0].body.kind).toBe('summarize');
-    expect(t.sent[0].delaySeconds).toBe(10);
+    expect(t.sent[0].delaySeconds).toBe(2);
     expect(t.meeting().status).toBe('processing');
   });
 
   test('checks back quickly at first, then backs off', () => {
-    expect(summaryRetryDelaySeconds(2, 0)).toBe(10);
+    expect(summaryRetryDelaySeconds(2, 0)).toBe(2);
+    expect(summaryRetryDelaySeconds(2, 15_000)).toBe(5);
+    expect(summaryRetryDelaySeconds(2, 60_000)).toBe(10);
     expect(summaryRetryDelaySeconds(30, 0)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 3 * 60_000)).toBe(30);
     expect(summaryRetryDelaySeconds(2, 10 * 60_000)).toBe(60);
@@ -117,7 +120,7 @@ describe('final summary', () => {
     expect(t.meeting().status).toBe('complete');
     expect(t.meeting().title).toBe('Launch planning sync');
     expect(t.meeting().status_error).toContain('could not be transcribed');
-    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed']);
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed', 'agent-transcript']);
   });
 
   test('gives up waiting on stragglers after the wait limit', async () => {
@@ -211,6 +214,117 @@ describe('segment transcription', () => {
     expect(t.segmentStatus(2)).toBe('complete');
     expect(t.sqlite.query('SELECT start_ms, text FROM transcript_segments').all()).toEqual([
       { start_ms: 2 * 240_000 + 1_500, text: 'hi' },
+    ]);
+  });
+
+  test('labels each line with the language it was heard in', async () => {
+    const t = setup({
+      transcribe: () => ({
+        text: 'hola',
+        transcription_info: { language: 'es', language_probability: 0.98 },
+        segments: [{ start: 0, end: 1, text: 'hola' }],
+      }),
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.addSegment(0, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(t.sqlite.query('SELECT language FROM transcript_segments').all()).toEqual([{ language: 'es' }]);
+  });
+
+  test('an unsure detection is retried in the language the meeting has been in', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return language === 'es'
+          ? { text: 'vale', transcription_info: { language: 'es' }, segments: [{ start: 0, end: 1, text: 'vale' }] }
+          : {
+              text: 'bale',
+              transcription_info: { language: 'gl', language_probability: 0.38 },
+              segments: [{ start: 0, end: 1, text: 'bale' }],
+            };
+      },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(asked).toEqual([undefined, 'es']);
+    expect(t.sqlite.query('SELECT text, language FROM transcript_segments ORDER BY start_ms').all()).toEqual([
+      { text: 'Buenos días a todos', language: 'es' },
+      { text: 'vale', language: 'es' },
+    ]);
+  });
+
+  test('a retry that hears nothing keeps the first pass', async () => {
+    const t = setup({
+      transcribe: (_audio, { language }) =>
+        language === 'es'
+          ? { text: '', segments: [] }
+          : {
+              text: 'bale',
+              transcription_info: { language: 'gl', language_probability: 0.38 },
+              segments: [{ start: 0, end: 1, text: 'bale' }],
+            },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(t.sqlite.query(`SELECT text, language FROM transcript_segments WHERE id != 't0'`).all()).toEqual([
+      { text: 'bale', language: 'gl' },
+    ]);
+  });
+
+  test('the first clip of a meeting is steered toward the languages the user speaks', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return language === 'en'
+          ? { text: 'morning all', transcription_info: { language: 'en' }, segments: [{ start: 0, end: 1, text: 'morning all' }] }
+          : {
+              text: 'morin ol',
+              transcription_info: { language: 'cy', language_probability: 0.71 },
+              segments: [{ start: 0, end: 1, text: 'morin ol' }],
+            };
+      },
+    });
+    t.sqlite.run(`UPDATE users SET spoken_languages_json = '["en","es"]' WHERE id = 'u1'`);
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.addSegment(0, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(asked).toEqual([undefined, 'en']);
+    expect(t.sqlite.query('SELECT text, language FROM transcript_segments').all()).toEqual([
+      { text: 'morning all', language: 'en' },
+    ]);
+  });
+
+  test('a confident switch of language is kept', async () => {
+    const asked: (string | undefined)[] = [];
+    const t = setup({
+      transcribe: (_audio, { language }) => {
+        asked.push(language);
+        return {
+          text: 'right, in English then',
+          transcription_info: { language: 'en', language_probability: 0.95 },
+          segments: [{ start: 0, end: 1, text: 'right, in English then' }],
+        };
+      },
+    });
+    t.sqlite.run(`UPDATE meetings SET language = 'auto' WHERE id = 'm1'`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, language) VALUES ('t0', 'm1', 0, 1000, 'Buenos días a todos', 'es')`,
+    );
+    t.addSegment(1, 'pending');
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 1 });
+    expect(asked).toEqual([undefined]);
+    expect(t.sqlite.query(`SELECT language FROM transcript_segments WHERE id != 't0'`).all()).toEqual([
+      { language: 'en' },
     ]);
   });
 });
@@ -313,16 +427,54 @@ describe('rolling summary', () => {
 });
 
 describe('dead-letter queue', () => {
-  test('messages are reported and acknowledged, never re-run', async () => {
-    const t = setup();
-    t.addSegment(0, 'pending');
-    const d = delivery({ kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+  const deadLetter = async (env: Parameters<typeof queue>[1], body: ProcessingMessage) => {
+    const d = delivery(body);
     await queue(
       { queue: 'eavesy-processing-dlq', messages: [d.message] } as unknown as MessageBatch<ProcessingMessage>,
-      t.env,
+      env,
     );
-    expect(d.outcome.acked).toBe(true);
-    expect(t.segmentStatus(0)).toBe('pending');
+    return d.outcome;
+  };
+
+  test('a lost segment is marked failed without failing the meeting, and never re-run', async () => {
+    const t = setup();
+    t.addSegment(0, 'pending');
+    const outcome = await deadLetter(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(outcome).toMatchObject({ acked: true, retried: false });
+    expect(t.segmentStatus(0)).toBe('failed');
+    expect(t.meeting().status).toBe('processing');
+    expect(t.sent).toEqual([]);
+  });
+
+  test('a segment another job finished stays complete', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    await deadLetter(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0 });
+    expect(t.segmentStatus(0)).toBe('complete');
+  });
+
+  test('a rolling note leaves the meeting alone; a final summary fails it', async () => {
+    const t = setup();
+    await deadLetter(t.env, { kind: 'rolling-summarize', meetingId: 'm1', throughIdx: 0 });
+    expect(t.meeting().status).toBe('processing');
+    await deadLetter(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(t.meeting().status).toBe('failed');
+  });
+});
+
+describe('terminal failures', () => {
+  test('a summary that runs out of retries does not undo a meeting completed meanwhile', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday and the launch plan is set, everyone agreed on the owners.');
+    const failing = stubAnthropic(() => {
+      // Another chain finishes the meeting while this one's model call fails.
+      t.sqlite.run(`UPDATE meetings SET status = 'complete' WHERE id = 'm1'`);
+      return { status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: 'bad' } } };
+    });
+    restoreFetch = failing.restore;
+    expect(await deliver(t.env, { kind: 'summarize', meetingId: 'm1' }, MAX_ATTEMPTS)).toMatchObject({ acked: true });
+    expect(t.meeting().status).toBe('complete');
   });
 });
 
@@ -398,6 +550,144 @@ describe('two-track transcription', () => {
     const request = api.calls[0] as { system: string; messages: { content: string }[] };
     expect(request.messages[0].content).toBe('Will: I will write the notes.\nThem: Great, thanks.');
     expect(request.system).toContain('"Will" is the person who recorded the meeting');
+  });
+});
+
+describe('mic-only notes', () => {
+  test('a quiet mic is transcribed even with little active time', async () => {
+    let calls = 0;
+    const t = setup({
+      transcribe: () => {
+        calls += 1;
+        return { text: '', segments: [{ start: 0, end: 1, text: 'Call the bank.' }] };
+      },
+    });
+    t.addSegment(0, 'pending', 'mic', 120);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(calls).toBe(1);
+    expect(t.lines().map((l) => l.text)).toEqual(['Call the bank.']);
+  });
+
+  test('a short "thank you" note is kept when Whisper did not doubt it', async () => {
+    const t = setup({ transcribe: () => ({ text: '', segments: [{ start: 0, end: 1, text: 'Thank you.' }] }) });
+    t.addSegment(0, 'pending', 'mic', 900);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(t.lines().map((l) => l.text)).toEqual(['Thank you.']);
+  });
+
+  test('stock phrases on a near-silent mic-only segment are dropped', async () => {
+    for (const text of ['Thank you. Thank you', 'Thank you. Here we go']) {
+      const t = setup({ transcribe: () => ({ text: '', segments: [{ start: 0, end: 1, text, no_speech_prob: 0.1 }] }) });
+      t.addSegment(0, 'pending', 'mic', 90);
+      await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+      expect(t.lines()).toEqual([]);
+      expect(t.segmentStatus(0, 'mic')).toBe('complete');
+    }
+  });
+
+  test('speech the VAD cut away gets one more pass without it', async () => {
+    const passes: boolean[] = [];
+    const t = setup({
+      transcribe: (_audio, { vadFilter }) => {
+        passes.push(vadFilter);
+        return vadFilter
+          ? { text: '', segments: [] }
+          : { text: '', segments: [{ start: 0, end: 2, text: 'quiet words', no_speech_prob: 0.2 }] };
+      },
+    });
+    t.addSegment(0, 'pending', 'mic', 600);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(passes).toEqual([true, false]);
+    expect(t.lines().map((l) => l.text)).toEqual(['quiet words']);
+  });
+
+  test('the retry without VAD still drops invented stock phrases', async () => {
+    const t = setup({
+      transcribe: (_audio, { vadFilter }) =>
+        vadFilter ? { text: '', segments: [] } : { text: '', segments: [{ start: 0, end: 1, text: 'Thank you.' }] },
+    });
+    t.addSegment(0, 'pending', 'mic', 600);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(t.lines()).toEqual([]);
+    expect(t.segmentStatus(0, 'mic')).toBe('complete');
+  });
+
+  test('the mic side of a call is still skipped when silent', async () => {
+    let calls = 0;
+    const t = setup({
+      transcribe: () => {
+        calls += 1;
+        return { text: '', segments: [] };
+      },
+    });
+    t.addSegment(0, 'complete', 'system', 60_000);
+    t.addSegment(0, 'pending', 'mic', 0);
+    await deliver(t.env, { kind: 'transcribe-segment', meetingId: 'm1', idx: 0, track: 'mic' });
+    expect(calls).toBe(0);
+  });
+
+  test('a short dictation finishes without a summary, titled by its words', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 5_000);
+    t.sqlite.run(`UPDATE meeting_segments SET duration_ms = 8000`);
+    t.addLine(0, 'Remind me to send the invoice to Dana on Monday morning please.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(0);
+    expect(t.meeting().status).toBe('complete');
+    expect(t.meeting().title).toBe('Remind me to send the invoice to Dana…');
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['embed', 'agent-transcript']);
+  });
+
+  test('a note right at the limits is still a quick note; one word or millisecond more is not', async () => {
+    const run = async (ms: number, words: number) => {
+      const t = setup();
+      t.addSegment(0, 'complete', 'mic', 5_000);
+      t.sqlite.run(`UPDATE meetings SET duration_sec = ?`, [ms / 1_000]);
+      t.addLine(0, Array.from({ length: words }, () => 'word').join(' '));
+      const api = stubAnthropic(() => summaryReply(SUMMARY));
+      restoreFetch = api.restore;
+      await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+      api.restore();
+      restoreFetch = null;
+      return api.calls.length;
+    };
+    expect(await run(QUICK_NOTE_MAX_MS, 150)).toBe(0);
+    expect(await run(QUICK_NOTE_MAX_MS + 1_000, 10)).toBe(1);
+    expect(await run(10_000, 151)).toBe(1);
+  });
+
+  test('a short call with both sides is still summarized', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 5_000);
+    t.addSegment(0, 'complete', 'system', 5_000);
+    t.addLine(0, 'Quick sync.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(1);
+  });
+
+  test('a short note waits for its unfinished part before finishing', async () => {
+    const t = setup();
+    t.addSegment(0, 'pending', 'mic', 5_000);
+    const outcome = await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(outcome.acked).toBe(true);
+    expect(t.meeting().status).toBe('processing');
+    expect(t.sent.map((m) => m.body.kind)).toEqual(['summarize']);
+  });
+
+  test('a long voice note is still summarized', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete', 'mic', 60_000);
+    t.addLine(0, 'Hello.');
+    t.addLine(200_000, 'More thoughts.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(1);
+    expect(t.meeting().title).toBe(SUMMARY.title);
   });
 });
 
@@ -484,7 +774,7 @@ describe('purging deleted data', () => {
 
     const purged = await purgeDeleted(fake.env, now);
 
-    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0, drops: 1 });
+    expect(purged).toEqual({ meetings: 1, captures: 1, dictations: 0, drops: 1, agentMessages: 0 });
     expect(fake.sqlite.query(`SELECT id FROM drops`).all()).toEqual([{ id: 'd-new' }]);
     expect(fake.objects.has('users/u1/drops/d-old/notes.docx')).toBe(false);
     expect(fake.objects.has('users/u1/drops/d-new/notes.docx')).toBe(true);
@@ -534,5 +824,104 @@ describe('deleting an account', () => {
     expect(fake.deletedVectors).toContain('m1__0');
     expect([...fake.objects.keys()]).toEqual(['users/u2/meetings/m2.webm']);
     expect(count(`SELECT count(*) n FROM meetings WHERE user_id = 'u2'`)).toBe(1);
+  });
+});
+
+describe('agent transcript', () => {
+  function textReply(text: string) {
+    return summaryReply(text as unknown as Record<string, unknown>);
+  }
+
+  function complete(t: ReturnType<typeof setup>, lines: [string | null, number, string][]) {
+    t.sqlite.run(`UPDATE meetings SET status = 'complete', title = 'Cask fix' WHERE id = 'm1'`);
+    for (const [speaker, startMs, text] of lines) {
+      t.sqlite.run(
+        `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES (?, 'm1', ?, ?, ?, ?)`,
+        [`t${startMs}${speaker}`, startMs, startMs + 1000, speaker, text],
+      );
+    }
+  }
+
+  const stored = (t: ReturnType<typeof setup>) =>
+    t.sqlite.query(`SELECT agent_transcript_md md, transcript_kind kind FROM meetings WHERE id = 'm1'`).get() as {
+      md: string | null;
+      kind: string | null;
+    };
+
+  test('the final summary queues it', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday and the launch plan is set, everyone agreed on the owners.');
+    t.addLine(70_000, 'Maya writes the release notes and Alex handles the rollout checklist.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(t.sent.map((message) => message.body.kind)).toEqual(['embed', 'agent-transcript']);
+  });
+
+  test('a queued refresh skips a copy an earlier rebuild already made', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    t.sqlite.run(`UPDATE meetings SET agent_transcript_md = 'Ship the build today.' WHERE id = 'm1'`);
+    const api = stubAnthropic(() => textReply('unused'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1', onlyIfMissing: true });
+    expect(api.calls).toHaveLength(0);
+    expect(stored(t).md).toBe('Ship the build today.');
+  });
+
+  test('a rebuild whose lines changed while it ran leaves the write to the next one', async () => {
+    const t = setup();
+    complete(t, [['you', 0, 'ship the build today and tell the team about it']]);
+    const api = stubAnthropic(() => {
+      t.sqlite.run(`UPDATE transcript_segments SET text = 'ship the build tomorrow and tell the team' WHERE meeting_id = 'm1'`);
+      return textReply('Ship the build today and tell the team about it.');
+    });
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(stored(t).md).toBeNull();
+  });
+
+  test('cleans a monologue with the project terms and stores it', async () => {
+    const t = setup();
+    t.sqlite.run(
+      `INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'u1', 'eavesy', 'Mac recorder.', '["summarize.ts"]', '[]')`,
+    );
+    t.sqlite.run(`UPDATE meetings SET folder_id = 'p1' WHERE id = 'm1'`);
+    complete(t, [['you', 0, 'so um the retry delay in summarize dot ts needs to be shorter']]);
+    const cleaned = 'The retry delay in `summarize.ts` needs to be shorter.';
+    const api = stubAnthropic(() => textReply(cleaned));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(stored(t)).toEqual({ md: cleaned, kind: 'solo' });
+    expect(String(api.calls[0].system)).toContain('summarize.ts');
+    expect(String(api.calls[0].system)).toContain('one person talking');
+  });
+
+  test('keeps the model-free cleanup when the model drops a turn', async () => {
+    const t = setup();
+    complete(t, [
+      ['you', 0, 'So um the cask keeps failing on the notarization step.'],
+      ['them', 2_000, "That's the stapler timing out, bump it to ten minutes."],
+    ]);
+    const api = stubAnthropic(() => textReply('You: The cask keeps failing on the notarization step and the stapler.'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    const result = stored(t);
+    expect(result.kind).toBe('conversation');
+    expect(result.md).toContain('<transcript kind="conversation" title="Cask fix"');
+    expect(result.md).toContain('speakers="You (recorder), Them"');
+    expect(result.md).toContain('You: So the cask keeps failing on the notarization step.');
+    expect(result.md).toContain("Them: That's the stapler timing out, bump it to ten minutes.");
+  });
+
+  test('skips a meeting that is not finished', async () => {
+    const t = setup();
+    t.addLine(0, 'Still going.');
+    const api = stubAnthropic(() => textReply('x'));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'agent-transcript', meetingId: 'm1' });
+    expect(api.calls).toHaveLength(0);
+    expect(stored(t).md).toBeNull();
   });
 });

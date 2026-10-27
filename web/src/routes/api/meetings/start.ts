@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
+import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
@@ -8,9 +9,13 @@ import { resolveActor } from '@/server/auth';
 const schema = z.object({
   source: z.enum(['desktop', 'web', 'public', 'ios', 'android', 'import']).default('web'),
   title: z.string().max(200).optional(),
-  language: z.string().max(10).optional(),
+  language: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .optional()
+    .transform((language) => (language && isTranscriptionLanguage(language) ? language : undefined)),
   localFolderSlug: z.string().max(200).optional(),
-  anonymousSessionToken: z.string().optional(),
 });
 
 export const Route = createFileRoute('/api/meetings/start')({

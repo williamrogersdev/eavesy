@@ -24,8 +24,14 @@ struct Arguments {
     let segmentSec: Double
     /// Tracks to caption live on-device; empty when captions are off.
     let captions: Set<Track>
-    /// Locale for captions: the user's own region when it speaks `--language`.
+    /// Locale captions start in: the user's own region when it speaks `--language`.
     let locale: Locale
+    /// `--language auto`: captions follow the language being spoken.
+    let followsSpeech: Bool
+    /// Words the recognizer should expect, from `--vocabulary`, one per line.
+    let vocabulary: [String]
+    /// Faster live words from a second, fast recognizer; `--no-preview` turns it off.
+    let preview: Bool
 
     static func parse(_ argv: [String]) -> Arguments {
         var dict: [String: String] = [:]
@@ -65,13 +71,17 @@ struct Arguments {
             source = .system
         }
 
-        let includeMic = (dict["mic"]?.lowercased() == "true")
+        let includeMic = (dict["mic"].map { $0.lowercased() == "true" } ?? (mode == .screen))
         let segmentDir = dict["segment-dir"].flatMap { $0.isEmpty ? nil : $0 }
         let segmentSec = dict["segment-sec"].flatMap(Double.init).map { max($0, minSegmentSec) }
             ?? defaultSegmentSec
 
         let captions = mode == .audio ? parseCaptions(dict["captions"], source: source) : []
-        let locale = captionLocale(language: dict["language"], current: Locale.current)
+        let language = dict["language"]
+        let locale =
+            captions.isEmpty
+            ? Locale.current
+            : captionLocale(language: language, current: Locale.current, supported: CaptionLanguage.supportedLocales())
 
         return Arguments(
             mode: mode,
@@ -81,15 +91,33 @@ struct Arguments {
             segmentDir: segmentDir,
             segmentSec: segmentSec,
             captions: captions,
-            locale: locale)
+            locale: locale,
+            followsSpeech: language?.lowercased() == CaptionLanguage.auto,
+            vocabulary: parseVocabulary(dict["vocabulary"]),
+            preview: dict["no-preview"]?.lowercased() != "true")
     }
 
-    /// The cloud transcribes in one language; caption in the same one, keeping
-    /// the user's regional variant (en-GB, en-AU) when the system already speaks it.
-    static func captionLocale(language: String?, current: Locale) -> Locale {
+    /// The host sends at most 100 words; this holds to that whatever it sends.
+    static func parseVocabulary(_ raw: String?) -> [String] {
+        Array(
+            (raw ?? "")
+                .split(separator: "\n")
+                .map { String($0.trimmingCharacters(in: .whitespaces).prefix(60)) }
+                .filter { !$0.isEmpty }
+                .prefix(100))
+    }
+
+    /// Caption in the cloud's fixed language, keeping the user's regional
+    /// variant (en-GB, en-AU) when the system already speaks it. `auto`, no
+    /// language, or one no recognizer here speaks leaves the system's own.
+    /// `supported` is only asked for when the system's own language won't do.
+    static func captionLocale(
+        language: String?, current: Locale, supported: @autoclosure () -> [Locale]
+    ) -> Locale {
         guard let language, !language.isEmpty else { return current }
-        if current.language.languageCode?.identifier == language { return current }
-        return Locale(identifier: language)
+        let wanted = CaptionLanguage.base(language)
+        guard wanted != CaptionLanguage.auto, wanted != CaptionLanguage.base(of: current) else { return current }
+        return CaptionLanguage.locale(for: language, current: current, supported: supported()) ?? current
     }
 
     /// `--captions mic|system|all`, limited to the tracks the source records.

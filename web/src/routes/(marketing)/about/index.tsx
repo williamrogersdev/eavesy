@@ -75,10 +75,10 @@ function AboutPage() {
             {PRINCIPLES.map((p) => (
               <div
                 key={p.title}
-                className="rounded-2xl border border-white/10 bg-white/[0.02] p-6"
+                className="rounded-2xl border border-ev-line bg-ev-raised p-6"
               >
-                <h2 className="font-semibold text-white">{p.title}</h2>
-                <p className="mt-2 text-sm leading-relaxed text-white/55">{p.body}</p>
+                <h2 className="font-semibold text-ev-ink">{p.title}</h2>
+                <p className="mt-2 text-sm leading-relaxed text-ev-ink-2">{p.body}</p>
               </div>
             ))}
           </div>

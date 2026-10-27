@@ -11,8 +11,9 @@ enum Screenshot {
             let excluded = content.applications.filter { $0.bundleIdentifier == "com.eavesy.desktop" }
             let filter = SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: [])
             let config = SCStreamConfiguration()
-            config.width = display.width
-            config.height = display.height
+            let scale = CGFloat(filter.pointPixelScale)
+            config.width = Int((filter.contentRect.width * scale).rounded())
+            config.height = Int((filter.contentRect.height * scale).rounded())
             config.showsCursor = false
             SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
                 if let error { fail("Screenshot failed: \(error.localizedDescription)") }

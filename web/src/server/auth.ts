@@ -31,16 +31,28 @@ async function loadClerkIdentity(clerkId: string): Promise<{
   }
 }
 
+const IDENTITY_RETRY_MS = 10 * 60 * 1000;
+const IDENTITY_RETRY_MAX_ENTRIES = 1000;
+const identityTriedAt = new Map<string, number>();
+
+/** True when this isolate hasn't asked Clerk about `clerkId` recently; records the attempt. */
+function shouldRetryIdentity(clerkId: string, now = Date.now()): boolean {
+  const last = identityTriedAt.get(clerkId);
+  if (last !== undefined && now - last < IDENTITY_RETRY_MS) return false;
+  if (identityTriedAt.size >= IDENTITY_RETRY_MAX_ENTRIES) identityTriedAt.clear();
+  identityTriedAt.set(clerkId, now);
+  return true;
+}
+
 export interface ResolvedActor {
   userId: string;
-  isAnonymous: boolean;
+  /** Always false: anonymous sessions were retired; kept for callers that build R2 keys. */
+  isAnonymous: false;
   clerkUserId?: string;
   user?: typeof users.$inferSelect;
 }
 
-export async function resolveActor(_args?: {
-  anonymousSessionToken?: string | null;
-}): Promise<ResolvedActor> {
+export async function resolveActor(): Promise<ResolvedActor> {
   const db = getDb();
 
   if (LOCAL_TEST && (await import('@tanstack/react-start/server')).getCookie('eavesy_local_test') === '1') {
@@ -52,7 +64,11 @@ export async function resolveActor(_args?: {
     const { userId: clerkId } = await timeSpan('auth', () => auth());
     if (clerkId) {
       const existing = await getByClerkId(db, clerkId);
-      if (existing && existing.email) {
+      // A known user is resolved from D1 alone. Clerk is asked again only to
+      // fill in a missing email, and then at most once per isolate per
+      // IDENTITY_RETRY_MS, so an account without an email doesn't call
+      // Clerk's API on every request.
+      if (existing && (existing.email || !shouldRetryIdentity(clerkId))) {
         return { userId: existing.id, isAnonymous: false, clerkUserId: clerkId, user: existing };
       }
       const identity = await loadClerkIdentity(clerkId);
@@ -60,17 +76,15 @@ export async function resolveActor(_args?: {
       return { userId: user.id, isAnonymous: false, clerkUserId: clerkId, user };
     }
   } catch {
-    /* fall through to anonymous */
+    /* fall through to not authenticated */
   }
 
   throw new Error('not_authenticated');
 }
 
-export async function tryResolveActor(args?: {
-  anonymousSessionToken?: string | null;
-}): Promise<ResolvedActor | null> {
+export async function tryResolveActor(): Promise<ResolvedActor | null> {
   try {
-    return await resolveActor(args);
+    return await resolveActor();
   } catch {
     return null;
   }

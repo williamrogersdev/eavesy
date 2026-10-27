@@ -1,6 +1,7 @@
-import { FileText, Mic, MonitorSmartphone, Sparkles, Waves, FolderTree } from 'lucide-react';
+import { Check, FileText, FolderTree, Sparkles, Waves } from 'lucide-react';
+import { Mascot } from '@/components/launcher/ui';
 import type { ShowcaseVisual } from './content';
-import { Equalizer, LevelBars } from './waveform';
+import { HudPreview } from './launcher-preview';
 
 export function ShowcaseVisualFor({ kind }: { kind: ShowcaseVisual }) {
   switch (kind) {
@@ -13,64 +14,49 @@ export function ShowcaseVisualFor({ kind }: { kind: ShowcaseVisual }) {
   }
 }
 
-function Frame({ children, glow }: { children: React.ReactNode; glow: string }) {
-  return (
-    <div className="relative">
-      <div className={`absolute -inset-6 -z-10 rounded-3xl ${glow} blur-3xl`} />
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-xl shadow-black/40">
-        {children}
-      </div>
-    </div>
-  );
+function Frame({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <div aria-hidden className={`ev-tile relative overflow-hidden p-5 ${className}`}>{children}</div>;
 }
 
 function CaptureVisual() {
   return (
-    <Frame glow="bg-accent/15">
-      <div className="flex items-center gap-3 rounded-xl bg-action px-4 py-3 text-sm font-medium text-white">
-        <span className="h-2.5 w-2.5 animate-recording-pulse rounded-full bg-white" />
-        <span className="font-mono">08:12</span> Recording
-        <Equalizer />
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-        <ChannelMeter icon={Mic} label="Mic" />
-        <ChannelMeter icon={MonitorSmartphone} label="System" />
+    <Frame className="flex min-h-[260px] flex-col items-center justify-center gap-6 bg-[linear-gradient(160deg,var(--ev-coat-soft),var(--ev-manila-soft))]">
+      <HudPreview words={['Okay, the export button greys out', 'after I switch workspaces']} />
+      <div className="flex w-full max-w-[300px] items-center gap-2.5 rounded-[var(--ev-r-pop)] bg-ev-raised px-3 py-2.5 shadow-[var(--ev-e-2)]">
+        <Mascot size={22} state="happy" />
+        <span className="font-round text-[13px] font-semibold text-ev-ink">Pasted</span>
+        <span className="ml-auto font-round text-[11.5px] text-ev-ink-3">into Cursor</span>
       </div>
     </Frame>
   );
 }
 
-function ChannelMeter({ icon: Icon, label }: { icon: typeof Mic; label: string }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-      <div className="mb-2 flex items-center justify-between text-white/55">
-        <span className="flex items-center gap-1.5"><Icon className="h-3 w-3" /> {label}</span>
-        <span className="text-[var(--signal)]">●</span>
-      </div>
-      <LevelBars />
-    </div>
-  );
-}
-
 function SummaryVisual() {
   const items = [
-    { who: 'Marcus', task: 'Own timeline, send invites Fri' },
-    { who: 'Sarah', task: 'Confirm beta date' },
-    { who: 'Priya', task: 'Draft scope doc' },
+    { who: 'Marcus', task: 'Own the timeline, send invites Fri' },
+    { who: 'Sarah', task: 'Confirm the beta date' },
+    { who: 'Priya', task: 'Draft the scope doc' },
   ];
   return (
-    <Frame glow="bg-accent/15">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/50">
-        <Sparkles className="h-3.5 w-3.5 text-accent" /> AI summary
+    <Frame>
+      <div className="flex items-center gap-1.5 font-round text-xs font-bold text-ev-ink-2">
+        <Sparkles className="h-3.5 w-3.5 text-ev-coat" strokeWidth={1.75} /> Summary
       </div>
-      <p className="mt-3 text-sm text-white/80">
+      <p className="mt-3 text-sm leading-relaxed text-ev-ink">
         Team aligned on shipping the mobile beta in late August, scoped to recording and sync.
       </p>
-      <div className="mt-4 space-y-2 text-sm">
-        {items.map((a) => (
-          <div key={a.who} className="flex items-center gap-2.5 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2">
-            <span className="h-4 w-4 rounded-[5px] border border-white/25" />
-            <span className="text-white/75"><b className="text-white/90">{a.who}</b> — {a.task}</span>
+      <div className="mt-4 font-round text-xs font-bold text-ev-ink-2">Action items</div>
+      <div className="mt-2 space-y-1.5 text-sm">
+        {items.map((a, i) => (
+          <div key={a.who} className="flex items-center gap-2.5 rounded-[var(--ev-r-ctl)] bg-ev-well px-3 py-2">
+            {i === 0 ? (
+              <span className="grid h-4 w-4 place-items-center rounded-[5px] bg-ev-leaf text-ev-paper">
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+            ) : (
+              <span className="h-4 w-4 rounded-[5px] border border-ev-line-strong" />
+            )}
+            <span className="text-ev-ink-2"><b className="font-semibold text-ev-ink">{a.who}</b> · {a.task}</span>
           </div>
         ))}
       </div>
@@ -82,24 +68,25 @@ function FilesVisual() {
   const files = [
     { name: 'summary.md', icon: FileText },
     { name: 'transcript.md', icon: FileText },
+    { name: 'capture.json', icon: FileText },
     { name: 'audio.m4a', icon: Waves },
   ];
   return (
-    <Frame glow="bg-accent/15">
-      <div className="flex items-center gap-2 text-sm text-white/60">
-        <FolderTree className="h-4 w-4 text-accent" />
-        <span className="font-medium text-white/80">~/Eavesy/2026-06-12 Q3 Planning</span>
+    <Frame>
+      <div className="flex items-center gap-2 text-sm">
+        <FolderTree className="h-4 w-4 text-ev-coat" strokeWidth={1.75} />
+        <span className="font-round font-bold text-ev-ink">~/Eavesy/2026-06-12 Q3 Planning</span>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-2.5">
+      <div className="mt-4 grid grid-cols-2 gap-2">
         {files.map((f) => (
-          <div key={f.name} className="flex items-center gap-2.5 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-sm text-white/75">
-            <f.icon className="h-4 w-4 text-white/50" />
+          <div key={f.name} className="flex items-center gap-2.5 rounded-[var(--ev-r-ctl)] bg-ev-well px-3 py-2.5 text-sm text-ev-ink">
+            <f.icon className="h-4 w-4 text-ev-ink-2" strokeWidth={1.75} />
             {f.name}
           </div>
         ))}
       </div>
-      <div className="mt-3 rounded-lg border border-dashed border-white/10 px-3 py-2 text-center text-xs text-white/50">
-        Drop into Obsidian, Dropbox, or any folder — it just works
+      <div className="mt-3 rounded-[var(--ev-r-ctl)] border border-dashed border-ev-line-strong px-3 py-2 text-center font-round text-xs font-semibold text-ev-ink-2">
+        Open it in Obsidian, grep it, or point an agent at it
       </div>
     </Frame>
   );

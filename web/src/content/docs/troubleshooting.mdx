@@ -1,59 +1,71 @@
 ---
 title: Troubleshooting
-description: Fixes for the most common recording, audio, and permission issues.
+description: Fixes for the most common permission, audio, paste and upload problems.
 category: Help
-order: 51
+order: 71
 ---
 
-Most issues come down to a macOS permission or an audio-routing setting. Here are
-the quick fixes.
+Most problems come down to a macOS permission. Open **Settings → Permissions**
+in the Mac app to see which ones are on, or choose **Run setup again**.
 
-## The recording has no sound
+## A meeting only has my side
 
-Eavesy captures the audio your Mac is **playing**, so:
+Hearing the other side of a call needs the **Screen Recording** permission.
 
-1. Check **System Settings → Privacy &amp; Security → Screen &amp; System Audio
-   Recording** and make sure Eavesy is allowed.
-2. Confirm your call&rsquo;s audio is routed to the output device you can hear
-   from — if it&rsquo;s going to a muted or different device, it won&rsquo;t be
-   captured.
-3. Make a short test recording, stop it, and inspect the processed transcript
-   and audio before starting an important session.
+1. Allow Eavesy in **System Settings → Privacy &amp; Security → Screen &amp;
+   System Audio Recording**.
+2. If the permissions list offers to reopen Eavesy, let it.
+3. Check that the call plays through an output you can hear. Eavesy records
+   what your Mac plays, so a muted or different device won't be heard.
 
-## My voice isn&rsquo;t captured
+## My voice isn't recorded
 
-Allow **Microphone** access in **System Settings → Privacy &amp; Security →
-Microphone**, then start a fresh recording.
+Allow **Microphone** in **System Settings → Privacy &amp; Security →
+Microphone**, then start a new recording.
 
-<Callout type="warning">
-macOS only applies a newly granted permission to *new* recordings. If you
-granted access mid-session, stop and start again.
-</Callout>
+## Talk doesn't paste
 
-## The app won&rsquo;t open on first launch
+- Pasting needs the **Accessibility** permission.
+- Your cursor needs to be in a text field when you stop.
+- On-device text needs **Speech Recognition**. Without it, Talk waits for the
+  cloud transcript, which needs you to be signed in.
 
-Because Eavesy is distributed outside the App Store, Gatekeeper may block the
-first launch. Open **System Settings → Privacy &amp; Security**, scroll to the
-bottom, and click **Open Anyway**. See
-[Installing the Mac app](/docs/installing-the-mac-app).
+## fn opens the emoji picker
 
-## Processing is slow or the transcript is empty
+In **System Settings → Keyboard**, set "Press 🌐 key to" to **Do Nothing**.
+Using `fn` as the Talk key also needs **Input Monitoring**.
 
-- Check your internet connection — segments and completed browser captures need
-  to upload before transcription can run.
-- Long Mac recordings appear in processed batches rather than as sub-second
-  captions.
-- Very quiet input can produce an empty transcript; move closer to the mic or
-  raise the other side&rsquo;s volume, then make a short test recording.
+## There are no live captions
 
-## My browser recording didn&rsquo;t finish uploading
+Captions need **Speech Recognition**. Check that **Settings → Live captions** is
+on in the Mac app.
 
-Keep the tab open and choose **Try again** once you&rsquo;re back online; the
-upload resumes where it stopped. You can also **Download** the recording so you
-always have a copy. If the tab closed, the parts that already uploaded still
-become a transcript within the hour.
+## There's no transcript or brief
+
+Cloud transcripts and briefs need you to be signed in.
+
+- Check your internet connection. Audio has to upload before it can be
+  transcribed.
+- Long recordings arrive in batches while they upload.
+- Very quiet audio can come back empty. Move closer to the microphone, or turn
+  up the call.
+- If you hit a [fair-use limit](/docs/fair-use-limits), try again after
+  midnight UTC.
+
+## A browser recording didn't finish uploading
+
+Keep the tab open and choose **Try again** once you're back online. The upload
+picks up where it stopped. You can also **Download** the recording to keep a
+copy. If the tab closed, the parts that already uploaded still become a
+transcript.
+
+## macOS warns about the app on first launch
+
+Eavesy is notarized by Apple, so this is rare. If it happens, open **System
+Settings → Privacy &amp; Security**, scroll down, and choose **Open Anyway**.
 
 ## Still stuck?
 
-Email <a href="mailto:support@eavesy.com">support@eavesy.com</a> — include your
-macOS version and what you were recording, and we&rsquo;ll help.
+[Open an issue on GitHub](https://github.com/williamrogersdev/eavesy/issues)
+or email <a href="mailto:support@eavesy.com">support@eavesy.com</a>. Include
+your macOS version and what you were doing.

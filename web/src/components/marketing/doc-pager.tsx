@@ -15,16 +15,16 @@ export function DocPager({
 }) {
   if (!prev && !next) return null;
   return (
-    <nav className="mt-14 grid gap-3 border-t border-white/[0.08] pt-8 sm:grid-cols-2">
+    <nav className="mt-14 grid gap-3 border-t border-ev-line pt-8 sm:grid-cols-2">
       {prev ? (
         <Link
           href={`/docs/${prev.slug}`}
-          className="group flex flex-col rounded-2xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-white/20 hover:bg-white/[0.04]"
+          className="group flex flex-col rounded-2xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
         >
-          <span className="flex items-center gap-1.5 text-xs text-white/50">
+          <span className="flex items-center gap-1.5 text-xs text-ev-ink-2">
             <ArrowLeft className="h-3.5 w-3.5" /> Previous
           </span>
-          <span className="mt-1 font-medium text-white/85 group-hover:text-white">
+          <span className="mt-1 font-medium text-ev-ink group-hover:text-ev-ink">
             {prev.title}
           </span>
         </Link>
@@ -34,12 +34,12 @@ export function DocPager({
       {next ? (
         <Link
           href={`/docs/${next.slug}`}
-          className="group flex flex-col rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-right transition hover:border-white/20 hover:bg-white/[0.04] sm:items-end"
+          className="group flex flex-col rounded-2xl border border-ev-line bg-ev-raised p-4 text-right transition hover:border-ev-line-strong hover:bg-ev-well sm:items-end"
         >
-          <span className="flex items-center gap-1.5 text-xs text-white/50">
+          <span className="flex items-center gap-1.5 text-xs text-ev-ink-2">
             Next <ArrowRight className="h-3.5 w-3.5" />
           </span>
-          <span className="mt-1 font-medium text-white/85 group-hover:text-white">
+          <span className="mt-1 font-medium text-ev-ink group-hover:text-ev-ink">
             {next.title}
           </span>
         </Link>

@@ -21,3 +21,14 @@ filename order and the journal order give the same schema.
 `scripts/check-migrations.sh` (run in CI) rejects any new duplicate number and
 any mismatch between files and `meta/_journal.json`. Generate new migrations
 with `drizzle-kit generate` from an up-to-date main so numbers stay unique.
+
+## Pilot migration aliases
+
+The credit pilot's additive tables and raw transcript column were applied from
+an older checkout before its production release mismatch was identified. Their
+original names (0012_personal_dictionary, 0013_credit_usage_and_imports,
+0014_ai_credit_budget, 0015_transcript_raw_text) were recorded in production.
+The corresponding 0030–0033 migration names were added to the production
+ledger after successful application was verified, so deployment does not rerun
+ALTER TABLE. Fresh databases apply the canonical 0030–0033 files normally.
+Do not remove those production ledger aliases or rerun the original files.

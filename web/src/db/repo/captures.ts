@@ -1,16 +1,32 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, ne, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { captures } from '../schema';
+import { captures, devices } from '../schema';
 
 export type Capture = typeof captures.$inferSelect;
 export type CaptureKind = Capture['kind'];
 export type CaptureMode = Capture['captureMode'];
 export type TranscriptStatus = Capture['transcriptStatus'];
 
+/**
+ * A transcript `processing` for longer than this never finished: the request
+ * that claimed it was cut off (the tab closed during "Saving…", or the isolate
+ * went away). The next upload of the audio may claim it again.
+ *
+ * The claim's age is the row's `updatedAt`. Any other write to the row (a
+ * rename) only pushes the claim later, never earlier, and a finished
+ * transcript is not `processing` any more, so the only way to reclaim a live
+ * one is a single Whisper call outlasting this, far longer than Workers AI
+ * allows a request. Should it ever happen, the first result to land wins and
+ * the other is dropped (`setTranscript` with `ifStatus`).
+ */
+export const TRANSCRIPT_CLAIM_TTL_MS = 15 * 60 * 1_000;
+
 export async function create(
   db: AppDb,
   args: {
+    /** Given when the caller already named the R2 object after it. */
+    id?: string;
     userId: string;
     kind: CaptureKind;
     captureMode: CaptureMode;
@@ -26,9 +42,12 @@ export async function create(
     transcript?: string | null;
     transcriptStatus?: TranscriptStatus;
     transcriptError?: string | null;
+    clientCaptureId?: string | null;
+    deviceId?: string | null;
+    createdAt?: number;
   },
 ): Promise<string> {
-  const id = pid('cap');
+  const id = args.id ?? pid('cap');
   const now = Date.now();
   await db.insert(captures).values({
     id,
@@ -47,12 +66,61 @@ export async function create(
     transcriptStatus: args.transcriptStatus ?? 'none',
     transcriptError: args.transcriptError ?? null,
     folderId: args.folderId ?? null,
-    createdAt: now,
+    clientCaptureId: args.clientCaptureId ?? null,
+    deviceId: args.deviceId ?? null,
+    createdAt: args.createdAt ?? now,
     updatedAt: now,
   });
   return id;
 }
 
+/** A desktop upload already received under this Mac-side id, deleted or not. */
+export async function getByClientId(
+  db: AppDb,
+  args: { userId: string; clientCaptureId: string },
+): Promise<Capture | null> {
+  const rows = await db
+    .select()
+    .from(captures)
+    .where(and(eq(captures.userId, args.userId), eq(captures.clientCaptureId, args.clientCaptureId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** Images another device can bring into its history: everything not uploaded by `exceptDeviceId`. */
+export async function listImagesForDevice(
+  db: AppDb,
+  args: { userId: string; exceptDeviceId?: string; limit: number; offset: number },
+) {
+  return await db
+    .select({
+      id: captures.id,
+      clientCaptureId: captures.clientCaptureId,
+      title: captures.title,
+      contentType: captures.contentType,
+      bytes: captures.bytes,
+      transcript: captures.transcript,
+      createdAt: captures.createdAt,
+      deviceName: devices.name,
+    })
+    .from(captures)
+    .leftJoin(devices, eq(devices.id, captures.deviceId))
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'image'),
+        isNull(captures.deletedAt),
+        args.exceptDeviceId
+          ? or(isNull(captures.deviceId), ne(captures.deviceId, args.exceptDeviceId))
+          : undefined,
+      ),
+    )
+    .orderBy(desc(captures.createdAt), desc(captures.id))
+    .limit(args.limit)
+    .offset(args.offset);
+}
+
+/** Returns false when `ifStatus` was given and the row had moved on. */
 export async function setTranscript(
   db: AppDb,
   args: {
@@ -61,9 +129,11 @@ export async function setTranscript(
     status: TranscriptStatus;
     transcript?: string | null;
     error?: string | null;
+    /** Only write while the transcript is still at this status. */
+    ifStatus?: TranscriptStatus;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(captures)
     .set({
       transcriptStatus: args.status,
@@ -71,7 +141,47 @@ export async function setTranscript(
       transcriptError: args.error ?? null,
       updatedAt: Date.now(),
     })
-    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId)));
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        args.ifStatus === undefined ? undefined : eq(captures.transcriptStatus, args.ifStatus),
+      ),
+    )
+    .returning({ id: captures.id });
+  return rows.length > 0;
+}
+
+/**
+ * Moves a capture's transcript from `from` to `to` only if it is still at
+ * `from`, so a transcript is worked on (and paid for) once. False otherwise.
+ */
+export async function claimTranscript(
+  db: AppDb,
+  args: {
+    captureId: string;
+    userId: string;
+    from: TranscriptStatus;
+    to: TranscriptStatus;
+    /** Also take over a row already at `to` that has sat there this long. */
+    staleAfterMs?: number;
+    error?: string | null;
+  },
+): Promise<boolean> {
+  const now = Date.now();
+  const claimable =
+    args.staleAfterMs === undefined
+      ? eq(captures.transcriptStatus, args.from)
+      : or(
+          eq(captures.transcriptStatus, args.from),
+          and(eq(captures.transcriptStatus, args.to), lt(captures.updatedAt, now - args.staleAfterMs)),
+        );
+  const rows = await db
+    .update(captures)
+    .set({ transcriptStatus: args.to, transcriptError: args.error ?? null, updatedAt: now })
+    .where(and(eq(captures.id, args.captureId), eq(captures.userId, args.userId), claimable, isNull(captures.deletedAt)))
+    .returning({ id: captures.id });
+  return rows.length > 0;
 }
 
 export async function listForUser(
@@ -86,7 +196,8 @@ export async function listForUser(
     .limit(args.limit ?? 100);
 }
 
-export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number }) {
+/** Newest first; `before` (a `createdAt`) pages back through older captures. */
+export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number; before?: number }) {
   return await db
     .select({
       id: captures.id,
@@ -103,7 +214,13 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
       createdAt: captures.createdAt,
     })
     .from(captures)
-    .where(and(eq(captures.userId, args.userId), isNull(captures.deletedAt)))
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        isNull(captures.deletedAt),
+        args.before === undefined ? undefined : lt(captures.createdAt, args.before),
+      ),
+    )
     .orderBy(desc(captures.createdAt))
     .limit(args.limit ?? 100);
 }

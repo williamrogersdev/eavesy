@@ -19,5 +19,6 @@
       "next/navigation": ["./src/shims/next-navigation.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["src/**/*.test.ts"]
 }

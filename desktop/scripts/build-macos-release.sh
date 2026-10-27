@@ -189,14 +189,21 @@ run_tauri_build() {
   return "$status"
 }
 
-if [[ -z "${SENTRY_DSN:-}" ]]; then
-  if [[ "${EAVESY_ALLOW_NO_SENTRY:-}" == "1" ]]; then
-    echo "⚠ SENTRY_DSN is not set and EAVESY_ALLOW_NO_SENTRY=1: this build will not report crashes or errors" >&2
-  else
-    echo "SENTRY_DSN is not set. Release builds must report crashes and errors (desktop/BUILD.md)." >&2
-    echo "Self-hosted builds without Sentry can opt out with EAVESY_ALLOW_NO_SENTRY=1." >&2
-    exit 1
-  fi
+# EAVESY_API_BASE is compiled into the app. A leftover dev value (e.g. a localhost
+# URL) must never ship in a signed release: only the production URL is accepted,
+# or a self-hosted origin you confirm by exporting EAVESY_ALLOW_API_BASE with the
+# same value.
+if [[ -n "${EAVESY_API_BASE:-}" && "$EAVESY_API_BASE" != "https://eavesy.com" && "$EAVESY_API_BASE" != "${EAVESY_ALLOW_API_BASE:-}" ]]; then
+  echo "EAVESY_API_BASE is set to '$EAVESY_API_BASE'. Release builds use https://eavesy.com. Unset it, or for a self-hosted build also set EAVESY_ALLOW_API_BASE to the same https URL." >&2
+  exit 1
+fi
+if [[ -n "${EAVESY_API_BASE:-}" && ! "$EAVESY_API_BASE" =~ ^https://[^/[:space:]]+$ ]]; then
+  echo "EAVESY_API_BASE must be an https origin with no path." >&2
+  exit 1
+fi
+
+if [[ -z "${EAVESY_POSTHOG_KEY:-}" ]]; then
+  echo "⚠ EAVESY_POSTHOG_KEY is not set: this build will not report errors or usage (desktop/BUILD.md)" >&2
 fi
 echo "▸ Tauri signed app and updater build"
 build_status=0

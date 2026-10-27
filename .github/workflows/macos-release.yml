@@ -1,0 +1,498 @@
+name: macOS release
+
+# Tag push `desktop-vX.Y.Z`: build, sign, notarize, attach to a draft GitHub
+# Release, then (after approval in the `macos-release` environment) publish to
+# R2 + the updater manifest and open a Homebrew cask bump PR.
+# Tags are pushed by tag-desktop-release.yml when a version bump lands on main.
+# Manual dispatch: release candidate only (CI artifacts, nothing published).
+# It can also build a candidate without some entitlements, to test whether the
+# signed app still runs without them (docs/plans/device-security.md, phase 0).
+# Secrets and setup: docs/RELEASING.md.
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+    inputs:
+      without_entitlements:
+        description: "Space-separated entitlements to leave out of this candidate (test builds only)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IS_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v') }}
+
+jobs:
+  prepare:
+    name: Check version and release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Match tag to tauri.conf.json version
+        id: version
+        run: |
+          VERSION="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
+          if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+            echo "::error file=desktop/src-tauri/tauri.conf.json::Could not read version"
+            exit 1
+          fi
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' desktop/src-tauri/Cargo.toml | head -1)"
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "::error file=desktop/src-tauri/Cargo.toml::Cargo.toml version $CARGO_VERSION does not match tauri.conf.json version $VERSION"
+            exit 1
+          fi
+          if [[ "$IS_RELEASE" == "true" ]]; then
+            TAG="$GITHUB_REF_NAME"
+            if [[ "$TAG" != "desktop-v$VERSION" ]]; then
+              echo "::error::Tag $TAG does not match tauri.conf.json version $VERSION (expected desktop-v$VERSION)"
+              exit 1
+            fi
+          else
+            TAG="desktop-v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              echo "::error file=CHANGELOG.md::No '## [$VERSION]' section with content. Move the Unreleased entries under it before tagging."
+              exit 1
+            fi
+            echo "::warning file=CHANGELOG.md::No '## [$VERSION]' section yet; a tagged release would fail."
+            echo "Release candidate $VERSION (no CHANGELOG section yet)." > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: Build, sign, and notarize
+    needs: prepare
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: macos-signing
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.13
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+
+      - name: Install locked dependencies
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          cd ../workers/processing
+          bun install --frozen-lockfile
+          cd ../mcp
+          bun install --frozen-lockfile
+          cd ../../desktop/launcher-ui
+          bun install --frozen-lockfile
+
+      - name: Verify web and Worker code
+        run: |
+          cd web
+          # Build first: it generates the route tree that lint and typecheck
+          # read (ci.yml runs them in the same order).
+          bun run build
+          bun run lint
+          bun run typecheck
+          bun run test
+          cd ../workers/processing
+          bun run typecheck
+          bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/processing-dry-run"
+          cd ../mcp
+          bun run typecheck
+          bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/mcp-dry-run"
+
+      # The Rust build script needs the launcher UI and the SwiftAudio sidecar
+      # (ci.yml runs the same prebuild before its Rust tests).
+      - name: Prebuild launcher UI and SwiftAudio sidecar
+        run: desktop/scripts/prebuild.sh
+
+      - name: Verify desktop Rust core
+        working-directory: desktop/src-tauri
+        run: |
+          cargo check --locked
+          cargo test --locked
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="${RUNNER_TEMP}/developer-id.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/eavesy-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          test -n "$SIGNING_IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      # Only on a manual run, and only these two: a tag build always ships the
+      # checked-in entitlements.
+      - name: Leave out entitlements for this test candidate
+        if: github.event_name == 'workflow_dispatch' && inputs.without_entitlements != ''
+        env:
+          WITHOUT: ${{ inputs.without_entitlements }}
+        run: |
+          PLIST=desktop/src-tauri/entitlements.plist
+          for key in $WITHOUT; do
+            case "$key" in
+              com.apple.security.cs.allow-jit|com.apple.security.cs.allow-unsigned-executable-memory) ;;
+              *) echo "::error::$key can't be left out by this workflow"; exit 1 ;;
+            esac
+            # Only a missing key is fine; a missing or broken plist still fails.
+            if /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" > /dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
+            else
+              # Recording always needs this one, so the file itself was read.
+              /usr/libexec/PlistBuddy -c "Print :com.apple.security.device.audio-input" "$PLIST" > /dev/null
+              echo "$key isn't in the checked-in entitlements"
+            fi
+          done
+          cat "$PLIST"
+
+      # Apple credentials are deliberately absent here so Tauri does not
+      # notarize the .app; the next step notarizes the exact final DMG.
+      - name: Build signed release candidate
+        env:
+          EAVESY_POSTHOG_KEY: ${{ vars.DESKTOP_POSTHOG_KEY }}
+          EAVESY_POSTHOG_HOST: ${{ vars.DESKTOP_POSTHOG_HOST }}
+        run: desktop/scripts/build-macos-release.sh
+
+      # The hardened runtime only applies to a signed build, so this is where a
+      # missing entitlement shows: the web view's JavaScript engine is killed
+      # at launch. Run the signed app and fail if it doesn't stay up. This only
+      # catches a crash in the first 25 seconds, which is when that happens.
+      - name: Launch the signed app
+        run: |
+          APP=desktop/src-tauri/target/release/bundle/macos/Eavesy.app
+          EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          test -x "$EXE" || { echo "::error::No executable at $EXE"; exit 1; }
+          codesign -d --entitlements - "$APP"
+          # The app refuses a capture engine that fails this: keep it the same as
+          # requirement() in sidecar_trust.rs. The app runs the engine next to
+          # its executable (capture_bin in audio.rs).
+          TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
+          codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
+          # Only this launch's log counts.
+          LOGS=~/Library/Logs/com.eavesy.desktop
+          rm -f "$LOGS"/*.log
+          EAVESY_NO_TELEMETRY=1 "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
+          PID=$!
+          # Staying up isn't enough: the web view's JavaScript runs in WebKit's
+          # own process, so a broken one leaves the app alive with a blank
+          # window. Wait, while the app is still running, for both 25 s up and
+          # the line it logs once a page's code has called into Rust
+          # (commands::WEB_VIEW_RUNNING). Give up after 90 s.
+          ready=""
+          for second in $(seq 1 90); do
+            sleep 1
+            if [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null; then
+              ready=$second
+              echo "Web view ran its JavaScript after $second s"
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              wait "$PID" || echo "exit status $?"
+              cat "${RUNNER_TEMP}/launch.log"
+              ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
+              echo "::error::The signed app quit $second seconds after launch"
+              exit 1
+            fi
+            [[ -n "$ready" && $second -ge 25 ]] && break
+          done
+          kill "$PID"
+          wait "$PID" 2>/dev/null || true
+          tail -50 "${RUNNER_TEMP}/launch.log"
+          # One last look, now the app has flushed its log on the way out.
+          [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null && ready=late
+          if [[ -z "$ready" ]]; then
+            echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
+            exit 1
+          fi
+          # The app checks its own capture engine at launch (sidecar_trust::warm,
+          # finished well inside the 25 s: codesign is cut off at 15 s) and logs
+          # any refusal, so this tests the app's real requirement too. Both
+          # names are only ever logged as errors (sidecar_trust.rs).
+          if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
+            echo "::error::The signed app refused its own capture engine"
+            exit 1
+          fi
+
+      - name: Notarize and validate release candidate
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          # App Store Connect API key alternative to the Apple ID set.
+          if [[ -z "$APPLE_ID" && -n "$API_PRIVATE_KEY" ]]; then
+            export APPLE_API_ISSUER="$API_ISSUER"
+            export APPLE_API_KEY="$API_KEY_ID"
+            export APPLE_API_KEY_PATH="${RUNNER_TEMP}/AuthKey_${API_KEY_ID}.p8"
+            printf '%s' "$API_PRIVATE_KEY" > "$APPLE_API_KEY_PATH"
+          fi
+          desktop/scripts/release-macos.sh
+
+      - name: Upload validated artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: eavesy-macos-${{ needs.prepare.outputs.version }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/macos/Eavesy.app.tar.gz
+            desktop/src-tauri/target/release/bundle/macos/Eavesy.app.tar.gz.sig
+
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}"/AuthKey_*.p8
+          if [[ -n "${SIGNING_KEYCHAIN_PATH:-}" && -f "$SIGNING_KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$SIGNING_KEYCHAIN_PATH"
+          fi
+
+  github-release:
+    name: Create draft GitHub Release
+    needs: [prepare, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+
+      - name: Stage versioned release assets
+        run: |
+          mkdir release
+          DMG="dist/eavesy-macos-$VERSION/dmg/Eavesy_${VERSION}_aarch64.dmg"
+          BUNDLE="dist/eavesy-macos-$VERSION/macos"
+          cp "$DMG" release/
+          cp "$BUNDLE/Eavesy.app.tar.gz" "release/Eavesy_${VERSION}_aarch64.app.tar.gz"
+          cp "$BUNDLE/Eavesy.app.tar.gz.sig" "release/Eavesy_${VERSION}_aarch64.app.tar.gz.sig"
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - name: Create or update draft release
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --notes-file dist/release-notes/release-notes.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --title "Eavesy for Mac $VERSION" \
+              --notes-file dist/release-notes/release-notes.md
+          fi
+
+  publish:
+    name: Publish to R2 and updater
+    needs: [prepare, build, github-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: macos-26
+    timeout-minutes: 45
+    # Protected environment: required reviewers approve before this job runs.
+    environment:
+      name: macos-release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Check publish configuration
+        run: |
+          missing=0
+          if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then echo "::error::Secret CLOUDFLARE_API_TOKEN is not set in the macos-release environment (docs/RELEASING.md)"; missing=1; fi
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then echo "::error::Variable CLOUDFLARE_ACCOUNT_ID is not set (docs/RELEASING.md)"; missing=1; fi
+          exit $missing
+
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.13
+
+      # release-macos.sh re-verifies the updater signature with a cargo example.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+
+      - name: Install web dependencies (Wrangler)
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Download notarized artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: eavesy-macos-${{ needs.prepare.outputs.version }}
+          path: desktop/src-tauri/target/release/bundle
+
+      # The DMG is already stapled, so the script skips re-signing and
+      # re-notarizing, re-validates Gatekeeper, then uploads and verifies.
+      - name: Publish DMG, updater archive, and manifest
+        run: desktop/scripts/release-macos.sh --publish
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+  homebrew-cask:
+    name: Open Homebrew cask bump PR
+    needs: [prepare, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAP_REPO: williamrogersdev/homebrew-eavesy
+      CASK_PATH: Casks/eavesy.rb
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Check tap token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Repository secret HOMEBREW_TAP_TOKEN is not set (docs/RELEASING.md)"
+            exit 1
+          fi
+
+      - name: Download notarized DMG
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: eavesy-macos-${{ needs.prepare.outputs.version }}
+          path: dist
+
+      - name: Check out tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Bump cask version and sha256
+        id: bump
+        run: |
+          SHA="$(sha256sum "dist/dmg/Eavesy_${VERSION}_aarch64.dmg" | awk '{print $1}')"
+          cd tap
+          test -f "$CASK_PATH"
+          test "$(grep -cE '^[[:space:]]*version "' "$CASK_PATH")" -eq 1
+          test "$(grep -cE '^[[:space:]]*sha256 "' "$CASK_PATH")" -eq 1
+          sed -i -E \
+            -e "s/^([[:space:]]*version )\"[^\"]*\"/\1\"$VERSION\"/" \
+            -e "s/^([[:space:]]*sha256 )\"[^\"]*\"/\1\"$SHA\"/" \
+            "$CASK_PATH"
+          git diff
+          if git diff --quiet; then
+            echo "Cask already at $VERSION ($SHA)"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        if: steps.bump.outputs.changed == 'true'
+        working-directory: tap
+        env:
+          SHA: ${{ steps.bump.outputs.sha }}
+        run: |
+          BRANCH="bump-eavesy-$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "eavesy $VERSION"
+          git push --force origin "$BRANCH"
+          if [[ -n "$(gh pr list --repo "$TAP_REPO" --head "$BRANCH" --state open --json number --jq '.[].number')" ]]; then
+            echo "PR for $BRANCH already open; branch updated"
+            exit 0
+          fi
+          gh pr create --repo "$TAP_REPO" --head "$BRANCH" \
+            --title "eavesy $VERSION" \
+            --body "Bumps the cask to Eavesy $VERSION.
+
+          - Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/desktop-v$VERSION
+          - DMG sha256: \`$SHA\`
+
+          Opened by the macOS release workflow (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+
+      # The tap has no CI of its own, so this is its check: the cask URL must
+      # serve exactly the bytes that were notarized and published.
+      - name: Verify the cask download
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          SHA: ${{ steps.bump.outputs.sha }}
+        run: |
+          URL="$(sed -n -E 's/^[[:space:]]*url "([^"]*)".*/\1/p' "tap/$CASK_PATH" | head -1)"
+          URL="${URL//'#{version}'/$VERSION}"
+          echo "Checking $URL"
+          GOT="$(curl --fail --silent --show-error --location "$URL" | sha256sum | awk '{print $1}')"
+          if [[ "$GOT" != "$SHA" ]]; then
+            echo "::error::$URL has sha256 $GOT, expected $SHA"
+            exit 1
+          fi

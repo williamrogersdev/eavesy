@@ -3,21 +3,19 @@
 This runbook covers failure alerts, privacy-safe launch metrics, and recovery.
 It intentionally contains no secret values and every read query is aggregate.
 
-## Error reporting (optional for the initial beta)
+## Error reporting
 
-The initial beta deliberately runs without Sentry. During each acceptance and
-beta session, tail the web, processing, and MCP Workers; inspect the desktop
-`capture.log`; and check the private metrics endpoint for failed, stuck, or DLQ
-work. Do not run the beta unattended while automated alerts are disabled.
-
-Sentry remains available later. If enabled, create separate projects for the
-web/Workers runtime, the browser and the macOS app as described in
-[DEPLOY.md](DEPLOY.md) and [../desktop/BUILD.md](../desktop/BUILD.md). Events
-keep the scrubbed error message, route, release and breadcrumbs; bodies,
-headers, cookies, query strings, emails, IPs, tokens, transcript/audio content
-and local home paths are removed before sending (details in
-[OBSERVABILITY.md](OBSERVABILITY.md)). Traces are sampled at 5% on the Workers
-and in the browser. For a desktop problem, ask the user for **Copy
+Errors from the web, processing and MCP Workers, the browser and the macOS app
+go to PostHog error tracking once `POSTHOG_KEY` (and, for the Mac app,
+`DESKTOP_POSTHOG_KEY`) is set, as described in [DEPLOY.md](DEPLOY.md) and
+[../desktop/BUILD.md](../desktop/BUILD.md). Each event has a `service`
+property (`web`, `processing`, `mcp`, `browser`, `desktop`). Events keep the
+scrubbed error message, route and release; bodies, headers, cookies, query
+strings, emails, IPs, tokens, transcript/audio content and local home paths
+are removed before sending (details in [OBSERVABILITY.md](OBSERVABILITY.md)).
+Until a key is set, tail the web, processing, and MCP Workers; inspect the
+desktop `capture.log`; and check the private metrics endpoint for failed,
+stuck, or DLQ work. For a desktop problem, ask the user for **Copy
 Diagnostics** from the menu bar menu: it copies a scrubbed log tail. Configure
 notifications for:
 
@@ -28,7 +26,12 @@ notifications for:
 
 The processing DLQ consumer persists a generic user-visible failure on the
 meeting before acknowledging the message. Uploaded audio remains in R2. If D1
-is unavailable, the DLQ message is retried instead of being acknowledged.
+is unavailable, the DLQ message is retried instead of being acknowledged:
+up to ten more times, five minutes apart (`max_retries` and `retry_delay` on
+the DLQ consumer in `workers/processing/wrangler.toml`). The DLQ has no queue
+behind it, so a D1 outage longer than about 50 minutes drops the message
+without recording the failure. The meeting then stays in its last status, and
+the hourly sweeps finish or fail it from there.
 
 ## Daily funnel, outcomes, and spend
 
@@ -183,7 +186,7 @@ SELECT count(*) FROM mcp_tokens
 ## Recovery
 
 1. Identify the failed job from Worker logs and aggregate failed/stuck metrics
-   (or the content-free Sentry issue if Sentry is enabled).
+   (or the content-free PostHog error, once PostHog is set up).
 2. Confirm the recording object still exists before changing D1 state.
 3. Fix and deploy the processing consumer first.
 4. Re-enqueue only the affected job using the correct message kind; handlers
@@ -193,34 +196,12 @@ SELECT count(*) FROM mcp_tokens
 
 Do not delete a failed meeting or its R2 object as a recovery shortcut.
 
-## Release candidate automation
+## Release automation
 
-The manually triggered `macOS release candidate` GitHub workflow builds,
-signs, notarizes, validates, and uploads CI artifacts for acceptance testing.
-It never deploys Workers or publishes to R2. Configure the protected
-`macos-release` GitHub environment with:
-
-- `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`;
-- `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`;
-- `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-
-`DESKTOP_SENTRY_DSN` is required: the release build fails without it. The
-`macos-release` environment exists as of 2026-07-17, but none of the required
-secrets has been uploaded. The local Developer ID Application identity and
-updater private key are present and the current-source app and embedded Swift
-capture helper both pass strict Developer ID signature verification. The
-noninteractive path also produced and verified a Developer ID-signed DMG and a
-matching signed updater. That disposable build deliberately omitted real
-production tokens and Apple notarization credentials, so it is engineering
-evidence only—not an installable beta candidate. No current DMG has been
-published.
-
-Publishing remains a separate, explicit `release-macos.sh --publish` action
-after the installed-DMG acceptance test. The build requests only Tauri's app
-bundle (which also emits the configured updater), then creates the DMG
-noninteractively, removing Finder automation from the release path. Both build
-and publish cryptographically verify the updater archive against the public key
-compiled into Eavesy. The candidate workflow notarizes the exact final DMG;
-local workstations use the Keychain profile, while CI can use its scoped Apple
-or App Store Connect secrets. The publish script verifies before its first
-remote write and writes the updater manifest last.
+Mac releases run from the `macOS release` GitHub workflow: push a
+`desktop-vX.Y.Z` tag to build, sign, notarize and draft a GitHub Release, then
+approve the gated `publish` job to push to R2 and the updater manifest. A
+manual run builds a notarized candidate and publishes nothing. The secrets
+(`macos-signing` and `macos-release` environments) and the release steps are
+in [RELEASING.md](RELEASING.md). As of 2026-10-15 none of those secrets has
+been uploaded, so the workflow has never run.

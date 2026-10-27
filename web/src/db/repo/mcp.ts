@@ -1,21 +1,15 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { decode, encode } from '../codec';
+import { encode } from '../codec';
 import { pid } from '../ids';
 import { mcpTokens } from '../schema';
+import { sha256Hex } from '@/lib/sha256';
+import { type McpScope, parseMcpScopes } from '@/server/mcp-scopes';
 import { MCP_TOKEN_TTL_MS, mcpTokenExpiresAt, renewedMcpTokenExpiry } from '@/server/mcp-token-policy';
 
-export type Scope = 'read' | 'write';
+export type Scope = McpScope;
 
 const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
-
-async function sha256Hex(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 export async function mintToken(
   db: AppDb,
@@ -80,6 +74,6 @@ export async function resolveToken(db: AppDb, rawToken: string) {
   return {
     tokenId: row.id,
     userId: row.userId,
-    scopes: decode<Scope[]>(row.scopesJson, ['read']),
+    scopes: parseMcpScopes(row.scopesJson),
   };
 }

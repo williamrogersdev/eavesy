@@ -4,7 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as usersRepo from '@/db/repo/users';
-import { captures, deviceTokens, dictations, mcpTokens, meetings, users } from '@/db/schema';
+import { captures, deviceTokens, dictations, mcpTokens, meetings, personalDictionary, users } from '@/db/schema';
 import { resolveActor } from '@/server/auth';
 import { reportError } from '@/server/observability';
 import { enqueue } from '@/server/queue';
@@ -33,36 +33,46 @@ export const Route = createFileRoute('/api/account/')({
         }
 
         const now = Date.now();
-        await db
-          .update(deviceTokens)
-          .set({ revokedAt: now })
-          .where(and(eq(deviceTokens.userId, actor.userId), isNull(deviceTokens.revokedAt)));
-        await db
-          .update(mcpTokens)
-          .set({ revokedAt: now })
-          .where(and(eq(mcpTokens.userId, actor.userId), isNull(mcpTokens.revokedAt)));
-        for (const table of [meetings, captures, dictations]) {
-          await db
-            .update(table)
+        // One D1 batch is one transaction: either the account is gone or nothing changed.
+        await db.batch([
+          db.delete(personalDictionary).where(eq(personalDictionary.userId, actor.userId)),
+          db
+            .update(deviceTokens)
+            .set({ revokedAt: now })
+            .where(and(eq(deviceTokens.userId, actor.userId), isNull(deviceTokens.revokedAt))),
+          db
+            .update(mcpTokens)
+            .set({ revokedAt: now })
+            .where(and(eq(mcpTokens.userId, actor.userId), isNull(mcpTokens.revokedAt))),
+          db
+            .update(meetings)
             .set({ deletedAt: now })
-            .where(and(eq(table.userId, actor.userId), isNull(table.deletedAt)));
-        }
-        await db
-          .update(users)
-          .set({
-            clerkUserId: null,
-            email: null,
-            displayName: null,
-            companyName: null,
-            role: null,
-            phoneNumber: null,
-            byoAnthropicKey: null,
-            byoDeepgramKey: null,
-            byoOpenRouterKey: null,
-            openRouterPkceVerifier: null,
-            updatedAt: now,
-          })
-          .where(eq(users.id, actor.userId));
+            .where(and(eq(meetings.userId, actor.userId), isNull(meetings.deletedAt))),
+          db
+            .update(captures)
+            .set({ deletedAt: now })
+            .where(and(eq(captures.userId, actor.userId), isNull(captures.deletedAt))),
+          db
+            .update(dictations)
+            .set({ deletedAt: now })
+            .where(and(eq(dictations.userId, actor.userId), isNull(dictations.deletedAt))),
+          db
+            .update(users)
+            .set({
+              clerkUserId: null,
+              email: null,
+              displayName: null,
+              companyName: null,
+              role: null,
+              phoneNumber: null,
+              byoAnthropicKey: null,
+              byoDeepgramKey: null,
+              byoOpenRouterKey: null,
+              openRouterPkceVerifier: null,
+              updatedAt: now,
+            })
+            .where(eq(users.id, actor.userId)),
+        ]);
 
         await enqueue({ kind: 'purge-account', userId: actor.userId }).catch((error: unknown) =>
           reportError('account purge enqueue failed', error, { userId: actor.userId }),

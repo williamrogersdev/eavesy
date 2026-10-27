@@ -1,27 +1,12 @@
-// Shared Sentry scrubbing for the Workers and the browser client.
+// Shared PostHog scrubbing for the Workers and the browser client.
 //
-// Goal: an event still says what failed and where (message, exception value,
-// route, method, release, breadcrumbs) but never carries user content
+// Goal: an event still says what failed and where (exception value, stack,
+// route, method, release) but never carries user content
 // (transcripts, notes, summaries, request bodies), credentials, cookies,
 // emails, or IPs. Free text is scrubbed with patterns; structured data is
 // filtered by key name, because transcript text has no recognisable shape.
 
-/** Sentry `dataCollection`: collect nothing that can carry user content. */
-export const PRIVATE_DATA_COLLECTION = {
-  userInfo: false,
-  cookies: false,
-  httpHeaders: false,
-  httpBodies: [] as [],
-  urlQueryParams: false,
-  graphQL: { document: false, variables: false },
-  genAI: { inputs: false, outputs: false },
-  databaseQueryData: false,
-  queues: false,
-  stackFrameVariables: false,
-};
-
 const MAX_TEXT = 1_000;
-const MAX_BREADCRUMB_TEXT = 300;
 const MAX_DEPTH = 4;
 
 const TEXT_PATTERNS: Array<[RegExp, string]> = [
@@ -47,35 +32,9 @@ const TEXT_PATTERNS: Array<[RegExp, string]> = [
 const SENSITIVE_KEY =
   /text|transcript|summary|summaries|note|body|content|prompt|title|description|blurb|token|secret|password|passwd|api[-_]?key|authorization|cookie|session|email|ip_address|^ip$|phone|name$/i;
 
-const SDK_CONTEXTS = new Set([
-  'app',
-  'browser',
-  'cloud_resource',
-  'culture',
-  'device',
-  'os',
-  'runtime',
-  'trace',
-]);
-
-// Span attributes that hold payloads or identify the client.
-const SPAN_DROP_KEY = /query|statement|args|input|output|message|user_agent|client\.address|\bip\b/i;
-
 // Error messages that embed model output or response bodies by construction.
 // Keep the description, drop whatever follows it.
 const CONTENT_BEARING_MESSAGES = [/^(summary was not valid JSON):[\s\S]*$/];
-
-// Breadcrumb data keys that describe a request or navigation, not content.
-const BREADCRUMB_DATA_KEYS = new Set([
-  'url',
-  'method',
-  'status_code',
-  'from',
-  'to',
-  'reason',
-  'http.method',
-  'http.response.status_code',
-]);
 
 export function scrubText(value: string, max = MAX_TEXT): string {
   let text = value;
@@ -111,163 +70,103 @@ export interface ScrubOptions {
   redactPath?: boolean;
 }
 
-interface ScrubbableBreadcrumb {
-  category?: string;
-  message?: string;
-  data?: { [key: string]: unknown };
-  level?: string;
+interface StackFrame {
+  platform: 'web:javascript' | 'node:javascript';
+  filename?: string;
+  function?: string;
+  lineno?: number;
+  colno?: number;
+  in_app: boolean;
 }
 
-/** Returns null to drop the breadcrumb. */
-export function scrubBreadcrumb<T extends ScrubbableBreadcrumb>(
-  breadcrumb: T,
-  opts: ScrubOptions = {},
-): T | null {
-  // Console output and DOM input can echo anything on the page.
-  if (breadcrumb.category === 'console' && breadcrumb.level !== 'error' && breadcrumb.level !== 'warning') {
-    return null;
+const V8_FRAME = /^\s*at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?$/;
+
+/** V8 stack lines to PostHog raw frames, oldest call first. */
+export function parseStack(stack: string | undefined, platform: StackFrame['platform'] = 'node:javascript'): StackFrame[] {
+  const frames: StackFrame[] = [];
+  for (const line of (stack ?? '').split('\n')) {
+    const match = V8_FRAME.exec(line);
+    if (!match) continue;
+    const filename = scrubUrl(match[2]);
+    frames.push({
+      platform,
+      filename,
+      ...(match[1] ? { function: match[1] } : {}),
+      lineno: Number(match[3]),
+      colno: Number(match[4]),
+      in_app: !filename.includes('node_modules'),
+    });
   }
-  if (breadcrumb.category === 'ui.input') return null;
-  if (breadcrumb.message) breadcrumb.message = scrubText(breadcrumb.message, MAX_BREADCRUMB_TEXT);
-  if (breadcrumb.data) {
-    const data: { [key: string]: unknown } = {};
-    for (const [key, value] of Object.entries(breadcrumb.data)) {
-      if (!BREADCRUMB_DATA_KEYS.has(key)) continue;
-      data[key] =
-        typeof value === 'string'
-          ? key === 'url' || key === 'from' || key === 'to'
-            ? scrubUrl(value, opts)
-            : scrubText(value, MAX_BREADCRUMB_TEXT)
-          : value;
-    }
-    breadcrumb.data = data;
-  }
-  return breadcrumb;
+  return frames.slice(0, 50).reverse();
 }
 
-interface ScrubbableEvent {
-  message?: string;
-  transaction?: string;
-  server_name?: string;
-  exception?: {
-    values?: Array<{
-      value?: string;
-      stacktrace?: { frames?: Array<{ vars?: { [key: string]: unknown } }> };
-    }>;
-  };
-  request?: { url?: string; method?: string };
-  user?: { id?: string | number; [key: string]: unknown };
-  breadcrumbs?: ScrubbableBreadcrumb[];
-  contexts?: { [key: string]: unknown };
-  extra?: { [key: string]: unknown };
-  tags?: { [key: string]: unknown };
-  spans?: Array<{ description?: string; data?: { [key: string]: unknown } }>;
+/** PostHog `$exception_list` for an error, with the message scrubbed. */
+export function exceptionList(error: unknown, opts: { handled: boolean }) {
+  const err = error instanceof Error ? error : new Error(String(error));
+  const frames = parseStack(err.stack);
+  return [
+    {
+      type: err.name || 'Error',
+      value: scrubText(err.message),
+      mechanism: { handled: opts.handled, synthetic: false },
+      ...(frames.length ? { stacktrace: { type: 'raw', frames } } : {}),
+    },
+  ];
 }
 
-export function scrubEvent<T extends ScrubbableEvent>(event: T, opts: ScrubOptions = {}): T {
-  if (event.message) event.message = scrubText(event.message);
-  for (const exception of event.exception?.values ?? []) {
-    if (exception.value) exception.value = scrubText(exception.value);
-    for (const frame of exception.stacktrace?.frames ?? []) delete frame.vars;
-  }
+// Page titles name meetings and notes; posthog-js sends document.title.
+const DROPPED_PROPERTIES = new Set(['title', '$title', '$el_text', '$elements', '$elements_chain']);
+const URL_PROPERTY = /url|referrer|href|pathname/i;
 
-  if (event.request) {
-    const { url, method } = event.request;
-    event.request = {
-      ...(url ? { url: scrubUrl(url, opts) } : {}),
-      ...(method ? { method } : {}),
-    };
+function scrubProperties(properties: { [key: string]: unknown }, opts: ScrubOptions) {
+  for (const [key, value] of Object.entries(properties)) {
+    if (DROPPED_PROPERTIES.has(key)) delete properties[key];
+    else if (typeof value === 'string' && URL_PROPERTY.test(key)) properties[key] = scrubUrl(value, opts);
   }
-  if (event.transaction) {
-    event.transaction = opts.redactPath
-      ? event.transaction.replace(/\/\S*/, '/[redacted]')
-      : scrubText(event.transaction);
-  }
-
-  // Keep only an opaque id so issues can be counted per user.
-  if (event.user) {
-    const id = event.user.id;
-    event.user = id === undefined ? undefined : { id };
-    if (!event.user) delete event.user;
-  }
-  delete event.server_name;
-
-  if (event.breadcrumbs) {
-    event.breadcrumbs = event.breadcrumbs
-      .map((breadcrumb) => scrubBreadcrumb(breadcrumb, opts))
-      .filter((breadcrumb): breadcrumb is ScrubbableBreadcrumb => breadcrumb !== null);
-  }
-  if (event.contexts) {
-    // SDK contexts (runtime, os, browser, trace…) describe the environment;
-    // anything our code attached is filtered by key.
-    for (const [key, value] of Object.entries(event.contexts)) {
-      if (!SDK_CONTEXTS.has(key)) event.contexts[key] = scrubValue(value);
-    }
-    // The root span's attributes (url.full, url.path, user agent) ride on the
-    // trace context of sampled transactions and errors alike.
-    const trace = event.contexts.trace as { data?: { [key: string]: unknown } } | undefined;
-    if (trace?.data) trace.data = scrubSpanData(trace.data, opts);
-  }
-  if (event.extra) event.extra = scrubValue(event.extra) as T['extra'];
-  if (event.tags) {
-    for (const [key, value] of Object.entries(event.tags)) {
-      if (typeof value === 'string') event.tags[key] = scrubText(value, MAX_BREADCRUMB_TEXT);
-    }
-  }
-  for (const span of event.spans ?? []) {
-    if (span.description) {
-      span.description = opts.redactPath
-        ? span.description.replace(/\/\S*/, '/[redacted]')
-        : scrubText(span.description);
-    }
-    if (span.data) span.data = scrubSpanData(span.data, opts);
-  }
-  return event;
 }
 
-interface ScrubbableStreamedSpan {
-  name: string;
-  attributes: { [key: string]: unknown };
+interface ScrubbableException {
+  value?: string;
+  stacktrace?: { frames?: Array<{ filename?: string; vars?: unknown; pre_context?: unknown; post_context?: unknown; context_line?: unknown }> };
+}
+
+interface ScrubbableAnalyticsEvent {
+  event: string;
+  properties?: { [key: string]: unknown };
+  $set?: { [key: string]: unknown };
+  $set_once?: { [key: string]: unknown };
 }
 
 /**
- * Span streaming (the SDK default) sends spans as their own envelope items,
- * bypassing beforeSend/beforeSendTransaction; this is the `beforeSendSpan`
- * hook. Attribute values may be raw or `{ value, type }`.
+ * posthog-js `before_send`: keep the event and route, drop query strings,
+ * fragments and page titles, scrub exception text, and strip source context
+ * from stack frames.
  */
-export function scrubStreamedSpan<T extends ScrubbableStreamedSpan>(span: T, opts: ScrubOptions = {}): T {
-  span.name = opts.redactPath ? span.name.replace(/\/\S*/, '/[redacted]') : scrubText(span.name);
-  const raw: { [key: string]: unknown } = {};
-  const typed = new Set<string>();
-  for (const [key, value] of Object.entries(span.attributes)) {
-    if (value !== null && typeof value === 'object' && 'value' in value) {
-      raw[key] = value.value;
-      typed.add(key);
-    } else {
-      raw[key] = value;
+export function scrubAnalyticsEvent<T extends ScrubbableAnalyticsEvent>(event: T, opts: ScrubOptions = {}): T {
+  const bags = [event.properties, event.$set, event.$set_once, event.properties?.$set, event.properties?.$set_once];
+  for (const bag of bags) {
+    if (bag && typeof bag === 'object') scrubProperties(bag as { [key: string]: unknown }, opts);
+  }
+
+  const exceptions = event.properties?.$exception_list;
+  if (Array.isArray(exceptions)) {
+    for (const exception of exceptions as ScrubbableException[]) {
+      if (exception.value) exception.value = scrubText(exception.value);
+      for (const frame of exception.stacktrace?.frames ?? []) {
+        if (frame.filename) frame.filename = scrubUrl(frame.filename);
+        delete frame.vars;
+        delete frame.pre_context;
+        delete frame.post_context;
+        delete frame.context_line;
+      }
     }
   }
-  const scrubbed = scrubSpanData(raw, opts);
-  const attributes: { [key: string]: unknown } = {};
-  for (const [key, value] of Object.entries(scrubbed)) {
-    attributes[key] = typed.has(key)
-      ? { ...(span.attributes[key] as object), value }
-      : value;
+  for (const key of ['$exception_message', '$exception_values']) {
+    const value: unknown = event.properties?.[key];
+    if (typeof value === 'string') event.properties![key] = scrubText(value);
+    else if (Array.isArray(value)) {
+      event.properties![key] = (value as unknown[]).map((item) => (typeof item === 'string' ? scrubText(item) : item));
+    }
   }
-  span.attributes = attributes;
-  return span;
-}
-
-function scrubSpanData(data: { [key: string]: unknown }, opts: ScrubOptions) {
-  const out: { [key: string]: unknown } = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (SENSITIVE_KEY.test(key) || SPAN_DROP_KEY.test(key)) continue;
-    out[key] =
-      typeof value === 'string'
-        ? /url|target|route/i.test(key)
-          ? scrubUrl(value, opts)
-          : scrubText(value, MAX_BREADCRUMB_TEXT)
-        : scrubValue(value);
-  }
-  return out;
+  return event;
 }

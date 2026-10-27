@@ -62,9 +62,7 @@ pub async fn set_root_folder(
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("could not create recordings folder: {error}"))?;
 
-    let mut config = settings::load(&app);
-    config.recordings_root = Some(root.to_string_lossy().into_owned());
-    settings::save(&app, &config)?;
+    settings::update(&app, |config| config.recordings_root = Some(root.to_string_lossy().into_owned()))?;
     watcher
         .replace(app, root.clone())
         .map_err(|error| format!("could not monitor the recordings folder: {error}"))?;
@@ -106,9 +104,7 @@ pub async fn write_meeting_folder(
 
 #[tauri::command]
 pub fn reveal_in_finder(app: AppHandle, meeting_id: String) -> Result<(), String> {
-    let target = crate::store::load_all(&app)
-        .into_iter()
-        .find(|recording| recording.id == meeting_id)
+    let target = crate::store::get(&app, &meeting_id)?
         .and_then(|recording| recording.folder_path)
         .unwrap_or(meeting_id);
 
@@ -339,7 +335,7 @@ fn yaml_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent folder", path.display()))?;

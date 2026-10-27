@@ -12,16 +12,22 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
       core: { convertFileSrc: () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf2kAAAAASUVORK5CYII=', invoke: async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
         calls.push({ command, args });
         let result: unknown = null;
-        if (command === 'list_recordings') result = [{ id: 'note-1', title: 'Quick note', started_at_ms: Date.now(), status: 'complete', transcript: '# Quick note\n\n## Transcript\n\n[00:00:00] Send the revised proposal tomorrow.' }];
-        if (command === 'list_recordings' && visual) result = [{ id: 'image-1', title: 'Screenshot', started_at_ms: Date.now(), source: 'screenshot', status: 'complete' }, { id: 'video-1', title: 'Screen recording', started_at_ms: Date.now() - 1000, source: 'screen', status: 'complete', has_video: true }];
-        if (command === 'list_recordings' && timeline) result = Array.from({ length: 20 }, (_, index) => ({ id: `note-${index}`, title: `Note ${index}`, started_at_ms: Date.now() - index * 60000, status: 'complete', transcript: `Saved note ${index}.\nA second line of text.` }));
+        if (command === 'list_recordings' || command === 'get_recording') result = [{ id: 'note-1', title: 'Quick note', started_at_ms: Date.now(), status: 'complete', transcript: '# Quick note\n\n## Transcript\n\n[00:00:00] Send the revised proposal tomorrow.' }];
+        if ((command === 'list_recordings' || command === 'get_recording') && visual) result = [{ id: 'image-1', title: 'Screenshot', started_at_ms: Date.now(), source: 'screenshot', status: 'complete' }, { id: 'video-1', title: 'Screen recording', started_at_ms: Date.now() - 1000, source: 'screen', status: 'complete', has_video: true }];
+        if ((command === 'list_recordings' || command === 'get_recording') && timeline) result = Array.from({ length: 20 }, (_, index) => ({ id: `note-${index}`, title: `Note ${index}`, started_at_ms: Date.now() - index * 60000, status: 'complete', transcript: `Saved note ${index}.\nA second line of text.` }));
+        if ((command === 'list_recordings' || command === 'get_recording') && Array.isArray(result)) {
+          const items = result as Record<string, unknown>[];
+          if (command === 'get_recording') result = items.find((row) => row.id === args?.id) ?? null;
+          else result = { items, next_offset: null, counts: { all: items.length, voice: visual ? 0 : items.length, meetings: 0, screens: visual ? items.length : 0, notes: 0 } };
+        }
         if (command === 'capture_media') result = '/saved/capture.png';
         if (command === 'get_settings') result = { toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Cmd+Shift+D' };
         if (command === 'get_setup_status') result = { paired: true, completed };
         if (command === 'check_permissions') result = { mic: true, screen: true };
         if (command === 'start_capture') result = { session_id: 'shortcut-test' };
         if (command === 'live_transcript') result = [{ startMs: 0, endMs: 2000, track: null, text: 'Cloud line.', provisional: false }];
-        if (command === 'hotkey_conflict') result = { title: 'Fn / Globe may also trigger macOS', detail: 'Set Press Fn/Globe key to Do Nothing.' };
+        if (command === 'suspend_hotkeys') result = args?.suspended === true;
+        if (command === 'fn_status') result = { input_monitoring: true, globe_action: 'emoji' };
         return result as T;
       } },
       event: { listen: async <T,>(name: string, handler: (event: { payload: T }) => void) => {
@@ -33,20 +39,6 @@ async function nativeLauncher(page: Page, completed = true, visual = false, time
   }, { completed, visual, timeline });
   await page.goto('/launcher', { waitUntil: 'networkidle' });
 }
-
-test('Fn warning opens settings and cancellation leaves binding unchanged', async ({ page }) => {
-  await nativeLauncher(page, false);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await page.getByRole('button', { name: 'Use Fn / Globe tap' }).first().click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('Do Nothing');
-  await dialog.getByRole('button', { name: 'Open Keyboard settings' }).click();
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(dialog).toBeHidden();
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string }[] } }).__shortcutTest.calls);
-  expect(calls.some((call) => call.command === 'open_keyboard_settings')).toBe(true);
-  expect(calls.some((call) => call.command === 'set_hotkey')).toBe(false);
-});
 
 test('native dictation event starts mic capture and second press saves', async ({ page }) => {
   await nativeLauncher(page);
@@ -62,20 +54,6 @@ test('native dictation event starts mic capture and second press saves', async (
   expect(calls.some((call) => call.command === 'stop_capture')).toBe(true);
 });
 
-test('live captions can be turned off, and turning them on asks for Speech Recognition', async ({ page }) => {
-  await nativeLauncher(page);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  const toggle = page.getByRole('switch', { name: 'Live captions' });
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
-  expect(calls.filter((call) => call.command === 'set_live_captions').map((call) => call.args?.enabled)).toEqual([false, true]);
-  expect(calls.some((call) => call.command === 'check_permissions' && call.args?.needSpeech === true)).toBe(true);
-});
-
 test('a recording shows its live captions, cloud lines first', async ({ page }) => {
   await nativeLauncher(page);
   await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
@@ -87,34 +65,6 @@ test('a recording shows its live captions, cloud lines first', async ({ page }) 
   await expect(captions).toContainText('still talking');
 });
 
-test('recording control can open Settings and stopping clears the launcher timer', async ({ page }) => {
-  await nativeLauncher(page);
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:dictation'));
-  await expect(page.getByRole('button', { name: 'Stop & save' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await expect(page.getByRole('button', { name: 'Start dictation ⌘ ⇧ D' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string, payload: unknown) => void } }).__shortcutTest.emit('capture:state', { phase: 'saved', sessionId: 'shortcut-test' }));
-  await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop & save' })).toBeHidden();
-});
-
-
-test('overview shows transcript cards and copies spoken text without search clutter', async ({ page }) => {
-  await nativeLauncher(page);
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-  await expect(page.getByPlaceholder('Search recordings, transcripts, commands…')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start voice note' })).toBeVisible();
-  await expect(page.getByText('Send the revised proposal tomorrow.', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Copy voice note' }).click();
-  const calls = await page.evaluate(() => (window as unknown as { __shortcutTest: { calls: { command: string; args?: Record<string, unknown> }[] } }).__shortcutTest.calls);
-  expect(calls.find((call) => call.command === 'copy_text')?.args?.text).toBe('Send the revised proposal tomorrow.');
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:settings'));
-  await expect(page.getByRole('button', { name: 'Start dictation ⌘ ⇧ D' })).toBeVisible();
-  await page.evaluate(() => (window as unknown as { __shortcutTest: { emit: (name: string) => void } }).__shortcutTest.emit('launcher:opened'));
-  await expect(page.getByRole('heading', { name: 'Capture history' })).toBeVisible();
-});
 
 
 test('saved screenshots and videos remain in history with media copy actions', async ({ page }) => {

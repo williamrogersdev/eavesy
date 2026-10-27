@@ -5,9 +5,12 @@ and Workers AI resources. Commands are run from the repository root unless noted
 
 ## Account and authentication
 
-All three Wrangler configs pin account `5bc563d42299762f9b48f5dec0531954`
-(the maintainer's personal Cloudflare account). It also hosts other projects;
-account-scoped permissions are not restricted to Eavesy Workers alone.
+The account is selected with `CLOUDFLARE_ACCOUNT_ID` (the Wrangler configs
+no longer pin one) and D1/KV IDs and domains come from `EAVESY_*` variables
+rendered into the configs by `scripts/render-wrangler.mjs`. See
+[SELF_HOSTING.md](SELF_HOSTING.md) for the full variable list. Production uses
+the same mechanism via repository variables. If your account hosts other
+projects, account-scoped permissions are not restricted to Eavesy Workers alone.
 
 Create a user API token named `eavesy-cloudflare` with account permissions:
 Workers Scripts Edit, Workers KV Storage Edit, Workers R2 Storage Edit,
@@ -23,12 +26,12 @@ security add-generic-password -a "$(id -un)" -s eavesy-cloudflare -w
 ```
 
 The password prompt accepts the token without echoing it. The `scripts/cf`
-wrapper reads that Keychain item, supplies the token and pinned account to
-its child command, and fails if the token is missing. It does not change
+wrapper reads that Keychain item, supplies the token and
+`CLOUDFLARE_ACCOUNT_ID` to its child command, and fails if either is missing. It does not change
 your saved Wrangler login or parent shell. Allow Keychain access when prompted.
 On non-macOS CI runners, supply `CLOUDFLARE_API_TOKEN` through the CI secret
-store and set `CLOUDFLARE_ACCOUNT_ID` to the pinned Eavesy account. The wrapper
-rejects a missing or different account and never falls back to OAuth.
+store and set `CLOUDFLARE_ACCOUNT_ID`. The wrapper rejects a missing account
+and never falls back to OAuth.
 
 Deploy scripts and remote migrations use the wrapper automatically. For
 other authenticated commands, prefix Wrangler with `../scripts/cf` from
@@ -39,13 +42,16 @@ cd web
 ../scripts/cf bunx wrangler d1 migrations list eavesy --remote
 ```
 
-A config pin prevents accidental default-account selection; it is not a
-security boundary against explicitly overriding config or account settings.
+Requiring an explicit `CLOUDFLARE_ACCOUNT_ID` prevents accidental
+default-account selection; it is not a security boundary against explicitly
+overriding settings.
 
 ## Required resources
 
-The committed Wrangler configs contain the production IDs. For a new account
-or environment, create equivalent resources and replace those IDs:
+The committed Wrangler configs contain placeholder IDs; run
+`bun run cf:render` (with `EAVESY_D1_DATABASE_ID`, `EAVESY_KV_CACHE_ID` and
+optional domains exported) before deploying, and `bun run cf:restore` after.
+To create the resources:
 
 ```bash
 cd web
@@ -90,39 +96,105 @@ cd workers/processing
 bunx wrangler secret put ANTHROPIC_API_KEY
 ```
 
-Workers AI transcription and embeddings use the `AI` binding and do not need
-an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
-authenticates token hashes stored in D1. `SENTRY_DSN` is optional for all three
-Workers; when absent, error reporting is disabled without affecting request or
-queue handling. If enabled later, keep it as a Worker secret and use separate
-projects per environment. `OPS_METRICS_TOKEN` protects the aggregate-only
-operations endpoint and must be generated independently of user/device tokens.
+Notetaker bots: `workers/meeting-bot` deploys first (`bun run
+deploy:meeting-bot`), because the web and processing Workers bind to it. It
+needs Cloudflare Containers on the account and Docker where wrangler runs,
+which builds the bot's image and pushes it to the account's registry. It uses
+the same D1 database, R2 bucket and queue as the others and needs no secrets.
 
-### Error reporting (optional, strongly recommended)
-
-All three Workers report to Sentry when `SENTRY_DSN` is set, and do nothing
-extra when it isn't. Queue jobs that fail permanently and anything that lands
-in the dead-letter queue are reported explicitly. Reports keep the scrubbed
-error message, route, method and release; headers, cookies, bodies, query
-strings, emails and tokens are never sent, and the MCP Worker also drops the
-URL path. The deploy workflow passes the commit SHA as `SENTRY_RELEASE`. See
-[OBSERVABILITY.md](OBSERVABILITY.md).
+Email recaps (optional, both Workers): set `RESEND_API_KEY`,
+`RESEND_WEBHOOK_SECRET` (the `whsec_…` signing secret of the Resend webhook)
+and `EMAIL_FROM` (a sender on a domain verified in Resend, e.g.
+`Eavesy <recaps@eavesy.com>`). `APP_URL` sets where links in the email point;
+it defaults to `https://eavesy.com`. In the Resend dashboard, add a webhook at
+`https://<app host>/api/webhooks/resend` for the `email.sent`,
+`email.delivered`, `email.bounced`, `email.complained`, `email.failed` and
+`email.suppressed` events. Without all three secrets the setting says recaps
+aren't set up and nothing is sent.
 
 ```bash
-cd web && bunx wrangler secret put SENTRY_DSN
-cd ../workers/processing && bunx wrangler secret put SENTRY_DSN
-cd ../mcp && bunx wrangler secret put SENTRY_DSN
+cd web && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
+cd ../workers/processing && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
 ```
 
-For browser errors, set the GitHub Actions variable `VITE_SENTRY_DSN` (a
-browser DSN is public by design); the deploy workflow writes it into
-`web/.env.production`. Leave it unset to ship no Sentry code to browsers.
+### Notetaker canary (optional, recommended)
 
-The desktop app reads `SENTRY_DSN` at **compile time**, and
-`build-macos-release.sh` refuses to build a release without it (set
-`EAVESY_ALLOW_NO_SENTRY=1` to opt out deliberately). In CI it comes from the
-`DESKTOP_SENTRY_DSN` secret; authentication uses the paired-device credential
-in Keychain.
+Joining and speaker detection depend on Meet's and Teams' page text, which
+changes every few weeks. Once a day (07:20 UTC, the processing Worker's
+`20 7 * * *` cron) a canary bot joins a standing test meeting on each
+platform. It is told to leave on the first watch tick (every two minutes)
+once it has been in the call for about two minutes, so it typically stays
+two to four minutes. Ten minutes after it starts,
+the processing Worker checks it: a bot that never got into the call, or got
+in but read no participant or speaker names, raises an alert. Canary bots
+belong to a system account (`user_eavesy_canary`), are marked `canary` in
+`meeting_bots`, make no meeting and drop their audio, so nothing reaches
+anyone's library. Code: `web/src/server/meeting-bots/canary.ts`.
+
+Set it up:
+
+1. Create a recurring Google Meet and a recurring Teams meeting with no end
+   date, used for nothing else.
+2. Make sure the bot gets in on its own. It joins as an unauthenticated guest
+   named "Eavesy Notetaker", so either keep a host admitting (an always-on
+   account or device signed in to the meeting) or turn on lobby bypass for
+   everyone: in Meet, Host controls → Meeting access → Open; in Teams, Meeting
+   options → "Who can bypass the lobby" → Everyone, and allow anonymous
+   users to join.
+3. Keep someone in the call. The bot leaves a meeting nobody else is in, and
+   the check needs at least one name read off the call; a signed-in device
+   left in the meeting (ideally playing audio, which also exercises speaker
+   detection) does both.
+4. Set the links as secrets on the processing Worker. Never commit them: the
+   repo is public and a link lets anyone into the test meeting.
+
+```bash
+cd workers/processing
+bunx wrangler secret put CANARY_MEET_URL     # https://meet.google.com/xxx-xxxx-xxx
+bunx wrangler secret put CANARY_TEAMS_URL    # https://teams.microsoft.com/l/meetup-join/…
+bunx wrangler secret put CANARY_ALERT_EMAIL  # optional, where failures are emailed
+```
+
+With neither link set the canary does nothing; set one to watch one platform.
+
+Alerts: every failure logs a `console.error` JSON line with
+`"alert":"meeting_bot_canary"`, plus `platform`, `reason` (`did_not_join`,
+`no_speakers`, `invalid_url`, `schedule_failed`, `check_failed`), `botId` and
+the bot's last `status`/`statusDetail`. Add a Workers observability alert on
+the `eavesy-processing` Worker for that field. When `RESEND_API_KEY`,
+`EMAIL_FROM` and `CANARY_ALERT_EMAIL` are all set, the same failure is also
+emailed (no webhook secret is needed for this). A passing run logs
+`canary passed`. To see why a bot failed, filter the `eavesy-meeting-bot`
+Worker's logs by its `botId`.
+
+Workers AI transcription and embeddings use the `AI` binding and do not need
+an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
+authenticates token hashes stored in D1. PostHog is optional for all three
+Workers; without a key, error reporting is disabled without affecting request
+or queue handling. `OPS_METRICS_TOKEN` protects the aggregate-only
+operations endpoint and must be generated independently of user/device tokens.
+
+### Errors and analytics (optional, strongly recommended)
+
+All three Workers and the browser send errors and product events to PostHog
+when the GitHub Actions variable `POSTHOG_KEY` holds a PostHog project API key
+(`phc_…`, public by design), and do nothing extra when it isn't set. The
+deploy workflow passes it to the Workers as a var and writes it into
+`web/.env.production` as `VITE_POSTHOG_KEY`; leave it unset to ship no
+PostHog code to browsers. Queue jobs that fail permanently and anything that
+lands in the dead-letter queue are reported explicitly. Reports keep the
+scrubbed error message, route, method and release; headers, cookies, bodies,
+query strings, emails and tokens are never sent, and the MCP Worker also
+drops the URL path. The deploy workflow passes the commit SHA as `RELEASE`.
+See [OBSERVABILITY.md](OBSERVABILITY.md).
+
+```bash
+gh variable set POSTHOG_KEY --env production --body phc_…
+```
+
+The desktop app reads `EAVESY_POSTHOG_KEY` at **compile time**; in CI it
+comes from the `DESKTOP_POSTHOG_KEY` variable. A build without it sends
+nothing. Authentication uses the paired-device credential in Keychain.
 
 ## Database migrations
 
@@ -158,7 +230,8 @@ processing → MCP → web, and smoke-tests the live domains. If the smoke test
 fails it rolls the web Worker back; the processing and MCP Workers and
 migrations are left as they are.
 
-The job is skipped until it is configured. One-time setup:
+The job is skipped until `VITE_CLERK_PUBLISHABLE_KEY` is set; once it is, the
+job fails loudly if any other variable is missing. One-time setup:
 
 ```bash
 gh api -X PUT repos/williamrogersdev/eavesy/environments/production \
@@ -168,6 +241,12 @@ gh api -X POST repos/williamrogersdev/eavesy/environments/production/deployment-
   -f name=main
 gh secret set CLOUDFLARE_API_TOKEN --env production --repo williamrogersdev/eavesy
 gh variable set VITE_CLERK_PUBLISHABLE_KEY --repo williamrogersdev/eavesy
+gh variable set CLOUDFLARE_ACCOUNT_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_D1_DATABASE_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_KV_CACHE_ID --repo williamrogersdev/eavesy
+gh variable set EAVESY_APP_DOMAIN --body eavesy.com --repo williamrogersdev/eavesy
+gh variable set EAVESY_WWW_DOMAIN --body www.eavesy.com --repo williamrogersdev/eavesy
+gh variable set EAVESY_MCP_DOMAIN --body mcp.eavesy.com --repo williamrogersdev/eavesy
 ```
 
 The token is the Cloudflare API token described above; it lives in the
@@ -185,9 +264,11 @@ for a deploy from your Mac.
 ## Deploy
 
 ```bash
+bun run cf:render
 bun run deploy:processing
 bun run deploy:mcp
 bun run deploy
+bun run cf:restore
 ```
 
 Order matters operationally: deploy the processing consumer before the web

@@ -1,5 +1,4 @@
 name = "eavesy-processing"
-account_id = "5bc563d42299762f9b48f5dec0531954"
 main = "src/index.ts"
 compatibility_date = "2026-07-16"
 compatibility_flags = ["nodejs_compat"]
@@ -8,7 +7,7 @@ observability = { enabled = true }
 [[d1_databases]]
 binding = "DB"
 database_name = "eavesy"
-database_id = "72c5c5f6-a2d9-4a07-b17f-15eb282e9782"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
 binding = "AUDIO_BUCKET"
@@ -21,18 +20,30 @@ index_name = "eavesy-embeddings"
 [ai]
 binding = "AI"
 
+# Notetaker bots (workers/meeting-bot); deployed before this Worker.
+[[services]]
+binding = "MEETING_BOTS"
+service = "eavesy-meeting-bot"
+entrypoint = "BotControl"
+
 [[queues.consumers]]
 queue = "eavesy-processing"
 max_batch_size = 1
 max_batch_timeout = 5
-max_retries = 8
+# MAX_ATTEMPTS - 1 (web/src/server/processing/shared.ts): the consumer records
+# the failure on the last delivery itself; the DLQ catches deliveries that crashed.
+max_retries = 4
 dead_letter_queue = "eavesy-processing-dlq"
 
 [[queues.consumers]]
 queue = "eavesy-processing-dlq"
 max_batch_size = 1
 max_batch_timeout = 5
-max_retries = 3
+# The DLQ has no DLQ of its own: past these attempts a message is dropped.
+# Ten, five minutes apart (DEAD_LETTER_RETRY_SECONDS), ride out a D1 outage
+# of most of an hour while still recording the failure.
+max_retries = 10
+retry_delay = 300
 
 [[queues.producers]]
 queue = "eavesy-processing"
@@ -47,4 +58,5 @@ tag = "v2"
 deleted_classes = ["MeetingRoom"]
 
 [triggers]
-crons = ["0 * * * *"]
+# Hourly sweeps; daily, the notetaker canary (web/src/server/meeting-bots/canary.ts, CANARY_CRON).
+crons = ["0 * * * *", "20 7 * * *"]

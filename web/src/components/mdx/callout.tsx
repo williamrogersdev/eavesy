@@ -10,26 +10,26 @@ const STYLES: Record<
 > = {
   note: {
     icon: Info,
-    ring: 'border-sky-400/20 bg-sky-400/[0.06]',
-    iconColor: 'text-sky-300',
+    ring: 'border-ev-line bg-ev-well',
+    iconColor: 'text-ev-ink-2',
     label: 'Note',
   },
   tip: {
     icon: Lightbulb,
-    ring: 'border-accent/20 bg-accent/[0.06]',
-    iconColor: 'text-accent',
+    ring: 'border-ev-coat/40 bg-ev-coat-soft',
+    iconColor: 'text-ev-coat',
     label: 'Tip',
   },
   warning: {
     icon: AlertTriangle,
-    ring: 'border-amber-400/20 bg-amber-400/[0.06]',
-    iconColor: 'text-amber-300',
+    ring: 'border-ev-warn-ink/30 bg-ev-warn-soft',
+    iconColor: 'text-ev-warn-ink',
     label: 'Heads up',
   },
   privacy: {
     icon: ShieldCheck,
-    ring: 'border-emerald-400/20 bg-emerald-400/[0.06]',
-    iconColor: 'text-emerald-300',
+    ring: 'border-ev-leaf/30 bg-ev-leaf-soft',
+    iconColor: 'text-ev-leaf',
     label: 'Your data',
   },
 };
@@ -48,10 +48,10 @@ export function Callout({
     <div className={cn('my-6 flex gap-3 rounded-2xl border p-4', ring)}>
       <Icon className={cn('mt-0.5 h-5 w-5 flex-none', iconColor)} />
       <div className="min-w-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0">
-        <div className="mb-1 text-sm font-semibold text-white">
+        <div className="mb-1 text-sm font-semibold text-ev-ink">
           {title ?? label}
         </div>
-        <div className="text-sm leading-relaxed text-white/70">{children}</div>
+        <div className="text-sm leading-relaxed text-ev-ink">{children}</div>
       </div>
     </div>
   );

@@ -1,0 +1,183 @@
+/* Settings have their own native window, drawn like System Settings: a full-height
+   sidebar under the traffic lights, a quiet pane, and borderless groups. Manila marks
+   only the open section's icon. Everything is mixed from --ev-* tokens. */
+.ev-preferences-window {
+  height: 100%;
+  position: relative;
+  color: var(--ev-ink);
+}
+.ev-preferences {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  --evs-folder: color-mix(in srgb, var(--ev-well) 70%, var(--ev-paper));
+  --evs-group: var(--ev-raised);
+  --evs-group-ring: 0 0 0 1px color-mix(in srgb, var(--ev-ink) 7%, transparent), 0 1px 2px color-mix(in srgb, var(--ev-ink) 4%, transparent);
+  --evs-divider: color-mix(in srgb, var(--ev-ink) 7%, transparent);
+  background: var(--ev-paper);
+}
+@media (prefers-color-scheme: dark) {
+  .ev-preferences {
+    --evs-folder: color-mix(in srgb, #000 22%, var(--ev-paper));
+    --evs-group: color-mix(in srgb, var(--ev-ink) 5%, var(--ev-paper));
+    --evs-group-ring: 0 0 0 1px color-mix(in srgb, var(--ev-ink) 6%, transparent);
+    --evs-divider: color-mix(in srgb, var(--ev-ink) 7%, transparent);
+  }
+}
+
+.ev-settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); flex: 1; min-height: 0; }
+
+/* The sidebar: the open section is a soft fill with a manila icon. */
+.ev-settings-nav { display: flex; flex-direction: column; padding: 18px 10px 14px; background: var(--evs-folder); border-right: 1px solid var(--evs-divider); overflow-y: auto; }
+/* In its own window the traffic lights sit over the sidebar, and its top drags the window. */
+.ev-preferences[data-standalone='true'] .ev-settings-nav { padding-top: 0; }
+.ev-settings-drag { flex: none; height: 44px; }
+.ev-settings-nav .ev-settings-back { margin: 0 0 12px; padding: 6px 8px; color: var(--ev-ink-2); font: 600 12.5px/18px var(--ev-font-round); }
+.ev-settings-nav .ev-settings-back:hover { color: var(--ev-ink); }
+.ev-settings-nav .ev-settings-back svg { color: currentColor; }
+.ev-settings-nav-title { display: flex; align-items: center; gap: 8px; padding: 0 8px 14px; color: var(--ev-ink); font: var(--ev-t-head); }
+.ev-preferences[data-standalone='true'] .ev-settings-nav-title { display: none; }
+.ev-settings-nav button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px; margin: 1px 0; border: 0; border-radius: 7px; color: var(--ev-ink); background: transparent; font: 500 13px/18px var(--ev-font-text); text-align: left; transition: background var(--ev-d-state); }
+.ev-settings-nav button svg { color: var(--ev-ink-3); transition: color var(--ev-d-state); }
+.ev-settings-nav button:hover { background: var(--ev-hover); }
+.ev-settings-nav button[aria-current] { background: color-mix(in srgb, var(--ev-ink) 10%, transparent); }
+.ev-settings-nav button[aria-current] svg { color: var(--ev-manila-shade); }
+.ev-settings-nav button:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-settings-search { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 6px 9px; border-radius: 7px; background: color-mix(in srgb, var(--ev-ink) 6%, transparent); color: var(--ev-ink-3); transition: box-shadow var(--ev-d-state); }
+.ev-settings-search:focus-within { box-shadow: var(--ev-focus-field); }
+.ev-settings-search input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ev-ink); font: 400 13px/18px var(--ev-font-text); outline: none; }
+.ev-settings-search input::placeholder { color: var(--ev-ink-3); }
+.ev-settings-search input::-webkit-search-cancel-button { display: none; }
+.ev-settings-nav-empty { margin: 4px 0; padding: 0 10px; color: var(--ev-ink-3); font: var(--ev-t-small); }
+.ev-settings-nav-foot { margin: auto 0 0; padding: 16px 10px 0; color: var(--ev-ink-3); font: var(--ev-t-small); }
+
+.ev-settings-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ev-paper); }
+.ev-settings-heading { flex: none; display: flex; align-items: center; gap: 16px; padding: 22px 32px 6px; }
+.ev-preferences[data-standalone='true'] .ev-settings-heading { padding-top: 34px; }
+.ev-settings-heading h1 { margin: 0; font: var(--ev-t-title); color: var(--ev-ink); }
+.ev-settings-heading p { margin: 3px 0 0; font: 400 13px/18px var(--ev-font-text); color: var(--ev-ink-2); }
+.ev-settings-pane .ev-settings { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 32px 36px; }
+.ev-settings-pane .ev-settings > div { max-width: 680px; }
+
+/* Groups: one level, a soft step above the pane, never nested and never outlined twice. */
+.ev-settings-pane .ev-card-wrap { margin: 0; }
+.ev-settings-pane .ev-card-wrap + .ev-card-wrap,
+.ev-settings-pane .ev-perm-summary + .ev-card-wrap { margin-top: 22px; }
+.ev-settings-pane .ev-card-title { margin: 0 0 7px 4px; color: var(--ev-ink-2); font: 600 12px/16px var(--ev-font-text); }
+.ev-settings-pane #settings-shortcuts > .ev-card-wrap > .ev-card-title { display: none; }
+.ev-settings-pane .ev-card { padding: 0 16px; border-radius: 10px; background: var(--evs-group); box-shadow: var(--evs-group-ring); }
+.ev-settings-pane .ev-card > * + * { border-top: 1px solid var(--evs-divider); }
+.ev-settings-pane .ev-card > p:only-child { padding: 12px 0; }
+.ev-settings-pane .ev-card > .ev-set-hint:first-child { padding: 12px 0 10px; }
+.ev-settings-pane .ev-set-body { padding: 12px 0; }
+.ev-settings-pane .ev-set-row { padding: 12px 0; }
+.ev-settings-pane .ev-perm { padding: 12px 0; }
+/* Several settings in one group: each its own row, split by a hairline. */
+.ev-settings-pane .ev-set-body > .ev-set-row { padding: 0; }
+.ev-settings-pane .ev-set-body > :is(.ev-switch-row, .ev-set-row) + :is(.ev-switch-row, .ev-set-row) { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--evs-divider); }
+.ev-settings-pane .ev-shortcut { padding: 12px 0; }
+.ev-settings-pane .ev-shortcut-footer { padding: 10px 0; }
+/* A step-by-step box inside a group is a tint, not a second card. */
+.ev-settings-pane .ev-shortcut-card[data-tone='steps'] { background: color-mix(in srgb, var(--ev-ink) 4%, transparent); }
+.ev-settings-pane .ev-field-input { min-height: 34px; background: var(--ev-paper); }
+.ev-settings-pane textarea.ev-field-input { min-height: 120px; }
+.ev-settings-pane .ev-field-select { width: auto; min-width: 200px; }
+.ev-settings-pane .ev-select > select { background: var(--ev-paper); }
+.ev-settings-pane .ev-tags { min-height: 78px; align-content: flex-start; align-items: flex-start; padding: 10px; background: var(--ev-paper); }
+.ev-settings-pane .ev-tags input { min-height: 26px; }
+.ev-settings-pane .ev-tag { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
+.ev-settings-pane .ev-set-hint { line-height: 1.5; }
+.ev-settings-pane .ev-projrow-head { margin: 0 -8px; width: calc(100% + 16px); padding: 11px 8px; border-radius: var(--ev-r-ctl); }
+.ev-settings-pane .ev-projrow-head:hover { background: var(--ev-hover); }
+.ev-settings-pane .ev-projrow-head:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-settings-pane .ev-card > .ev-projrow + .ev-projrow { border-top: 1px solid var(--evs-divider); }
+
+.ev-settings-feedback { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); color: var(--ev-warn-ink); font: var(--ev-t-body); }
+.ev-settings-feedback p { flex: 1; min-width: 0; margin: 0; }
+.ev-settings-feedback .ev-btn { flex: none; }
+.ev-settings-save { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 8px; }
+.ev-signin-note { display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: 10px; background: var(--evs-group); box-shadow: var(--evs-group-ring); }
+.ev-signin-note > p { flex: 1; min-width: 0; margin: 0; }
+
+/* Permissions: one line that says where things stand, above every row. */
+.ev-perm-summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; font: var(--ev-t-ui); }
+.ev-perm-summary > p { margin: 0; min-width: 0; }
+.ev-perm-summary[data-state='ok'] { background: var(--ev-leaf-soft); color: var(--ev-leaf); }
+.ev-perm-summary[data-state='partial'] { background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
+.ev-perm-summary[data-state='warn'] { background: var(--ev-warn-soft); color: var(--ev-warn-ink); }
+.ev-perm-summary[data-state='checking'] { background: var(--ev-well); color: var(--ev-ink-2); }
+.ev-settings-pane .ev-perm[data-need='not-needed'] { opacity: 0.7; }
+
+/* What a dictation style does, shown with one spoken sentence. */
+.ev-style-example { margin: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--ev-r-ctl); background: color-mix(in srgb, var(--ev-ink) 4%, transparent); }
+.ev-style-example p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.ev-style-example span { display: block; margin-bottom: 2px; color: var(--ev-ink-3); font: var(--ev-t-small); }
+.ev-style-said { color: var(--ev-ink-2); font: italic 400 12.5px/18px var(--ev-font-text); }
+.ev-style-typed { color: var(--ev-ink); font: var(--ev-t-body); }
+.ev-style-typed span { font-style: normal; }
+
+.ev-plain-list { margin: 0 0 4px; padding: 0; list-style: none; }
+.ev-howto { margin: 0; padding: 12px 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 10px; }
+.ev-howto li { counter-increment: step; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; color: var(--ev-ink-2); font: 400 12.5px/18px var(--ev-font-text); }
+.ev-howto li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ev-manila-soft); color: var(--ev-manila-ink); font: 700 11.5px/1 var(--ev-font-round); }
+.ev-howto b { color: var(--ev-ink); font-weight: 600; }
+.ev-proj-crumbs { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px -10px; }
+
+.ev-preferences-notice { position: absolute; bottom: 16px; left: 232px; right: 24px; padding: 12px 16px; background: var(--ev-warn-soft); color: var(--ev-warn-ink); border-radius: var(--ev-r-ctl); box-shadow: var(--ev-e-2); font: var(--ev-t-body); }
+@media (max-width: 600px) {
+  .ev-settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ev-settings-nav { flex-direction: row; gap: 4px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--evs-divider); overflow-x: auto; }
+  .ev-settings-nav-title, .ev-settings-nav-foot, .ev-settings-search, .ev-settings-nav-empty, .ev-settings-drag { display: none; }
+  .ev-preferences[data-standalone='true'] .ev-settings-nav { padding-top: 8px; }
+  .ev-settings-nav button { flex: none; width: auto; padding: 8px 10px; }
+  .ev-settings-nav button svg { display: none; }
+  .ev-settings-nav button[aria-current]::before { display: none; }
+  .ev-settings-heading { padding: 18px 16px; }
+  .ev-settings-pane .ev-settings { padding: 16px 16px 24px; }
+  .ev-preferences-notice { left: 16px; right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .ev-settings-nav button, .ev-settings-nav button svg { transition: none; } }
+
+/* This Mac: leftovers from agent sessions. */
+/* Drawn from the tokens: the system checkbox is a stark white square in the dark. */
+.ev-machine-check { appearance: none; flex: none; width: 16px; height: 16px; margin: 0; border-radius: 4px; background: var(--ev-well); box-shadow: inset 0 0 0 1px var(--ev-line-strong); cursor: pointer; display: grid; place-content: center; transition: background var(--ev-d-state), box-shadow var(--ev-d-state); }
+.ev-machine-check:hover { box-shadow: inset 0 0 0 1px var(--ev-ink-3); }
+.ev-machine-check:checked { background: var(--ev-coat); box-shadow: none; }
+.ev-machine-check:checked::after { content: ''; width: 8px; height: 4px; margin-top: -2px; border: solid var(--ev-on-coat); border-width: 0 0 1.75px 1.75px; transform: rotate(-45deg); }
+.ev-machine-check:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-machine-card { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 12px; padding: 12px; border: 1px solid var(--ev-line); border-radius: var(--ev-r-ctl); background: var(--ev-raised); font: var(--ev-t-body); color: var(--ev-ink); }
+.ev-machine-card p { margin: 0; }
+.ev-machine-list { margin: 0; padding-left: 18px; max-height: 220px; overflow-y: auto; list-style: disc; }
+.ev-machine-list li { overflow-wrap: anywhere; }
+.ev-machine-code, .ev-machine-list code { font-family: ui-monospace, monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+.ev-assistant-error { margin: 0 0 12px; color: var(--ev-warn-ink); }
+.ev-assistant-folders { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ev-assistant-folders li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.ev-assistant-empty { padding-bottom: 12px; }
+.ev-assistant-activity { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 0 12px; list-style: none; max-height: 360px; overflow-y: auto; }
+.ev-assistant-activity .ev-set-label { overflow-wrap: anywhere; }
+.ev-assistant-note { min-width: 0; overflow-wrap: anywhere; }
+.ev-assistant-review { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ev-assistant-review li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ev-assistant-review .ev-set-label { overflow-wrap: anywhere; }
+.ev-assistant-review li[data-kind='invalid'] .ev-set-label, .ev-assistant-review li[data-kind='unreadable'] .ev-set-label { color: var(--ev-warn-ink); }
+
+/* Connections: commands to copy, and the apps signed in over MCP. */
+.ev-conn-row { padding: 12px 0; }
+.ev-conn-head { display: flex; align-items: center; gap: 12px; }
+.ev-conn-mark { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--ev-paper); box-shadow: inset 0 0 0 1px var(--ev-line); color: var(--ev-ink-2); }
+.ev-conn-head .ev-btn svg + svg { margin-left: -2px; }
+.ev-conn-warn { display: block; color: var(--ev-warn-ink); }
+.ev-conn-more { margin: 10px 0 0 42px; }
+.ev-conn-more code, .ev-conn-copy code { font-family: ui-monospace, monospace; font-size: 0.92em; }
+.ev-conn-copy { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ev-conn-copy code { flex: 1; min-width: 0; padding: 7px 10px; border-radius: var(--ev-r-ctl); background: color-mix(in srgb, var(--ev-ink) 5%, transparent); color: var(--ev-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ev-conn-about { margin-top: 8px; }
+.ev-conn-about summary { cursor: pointer; width: fit-content; color: var(--ev-ink-2); font: var(--ev-t-small); border-radius: 4px; }
+.ev-conn-about summary:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-conn-about p { margin: 6px 0 0; }
+.ev-conn-then { margin-top: 6px; }
+.ev-conn-toggle { display: block; margin-top: 2px; font-size: 0.92em; }
+.ev-conn-more > .ev-conn-toggle + * { margin-top: 8px; }

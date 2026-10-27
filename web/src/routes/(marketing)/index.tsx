@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import {
   Bento,
-  Comparison,
   DownloadCTA,
   Faq,
   FeatureShowcases,
@@ -9,6 +8,7 @@ import {
   HowItWorks,
   Marquee,
 } from '@/components/marketing';
+import { ResourceGateway } from '@/components/marketing/resource-gateway';
 import { FAQS } from '@/components/marketing/content';
 import {
   JsonLd,
@@ -42,7 +42,7 @@ function LandingPage() {
       <FeatureShowcases />
       <Bento />
       <HowItWorks />
-      <Comparison />
+      <ResourceGateway />
       <Faq />
       <DownloadCTA />
     </main>

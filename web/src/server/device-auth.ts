@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { deviceTokens } from '@/db/schema';
+import { sha256Hex } from '@/lib/sha256';
 import { resolveActor, type ResolvedActor } from '@/server/auth';
 
 export interface ResolvedIngestActor extends ResolvedActor {
@@ -9,10 +10,7 @@ export interface ResolvedIngestActor extends ResolvedActor {
 
 export const LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
 
-export async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export { sha256Hex };
 
 export async function resolveIngestActor(request: Request): Promise<ResolvedIngestActor> {
   const authorization = request.headers.get('authorization') ?? '';

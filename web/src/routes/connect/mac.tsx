@@ -87,21 +87,21 @@ function ConnectMacPage() {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-muted/35 px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-background p-8 text-center shadow-xl shadow-black/5">
-        <BrandMark className="mx-auto h-10 w-10" />
+    <main className="flex min-h-dvh items-center justify-center bg-ev-well px-4">
+      <div className="w-full max-w-sm rounded-[var(--ev-r-panel)] border border-ev-line bg-ev-paper p-8 text-center shadow-[var(--ev-e-2)]">
+        <BrandMark size={40} className="mx-auto" />
         {phase === 'done' ? (
           <>
             <CheckCircle2 className="mx-auto mt-6 h-8 w-8 text-emerald-500" />
             <h1 className="mt-3 text-lg font-semibold">You&apos;re signed in</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="mt-2 text-sm text-ev-ink-2">
               Eavesy for Mac is connected{email ? ` to ${email}` : ''}. Head back to the app; you can close this tab.
             </p>
           </>
         ) : (
           <>
             <h1 className="mt-5 text-lg font-semibold">Sign in to Eavesy for Mac</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="mt-2 text-sm text-ev-ink-2">
               Your recordings will get transcripts and sync to your account.
             </p>
             {email ? (
@@ -110,7 +110,7 @@ function ConnectMacPage() {
               </p>
             ) : null}
             {request?.sameNetwork === false ? (
-              <p role="alert" className="mt-4 flex gap-2 rounded-lg bg-amber-500/10 p-3 text-left text-xs text-amber-700 dark:text-amber-300">
+              <p role="alert" className="mt-4 flex gap-2 rounded-[var(--ev-r-pop)] bg-amber-500/10 p-3 text-left text-xs text-amber-700 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   This request came from a different network than this browser. Only continue if you just clicked
@@ -118,23 +118,23 @@ function ConnectMacPage() {
                 </span>
               </p>
             ) : null}
-            {error ? <p role="alert" className="mt-4 text-sm text-danger">{error}</p> : null}
+            {error ? <p role="alert" className="mt-4 text-sm text-ev-warn-ink">{error}</p> : null}
             {code ? (
               <button
                 type="button"
                 onClick={() => void connect()}
                 disabled={phase === 'connecting'}
-                className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-ev-coat font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover disabled:opacity-60"
               >
                 {phase === 'connecting' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {phase === 'error' ? 'Try again' : 'Continue'}
               </button>
             ) : null}
-            <button type="button" onClick={switchAccount} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={switchAccount} className="mt-3 text-xs text-ev-ink-2 hover:text-ev-ink">
               Use a different account
             </button>
             {code ? (
-              <p className="mt-6 font-mono text-[11px] tracking-wider text-muted-foreground/70">
+              <p className="mt-6 font-round text-[11px] tracking-wider text-ev-ink-2">
                 {code}
                 {request ? ` · requested ${requestedAgo(request.requestedAt)}` : ''}
               </p>

@@ -32,10 +32,10 @@ export function DocToc({ items }: { items: TocItem[] }) {
 
   return (
     <nav aria-label="On this page" className="text-sm">
-      <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/50">
+      <div className="mb-3 text-xs font-semibold text-ev-ink-2">
         On this page
       </div>
-      <ul className="flex flex-col gap-0.5 border-l border-white/[0.08]">
+      <ul className="flex flex-col gap-0.5 border-l border-ev-line">
         {items.map((item) => {
           const active = item.id === activeId;
           return (
@@ -46,8 +46,8 @@ export function DocToc({ items }: { items: TocItem[] }) {
                   '-ml-px block border-l-2 py-1 transition',
                   item.depth === 3 ? 'pl-7' : 'pl-4',
                   active
-                    ? 'border-accent text-white'
-                    : 'border-transparent text-white/55 hover:border-white/30 hover:text-white/80',
+                    ? 'border-ev-coat text-ev-ink'
+                    : 'border-transparent text-ev-ink-2 hover:border-ev-line-strong hover:text-ev-ink',
                 )}
               >
                 {item.text}

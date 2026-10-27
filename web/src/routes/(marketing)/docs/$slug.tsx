@@ -1,17 +1,25 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
-import { getAllDocs, getDoc } from '@/lib/content';
+import { Pencil } from 'lucide-react';
+import { getDoc } from '@/lib/content';
 import { extractToc } from '@/lib/toc';
+import { categoryMeta, docEditUrl, DOC_REDIRECTS } from '@/lib/docs-meta';
+import { siteConfig } from '@/lib/site';
 import { Breadcrumbs } from '@/components/marketing/page-chrome';
 import { DocToc } from '@/components/marketing/doc-toc';
 import { DocPager, type PagerLink } from '@/components/marketing/doc-pager';
 import { MdxContent } from '@/components/mdx/mdx-content';
+import { GithubMark } from '@/components/github-mark';
 import { seoHead } from '@/lib/seo-head';
 
 export const Route = createFileRoute('/(marketing)/docs/$slug')({
-  loader: ({ params }) => {
-    if (params.slug === 'plans-and-billing') {
-      throw redirect({ to: '/docs/$slug', params: { slug: 'fair-use-limits' }, statusCode: 301 });
+  // Imported on demand: loaders stay in the entry bundle, and the content
+  // module carries every compiled MDX page.
+  loader: async ({ params }) => {
+    const moved = DOC_REDIRECTS[params.slug];
+    if (moved) {
+      throw redirect({ to: '/docs/$slug', params: { slug: moved }, statusCode: 301 });
     }
+    const { getAllDocs, getDoc } = await import('@/lib/content');
     const doc = getDoc(params.slug);
     if (!doc) throw notFound();
 
@@ -44,9 +52,10 @@ function DocPage() {
   const { slug, frontmatter, toc, prev, next } = Route.useLoaderData();
   const doc = getDoc(slug);
   if (!doc) throw notFound();
+  const { icon: CategoryIcon } = categoryMeta(frontmatter.category);
 
   return (
-    <div className="grid gap-12 xl:grid-cols-[1fr_15rem]">
+    <div className="grid gap-12 xl:grid-cols-[1fr_13rem]">
       <article className="min-w-0">
         <Breadcrumbs
           items={[
@@ -55,24 +64,58 @@ function DocPage() {
             { name: frontmatter.title, path: `/docs/${slug}` },
           ]}
         />
-        <header className="mb-8">
-          <div className="text-xs font-semibold uppercase tracking-wider text-accent">
+        <header className="mb-10 border-b border-ev-line pb-8">
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-ev-coat-soft px-3 py-1 font-round text-xs font-bold text-ev-coat">
+            <CategoryIcon className="h-3.5 w-3.5" />
             {frontmatter.category}
           </div>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+          <h1 className="mt-4 font-round text-3xl font-extrabold tracking-tight text-ev-ink sm:text-4xl">
             {frontmatter.title}
           </h1>
-          <p className="mt-3 text-lg leading-relaxed text-white/55">
+          <p className="mt-3 max-w-2xl text-lg leading-relaxed text-ev-ink-2">
             {frontmatter.description}
           </p>
         </header>
-        <MdxContent Component={doc.Component} />
+
+        <div className="[&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto sm:[&_table]:table">
+          <MdxContent Component={doc.Component} />
+        </div>
+
+        <div className="mt-14 flex flex-col gap-3 rounded-2xl bg-ev-well p-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-ev-ink-2">
+            These docs are open source. Spotted something wrong or missing?
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={docEditUrl(slug)}
+              className="inline-flex min-h-9 items-center gap-2 rounded-full bg-ev-raised px-4 font-round text-sm font-bold text-ev-ink shadow-[inset_0_0_0_1px_var(--ev-line-strong)] transition hover:bg-ev-paper"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit this page on GitHub
+            </a>
+            <a
+              href={siteConfig.github}
+              className="inline-flex min-h-9 items-center gap-2 rounded-full px-4 font-round text-sm font-bold text-ev-ink-2 transition hover:bg-ev-raised hover:text-ev-ink"
+            >
+              <GithubMark className="h-4 w-4" />
+              View the repo
+            </a>
+          </div>
+        </div>
+
         <DocPager prev={prev} next={next} />
       </article>
 
       <aside className="hidden xl:block">
-        <div className="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto">
+        <div className="sticky top-24 flex max-h-[calc(100vh-8rem)] flex-col gap-6 overflow-y-auto">
           <DocToc items={toc} />
+          <a
+            href={docEditUrl(slug)}
+            className="inline-flex items-center gap-2 text-sm text-ev-ink-2 transition hover:text-ev-coat"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit this page
+          </a>
         </div>
       </aside>
     </div>

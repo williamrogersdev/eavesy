@@ -1,45 +1,55 @@
 ---
-title: The browser recorder
-description: Record from eavesy.com with a free account, and what the browser recorder can and can't do.
-category: Getting started
-order: 4
+title: Eavesy on the web
+description: Record in the browser, capture from the web app, send drops between devices, and how it all reaches your Mac.
+category: Capturing
+order: 14
 ---
 
-The browser recorder lets you try Eavesy without a download. A free account keeps
-the finished transcript and brief private while they process and gives you a place
-to return to them later.
+The web app at eavesy.com works on any computer with a modern browser. It
+needs a free account.
 
-## How it works
+## Record in the browser
 
-1. Go to [eavesy.com](/) and click **Try free in your browser**.
-2. Grant microphone access when your browser prompts you.
-3. Record for as long as you need. Audio uploads every few minutes while you
-   record, so a long session is safe even if your connection drops.
-4. Get a transcript and brief shortly after you stop, then copy it into your AI or export to
-   Markdown and audio.
+Open the web app and start a recording. Grant microphone access when your
+browser asks. If you share a tab, its audio can be recorded too, where your
+browser supports it.
 
-<Callout type="note" title="What it captures">
-The browser recorder captures your **microphone** and can include shared-tab or
-shared-screen audio when your browser supports it. It does not save the screen
-video with the recording. For full-fidelity screen + system audio + microphone
-capture, use the [Mac app](/docs/installing-the-mac-app).
+Audio uploads in segments of about four minutes while you record, so a long
+recording is safe if your connection drops. After you stop, you get a
+transcript and a brief, the same as on the Mac.
+
+<Callout type="note" title="Not saved as video">
+The browser recorder keeps audio only. It does not save the shared screen as
+video.
 </Callout>
 
-## Privacy
+## The capture bar
 
-Browser recordings belong to your signed-in account. Eavesy does not train
-models on your content; platform-provider and connected-account policies are
-explained in [Privacy &amp; your data](/docs/privacy-and-data), alongside storage,
-export, and deletion details.
+The capture bar in the web app records audio from your microphone, video from
+your webcam or screen, or a screenshot. You review each one before saving.
+Everything from the capture bar is uploaded to your account.
 
-## Browser vs. Mac app
+## Drops
+
+Drops send text or a file, up to 100 MB, from one signed-in browser to your
+others. Open the drops button in the web app to send one or pick one up.
+
+## On your Mac
+
+If the Mac app is signed in to the same account, recordings you make in the
+browser are copied into `~/Eavesy/Recordings` with their transcript and brief.
+The audio stays in the cloud and is not downloaded.
+
+## Browser and Mac compared
 
 | | Browser | Mac app |
 | --- | --- | --- |
-| Account required | Free account | Yes |
-| Captures | Mic + supported shared audio | Screen + system audio + mic |
-| Session length | Unlimited | Unlimited |
-| Files written to disk | Export | Automatic |
-| Library | Yes | Yes |
+| Account | Required | Optional |
+| Records | Microphone, plus shared tab audio | Talk, Meeting, Video, Screenshot |
+| Live captions | No | Yes, on-device |
+| Files on disk | Copied to a signed-in Mac | Always |
 
-When you&rsquo;re ready for full sessions, [download the Mac app](/download/mac).
+## Next
+
+- [Install the Mac app](/docs/installing-the-mac-app)
+- [Transcripts and captions](/docs/transcripts-and-summaries)

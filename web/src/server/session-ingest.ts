@@ -30,3 +30,14 @@ export function boundedInteger(
   if (!Number.isSafeInteger(parsed) || parsed < opts.min || parsed > opts.max) return null;
   return parsed;
 }
+
+/**
+ * Whether the transcript is final although the summary may still be written:
+ * the recording has stopped and every uploaded part has been transcribed (or
+ * given up on). The desktop app pastes and shows it without waiting for Claude.
+ */
+export function transcriptReady(status: string, parts: { status: string }[]): boolean {
+  if (status === 'complete') return true;
+  if (status !== 'processing' || parts.length === 0) return false;
+  return parts.every((part) => part.status === 'complete' || part.status === 'failed');
+}

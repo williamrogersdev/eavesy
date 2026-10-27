@@ -45,10 +45,10 @@ const PILLARS = [
 
 const PROCESSORS = [
   { name: 'Anthropic', role: 'AI summaries & extraction under commercial API policy' },
-  { name: 'Cloudflare', role: 'Hosting, storage, database & queues' },
+  { name: 'Cloudflare', role: 'Hosting, storage, database & queues, plus Workers AI transcription and search embeddings' },
   { name: 'Clerk', role: 'Authentication' },
   { name: 'OpenRouter', role: 'Optional bring-your-own AI connection' },
-  { name: 'Sentry (optional)', role: 'Scrubbed error reports when enabled; never recording content' },
+  { name: 'PostHog', role: 'Product analytics & scrubbed error reports; never recording content' },
 ];
 
 function SecurityPage() {
@@ -57,7 +57,7 @@ function SecurityPage() {
       <PageHero
         eyebrow="Security & privacy"
         title="Built so your conversations stay yours"
-        description="Your meetings are some of the most sensitive data you produce. Eavesy is designed local-first and privacy-first, with clear, auditable practices."
+        description="Your meetings are some of the most sensitive data you produce. Eavesy is local-first and open source, so you can check how it handles them."
       >
         <Breadcrumbs
           items={[
@@ -75,37 +75,37 @@ function SecurityPage() {
               return (
                 <div
                   key={p.title}
-                  className="rounded-2xl border border-white/10 bg-white/[0.02] p-6"
+                  className="rounded-2xl border border-ev-line bg-ev-raised p-6"
                 >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-coat-soft text-ev-coat">
                     <Icon className="h-5 w-5" />
                   </span>
-                  <h2 className="mt-5 font-semibold text-white">{p.title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-white/55">{p.body}</p>
+                  <h2 className="mt-5 font-semibold text-ev-ink">{p.title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-ev-ink-2">{p.body}</p>
                 </div>
               );
             })}
           </div>
 
           <div className="mt-14 max-w-3xl">
-            <h2 className="text-xl font-semibold tracking-tight text-white">
+            <h2 className="text-xl font-extrabold tracking-tight text-ev-ink">
               Who can touch your data
             </h2>
-            <p className="mt-3 text-sm text-white/55">
+            <p className="mt-3 text-sm text-ev-ink-2">
               We keep the list of subprocessors short and public. See the{' '}
-              <Link href="/privacy" className="text-accent underline underline-offset-2">
+              <Link href="/privacy" className="text-ev-coat underline underline-offset-2">
                 privacy policy
               </Link>{' '}
               for the full detail.
             </p>
-            <dl className="mt-6 divide-y divide-white/[0.06] rounded-2xl border border-white/10">
+            <dl className="mt-6 divide-y divide-ev-line rounded-2xl border border-ev-line">
               {PROCESSORS.map((proc) => (
                 <div
                   key={proc.name}
                   className="flex items-center justify-between gap-4 px-5 py-4"
                 >
-                  <dt className="font-medium text-white">{proc.name}</dt>
-                  <dd className="text-right text-sm text-white/55">{proc.role}</dd>
+                  <dt className="font-medium text-ev-ink">{proc.name}</dt>
+                  <dd className="text-right text-sm text-ev-ink-2">{proc.role}</dd>
                 </div>
               ))}
             </dl>

@@ -1,0 +1,421 @@
+{
+  "baseline_commit": "f63092a8bfcc1e78432f6e1b5a9dd4ecde9736e4",
+  "date": "2026-10-20",
+  "platform": "macOS 26.6.2 ARM64",
+  "compiler": "rustc 1.95.0",
+  "profile": "release, thin LTO, codegen-units=1",
+  "reproduce": "cd desktop/src-tauri && cargo run --locked --release --example history-benchmark; PROFILE_ALLOC=1 cargo run --locked --release --example history-benchmark",
+  "fixture": {
+    "counts": [
+      10,
+      100,
+      500
+    ],
+    "transcript_bytes_per_record": 104500,
+    "summary_bytes_per_record": 2100,
+    "notes_bytes_per_record": 1050,
+    "page_size": 50
+  },
+  "scope": [
+    "Synthetic histories; no user recordings or production requests.",
+    "Timings are medians after one warm-up, allocation instrumentation disabled.",
+    "Startup compares only history-access work: before 1+3*N full cached copies; after folder metadata and one indexed body read per recording, reused for its three files. Neither includes common hashing, filesystem reconciliation, UI rendering or Tauri startup.",
+    "Title update reads and durably saves one changed title. Baseline fsyncs the JSON file and parent; SQLite uses WAL, synchronous=FULL and fullfsync=ON, matching the Apple F_FULLFSYNC operation used by Rust sync_all.",
+    "History response compares the old full-history DTO with the new first page, including previews and counts. Later pages and full transcript expansion are separate on-demand operations.",
+    "One-time import is reported separately; the JSON backup is retained unchanged.",
+    "Allocation figures are cumulative Rust allocator requests, including reallocations; they exclude SQLite C allocations and are not peak RAM.",
+    "Search timing uses a term matching all bodies and returns the first 50 matches; this is not a worst-case no-match search.",
+    "No network latency, Swift capture or JavaScript rendering was measured.",
+    "This is a live list with stable timestamp/ID ordering and offset pagination. Mutations between page requests can shift offsets; recording updates trigger a reload of the loaded range, duplicate IDs are removed and obsolete request generations are discarded. It is not a multi-page database snapshot.",
+    "The primitive benchmark includes production history.rs directly. Integration source hashes separately cover the Tauri/store wrappers, which are verified by the full regression suite."
+  ],
+  "measured_sources_sha256": {
+    "desktop/src-tauri/src/history.rs": "292fed4a29752b1c0875193ac1e7012fe997507cb6b94bc2bbc77087cb9c1386",
+    "desktop/bench/history.rs": "38c429a706f2eb0113a3c35ce40648383185d087212a4f83ca22a5bf251dff7d",
+    "desktop/bench/history-legacy.rs": "2c9d9db221aeafdae95febc639ca50882a940de8ca22368e67f7b8ad3f9a1d1e",
+    "desktop/bench/history-alloc.rs": "6b9936776cbf01127047f3031e953a79a229dbc1fc544cc95f78c8c06c4e29f9"
+  },
+  "timings": [
+    {
+      "elapsed_ms": 580.983583,
+      "legacy_bytes": 1080532,
+      "n": 10,
+      "operation": "one_time_migration"
+    },
+    {
+      "max_ms": 0.470875,
+      "median_ms": 0.467542,
+      "min_ms": 0.46429099999999995,
+      "n": 10,
+      "operation": "before_startup_history_work",
+      "reps": 3
+    },
+    {
+      "max_ms": 0.128208,
+      "median_ms": 0.12025,
+      "min_ms": 0.11379099999999999,
+      "n": 10,
+      "operation": "after_startup_history_work",
+      "reps": 7
+    },
+    {
+      "max_ms": 24.956417000000002,
+      "median_ms": 20.009959000000002,
+      "min_ms": 13.870834,
+      "n": 10,
+      "operation": "before_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 12.867416,
+      "median_ms": 8.127749999999999,
+      "min_ms": 7.930708,
+      "n": 10,
+      "operation": "after_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 0.36537499999999995,
+      "median_ms": 0.30366699999999996,
+      "min_ms": 0.28925,
+      "n": 10,
+      "operation": "before_full_history_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 0.027375,
+      "median_ms": 0.019875,
+      "min_ms": 0.0185,
+      "n": 10,
+      "operation": "after_first_history_page_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 0.6685000000000001,
+      "median_ms": 0.30374999999999996,
+      "min_ms": 0.25845799999999997,
+      "n": 10,
+      "operation": "after_search_full_history",
+      "reps": 7
+    },
+    {
+      "after_response_bytes": 22644,
+      "before_response_bytes": 1067789,
+      "n": 10
+    },
+    {
+      "elapsed_ms": 1455.862625,
+      "legacy_bytes": 10805672,
+      "n": 100,
+      "operation": "one_time_migration"
+    },
+    {
+      "max_ms": 83.64425,
+      "median_ms": 83.408,
+      "min_ms": 81.2315,
+      "n": 100,
+      "operation": "before_startup_history_work",
+      "reps": 3
+    },
+    {
+      "max_ms": 3.513458,
+      "median_ms": 2.9187499999999997,
+      "min_ms": 2.305583,
+      "n": 100,
+      "operation": "after_startup_history_work",
+      "reps": 7
+    },
+    {
+      "max_ms": 44.897125,
+      "median_ms": 43.943333,
+      "min_ms": 26.131999999999998,
+      "n": 100,
+      "operation": "before_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 6.9901670000000005,
+      "median_ms": 6.031334,
+      "min_ms": 5.924792,
+      "n": 100,
+      "operation": "after_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 4.043209,
+      "median_ms": 3.7504169999999997,
+      "min_ms": 3.541375,
+      "n": 100,
+      "operation": "before_full_history_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 0.082583,
+      "median_ms": 0.079583,
+      "min_ms": 0.065875,
+      "n": 100,
+      "operation": "after_first_history_page_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 2.404208,
+      "median_ms": 1.98525,
+      "min_ms": 1.6040830000000001,
+      "n": 100,
+      "operation": "after_search_full_history",
+      "reps": 7
+    },
+    {
+      "after_response_bytes": 112896,
+      "before_response_bytes": 10677989,
+      "n": 100
+    },
+    {
+      "elapsed_ms": 439.09170800000004,
+      "legacy_bytes": 54029672,
+      "n": 500,
+      "operation": "one_time_migration"
+    },
+    {
+      "max_ms": 2725.194625,
+      "median_ms": 2610.768667,
+      "min_ms": 2395.044167,
+      "n": 500,
+      "operation": "before_startup_history_work",
+      "reps": 3
+    },
+    {
+      "max_ms": 14.256875,
+      "median_ms": 13.78425,
+      "min_ms": 13.437958,
+      "n": 500,
+      "operation": "after_startup_history_work",
+      "reps": 7
+    },
+    {
+      "max_ms": 61.926708,
+      "median_ms": 55.172417,
+      "min_ms": 52.727792,
+      "n": 500,
+      "operation": "before_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 4.1255,
+      "median_ms": 3.968541,
+      "min_ms": 3.402375,
+      "n": 500,
+      "operation": "after_one_title_update",
+      "reps": 7
+    },
+    {
+      "max_ms": 20.063582999999998,
+      "median_ms": 18.579167,
+      "min_ms": 17.683917,
+      "n": 500,
+      "operation": "before_full_history_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 0.665208,
+      "median_ms": 0.35508300000000004,
+      "min_ms": 0.30737499999999995,
+      "n": 500,
+      "operation": "after_first_history_page_json",
+      "reps": 9
+    },
+    {
+      "max_ms": 2.563959,
+      "median_ms": 2.062833,
+      "min_ms": 1.8489579999999999,
+      "n": 500,
+      "operation": "after_search_full_history",
+      "reps": 7
+    },
+    {
+      "after_response_bytes": 112996,
+      "before_response_bytes": 53390789,
+      "n": 500
+    }
+  ],
+  "allocations": [
+    {
+      "elapsed_ms": 48.910584,
+      "legacy_bytes": 1080532,
+      "n": 10,
+      "operation": "one_time_migration"
+    },
+    {
+      "allocated_bytes": 33484960,
+      "allocation_calls": 2511,
+      "n": 10,
+      "operation": "before_startup_history_work"
+    },
+    {
+      "allocated_bytes": 1091254,
+      "allocation_calls": 163,
+      "n": 10,
+      "operation": "after_startup_history_work"
+    },
+    {
+      "allocated_bytes": 5478653,
+      "allocation_calls": 177,
+      "n": 10,
+      "operation": "before_one_title_update"
+    },
+    {
+      "allocated_bytes": 742587,
+      "allocation_calls": 26,
+      "n": 10,
+      "operation": "after_one_title_update"
+    },
+    {
+      "allocated_bytes": 4397952,
+      "allocation_calls": 90,
+      "n": 10,
+      "operation": "before_full_history_json"
+    },
+    {
+      "allocated_bytes": 94835,
+      "allocation_calls": 64,
+      "n": 10,
+      "operation": "after_first_history_page_json"
+    },
+    {
+      "allocated_bytes": 25721,
+      "allocation_calls": 61,
+      "n": 10,
+      "operation": "after_search_full_history"
+    },
+    {
+      "after_response_bytes": 22638,
+      "before_response_bytes": 1067783,
+      "n": 10
+    },
+    {
+      "elapsed_ms": 131.93812499999999,
+      "legacy_bytes": 10805672,
+      "n": 100,
+      "operation": "one_time_migration"
+    },
+    {
+      "allocated_bytes": 3251365880,
+      "allocation_calls": 241101,
+      "n": 100,
+      "operation": "before_startup_history_work"
+    },
+    {
+      "allocated_bytes": 10913466,
+      "allocation_calls": 1606,
+      "n": 100,
+      "operation": "after_startup_history_work"
+    },
+    {
+      "allocated_bytes": 48865621,
+      "allocation_calls": 1621,
+      "n": 100,
+      "operation": "before_one_title_update"
+    },
+    {
+      "allocated_bytes": 742591,
+      "allocation_calls": 26,
+      "n": 100,
+      "operation": "after_one_title_update"
+    },
+    {
+      "allocated_bytes": 38049660,
+      "allocation_calls": 813,
+      "n": 100,
+      "operation": "before_full_history_json"
+    },
+    {
+      "allocated_bytes": 408089,
+      "allocation_calls": 273,
+      "n": 100,
+      "operation": "after_first_history_page_json"
+    },
+    {
+      "allocated_bytes": 125601,
+      "allocation_calls": 268,
+      "n": 100,
+      "operation": "after_search_full_history"
+    },
+    {
+      "after_response_bytes": 112896,
+      "before_response_bytes": 10677983,
+      "n": 100
+    },
+    {
+      "elapsed_ms": 493.087667,
+      "legacy_bytes": 54029672,
+      "n": 500,
+      "operation": "one_time_migration"
+    },
+    {
+      "allocated_bytes": 81069430280,
+      "allocation_calls": 6005501,
+      "n": 500,
+      "operation": "before_startup_history_work"
+    },
+    {
+      "allocated_bytes": 54561530,
+      "allocation_calls": 8008,
+      "n": 500,
+      "operation": "after_startup_history_work"
+    },
+    {
+      "allocated_bytes": 217388665,
+      "allocation_calls": 8023,
+      "n": 500,
+      "operation": "before_one_title_update"
+    },
+    {
+      "allocated_bytes": 742591,
+      "allocation_calls": 26,
+      "n": 500,
+      "operation": "after_one_title_update"
+    },
+    {
+      "allocated_bytes": 163325344,
+      "allocation_calls": 4016,
+      "n": 500,
+      "operation": "before_full_history_json"
+    },
+    {
+      "allocated_bytes": 408394,
+      "allocation_calls": 273,
+      "n": 500,
+      "operation": "after_first_history_page_json"
+    },
+    {
+      "allocated_bytes": 125652,
+      "allocation_calls": 268,
+      "n": 500,
+      "operation": "after_search_full_history"
+    },
+    {
+      "after_response_bytes": 112996,
+      "before_response_bytes": 53390783,
+      "n": 500
+    }
+  ],
+  "benchmark_binary_sha256": "d320a43f4cf37184eac796a444b90e06843dbfb49b78c1f0513b56ab42975ac9",
+  "measured_at_utc": "2026-10-20T22:23:40.583445Z",
+  "measurement_build": {
+    "method": "Standalone Cargo wrapper around the same desktop/bench/history.rs example and production history.rs, to avoid rebuilding the unrelated Tauri library.",
+    "manifest": "[package]\nname=\"eavesy-history-standalone-bench\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[profile.release]\nlto=\"thin\"\ncodegen-units=1\nstrip=\"debuginfo\"\n[[bin]]\nname=\"history-benchmark\"\npath=\"/private/tmp/eavesy-rust-profiling/desktop/bench/history.rs\"\n[dependencies]\nserde={version=\"=1.0.228\",features=[\"derive\"]}\nserde_json=\"=1.0.150\"\nuuid={version=\"=1.24.0\",features=[\"v4\"]}\nrusqlite={version=\"=0.31.0\",features=[\"bundled\"]}\nregex=\"1\"\n",
+    "dependency_versions": "All measured dependencies are an exact subset of desktop/src-tauri/Cargo.lock.",
+    "profile": "opt-level=3, thin LTO, codegen-units=1, strip=debuginfo; same as the production release profile.",
+    "standard_reproduction": "cargo run --locked --release --example history-benchmark from desktop/src-tauri compiles the same benchmark source with the desktop package dependencies."
+  },
+  "integration_sources_sha256": {
+    "desktop/src-tauri/src/store.rs": "b881e804f822a85c102fb5ad9de3c8b84cdcc77d48aeff61aebd0fbacdb2b8cb",
+    "desktop/src-tauri/src/fs_watcher.rs": "37d707f50876bcf6c953be26e4549a4128e9bcb527225fc272b7fd243151a7a9",
+    "desktop/src-tauri/src/commands.rs": "5c7c370d0073b6a755280e119b1f246b987ad01c05f7708bfeaf8ad4bf895399"
+  },
+  "durability_sources": {
+    "rust_sync_all_apple": "https://github.com/rust-lang/rust/blob/1.95.0/library/std/src/sys/fs/unix.rs#L1293-L1303",
+    "sqlite_fullfsync": "https://www.sqlite.org/pragma.html#pragma_fullfsync"
+  },
+  "durability_note": "These results supersede the earlier write timings, which used SQLite synchronous=FULL with fullfsync disabled. That configuration did not match the stronger Apple flush operation used by the JSON baseline. fullfsync is enabled before schema creation/import and on every reopen; it also covers WAL checkpoints."
+}

@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(marketing)/blog/')({
     seoHead({
       title: 'Blog',
       description:
-        'Buyer’s guides and deep dives on speech-to-text, text-to-speech, and AI image models — plus notes on context capture for AI agents, from the team building Eavesy.',
+        'Updates from Eavesy and practical notes on capturing, reviewing, and sharing context with AI agents.',
       path: '/blog',
     }),
   component: BlogIndexPage,
@@ -23,7 +23,7 @@ export const Route = createFileRoute('/(marketing)/blog/')({
 
 function CategoryChip({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-accent">
+    <span className="inline-flex items-center rounded-full border border-ev-coat/40 bg-ev-coat-soft px-2.5 py-1 text-[11px] font-medium text-ev-coat">
       {label}
     </span>
   );
@@ -31,7 +31,7 @@ function CategoryChip({ label }: { label: string }) {
 
 function MetaRow({ post }: { post: Entry<PostFrontmatter> }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-white/50">
+    <div className="flex items-center gap-2 text-xs text-ev-ink-2">
       <time dateTime={post.frontmatter.date}>
         {formatDate(post.frontmatter.date)}
       </time>
@@ -45,11 +45,11 @@ function FeaturedCard({ post }: { post: Entry<PostFrontmatter> }) {
   return (
     <Link
       href={`/blog/${post.slug}`}
-      className="group relative block overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] p-8 transition hover:border-white/20 sm:p-10"
+      className="group relative block overflow-hidden rounded-2xl border border-ev-line bg-ev-raised p-8 transition hover:border-ev-line-strong sm:p-10"
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-accent/10 blur-3xl transition-opacity duration-500 group-hover:opacity-100 sm:opacity-70"
+        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-ev-coat-soft blur-3xl transition-opacity duration-500 group-hover:opacity-100 sm:opacity-70"
       />
       <div className="relative flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -58,13 +58,13 @@ function FeaturedCard({ post }: { post: Entry<PostFrontmatter> }) {
           )}
           <MetaRow post={post} />
         </div>
-        <h2 className="max-w-2xl text-balance text-2xl font-semibold tracking-tight text-white transition group-hover:text-white sm:text-3xl">
+        <h2 className="max-w-2xl text-balance text-2xl font-extrabold tracking-tight text-ev-ink transition group-hover:text-ev-ink sm:text-3xl">
           {post.frontmatter.title}
         </h2>
-        <p className="max-w-2xl text-base leading-relaxed text-white/55">
+        <p className="max-w-2xl text-base leading-relaxed text-ev-ink-2">
           {post.frontmatter.description}
         </p>
-        <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-accent transition group-hover:gap-2.5 group-hover:text-accent-hover">
+        <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-ev-coat transition group-hover:gap-2.5 group-hover:text-ev-coat-hover">
           Read guide
           <ArrowUpRight className="h-4 w-4" />
         </span>
@@ -77,17 +77,17 @@ function PostCard({ post }: { post: Entry<PostFrontmatter> }) {
   return (
     <Link
       href={`/blog/${post.slug}`}
-      className="group flex h-full flex-col gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 transition hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.04]"
+      className="group flex h-full flex-col gap-3 rounded-2xl border border-ev-line bg-ev-raised p-6 transition hover:-translate-y-0.5 hover:border-ev-line-strong hover:bg-ev-well"
     >
       <div className="flex flex-wrap items-center gap-2">
         {post.frontmatter.category && (
           <CategoryChip label={post.frontmatter.category} />
         )}
       </div>
-      <h3 className="text-lg font-semibold leading-snug text-white transition group-hover:text-white">
+      <h3 className="text-lg font-semibold leading-snug text-ev-ink transition group-hover:text-ev-ink">
         {post.frontmatter.title}
       </h3>
-      <p className="line-clamp-3 flex-1 text-sm leading-relaxed text-white/50">
+      <p className="line-clamp-3 flex-1 text-sm leading-relaxed text-ev-ink-2">
         {post.frontmatter.description}
       </p>
       <MetaRow post={post} />
@@ -104,8 +104,8 @@ function BlogIndexPage() {
     <main className="flex flex-1 flex-col">
       <PageHero
         eyebrow="Blog"
-        title="Guides on AI voice, vision & context"
-        description="Hands-on buyer’s guides to the best speech-to-text, text-to-speech, and image models — plus how we think about capturing context for AI agents. Written by the team building Eavesy."
+        title="Guides and updates from Eavesy"
+        description="Updates from Eavesy and practical notes on capturing, reviewing, and sharing context with AI agents."
       >
         <Breadcrumbs
           items={[
@@ -118,7 +118,7 @@ function BlogIndexPage() {
       <section className="px-6 py-16">
         <Container className="max-w-5xl">
           {posts.length === 0 ? (
-            <p className="text-white/55">No posts yet — check back soon.</p>
+            <p className="text-ev-ink-2">No posts yet — check back soon.</p>
           ) : (
             <div className="flex flex-col gap-10">
               {featured && <FeaturedCard post={featured} />}

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum EventEmitter {
@@ -20,9 +21,24 @@ enum EventEmitter {
         FileHandle.standardOutput.write(line)
     }
 
-    static func ready() {
+    /// The first audio buffer arrived, `firstBufferMs` after the capture was
+    /// asked for (see `StartClock`); its audio begins `audioFromMs` after.
+    static func ready(firstBufferMs: Int64? = nil, audioFromMs: Int64? = nil) {
         captureIsLive = true
-        emit(["event": "ready"])
+        var event: [String: Any] = ["event": "ready"]
+        if let firstBufferMs { event["firstBufferMs"] = firstBufferMs }
+        if let audioFromMs { event["audioFromMs"] = audioFromMs }
+        emit(event)
+    }
+
+    /// The screen video's first frame: when it was, and the display it shows,
+    /// in global points with the origin at the top left of the main display.
+    static func videoStart(epochMs: Int64, display: CGRect) {
+        emit([
+            "event": "video_start", "epochMs": epochMs,
+            "displayX": display.minX, "displayY": display.minY,
+            "displayWidth": display.width, "displayHeight": display.height,
+        ])
     }
 
     static func warning(_ message: String) {
@@ -65,8 +81,13 @@ enum EventEmitter {
         emit(["event": "done", "path": path, "durationSec": durationSec])
     }
 
-    static func permissions(mic: Bool, micAsked: Bool, screen: Bool, speech: Bool) {
-        emit(["event": "permissions", "mic": mic, "micAsked": micAsked, "screen": screen, "speech": speech])
+    static func permissions(
+        mic: Bool, micAsked: Bool, screen: Bool, speech: Bool, micStatus: String, speechStatus: String
+    ) {
+        emit([
+            "event": "permissions", "mic": mic, "micAsked": micAsked, "screen": screen, "speech": speech,
+            "micStatus": micStatus, "speechStatus": speechStatus,
+        ])
     }
 }
 
