@@ -7,7 +7,7 @@ import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launche
 import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
-import { learnedLabel, type LearningEvent } from '@/lib/desktop/learning';
+import { learnedLabel, learnedPending, type LearningEvent } from '@/lib/desktop/learning';
 import { DICTATION_STYLES, FOR_AGENTS_HINT, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { requestTranslation } from '@/lib/translation/client';
@@ -342,7 +342,9 @@ function useLearned(): { text: string; title?: string; tone: 'leaf' | 'warn' } |
   useEvent('dictionary:learning', (payload) => {
     const event = payload as LearningEvent;
     const text = learnedLabel(event);
-    if (text) setLearned({ text, title: 'Saved to your dictionary', tone: 'leaf' });
+    if (text) setLearned({ text, tone: 'leaf', title: learnedPending(event)
+      ? 'Suggested for your dictionary. It applies once you make the same fix again, or keep it in Settings → Dictionary.'
+      : 'Saved to your dictionary' });
     else if (event.status === 'failed') setLearned({ text: 'Not saved to dictionary', title: event.message, tone: 'warn' });
   });
   useEffect(() => {

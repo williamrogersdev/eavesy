@@ -51,7 +51,12 @@ export function installDevMock(): void {
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
   const account = mockAccount(params.has('noprojects'), params.has('manywords'));
-  let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
+  let dictionary: { id: string; from: string; to: string; origin?: string; seen?: number }[] = [
+    { id: 'word-1', from: 'easey', to: 'Eavesy', origin: 'manual', seen: 1 },
+    { id: 'word-2', from: 'cube cuddle', to: 'kubectl', origin: 'learned', seen: 2 },
+    { id: 'word-3', from: 'SEO', to: 'SEU', origin: 'learned', seen: 1 },
+    { id: 'word-4', from: 'post hog', to: 'PostHog', origin: 'learned', seen: 1 },
+  ];
   let calendars = params.has('noconnections') ? [] : [
     { id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false },
   ];
@@ -118,7 +123,7 @@ export function installDevMock(): void {
       const fields = (body ?? {}) as { from?: string; to?: string; id?: string; entries?: { from: string; to: string }[] };
       const upsert = ({ from, to }: { from: string; to: string }) => {
         const kept = dictionary.filter((entry) => entry.from.toLowerCase() !== from.toLowerCase());
-        dictionary = [{ id: `word-${Date.now()}-${kept.length}`, from, to }, ...kept];
+        dictionary = [{ id: `word-${Date.now()}-${kept.length}`, from, to, origin: 'manual', seen: 1 }, ...kept];
       };
       if (method === 'PUT' && fields.entries) {
         fields.entries.forEach(upsert);
