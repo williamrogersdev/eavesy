@@ -6,6 +6,18 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-27 - desktop
+
+### Added
+
+- Mac app: keep the dictation drawer open longer, and translate from it ([#281](https://github.com/williamrogersdev/eavesy/pull/281))
+- Mac app: add Eavesy to Claude Code and sign in from Settings ([#278](https://github.com/williamrogersdev/eavesy/pull/278))
+- Mac app: Connections as an apps list, with one-click Google Calendar ([#279](https://github.com/williamrogersdev/eavesy/pull/279))
+
+### Fixed
+
+- Mac app: dictations lose their "like"s and misheard words again ([#282](https://github.com/williamrogersdev/eavesy/pull/282))
+
 ## [0.9.0] - 2026-10-26 - desktop
 
 ### Added
