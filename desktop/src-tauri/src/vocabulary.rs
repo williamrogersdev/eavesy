@@ -1,6 +1,8 @@
 //! The custom words and transcription language from the user's account, kept
 //! on disk so a capture can hand them to the on-device recognizer without
 //! waiting on the network. Each capture refreshes them for the next one.
+//! The account's confirmed fixes are kept beside them (`corrections.json`),
+//! for the Mac to spell a dictation itself when the server can't polish it.
 
 use std::path::PathBuf;
 
@@ -114,39 +116,52 @@ fn store_corrections(app: &AppHandle, corrections: &[Correction]) {
 /// The account's confirmed fixes applied to words as heard, for when the
 /// server can't polish them in time: whole words or phrases only, any case,
 /// with any spacing between their words. Like `fix_built_in_terms`, one
-/// joined to a dot, slash, at-sign or dash stays as written. The longest
-/// phrase goes first, so "gay lord boxes" wins over "gay lord".
+/// joined to a letter, digit, dot, slash, at-sign or dash stays as written.
+/// One pass over the text, so a fix never rewrites another's words; the
+/// longest phrase wins where two start at once ("gay lord boxes" over "gay
+/// lord"), and the newest fix where two share a source.
 pub fn apply_corrections(text: &str, corrections: &[Correction]) -> String {
-    let mut ordered: Vec<&Correction> = corrections
-        .iter()
-        .filter(|c| c.from.trim().chars().count() >= 3 && !c.to.trim().is_empty())
-        .collect();
-    ordered.sort_by_key(|c| std::cmp::Reverse(c.from.trim().chars().count()));
-    let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
-    let mut text = text.to_string();
-    for correction in ordered {
-        let words: Vec<String> = correction.from.split_whitespace().map(regex::escape).collect();
-        let Ok(pattern) = regex::Regex::new(&format!(r"(?i)\b{}\b", words.join(r"\s+"))) else { continue };
-        let to = correction.to.trim();
-        let mut out = String::with_capacity(text.len());
-        let mut end = 0;
-        for found in pattern.find_iter(&text) {
-            let before = text[..found.start()].chars().next_back();
-            let mut after = text[found.end()..].chars();
-            let next = after.next();
-            let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
-            if joined(before) || before == Some('.') || joined(next) || domain {
-                continue;
-            }
-            out.push_str(&text[end..found.start()]);
-            out.push_str(to);
-            end = found.end();
+    let key = |phrase: &str| phrase.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let mut fixes: Vec<(String, &str)> = Vec::new();
+    for correction in corrections.iter().take(MAX_CORRECTIONS) {
+        let (from, to) = (key(&correction.from), correction.to.trim());
+        if from.chars().count() >= 3 && !to.is_empty() && !fixes.iter().any(|(kept, _)| *kept == from) {
+            fixes.push((from, to));
         }
-        out.push_str(&text[end..]);
-        text = out;
     }
-    text
+    if fixes.is_empty() {
+        return text.to_string();
+    }
+    fixes.sort_by_key(|(from, _)| std::cmp::Reverse(from.chars().count()));
+    let alternatives: Vec<String> = fixes
+        .iter()
+        .map(|(from, _)| from.split(' ').map(regex::escape).collect::<Vec<_>>().join(r"\s+"))
+        .collect();
+    let Ok(pattern) = regex::Regex::new(&format!("(?i)(?:{})", alternatives.join("|"))) else {
+        return text.to_string();
+    };
+    let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
+    let mut out = String::with_capacity(text.len());
+    let mut end = 0;
+    for found in pattern.find_iter(text) {
+        let before = text[..found.start()].chars().next_back();
+        let mut after = text[found.end()..].chars();
+        let next = after.next();
+        let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
+        if joined(before) || before == Some('.') || joined(next) || domain {
+            continue;
+        }
+        let Some((_, to)) = fixes.iter().find(|(from, _)| *from == key(found.as_str())) else { continue };
+        out.push_str(&text[end..found.start()]);
+        out.push_str(to);
+        end = found.end();
+    }
+    out.push_str(&text[end..]);
+    out
 }
+
+/// How many confirmed fixes the Mac applies: the newest, as the server sends them.
+const MAX_CORRECTIONS: usize = 200;
 
 /// The app's own name. The recognizer always gets it, ahead of the account's
 /// words, so the 100-word cap never pushes it out and nobody has to add it.
@@ -216,15 +231,18 @@ pub fn refresh(app: &AppHandle) {
             vocabulary: Vec<String>,
             #[serde(default)]
             language: Option<String>,
+            /// Absent from servers that don't send it: the cached fixes stay.
             #[serde(default)]
-            corrections: Vec<Correction>,
+            corrections: Option<Vec<Correction>>,
         }
         if let Ok(response) = response {
             if response.status().is_success() {
                 if let Ok(body) = response.json::<Body>().await {
                     store(&app, &body.vocabulary);
                     store_language(&app, body.language.as_deref());
-                    store_corrections(&app, &body.corrections);
+                    if let Some(corrections) = body.corrections {
+                        store_corrections(&app, &corrections);
+                    }
                 }
             }
         }
@@ -313,12 +331,19 @@ mod tests {
             "Send Repackify the Gaylord Boxes, and Repackify's order."
         );
         assert_eq!(apply_corrections("A gay lord box.", &fixes), "A Gaylord box.");
+        assert_eq!(apply_corrections("I used C++ today.", &[fix("C++", "C#")]), "I used C# today.");
+    }
+
+    #[test]
+    fn one_pass_so_fixes_never_rewrite_each_other() {
+        let fixes = [fix("priya", "Pria"), fix("pria", "Priya"), fix("Priya", "PRIYA")];
+        assert_eq!(apply_corrections("priya and pria", &fixes), "Pria and Priya");
     }
 
     #[test]
     fn confirmed_fixes_leave_other_words_alone() {
         let fixes = [fix("Packify", "Repackify"), fix("ab", "AB")];
-        for text in ["Repackify is spelled right.", "packifying", "packify.com", "my-packify", "@packify", "an ab workout"] {
+        for text in ["Repackify is spelled right.", "packifying", "packify.com", "eavesy.packify now", "my-packify", "@packify", "an ab workout"] {
             assert_eq!(apply_corrections(text, &fixes), text);
         }
     }

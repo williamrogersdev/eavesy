@@ -40,7 +40,7 @@ export const Route = createFileRoute('/api/devices/me')({
           name: user?.displayName ?? null,
           vocabulary,
           // Newest first, for the Mac to spell dictations itself when polishing can't answer in time.
-          corrections: entries.map(({ from, to }) => ({ from, to })),
+          corrections: entries.slice(0, 200).map(({ from, to }) => ({ from, to })),
           language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },
