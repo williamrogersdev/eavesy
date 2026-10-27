@@ -234,15 +234,19 @@ mod mac {
             }
             notify(json!({"status":"watching"}));
             // Only the passage as the user leaves it is learned: a word half typed
-            // or mistyped and fixed a moment later must never become a rule. The
-            // last two reads must agree, so text still changing when the watch
-            // ends is not learned at all.
+            // or mistyped and fixed a moment later must never become a rule.
             let read = || unsafe { string(target.0 as Ref, "AXValue") }.and_then(|value| super::passage(&value, &prefix, &suffix));
             let mut previous = pasted.clone();
             let mut last_read = pasted.clone();
+            let mut left_field = false;
             for _ in 0..120 {
                 std::thread::sleep(Duration::from_millis(500));
-                if GENERATION.load(Ordering::SeqCst) != generation || !still_focused(&target) {
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    // A new dictation took over the watch: this one's edit is not known to be finished.
+                    return;
+                }
+                if !still_focused(&target) {
+                    left_field = true;
                     break;
                 }
                 let Some(current) = read() else {
@@ -250,14 +254,20 @@ mod mac {
                 };
                 previous = std::mem::replace(&mut last_read, current);
             }
-            // One more look after the user moves on catches a fix typed in the last moment.
-            if let Some(after) = read() {
-                previous = std::mem::replace(&mut last_read, after);
-            }
-            if last_read != previous {
+            let settled = if left_field {
+                // The user moved on, so the field can't change under them any more:
+                // what it holds now, including a fix typed at the last moment, is final.
+                match read() {
+                    Some(text) => text,
+                    None => return,
+                }
+            } else if last_read == previous {
+                // Still in the field (time ran out, or text around the passage changed):
+                // only text that held still across the last two reads.
+                last_read
+            } else {
                 return;
-            }
-            let settled = last_read;
+            };
             if settled == pasted || settled.trim().is_empty() || settled.encode_utf16().count() > 12_000 {
                 return;
             }
