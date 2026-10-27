@@ -12,6 +12,10 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
     Some(app.path().app_config_dir().ok()?.join("vocabulary.json"))
 }
 
+fn corrections_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join("corrections.json"))
+}
+
 fn language_path(app: &AppHandle) -> Option<PathBuf> {
     Some(app.path().app_config_dir().ok()?.join("language.txt"))
 }
@@ -75,6 +79,73 @@ pub fn store(app: &AppHandle, words: &[String]) {
             let _ = std::fs::remove_file(&partial);
         }
     }
+}
+
+/// A confirmed fix from the account's dictionary: what the recognizer writes,
+/// and how the user spells it.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Correction {
+    pub from: String,
+    pub to: String,
+}
+
+pub fn cached_corrections(app: &AppHandle) -> Vec<Correction> {
+    corrections_path(app)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|raw| serde_json::from_str::<Vec<Correction>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn store_corrections(app: &AppHandle, corrections: &[Correction]) {
+    if corrections == cached_corrections(app).as_slice() {
+        return;
+    }
+    if let (Some(path), Ok(raw)) = (corrections_path(app), serde_json::to_string(corrections)) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let partial = path.with_extension(format!("json.{}", uuid::Uuid::new_v4()));
+        if std::fs::write(&partial, raw).and_then(|()| std::fs::rename(&partial, &path)).is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+    }
+}
+
+/// The account's confirmed fixes applied to words as heard, for when the
+/// server can't polish them in time: whole words or phrases only, any case,
+/// with any spacing between their words. Like `fix_built_in_terms`, one
+/// joined to a dot, slash, at-sign or dash stays as written. The longest
+/// phrase goes first, so "gay lord boxes" wins over "gay lord".
+pub fn apply_corrections(text: &str, corrections: &[Correction]) -> String {
+    let mut ordered: Vec<&Correction> = corrections
+        .iter()
+        .filter(|c| c.from.trim().chars().count() >= 3 && !c.to.trim().is_empty())
+        .collect();
+    ordered.sort_by_key(|c| std::cmp::Reverse(c.from.trim().chars().count()));
+    let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
+    let mut text = text.to_string();
+    for correction in ordered {
+        let words: Vec<String> = correction.from.split_whitespace().map(regex::escape).collect();
+        let Ok(pattern) = regex::Regex::new(&format!(r"(?i)\b{}\b", words.join(r"\s+"))) else { continue };
+        let to = correction.to.trim();
+        let mut out = String::with_capacity(text.len());
+        let mut end = 0;
+        for found in pattern.find_iter(&text) {
+            let before = text[..found.start()].chars().next_back();
+            let mut after = text[found.end()..].chars();
+            let next = after.next();
+            let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
+            if joined(before) || before == Some('.') || joined(next) || domain {
+                continue;
+            }
+            out.push_str(&text[end..found.start()]);
+            out.push_str(to);
+            end = found.end();
+        }
+        out.push_str(&text[end..]);
+        text = out;
+    }
+    text
 }
 
 /// The app's own name. The recognizer always gets it, ahead of the account's
@@ -145,12 +216,15 @@ pub fn refresh(app: &AppHandle) {
             vocabulary: Vec<String>,
             #[serde(default)]
             language: Option<String>,
+            #[serde(default)]
+            corrections: Vec<Correction>,
         }
         if let Ok(response) = response {
             if response.status().is_success() {
                 if let Ok(body) = response.json::<Body>().await {
                     store(&app, &body.vocabulary);
                     store_language(&app, body.language.as_deref());
+                    store_corrections(&app, &body.corrections);
                 }
             }
         }
@@ -225,6 +299,28 @@ mod tests {
         assert_eq!(kept.len(), 100);
         assert_eq!(kept.first().map(String::as_str), Some("w40"));
         assert_eq!(kept.last().map(String::as_str), Some("w139"));
+    }
+
+    fn fix(from: &str, to: &str) -> Correction {
+        Correction { from: from.to_string(), to: to.to_string() }
+    }
+
+    #[test]
+    fn confirmed_fixes_spell_words_as_heard() {
+        let fixes = [fix("re packify", "Repackify"), fix("Packify", "Repackify"), fix("gay lord boxes", "Gaylord Boxes"), fix("gay lord", "Gaylord")];
+        assert_eq!(
+            apply_corrections("Send re  Packify the gay lord boxes, and packify's order.", &fixes),
+            "Send Repackify the Gaylord Boxes, and Repackify's order."
+        );
+        assert_eq!(apply_corrections("A gay lord box.", &fixes), "A Gaylord box.");
+    }
+
+    #[test]
+    fn confirmed_fixes_leave_other_words_alone() {
+        let fixes = [fix("Packify", "Repackify"), fix("ab", "AB")];
+        for text in ["Repackify is spelled right.", "packifying", "packify.com", "my-packify", "@packify", "an ab workout"] {
+            assert_eq!(apply_corrections(text, &fixes), text);
+        }
     }
 
     #[test]
