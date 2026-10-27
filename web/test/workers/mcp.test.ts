@@ -232,7 +232,7 @@ describe('MCP scopes', () => {
   it('hide and refuse tools outside the connection’s scopes', async () => {
     const { token } = await mint();
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools).toEqual([]);
+    expect((await rpc(token, 'tools/list')).result?.tools?.map((tool) => tool.name)).toEqual(['send_to_my_devices']);
     const refused = (await rpc(token, 'tools/call', { name: 'recent_meetings', arguments: {} })).result;
     expect(refused?.isError).toBe(true);
     expect(refused?.content?.[0]?.text).toContain('needs read access');

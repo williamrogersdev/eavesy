@@ -71,8 +71,8 @@ A connection is **read-only** by default: it can search and read your
 recordings, dictations and action items.
 
 If the app asks for write access, the page also shows **Also let it write**,
-unchecked. Tick it only if you want the agent to make changes. Every tool
-available today only reads, so this matters once write tools ship. A
+unchecked. Tick it only if you want the agent to make changes. Today the only
+write tool is `send_to_my_devices`, which puts text in your **Drop** inbox. A
 read-only connection never sees write tools in its tool list, and calling one
 is refused.
 
@@ -124,6 +124,7 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `ask_human` | Ask you a question on your Mac and wait (2 minutes by default) for the answer you type. Returns `mac_offline` at once when no Mac is listening. |
 | `get_account_info` | Show which Eavesy account and connection the agent is using, its access, and when it expires. Useful when results look like they come from the wrong account. |
 | `sign_out` | Disconnect this connection. The agent only calls it when you ask; your other connections keep working. |
+| `send_to_my_devices` | Put text, such as a session handoff doc, in your **Drop** inbox on every device where Eavesy is open. Needs write access. |
 
 Library retrieval does not guarantee exhaustive coverage. Inspect quoted passages and retain any warnings about unanswered parts or context limits. Cloud answer availability depends on the deployment and account configuration.
 
@@ -135,6 +136,19 @@ agents* into a Claude project or ChatGPT's custom instructions.
 
 `sign_out` ends the connection it's called from, the same as removing it in
 Settings.
+
+### Send a handoff to your other computers
+
+`send_to_my_devices` puts up to 5 MB of text straight into your **Drop**
+inbox, and it appears right away on every device where you have Eavesy open.
+It takes the `text` and an optional `title`, which becomes the first line. The
+drop is labelled with the connection's name and kept for 7 days. It only
+reaches your own inbox, and counts against your daily drop limit.
+
+It needs a connection with write access: tick **Also let it write** when you
+approve the app, or **Allow writes** when you make a token. Then try *"Write a
+handoff doc for this session and send it to my devices."* and open **Drop** on
+your other computer.
 
 The other tools only read, and are marked read-only so a client can choose to
 run them without asking each time; whether it asks is up to the client.
