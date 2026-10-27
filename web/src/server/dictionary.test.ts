@@ -22,7 +22,7 @@ describe('dictionary feedback API and persistence', () => {
     const t = setup();
     const body = { dictationId: 'd2', original: 'Ship it to gay lord boxes today.', corrected: 'Ship it to Gaylord Boxes today.' };
     const result = await t.request('POST', body);
-    expect(await result.json()).toEqual({ learned: 1, words: [{ from: 'gay lord boxes', to: 'Gaylord Boxes' }] });
+    expect(await result.json()).toEqual({ learned: 1, words: [{ from: 'gay lord boxes', to: 'Gaylord Boxes', pending: true }] });
     const retry = await t.request('POST', body);
     expect(await retry.json()).toEqual({ learned: 0, words: [] });
     expect(t.sqlite.query("SELECT transcript, cleaned_text FROM dictations WHERE id = 'd2'").get()).toEqual({ transcript: 'Ship it to gay lord boxes today.', cleaned_text: 'Ship it to Gaylord Boxes today.' });
@@ -57,8 +57,8 @@ describe('dictionary feedback API and persistence', () => {
     const t = setup();
     expect(await (await t.request('POST', { dictationId: 'd1', original: 'Open a pool request today.', corrected: 'Open a pull request today.' })).json())
       .toEqual({ learned: 0, words: [] });
-    t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, created_at, updated_at) VALUES
-      ('w1', 'u1', 'keep', 'keep', 'kept', 1, 1), ('w2', 'u1', 'yvesy', 'Yvesy', 'Eavesy', 1, 2)`);
+    t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, seen, created_at, updated_at) VALUES
+      ('w1', 'u1', 'keep', 'keep', 'kept', 2, 1, 1), ('w2', 'u1', 'yvesy', 'Yvesy', 'Eavesy', 2, 1, 2)`);
     await t.request('PUT', { from: 'fall', to: 'full' });
     expect((await dictionary.list(t.db, 'u1')).map(e => e.to).sort()).toEqual(['Eavesy', 'full', 'kept']);
     expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.to).sort()).toEqual(['Eavesy', 'full']);
@@ -73,6 +73,41 @@ describe('dictionary feedback API and persistence', () => {
     const origins = Object.fromEntries((await dictionary.list(t.db, 'u1')).map(e => [e.sourceKey, e.origin]));
     expect(origins).toEqual({ yvesy: 'learned', curry: 'manual' });
   });
+});
+
+test('a fix made once is a suggestion until it is made again or kept, and reversing it forgets it', async () => {
+  const t = setup();
+  const steering = async () => (await dictionary.listForTranscription(t.db, 'u1')).map(e => `${e.from}>${e.to}`).sort();
+  expect(await dictionary.rememberCorrections(t.db, 'u1', [{ from: 'SEO', to: 'SEU' }, { from: 'cube cuddle', to: 'Kubectl' }], 'learned'))
+    .toEqual([{ from: 'SEO', to: 'SEU', pending: true }, { from: 'cube cuddle', to: 'Kubectl', pending: true }]);
+  expect(await steering()).toEqual([]);
+  // Changing it straight back drops the mistaken one instead of keeping both directions.
+  await dictionary.rememberCorrections(t.db, 'u1', [{ from: 'SEU', to: 'SEO' }], 'learned');
+  expect((await dictionary.list(t.db, 'u1')).map(e => e.from).sort()).toEqual(['SEU', 'cube cuddle']);
+  // An immediate retry of one edit is not a second sighting; a later one is.
+  expect(await dictionary.rememberCorrections(t.db, 'u1', [{ from: 'cube cuddle', to: 'Kubectl' }], 'learned')).toEqual([]);
+  t.sqlite.run("UPDATE personal_dictionary SET updated_at = 1");
+  expect(await dictionary.rememberCorrections(t.db, 'u1', [{ from: 'cube cuddle', to: 'Kubectl' }], 'learned'))
+    .toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: false }]);
+  expect(await steering()).toEqual(['cube cuddle>Kubectl']);
+  // Keeping a suggestion by hand confirms it at once.
+  expect(await (await t.request('PUT', { from: 'SEU', to: 'SEO' })).json()).toMatchObject({ learned: 1, status: 'saved' });
+  expect(await steering()).toEqual(['SEU>SEO', 'cube cuddle>Kubectl']);
+});
+
+test('a fix to a different word restarts the count, and rows from before the count are suggestions', async () => {
+  const t = setup();
+  const learn = async (to: string) => {
+    t.sqlite.run("UPDATE personal_dictionary SET updated_at = 1");
+    return dictionary.rememberCorrections(t.db, 'u1', [{ from: 'cube cuddle', to }], 'learned');
+  };
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: true }]);
+  expect(await learn('KubeCTL')).toEqual([{ from: 'cube cuddle', to: 'KubeCTL', pending: true }]);
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: true }]);
+  expect(await learn('Kubectl')).toEqual([{ from: 'cube cuddle', to: 'Kubectl', pending: false }]);
+  t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, origin, created_at, updated_at) VALUES
+    ('w9', 'u1', 'yvesy', 'Yvesy', 'Eavesy', 'learned', 1, 1)`);
+  expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.to)).toEqual(['Kubectl']);
 });
 
 test('a bulk paste adds every valid replacement and counts the rest as skipped', async () => {

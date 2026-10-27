@@ -17,6 +17,7 @@ use tauri::{
 pub const ABOUT: &str = "app_about";
 pub const CHECK_FOR_UPDATES: &str = "app_check_for_updates";
 pub const SETTINGS: &str = "app_settings";
+pub const DICTIONARY: &str = "app_dictionary";
 pub const RECORD: &str = "app_record";
 pub const SHOW_RECORDINGS: &str = "app_show_recordings";
 pub const OPEN_WEB_APP: &str = "app_open_web_app";
@@ -39,6 +40,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let about = MenuItem::with_id(app, ABOUT, "About Eavesy", true, None::<&str>)?;
     let updates = MenuItem::with_id(app, CHECK_FOR_UPDATES, "Check for Updates…", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let dictionary = MenuItem::with_id(app, DICTIONARY, "Add to Dictionary…", true, None::<&str>)?;
     let eavesy = Submenu::with_items(
         app,
         "Eavesy",
@@ -48,6 +50,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &updates,
             &separator()?,
             &settings,
+            &dictionary,
             &separator()?,
             &PredefinedMenuItem::services(app, None)?,
             &separator()?,
@@ -147,6 +150,9 @@ pub fn handle(app: &AppHandle, id: &str) -> bool {
         CHECK_FOR_UPDATES => crate::updates::check_interactively(app),
         SETTINGS => {
             let _ = crate::commands::show_settings(app.clone());
+        }
+        DICTIONARY => {
+            let _ = crate::settings_window::show_section(app, "dictionary");
         }
         RECORD => crate::hotkeys::trigger_dictation(app),
         SHOW_RECORDINGS => crate::commands::show_launcher(app.clone()),

@@ -11,6 +11,10 @@ describe('learnedLabel', () => {
   test('falls back to a count when the server sends no words', () => {
     expect(learnedLabel({ status: 'saved', learned: 2 })).toBe('Learned 2 corrections');
   });
+  test('a fix seen once is only suggested', () => {
+    expect(learnedLabel({ status: 'saved', learned: 1, words: [{ from: 'SEO', to: 'SEU', pending: true }] })).toBe('Suggested “SEU”');
+    expect(learnedLabel({ status: 'saved', learned: 2, words: [{ from: 'a', to: 'Bee', pending: true }, { from: 'c', to: 'Dee', pending: false }] })).toBe('Added “Bee” +1');
+  });
   test('says nothing when nothing new was saved', () => {
     expect(learnedLabel({ status: 'saved', learned: 0, words: [] })).toBeNull();
     expect(learnedLabel({ status: 'watching' })).toBeNull();

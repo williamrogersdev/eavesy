@@ -21,6 +21,11 @@
 .ev-dict-view:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-dict-from { overflow-wrap: anywhere; color: var(--ev-ink-2); font: 400 13px/18px var(--ev-font-text); }
 .ev-dict-to { overflow-wrap: anywhere; color: var(--ev-ink); font: 600 13px/18px var(--ev-font-text); }
+.ev-dict-view[data-static] { display: grid; cursor: default; }
+.ev-dict-view[data-static]:hover { background: transparent; }
+.ev-dict-row .ev-dict-actions[data-shown] { opacity: 1; }
+.ev-dict-suggested { display: flex; flex-direction: column; gap: 6px; }
+.ev-dict-tag { margin-left: 6px; color: var(--ev-ink-3); font: 400 11px/18px var(--ev-font-text); }
 @media (max-width: 600px) {
   .ev-dict-pair { grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); }
   .ev-dict-pair > .ev-dict-actions { grid-column: 1 / -1; }

@@ -563,7 +563,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}
         </div>
         <div id="settings-dictionary" hidden={section !== 'dictionary'}>
-          {account ? <><WordsCard account={accountPrefs} /><DictionarySettings /></> : signInFirst('keep a dictionary')}
+          {account ? <><WordsCard account={accountPrefs} /><DictionarySettings active={section === 'dictionary'} /></> : signInFirst('keep a dictionary')}
         </div>
         <div id="settings-prompts" hidden={section !== 'prompts'}>
           {account

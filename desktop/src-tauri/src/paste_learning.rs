@@ -181,18 +181,21 @@ mod mac {
         }
     }
     fn still_focused(target: &Target) -> bool {
+        focus(target) == Some(true)
+    }
+    /// Whether `target` has the keyboard, or None when the focused element
+    /// can't be found right now (an AX timeout), which says nothing either way.
+    fn focus(target: &Target) -> Option<bool> {
         // AXUIElement equality is defined by CFEqual, not pointer identity.
         #[link(name = "CoreFoundation", kind = "framework")]
         extern "C" {
             fn CFEqual(a: Ref, b: Ref) -> bool;
         }
         unsafe {
-            let focused = focused_element();
-            focused.is_some_and(|f| {
-                let equal = CFEqual(f, target.0 as Ref);
-                CFRelease(f);
-                equal
-            })
+            let focused = focused_element()?;
+            let equal = CFEqual(focused, target.0 as Ref);
+            CFRelease(focused);
+            Some(equal)
         }
     }
     pub fn observe(app: AppHandle, target: Option<Target>, pasted: String) {
@@ -233,45 +236,51 @@ mod mac {
                 *last() = Some(LastPaste { field, prefix: prefix.clone(), suffix: suffix.clone(), pasted: pasted.clone() });
             }
             notify(json!({"status":"watching"}));
-            let mut baseline = pasted.clone();
-            let mut candidate = pasted;
-            let mut stable = 0;
+            // Only the passage as the user leaves it is learned: a word half typed
+            // or mistyped and fixed a moment later must never become a rule.
+            let read = || unsafe { string(target.0 as Ref, "AXValue") }.and_then(|value| super::passage(&value, &prefix, &suffix));
+            let mut previous = pasted.clone();
+            let mut last_read = pasted.clone();
+            let mut left_field = false;
             for _ in 0..120 {
                 std::thread::sleep(Duration::from_millis(500));
-                if GENERATION.load(Ordering::SeqCst) != generation || !still_focused(&target) {
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    // A new dictation took over the watch: this one's edit is not known to be finished.
+                    return;
+                }
+                // Only another element taking the keyboard means the user left;
+                // a lookup that fails keeps watching.
+                if focus(&target) == Some(false) {
+                    left_field = true;
                     break;
                 }
-                let Some(value) = (unsafe { string(target.0 as Ref, "AXValue") }) else {
+                let Some(current) = read() else {
                     break;
                 };
-                let Some(current) = super::passage(&value, &prefix, &suffix) else {
-                    break;
-                };
-                if current == candidate {
-                    stable += 1;
-                } else {
-                    candidate = current;
-                    stable = 0;
+                previous = std::mem::replace(&mut last_read, current);
+            }
+            let settled = if left_field {
+                // The user moved on, so the field can't change under them any more:
+                // what it holds now, including a fix typed at the last moment, is final.
+                match read() {
+                    Some(text) => text,
+                    None => return,
                 }
-                if stable < 4
-                    || candidate == baseline
-                    || candidate.trim().is_empty()
-                    || candidate.encode_utf16().count() > 12_000
-                {
-                    continue;
-                }
-                match feedback(&baseline, &candidate) {
-                    Ok(result) => {
-                        baseline = candidate.clone();
-                        notify(json!({"status":"saved", "learned":result["learned"], "words":result["words"]}));
-                    }
-                    Err(_) => {
-                        notify(
-                            json!({"status":"failed", "message":"Could not save correction. Use Edit transcript in Eavesy to retry."}),
-                        );
-                        break;
-                    }
-                }
+            } else if last_read == previous {
+                // Still in the field (time ran out, or text around the passage changed):
+                // only text that held still across the last two reads.
+                last_read
+            } else {
+                return;
+            };
+            if settled == pasted || settled.trim().is_empty() || settled.encode_utf16().count() > 12_000 {
+                return;
+            }
+            match feedback(&pasted, &settled) {
+                Ok(result) => notify(json!({"status":"saved", "learned":result["learned"], "words":result["words"]})),
+                Err(_) => notify(
+                    json!({"status":"failed", "message":"Could not save correction. Use Edit transcript in Eavesy to retry."}),
+                ),
             }
         }))
     }
