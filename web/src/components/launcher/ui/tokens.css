@@ -6,43 +6,44 @@
 
 .launcher-scope,
 .ev {
-  /* surfaces: whitewashed plaster, not cream, not white */
-  --ev-paper: #fbf7f2;
-  --ev-well: #f3ece3;
-  --ev-raised: #fffdf9;
-  --ev-line: #e8dfd4;
-  --ev-line-strong: #d6cabc;
-  /* ink: plum dusk, never #000 */
-  --ev-ink: #2a2233;
-  --ev-ink-2: #675d70;
-  --ev-ink-3: #978c9c;
-  /* brand */
-  --ev-slate: #4b3a78;
-  --ev-slate-hover: #3d2f66;
-  --ev-slate-soft: #ece6f6;
-  --ev-on-slate: #fff8ee;
-  --ev-honey: #f6b93b;
-  --ev-honey-shade: #e39e1e;
-  --ev-honey-soft: #fcebc4;
-  --ev-honey-ink: #7a4e00;
-  --ev-cheek: #f59ba0;
-  --ev-mascot-body: #f6b93b;
-  --ev-mascot-shade: #e39e1e;
-  --ev-mascot-roof: #4b3a78;
+  /* surfaces: case-file cream, not white */
+  --ev-paper: #fbf7f0;
+  --ev-well: #f2ebdf;
+  --ev-raised: #fffdf8;
+  --ev-line: #e6ddcf;
+  --ev-line-strong: #d3c7b6;
+  /* ink: trench-coat charcoal, never #000 */
+  --ev-ink: #211c1a;
+  --ev-ink-2: #5f5751;
+  --ev-ink-3: #968d85;
+  /* brand: the coat carries actions, manila marks highlights */
+  --ev-coat: #2b2523;
+  --ev-coat-hover: #1a1614;
+  --ev-coat-soft: #ece6df;
+  --ev-on-coat: #fbf7f0;
+  --ev-manila: #e2b866;
+  --ev-manila-shade: #c99a45;
+  --ev-manila-soft: #f6e8cc;
+  --ev-manila-ink: #6e4a12;
+  --ev-mascot-body: #2b2523;
+  --ev-mascot-band: #4a403c;
+  --ev-mascot-eye: #fbf7f0;
   /* meaning */
-  --ev-rec: #ff3b30; /* RECORDING ONLY */
-  --ev-rec-soft: #ffe4e1;
+  --ev-rec: #ff5a3c; /* the coral light: RECORDING ONLY */
+  --ev-rec-soft: #ffe3da;
   --ev-leaf: #2f8a5b;
   --ev-leaf-soft: #ddf1e5;
-  --ev-warn-ink: #9a5b00; /* errors use warn, not red: red means recording */
+  --ev-warn-ink: #9a5b00; /* errors use warn, not coral: coral means recording */
   --ev-warn-soft: #fff0d6;
   /* HUD glass (same in both modes: it sits over any app) */
-  --ev-hud: rgb(44 36 52 / 0.62);
+  --ev-hud: rgb(22 19 18 / 0.97);
   --ev-hud-line: rgb(255 240 220 / 0.14);
-  --ev-hud-ink: #f7efe6;
-  --ev-hud-ink-2: rgb(247 239 230 / 0.62);
+  --ev-hud-ink: #f6efe4;
+  --ev-hud-ink-2: rgb(246 239 228 / 0.62);
 
-  --ev-focus: 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-slate);
+  --ev-focus: 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-coat);
+  /* Text fields: a hairline and a soft glow. Typing is focus enough; the coat ring stays for keyboard focus on controls. */
+  --ev-focus-field: 0 0 0 1px var(--ev-ink-3), 0 0 0 4px color-mix(in srgb, var(--ev-ink-3) 18%, transparent);
   --ev-hover: color-mix(in srgb, var(--ev-ink) 5%, transparent);
   --ev-press: color-mix(in srgb, var(--ev-ink) 9%, transparent);
 
@@ -66,10 +67,10 @@
   --ev-r-hud: 999px;
   --ev-r-sheet: 16px;
 
-  /* elevation: plum-tinted, never neutral grey */
-  --ev-e-1: inset 0 1px 0 rgb(42 34 51 / 0.05);
-  --ev-e-2: 0 1px 2px rgb(42 34 51 / 0.08), 0 4px 14px -6px rgb(42 34 51 / 0.18);
-  --ev-e-3: 0 0 0 0.5px rgb(42 34 51 / 0.14), 0 24px 60px -22px rgb(42 34 51 / 0.45);
+  /* elevation: charcoal-tinted, never neutral grey */
+  --ev-e-1: inset 0 1px 0 rgb(33 28 26 / 0.05);
+  --ev-e-2: 0 1px 2px rgb(33 28 26 / 0.08), 0 4px 14px -6px rgb(33 28 26 / 0.18);
+  --ev-e-3: 0 0 0 0.5px rgb(33 28 26 / 0.14), 0 24px 60px -22px rgb(33 28 26 / 0.45);
 
   /* spacing: 4pt grid */
   --ev-s-1: 4px;
@@ -90,40 +91,40 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  /* attic at night */
+  /* after hours */
   .launcher-scope,
   .ev {
-    --ev-paper: #241e2c;
-    --ev-well: #1c1723;
-    --ev-raised: #2e2738;
-    --ev-line: #3a3245;
-    --ev-line-strong: #4b4257;
-    --ev-ink: #f5ede3;
-    --ev-ink-2: #bdb2c2;
-    --ev-ink-3: #887d90;
-    --ev-slate: #b4a4f0; /* the roof catches moonlight */
-    --ev-slate-hover: #c8bbf7;
-    --ev-slate-soft: #352c4c;
-    --ev-on-slate: #1f1830;
-    --ev-honey: #ffc65a;
-    --ev-honey-shade: #e8a63a;
-    --ev-honey-soft: #3d3020;
-    --ev-honey-ink: #ffd98f;
-    --ev-cheek: #f08a93;
-    --ev-mascot-body: #f6b93b;
-    --ev-mascot-shade: #d9921c;
-    --ev-mascot-roof: #7c69c6;
-    --ev-rec: #ff5a4f;
-    --ev-rec-soft: #3a1d1f;
+    /* warm charcoal: a hint of the coat's brown, not a sepia wash */
+    --ev-paper: #1c1b1a;
+    --ev-well: #232220; /* lighter than paper after hours: raised, not sunken */
+    --ev-raised: #282725;
+    --ev-line: #353331;
+    --ev-line-strong: #46433f;
+    --ev-ink: #f2efea;
+    --ev-ink-2: #aea9a2;
+    --ev-ink-3: #7c7771;
+    --ev-coat: #f2efea; /* in the dark the coat turns to cream paper */
+    --ev-coat-hover: #ffffff;
+    --ev-coat-soft: #302e2c;
+    --ev-on-coat: #1c1b1a;
+    --ev-manila: #f0c879;
+    --ev-manila-shade: #d9ab55;
+    --ev-manila-soft: #3a2f1c;
+    --ev-manila-ink: #f5d9a0;
+    --ev-mascot-body: #3b3836;
+    --ev-mascot-band: #57524e;
+    --ev-mascot-eye: #f2efea;
+    --ev-rec: #ff6a4d;
+    --ev-rec-soft: #3a1d16;
     --ev-leaf: #6fcf97;
     --ev-leaf-soft: #1f3328;
     --ev-warn-ink: #ffc870;
     --ev-warn-soft: #3a2c17;
 
     --ev-e-1: inset 0 1px 0 rgb(0 0 0 / 0.1);
-    --ev-e-2: 0 1px 2px rgb(10 6 16 / 0.16), 0 4px 14px -6px rgb(10 6 16 / 0.36),
+    --ev-e-2: 0 1px 2px rgb(8 6 5 / 0.16), 0 4px 14px -6px rgb(8 6 5 / 0.36),
       inset 0 1px 0 rgb(255 240 220 / 0.06);
-    --ev-e-3: 0 0 0 0.5px rgb(10 6 16 / 0.28), 0 24px 60px -22px rgb(10 6 16 / 0.9),
+    --ev-e-3: 0 0 0 0.5px rgb(8 6 5 / 0.28), 0 24px 60px -22px rgb(8 6 5 / 0.9),
       inset 0 1px 0 rgb(255 240 220 / 0.06);
   }
 }
@@ -137,7 +138,7 @@
   --lr-brand: var(--ev-rec); /* only where it meant "recording" */
   --lr-brand-ink: var(--ev-rec);
   --lr-hover: color-mix(in srgb, var(--ev-ink) 6%, transparent);
-  --lr-selected: var(--ev-slate-soft);
+  --lr-selected: var(--ev-coat-soft);
   --lr-brand-soft: var(--ev-rec-soft);
   --lr-surface: color-mix(in srgb, var(--ev-paper) 88%, transparent);
   --lr-elevated: var(--ev-raised);
@@ -149,6 +150,6 @@
   --border: var(--ev-line);
   --accent: var(--ev-rec);
   --accent-soft: var(--ev-rec-soft);
-  --primary: var(--ev-slate);
-  --primary-foreground: var(--ev-on-slate);
+  --primary: var(--ev-coat);
+  --primary-foreground: var(--ev-on-coat);
 }

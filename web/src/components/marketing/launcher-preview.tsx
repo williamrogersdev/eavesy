@@ -15,7 +15,7 @@ export function LauncherPreview({ className }: { className?: string }) {
           </span>
           <Mascot size={20} state="idle" />
           <span className="font-round text-[13.5px] font-[650] text-ev-ink">Eavesy</span>
-          <span className="ml-auto grid h-6 w-6 place-items-center rounded-full bg-ev-honey-soft font-round text-[11px] font-bold text-ev-honey-ink">
+          <span className="ml-auto grid h-6 w-6 place-items-center rounded-full bg-ev-manila-soft font-round text-[11px] font-bold text-ev-manila-ink">
             W
           </span>
         </div>
@@ -113,8 +113,8 @@ function ScreenshotThumb() {
     <div className="h-[92px] w-[160px] overflow-hidden rounded-[var(--ev-r-media)] bg-ev-raised p-2 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)]">
       <div className="h-2 w-16 rounded-full bg-ev-line-strong" />
       <div className="mt-2 grid grid-cols-3 gap-1.5">
-        <div className="h-9 rounded bg-ev-slate-soft" />
-        <div className="h-9 rounded bg-ev-honey-soft" />
+        <div className="h-9 rounded bg-ev-coat-soft" />
+        <div className="h-9 rounded bg-ev-manila-soft" />
         <div className="h-9 rounded bg-ev-well" />
       </div>
       <div className="mt-2 h-1.5 w-24 rounded-full bg-ev-line" />
@@ -125,7 +125,7 @@ function ScreenshotThumb() {
 
 const LEVELS = [0.35, 0.7, 0.5, 0.95, 0.6, 0.8, 0.45, 0.65, 0.3];
 
-/** The floating dictation bar (DESIGN.md §5 HUD): glass, mascot with the porch light on, timer. */
+/** The floating dictation bar (DESIGN.md §5 HUD): glass, mascot with the coral light on, timer. */
 export function HudPreview({ className, words }: { className?: string; words?: [string, string] }) {
   return (
     <div aria-hidden className={cn('w-[300px] select-none', className)}>

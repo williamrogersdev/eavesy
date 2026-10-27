@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, isNull, lt, max } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNull, lt, max } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { devices, meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
@@ -216,32 +216,86 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
   const meeting = meetingRows[0];
   if (!meeting) return null;
 
-  const summary = summaryRow[0]
-    ? {
-        id: summaryRow[0].id,
-        meetingId: summaryRow[0].meetingId,
-        tldr: summaryRow[0].tldr,
-        decisions: decode<Decision[]>(summaryRow[0].decisionsJson, []),
-        actionItems: decode<ActionItem[]>(summaryRow[0].actionItemsJson, []),
-        followUps: decode<Sourced[]>(summaryRow[0].followUpsJson, []),
-        openQuestions: decode<Sourced[]>(summaryRow[0].openQuestionsJson, []),
-        topics: decode<string[]>(summaryRow[0].topicsJson, []),
-        mentions: decode<Mention[]>(summaryRow[0].mentionsJson, []),
-        chapters: decode<{ startMs: number; title: string }[]>(summaryRow[0].chaptersJson, []),
-        generatedByModel: summaryRow[0].generatedByModel,
-        generatedAt: summaryRow[0].generatedAt,
-        userEditedAt: summaryRow[0].userEditedAt,
-      }
-    : null;
-
   return {
     meeting,
-    summary,
+    summary: summaryRow[0] ? decodeSummary(summaryRow[0]) : null,
     notes: notesRow[0] ?? null,
     segments,
     // Where a live transcript stream should resume from after this read.
     transcriptCursor: segmentStamp[0]?.at ?? 0,
   };
+}
+
+function decodeSummary(row: typeof summaries.$inferSelect) {
+  return {
+    id: row.id,
+    meetingId: row.meetingId,
+    tldr: row.tldr,
+    decisions: decode<Decision[]>(row.decisionsJson, []),
+    actionItems: decode<ActionItem[]>(row.actionItemsJson, []),
+    followUps: decode<Sourced[]>(row.followUpsJson, []),
+    openQuestions: decode<Sourced[]>(row.openQuestionsJson, []),
+    topics: decode<string[]>(row.topicsJson, []),
+    mentions: decode<Mention[]>(row.mentionsJson, []),
+    chapters: decode<{ startMs: number; title: string }[]>(row.chaptersJson, []),
+    generatedByModel: row.generatedByModel,
+    generatedAt: row.generatedAt,
+    userEditedAt: row.userEditedAt,
+  };
+}
+
+/** Meetings read per round trip by `listFullForUser`; keeps each IN list well under D1's bound-parameter limit. */
+export const FULL_MEETING_CHUNK = 50;
+
+/**
+ * Every live meeting of a user with its summary, notes and transcript, the
+ * same shape as `getFull`, read `FULL_MEETING_CHUNK` meetings per D1 batch
+ * instead of one batch per meeting. Yields one chunk at a time so a caller
+ * can write each out before the next is read.
+ */
+export async function* listFullForUser(db: AppDb, args: { userId: string; limit?: number }) {
+  const ids = await db
+    .select({ id: meetings.id })
+    .from(meetings)
+    .where(and(eq(meetings.userId, args.userId), isNull(meetings.deletedAt)))
+    .orderBy(desc(meetings.startedAt))
+    .limit(args.limit ?? 10_000);
+  for (let i = 0; i < ids.length; i += FULL_MEETING_CHUNK) {
+    const chunk = ids.slice(i, i + FULL_MEETING_CHUNK).map((row) => row.id);
+    const [meetingRows, summaryRows, notesRows, segmentRows] = await db.batch([
+      db
+        .select({ ...getTableColumns(meetings), deviceName: devices.name })
+        .from(meetings)
+        .leftJoin(devices, eq(devices.id, meetings.deviceId))
+        .where(and(inArray(meetings.id, chunk), eq(meetings.userId, args.userId), isNull(meetings.deletedAt)))
+        .orderBy(desc(meetings.startedAt)),
+      db.select().from(summaries).where(inArray(summaries.meetingId, chunk)),
+      db.select().from(userNotes).where(inArray(userNotes.meetingId, chunk)),
+      db
+        .select()
+        .from(transcriptSegments)
+        .where(inArray(transcriptSegments.meetingId, chunk))
+        .orderBy(transcriptSegments.meetingId, transcriptSegments.startMs),
+    ]);
+    const summaryBy = new Map(summaryRows.map((row) => [row.meetingId, row]));
+    const notesBy = new Map(notesRows.map((row) => [row.meetingId, row]));
+    const segmentsBy = new Map<string, (typeof segmentRows)[number][]>();
+    for (const segment of segmentRows) {
+      const list = segmentsBy.get(segment.meetingId);
+      if (list) list.push(segment);
+      else segmentsBy.set(segment.meetingId, [segment]);
+    }
+    yield meetingRows.map((meeting) => {
+      const summary = summaryBy.get(meeting.id);
+      return {
+        meeting,
+        summary: summary ? decodeSummary(summary) : null,
+        notes: notesBy.get(meeting.id) ?? null,
+        segments: segmentsBy.get(meeting.id) ?? [],
+        transcriptCursor: 0,
+      };
+    });
+  }
 }
 
 export async function getByShareSlug(db: AppDb, slug: string) {

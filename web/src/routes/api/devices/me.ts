@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import * as dictionary from '@/db/repo/dictionary';
 import { deviceTokens, users } from '@/db/schema';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
-import { parseVocabulary } from '@/lib/transcription/vocabulary';
+import { parseVocabulary, normalizeVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor, sha256Hex } from '@/server/device-auth';
 
 export const Route = createFileRoute('/api/devices/me')({
@@ -16,7 +17,6 @@ export const Route = createFileRoute('/api/devices/me')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'unauthenticated' }, { status: 401 });
         const user = (
           await getDb()
             .select({
@@ -29,10 +29,16 @@ export const Route = createFileRoute('/api/devices/me')({
             .where(eq(users.id, actor.userId))
             .limit(1)
         )[0];
+        // Normalize in priority order, then store oldest first because the Mac
+        // takes the last 100 cached words. Confirmed spellings beat manual duplicates.
+        const learnedNewestFirst = (await dictionary.listForTranscription(getDb(), actor.userId)).map(e => e.to);
+        const vocabulary = normalizeVocabulary([
+          ...learnedNewestFirst, ...parseVocabulary(user?.customVocabularyJson).reverse(),
+        ]).reverse();
         return Response.json({
           email: user?.email ?? null,
           name: user?.displayName ?? null,
-          vocabulary: parseVocabulary(user?.customVocabularyJson),
+          vocabulary,
           language: user?.defaultLanguage || AUTO_LANGUAGE,
         });
       },

@@ -1,25 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ArrowRight, Loader2 } from 'lucide-react';
+import { ArrowRight, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BrandMark } from '@/components/brand-mark';
 import { Bubble, Mascot } from '@/components/launcher/ui';
+import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { AppAlert } from '@/components/ui/app-page';
 import { appReturnPath } from '@/lib/auth-return';
 import { isRecord, optionalString } from '@/lib/json';
 import { useRouter } from '@/lib/next-compat/navigation';
-
-const ROLES = [
-  'Founder / CEO',
-  'Product',
-  'Engineering',
-  'Design',
-  'Sales',
-  'Marketing',
-  'Operations',
-  'Consultant',
-  'Student',
-  'Other',
-];
+import { MAX_ONBOARDING_PROJECTS, takeProjectDraft } from '@/lib/onboarding';
+import { languagesFromLocales } from '@/lib/transcription/language';
 
 const NEXT_STEPS = [
   'Record a short explanation in your browser',
@@ -33,23 +23,22 @@ export const Route = createFileRoute('/onboarding/')({
 
 function OnboardingPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [role, setRole] = useState('');
+  const [projects, setProjects] = useState<string[]>([]);
+  const [projectDraft, setProjectDraft] = useState('');
+  const [spoken, setSpoken] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const fromBrowser = languagesFromLocales(navigator.languages.length ? navigator.languages : [navigator.language]);
+    setSpoken(fromBrowser.length > 0 ? fromBrowser.slice(0, 2) : ['en']);
     let cancelled = false;
     void fetch('/api/me')
       .then(async (response): Promise<unknown> => (response.ok ? response.json() : null))
       .then((me) => {
         if (cancelled || !isRecord(me)) return;
-        setEmail(optionalString(me.email) ?? '');
         setDisplayName(optionalString(me.displayName) ?? '');
-        setCompanyName(optionalString(me.companyName) ?? '');
-        setRole(optionalString(me.role) ?? '');
       })
       .catch(() => setError('We could not load your account details. You can still continue.'));
     return () => {
@@ -57,28 +46,27 @@ function OnboardingPage() {
     };
   }, []);
 
+  const editProjects = (draft: string, finish = false) => {
+    const next = takeProjectDraft(projects, draft, finish);
+    setProjects(next.projects);
+    setProjectDraft(next.draft);
+  };
+
   async function finishSetup(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     setSaving(true);
     try {
-      const profileResponse = await fetch('/api/me', {
-        method: 'PATCH',
+      const response = await fetch('/api/onboarding/complete', {
+        method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           displayName: displayName.trim(),
-          companyName: companyName.trim() || null,
-          role: role || null,
+          spokenLanguages: spoken,
+          projects: takeProjectDraft(projects, projectDraft, true).projects,
         }),
       });
-      if (!profileResponse.ok) throw new Error('Could not save your profile. Please try again.');
-
-      const completeResponse = await fetch('/api/onboarding/complete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!completeResponse.ok) throw new Error('Could not finish setup. Please try again.');
+      if (!response.ok) throw new Error('Could not finish setup. Please try again.');
       const returnTo = new URLSearchParams(window.location.search).get('redirect_url');
       await router.push(appReturnPath(returnTo, '/app/record?first=1'));
     } catch (cause) {
@@ -94,31 +82,18 @@ function OnboardingPage() {
           <BrandMark size={32} /> Eavesy
         </div>
         <div className="mt-10">
-          <p className="font-round text-sm font-bold text-ev-slate">One-minute setup</p>
+          <p className="font-round text-sm font-bold text-ev-coat">One-minute setup</p>
           <h1 className="mt-2 font-round text-3xl font-extrabold tracking-tight">Make the workspace yours</h1>
           <p className="mt-2 max-w-md text-sm leading-relaxed text-ev-ink-2">
-            Add a name for your recordings. The optional details help Eavesy choose better defaults later.
+            Three quick things so your first recording comes out right. You can change them later in Settings.
           </p>
         </div>
 
-        <form onSubmit={(event) => void finishSetup(event)} className="mt-8 space-y-5">
+        <form onSubmit={(event) => void finishSetup(event)} className="mt-8 space-y-6">
           {error ? <AppAlert>{error}</AppAlert> : null}
 
-          {email ? (
-            <div className="space-y-1.5">
-              <label htmlFor="onboarding-email" className="text-sm font-medium">Email</label>
-              <input
-                id="onboarding-email"
-                value={email}
-                readOnly
-                autoComplete="email"
-                className="h-11 w-full cursor-default rounded-[var(--ev-r-ctl)] bg-ev-well px-3 text-sm text-ev-ink-2"
-              />
-            </div>
-          ) : null}
-
           <div className="space-y-1.5">
-            <label htmlFor="onboarding-name" className="text-sm font-medium">Your name</label>
+            <label htmlFor="onboarding-name" className="text-sm font-medium">What should we call you?</label>
             <input
               id="onboarding-name"
               value={displayName}
@@ -127,45 +102,65 @@ function OnboardingPage() {
               autoFocus
               autoComplete="name"
               placeholder="Jane Doe"
-              className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
+              className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat focus:shadow-[var(--ev-focus)]"
             />
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label htmlFor="onboarding-company" className="text-sm font-medium">
-                Company <span className="font-normal text-ev-ink-2">(optional)</span>
-              </label>
-              <input
-                id="onboarding-company"
-                value={companyName}
-                onChange={(event) => setCompanyName(event.target.value)}
-                autoComplete="organization"
-                placeholder="Acme Inc."
-                className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
-              />
+          <div className="space-y-1.5">
+            <label htmlFor="onboarding-projects" className="text-sm font-medium">
+              What are you working on? <span className="font-normal text-ev-ink-2">(optional)</span>
+            </label>
+            <p className="text-xs leading-relaxed text-ev-ink-2">
+              A client, a product, a class. Each becomes a project: recordings get filed under it and Eavesy learns its names and terms.
+            </p>
+            <div className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1.5 focus-within:border-ev-coat focus-within:shadow-[var(--ev-focus)]">
+              {projects.map((project) => (
+                <span key={project} className="ev-chip bg-ev-coat-soft text-ev-coat shadow-none">
+                  {project}
+                  <button
+                    type="button"
+                    onClick={() => setProjects((current) => current.filter((item) => item !== project))}
+                    aria-label={`Remove ${project}`}
+                    className="-mr-1 grid h-4 w-4 place-items-center rounded-full hover:bg-ev-hover"
+                  >
+                    <X size={11} strokeWidth={2} aria-hidden />
+                  </button>
+                </span>
+              ))}
+              {projects.length < MAX_ONBOARDING_PROJECTS ? (
+                <input
+                  id="onboarding-projects"
+                  value={projectDraft}
+                  onChange={(event) => editProjects(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && projectDraft.trim()) {
+                      event.preventDefault();
+                      editProjects(projectDraft, true);
+                    }
+                    if (event.key === 'Backspace' && !projectDraft && projects.length > 0) {
+                      setProjects((current) => current.slice(0, -1));
+                    }
+                  }}
+                  onBlur={() => editProjects(projectDraft, true)}
+                  placeholder={projects.length === 0 ? 'Acme redesign, Thesis…' : 'Add another'}
+                  className="h-7 min-w-[8rem] flex-1 bg-transparent px-1 text-sm outline-none focus-visible:outline-none!"
+                />
+              ) : null}
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="onboarding-role" className="text-sm font-medium">
-                Role <span className="font-normal text-ev-ink-2">(optional)</span>
-              </label>
-              <select
-                id="onboarding-role"
-                value={role}
-                onChange={(event) => setRole(event.target.value)}
-                autoComplete="organization-title"
-                className="h-11 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-slate focus:shadow-[var(--ev-focus)]"
-              >
-                <option value="">Select a role</option>
-                {ROLES.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="onboarding-languages" className="text-sm font-medium">Which languages do you speak in recordings?</label>
+            <p className="text-xs leading-relaxed text-ev-ink-2">
+              Eavesy picks up whichever one is spoken, line by line, even when a conversation switches between them.
+            </p>
+            <SpokenLanguages id="onboarding-languages" value={spoken} onChange={setSpoken} className="pt-1" />
           </div>
 
           <button
             type="submit"
             disabled={saving || !displayName.trim()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-action px-4 font-round text-sm font-bold text-ev-on-slate shadow-[var(--ev-e-2)] hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-action px-4 font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating your workspace…</> : <>Open your workspace <ArrowRight className="h-4 w-4" /></>}
           </button>
@@ -185,7 +180,7 @@ function OnboardingPage() {
           <ol className="mt-6 space-y-5">
             {NEXT_STEPS.map((item, index) => (
               <li key={item} className="flex gap-3 text-sm leading-relaxed text-ev-ink-2">
-                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ev-slate-soft font-round text-xs font-extrabold text-ev-slate">{index + 1}</span>
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ev-coat-soft font-round text-xs font-extrabold text-ev-coat">{index + 1}</span>
                 {item}
               </li>
             ))}

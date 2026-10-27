@@ -49,7 +49,7 @@ connector, sign in to Eavesy, and approve it. The agent can then search your
 recordings and dictations. Connections are read-only unless you allow writes.
 
 ```bash
-claude mcp add --transport http eavesy https://mcp.eavesy.com
+claude mcp add --scope user --transport http eavesy https://mcp.eavesy.com
 ```
 
 MCP reads from your account, so it only sees recordings that have synced. See
@@ -65,3 +65,10 @@ and open questions. Regenerate a brief with a built-in format, or make your own
 
 - [Connect an agent over MCP](/docs/connect-mcp)
 - [Your files](/docs/session-folder-format)
+
+## Choose the right handoff
+
+- [Read local recording files](/guides/local-recording-context)
+- [Share media with an AI assistant](/guides/share-local-recordings-with-ai)
+- [Claude Code workflow](/integrations/claude-code)
+- [Cursor workflow](/integrations/cursor)

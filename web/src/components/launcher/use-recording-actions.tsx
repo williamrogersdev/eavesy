@@ -7,14 +7,13 @@ import {
   FileText,
   FolderOpen,
   Globe,
-  Sparkles,
 } from 'lucide-react';
 import { useMemo } from 'react';
-import { copyText, pasteToFrontmost, revealInFinder } from '@/lib/desktop/bridge';
+import { copyText, recordingContext, pasteToFrontmost, revealInFinder, retryWalkthrough } from '@/lib/desktop/bridge';
+import { loadRecordingDetails } from '@/lib/launcher/data';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown, recordingMarkdown } from './format';
-import { agentText } from './capture-history';
 
 export function useRecordingActions({
   current,
@@ -47,28 +46,26 @@ export function useRecordingActions({
     }
     if (!currentRec) return [];
     const rec = currentRec;
-    const transcript = rec.transcript ?? '';
-    const summary = rec.summary ?? '';
     const close = () => setActionsOpen(false);
     return [
       {
         id: 'paste',
-        label: 'Paste transcript into active app',
+        label: 'Paste into active app',
         icon: <CornerDownLeft className="h-4 w-4" />,
         hint: '⌘↵',
         run: async () => {
-          await pasteToFrontmost(transcript);
+          await pasteToFrontmost(await recordingContext(rec.id, (await loadRecordingDetails(rec)).transcript ?? ''), !rec.hasVideo);
           close();
           if (!desktop) flash('Transcript copied — paste anywhere');
         },
       },
       {
         id: 'copy-transcript',
-        label: 'Copy transcript',
+        label: 'Copy',
         icon: <Copy className="h-4 w-4" />,
         hint: '⌘C',
         run: async () => {
-          await copyText(transcript);
+          await copyText(await recordingContext(rec.id, (await loadRecordingDetails(rec)).transcript ?? ''));
           close();
           flash('Transcript copied');
         },
@@ -79,7 +76,8 @@ export function useRecordingActions({
         icon: <FileText className="h-4 w-4" />,
         hint: '⌘⇧C',
         run: async () => {
-          await copyText(summary || transcript);
+          const detail = await loadRecordingDetails(rec);
+          await copyText(detail.summary || detail.transcript || '');
           close();
           flash('Summary copied');
         },
@@ -89,30 +87,22 @@ export function useRecordingActions({
         label: 'Copy as Markdown',
         icon: <Copy className="h-4 w-4" />,
         run: async () => {
-          await copyText(recordingMarkdown(rec));
+          await copyText(recordingMarkdown(await loadRecordingDetails(rec)));
           close();
           flash('Markdown copied');
         },
       },
-      {
-        id: 'ask-ai',
-        label: 'Copy for AI',
-        icon: <Sparkles className="h-4 w-4" />,
-        hint: '⌘J',
-        run: async () => {
-          const { text, cleaned } = await agentText(rec);
-          await copyText(text);
-          close();
-          flash(cleaned ? 'Copied for AI' : 'Copied. The cleaned-up version isn’t ready yet');
-        },
-      },
+      ...(desktop && rec.hasVideo ? [{
+        id: 'retry-walkthrough', label: 'Prepare walkthrough context', icon: <FileText className="h-4 w-4" />,
+        run: async () => { await retryWalkthrough(rec.id); close(); flash('Preparing context…'); },
+      }] : []),
       {
         id: 'download',
         label: 'Download as Markdown',
         icon: <Download className="h-4 w-4" />,
         hint: '⌘D',
-        run: () => {
-          downloadMarkdown(rec);
+        run: async () => {
+          downloadMarkdown(await loadRecordingDetails(rec));
           close();
         },
       },
@@ -124,7 +114,7 @@ export function useRecordingActions({
               icon: <FolderOpen className="h-4 w-4" />,
               hint: '⌘⇧R',
               run: () => {
-                runTask(() => revealInFinder(rec.id), 'Could not reveal recording');
+                runTask(() => revealInFinder(rec.id), 'Couldn’t reveal recording');
                 close();
               },
             } as Action,

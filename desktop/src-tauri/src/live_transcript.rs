@@ -270,11 +270,32 @@ pub struct Delta {
 
 /// Stores a caption final, unless cloud lines already cover that moment.
 pub fn record_caption(conn: &Connection, caption: &Caption) -> Result<(), String> {
-    if !caption.is_final || caption.text.trim().is_empty() {
+    if !caption.is_final || caption.preview || caption.text.trim().is_empty() {
         return Ok(());
     }
+    // `provisional` below means settled on-device words awaiting cloud
+    // refinement. Unsettled speech hypotheses never enter live_lines.
+    let tx = conn.unchecked_transaction().map_err(|error| format!("begin caption revision: {error}"))?;
+    let previous = {
+        let mut query = tx.prepare("SELECT rowid,start_ms,end_ms,text FROM live_lines
+            WHERE session_id=?1 AND track=?2 AND provisional=1 AND start_ms<=?4 AND end_ms>=?3")
+            .map_err(|error| error.to_string())?;
+        let rows = query.query_map(params![caption.session_id, caption.track, caption.start_ms, caption.end_ms], |row| {
+            Ok((row.get::<_, i64>(0)?, Caption {
+                session_id: caption.session_id.clone(), track: caption.track.clone(),
+                start_ms: row.get(1)?, end_ms: row.get(2)?, text: row.get(3)?, is_final: true,
+                preview: false,
+            }))
+        }).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?
+    };
+    for (row_id, previous) in previous {
+        if crate::captions::same_phrase(&previous, caption) {
+            tx.execute("DELETE FROM live_lines WHERE rowid=?1", params![row_id]).map_err(|error| error.to_string())?;
+        }
+    }
     let mid = midpoint(caption.start_ms, caption.end_ms);
-    conn.execute(
+    tx.execute(
         "INSERT INTO live_lines (session_id, start_ms, end_ms, track, text, provisional)
          SELECT ?1, ?2, ?3, ?4, ?5, 1
          WHERE NOT EXISTS (SELECT 1 FROM live_lines WHERE session_id=?1 AND provisional=0
@@ -282,7 +303,7 @@ pub fn record_caption(conn: &Connection, caption: &Caption) -> Result<(), String
         params![caption.session_id, caption.start_ms, caption.end_ms, caption.track, caption.text.trim(), mid],
     )
     .map_err(|e| format!("store live caption: {e}"))?;
-    Ok(())
+    tx.commit().map_err(|error| format!("commit caption revision: {error}"))
 }
 
 /// Replaces everything inside each range with the cloud's lines for it.
@@ -370,7 +391,7 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     let mut statement = conn
         .prepare(
             "SELECT id, remote_meeting_id FROM recording_sessions
-             WHERE status='recording' AND remote_meeting_id IS NOT NULL",
+             WHERE status='recording' AND discarded=0 AND remote_meeting_id IS NOT NULL",
         )
         .map_err(|e| format!("list live recordings: {e}"))?;
     let rows = statement
@@ -378,6 +399,16 @@ fn recording_now(conn: &Connection) -> Result<Vec<(String, String)>, String> {
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         .map_err(|e| format!("list live recordings: {e}"))?;
     Ok(rows)
+}
+
+/// Whether lines may still be stored for this recording: it exists and was not cancelled.
+fn still_recording(conn: &Connection, session_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM recording_sessions WHERE id=?1 AND discarded=0)",
+        params![session_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("check cancelled recording: {e}"))
 }
 
 fn midpoint(start_ms: i64, end_ms: i64) -> i64 {
@@ -422,6 +453,10 @@ pub async fn run(app: AppHandle) {
             let since = crate::sqlite::with_open(&app, |conn| cursor(conn, &session_id)).unwrap_or(0);
             match api.transcript_delta(&token, &remote_id, since).await {
                 Ok(Fetched::Delta(delta)) => {
+                    // A recording cancelled while this poll was out gets nothing from it.
+                    if !crate::sqlite::with_open(&app, |conn| still_recording(conn, &session_id)).is_ok_and(|live| live.unwrap_or(false)) {
+                        continue;
+                    }
                     if !delta.lines.is_empty() {
                         report_first(&app, &session_id, Milestone::CloudLine);
                     }
@@ -432,7 +467,10 @@ pub async fn run(app: AppHandle) {
                             hinted.insert(session_id.clone(), language);
                         }
                     }
-                    let changed = crate::sqlite::with_open_mut(&app, |conn| apply_delta(conn, &session_id, &delta));
+                    // Checked again with the write: the cancel may land in between.
+                    let changed = crate::sqlite::with_open_mut(&app, |conn| {
+                        if still_recording(conn, &session_id)? { apply_delta(conn, &session_id, &delta) } else { Ok(false) }
+                    });
                     match changed {
                         Ok(Ok(true)) => {
                             let _ = app.emit("recording:live_transcript", &session_id);
@@ -469,6 +507,7 @@ mod tests {
             is_final: true,
             start_ms,
             end_ms,
+            preview: false,
         }
     }
 
@@ -504,6 +543,31 @@ mod tests {
         record_caption(&conn, &Caption { is_final: false, ..caption("partial", 2_000, 2_500) }).unwrap();
         record_caption(&conn, &caption("  ", 3_000, 3_500)).unwrap();
         assert_eq!(texts(&conn), vec![("hello there".into(), true)]);
+    }
+
+    #[test]
+    fn volatile_silent_lead_in_is_never_stored_as_a_settled_history_line() {
+        let conn = db();
+        let mut volatile = caption("The blue Notebook is on the kitchen table.", 0, 23_159);
+        volatile.is_final = false;
+        record_caption(&conn, &volatile).unwrap();
+        assert!(lines(&conn, "rec").unwrap().is_empty());
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 18_060, 21_240)).unwrap();
+        record_caption(&conn, &volatile).unwrap();
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 25_000, 28_000)).unwrap();
+        let rows = lines(&conn, "rec").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().map(|line| line.start_ms).collect::<Vec<_>>(), vec![18_060, 25_000]);
+    }
+
+    #[test]
+    fn stored_captions_replace_jittered_duplicates_without_erasing_later_repeats() {
+        let conn = db();
+        record_caption(&conn, &caption("The blue Notebook is on the kitchen table.", 1000, 4000)).unwrap();
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 1040, 4020)).unwrap();
+        record_caption(&conn, &caption("The blue notebook is on the kitchen table.", 5000, 8000)).unwrap();
+        assert_eq!(texts(&conn), vec![("The blue notebook is on the kitchen table.".into(), true), ("The blue notebook is on the kitchen table.".into(), true)]);
+        assert_eq!(lines(&conn, "rec").unwrap().iter().map(|line| line.start_ms).collect::<Vec<_>>(), vec![1040, 5000]);
     }
 
     #[test]

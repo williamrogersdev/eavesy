@@ -76,13 +76,15 @@ CI runs exactly these (see `.github/workflows/ci.yml`):
 # web + workers
 cd web
 bun run build
-bunx tsc --noEmit
-bunx eslint .
+bun run typecheck
+bun run lint
 bun test src                     # unit tests
 bun run test:workers             # Miniflare-based worker tests, no credentials
 bun bench/score.ts --check       # two-track transcription bench
-(cd ../workers/processing && bunx tsc --noEmit && bunx wrangler deploy --dry-run --outdir /tmp/p)
-(cd ../workers/mcp && bunx tsc --noEmit && bunx wrangler deploy --dry-run --outdir /tmp/m)
+(cd ../workers/processing && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/p)
+(cd ../workers/mcp && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/m)
+(cd ../workers/meeting-bot && bun run typecheck && bun run test:bot && bun run lint:bot)
+docker build --platform linux/amd64 ../workers/meeting-bot   # the bot's image
 
 # desktop
 cd desktop/src-tauri && cargo test --locked
@@ -90,6 +92,11 @@ cd desktop/swift-audio && swift test
 ```
 
 Browser UX tests (Playwright, optional locally): `cd web && bun run test:ux`.
+
+`scripts/test-local.sh` runs all of the above headless in one go. To test the
+installed Mac app without touching your own desktop, use a throwaway VM:
+`desktop/scripts/vm-test.sh smoke`. See
+[docs/TESTING-ENVIRONMENTS.md](docs/TESTING-ENVIRONMENTS.md).
 
 ## Pull requests and review
 

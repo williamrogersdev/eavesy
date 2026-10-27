@@ -10,6 +10,7 @@ import {
 } from '@/components/marketing/page-chrome';
 import { JsonLd, faqSchema } from '@/components/seo/json-ld';
 import { seoHead } from '@/lib/seo-head';
+import { ContentSupplement } from '@/components/marketing/content-supplement';
 
 export const Route = createFileRoute('/(marketing)/integrations/$slug')({
   loader: ({ params }) => {
@@ -108,7 +109,7 @@ function IntegrationDetailPage() {
                   className="group flex items-center justify-between rounded-xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
                 >
                   <span className="text-sm font-medium text-ev-ink">{o.name}</span>
-                  <ArrowRight className="h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-slate" />
+                  <ArrowRight className="h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-coat" />
                 </Link>
               ))}
             </div>
@@ -116,6 +117,7 @@ function IntegrationDetailPage() {
         </section>
       )}
 
+      <ContentSupplement collection="integration-details" slug={integration.slug} />
       <CTASection />
     </main>
   );

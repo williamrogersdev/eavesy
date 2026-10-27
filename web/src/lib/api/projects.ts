@@ -1,5 +1,6 @@
 import { isRecord } from '@/lib/json';
 import type { Project } from '@/lib/projects';
+import { isDictationStyle } from '@/lib/transcription/dictation-style';
 
 export interface ProjectSummary extends Project {
   recordingCount: number;
@@ -20,6 +21,8 @@ export function parseProject(value: unknown): ProjectSummary | null {
     vocabulary: strings(value.vocabulary),
     people: typeof value.people === 'string' ? value.people : null,
     match: strings(value.match),
+    dictationStyle: isDictationStyle(value.dictationStyle) ? value.dictationStyle : null,
+    dictationForAgents: typeof value.dictationForAgents === 'boolean' ? value.dictationForAgents : null,
     recordingCount: typeof value.recordingCount === 'number' ? value.recordingCount : 0,
   };
 }

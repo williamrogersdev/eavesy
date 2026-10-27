@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PermissionStatus, Permissions } from '@/lib/desktop/bridge';
-import { answered, permissionRowState, permissionSpecs, usesFnKey } from './permission-checklist';
+import { answered, needsPermissionPoll, permissionRowState, permissionSpecs, samePermissions, usesFnKey } from './permission-checklist';
 
 function perms(over: Partial<Permissions> = {}, status: Partial<Record<keyof NonNullable<Permissions['status']>, PermissionStatus>> = {}): Permissions {
   return {
@@ -31,6 +31,9 @@ describe('usesFnKey', () => {
     expect(usesFnKey('⌘⇧Space', 'Fn')).toBe(true);
     expect(usesFnKey('fn')).toBe(true);
     expect(usesFnKey('⌘⇧D', '⌘⇧Space')).toBe(false);
+  });
+  test('fn held with a key is not the fn key on its own', () => {
+    expect(usesFnKey('Fn+Space', 'fn Space')).toBe(false);
   });
 });
 
@@ -81,5 +84,32 @@ describe('permissionRowState', () => {
   });
   test('without permissions yet, nothing is granted or denied', () => {
     expect(row({ kind: 'mic', permissions: null, grantedAtStart: undefined })).toMatchObject({ granted: undefined, disc: 'pending', inSettings: false });
+  });
+});
+
+describe('samePermissions', () => {
+  test('equal answers compare equal, including the status map', () => {
+    expect(samePermissions(perms({ mic: true }), perms({ mic: true }))).toBe(true);
+    expect(samePermissions(null, null)).toBe(true);
+  });
+  test('any changed answer or status differs', () => {
+    expect(samePermissions(perms(), perms({ mic: true }))).toBe(false);
+    expect(samePermissions(perms(), perms({}, { mic: 'denied' }))).toBe(false);
+    expect(samePermissions(null, perms())).toBe(false);
+  });
+});
+
+describe('needsPermissionPoll', () => {
+  const all = { mic: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true };
+  test('stops once every row that matters is on', () => {
+    expect(needsPermissionPoll(perms(all), true)).toBe(false);
+  });
+  test('ignores Input Monitoring when fn is not a shortcut', () => {
+    expect(needsPermissionPoll(perms({ ...all, inputMonitoring: false }), false)).toBe(false);
+    expect(needsPermissionPoll(perms({ ...all, inputMonitoring: false }), true)).toBe(true);
+  });
+  test('keeps checking while a shown row is off, or before the first answer', () => {
+    expect(needsPermissionPoll(perms({ ...all, screen: false }), false)).toBe(true);
+    expect(needsPermissionPoll(null, false)).toBe(true);
   });
 });

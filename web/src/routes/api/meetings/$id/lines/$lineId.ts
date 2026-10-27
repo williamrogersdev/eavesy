@@ -44,11 +44,13 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         if (meeting instanceof Response) return meeting;
         const parsed = patchSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        await transcriptsRepo.editSegment(getDb(), {
+        const saved = await transcriptsRepo.editSegment(getDb(), {
+          userId: meeting.userId,
           meetingId: meeting.id,
           segmentId: params.lineId,
           ...parsed.data,
         });
+        if (!saved) return Response.json({ error: 'not_found' }, { status: 404 });
         refreshAgentTranscriptLater(meeting.id, meeting.userId);
         return Response.json({ ok: true });
       },
@@ -73,6 +75,7 @@ export const Route = createFileRoute('/api/meetings/$id/lines/$lineId')({
         await transcriptsRepo.restoreSegment(getDb(), {
           id: params.lineId,
           meetingId: meeting.id,
+          rawText: null,
           confidence: null,
           language: null,
           isEdited: false,

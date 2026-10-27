@@ -1,12 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { and, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql, type SQLWrapper } from 'drizzle-orm';
 import type { VectorizeIndex } from '@cloudflare/workers-types';
 import { getDb } from '@/db/client';
+import { clampLimit } from '@/lib/http/clamp-limit';
 import { embeddings, meetings, dictations } from '@/db/schema';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
-import { embedTexts, type WorkersAiRunner } from '@/lib/ai/embed';
+import { createAiRunner, type CreditEnv } from '@/lib/ai/credit-runner';
+import { embedTexts } from '@/lib/ai/embed';
 
 type SearchItem =
   | {
@@ -35,11 +37,13 @@ export const Route = createFileRoute('/api/search')({
 
         const url = new URL(request.url);
         const q = url.searchParams.get('q')?.trim();
-        const limit = Math.min(Number(url.searchParams.get('limit') ?? '10'), 25);
+        const limit = clampLimit(url.searchParams.get('limit'), 10, 25);
         if (!q) return Response.json({ items: [] });
 
         const db = getDb();
-        const pattern = `%${q.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+        // `\` escapes LIKE's wildcards; SQLite needs ESCAPE to honour it.
+        const pattern = `%${q.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+        const contains = (column: SQLWrapper) => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
         const lexicalRows = await db
           .select()
           .from(meetings)
@@ -47,11 +51,12 @@ export const Route = createFileRoute('/api/search')({
             and(
               eq(meetings.userId, actor.userId),
               isNull(meetings.deletedAt),
+              or(ne(meetings.source, 'import'), eq(meetings.status, 'complete')),
               or(
-                like(meetings.title, pattern),
-                like(meetings.description, pattern),
-                like(meetings.summaryOverrideMd, pattern),
-                like(meetings.transcriptOverrideMd, pattern),
+                contains(meetings.title),
+                contains(meetings.description),
+                contains(meetings.summaryOverrideMd),
+                contains(meetings.transcriptOverrideMd),
               ),
             ),
           )
@@ -74,16 +79,19 @@ export const Route = createFileRoute('/api/search')({
 
         const { env } = getCloudflareContext();
         const vectorize = (env as { VECTORIZE?: VectorizeIndex }).VECTORIZE;
-        const ai = (env as { AI?: WorkersAiRunner }).AI;
-        if (!ai || !vectorize || (await guardUserQuota(actor.userId, 'search'))) {
-          return Response.json({
-            items: lexicalItems,
-            note: 'semantic search is unavailable; showing text matches',
-          });
-        }
-
-        const queryVec = (await embedTexts(ai, [q]))[0];
-        if (!queryVec) return Response.json({ items: [] });
+        const fallback = () => Response.json({ items: lexicalItems, note: 'semantic search is unavailable; showing text matches' });
+        if (!vectorize || (await guardUserQuota(actor.userId, 'search'))) return fallback();
+        let queryVec: number[] | undefined;
+        try {
+          // Query embeddings never go through the credit pilot: without the binding there is no vector to search with.
+          const ai = (env as CreditEnv).AI ? createAiRunner(env as CreditEnv, 'search-embedding') : undefined;
+          if (!ai) {
+            console.warn(JSON.stringify({ message: 'semantic search disabled: AI binding missing; using lexical results' }));
+            return fallback();
+          }
+          queryVec = (await embedTexts(ai, [q]))[0];
+        } catch { console.warn(JSON.stringify({ message: 'semantic search unavailable; using lexical results' })); return fallback(); }
+        if (!queryVec) return fallback();
 
         const matches = await vectorize.query(queryVec, {
           topK: limit * 3,
@@ -108,6 +116,7 @@ export const Route = createFileRoute('/api/search')({
                   and(
                     eq(meetings.userId, actor.userId),
                     isNull(meetings.deletedAt),
+              or(ne(meetings.source, 'import'), eq(meetings.status, 'complete')),
                     inArray(meetings.id, [...meetingIds]),
                   ),
                 )

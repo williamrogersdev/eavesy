@@ -19,13 +19,9 @@ export const Route = createFileRoute('/api/meetings/$id/transcript')({
   server: {
     handlers: {
       GET: async ({ request, params }) => {
-        const url = new URL(request.url);
         let actor;
         try {
-          actor = await resolveActor({
-            anonymousSessionToken:
-              request.headers.get('x-anonymous-token') ?? url.searchParams.get('anonymousSessionToken'),
-          });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }

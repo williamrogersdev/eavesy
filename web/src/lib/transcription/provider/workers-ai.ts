@@ -3,7 +3,8 @@ import type { TranscriptSegment } from '@/lib/transcription/types';
 import type { SegmentTranscriber, SegmentTranscription } from '@/lib/transcription/provider';
 import { audioBase64 } from '@/lib/transcription/base64';
 import { whisperLanguage } from '@/lib/transcription/language';
-import { whisperPrompt } from '@/lib/transcription/vocabulary';
+import { fixBuiltInTerms, whisperPrompt } from '@/lib/transcription/vocabulary';
+import { isRecord } from '@/lib/json';
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
@@ -33,14 +34,14 @@ export class WorkersAiSegmentTranscriber implements SegmentTranscriber {
 
 function mapResult(result: unknown, fallbackLanguage?: string): SegmentTranscription {
   const root = isRecord(result) ? result : {};
-  const text = typeof root.text === 'string' ? root.text : '';
+  const text = typeof root.text === 'string' ? fixBuiltInTerms(root.text) : '';
   const info = isRecord(root.transcription_info) ? root.transcription_info : {};
   const segments: TranscriptSegment[] = [];
 
   if (Array.isArray(root.segments)) {
     for (const candidate of root.segments) {
       if (!isRecord(candidate)) continue;
-      const segmentText = typeof candidate.text === 'string' ? candidate.text.trim() : '';
+      const segmentText = typeof candidate.text === 'string' ? fixBuiltInTerms(candidate.text.trim()) : '';
       if (!segmentText) continue;
       const start = typeof candidate.start === 'number' ? candidate.start : 0;
       const end = typeof candidate.end === 'number' ? candidate.end : start;
@@ -76,8 +77,4 @@ function mapResult(result: unknown, fallbackLanguage?: string): SegmentTranscrip
       : {}),
     durationSec: typeof info.duration === 'number' ? info.duration : undefined,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

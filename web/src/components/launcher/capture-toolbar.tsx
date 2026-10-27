@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { AudioLines, Camera, ChevronDown, Clapperboard, Square, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AudioLines, Camera, Clapperboard, Square, Users, X } from 'lucide-react';
+import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from './discard';
 import { clock } from './history-model';
 import { talkHint, FN } from './shortcut-keys';
-import { Kbd, Mascot, ToolbarSegment, ToolbarShelf } from './ui';
+import { ToolbarSegment, ToolbarShelf } from './ui';
 import { useLiveLines } from './use-live-lines';
 
 export type CaptureKind = 'talk' | 'meeting' | 'video';
@@ -16,7 +17,25 @@ export interface LiveCapture {
   kind: CaptureKind;
   /** `thinking` once stopped, while the words are written down. */
   phase: 'listening' | 'thinking';
-  elapsed: number;
+  /** When it started; the live bar counts from here on its own clock. */
+  startedAtMs: number | null;
+}
+
+/** Seconds since `startedAtMs`, ticking once a second only inside the live bar. */
+function secondsSince(startedAtMs: number | null): number {
+  return startedAtMs === null ? 0 : Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+}
+
+/** Seconds since `startedAtMs`, ticking once a second only inside the live bar. */
+function useElapsed(startedAtMs: number | null): number {
+  const [elapsed, setElapsed] = useState(() => secondsSince(startedAtMs));
+  useEffect(() => {
+    setElapsed(secondsSince(startedAtMs));
+    if (startedAtMs === null) return;
+    const timer = window.setInterval(() => setElapsed(secondsSince(startedAtMs)), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAtMs]);
+  return elapsed;
 }
 
 /**
@@ -33,6 +52,7 @@ export function CaptureToolbar({
   onScreenshot,
   onVideo,
   onStop,
+  onCancel,
 }: {
   /** The capture running now, if any. */
   live: LiveCapture | null;
@@ -44,77 +64,85 @@ export function CaptureToolbar({
   onScreenshot: () => void;
   onVideo: () => void;
   onStop: () => void;
+  /** Ends the capture without saving it. */
+  onCancel: () => void;
 }) {
   const fn = dictationHotkey === FN || dictationHotkey === 'fn';
-  if (live) return <div className="ev-toolbar"><LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} /></div>;
   return (
     <div className="ev-toolbar">
-      <ToolbarShelf>
+      {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} onCancel={onCancel} /> : <ToolbarShelf>
         <ToolbarSegment
           icon={AudioLines}
           label="Talk"
           kbd={fn ? 'fn' : undefined}
           hint={talkHint(fn ? FN : dictationHotkey)}
-          disabled={busy}
+          disabled={busy || !!live}
           onClick={onTalk}
         />
-        <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" disabled={busy} onClick={onMeeting} />
-        <ToolbarSegment icon={Camera} label="Screenshot" hint="Pick an area to save" disabled={busy} onClick={onScreenshot} />
-        <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" disabled={busy} onClick={onVideo} />
-      </ToolbarShelf>
+        <ToolbarSegment icon={Users} label="Meeting" hint="Records both sides of a call" disabled={busy || !!live} onClick={onMeeting} />
+        <ToolbarSegment icon={Camera} label="Screenshot" hint="Pick an area to save" disabled={busy || !!live} onClick={onScreenshot} />
+        <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" disabled={busy || !!live} onClick={onVideo} />
+      </ToolbarShelf>}
     </div>
   );
 }
 
 const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'Meeting', video: 'Recording screen' };
 
-/** The shelf while a capture runs. Click it to see more of what has been heard. */
-function LiveBar({ live, stopKey, onStop }: { live: LiveCapture; stopKey: string; onStop: () => void }) {
-  const [open, setOpen] = useState(false);
-  const lines = useLiveLines(live.sessionId, 4);
+/** Lines the live card keeps, the same count the pill shows, so nothing you were reading moves. */
+export const LIVE_CARD_LINES = 4;
+
+/**
+ * The pill, carried into the panel: the same charcoal card, coral light and
+ * newest lines, in place of the capture shelf. The title bar's mascot is the
+ * only mascot while it runs.
+ */
+function LiveBar({ live, stopKey, onStop, onCancel }: { live: LiveCapture; stopKey: string; onStop: () => void; onCancel: () => void }) {
+  const lines = useLiveLines(live.sessionId, LIVE_CARD_LINES);
+  const elapsed = useElapsed(live.sessionId !== null ? live.startedAtMs : null);
+  // Past a short note, Cancel asks first: the × turns into Discard for a moment.
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), DISCARD_CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+  const cancel = () => {
+    if (elapsed >= DISCARD_ASKS_AFTER_SEC && !confirming) { setConfirming(true); return; }
+    setConfirming(false);
+    onCancel();
+  };
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
-  const last = lines.at(-1)?.text ?? '';
   const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
+  const stopTitle = `Stop and save${stopKey ? ` (${stopKey})` : ''}`;
   return (
-    <div className="ev-livebar" data-phase={live.phase} data-open={open || undefined}>
-      <div className="ev-livebar-row">
-        <button
-          type="button"
-          className="ev-livebar-main"
-          aria-expanded={open}
-          aria-label={`${label}${started && !thinking ? `, ${clock(live.elapsed)}` : ''}. ${open ? 'Hide' : 'Show'} what has been heard`}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="ev-livebar-mark" aria-hidden>
-            <Mascot size={16} state={thinking ? 'thinking' : started ? 'listening' : 'idle'} recording={!thinking && started} />
-          </span>
-          <span className="ev-livebar-label" aria-live="polite">{label}</span>
-          {started && !thinking && <span className="ev-livebar-time">{clock(live.elapsed)}</span>}
-          <span className="ev-livebar-words"><bdi>{open ? '' : last}</bdi></span>
-          <ChevronDown size={14} strokeWidth={1.75} className="ev-livebar-chev" aria-hidden />
-        </button>
+    <div className="ev-livebar" data-phase={live.phase}>
+      <div className="ev-livebar-head">
+        {!thinking && started && <span className="ev-livebar-dot" aria-hidden />}
+        <span className="ev-livebar-label" role="status">{label}</span>
+        {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
+        <span className="ev-livebar-spacer" />
+        {!thinking && started && (confirming
+          ? <button type="button" className="ev-livebar-discard" onClick={cancel} title="Click again to throw this recording away">Discard</button>
+          : <button type="button" className="ev-livebar-cancel" onClick={cancel} title="Cancel: throw this recording away without saving" aria-label="Cancel recording">
+            <X size={14} aria-hidden />
+          </button>
+        )}
         {!thinking && started && (
-          <button type="button" className="ev-livebar-stop" onClick={onStop} title={`Stop and save${stopKey ? ` (${stopKey})` : ''}`} aria-label={`Stop and save${stopKey ? ` (${stopKey})` : ''}`}>
-            <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden />
+          <button type="button" className="ev-livebar-stop" onClick={onStop} title={stopTitle} aria-label={stopTitle}>
+            <Square size={9} strokeWidth={0} fill="currentColor" aria-hidden />
             Stop
-            {stopKey && <Kbd keys={stopKey} />}
           </button>
         )}
       </div>
-      <div className="ev-livebar-more" aria-hidden={!open}>
-        <div>
-          {lines.length > 0 ? (
-            lines.map((line, i) => (
-              <p key={i} data-provisional={line.provisional || undefined}>
-                {line.label && <b>{line.label} </b>}{line.text}
-              </p>
-            ))
-          ) : (
-            <p className="ev-livebar-empty">{thinking ? 'Almost there…' : started ? 'Say something. Your words show up here as you talk.' : 'Opening the mic…'}</p>
-          )}
+      {lines.length > 0 && (
+        <div className="ev-livebar-lines" aria-live="off">
+          {lines.map((line, i) => (
+            <p key={i} data-latest={i === lines.length - 1 || undefined}>{line.text}</p>
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }

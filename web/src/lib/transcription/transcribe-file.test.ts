@@ -18,6 +18,8 @@ describe('Workers AI file transcription', () => {
       }),
     ).toEqual({
       text: 'Hello world',
+      timestampSource: 'unavailable',
+      languageProbability: undefined,
       language: 'en',
       durationSec: 1.25,
       segments: [
@@ -73,6 +75,7 @@ describe('Workers AI file transcription', () => {
         language: 'es',
         vad_filter: true,
         condition_on_previous_text: false,
+        initial_prompt: 'Eavesy.',
       },
     });
     expect(result.segments).toEqual([]);
@@ -93,7 +96,33 @@ describe('Workers AI file transcription', () => {
       },
     });
     expect('language' in input).toBe(false);
-    expect(input.initial_prompt).toBe('Weekly sync with Priya Priya Raman.');
+    expect(input.initial_prompt).toBe('Weekly sync with Priya Eavesy, Priya Raman.');
+  });
+
+  test('an unsure detection outside the languages the user speaks is redone in theirs', async () => {
+    const asked: unknown[] = [];
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      language: 'auto',
+      spoken: ['en', 'es'],
+      ai: {
+        run(_model, value) {
+          const language = (value as { language?: string }).language;
+          asked.push(language);
+          return Promise.resolve(
+            language === 'en'
+              ? { text: 'Send me the deck', segments: [{ start: 0, end: 1, text: 'Send me the deck' }] }
+              : {
+                  text: 'Sendt mi ze dek',
+                  transcription_info: { language: 'nl', language_probability: 0.64 },
+                  segments: [{ start: 0, end: 1, text: 'Sendt mi ze dek' }],
+                },
+          );
+        },
+      },
+    });
+    expect(asked).toEqual([undefined, 'en']);
+    expect(result).toMatchObject({ text: 'Send me the deck', language: 'en' });
   });
 
   test('drops lines Whisper invents on silence and rebuilds the text from what is left', async () => {
@@ -141,5 +170,28 @@ describe('Workers AI file transcription', () => {
       ai: { run: () => Promise.resolve({ text: 'Thank you.', segments: [{ start: 0, end: 1, text: 'Thank you.', no_speech_prob: 0.2 }] }) },
     });
     expect(thanks.text).toBe('Thank you.');
+  });
+
+  test('a voice note the Mac heard no words in gets no benefit of the doubt', async () => {
+    const said = (text: string, noSpeechProb?: number) => ({
+      run: () => Promise.resolve({ text, segments: [{ start: 0, end: 1, text, ...(noSpeechProb === undefined ? {} : { no_speech_prob: noSpeechProb }) }] }),
+    });
+    for (const text of ['Thank you. Thank you', 'Thank you. Here we go', 'Hope you enjoyed it.']) {
+      const result = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said(text) });
+      expect(result.text).toBe('');
+    }
+    // Whisper sure of real words still wins.
+    const sure = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said('Thank you.', 0.05) });
+    expect(sure.text).toBe('Thank you.');
+    const words = await transcribeAudioFile({ audio: new Uint8Array([1]), voiceNote: true, heardOnDevice: false, ai: said('Call mom.') });
+    expect(words.text).toBe('Call mom.');
+  });
+});
+
+
+test('walkthroughs never label untimed speech as aligned to the screen', () => {
+  expect(mapWhisperResult({ text: 'untimed speech' }).timestampSource).toBe('unavailable');
+  expect(mapWhisperResult({ text: 'timed speech', segments: [{text:'timed speech',start:18.125,end:20.25}] })).toMatchObject({
+    timestampSource:'segments', segments:[{startMs:18125,endMs:20250,text:'timed speech'}],
   });
 });

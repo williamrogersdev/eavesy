@@ -77,7 +77,7 @@ function SecurityPage() {
                   key={p.title}
                   className="rounded-2xl border border-ev-line bg-ev-raised p-6"
                 >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-slate-soft text-ev-slate">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-coat-soft text-ev-coat">
                     <Icon className="h-5 w-5" />
                   </span>
                   <h2 className="mt-5 font-semibold text-ev-ink">{p.title}</h2>
@@ -93,7 +93,7 @@ function SecurityPage() {
             </h2>
             <p className="mt-3 text-sm text-ev-ink-2">
               We keep the list of subprocessors short and public. See the{' '}
-              <Link href="/privacy" className="text-ev-slate underline underline-offset-2">
+              <Link href="/privacy" className="text-ev-coat underline underline-offset-2">
                 privacy policy
               </Link>{' '}
               for the full detail.

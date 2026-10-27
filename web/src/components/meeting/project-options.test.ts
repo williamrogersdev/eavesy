@@ -31,7 +31,7 @@ describe('project picker', () => {
     expect(calls).toEqual([['m1', null]]);
   });
 
-  test('choosing manage opens settings without changing the recording', async () => {
+  test('choosing manage opens projects without changing the recording', async () => {
     let managed = false;
     const result = await chooseProject('m1', MANAGE, {
       manage: () => { managed = true; },

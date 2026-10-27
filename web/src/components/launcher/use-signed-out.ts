@@ -15,7 +15,7 @@ export function useSignedOut(desktop: boolean, runTask: RunTask) {
       if (!disposed && initial) setSignedOut(initial.signedOut);
       if (disposed) stopListening();
       else unlisten = stopListening;
-    }, 'Could not watch sync status');
+    }, 'Couldn’t watch sync status');
     return () => {
       disposed = true;
       unlisten?.();

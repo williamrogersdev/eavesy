@@ -1,13 +1,15 @@
 import { useId, type CSSProperties } from 'react';
 
 /**
- * Eavesy: a honey pebble wearing its own slate roof. The roof's overhangs
- * (the eaves) are its ears, and they only lift while the mic is live. That
- * makes the character the privacy indicator, so never fake `listening`.
+ * Eavesy: the Little Snoop, a charcoal bean in a fedora. The hat lifts off
+ * its brow only while the mic is live, and the coral lens appears only while
+ * recording. That makes the character the privacy indicator, so never fake
+ * `listening` or `recording`. The static brand mark (app icon, favicon, OG
+ * image) is the one exception: it always shows the lens (desktop/DESIGN.md §3).
  *
  * Calm by default: it holds a pose and blinks now and then. It never animates
- * to ask for attention. Under reduced motion it holds the pose only (eaves
- * still perk while listening, at a fixed angle).
+ * to ask for attention. Under reduced motion it holds the pose only (the hat
+ * still lifts while listening, at a fixed height).
  */
 
 export type MascotState = 'idle' | 'listening' | 'thinking' | 'happy' | 'confused' | 'sleeping';
@@ -18,7 +20,7 @@ export type MascotProps = {
   level?: number;
   /** Rendered size in px (square). */
   size?: number;
-  /** Red record light on the roof peak. */
+  /** Coral lens: shown only while a capture is recording. */
   recording?: boolean;
   /** 'auto' picks by size: ≤19 mini, 20–39 medium, ≥40 full. */
   detail?: 'auto' | 'full' | 'medium' | 'mini';
@@ -30,30 +32,26 @@ export type MascotProps = {
   style?: CSSProperties;
 };
 
-const BODY = 'M32 15C46.5 15 54 27 54 40C54 51.5 45 58.5 32 58.5C19 58.5 10 51.5 10 40C10 27 17.5 15 32 15Z';
+const CROWN = 'M13.5 27C13.8 16.5 19.5 8.5 26.5 8.5Q32 11.5 37.5 8.5C44.5 8.5 50.2 16.5 50.5 27Z';
 
 const CSS = `
-.evm{--evm-honey:var(--ev-mascot-body,#F6B93B);--evm-shade:var(--ev-mascot-shade,#E39E1E);--evm-roof:var(--ev-mascot-roof,#4B3A78);--evm-eye:#2A2233;--evm-cheek:var(--ev-cheek,#F59BA0);--evm-rec:var(--ev-rec,#FF3B30);--evm-smoke:var(--ev-ink-3,#978C9C);overflow:visible;display:inline-block;vertical-align:middle;flex:none}
+.evm{--evm-body:var(--ev-mascot-body,#2B2523);--evm-band:var(--ev-mascot-band,#4A403C);--evm-eye:var(--ev-mascot-eye,#FBF7F0);--evm-rec:var(--ev-rec,#FF5A3C);--evm-smoke:var(--ev-ink-3,#968D85);overflow:visible;display:inline-block;vertical-align:middle;flex:none}
 .evm *{transform-box:fill-box}
-.evm-body{fill:var(--evm-honey)}
-.evm-shadeband{stroke:var(--evm-shade);opacity:.45}
-.evm-ground{fill:var(--evm-eye);opacity:.10}
-.evm-roofline{stroke:var(--evm-roof)}
-.evm-chimney{fill:var(--evm-roof)}
-.evm-ink{fill:var(--evm-eye)}
+.evm-body{fill:var(--evm-body)}
+.evm-band{fill:var(--evm-band)}
+.evm-ground{fill:var(--evm-body);opacity:.12}
+.evm-eye{fill:var(--evm-eye)}
 .evm-stroke{stroke:var(--evm-eye);fill:none;stroke-linecap:round;stroke-linejoin:round}
-.evm-hl{fill:#FFF8EE}
-.evm-cheek{fill:var(--evm-cheek);opacity:.7}
-.evm-rec{fill:var(--evm-rec);stroke:#FFF8EE;stroke-width:1.4}
-.evm-mono .evm-roofline{stroke:currentColor}
-.evm-mono .evm-ink{fill:currentColor}
+.evm-handle{stroke:var(--evm-band);stroke-linecap:round}
+.evm-glass{fill:var(--evm-rec)}
+.evm-glint{fill:#FFFFFF;opacity:.7}
+.evm-rec{fill:var(--evm-rec);stroke:var(--ev-paper,#FBF7F0);stroke-width:1.6}
+.evm-mono .evm-body,.evm-mono .evm-eye{fill:currentColor}
 .evm-mono .evm-stroke{stroke:currentColor}
 
-.evm-roof-l{transform-origin:100% 0}
-.evm-roof-r{transform-origin:0 0}
 .evm-figure{transform-origin:50% 100%;transition:transform 260ms cubic-bezier(.2,.8,.2,1)}
-.evm-roof-l,.evm-roof-r{transition:transform 260ms cubic-bezier(.2,.8,.2,1)}
-.evm-listening .evm-roof-l,.evm-listening .evm-roof-r,.evm-listening .evm-bob{transition:transform 80ms linear}
+.evm-hat{transform-origin:50% 100%;transition:transform 260ms cubic-bezier(.2,.8,.2,1)}
+.evm-listening .evm-hat,.evm-listening .evm-bob{transition:transform 80ms linear}
 .evm-eyes{transform-origin:50% 50%}
 .evm-pupils{transition:transform 400ms cubic-bezier(.2,.8,.2,1)}
 
@@ -64,28 +62,23 @@ const CSS = `
 .evm-happy .evm-breathe{animation:evm-lift 360ms cubic-bezier(.34,1.56,.64,1) 1 both}
 .evm-confused .evm-figure{transform:rotate(-6deg)}
 .evm-sleeping .evm-breathe{animation:evm-sleep 5s ease-in-out infinite}
-.evm-puff{opacity:0;transform-origin:50% 50%;animation:evm-puff 2.4s ease-out infinite}
-.evm-puff:nth-child(2){animation-delay:.8s}
-.evm-puff:nth-child(3){animation-delay:1.6s}
 .evm-z{opacity:0;fill:var(--evm-smoke);font:700 9px ui-rounded,"SF Pro Rounded","Nunito",system-ui,sans-serif;animation:evm-z 3s ease-out infinite}
 .evm-z:nth-of-type(2){animation-delay:1.5s;font-size:7px}
-.evm-q{fill:var(--evm-roof);font:800 13px ui-rounded,"SF Pro Rounded","Nunito",system-ui,sans-serif}
+.evm-q{fill:var(--evm-smoke);font:800 13px ui-rounded,"SF Pro Rounded","Nunito",system-ui,sans-serif}
 
 @keyframes evm-blink{0%,57%,60%,95%,100%{transform:scaleY(1)}58.5%,96.5%{transform:scaleY(.1)}}
 @keyframes evm-glance{0%,40%,100%{transform:translate(0,0)}46%,62%{transform:translate(1.3px,-.3px)}68%,74%{transform:translate(-1px,0)}}
 @keyframes evm-breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-.6px)}}
-@keyframes evm-ponder{0%{transform:translate(-1.4px,-1.6px)}100%{transform:translate(1.4px,-1.6px)}}
+@keyframes evm-ponder{0%{transform:translate(-1.4px,-.8px)}100%{transform:translate(1.4px,-.8px)}}
 @keyframes evm-lift{0%{transform:translateY(0)}45%{transform:translateY(-1.5px)}100%{transform:translateY(0)}}
 @keyframes evm-sleep{0%,100%{transform:scale(1,1)}50%{transform:scale(1.012,.985)}}
-@keyframes evm-puff{0%{opacity:0;transform:translate(0,0) scale(.5)}25%{opacity:.45}100%{opacity:0;transform:translate(2px,-11px) scale(1.4)}}
 @keyframes evm-z{0%{opacity:0;transform:translate(0,0)}30%{opacity:.8}100%{opacity:0;transform:translate(5px,-9px)}}
 
 @media (prefers-reduced-motion:reduce){
   .evm *{animation:none!important;transition:none!important}
-  .evm-puff,.evm-z{opacity:0}
+  .evm-z{opacity:0}
   .evm-bob{transform:none!important}
-  .evm-listening .evm-roof-l{transform:rotate(10deg)!important}
-  .evm-listening .evm-roof-r{transform:rotate(-10deg)!important}
+  .evm-listening .evm-hat{transform:translateY(-3px) rotate(-3deg)!important}
 }
 `;
 
@@ -110,12 +103,10 @@ export function Mascot({
   const mini = tier === 'mini' || mono;
   const lvl = state === 'listening' ? clamp01(level) : 0;
 
-  // Eaves: the ears. Up only while listening, droop asleep.
-  const perk = state === 'listening' ? 6 + lvl * 14 : state === 'sleeping' ? -5 : state === 'confused' ? 3 : 0;
+  // The hat: tipped up off the brow while listening, pulled down asleep.
+  const lift = state === 'listening' ? 2 + lvl * 4 : state === 'sleeping' ? -3 : 0;
+  const tilt = state === 'confused' ? 6 : state === 'listening' ? -3 : 0;
   const bob = -lvl * 2.5;
-
-  const eyes = renderEyes(state, mini);
-  const mouth = mini ? null : renderMouth(state);
 
   return (
     <>
@@ -132,122 +123,77 @@ export function Mascot({
         style={style}
         data-state={state}
       >
-        {full && !mono && <ellipse className="evm-ground" cx="32" cy="61" rx="15" ry="2.2" />}
+        {full && !mono && <ellipse className="evm-ground" cx="32" cy="61" rx="17" ry="2.2" />}
 
         <g className="evm-figure">
           <g className="evm-bob" style={{ transform: `translateY(${bob}px)` }}>
             <g className="evm-breathe">
-              {!mono && (
+              {!mono && <ellipse className="evm-body" cx="32" cy="41" rx="21" ry="17" />}
+              <g className="evm-eyes">{renderEyes(state, mini)}</g>
+            </g>
+
+            <g className="evm-hat" style={{ transform: `translateY(${-lift}px) rotate(${tilt}deg)` }}>
+              <ellipse className="evm-body" cx="32" cy="27" rx="30" ry={mini ? 5.6 : 5} />
+              <path className="evm-body" d={CROWN} />
+              {!mini && (
                 <>
-                  <path className="evm-body" d={BODY} />
-                  {!mini && (
-                    <>
-                      <clipPath id={clipId}><path d={BODY} /></clipPath>
-                      {/* The eave's shadow on its forehead. */}
-                      <polyline
-                        className="evm-shadeband"
-                        clipPath={`url(#${clipId})`}
-                        points="8,33.5 32,13.5 56,33.5"
-                        fill="none"
-                        strokeWidth="5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </>
-                  )}
-                  {!mini && (
-                    <>
-                      <ellipse className="evm-cheek" cx="17.6" cy="44.6" rx="3.6" ry="2.2" />
-                      <ellipse className="evm-cheek" cx="46.4" cy="44.6" rx="3.6" ry="2.2" />
-                    </>
-                  )}
+                  <clipPath id={clipId}><path d={CROWN} /></clipPath>
+                  <rect className="evm-band" clipPath={`url(#${clipId})`} x="10" y="20" width="44" height="4.6" />
                 </>
               )}
-              <g className="evm-eyes">{eyes}</g>
-              {mouth}
             </g>
 
-            {/* Roof: two halves hinged at the peak so each eave can perk. */}
-            <g className="evm-roof-l" style={{ transform: `rotate(${perk}deg)` }}>
-              <line className="evm-roofline" x1="32" y1="9" x2="5" y2="31" strokeWidth={mini ? 9 : 8} strokeLinecap="round" />
-            </g>
-            <g className="evm-roof-r" style={{ transform: `rotate(${-perk}deg)` }}>
-              {!mini && <rect className="evm-chimney" x="43" y="9.5" width="5.2" height="10" rx="1.4" />}
-              <line className="evm-roofline" x1="32" y1="9" x2="59" y2="31" strokeWidth={mini ? 9 : 8} strokeLinecap="round" />
-              {state === 'thinking' && tier !== 'mini' && !mono && (
-                <g>
-                  <circle className="evm-puff" cx="45.6" cy="5" r="2" fill="var(--evm-smoke)" />
-                  <circle className="evm-puff" cx="45.6" cy="5" r="2" fill="var(--evm-smoke)" />
-                  <circle className="evm-puff" cx="45.6" cy="5" r="2" fill="var(--evm-smoke)" />
-                </g>
-              )}
-            </g>
-
-            {recording && <circle className="evm-rec" cx="32" cy="9" r={mini ? 6.5 : 3.6} />}
+            {recording && !mini && (
+              <g>
+                <line className="evm-handle" x1="53" y1="56" x2="59" y2="63" strokeWidth="3.4" />
+                <circle className="evm-body" cx="49.5" cy="51.5" r="7.6" />
+                <circle className="evm-glass" cx="49.5" cy="51.5" r="5" />
+                <circle className="evm-glint" cx="47.8" cy="49.8" r="1.3" />
+              </g>
+            )}
+            {recording && mini && <circle className="evm-rec" cx="51" cy="50" r="7" />}
           </g>
         </g>
 
         {full && state === 'sleeping' && (
           <g>
-            <text className="evm-z" x="53" y="16">z</text>
-            <text className="evm-z" x="58" y="10">z</text>
+            <text className="evm-z" x="55" y="12">z</text>
+            <text className="evm-z" x="60" y="6">z</text>
           </g>
         )}
-        {full && state === 'confused' && <text className="evm-q" x="56" y="22">?</text>}
+        {full && state === 'confused' && <text className="evm-q" x="57" y="40">?</text>}
       </svg>
     </>
   );
 }
 
 function renderEyes(state: MascotState, mini: boolean) {
-  const hl = !mini;
   switch (state) {
     case 'happy':
       return (
         <>
-          <path className="evm-stroke" d="M20.8 38.6Q24 34.4 27.2 38.6" strokeWidth={mini ? 3.4 : 2.4} />
-          <path className="evm-stroke" d="M36.8 38.6Q40 34.4 43.2 38.6" strokeWidth={mini ? 3.4 : 2.4} />
+          <path className="evm-stroke" d="M21.6 43.4Q25 39 28.4 43.4" strokeWidth={mini ? 3.6 : 2.6} />
+          <path className="evm-stroke" d="M35.6 43.4Q39 39 42.4 43.4" strokeWidth={mini ? 3.6 : 2.6} />
         </>
       );
     case 'sleeping':
       return (
         <>
-          <path className="evm-stroke" d="M20.8 37.6Q24 40.4 27.2 37.6" strokeWidth={mini ? 4.4 : 2.2} />
-          <path className="evm-stroke" d="M36.8 37.6Q40 40.4 43.2 37.6" strokeWidth={mini ? 4.4 : 2.2} />
+          <path className="evm-stroke" d="M21.6 42Q25 45 28.4 42" strokeWidth={mini ? 4.4 : 2.4} />
+          <path className="evm-stroke" d="M35.6 42Q39 45 42.4 42" strokeWidth={mini ? 4.4 : 2.4} />
         </>
       );
     default: {
-      const wide = state === 'listening';
-      const rL = state === 'confused' ? 3.0 : 3.2;
-      const rR = state === 'confused' ? 3.8 : 3.2;
-      const ry = wide ? 4.7 : 4.2;
-      const m = mini ? 1.35 : 1;
+      const ry = state === 'listening' ? 6.2 : 5.4;
+      const m = mini ? 1.25 : 1;
+      const confused = state === 'confused';
       return (
         <g className="evm-pupils">
-          <ellipse className="evm-ink" cx="24" cy="37.5" rx={rL * m} ry={(state === 'confused' ? 3.8 : ry) * m} />
-          <ellipse className="evm-ink" cx="40" cy="37.5" rx={rR * m} ry={(state === 'confused' ? 4.8 : ry) * m} />
-          {hl && <circle className="evm-hl" cx="25.2" cy="35.8" r="1.15" />}
-          {hl && <circle className="evm-hl" cx="41.2" cy="35.8" r="1.15" />}
+          <ellipse className="evm-eye" cx="25" cy="42" rx={(confused ? 3.2 : 3.8) * m} ry={(confused ? 4.4 : ry) * m} />
+          <ellipse className="evm-eye" cx="39" cy="42" rx={(confused ? 4.3 : 3.8) * m} ry={(confused ? 6 : ry) * m} />
         </g>
       );
     }
-  }
-}
-
-function renderMouth(state: MascotState) {
-  switch (state) {
-    case 'listening':
-      return <ellipse className="evm-ink" cx="32" cy="46.6" rx="1.7" ry="2.1" />;
-    case 'thinking':
-      return <path className="evm-stroke" d="M29.6 46.4H34.4" strokeWidth="1.8" />;
-    case 'happy':
-      return <path className="evm-stroke" d="M28.4 45Q32 49.6 35.6 45" strokeWidth="1.9" />;
-    case 'confused':
-      return <path className="evm-stroke" d="M28.5 46.8q1.75-1.6 3.5 0t3.5 0" strokeWidth="1.7" />;
-    case 'sleeping':
-      return <ellipse className="evm-ink" cx="32" cy="46.4" rx="1.3" ry="1" />;
-    default:
-      return <path className="evm-stroke" d="M29.2 45.4Q32 48.2 34.8 45.4" strokeWidth="1.8" />;
   }
 }
 

@@ -34,9 +34,3 @@ export function meetingFolderSlug(title: string, startedAt: Date): string {
   return `${datePart} ${safeTitle || 'Recording'}`;
 }
 
-export function newAnonymousToken(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return `anon_${crypto.randomUUID()}`;
-  }
-  return `anon_${Math.random().toString(36).slice(2)}_${Date.now()}`;
-}

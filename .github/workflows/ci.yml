@@ -74,6 +74,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd workers/meeting-bot && bun install --frozen-lockfile)
       - name: Check migration numbering
         run: scripts/check-migrations.sh
       - name: Write placeholder env for the build
@@ -86,18 +87,33 @@ jobs:
             echo "VITE_APP_URL=https://eavesy.com"
           } > web/.env.production
       # Build must run before typecheck: it generates src/routeTree.gen.ts
-      # (gitignored), which tsc needs to resolve the route tree types.
+      # (gitignored), which the type checker needs to resolve the route tree types.
       - name: Build
         working-directory: web
         run: bun run build
       - name: Typecheck
         run: |
-          (cd web && bunx tsc --noEmit)
-          (cd workers/processing && bunx tsc --noEmit)
-          (cd workers/mcp && bunx tsc --noEmit)
+          (cd web && bun run typecheck)
+          (cd workers/processing && bun run typecheck)
+          (cd workers/mcp && bun run typecheck)
+          (cd workers/meeting-bot && bun run typecheck)
+      # Keep upstream diagnostics visible while the pinned tsrs is experimental.
+      # tsrs remains the required gate; this reference check is advisory.
+      - name: TypeScript reference (advisory)
+        continue-on-error: true
+        run: |
+          status=0
+          (cd web && bun run typecheck:tsc) || status=1
+          (cd workers/processing && bun run typecheck:tsc) || status=1
+          (cd workers/mcp && bun run typecheck:tsc) || status=1
+          (cd web && bun run typecheck:tsc --project test/tsconfig.json) || status=1
+          exit "$status"
       - name: Lint
         working-directory: web
-        run: bunx eslint . --max-warnings 0
+        run: bun run lint
+      - name: Lint rule parity
+        working-directory: web
+        run: bun run lint:parity
       - name: Test
         working-directory: web
         run: bun test src
@@ -111,12 +127,24 @@ jobs:
         run: |
           (cd workers/processing && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/processing")
           (cd workers/mcp && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/mcp")
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Meeting bot (Rust)
+        working-directory: workers/meeting-bot
+        run: |
+          bun run test:bot
+          bun run lint:bot
+      - name: Meeting bot image
+        # The image deploy.yml ships: catches a broken Dockerfile or package
+        # before it reaches production.
+        run: docker build --platform linux/amd64 -t eavesy-meeting-bot:ci workers/meeting-bot
 
   desktop:
     name: Desktop (Rust + Swift)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -141,3 +169,11 @@ jobs:
       - name: Clippy
         working-directory: desktop/src-tauri
         run: cargo clippy --locked -- -D warnings
+      # Known-vulnerable crates fail the build. Exceptions, each with its
+      # reason, live in desktop/src-tauri/.cargo/audit.toml.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+      - name: Audit dependencies
+        working-directory: desktop/src-tauri
+        run: cargo audit

@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ChevronDown, Laptop, Mic, Search, X } from 'lucide-react';
+import { ChevronDown, Laptop, Mic, Search, Video, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Bubble, Button, Chip, Mascot, Menu } from '@/components/launcher/ui';
 import { KindIcon, kindOf } from '@/components/library/kind';
@@ -79,6 +79,8 @@ function LibraryPage() {
           <Mic className="h-4 w-4" /> New recording
         </Link>
       </header>
+
+      <nav className="flex gap-3 text-sm"><Link href="/app/import" className={appButton('secondary')}>Import recordings</Link><Link href="/app/memory" className={appButton('secondary')}>Ask your library</Link></nav>
 
       {!empty ? (
         <div className="flex flex-col gap-2.5">
@@ -189,7 +191,7 @@ function LibraryRow({ item }: { item: LibItem }) {
       href={item.href}
       className="group relative flex gap-3 rounded-[var(--ev-r-pop)] px-2 py-2.5 transition-colors hover:bg-[var(--ev-hover)]"
     >
-      <span className="relative mt-px grid h-[28px] w-[28px] shrink-0 place-items-center rounded-full bg-ev-paper text-ev-ink-2 shadow-[0_0_0_1px_var(--ev-line)] group-hover:text-ev-slate">
+      <span className="relative mt-px grid h-[28px] w-[28px] shrink-0 place-items-center rounded-full bg-ev-paper text-ev-ink-2 shadow-[0_0_0_1px_var(--ev-line)] group-hover:text-ev-coat">
         {working ? <Mascot size={20} state="thinking" /> : <KindIcon item={item} size={15} />}
       </span>
 
@@ -214,7 +216,7 @@ function LibraryRow({ item }: { item: LibItem }) {
               {item.device}
             </span>
           ) : null}
-          {working ? <span className="text-ev-slate">Writing it down…</span> : null}
+          {working ? <span className="text-ev-coat">Writing it down…</span> : null}
           {failed ? <span className="text-ev-warn-ink">Didn&apos;t finish</span> : null}
         </span>
       </span>
@@ -222,13 +224,18 @@ function LibraryRow({ item }: { item: LibItem }) {
       {item.thumbUrl ? (
         <span className="hidden h-[58px] w-[92px] shrink-0 overflow-hidden rounded-[var(--ev-r-media)] bg-ev-well shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)] sm:block">
           {item.mediaKind === 'video' ? (
-            <video src={item.thumbUrl} className="h-full w-full object-cover" muted preload="metadata" />
+            // A <video> per row would fetch every recording's metadata; the row
+            // only needs to say it is a video.
+            <span className="grid h-full w-full place-items-center text-ev-ink-3">
+              <Video size={20} strokeWidth={1.75} aria-hidden />
+            </span>
           ) : (
             <img
               src={item.thumbUrl}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
+              decoding="async"
               onError={(e) => {
                 e.currentTarget.style.visibility = 'hidden';
               }}

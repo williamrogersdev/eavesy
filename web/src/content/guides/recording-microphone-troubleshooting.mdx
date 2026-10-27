@@ -1,0 +1,62 @@
+---
+title: "Fix missing microphone audio in an Eavesy recording"
+description: "Check microphone access, input selection, capture mode, and the saved audio before retrying a longer recording."
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "Record both audio sources", "path": "/guides/record-microphone-and-system-audio"}, {"title": "Transcripts and captions", "path": "/docs/transcripts-and-summaries"}, {"title": "Contact support", "path": "/contact"}]
+---
+
+First listen to the saved audio. Missing text does not always mean missing microphone sound: capture can succeed while recognition is unavailable, inaccurate, or still processing. Diagnose the recording and its transcript separately.
+
+## Check the physical input
+
+Open macOS Sound settings and choose the microphone you expect to use. Speak and check the input level. Confirm the device is not muted and that a headset or external microphone has not disconnected. Bluetooth and USB device changes can alter routing.
+
+If macOS itself receives no signal, fix that before restarting a long Eavesy session. Move closer to the microphone and reduce competing audio for the short test.
+
+## Check permissions
+
+In **System Settings → Privacy & Security**, review Microphone access for Eavesy. Meeting and Video can also need Screen Recording or system-audio access. On-device captions use Speech Recognition. Automatic pasting uses Accessibility, which is a different permission from audio capture.
+
+After changing permissions, follow any macOS restart prompt and reopen Eavesy if needed. Permission names can differ by OS version; check the current [Apple privacy guidance](https://support.apple.com/guide/mac-help/control-access-to-your-microphone-on-mac-mchla1b1e1fe/mac) if you cannot find the control.
+
+## Make a small recording
+
+Use **Talk** to isolate the microphone. Say a unique sentence, stop after ten seconds, and play back the audio from that capture. If it is audible, repeat in Meeting or Video, the mode used when the failure occurred. Add computer sound only after microphone capture works on its own.
+
+A moving recording timer proves that a session started, not that usable sound reached the saved file. Playback is the useful check.
+
+## If the sound is there but text is missing
+
+Check whether the capture is still processing, whether you are signed in for cloud transcription, and whether on-device recognition is available and permitted. Review the spoken-language setting. Do not delete the original audio while investigating.
+
+For support, record the Eavesy version, macOS version, input device, capture mode, whether playback has your voice, and any visible error. Avoid sending a private meeting merely to demonstrate the problem; a short synthetic test is usually enough.
+
+## Keep capture and recognition separate
+
+| Symptom | What it tells you | Next step |
+| --- | --- | --- |
+| macOS input meter stays flat | The selected input may not be receiving your voice | Check device, connection, and mute |
+| Saved audio is silent | The capture did not retain useful microphone sound | Recheck permissions and make a Talk test |
+| Saved audio is clear, captions absent | Audio capture worked; recognition needs investigation | Check recognition permission and availability |
+| Captions appear, final transcript pending | Preliminary recognition and cloud processing are separate | Check sign-in and processing state |
+| Talk works, Meeting misses the other side | Your microphone works; computer audio is the missing source | Check Meeting/Video permissions and output route |
+
+Do not use a quiet indicator by itself as proof of a failure: silence while you are not speaking can be normal. Speak a distinct phrase and verify the saved result.
+
+## A useful support report
+
+```text
+Eavesy version:
+macOS version:
+Capture mode:
+Microphone and output device:
+Does macOS show input while I speak?
+Can I hear my voice in the saved ten-second test?
+Can I hear computer sound in Meeting or Video?
+Is the problem captions, final text, or the audio itself?
+Visible error and the step that triggers it:
+```
+
+This report lets support distinguish a device-routing issue from a processing issue without needing your private meeting. Include a short synthetic recording only when it helps reproduce the problem.

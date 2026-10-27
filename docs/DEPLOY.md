@@ -96,6 +96,77 @@ cd workers/processing
 bunx wrangler secret put ANTHROPIC_API_KEY
 ```
 
+Notetaker bots: `workers/meeting-bot` deploys first (`bun run
+deploy:meeting-bot`), because the web and processing Workers bind to it. It
+needs Cloudflare Containers on the account and Docker where wrangler runs,
+which builds the bot's image and pushes it to the account's registry. It uses
+the same D1 database, R2 bucket and queue as the others and needs no secrets.
+
+Email recaps (optional, both Workers): set `RESEND_API_KEY`,
+`RESEND_WEBHOOK_SECRET` (the `whsec_…` signing secret of the Resend webhook)
+and `EMAIL_FROM` (a sender on a domain verified in Resend, e.g.
+`Eavesy <recaps@eavesy.com>`). `APP_URL` sets where links in the email point;
+it defaults to `https://eavesy.com`. In the Resend dashboard, add a webhook at
+`https://<app host>/api/webhooks/resend` for the `email.sent`,
+`email.delivered`, `email.bounced`, `email.complained`, `email.failed` and
+`email.suppressed` events. Without all three secrets the setting says recaps
+aren't set up and nothing is sent.
+
+```bash
+cd web && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
+cd ../workers/processing && bunx wrangler secret put RESEND_API_KEY && bunx wrangler secret put RESEND_WEBHOOK_SECRET && bunx wrangler secret put EMAIL_FROM
+```
+
+### Notetaker canary (optional, recommended)
+
+Joining and speaker detection depend on Meet's and Teams' page text, which
+changes every few weeks. Once a day (07:20 UTC, the processing Worker's
+`20 7 * * *` cron) a canary bot joins a standing test meeting on each
+platform. It is told to leave on the first watch tick (every two minutes)
+once it has been in the call for about two minutes, so it typically stays
+two to four minutes. Ten minutes after it starts,
+the processing Worker checks it: a bot that never got into the call, or got
+in but read no participant or speaker names, raises an alert. Canary bots
+belong to a system account (`user_eavesy_canary`), are marked `canary` in
+`meeting_bots`, make no meeting and drop their audio, so nothing reaches
+anyone's library. Code: `web/src/server/meeting-bots/canary.ts`.
+
+Set it up:
+
+1. Create a recurring Google Meet and a recurring Teams meeting with no end
+   date, used for nothing else.
+2. Make sure the bot gets in on its own. It joins as an unauthenticated guest
+   named "Eavesy Notetaker", so either keep a host admitting (an always-on
+   account or device signed in to the meeting) or turn on lobby bypass for
+   everyone: in Meet, Host controls → Meeting access → Open; in Teams, Meeting
+   options → "Who can bypass the lobby" → Everyone, and allow anonymous
+   users to join.
+3. Keep someone in the call. The bot leaves a meeting nobody else is in, and
+   the check needs at least one name read off the call; a signed-in device
+   left in the meeting (ideally playing audio, which also exercises speaker
+   detection) does both.
+4. Set the links as secrets on the processing Worker. Never commit them: the
+   repo is public and a link lets anyone into the test meeting.
+
+```bash
+cd workers/processing
+bunx wrangler secret put CANARY_MEET_URL     # https://meet.google.com/xxx-xxxx-xxx
+bunx wrangler secret put CANARY_TEAMS_URL    # https://teams.microsoft.com/l/meetup-join/…
+bunx wrangler secret put CANARY_ALERT_EMAIL  # optional, where failures are emailed
+```
+
+With neither link set the canary does nothing; set one to watch one platform.
+
+Alerts: every failure logs a `console.error` JSON line with
+`"alert":"meeting_bot_canary"`, plus `platform`, `reason` (`did_not_join`,
+`no_speakers`, `invalid_url`, `schedule_failed`, `check_failed`), `botId` and
+the bot's last `status`/`statusDetail`. Add a Workers observability alert on
+the `eavesy-processing` Worker for that field. When `RESEND_API_KEY`,
+`EMAIL_FROM` and `CANARY_ALERT_EMAIL` are all set, the same failure is also
+emailed (no webhook secret is needed for this). A passing run logs
+`canary passed`. To see why a bot failed, filter the `eavesy-meeting-bot`
+Worker's logs by its `botId`.
+
 Workers AI transcription and embeddings use the `AI` binding and do not need
 an OpenAI or Deepgram secret. The hosted MCP worker has no provider secret; it
 authenticates token hashes stored in D1. PostHog is optional for all three

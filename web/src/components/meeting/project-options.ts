@@ -31,7 +31,7 @@ export function projectOptions(projects: readonly ProjectSummary[], projectId: s
   ];
 }
 
-/** Acts on a choice: opens project settings, or moves the recording ('' clears its project). */
+/** Acts on a choice: opens the projects page, or moves the recording ('' clears its project). */
 export async function chooseProject(
   meetingId: string,
   value: string,

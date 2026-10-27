@@ -169,6 +169,97 @@ How it fits together:
 Dictation stops after step 1 and pastes the on-device text, using Whisper only
 when there is none.
 
+## Notetaker bots
+
+For calls the Mac can't record, **Notetaker** (`/app/notetaker`) sends
+Eavesy's own bot into a Google Meet or Teams call. Zoom is not supported yet;
+it will join through Zoom's Linux Meeting SDK behind the same platform trait.
+The bot lives in `workers/meeting-bot`:
+
+- `bot/` is a Rust binary (tokio) that starts Chromium under Xvfb and drives
+  it over the DevTools protocol. An injected script taps every remote WebRTC
+  audio track into a 16 kHz AudioWorklet and hands PCM blocks to Rust, which
+  cuts ~1-minute WAV segments at the first quiet moment after 60 s (90 s at
+  most, the Mac app's rule) and uploads them in order. Video is hidden and
+  never decoded. Meet and Teams are adapters (`platform/js/*.js`) behind the
+  `Session` trait; the leave rules (`rules.rs`) are pure and unit-tested:
+  call ended, removed, not admitted, 15 minutes in the lobby, 15 minutes with
+  nobody else, 60 seconds alone after others left, 4 hours.
+- `src/index.ts` is a Worker with one Durable Object (a Cloudflare Container,
+  `standard-1`) per bot, named after the `meeting_bots` id.
+
+The flow:
+
+1. `POST /api/meeting-bots` writes a `meeting_bots` row (`provider =
+   'eavesy'`) and calls `BotControl.schedule` over the `MEETING_BOTS` service
+   binding. The Durable Object sets an alarm for the start time.
+2. At the alarm, `claimBotStart` sets the row's `status_detail` to
+   `launching` (only once, and not if it was cancelled) and the container
+   starts with the meeting link. A container that can't start fails the bot
+   as `start_failed` at once.
+3. The bot reports to `http://eavesy.internal/bots/<id>/…`. Those requests
+   never leave Cloudflare: the Container's outbound handler takes them and
+   only accepts the bot id its own container runs. Status events move the
+   bot forward only (`BOT_STATUS_ORDER`); `in_call_recording` creates the
+   meeting (`source = 'bot'`). Each segment becomes a `meeting_segments` row
+   and a `transcribe-segment` job, so the transcript and rolling notes are
+   live, as for the Mac. A heartbeat each minute, in every phase from
+   launch on, proves the bot is alive; once in the call it also carries the
+   speaking spans from the first one still open or not yet sent, with that
+   span's start as `speakersFrom` (`speakersFromUnit: 'ms'`): the server
+   replaces every stored span from that time on with them (a time, not an
+   index, so a lost report leaves a gap but never doubles or shifts later
+   spans). Older bot images send `speakersFrom` as an index, or the whole
+   timeline with none; the server still takes both.
+4. After the call the bot uploads its last segment and sends `done`, which
+   queues `collect-bot-recording`. That job waits for the last segments'
+   transcription, names each line's speaker from the speaking timeline
+   (`speaker_N` plus `speaker_names_json`), and queues `summarize`.
+5. Instead of webhooks and a reconcile cron, the Durable Object checks on its
+   bot every two minutes and when its container stops (`watchBot`): a
+   container that never reported fails after 5 minutes, and a bot silent for
+   10 minutes (20 while it waits in the lobby) or whose container died keeps
+   whatever audio arrived. A bot stuck in `collecting` is re-queued by the
+   watchdog after 5 minutes and by the hourly sweep after 10.
+   "Make it leave" and account deletion reach the container through the
+   same binding. Old `recall` rows are failed as `provider_retired`.
+
+## Email recaps
+
+Opt-in per account (**Settings → Email recaps**, `users.email_recaps`): when a
+meeting finishes with a summary, the owner gets an email with its TL;DR,
+decisions, action items and a link to the transcript, plus the transcript as
+`transcript.txt` if `email_recap_transcript` is on (up to 5 MiB). The provider
+is [Resend](https://resend.com/docs); it is off unless `RESEND_API_KEY`,
+`RESEND_WEBHOOK_SECRET` and `EMAIL_FROM` are set. Recipients are the account's
+own address only; sending to other participants is not built.
+
+1. Where `summarize` marks a meeting `complete` with a summary, or the
+   whole-file `process-recording` path completes one with a non-empty
+   transcript, `queueRecap` queues `send-recap`. Nothing is sent inline. Quick
+   notes and empty recordings get no recap.
+2. The `send-recap` job inserts an `email_deliveries` row keyed by
+   `idempotency_key = meeting_recap:<meetingId>:<recipient>` (unique), so a
+   retried or duplicated job finds the same row. Only a `queued` row is sent.
+   It claims the row by moving it to `unknown` before calling Resend, with the
+   row id as Resend's `Idempotency-Key` and as an `eavesy_delivery` tag.
+3. Outcomes: accepted → `sent`; a 429 → back to `queued` and the queue retries;
+   another 4xx → `failed`; a timeout, dropped connection, 5xx or 409 stays
+   `unknown`. `unknown` means the email may have gone out and is **never
+   resent automatically**; a later webhook can still settle it.
+4. `POST /api/webhooks/resend` verifies the Svix signature
+   (`server/svix.ts`, 5-minute replay window), skips deliveries already in
+   `provider_webhook_events` (written only after the update is applied), finds
+   the row by Resend's email id or the tag, and moves it forward only
+   (`DELIVERY_STATUS_ORDER`): `sent` → `delivered` → `bounced`/`failed` →
+   `complained`.
+5. Bounces and complaints: an address that bounced permanently, was suppressed
+   by Resend or complained gets no more recaps (the row is `failed`,
+   `suppressed_recipient`). A complaint also turns the account's recaps off.
+6. The hourly cron (`reconcileRecaps`) re-queues `queued` rows untouched for
+   30 minutes, fails ones older than 24 hours (`expired`) and leaves `unknown`
+   alone. Account deletion removes the account's rows.
+
 ## Authentication
 
 Browser requests use Clerk. Desktop long-form requests use a random device

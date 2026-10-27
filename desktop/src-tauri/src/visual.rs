@@ -23,8 +23,12 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
     std::fs::write(folder.join("capture.json"), serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     store::append(&app, recording)?;
     let _ = app.emit("recordings:updated", ());
+    // The HUD flashes a preview to copy or open; the clipboard is left as it was.
     hud::set_state(&app, hud::HudState { phase: hud::Phase::Done, session_id: Some(id.clone()), mode: Some("image".into()), started_at_ms: None, message: None, notice: None });
-    crate::commands::show_launcher(app.clone());
+    // With the control closed there is no preview to flash: show it in the panel.
+    if hud::hidden_by_user(&app) {
+        crate::commands::show_launcher(app.clone());
+    }
     Ok(id)
 }
 
@@ -106,7 +110,7 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
 }
 
 fn media_path(app: &AppHandle, id: &str) -> Result<(PathBuf, bool), String> {
-    let recording = store::load_all(app).into_iter().find(|rec| rec.id == id).ok_or("Capture not found.")?;
+    let recording = store::get(app, id)?.ok_or("Capture not found.")?;
     let image = matches!(recording.source.as_str(), "screenshot" | "image");
     if !image && !recording.has_video && !recording.has_audio { return Err("This capture has no saved media.".into()); }
     let path = if let Some(folder) = recording.folder_path {
@@ -142,12 +146,17 @@ pub fn capture_media(app: AppHandle, id: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String> {
+    if store::get(&app, &id)?.is_some_and(|r| r.has_video && r.source == "screen") {
+        let text = crate::walkthrough::recording_context(app.clone(), id)?;
+        return crate::commands::copy_to_clipboard(&app, &text);
+    }
     let (path, image) = media_path(&app, &id)?;
     let png = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
     if image && png {
         if std::fs::metadata(&path).map_err(|error| error.to_string())?.len() > 32 * 1024 * 1024 { return Err("Screenshot is too large to copy.".into()); }
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let image = tauri::image::Image::from_bytes(&bytes).map_err(|error| error.to_string())?;
+        crate::commands::cancel_clipboard_restore();
         return app.clipboard().write_image(&image).map_err(|error| error.to_string());
     }
     let (sender, receiver) = tokio::sync::oneshot::channel();

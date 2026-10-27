@@ -12,7 +12,7 @@ import {
   Video,
 } from 'lucide-react';
 import { type RefObject } from 'react';
-import { copyText, pasteToFrontmost } from '@/lib/desktop/bridge';
+import { copyText, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type BeginRecording, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown } from './format';
@@ -154,12 +154,12 @@ export function PaletteView({
               <span />
               <div className="flex items-center gap-1.5">
                 <ToolbarBtn
-                  title="Copy transcript"
+                  title="Copy"
                   onClick={() =>
                     runTask(async () => {
-                      await copyText(currentRec.transcript ?? '');
+                      await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
                       flash('Transcript copied');
-                    }, 'Could not copy transcript')
+                    }, 'Couldn’t copy transcript')
                   }
                 >
                   <Copy className="h-4 w-4" />
@@ -168,8 +168,8 @@ export function PaletteView({
                   title="Paste into active app"
                   onClick={() => {
                     runTask(
-                      () => pasteToFrontmost(currentRec.transcript ?? ''),
-                      'Could not paste transcript',
+                      async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
+                      'Couldn’t paste transcript',
                     );
                     if (!desktop) flash('Transcript copied — paste anywhere');
                   }}
@@ -211,7 +211,7 @@ export function PaletteView({
                   onClick={() =>
                     runTask(
                       () => beginRecording('screen', { mic: false }),
-                      'Could not start screen recording',
+                      'Couldn’t start screen recording',
                     )
                   }
                 />

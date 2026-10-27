@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { type CaptureItem, captureList, useCaptures } from './use-captures';
+import { type CaptureItem, captureList, parseCaptureList, useCaptures } from './use-captures';
 import { type MeetingListItem, meetingList, parseMeetingList, useMeetings } from './use-meeting';
 
 export function refreshLibrary() {
@@ -60,6 +60,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   ios: 'iPhone',
   android: 'Android',
   import: 'Import',
+  bot: 'Notetaker',
 };
 
 function fromMeeting(x: MeetingListItem): LibItem {
@@ -107,45 +108,65 @@ function fromCapture(x: CaptureItem): LibItem {
 export function useLibraryItems(): UseLibraryResult {
   const meetings = useMeetings();
   const captures = useCaptures();
-  const [older, setOlder] = useState<MeetingListItem[]>([]);
-  const [olderDone, setOlderDone] = useState(false);
+  const [olderMeetings, setOlderMeetings] = useState<MeetingListItem[]>([]);
+  const [olderCaptures, setOlderCaptures] = useState<CaptureItem[]>([]);
+  const [meetingsDone, setMeetingsDone] = useState(false);
+  const [capturesDone, setCapturesDone] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<Error | null>(null);
 
-  const firstPage = useMemo(() => meetings.data ?? [], [meetings.data]);
-  const allMeetings = useMemo(() => {
-    const seen = new Set(firstPage.map((m) => m.id));
-    return [...firstPage, ...older.filter((m) => !seen.has(m.id))];
-  }, [firstPage, older]);
+  const firstMeetings = useMemo(() => meetings.data ?? [], [meetings.data]);
+  const firstCaptures = useMemo(() => captures.data ?? [], [captures.data]);
+  const allMeetings = useMemo(() => mergeById(firstMeetings, olderMeetings), [firstMeetings, olderMeetings]);
+  const allCaptures = useMemo(() => mergeById(firstCaptures, olderCaptures), [firstCaptures, olderCaptures]);
 
   const items = useMemo<LibItem[]>(
-    () =>
-      [...allMeetings.map(fromMeeting), ...(captures.data ?? []).map(fromCapture)].sort(
-        (a, b) => b.createdAt - a.createdAt,
-      ),
-    [allMeetings, captures.data],
+    () => [...allMeetings.map(fromMeeting), ...allCaptures.map(fromCapture)].sort((a, b) => b.createdAt - a.createdAt),
+    [allMeetings, allCaptures],
   );
 
-  const hasOlder = !olderDone && firstPage.length >= PAGE;
-  const oldest = allMeetings[allMeetings.length - 1]?.startedAt;
+  // Each list pages on its own cursor; a full first page means there may be more.
+  const meetingsMore = !meetingsDone && firstMeetings.length >= PAGE;
+  const capturesMore = !capturesDone && firstCaptures.length >= PAGE;
+  const hasOlder = meetingsMore || capturesMore;
+  const oldestMeeting = allMeetings[allMeetings.length - 1]?.startedAt;
+  const oldestCapture = allCaptures[allCaptures.length - 1]?.createdAt;
 
   const loadOlder = useCallback(() => {
-    if (loadingOlder || !oldest) return;
+    if (loadingOlder) return;
+    const pageUrl = (path: string, before: number) => {
+      const url = new URL(path, window.location.origin);
+      url.searchParams.set('before', String(before));
+      url.searchParams.set('limit', String(PAGE));
+      return url.toString();
+    };
+    const fetchPage = async (path: string, before: number): Promise<unknown> => {
+      const res = await fetch(pageUrl(path, before));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+    const jobs: Promise<void>[] = [];
+    if (meetingsMore && oldestMeeting) {
+      jobs.push(fetchPage('/api/meetings/list', oldestMeeting).then((json) => {
+        const page = parseMeetingList(json);
+        setOlderMeetings((current) => [...current, ...page]);
+        if (page.length < PAGE) setMeetingsDone(true);
+      }));
+    }
+    if (capturesMore && oldestCapture) {
+      jobs.push(fetchPage('/api/captures', oldestCapture).then((json) => {
+        const page = parseCaptureList(json);
+        setOlderCaptures((current) => [...current, ...page]);
+        if (page.length < PAGE) setCapturesDone(true);
+      }));
+    }
+    if (!jobs.length) return;
     setLoadingOlder(true);
     setOlderError(null);
-    const url = new URL('/api/meetings/list', window.location.origin);
-    url.searchParams.set('before', String(oldest));
-    url.searchParams.set('limit', String(PAGE));
-    fetch(url.toString())
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const page = parseMeetingList(await res.json());
-        setOlder((current) => [...current, ...page]);
-        if (page.length < PAGE) setOlderDone(true);
-      })
+    Promise.all(jobs)
       .catch((error: unknown) => setOlderError(error instanceof Error ? error : new Error(String(error))))
       .finally(() => setLoadingOlder(false));
-  }, [loadingOlder, oldest]);
+  }, [loadingOlder, meetingsMore, capturesMore, oldestMeeting, oldestCapture]);
 
   return {
     items,
@@ -159,4 +180,9 @@ export function useLibraryItems(): UseLibraryResult {
     loadingOlder,
     loadOlder,
   };
+}
+
+function mergeById<T extends { id: string }>(first: T[], older: T[]): T[] {
+  const seen = new Set(first.map((item) => item.id));
+  return [...first, ...older.filter((item) => !seen.has(item.id))];
 }

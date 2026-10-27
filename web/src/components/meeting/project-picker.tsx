@@ -52,7 +52,7 @@ export function ProjectPicker({
           void chooseProject(meetingId, select.value, {
             manage: () => {
               select.value = projectId ?? '';
-              void router.push('/app/settings#projects');
+              void router.push('/app/projects');
             },
             assign: async (id, next) => {
               setSaving(true);

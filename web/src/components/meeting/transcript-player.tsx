@@ -1,19 +1,14 @@
 'use client';
 
-import { ArrowLeftRight, Check, Clipboard, Languages, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Check, Clipboard, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { isLanguage, type Language } from '@/lib/translation/languages';
 import { useMe } from '@/lib/api/use-me';
-import { isNotesLanguage, languageName } from '@/lib/transcription/language';
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { languageName } from '@/lib/transcription/language';
+import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
-import {
-  mergeTranslations,
-  requestTranslations,
-  spokenLanguages,
-  toggleTranslation,
-  translationFor,
-  type Translations,
-} from './transcript-translation';
+import { mergeTranslations, requestTranslations, spokenLanguages, translationFor, type Translations } from './transcript-translation';
 
 export interface TranscriptLine {
   id: string;
@@ -69,8 +64,10 @@ export function TranscriptPlayer({
     [lines, pending],
   );
   const { data: me } = useMe();
-  const target = me?.notesLanguage ?? browserLanguage();
-  const translation = useTranslation(meetingId, shown, target, Boolean(me?.notesLanguage));
+  const [chosenLanguage, setChosenLanguage] = useState<Language | null | undefined>(undefined);
+  const [translationRevision, setTranslationRevision] = useState(0);
+  const target = chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
+  const translation = useTranslation(meetingId, shown, target, translationRevision);
   const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
 
   const labelled = hasBothSides(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
@@ -186,13 +183,19 @@ export function TranscriptPlayer({
             onLoadedMetadata={(e) => {
               const seconds = e.currentTarget.duration;
               if (Number.isFinite(seconds)) setDurationMs(seconds * 1_000);
+              const requested = Number(new URLSearchParams(window.location.search).get('t'));
+              if (Number.isFinite(requested) && requested > 0 && Number.isFinite(seconds)) {
+                const start = Math.min(requested, seconds);
+                e.currentTarget.currentTime = start;
+                setNowMs(start * 1000);
+              }
             }}
           />
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-slate text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover active:scale-95"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-95"
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
@@ -208,7 +211,7 @@ export function TranscriptPlayer({
                 step={250}
                 value={Math.min(nowMs, durationMs || nowMs)}
                 onChange={(e) => seek(Number(e.target.value), playing)}
-                className="w-full accent-[var(--ev-slate)]"
+                className="w-full accent-[var(--ev-coat)]"
                 aria-label="Seek"
               />
               {durationMs
@@ -239,7 +242,7 @@ export function TranscriptPlayer({
                       onClick={() => seek(chapter.startMs)}
                       className={cn(
                         'flex w-full items-baseline gap-2 rounded-[var(--ev-r-ctl)] px-2 py-1 text-left text-sm text-ev-ink hover:bg-[var(--ev-hover)]',
-                        activeChapter === i && 'bg-ev-slate-soft font-semibold text-ev-slate',
+                        activeChapter === i && 'bg-ev-coat-soft font-semibold text-ev-coat',
                       )}
                     >
                       <span className="w-12 shrink-0 font-round text-xs tabular-nums text-ev-ink-3">
@@ -253,7 +256,7 @@ export function TranscriptPlayer({
             </div>
           ) : null}
           {labelled ? (
-            <SpeakerNames meetingId={meetingId} names={names} onSaved={onChanged} />
+            <SpeakerNames meetingId={meetingId} names={names} partialMs={partialAttributionMs(names)} onSaved={onChanged} />
           ) : null}
         </div>
       ) : null}
@@ -267,22 +270,7 @@ export function TranscriptPlayer({
                 {translation.spoken.map(languageName).join(' · ')}
               </span>
             ) : null}
-            {translation.available ? (
-              <button
-                type="button"
-                onClick={translation.toggle}
-                disabled={translation.loading}
-                className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 transition hover:bg-[var(--ev-hover)] hover:text-ev-ink disabled:opacity-60"
-              >
-                <Languages className="h-3.5 w-3.5" />
-                {translation.loading
-                  ? 'Translating…'
-                  : translation.showing
-                    ? 'Show original'
-                    : `Translate to ${languageName(target)}`}
-              </button>
-            ) : null}
-            {agentTranscript?.trim() ? (
+            {!target && agentTranscript?.trim() ? (
               <>
                 <CopyText
                   text={agentTranscript}
@@ -292,8 +280,9 @@ export function TranscriptPlayer({
                 <CopyText text={copyText} label="Copy raw" title="Every line shown, with timestamps" />
               </>
             ) : (
-              <CopyText text={copyText} label="Copy transcript" />
+              <CopyText text={copyText} label={target ? "Copy translation" : "Copy transcript"} disabled={!!target && (translation.loading || !!translation.error)} />
             )}
+            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
           </div>
         </div>
         <div
@@ -311,7 +300,7 @@ export function TranscriptPlayer({
             return (
               <div key={line.id}>
                 {heading ? (
-                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-slate first:mt-1">
+                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-coat first:mt-1">
                     {heading}
                   </h3>
                 ) : null}
@@ -345,7 +334,7 @@ export function TranscriptPlayer({
       {undo ? (
         <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ev-raised px-4 py-2 text-sm text-ev-ink shadow-[var(--ev-e-3)]">
           Line deleted.
-          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-slate hover:underline">
+          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-coat hover:underline">
             Undo
           </button>
         </div>
@@ -395,13 +384,13 @@ function Line({
       ref={ref}
       className={cn(
         'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded-[var(--ev-r-ctl)] px-2 py-1.5',
-        active ? 'bg-ev-slate-soft' : 'hover:bg-[var(--ev-hover)]',
+        active ? 'bg-ev-coat-soft' : 'hover:bg-[var(--ev-hover)]',
       )}
     >
       <button
         type="button"
         onClick={onPlay}
-        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-slate"
+        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-coat"
         title="Play from here"
       >
         {clockLabel(line.startMs)}
@@ -458,10 +447,13 @@ function Line({
 function SpeakerNames({
   meetingId,
   names,
+  partialMs,
   onSaved,
 }: {
   meetingId: string;
   names: Record<string, string>;
+  /** Where speaker names stop, for a call too long for the notetaker to name all of. */
+  partialMs: number | null;
   onSaved: () => void;
 }) {
   return (
@@ -472,6 +464,11 @@ function SpeakerNames({
           <SpeakerName key={id} meetingId={meetingId} id={id} name={speakerName(id, names)} onSaved={onSaved} />
         ))}
       </div>
+      {partialMs !== null ? (
+        <p className="mt-1.5 text-xs text-ev-ink-3">
+          Speakers are named up to {clockLabel(partialMs)}; the rest of the call is unattributed.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -533,11 +530,13 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function CopyText({ text, label, title }: { text: string; label: string; title?: string }) {
+function CopyText({ text, label, title, disabled = false }: { text: string; label: string; title?: string; disabled?: boolean }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [text]);
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => { void (async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -556,93 +555,47 @@ function CopyText({ text, label, title }: { text: string; label: string; title?:
   );
 }
 
-function browserLanguage(): string {
-  if (typeof navigator === 'undefined') return 'en';
-  const code = navigator.language.split('-')[0]?.toLowerCase() ?? '';
-  return isNotesLanguage(code) ? code : 'en';
-}
-
 /**
  * Translations of the lines heard in another language than `target`. Each one
  * is kept with the text it was made from, so an edited line is translated again.
  */
-function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: string, auto: boolean) {
-  const [showing, setShowing] = useState(false);
+function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: Language | null, revision: number) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Translations>({});
-  const inFlight = useRef(false);
-  const autoStarted = useRef(false);
-  const attempted = useRef(new Set<string>());
-
-  useEffect(() => {
-    setDone({});
-    setShowing(false);
-    autoStarted.current = false;
-    attempted.current = new Set();
-  }, [meetingId, target]);
-
+  const cache = useRef(new Map<string, Translations>());
   const spoken = useMemo(() => spokenLanguages(lines), [lines]);
-  const foreign = useMemo(
-    () => lines.filter((line) => line.language && line.language !== target),
-    [lines, target],
-  );
-  const missing = foreign.filter((line) => done[line.id]?.source !== line.text);
-  const untried = missing.filter((line) => !attempted.current.has(`${line.id}\n${line.text}`)).length;
 
-  const load = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+  useEffect(() => {
+    const controller = new AbortController();
+    const key = `${meetingId}:${target}`;
+    let known = { ...(cache.current.get(key) ?? {}) };
+    setDone(known); setError(null); setLoading(false);
+    if (!target) return;
+    const missing = lines.filter(line => line.language !== target && known[line.id]?.source !== line.text);
+    if (!missing.length) return;
     setLoading(true);
-    setError(null);
-    const sources = new Map(lines.map((line) => [line.id, line.text]));
-    try {
-      const result = await requestTranslations({
-        meetingId,
-        target,
-        onPage: (entries) => setDone((previous) => mergeTranslations(previous, sources, entries)),
-      });
-      if (!result.complete && result.ids.size === 0) {
-        setError('Could not translate every line. Try again later.');
-        return;
-      }
-      const tried = result.complete ? [...sources.keys()] : [...result.ids];
-      for (const id of tried) attempted.current.add(`${id}\n${sources.get(id)}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not translate.');
-      setShowing(false);
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
-    }
-  }, [lines, meetingId, target]);
-
-  useEffect(() => {
-    if (!auto || autoStarted.current || foreign.length === 0) return;
-    autoStarted.current = true;
-    setShowing(true);
-    void load();
-  }, [auto, foreign.length, load]);
-
-  useEffect(() => {
-    if (!showing || untried === 0 || inFlight.current || error) return;
-    const timer = window.setTimeout(() => void load(), 2_000);
-    return () => window.clearTimeout(timer);
-  }, [showing, untried, load, error]);
+    const sources = new Map(lines.map(line => [line.id, line.text]));
+    void (async () => {
+      try {
+        await requestTranslations({
+          meetingId,
+          target,
+          signal: controller.signal,
+          onPage: (entries) => {
+            known = mergeTranslations(known, sources, entries);
+            cache.current.set(key, known); setDone(known);
+          },
+        });
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not translate.');
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [meetingId, target, lines, revision]);
 
   return {
-    spoken,
-    available: foreign.length > 0,
-    showing,
-    loading,
-    error,
-    toggle: () => {
-      const next = toggleTranslation(showing, untried);
-      setShowing(next.showing);
-      if (!next.showing) return;
-      setError(null);
-      if (next.load) void load();
-    },
+    spoken, showing: !!target, loading, error,
     textFor: (line: TranscriptLine) => translationFor(done, line),
   };
 }

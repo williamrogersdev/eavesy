@@ -44,7 +44,7 @@ Server: `https://mcp.eavesy.com` (streamable HTTP). Add it by URL: the server su
 Claude Code:
 
 ```bash
-claude mcp add --transport http eavesy https://mcp.eavesy.com
+claude mcp add --scope user --transport http eavesy https://mcp.eavesy.com
 ```
 
 Or the Claude Code plugin (adds the server plus a skill for when to use it): `/plugin marketplace add williamrogersdev/eavesy`, then `/plugin install eavesy@eavesy`.
@@ -65,12 +65,21 @@ Fallback for clients without OAuth: create a connection in the web app under Set
 }
 ```
 
-Tools, all read-only (names say "meeting" because that is the recording type in the data model):
+Library tools, all read-only (names say "meeting" because that is the recording type in the data model):
+- `search_library` (query): retrieve source evidence from completed synced account recordings.
+- `ask_library` (question): answer from recording evidence when cloud answers are enabled; may abstain or report unanswered parts and context limits. Each call counts against the user's daily AI answer quota.
+- `list_projects`: list projects available to the connection.
 - `search_meetings` (query, limit): search recordings by title or transcript; returns excerpts.
 - `get_meeting` (id): summary and full transcript.
 - `recent_meetings` (limit): newest recordings.
 - `search_dictations` (query, limit): search dictations.
 - `get_action_items` (status: open|completed|all, owner): action items across recordings.
+- `get_account_info`: which account and connection this is, its access and expiry.
+
+Tools that are not read-only:
+- `send_to_human` (text, spoken): show a message on the user's Mac and read a short version aloud.
+- `ask_human` (question, spoken, choices, timeout_sec): ask the user on their Mac and wait for the typed answer.
+- `sign_out`: disconnect this connection (only when the user asks).
 
 Only recordings synced to the account are available over MCP. Screenshots, clipboard captures and notes from the Mac app stay on the Mac. Docs: https://eavesy.com/docs/connect-mcp
 
@@ -115,3 +124,17 @@ Eavesy runs on Cloudflare (Workers, D1, R2, KV, Queues, Vectorize, Workers AI) w
 
 ## Contact
 hello@eavesy.com
+
+## Practical resources
+
+- Guides: https://eavesy.com/guides
+- Copyable Markdown templates: https://eavesy.com/templates
+- Worked teaching examples: https://eavesy.com/examples
+- Screen recording to Markdown context: https://eavesy.com/guides/screen-recording-to-markdown
+- Claude Code handoff: https://eavesy.com/integrations/claude-code
+- Cursor handoff: https://eavesy.com/integrations/cursor
+- Local file and attachment boundaries: https://eavesy.com/guides/share-local-recordings-with-ai
+
+Mac version 0.5.4 does not automatically extract a visual frame timeline or provide the newer local walkthrough MCP server. Audio transcripts establish spoken words; an agent needs actual image or video access to inspect visual details. A path pasted into a browser chat does not upload the file. Hosted MCP does not expose local screenshot, note, or clipboard captures.
+
+The worked examples are explicitly fictional teaching material, with hand-authored sample text. They are not customer recordings, production model responses, or claims that Eavesy automatically generated a visual report. Their fixture screenshot depicts the included demo.

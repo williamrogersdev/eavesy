@@ -32,6 +32,9 @@
     "producers": [{ "queue": "eavesy-processing", "binding": "PROCESSING_QUEUE" }]
   },
 
+  // Notetaker bots (workers/meeting-bot); deployed before this Worker.
+  "services": [{ "binding": "MEETING_BOTS", "service": "eavesy-meeting-bot", "entrypoint": "BotControl" }],
+
   "durable_objects": {
     "bindings": [{ "name": "DROPS_HUB", "class_name": "DropsHub" }]
   },
@@ -40,13 +43,5 @@
 
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "eavesy-embeddings" }],
 
-  "ai": { "binding": "AI" },
-
-  "vars": {
-    "NEXT_PUBLIC_APP_URL": "http://localhost:3000"
-  },
-
-  "env": {
-    "preview": { "name": "eavesy-preview" }
-  }
+  "ai": { "binding": "AI" }
 }

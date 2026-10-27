@@ -1,6 +1,7 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
 import { notesLanguageRule } from '@/lib/transcription/language';
 import { anthropic, anthropicForUser, MODELS } from './client';
+import { isRecord } from '@/lib/json';
 
 export interface SummaryDecision {
   text: string;
@@ -62,6 +63,11 @@ export interface SummarizeInput {
   transcript: string;
   userNotes?: string;
   contextBlurb?: string;
+  /**
+   * Who the speaker labels on the transcript's lines are, when it has them
+   * (see `speakerNote`). Absent, the model is told not to invent speakers.
+   */
+  speakers?: string;
   byoApiKey?: string;
   openRouter?: { apiKey: string } | null;
   customTemplatePrompt?: string;
@@ -69,11 +75,33 @@ export interface SummarizeInput {
   notesLanguage?: string | null;
 }
 
+/**
+ * The sentence that tells the model what the speaker labels on a transcript
+ * mean, matching how the pipeline's own prompt describes them
+ * (`meetingSummarySystemPrompt`).
+ */
+export function speakerNote(rendered: { labelled: boolean; recorderName?: string }): string {
+  if (rendered.recorderName) {
+    return `Lines are prefixed with the speaker. "${rendered.recorderName}" is the person who recorded the meeting, speaking into their own microphone; the other label is everyone they spoke with over the call.`;
+  }
+  if (rendered.labelled) {
+    return 'Lines are prefixed with the speaker: each participant\'s name as the meeting platform showed it, or "Speaker N" when it showed none. Attribute decisions and action items to those speakers; do not invent other identities.';
+  }
+  return 'No speaker labels are available. Do not invent speaker identities.';
+}
+
+/** The `generated_by_model` label for a brief `summarizeMeeting` wrote under this plan. */
+export function summarizeMeetingModel(plan: { openRouter?: { apiKey: string } | null; summary: { apiKey?: string } }): string {
+  if (plan.openRouter) return `openrouter:${OPENROUTER_MODELS.summary}`;
+  return plan.summary.apiKey ? `byo-anthropic:${MODELS.summary}` : MODELS.summary;
+}
+
 export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSummary> {
   const userMessage = [
     input.contextBlurb
       ? `Meeting context supplied by the user. Treat this as ground truth and use it in place of absent speaker labels:\n${input.contextBlurb}`
       : null,
+    input.speakers ?? null,
     input.customTemplatePrompt
       ? `Custom template instructions (override defaults where in conflict):\n${input.customTemplatePrompt}`
       : null,
@@ -111,10 +139,6 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
 
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function asString(value: unknown, fallback = ''): string {

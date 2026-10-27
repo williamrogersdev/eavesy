@@ -1,0 +1,38 @@
+---
+title: "walkthroughs"
+description: "Workflow details"
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "Create Markdown context", "path": "/guides/screen-recording-to-markdown"}, {"title": "Practice with the UI fixture", "path": "/examples/narrated-ui-bug"}, {"title": "Share local media", "path": "/guides/share-local-recordings-with-ai"}]
+---
+
+## Record one complete reproduction
+
+Open the launcher with **⌘⇧Space** and choose **Video**. Show the starting state, repeat the action, and explain the expected and actual result. Stop after one reproduction. Verify the saved video has your voice before recording a longer session.
+
+## What the walkthrough produces
+
+Mac [0.5.5](https://github.com/williamrogersdev/eavesy/releases/tag/desktop-v0.5.5) added walkthrough context for AI agents. Supported captures save `context.md`, `walkthrough.json`, sampled screenshots, and the original video. The preview shows context readiness; Copy supplies narration, extracted screen text, warnings, and file references.
+
+| Output | Use it for | Keep in mind |
+| --- | --- | --- |
+| `context.md` | A readable handoff | Review readiness and warnings |
+| `walkthrough.json` | Structured context and media references | Keep the recording folder together |
+| Sampled frames | Inspecting a visible state | A brief transition can fall between samples |
+| `screen.mp4` | Original screen and audio evidence | The recipient needs a supported way to view it |
+| Transcript | Checking spoken narration | Corrected full text may not be time-aligned |
+
+OCR is extracted screen text, not a complete interpretation of the scene. An agent should inspect the relevant images when layout or visual state matters. Ask it to identify the source files and actual frame timestamps it used.
+
+## Hand context to an agent
+
+For a local coding agent, provide the permitted capture folder or configure the read-only local walkthrough MCP server. For a browser chat, paste the context and attach the relevant screenshots or video through its supported input. Pasting a local path does not upload the referenced media.
+
+A useful request is: “Inspect the disabled Export button after I switch workspaces. State the observation first, then investigate the condition controlling it.” The [worked example](/examples/narrated-ui-bug) provides a fictional fixture you can practice with.
+
+## Local files and cloud audio
+
+Screen extraction and OCR run locally. Signed-in audio processing uses the authenticated transcription service. The walkthrough feature does not upload the screen video or screenshots into the hosted meeting MCP library. Sharing those files with another service is a separate action.
+
+If you are still using 0.5.4, use the saved video, available transcript, and a manually selected screenshot. That version does not produce the newer walkthrough context. Check your installed version and the files your capture actually contains before following the local MCP setup.

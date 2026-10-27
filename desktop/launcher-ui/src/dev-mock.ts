@@ -1,8 +1,11 @@
+import { version } from '../../src-tauri/tauri.conf.json';
 // Dev-only stand-in for the Tauri bridge, so the capture panel can be looked
 // at in a plain browser: `vite dev` → /?mock (add &empty for the empty state,
 // &live for a recording in progress, &setup for first-run onboarding with
-// nothing allowed yet, &settings to open Settings, &fn=ready for a Mac where
-// fn is fully set up). Never active in a production build.
+// nothing allowed yet, &perms-missing for Screen Recording off, &fn=ready for
+// a Mac where fn is fully set up). Settings is its own page: /settings.html?mock
+// (&noclaude for a Mac without Claude Code, &mcpserver for one with the bare server).
+// Never active in a production build.
 
 type Handler = (e: { payload: unknown }) => void;
 
@@ -25,49 +28,145 @@ const SHOT = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 
 export function installDevMock(): void {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('mock')) return;
+  // Browsers preview the native panel by default; ?web opens the web palette.
+  // A real Tauri webview always keeps its native bridge.
+  if (window.__TAURI__ || (params.has('web') && !params.has('mock'))) return;
   const now = Date.now();
   const recordings = params.has('empty') ? [] : sampleRecordings(now);
+  if (params.has('history')) {
+    recordings.splice(0, recordings.length, ...Array.from({ length: 56 }, (_, i) => ({
+      id: `history-${i}`, title: `History fixture ${i}`, started_at_ms: now - i * HOUR,
+      duration_sec: 3600, source: 'both', status: 'complete', has_audio: true,
+      transcript: `Capture ${i}. ${'Synthetic meeting words. '.repeat(200)} ${i === 55 ? 'hidden-search-needle' : 'full-transcript-tail'}`,
+    })));
+  }
+  let copiedText = '';
   const live = params.has('live');
   const settings = {
-    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', device_id: 'dev', setup_completed: true,
+    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
+    hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
+    fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
   };
+  let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
+  let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
+  const account = mockAccount(params.has('noprojects'), params.has('manywords'));
+  let dictionary = [{ id: 'word-1', from: 'easey', to: 'Eavesy' }];
+  let calendars = params.has('noconnections') ? [] : [
+    { id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false },
+  ];
+  let mcpTokens = params.has('noconnections') ? [] : [
+    { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
+    { id: 'mcp-2', name: 'ChatGPT', createdAt: Date.now() - 86_400_000 * 20, lastUsedAt: null, expiresAt: Date.now() + 86_400_000 * 70, scopes: ['read', 'write'], usesLegacyUrl: false },
+  ];
+  const claudeCode = { cli: params.has('noclaude') ? null : '/Users/you/.local/bin/claude', plugin: false, server: params.has('mcpserver') };
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
-    account_info: { name: 'Robin Avery', email: 'robin@example.com' },
+    claude_code_status: () => ({ ...claudeCode }),
+    connect_claude_code: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      claudeCode.plugin = true;
+      return { ...claudeCode };
+    },
+    sign_in_claude_code: () => null,
+    account_info: params.has('signedout') ? null : { name: 'Robin Avery', email: 'robin@example.com' },
     get_settings: settings,
-    list_recordings: recordings,
+    list_recordings: ({ offset = 0, limit = 50, query = '', filter = 'all' }: Record<string, unknown>) => {
+      const category = (row: (typeof recordings)[number]) => row.source === 'both' ? 'meetings' : row.source === 'screenshot' ? 'screens' : row.source === 'note' ? 'notes' : 'voice';
+      const q = String(query).toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const visible = recordings.filter((row) => (filter === 'all' || category(row) === filter) && q.every((word) => `${row.title} ${row.transcript ?? ''}`.toLowerCase().includes(word)));
+      const start = Number(offset); const count = Number(limit);
+      return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048, revision: 1 })), next_offset: start + count < visible.length ? start + count : null,
+        counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
+    },
+    get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
+    set_hud_look: ({ lines, translucent, fastLiveWords, resultPreview }: Record<string, unknown>) => {
+      Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
+      if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
+      if (resultPreview !== undefined) settings.hud_result_preview = Boolean(resultPreview);
+      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? true });
+    },
+    copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
-    check_permissions: { mic: true, micAsked: true, screen: true, accessibility: true, speech: true, inputMonitoring: true, notifications: true },
+    check_permissions: { mic: true, micAsked: true, screen: !params.has('perms-missing'), accessibility: true, speech: true, inputMonitoring: true, notifications: !params.has('perms-missing') },
     get_hud_state: live
       ? { phase: 'recording', sessionId: 's-live', mode: 'audio', startedAtMs: now - 23_000 }
       : { phase: 'idle', sessionId: null },
     get_screenshot_folder: '~/Desktop',
-    get_app_info: { name: 'Eavesy', version: '0.2.0', update: { state: 'upToDate', currentVersion: '0.2.0' } },
+    ...assistantMock(params.has('eavesy-empty'), (event, payload) => emit(event, payload)),
+    get_app_info: { name: 'Eavesy', version, update: { state: 'upToDate', currentVersion: version } },
     capture_media: '/mock/shot.png',
     list_projects: params.has('noprojects') ? [] : [
       { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1'], people: null, match: [], recordingCount: 12 },
       { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: 'Maya, Alex', match: ['acme'], recordingCount: 3 },
     ],
     front_window: { app: 'Cursor', title: 'summarize.ts — eavesy' },
+    account_call: (args: Record<string, unknown>) => {
+      if (args.path === '/api/me' && args.method === 'GET' && preferencesLoadFailures > 0) { preferencesLoadFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
+      if (args.path === '/api/calendar-connections') {
+        if (args.method === 'DELETE') { calendars = calendars.filter((c) => c.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
+        return { available: { google: true, outlook: false }, connections: calendars };
+      }
+      if (args.path === '/api/mcp-tokens') {
+        if (args.method === 'DELETE') { mcpTokens = mcpTokens.filter((token) => token.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
+        return mcpTokens;
+      }
+      return account(args);
+    },
+    dictionary_request: ({ method, body }: Record<string, unknown>) => {
+      const fields = (body ?? {}) as { from?: string; to?: string; id?: string; entries?: { from: string; to: string }[] };
+      const upsert = ({ from, to }: { from: string; to: string }) => {
+        const kept = dictionary.filter((entry) => entry.from.toLowerCase() !== from.toLowerCase());
+        dictionary = [{ id: `word-${Date.now()}-${kept.length}`, from, to }, ...kept];
+      };
+      if (method === 'PUT' && fields.entries) {
+        fields.entries.forEach(upsert);
+        return { learned: fields.entries.length, skipped: 0, status: 'saved' };
+      }
+      if (method === 'PUT' && fields.from && fields.to) upsert({ from: fields.from, to: fields.to });
+      if (method === 'DELETE') dictionary = dictionary.filter((entry) => entry.id !== fields.id);
+      return method === 'GET' ? { entries: dictionary } : { learned: 1, status: 'saved' };
+    },
     agent_transcript: 'Rename `summarize.ts` to `summary.ts` and update the imports.',
+    restyle_dictation: ({ text, style, forAgents }: Record<string, unknown>) => {
+      if (forAgents) return `Remind me to do two things before Thursday:\n\n1. Send Priya the revised onboarding deck.\n2. Ask her whether the pricing page copy is final.`;
+      const tones: Record<string, string> = {
+        professional: 'Please remind me to send Priya the revised onboarding deck before Thursday and to confirm whether the pricing page copy is final.',
+        friendly: 'Hey, remember to send Priya the updated onboarding deck before Thursday! And check in on whether the pricing page copy is good to go.',
+        concise: 'Before Thursday: send Priya the revised onboarding deck; ask if pricing page copy is final.',
+      };
+      return tones[String(style)] ?? String(text);
+    },
     live_transcript: live ? [{ startMs: 0, endMs: 4000, track: 'mic', text: 'so the plan for this week is to finish the panel and then', provisional: true }] : [],
+    // ⌘V in the panel: text lands in the composer as a draft.
+    paste_to_composer: () => ({ kind: 'text', text: copiedText || 'Pasted from the clipboard' }),
+    save_note: ({ text }: Record<string, unknown>) => {
+      recordings.unshift({ id: `note-${Date.now()}`, title: 'Note', started_at_ms: Date.now(), duration_sec: 0, source: 'note', status: 'complete', has_audio: false, transcript: String(text) });
+      setTimeout(() => emit('recordings:updated'), 0);
+    },
+    import_files: ({ paths }: Record<string, unknown>) => ({ ids: Array.isArray(paths) ? paths.map(String) : [], skipped: [] }),
+    cancel_history_search: null,
+    // The real app opens the Settings window; the browser preview opens its page.
+    show_settings: () => { window.open(`settings.html${window.location.search || '?mock'}`, 'eavesy-settings'); },
+    open_privacy_settings: null,
+    set_panel_pinned: null,
+    set_project_choice: null,
   };
   if (params.has('setup')) installSetupMock(results);
   const listeners = new Map<string, Handler[]>();
   const emit = (event: string, payload: unknown = null) => listeners.get(event)?.forEach((handler) => handler({ payload }));
   const hotkeys = mockHotkeys(settings, params.get('fn') === 'ready');
-  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap') };
-  if (params.has('settings')) setTimeout(() => emit('launcher:settings'), 400);
+  (window as unknown as { __evMock: unknown }).__evMock = { fnTap: () => emit('hotkeys:fn-tap'), refreshHistory: () => emit('recordings:updated'), opened: () => emit('launcher:opened'), get copiedText() { return copiedText; } };
   window.__TAURI__ = {
     core: {
       convertFileSrc: () => SHOT,
       invoke: <T>(cmd: string, args?: Record<string, unknown>) => {
         console.debug('[mock invoke]', cmd, args);
+        if (cmd === 'translation_request' || cmd === 'read_clipboard_text') return Promise.reject(new Error('Open the Mac app to translate, or use the signed-in web app. This preview uses sample captures.'));
         if (cmd in hotkeys) return hotkeys[cmd](args ?? {}) as Promise<T>;
         const value = cmd in results ? results[cmd] : null;
-        return Promise.resolve((typeof value === 'function' ? (value as () => unknown)() : value) as T);
+        return Promise.resolve((typeof value === 'function' ? (value as (a: Record<string, unknown>) => unknown)(args ?? {}) : value) as T);
       },
     },
     event: {
@@ -110,14 +209,16 @@ function installSetupMock(results: Record<string, unknown>): void {
   });
 }
 
-type Bindings = { toggle_hotkey: string; dictation_hotkey: string };
-const DEFAULTS = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D' };
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string };
+type Action = 'toggle' | 'dictation' | 'assistant';
+const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant'];
+const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
 const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
 
 /** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
 function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args: Record<string, unknown>) => Promise<unknown>> {
-  const key = (action: unknown) => (action === 'toggle' ? 'toggle_hotkey' : 'dictation_hotkey');
-  const other = (action: unknown) => (action === 'toggle' ? 'dictation' : 'toggle');
+  const key = (action: unknown) => `${String(action)}_hotkey` as keyof Bindings;
+  const holder = (action: unknown, accel: string) => ACTIONS.find((other) => other !== action && !!accel && settings[key(other)] === accel);
   const validate = (accel: string) => {
     if (!accel || accel === 'Fn' || /^F([1-9]|1[0-2])$/.test(accel) || /(^|\+)(Cmd|Ctrl|Alt)\+/.test(accel)) return null;
     return { kind: 'needsModifier' };
@@ -125,10 +226,10 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
   const plan = (action: unknown, accel: string, swap: boolean) => {
     const refused = validate(accel);
     if (refused) return refused;
-    const otherKey = key(other(action));
-    if (accel && settings[otherKey] === accel) {
-      if (!swap) return { kind: 'taken', by: other(action) };
-      settings[otherKey] = settings[key(action)];
+    const taken = holder(action, accel);
+    if (taken) {
+      if (!swap) return { kind: 'taken', by: taken };
+      settings[key(taken)] = settings[key(action)];
     }
     settings[key(action)] = accel;
     return null;
@@ -136,7 +237,8 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
   return {
     check_hotkey: ({ action, accelerator }) => {
       const accel = String(accelerator);
-      const refused = validate(accel) ?? (accel && settings[key(other(action))] === accel ? { kind: 'taken', by: other(action) } : null);
+      const taken = holder(action, accel);
+      const refused = validate(accel) ?? (taken ? { kind: 'taken', by: taken } : null);
       if (refused) return Promise.reject(refused);
       if (accel === 'Cmd+Space') return Promise.resolve({ kind: 'system', name: 'Spotlight' });
       const common = /^Cmd\+([A-Z])$/.exec(accel)?.[1];
@@ -149,11 +251,331 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
     reset_all_hotkeys: () => {
       settings.toggle_hotkey = DEFAULTS.toggle;
       settings.dictation_hotkey = DEFAULTS.dictation;
+      settings.assistant_hotkey = DEFAULTS.assistant;
       return Promise.resolve(null);
     },
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),
     get_settings: () => Promise.resolve({ ...settings }),
     fn_status: () => Promise.resolve(fnReady ? { input_monitoring: true, globe_action: 'do_nothing' } : { input_monitoring: false, globe_action: 'emoji' }),
     suspend_hotkeys: ({ suspended }) => Promise.resolve(suspended === true && fnReady),
+    machine_inventory: () => Promise.resolve(MACHINE),
+    machine_worktree_details: ({ paths }) => later(500, (paths as string[]).flatMap((path) => { const found = MACHINE_DETAILS[path]; return found ? [{ path, ...found }] : []; })),
+    machine_repo_prs: ({ repo }) => later(1200, { available: true, prs: MACHINE_PRS[repo as string] ?? [] }),
+    machine_worktree_size: ({ path }) => later(700, MACHINE_SIZES[path as string] ?? 180_000_000),
+    machine_open_worktree: () => Promise.resolve(null),
+    machine_open_pr: () => Promise.resolve(null),
+    machine_clean: ({ worktrees }) => Promise.resolve((worktrees as string[]).map((path) => ({ target: path, ok: true, message: null, restore: `git -C '/Users/w/Developer/eavesy' worktree add '${path}' 'some-branch'` }))),
+  };
+}
+
+/** Resolves after `ms`, like the real commands that look at git. */
+function later<T>(ms: number, value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+const EAVESY = '/Users/w/Developer/eavesy';
+const REPACKIFY = '/Users/w/Developer/repackify';
+const DAY = 86_400_000;
+const AT = Date.now();
+
+/** Settings → This Mac (machine/mod.rs `Inventory`). The quick pass: rows that need a closer look say `settled: false`. */
+const MACHINE = {
+  repos: [EAVESY, REPACKIFY],
+  worktrees: [
+    { path: `${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`, repo: EAVESY, branch: 'feat/agent-reply-suggestion', status: 'stale', settled: false },
+    { path: '/private/tmp/eavesy-oxlint-pr', repo: EAVESY, branch: 'codex/oxlint-parity', status: 'stale', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/hud-fix`, repo: EAVESY, branch: 'claude/hud-fix', status: 'unmerged', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/settings-race`, repo: EAVESY, branch: 'claude/settings-race', status: 'unmerged', settled: false },
+    { path: `${EAVESY}/.claude/worktrees/sharp-hodgkin-5cf282`, repo: EAVESY, branch: 'claude/machine-inventory', status: 'in_use', settled: true },
+    { path: `${EAVESY}/.claude/worktrees/old-experiment`, repo: EAVESY, branch: null, status: 'locked', settled: true },
+    { path: `${REPACKIFY}/.claude/worktrees/bol-timing`, repo: REPACKIFY, branch: 'claude/bol-timing', status: 'unmerged', settled: false },
+    { path: `${REPACKIFY}/.claude/worktrees/wip`, repo: REPACKIFY, branch: 'claude/wip', status: 'stale', settled: false },
+  ],
+  leftovers: [
+    ...Array.from({ length: 98 }, (_, i) => ({ pid: 8000 + i, started_us: 1_792_000_000_000_000 + i, name: 'git', exe: '/opt/homebrew/Cellar/git/2.56.0_1/bin/git', cwd: '/Users/w', session_id: null, helpers: 0, ports: [] })),
+    { pid: 4191, started_us: 1_792_000_000_000_000, name: 'node', exe: '/opt/homebrew/bin/node', cwd: '/Users/w/Developer/vinext/tests/fixtures/pages-i18n', session_id: 'abc', helpers: 2, ports: [4191] },
+  ],
+  zombies: [],
+  ports: [
+    { port: 4191, address: '127.0.0.1', pid: 4191, name: 'node', cwd: '/Users/w/Developer/vinext/tests/fixtures/pages-i18n', owner: 'leftover' },
+    { port: 27925, address: '127.0.0.1', pid: 5100, name: 'convex-local-backend', cwd: '/Users/w/Developer/repackify/.claude/worktrees/lint-tooling', owner: 'session' },
+    { port: 7265, address: '127.0.0.1', pid: 700, name: 'Raycast', cwd: '/', owner: 'other' },
+  ],
+};
+
+/** The closer look for each mock worktree (machine/mod.rs `WorktreeDetail`). */
+const MACHINE_DETAILS: Record<string, Record<string, unknown>> = {
+  [`${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`]: { status: 'stale', merged_via: 'squash', changes: 0, last_commit_ms: AT - 9 * DAY, last_activity_ms: AT - 9 * DAY, base: 'origin/main', ahead: 3, behind: 41 },
+  '/private/tmp/eavesy-oxlint-pr': { status: 'stale', merged_via: 'ancestor', changes: 0, last_commit_ms: AT - 40 * DAY, last_activity_ms: AT - 40 * DAY, base: 'origin/main', ahead: 0, behind: 120 },
+  [`${EAVESY}/.claude/worktrees/hud-fix`]: { status: 'unmerged', merged_via: null, changes: 2, last_commit_ms: AT - 3 * 3_600_000, last_activity_ms: AT - 3_600_000, base: 'origin/main', ahead: 2, behind: 5 },
+  [`${EAVESY}/.claude/worktrees/settings-race`]: { status: 'unmerged', merged_via: null, changes: 0, last_commit_ms: AT - 2 * DAY, last_activity_ms: AT - 2 * DAY, base: 'origin/main', ahead: 1, behind: 9 },
+  [`${EAVESY}/.claude/worktrees/sharp-hodgkin-5cf282`]: { status: 'in_use', merged_via: null, changes: 4, last_commit_ms: AT - 600_000, last_activity_ms: AT - 60_000, base: 'origin/main', ahead: 1, behind: 0 },
+  [`${EAVESY}/.claude/worktrees/old-experiment`]: { status: 'locked', merged_via: null, changes: 0, last_commit_ms: AT - 90 * DAY, last_activity_ms: AT - 90 * DAY, base: 'origin/main', ahead: 6, behind: 300 },
+  [`${REPACKIFY}/.claude/worktrees/bol-timing`]: { status: 'unmerged', merged_via: null, changes: 0, last_commit_ms: AT - 5 * DAY, last_activity_ms: AT - 5 * DAY, base: 'origin/main', ahead: 4, behind: 20 },
+  [`${REPACKIFY}/.claude/worktrees/wip`]: { status: 'dirty', merged_via: 'ancestor', changes: 0, last_commit_ms: AT - 20 * DAY, last_activity_ms: AT - 20 * DAY, base: 'origin/main', ahead: 0, behind: 60 },
+};
+
+const MACHINE_PRS: Record<string, { number: number; state: 'open' | 'merged' | 'closed'; branch: string; url: string }[]> = {
+  [EAVESY]: [
+    { number: 231, state: 'merged', branch: 'feat/agent-reply-suggestion', url: 'https://github.com/eavesy/eavesy/pull/231' },
+    { number: 249, state: 'open', branch: 'claude/hud-fix', url: 'https://github.com/eavesy/eavesy/pull/249' },
+  ],
+  [REPACKIFY]: [],
+};
+
+const MACHINE_SIZES: Record<string, number> = {
+  [`${EAVESY}/.claude/worktrees/agent-a2f49f3017eaff5e0`]: 1_450_000_000,
+  '/private/tmp/eavesy-oxlint-pr': 380_000_000,
+  [`${EAVESY}/.claude/worktrees/hud-fix`]: 910_000_000,
+};
+
+/** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */
+function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<string, unknown>) => unknown {
+  const many = ['Anthropic', 'Cloudflare', 'Durable Objects', 'Vectorize', 'SpeechAnalyzer', 'ScreenCaptureKit', 'TanStack', 'Drizzle', 'Clerk', 'PostHog', 'Homebrew', 'notarytool', 'Sparkle', 'Rolldown', 'Vite', 'Zod', 'Tailwind', 'lucide', 'Bun', 'wrangler', 'Priya Raman', 'Dana Okafor', 'Mateo Silva', 'Kenji Ito', 'Aisha Khan', 'Lukas Weber'];
+  const me = {
+    spokenLanguages: ['en'],
+    dictationStyle: 'concise',
+    dictationForAgents: true,
+    customVocabulary: manyWords
+      ? Array.from({ length: 140 }, (_, i) => (i < many.length ? many[i] : `${many[i % many.length]} ${Math.floor(i / many.length) + 1}`))
+      : ['Eavesy', 'Priya Raman', 'Kubernetes'],
+  };
+  let projects = noProjects ? [] : [
+    { id: 'p-eavesy', name: 'eavesy', about: 'Mac meeting recorder', vocabulary: ['Tauri', 'D1', 'wrangler'], people: null, match: [], dictationStyle: 'concise', dictationForAgents: true, recordingCount: 12 },
+    { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: null, match: ['acme'], recordingCount: 3 },
+  ];
+  const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'prompt';
+  let prompts = [
+    { id: 'prm-triage', name: 'Triage support tickets', slug: 'triage-support-tickets', body: 'Search through all the open support tickets, debug each one, and write a plan to fix them.\n\nThen implement the plan, one ticket at a time, with a test for each fix.', useCount: 14, lastUsedAt: Date.now() - 3_600_000, updatedAt: Date.now() },
+    { id: 'prm-review', name: 'Review this PR', slug: 'review-this-pr', body: 'Review the current diff for bugs first, then simplifications. Focus on {{details}}.', useCount: 6, lastUsedAt: null, updatedAt: Date.now() },
+  ];
+  return ({ method, path, body }) => {
+    const fields = (body ?? {}) as Record<string, unknown>;
+    if (String(path).startsWith('/api/prompts')) {
+      if (method === 'GET') return { items: prompts };
+      if (method === 'POST') {
+        const prompt = { id: `prm-${Date.now()}`, name: String(fields.name), slug: slug(String(fields.name)), body: String(fields.body), useCount: 0, lastUsedAt: null, updatedAt: Date.now() };
+        prompts = [...prompts, prompt];
+        return { prompt };
+      }
+      const id = String(path).split('/').pop();
+      if (method === 'DELETE') { prompts = prompts.filter((p) => p.id !== id); return { ok: true }; }
+      prompts = prompts.map((p) => p.id !== id ? p : fields.used
+        ? { ...p, useCount: p.useCount + 1, lastUsedAt: Date.now() }
+        : { ...p, ...fields, ...(fields.name ? { slug: slug(String(fields.name)) } : {}), updatedAt: Date.now() });
+      return { prompt: prompts.find((p) => p.id === id) };
+    }
+    if (path === '/api/me') return method === 'GET' ? me : Object.assign(me, fields) && { ok: true };
+    if (path === '/api/projects' && method === 'GET') return { items: projects };
+    if (path === '/api/projects' && method === 'POST') {
+      const project = { id: `p-${Date.now()}`, name: String(fields.name), about: null, vocabulary: [], people: null, match: [], recordingCount: 0 };
+      projects = [...projects, project];
+      return { project };
+    }
+    const id = String(path).split('/').pop();
+    if (method === 'DELETE') projects = projects.filter((p) => p.id !== id);
+    else projects = projects.map((p) => (p.id === id ? { ...p, ...fields } : p));
+    return { ok: true };
+  };
+}
+
+/** Eavesy's tab (assistant/thread.rs and assistant/mod.rs), with a card waiting. */
+function assistantMock(empty: boolean, emit: (event: string, payload: unknown) => void): Record<string, unknown> {
+  const now = Date.now();
+  const thread = {
+    busy: false,
+    off_record: false,
+    turns: empty ? [] : [
+      { id: 0, who: 'you', spoken: true, at_ms: now - 60_000, text: 'Which of my Claude sessions are still running from yesterday?', steps: [] },
+      { id: 1, who: 'eavesy', spoken: false, at_ms: now - 55_000, text: 'Two dev servers outlived their sessions, both in worktrees you already merged: hud-fix and settings-race. Want me to show them out?', steps: [{ tool: 'machine_overview', line: '2 stale worktrees, 2 leftover processes', ok: true }] },
+      { id: 3, who: 'you', spoken: false, at_ms: now - 30_000, text: 'Yes, and clear out their worktrees.', steps: [] },
+      { id: 4, who: 'eavesy', spoken: false, at_ms: now - 28_000, text: 'It’s on the card below. Untick anything you want to keep.', steps: [{ tool: 'clean_machine', line: 'Waiting for your click', ok: true }] },
+      { id: 5, who: 'you', spoken: false, at_ms: now - 20_000, text: 'Remember that I use bun, not npm.', steps: [] },
+      { id: 6, who: 'eavesy', spoken: false, at_ms: now - 18_000, text: 'Noted.', steps: [{ tool: 'remember', line: 'Remembered: Uses bun, not npm', ok: true, remembered: 'Uses bun, not npm', book: 'setup' }] },
+    ],
+  };
+  let notes = empty ? [] : ['Uses bun, not npm', 'Ships risky changes behind a flag', 'Robin reviews PRs in the afternoon'];
+  let about = empty ? [] : ['Goes by Robin', 'Works from Leeds, UK time'];
+  let merged: { at_ms: number; before: number; after: number } | null = empty ? null : { at_ms: now - 3_600_000, before: 50, after: 31 };
+  let memoryOn = true;
+  type RuleKind = 'remove_worktrees' | 'stop_leftovers';
+  type MockRule = { kind: RuleKind; under: string };
+  const ruleText = (rule: MockRule) => `${rule.kind === 'remove_worktrees' ? 'Remove finished worktrees under' : 'Stop leftover processes under'} ${rule.under.replace('/Users/w', '~')}`;
+  const sameRule = (a: MockRule, b: MockRule) => a.kind === b.kind && a.under === b.under;
+  let rules: MockRule[] = empty ? [] : [{ kind: 'remove_worktrees', under: '/Users/w/Developer' }];
+  // What an agent wrote into rules.md, waiting for review.
+  let pendingRules: MockRule[] = empty ? [] : [{ kind: 'stop_leftovers', under: '/Users/w/Developer/eavesy' }];
+  let badLine = !empty;
+  let instructions: string[] = empty ? [] : ['Answer in British English'];
+  let pendingInstructions: string[] = empty ? [] : ['Mention open PRs when I say good morning'];
+  const rulesView = () => ({
+    rules: rules.map((rule) => ({ rule, text: ruleText(rule) })),
+    instructions,
+    pending: [
+      ...pendingRules.map((rule) => ({ kind: 'add', rule, text: ruleText(rule) })),
+      ...pendingInstructions.map((text) => ({ kind: 'add_instruction', text })),
+      ...(badLine ? [{ kind: 'invalid', line: 9, text: 'Delete everything under ~/Developer', reason: 'Eavesy doesn’t know this rule.' }] : []),
+    ],
+    path: '/Users/w/Eavesy/assistant/rules.md',
+  });
+  const state = {
+    mode: 'ask', effective: 'ask', until_ms: null as number | null, trusted_folders: [] as string[], tampered: false,
+    cards: empty ? [] : [{
+      id: 'card-1', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees and stop 2 leftover processes', warning: null, expires_ms: now + 300_000,
+      rows: [
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/hud-fix', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/hud-fix · claude/hud-fix, merged' },
+        { id: 'worktree:/Users/w/Developer/eavesy/.claude/worktrees/settings-race', label: 'Remove worktree ~/Developer/eavesy/.claude/worktrees/settings-race · claude/settings-race, merged' },
+        { id: 'process:4191:1', label: 'Stop node (pid 4191) in ~/Developer/eavesy/.claude/worktrees/hud-fix/web · port 5173' },
+        { id: 'process:4207:1', label: 'Stop node (pid 4207) in ~/Developer/eavesy/.claude/worktrees/settings-race/web · port 5174' },
+      ],
+    }],
+  };
+  return {
+    assistant_thread: () => thread,
+    assistant_state: () => ({ ...state }),
+    assistant_send: ({ text }: Record<string, unknown>) => {
+      thread.turns.push({ id: thread.turns.length * 2, who: 'you', spoken: false, at_ms: Date.now(), text: String(text), steps: [] });
+      thread.busy = true;
+      emit('assistant:thread', { ...thread });
+      return new Promise((resolve) => setTimeout(() => {
+        thread.turns.push({ id: thread.turns.length * 2 + 1, who: 'eavesy', spoken: false, at_ms: Date.now(), text: 'Quiet on my end. Nothing else is waiting on you.', steps: [{ tool: 'agent_sessions', line: '3 sessions', ok: true }] });
+        thread.busy = false;
+        emit('assistant:thread', { ...thread });
+        resolve(null);
+      }, 1200));
+    },
+    // What this thread kept, still in the notes: the remember steps of exchanges not already forgotten.
+    assistant_taught: () => {
+      const kept: { note: string; book: string }[] = [];
+      let counting = false;
+      for (const turn of thread.turns as { who: string; unremembered?: boolean; steps: { remembered?: string; book?: string }[] }[]) {
+        if (turn.who === 'you') { counting = !turn.unremembered; continue; }
+        for (const step of turn.steps) {
+          const list = step.book === 'you' ? about : notes;
+          if (counting && step.remembered && list.includes(step.remembered)) kept.push({ note: step.remembered, book: step.book ?? 'setup' });
+        }
+      }
+      return kept;
+    },
+    assistant_dont_remember: ({ id }: Record<string, unknown>) => {
+      const turns = thread.turns as { id: number; who: string; unremembered?: boolean; steps: { remembered?: string; book?: string }[] }[];
+      const at = turns.findIndex((turn) => turn.id === id && turn.who === 'you');
+      if (at < 0) throw new Error('That message is gone.');
+      turns[at].unremembered = true;
+      let forgot = 0;
+      for (const turn of turns.slice(at + 1)) {
+        if (turn.who === 'you') break;
+        for (const step of turn.steps) {
+          if (!step.remembered) continue;
+          if (step.book === 'you') { if (about.includes(step.remembered)) forgot += 1; about = about.filter((note) => note !== step.remembered); } else { if (notes.includes(step.remembered)) forgot += 1; notes = notes.filter((note) => note !== step.remembered); }
+          step.remembered = undefined;
+        }
+      }
+      emit('assistant:thread', { ...thread });
+      return forgot ? `Forgot ${forgot === 1 ? '1 note' : `${forgot} notes`}.` : 'Nothing from that was kept.';
+    },
+    assistant_clear: ({ forget }: Record<string, unknown>) => {
+      let forgot = 0;
+      if (forget === true) {
+        for (const turn of thread.turns as { steps: { remembered?: string; book?: string }[] }[]) {
+          for (const step of turn.steps) {
+            if (!step.remembered) continue;
+            if (step.book === 'you') about = about.filter((note) => note !== step.remembered); else notes = notes.filter((note) => note !== step.remembered);
+            forgot += 1;
+          }
+        }
+      }
+      thread.turns = [];
+      thread.off_record = false;
+      emit('assistant:thread', { ...thread });
+      return forgot ? `Forgot ${forgot === 1 ? '1 note' : `${forgot} notes`}.` : '';
+    },
+    set_assistant_off_record: ({ on }: Record<string, unknown>) => {
+      if (on !== true && thread.turns.length) throw new Error('Clear the conversation to go back on the record.');
+      thread.off_record = on === true;
+      emit('assistant:thread', { ...thread });
+    },
+    assistant_card_decide: ({ cardId, acceptedRowIds }: Record<string, unknown>) => {
+      state.cards = state.cards.filter((card) => card.id !== cardId);
+      emit('assistant:cards', state.cards);
+      const count = (acceptedRowIds as string[]).length;
+      return count ? { summary: `${count} of ${count} done`, detail: null } : null;
+    },
+    set_assistant_mode: ({ mode, minutes }: Record<string, unknown>) => {
+      state.mode = String(mode);
+      state.effective = String(mode);
+      state.until_ms = typeof minutes === 'number' && mode !== 'ask' ? Date.now() + minutes * 60_000 : null;
+    },
+    set_trusted_agent_folders: ({ folders }: Record<string, unknown>) => (state.trusted_folders = folders as string[]),
+    set_assistant_style: () => null,
+    assistant_memory: () => ({
+      on: memoryOn, notes: [...notes], about: [...about], merged,
+      path: '/Users/w/Eavesy/assistant/memory.md', about_path: '/Users/w/Eavesy/assistant/about-you.md',
+    }),
+    assistant_forget: ({ note, book }: Record<string, unknown>) => {
+      if (book === 'you') about = about.filter((kept) => kept !== note);
+      else notes = notes.filter((kept) => kept !== note);
+    },
+    assistant_forget_all: ({ book }: Record<string, unknown>) => {
+      if (book === 'you') about = [];
+      else { notes = []; merged = null; }
+    },
+    assistant_undo_merge: () => { merged = null; },
+    assistant_keep_merge: () => { merged = null; },
+    set_assistant_memory: ({ on }: Record<string, unknown>) => { memoryOn = on === true; },
+    open_assistant_memory: () => null,
+    assistant_rules: () => rulesView(),
+    add_assistant_rule: ({ kind, folder }: Record<string, unknown>) => {
+      const rule = { kind: kind as RuleKind, under: String(folder) };
+      if (!rules.some((kept) => sameRule(kept, rule))) rules.push(rule);
+      return rulesView();
+    },
+    remove_assistant_rule: ({ rule }: Record<string, unknown>) => {
+      rules = rules.filter((kept) => !sameRule(kept, rule as MockRule));
+      return rulesView();
+    },
+    add_assistant_instruction: ({ text }: Record<string, unknown>) => {
+      const line = String(text).trim();
+      if ([...line].length > 300) throw new Error('Keep an instruction under 300 characters.');
+      if (instructions.includes(line)) return rulesView();
+      if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+      instructions.push(line);
+      return rulesView();
+    },
+    remove_assistant_instruction: ({ text }: Record<string, unknown>) => {
+      instructions = instructions.filter((kept) => kept !== text);
+      return rulesView();
+    },
+    accept_assistant_rule_change: ({ change }: Record<string, unknown>) => {
+      const accepted = change as { kind: string; rule?: MockRule; text?: string };
+      if (accepted.kind === 'add_instruction' && accepted.text) {
+        if (!instructions.includes(accepted.text)) {
+          if (instructions.length >= 20) throw new Error('Eavesy keeps 20 instructions at most. Remove one first.');
+          instructions.push(accepted.text);
+        }
+        pendingInstructions = pendingInstructions.filter((text) => text !== accepted.text);
+        return rulesView();
+      }
+      if (accepted.kind === 'add' && accepted.rule) rules.push(accepted.rule);
+      pendingRules = pendingRules.filter((rule) => !accepted.rule || !sameRule(rule, accepted.rule));
+      return rulesView();
+    },
+    discard_assistant_rule_change: ({ change }: Record<string, unknown>) => {
+      const dropped = change as { kind: string; rule?: MockRule; text?: string };
+      pendingInstructions = pendingInstructions.filter((text) => dropped.kind !== 'add_instruction' || text !== dropped.text);
+      pendingRules = pendingRules.filter((rule) => !dropped.rule || !sameRule(rule, dropped.rule));
+      if (dropped.kind === 'invalid') badLine = false;
+      return rulesView();
+    },
+    open_assistant_rules: () => null,
+    set_assistant_voice: () => null,
+    assistant_voices: () => [
+      { name: 'Samantha', locale: 'en_US' }, { name: 'Daniel', locale: 'en_GB' }, { name: 'Eddy (English (US))', locale: 'en_US' }, { name: 'Thomas', locale: 'fr_FR' },
+    ],
+    assistant_activity: () => empty ? [] : [
+      { at_ms: now - 25_000, requester: 'You', tool: 'machine.clean', summary: 'Remove 2 worktrees and stop 2 leftover processes', decision: 'accepted', outcome: '4 of 4 done' },
+      { at_ms: now - 3_600_000, requester: 'Claude Code in eavesy', tool: 'open.link', summary: 'Open https://example.com/pricing', decision: 'refused', outcome: 'Only links you gave' },
+      { at_ms: now - 7_200_000, requester: 'You', tool: 'assistant.mode', summary: 'Auto', decision: 'ran', outcome: 'for 60 min' },
+    ],
   };
 }

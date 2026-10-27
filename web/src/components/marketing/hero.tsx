@@ -18,14 +18,14 @@ export function Hero() {
           <h1 className="mt-8 text-balance font-round text-[42px] font-extrabold leading-[1.04] sm:leading-[1.02] tracking-tight text-ev-ink sm:text-6xl lg:text-[56px] xl:text-[60px]">
             Drop it in.
             <br />
-            <span className="text-ev-slate">Paste it to your AI.</span>
+            <span className="text-ev-coat">Paste it to your AI.</span>
           </h1>
 
           <p className="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-ev-ink-2">
             Eavesy keeps the things you&apos;d otherwise re-explain (clipboard text and
-            images, screenshots, dictation, recordings) as clean Markdown on your
-            Mac. Copy it into Claude, Cursor or ChatGPT, or let an agent read it
-            over MCP.
+            images, screenshots, dictation, recordings) as files and reusable text on your
+            Mac. Copy it into Claude, Cursor or ChatGPT, or let an agent read synced recording text
+            over hosted MCP.
           </p>
 
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
@@ -52,7 +52,7 @@ export function Hero() {
             words={['…so the plan is we ship on Thursday and', 'ask Sam for the deck']}
           />
           <p className="mt-6 text-center font-round text-[13px] font-semibold text-ev-ink-2 sm:mt-24 lg:mt-6">
-            Hold <Kbd keys="fn" /> and talk. Let go to paste.
+            Hold <Kbd keys="⌘⇧D" /> and talk. Set Talk to fn in Settings if you prefer.
           </p>
         </div>
       </div>

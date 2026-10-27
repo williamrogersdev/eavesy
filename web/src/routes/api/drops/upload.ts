@@ -20,7 +20,6 @@ export const Route = createFileRoute('/api/drops/upload')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        if (actor.isAnonymous) return Response.json({ error: 'sign in to send drops' }, { status: 403 });
 
         const bytes = Number(request.headers.get('content-length') ?? '');
         if (!Number.isFinite(bytes) || bytes <= 0) {

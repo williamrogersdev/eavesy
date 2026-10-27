@@ -24,10 +24,14 @@ function PrivacyPage() {
           <li>
             <strong>Local first.</strong> In the Mac app, every capture is a real folder on
             your disk: Markdown, JSON metadata, and audio, video or images. You can use it
-            without an account. When you sign in, recordings also get a cloud copy for
-            transcripts, briefs, search and sync. Screenshots, clipboard captures and notes
-            from the Mac app are never uploaded. Anything you capture in the web app, including
-            screenshots and screen or webcam video, is stored in your account.
+            without an account, and then nothing leaves your Mac. When you sign in, recordings
+            also get a cloud copy for transcripts, briefs, search and sync, and the Mac app
+            uploads your screenshots and pasted images to your account so they show up on your
+            other signed-in Macs. Clipboard text and notes from the Mac app are not uploaded.
+            Anything you capture in the web app, including
+            screenshots and screen or webcam video, is stored in your account. A Notetaker
+            you send to a call records that call&rsquo;s audio, the participants&rsquo; display
+            names and who spoke when, never video, and stores them in your account the same way.
           </li>
           <li>
             <strong>Encrypted in transit and at rest.</strong> TLS protects data in transit.
@@ -72,7 +76,7 @@ function PrivacyPage() {
         </p>
         <ul className="ml-5 list-disc space-y-1">
           <li><strong>Anthropic</strong> — AI summaries &amp; action-item extraction under its commercial API policy</li>
-          <li><strong>Cloudflare</strong> — all infrastructure (Workers, R2, D1, Vectorize, Queues, KV), plus Workers AI for transcription (Whisper) and semantic-search embeddings</li>
+          <li><strong>Cloudflare</strong> — all infrastructure (Workers, R2, D1, Vectorize, Queues, KV, and Containers, where the Notetaker runs), plus Workers AI for transcription (Whisper) and semantic-search embeddings</li>
           <li><strong>Clerk</strong> — authentication</li>
           <li><strong>OpenRouter</strong> — optional bring-your-own AI connection</li>
           <li><strong>PostHog</strong> — product analytics and scrubbed error reports from the web app, browser, and Mac app; never recording content</li>

@@ -6,6 +6,15 @@ final class ArgumentsTests: XCTestCase {
         Arguments.parse(["SwiftAudio", "--mode", "audio", "--out", "/tmp/a.m4a", "--source", "mixed"] + extra)
     }
 
+    func testMicrophoneDefaultsDependOnMode() {
+        XCTAssertFalse(parse([]).includeMic)
+        XCTAssertTrue(parse(["--mic"]).includeMic)
+        XCTAssertFalse(parse(["--mic", "false"]).includeMic)
+        let screen = ["SwiftAudio", "--mode", "screen", "--out", "/tmp/video.mp4"]
+        XCTAssertTrue(Arguments.parse(screen).includeMic)
+        XCTAssertFalse(Arguments.parse(screen + ["--mic", "false"]).includeMic)
+    }
+
     func testSegmentsDefaultToOneMinute() {
         XCTAssertEqual(parse([]).segmentSec, 60)
     }
@@ -24,6 +33,12 @@ final class ArgumentsTests: XCTestCase {
     func testVocabularyIsOneWordOrPhrasePerLine() {
         XCTAssertEqual(parse([]).vocabulary, [])
         XCTAssertEqual(parse(["--vocabulary", "Eavesy\n Priya Raman \n\nKubernetes"]).vocabulary, ["Eavesy", "Priya Raman", "Kubernetes"])
+    }
+
+    func testTheLivePreviewIsOnUnlessTurnedOff() {
+        XCTAssertTrue(parse([]).preview)
+        XCTAssertFalse(parse(["--no-preview"]).preview)
+        XCTAssertFalse(parse(["--no-preview", "--vocabulary", "Eavesy"]).preview)
     }
 
     func testVocabularyIsCapped() {

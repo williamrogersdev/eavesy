@@ -1,9 +1,15 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { Queue } from '@cloudflare/workers-types';
+import type { BotPlatform } from '@/server/meeting-bots/service';
 
 export type QueueMessage =
   | { kind: 'process-recording'; meetingId: string }
-  | { kind: 'embed'; meetingId: string }
+  /**
+   * `queuedAt` marks a re-index after a transcript edit: the job is skipped
+   * when the meeting was embedded after that time, so a burst of edits
+   * embeds once.
+   */
+  | { kind: 'embed'; meetingId: string; queuedAt?: number }
   | { kind: 'embed-dictation'; dictationId: string }
   /** `track` is absent on messages from before two-track capture; read as `mixed`. */
   | { kind: 'transcribe-segment'; meetingId: string; idx: number; track?: 'mixed' | 'mic' | 'system' }
@@ -17,7 +23,13 @@ export type QueueMessage =
   /** Permanently remove a meeting the user deleted (R2, vectors, rows). */
   | { kind: 'purge-meeting'; meetingId: string }
   /** Permanently remove a deleted account and everything it owns. */
-  | { kind: 'purge-account'; userId: string };
+  | { kind: 'purge-account'; userId: string }
+  /** Copy a notetaker bot's finished recording in and hand it to the summary pipeline. */
+  | { kind: 'collect-bot-recording'; botId: string }
+  /** Judge a canary bot's run (meeting-bots/canary.ts); `check` counts re-looks. */
+  | { kind: 'check-canary'; botId: string; platform?: BotPlatform; check?: number }
+  /** Email the owner the recap of a completed meeting, if they turned recaps on. */
+  | { kind: 'send-recap'; meetingId: string };
 
 export function getQueue(): Queue<QueueMessage> {
   const { env } = getCloudflareContext();

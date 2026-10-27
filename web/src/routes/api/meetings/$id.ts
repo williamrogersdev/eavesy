@@ -20,23 +20,14 @@ const patchSchema = z.object({
     .optional(),
 });
 
-function tokenFrom(request: Request, url: URL): string | undefined {
-  return (
-    request.headers.get('x-anonymous-token') ??
-    url.searchParams.get('anonymousSessionToken') ??
-    undefined
-  );
-}
-
 export const Route = createFileRoute('/api/meetings/$id')({
   server: {
     handlers: {
-      GET: async ({ request, params }) => {
+      GET: async ({ params }) => {
         const { id } = params;
-        const url = new URL(request.url);
         let actor;
         try {
-          actor = await resolveActor({ anonymousSessionToken: tokenFrom(request, url) });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -82,7 +73,7 @@ export const Route = createFileRoute('/api/meetings/$id')({
         }
         const updated = await meetingsRepo.update(getDb(), { meetingId: id, userId: actor.userId, ...fields, speakerNamesJson });
         if (!updated) return Response.json({ error: 'not found' }, { status: 404 });
-        if (speakerNames || fields.folderId !== undefined) refreshAgentTranscriptLater(id, actor.userId);
+        if (speakerNames || fields.folderId !== undefined) refreshAgentTranscriptLater(id, actor.userId, { embed: Boolean(speakerNames) });
         return Response.json({ ok: true });
       },
 

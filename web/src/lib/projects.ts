@@ -1,3 +1,5 @@
+import type { DictationStyle } from '@/lib/transcription/dictation-style';
+
 export interface Project {
   id: string;
   name: string;
@@ -5,6 +7,10 @@ export interface Project {
   vocabulary: string[];
   people: string | null;
   match: string[];
+  /** Dictation tone in this project; null or missing uses the account's. */
+  dictationStyle?: DictationStyle | null;
+  /** Whether dictations in this project are formatted for AI agents; null or missing uses the account's. */
+  dictationForAgents?: boolean | null;
 }
 
 export const PROJECT_LIMITS = {
@@ -12,7 +18,7 @@ export const PROJECT_LIMITS = {
   about: 600,
   people: 400,
   term: 60,
-  vocabulary: 60,
+  vocabulary: 200,
   match: 12,
 } as const;
 
@@ -91,6 +97,22 @@ export function matchProject<T extends Pick<Project, 'name' | 'match'>>(
  */
 export function projectTerms(project: Pick<Project, 'vocabulary' | 'people'> | null | undefined): string[] {
   return [...(project?.vocabulary ?? []), ...namesIn(project?.people)];
+}
+
+/**
+ * The one list of words the editor shows: the vocabulary, then the names from
+ * an older people line that are not already in it.
+ */
+export function projectWords(project: Pick<Project, 'vocabulary' | 'people'>): string[] {
+  return cleanList(projectTerms(project), Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * Stores edited words as vocabulary and retires the old people line, whose
+ * names the editor already shows as words. The editor holds to the limit.
+ */
+export function wordsToFields(words: string[]): Pick<Project, 'vocabulary' | 'people'> {
+  return { vocabulary: cleanList(words, PROJECT_LIMITS.vocabulary), people: null };
 }
 
 function namesIn(people: string | null | undefined): string[] {

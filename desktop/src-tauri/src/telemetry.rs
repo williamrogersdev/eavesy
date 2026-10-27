@@ -43,7 +43,13 @@ pub fn init() -> Guards {
     Guards { _log: log }
 }
 
+/// `EAVESY_NO_TELEMETRY=1` turns sending off for that launch: anyone can use
+/// it to opt out, and the release workflow's launch test sets it so test runs
+/// don't reach production. The local log is still written.
 fn posthog_key() -> Option<&'static str> {
+    if std::env::var_os("EAVESY_NO_TELEMETRY").is_some_and(|value| value == "1") {
+        return None;
+    }
     option_env!("EAVESY_POSTHOG_KEY").filter(|key| !key.trim().is_empty())
 }
 

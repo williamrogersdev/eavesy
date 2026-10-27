@@ -89,14 +89,14 @@ function DownloadMacPage() {
                   <p className="font-round font-bold text-ev-ink">Eavesy runs on Mac.</p>
                   <p className="mt-1 text-ev-ink-2">
                     Open <span className="font-semibold text-ev-ink">eavesy.com/download/mac</span> on your Mac to install it,
-                    or record from any browser with the <Link href="/app/record" className="font-semibold text-ev-slate underline underline-offset-2">web recorder</Link>.
+                    or record from any browser with the <Link href="/app/record" className="font-semibold text-ev-coat underline underline-offset-2">web recorder</Link>.
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-3">
                   <a
                     href={DMG_URL}
-                    className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ev-slate px-6 font-round text-base font-bold text-ev-on-slate shadow-[var(--ev-e-2)] transition hover:bg-ev-slate-hover active:scale-[0.98]"
+                    className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ev-coat px-6 font-round text-base font-bold text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-[0.98]"
                   >
                     <Apple className="h-5 w-5" />
                     {started ? 'Download again' : 'Download for Mac'}
@@ -117,6 +117,9 @@ function DownloadMacPage() {
             <div className="mt-8 max-w-md">
               <p className="font-round text-[13px] font-bold text-ev-ink-2">Prefer Homebrew?</p>
               <CopyCommand text={BREW} />
+              <p className="mt-3 text-sm leading-relaxed text-ev-ink-2">
+                Both install the same app in Applications. Already have Eavesy? Open it and choose Update instead of installing another copy.
+              </p>
             </div>
           </div>
 
@@ -131,7 +134,7 @@ function DownloadMacPage() {
         <ol className="mt-6 grid gap-4 md:grid-cols-4">
           {STEPS.map((step, i) => (
             <li key={step.title} className="rounded-[var(--ev-r-panel)] bg-ev-raised p-5 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)]">
-              <span className="grid h-7 w-7 place-items-center rounded-full bg-ev-slate-soft font-round text-sm font-extrabold text-ev-slate">
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-ev-coat-soft font-round text-sm font-extrabold text-ev-coat">
                 {i + 1}
               </span>
               <h3 className="mt-3 font-round text-[15px] font-bold text-ev-ink">{step.title}</h3>
@@ -157,13 +160,13 @@ function DownloadMacPage() {
           </div>
           <p className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-ev-ink-2">
             <span className="inline-flex items-center gap-1.5"><FolderOpen className="h-4 w-4" /> Saved under ~/Eavesy as plain Markdown and audio</span>
-            <span className="inline-flex items-center gap-1.5"><GithubMark className="h-3.5 w-3.5" /> Apache-2.0, <a href={siteConfig.github} className="font-semibold text-ev-slate underline underline-offset-2">on GitHub</a></span>
+            <span className="inline-flex items-center gap-1.5"><GithubMark className="h-3.5 w-3.5" /> Apache-2.0, <a href={siteConfig.github} className="font-semibold text-ev-coat underline underline-offset-2">on GitHub</a></span>
           </p>
         </div>
       </section>
 
       <div className="py-10 text-center text-sm text-ev-ink-2">
-        Already installed? <Link href="/sign-in" className="font-semibold text-ev-slate underline underline-offset-2">Sign in</Link> to sync your library.
+        Already installed? <Link href="/sign-in" className="font-semibold text-ev-coat underline underline-offset-2">Sign in</Link> to sync your library.
       </div>
     </main>
   );
@@ -172,7 +175,7 @@ function DownloadMacPage() {
 const BREW = 'brew install --cask williamrogersdev/eavesy/eavesy';
 
 const STEPS = [
-  { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications.' },
+  { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications. If Eavesy is already there, replace it rather than keep both.' },
   { title: 'Allow the mic', body: 'Setup asks for the microphone. Screen Recording and the rest are optional.' },
   { title: 'Sign in, if you like', body: 'Free sign-in adds cloud transcripts, briefs and sync. You can stay local.' },
   { title: 'Press ⌘⇧Space', body: 'Opens Eavesy from anywhere. ⌘⇧D starts Talk and types where your cursor is.' },

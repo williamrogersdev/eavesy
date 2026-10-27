@@ -204,6 +204,118 @@
       "when": 1792439747807,
       "tag": "0028_auto_detect_language",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792442281026,
+      "tag": "0029_spoken_languages",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1792450000030,
+      "tag": "0030_personal_dictionary",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1792450000031,
+      "tag": "0031_credit_usage_and_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1792450000032,
+      "tag": "0032_ai_credit_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1792450000033,
+      "tag": "0033_transcript_raw_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1792450000034,
+      "tag": "0034_dictation_style",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1792450000035,
+      "tag": "0035_project_dictation_style",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1792635461267,
+      "tag": "0036_meeting_bots",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1792635461268,
+      "tag": "0037_dictionary_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792637733902,
+      "tag": "0038_email_recaps",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1792693096614,
+      "tag": "0039_capture_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792695569739,
+      "tag": "0040_meeting_bot_canary",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1792698104364,
+      "tag": "0041_saved_prompts",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1792732549827,
+      "tag": "0042_recovery_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1792866257487,
+      "tag": "0043_agent_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1793042190174,
+      "tag": "0044_calendar_sync_status",
+      "breakpoints": true
     }
   ]
 }

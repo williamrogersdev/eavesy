@@ -74,6 +74,27 @@ fn a_live_segment_goes_before_an_older_sessions_archive_parts() {
 }
 
 #[test]
+fn a_cancelled_recording_drops_its_segments_and_goes_first_to_be_deleted() {
+    let conn = db();
+    session(&conn, "old-meeting", "uploading", 1, 0);
+    session(&conn, "cancelled", "recording", 2, 0);
+    segment(&conn, "cancelled", 0);
+    conn.execute("UPDATE recording_sessions SET next_attempt_at=500 WHERE id='cancelled'", []).unwrap();
+    discard_recording_on(&conn, "cancelled", 100).unwrap();
+
+    let next = next_session_on(&conn, 100).unwrap().unwrap();
+    assert_eq!(next.id, "cancelled");
+    assert!(next.discarded);
+    let segments: i64 = conn
+        .query_row("SELECT count(*) FROM recording_segments WHERE session_id='cancelled'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(segments, 0);
+    // Whatever state an in-flight upload leaves it in, it is still deleted.
+    conn.execute("UPDATE recording_sessions SET status='failed' WHERE id='cancelled'", []).unwrap();
+    assert_eq!(next_session_on(&conn, 100).unwrap().unwrap().id, "cancelled");
+}
+
+#[test]
 fn a_just_stopped_note_is_not_queued_behind_a_long_archive() {
     let conn = db();
     session(&conn, "old-meeting", "uploading", 1, 0);
@@ -172,4 +193,57 @@ fn failed_and_complete_sessions_are_never_picked() {
     session(&conn, "a", "failed", 1, 0);
     session(&conn, "b", "complete", 2, 0);
     assert!(next_session_on(&conn, 100).unwrap().is_none());
+}
+
+fn edit_state(conn: &Connection, id: &str) -> (i64, i64, i64) {
+    conn.query_row(
+        "SELECT attempts, next_attempt_at, abandoned FROM pending_operations WHERE id=?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_failing_file_edit_backs_off_and_steps_aside_for_later_edits() {
+    let conn = db();
+    enqueue_file_edit_in(&conn, "a", "notes", "first", "h1").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    enqueue_file_edit_in(&conn, "b", "notes", "second", "h2").unwrap();
+    let first = next_file_edit_on(&conn, i64::MAX / 2).unwrap().unwrap();
+    assert_eq!(first.local_session_id, "a");
+
+    mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", 1_000).unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (1, 6_000, 0));
+    // Waiting out its backoff, it does not hold up the next edit.
+    assert_eq!(next_file_edit_on(&conn, 2_000).unwrap().unwrap().local_session_id, "b");
+    mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", 6_000).unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (2, 16_000, 0), "twice as long each time");
+
+    for attempt in 2..FILE_EDIT_MAX_ATTEMPTS {
+        mark_operation_failed_on(&conn, &first.operation_id, "HTTP 503", attempt * 1_000_000).unwrap();
+    }
+    let (attempts, next_attempt_at, abandoned) = edit_state(&conn, &first.operation_id);
+    assert_eq!((attempts, abandoned), (FILE_EDIT_MAX_ATTEMPTS, 1), "given up on after the cap");
+    assert!(next_attempt_at - (FILE_EDIT_MAX_ATTEMPTS - 1) * 1_000_000 <= 3_600_000, "at most an hour apart");
+    assert_eq!(next_file_edit_on(&conn, i64::MAX / 2).unwrap().unwrap().local_session_id, "b");
+
+    // A newer edit to the same file starts afresh.
+    enqueue_file_edit_in(&conn, "a", "notes", "third", "h3").unwrap();
+    assert_eq!(edit_state(&conn, &first.operation_id), (0, 0, 0));
+}
+
+#[test]
+fn file_edit_columns_are_added_to_an_older_queue() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(MIGRATIONS_SQL).unwrap();
+    conn.execute(
+        "INSERT INTO pending_operations (id, operation_type, payload_json, created_at, status)
+         VALUES ('file-edit:x:notes', 'file-edit', '{\"operationId\":\"file-edit:x:notes\",\"localSessionId\":\"x\",\"role\":\"notes\",\"contentMd\":\"\",\"contentHash\":\"h\"}', 1, 'failed')",
+        [],
+    )
+    .unwrap();
+    migrate(&conn).unwrap();
+    assert_eq!(edit_state(&conn, "file-edit:x:notes"), (0, 0, 0));
+    assert!(next_file_edit_on(&conn, 0).unwrap().is_some(), "an older failed edit is tried again");
 }

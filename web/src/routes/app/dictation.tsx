@@ -1,3 +1,6 @@
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { useInlineTranslation } from '@/lib/translation/use-inline-translation';
+import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Clipboard, Loader2, Mic, MicOff, RotateCcw, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -15,7 +18,7 @@ export const Route = createFileRoute('/app/dictation')({
 function DictationPage() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
-  const [result, setResult] = useState<{ transcript: string; cleaned?: string } | null>(null);
+  const [result, setResult] = useState<{ id: string; transcript: string; cleaned?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const captureRef = useRef<BrowserAudioCapture | null>(null);
@@ -73,7 +76,9 @@ function DictationPage() {
       const transcript = isRecord(json) ? optionalString(json.transcript) : undefined;
       if (!transcript) throw new Error('Server returned an invalid transcript');
       const cleaned = isRecord(json) ? optionalString(json.cleaned) : undefined;
-      setResult({ transcript, cleaned });
+      const id = isRecord(json) ? optionalString(json.id) : undefined;
+      if (!id) throw new Error("Missing dictation ID");
+      setResult({ id, transcript, cleaned });
       setPhase('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -123,7 +128,7 @@ function DictationPage() {
             type="button"
             onClick={() => void start()}
             aria-label="Start dictation"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-slate transition hover:bg-action-hover active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-coat transition hover:bg-action-hover active:scale-95"
           >
             <Mic className="h-5 w-5" />
           </button>
@@ -160,9 +165,10 @@ function DictationPage() {
       {phase === 'done' && result && (
         <div className="flex flex-col gap-3">
           {result.cleaned && result.cleaned !== result.transcript && (
-            <Section title="Cleaned up" text={result.cleaned} primary copied={copied === result.cleaned} onCopy={() => void copy(result.cleaned!)} />
+            <Section title="Cleaned up" text={result.cleaned} primary copied={copied} onCopy={text => void copy(text)} />
           )}
-          <Section title="As spoken" text={result.transcript} copied={copied === result.transcript} onCopy={() => void copy(result.transcript)} />
+          <CorrectionEditor id={result.id} original={result.cleaned ?? result.transcript} onSaved={cleaned => setResult({ ...result, cleaned })} />
+          <Section title="As spoken" text={result.transcript} copied={copied} onCopy={text => void copy(text)} />
           <button
             type="button"
             onClick={() => {
@@ -189,22 +195,24 @@ function Section({
   title: string;
   text: string;
   primary?: boolean;
-  copied: boolean;
-  onCopy: () => void;
+  copied: string | null;
+  onCopy: (text: string) => void;
 }) {
+  const translation = useInlineTranslation(text);
   return (
-    <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-slate bg-ev-slate-soft' : 'border-ev-line')}>
+    <section className={cn('rounded-[var(--ev-r-pop)] border p-3', primary ? 'border-ev-coat bg-ev-coat-soft' : 'border-ev-line')}>
       <div className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs font-medium text-ev-ink-2">
           {primary ? <Sparkles className="h-3.5 w-3.5" /> : null}
           {title}
         </span>
-        <button type="button" onClick={onCopy} className={appButton('ghost', 'sm')}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-1"><button type="button" disabled={translation.busy} onClick={() => onCopy(translation.text)} className={appButton('ghost', 'sm')}>
+          {copied === translation.text ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+          {copied === translation.text ? 'Copied' : 'Copy'}
+        </button><LanguagePicker value={translation.language} pending={translation.busy} onChange={language => void translation.select(language)} /></div>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+      <p dir="auto" lang={translation.language ?? undefined} className="whitespace-pre-wrap text-sm leading-relaxed">{translation.text}</p>
+      {translation.error && <p role="alert" className="mt-1 text-xs text-ev-warn-ink">{translation.error}</p>}
     </section>
   );
 }

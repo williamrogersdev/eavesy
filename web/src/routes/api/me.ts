@@ -5,10 +5,23 @@ import { getDb } from '@/db/client';
 import { devices, users } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as usersRepo from '@/db/repo/users';
-import { isNotesLanguage, isTranscriptionLanguage } from '@/lib/transcription/language';
+import {
+  AUTO_LANGUAGE,
+  isNotesLanguage,
+  isTranscriptionLanguage,
+  MAX_SPOKEN_LANGUAGES,
+  normalizeSpokenLanguages,
+  spokenLanguages,
+} from '@/lib/transcription/language';
+import { dictationStyle, isDictationStyle } from '@/lib/transcription/dictation-style';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
-import { resolveActor } from '@/server/auth';
+import { resolveIngestActor } from '@/server/device-auth';
+import { getCloudflareContext } from '@/server/cloudflare-context';
+import { type EmailEnv, emailConfigured } from '@/server/email/resend';
+
+/** What the Mac app may change with its device token; the rest needs a web sign-in. */
+const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents']);
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -18,17 +31,22 @@ const updateSchema = z.object({
   defaultTranscriptionEngine: z.literal('whisper').optional(),
   defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
   notesLanguage: z.string().refine(isNotesLanguage, 'unsupported language').nullable().optional(),
+  spokenLanguages: z.array(z.string().max(12)).max(MAX_SPOKEN_LANGUAGES * 2).optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
+  dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').optional(),
+  dictationForAgents: z.boolean().optional(),
+  emailRecaps: z.boolean().optional(),
+  emailRecapTranscript: z.boolean().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
 
 export const Route = createFileRoute('/api/me')({
   server: {
     handlers: {
-      GET: async () => {
+      GET: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -56,7 +74,13 @@ export const Route = createFileRoute('/api/me')({
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
           notesLanguage: u.notesLanguage ?? null,
+          spokenLanguages: spokenLanguages(u),
           customVocabulary: parseVocabulary(u.customVocabularyJson),
+          dictationStyle: dictationStyle(u.dictationStyle),
+          dictationForAgents: u.dictationForAgents,
+          emailRecaps: u.emailRecaps,
+          emailRecapTranscript: u.emailRecapTranscript,
+          emailRecapsAvailable: emailConfigured(getCloudflareContext<EmailEnv>().env),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
           hasOpenRouterKey: !!u.byoOpenRouterKey,
@@ -68,7 +92,7 @@ export const Route = createFileRoute('/api/me')({
       PATCH: async ({ request }) => {
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -76,6 +100,10 @@ export const Route = createFileRoute('/api/me')({
         if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const body = parsedBody.data;
         const db = getDb();
+        const fromMac = 'deviceId' in actor;
+        if (fromMac && Object.keys(body).some((key) => !MAC_WRITABLE.has(key))) {
+          return Response.json({ error: 'sign_in_on_web' }, { status: 403 });
+        }
         if ('byoAnthropicKey' in body) {
           await usersRepo.updateByoKeys(db, actor.userId, {
             anthropicKey: body.byoAnthropicKey,
@@ -89,6 +117,22 @@ export const Route = createFileRoute('/api/me')({
         if (body.defaultTranscriptionEngine) patch.defaultTranscriptionEngine = body.defaultTranscriptionEngine;
         if (body.defaultLanguage) patch.defaultLanguage = body.defaultLanguage;
         if (body.notesLanguage !== undefined) patch.notesLanguage = body.notesLanguage;
+        if (body.spokenLanguages) {
+          const spoken = normalizeSpokenLanguages(body.spokenLanguages);
+          patch.spokenLanguagesJson = spoken.length > 0 ? JSON.stringify(spoken) : null;
+          patch.defaultLanguage = AUTO_LANGUAGE;
+        }
+        if (body.dictationStyle) patch.dictationStyle = body.dictationStyle === 'natural' ? null : body.dictationStyle;
+        if (body.dictationForAgents !== undefined) patch.dictationForAgents = body.dictationForAgents;
+        if (body.emailRecaps !== undefined) {
+          // Recaps go to the account's own address, so a guest account has nowhere to send them.
+          const [owner] = await db.select({ email: users.email, isAnonymous: users.isAnonymous }).from(users).where(eq(users.id, actor.userId)).limit(1);
+          if (body.emailRecaps && (owner?.isAnonymous || !owner?.email)) {
+            return Response.json({ error: 'Add an email address to your account to get recaps.' }, { status: 400 });
+          }
+          patch.emailRecaps = body.emailRecaps;
+        }
+        if (body.emailRecapTranscript !== undefined) patch.emailRecapTranscript = body.emailRecapTranscript;
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;

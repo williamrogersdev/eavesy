@@ -11,6 +11,47 @@ if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 <
     Screenshot.run(outPath: CommandLine.arguments[index + 1])
 }
 
+if CommandLine.arguments.contains("--prepare-speech") {
+    SpeechModelSetup.run(arguments: CommandLine.arguments)
+}
+
+// Offline processing entry points also serve filesystem-capable agents.
+if let index = CommandLine.arguments.firstIndex(of: "--walkthrough"),
+   index + 1 < CommandLine.arguments.count,
+   let out = CommandLine.arguments.firstIndex(of: "--output-dir"), out + 1 < CommandLine.arguments.count {
+    let video = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+    let folder = URL(fileURLWithPath: CommandLine.arguments[out + 1])
+    Task {
+        do { try await WalkthroughProcessor.run(video: video, folder: folder); exit(0) }
+        catch { fail(error.localizedDescription) }
+    }
+    RunLoop.main.run()
+    exit(0)
+}
+if let index = CommandLine.arguments.firstIndex(of: "--moment-crops"), index + 1 < CommandLine.arguments.count,
+   let moments = CommandLine.arguments.firstIndex(of: "--moments"), moments + 1 < CommandLine.arguments.count,
+   let out = CommandLine.arguments.firstIndex(of: "--output-dir"), out + 1 < CommandLine.arguments.count {
+    let video = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+    let list = URL(fileURLWithPath: CommandLine.arguments[moments + 1])
+    let folder = URL(fileURLWithPath: CommandLine.arguments[out + 1])
+    Task {
+        do { try await MomentCrops.run(video: video, moments: list, folder: folder); exit(0) }
+        catch { fail(error.localizedDescription) }
+    }
+    RunLoop.main.run()
+    exit(0)
+}
+if let index = CommandLine.arguments.firstIndex(of: "--extract-frame"), index + 1 < CommandLine.arguments.count,
+   let at = CommandLine.arguments.firstIndex(of: "--at"), at + 1 < CommandLine.arguments.count,
+   let seconds = Double(CommandLine.arguments[at + 1]),
+   let out = CommandLine.arguments.firstIndex(of: "--output"), out + 1 < CommandLine.arguments.count {
+    do {
+        try WalkthroughProcessor.extractFrame(video: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
+            seconds: seconds, output: URL(fileURLWithPath: CommandLine.arguments[out + 1]))
+        exit(0)
+    } catch { fail(error.localizedDescription) }
+}
+
 let stdinLines = LineReader(handle: .standardInput)
 
 // A standby is launched ahead of the hotkey and waits, microphone closed, for
@@ -30,13 +71,15 @@ if CommandLine.arguments.contains("--standby") {
 
 let args = Arguments.parse(argv)
 
-let languages = CaptionLanguages(locale: args.locale, follows: args.followsSpeech, vocabulary: args.vocabulary)
+let languages = CaptionLanguages(
+    locale: args.locale, follows: args.followsSpeech, vocabulary: args.vocabulary, preview: args.preview)
 let captions = Dictionary(
     uniqueKeysWithValues: args.captions.map { track in
         (
             track,
             LiveCaptions(track: track.rawValue, emit: EventEmitter.emit, onFinal: languages.heard) { ready in
-                CaptionEngines.make(locale: args.locale, vocabulary: args.vocabulary, completion: ready)
+                CaptionEngines.make(
+                    locale: args.locale, vocabulary: args.vocabulary, preview: args.preview, completion: ready)
             }
         )
     })

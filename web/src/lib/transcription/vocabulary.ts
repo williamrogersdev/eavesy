@@ -1,5 +1,5 @@
-/** More than this many words stops helping the recognizers. */
-export const MAX_VOCABULARY_TERMS = 100;
+/** Kept per account. Each recognizer takes the newest that fit: Whisper a prompt's worth, the Mac 100. */
+export const MAX_VOCABULARY_TERMS = 500;
 export const MAX_TERM_LENGTH = 60;
 /**
  * Whisper reads about 224 tokens of prompt and keeps the end of a longer one.
@@ -10,6 +10,25 @@ export const MAX_TERM_LENGTH = 60;
  */
 const MAX_PROMPT_CHARS = 800;
 const MAX_GLOSSARY_CHARS = 500;
+
+/**
+ * The app's own name. Every recognizer is told it ahead of the user's words,
+ * so no cap can push it out, and nobody has to add it themselves.
+ */
+export const BUILT_IN_TERMS: readonly string[] = ['Eavesy'];
+
+/**
+ * How recognizers mishear the name. Only spellings that are no English word,
+ * so "easy", "eves" and "Evie" are never touched. A neighbouring dot, slash,
+ * at-sign or dash means a domain, path or handle, which is left as written.
+ */
+const MISHEARD_NAME =
+  /(?<![\p{L}\p{N}@/._-])(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie)(?![\p{L}\p{N}@/_-]|\.[\p{L}\p{N}])/giu;
+
+/** The app's name spelled right wherever a recognizer clearly misheard it. */
+export function fixBuiltInTerms(text: string): string {
+  return text.replace(MISHEARD_NAME, BUILT_IN_TERMS[0]);
+}
 
 /**
  * Trimmed, de-duplicated words and phrases, one per entry, capped in length
@@ -47,8 +66,9 @@ export function parseVocabulary(json: string | null | undefined): string[] {
 }
 
 /**
- * Whisper's `initial_prompt`: the meeting's context, then the user's words.
- * Whisper keeps the end of a prompt that runs long, so the words go last.
+ * Whisper's `initial_prompt`: the meeting's context, then the built-in terms
+ * and the user's words. Whisper keeps the end of a prompt that runs long, so
+ * the words go last; the built-in terms lead them, so the budget never drops them.
  */
 export function whisperPrompt(opts: {
   contextBlurb?: string | null;
@@ -56,7 +76,7 @@ export function whisperPrompt(opts: {
 }): string | undefined {
   const words: string[] = [];
   let glossaryChars = 1;
-  for (const word of normalizeVocabulary(opts.vocabulary ?? [])) {
+  for (const word of normalizeVocabulary([...BUILT_IN_TERMS, ...(opts.vocabulary ?? [])])) {
     const added = word.length + (words.length > 0 ? 2 : 0);
     if (glossaryChars + added > MAX_GLOSSARY_CHARS) break;
     words.push(word);

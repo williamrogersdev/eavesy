@@ -28,7 +28,10 @@ const TAG: Record<Need, string | null> = {
   'not-needed': 'not needed',
 };
 
-/** Whether the Talk or Open Eavesy shortcut is the fn key, which needs Input Monitoring. */
+/**
+ * Whether a shortcut is the fn key on its own, which needs Input Monitoring.
+ * fn held with a key ("Fn+Space", shown "fn Space") doesn't: it needs Accessibility instead.
+ */
 export function usesFnKey(...accelerators: string[]): boolean {
   return accelerators.some((accel) => accel.trim().toLowerCase() === 'fn');
 }
@@ -91,6 +94,31 @@ export function permissionSpecs(fnInUse: boolean): PermissionSpec[] {
 export function isGranted(permissions: Permissions | null, kind: SetupPermissionKind): boolean | undefined {
   if (!permissions) return undefined;
   return permissions[kind] ?? false;
+}
+
+/** Same answers from macOS, so there's nothing new to render. */
+export function samePermissions(a: Permissions | null, b: Permissions | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof Permissions>;
+  for (const key of keys) {
+    if (key !== 'status' && a[key] !== b[key]) return false;
+  }
+  const sa = (a.status ?? {}) as Partial<Record<string, PermissionStatus>>;
+  const sb = (b.status ?? {}) as Partial<Record<string, PermissionStatus>>;
+  for (const kind of new Set([...Object.keys(sa), ...Object.keys(sb)])) {
+    if (sa[kind] !== sb[kind]) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a permissions list on screen should keep re-checking: only while one
+ * of its rows that matters here (anything but "not needed") is still off.
+ */
+export function needsPermissionPoll(permissions: Permissions | null, fnInUse: boolean): boolean {
+  if (!permissions) return true;
+  return permissionSpecs(fnInUse).some((spec) => spec.need !== 'not-needed' && !isGranted(permissions, spec.kind));
 }
 
 /**

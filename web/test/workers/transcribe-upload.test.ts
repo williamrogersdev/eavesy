@@ -66,7 +66,7 @@ describe('/api/transcribe large uploads', () => {
       params: {},
     });
 
-    expect(await response.json()).toEqual({ text: 'ok', language: 'en', durationSec: 1 });
+    expect(await response.json()).toEqual({ text: 'ok', rawText: 'ok', repairStatus: 'unavailable', language: 'en', durationSec: 1 });
     expect(response.status).toBe(200);
     expect(transcribed.bytes).toBe(audioBytes);
   }, 60_000);

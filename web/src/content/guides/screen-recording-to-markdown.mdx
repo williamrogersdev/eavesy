@@ -1,0 +1,63 @@
+---
+title: "Turn a screen recording into Markdown context"
+description: "Record a narrated walkthrough on your Mac, then combine its transcript, brief, and selected screenshots into context an AI can inspect."
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "Walkthrough capture", "path": "/features/walkthroughs"}, {"title": "A worked UI bug example", "path": "/examples/narrated-ui-bug"}, {"title": "Use Claude Code", "path": "/integrations/claude-code"}]
+---
+
+A useful recording handoff includes what you said, what appeared on screen, and what you want the agent to investigate. Eavesy records the source video and prepares local walkthrough context with narration, screen text, sampled frames, and media references on supported builds. Signed-in audio processing supplies transcription. Review the resulting context and the visual evidence before sharing.
+
+## Record a focused walkthrough
+
+Open the Mac launcher with **⌘⇧Space**, choose **Video**, and grant the requested Microphone and Screen Recording permissions. Show the initial state, perform the action, and describe what you expected and what appeared instead. Stop after one complete reproduction.
+
+Avoid saying only “this is broken.” Name the control, the action that triggers the issue, and anything that changed just before it. A 40-second walkthrough of one problem is often easier to investigate than a long tour.
+
+## Open the saved files
+
+Find the capture in your recordings folder, normally `~/Eavesy/Recordings`. Video captures contain `screen.mp4` and recording metadata; transcript and summary files become available as processing completes. Check `transcript.md` and `summary.md` before passing them on. A placeholder summary is not a finished brief.
+
+In Mac version 0.5.4, video frames are not automatically turned into a timestamped visual Markdown document. Audio transcription describes spoken words; it does not establish what a button looked like. Take a screenshot of the relevant state or attach the video when the receiving agent supports it.
+
+## Assemble the handoff
+
+Use the [bug report template](/templates/ai-bug-report). Fill in the observed behavior, expected behavior, reproduction steps, and the actual paths or uploaded attachments. Include the transcript excerpt that explains the failure. Keep guesses about the cause separate from observations.
+
+A local coding agent can read files it has permission to access. A browser chat needs the text pasted and the necessary media attached; a path alone does not upload it.
+
+## Check what the agent received
+
+Ask the agent to identify the source files it actually opened and summarize the visible symptom before proposing a change. If it only read the transcript, attach a screenshot rather than assuming it saw the video. Review its proposed fix against the original reproduction.
+
+Signed-in audio processing uses the cloud. Local screen files and standalone screenshots are not made available by the hosted recording MCP connection. See the [sharing guide](/guides/share-local-recordings-with-ai) for the boundary.
+
+## Walkthrough context in Mac 0.5.5 and later
+
+Mac [0.5.5](https://github.com/williamrogersdev/eavesy/releases/tag/desktop-v0.5.5) added this workflow. Look for `context.md` and `walkthrough.json` in the saved folder. On supported captures, Copy supplies structured narration, extracted screen text, warnings, and media references. Review readiness and warnings before sharing. A browser chat still cannot open local media paths automatically. Use the [local context guide](/guides/local-recording-context) for the version-specific setup.
+
+## Choose the handoff for your task
+
+| What the agent needs | What to provide | What to check |
+| --- | --- | --- |
+| A decision you spoke aloud | Relevant transcript passage and your question | Names, numbers, and whether the passage is final |
+| A visible UI failure | Reproduction, screenshot, and narration | The screenshot shows the failing state |
+| A sequence or animation | Original video, if the client supports it | The recipient can actually open and inspect video |
+| A local walkthrough investigation | Capture folder or local walkthrough MCP | Readiness, warnings, and the frames actually inspected |
+
+For example, use a request like this with the actual files you selected:
+
+```text
+Investigate why Export is disabled after switching workspaces.
+Read the walkthrough context and inspect the screenshot of the disabled state.
+First identify the observed behavior and the source files you opened.
+Then inspect the relevant project code. Keep possible causes separate from
+what the capture establishes, and repeat the reproduction after a change.
+```
+
+## When the handoff is incomplete
+
+If you have only a video, keep it and add a short written reproduction; do not rename it to Markdown. If cloud text is still processing, say that explicitly and use the visible evidence you already have. If the agent says it cannot open an image, attach that image through its supported input rather than repeating the same local path.
+
+A useful final handoff contains one problem, its starting state, the expected and actual behavior, accessible evidence, and a specific request. The report is complete when the recipient can inspect those inputs, not merely when you have copied text.

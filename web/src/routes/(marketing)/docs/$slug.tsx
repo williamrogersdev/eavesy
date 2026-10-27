@@ -1,6 +1,6 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
 import { Pencil } from 'lucide-react';
-import { getAllDocs, getDoc } from '@/lib/content';
+import { getDoc } from '@/lib/content';
 import { extractToc } from '@/lib/toc';
 import { categoryMeta, docEditUrl, DOC_REDIRECTS } from '@/lib/docs-meta';
 import { siteConfig } from '@/lib/site';
@@ -12,11 +12,14 @@ import { GithubMark } from '@/components/github-mark';
 import { seoHead } from '@/lib/seo-head';
 
 export const Route = createFileRoute('/(marketing)/docs/$slug')({
-  loader: ({ params }) => {
+  // Imported on demand: loaders stay in the entry bundle, and the content
+  // module carries every compiled MDX page.
+  loader: async ({ params }) => {
     const moved = DOC_REDIRECTS[params.slug];
     if (moved) {
       throw redirect({ to: '/docs/$slug', params: { slug: moved }, statusCode: 301 });
     }
+    const { getAllDocs, getDoc } = await import('@/lib/content');
     const doc = getDoc(params.slug);
     if (!doc) throw notFound();
 
@@ -62,7 +65,7 @@ function DocPage() {
           ]}
         />
         <header className="mb-10 border-b border-ev-line pb-8">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-ev-slate-soft px-3 py-1 font-round text-xs font-bold text-ev-slate">
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-ev-coat-soft px-3 py-1 font-round text-xs font-bold text-ev-coat">
             <CategoryIcon className="h-3.5 w-3.5" />
             {frontmatter.category}
           </div>
@@ -108,7 +111,7 @@ function DocPage() {
           <DocToc items={toc} />
           <a
             href={docEditUrl(slug)}
-            className="inline-flex items-center gap-2 text-sm text-ev-ink-2 transition hover:text-ev-slate"
+            className="inline-flex items-center gap-2 text-sm text-ev-ink-2 transition hover:text-ev-coat"
           >
             <Pencil className="h-3.5 w-3.5" />
             Edit this page

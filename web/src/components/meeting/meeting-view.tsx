@@ -103,7 +103,7 @@ function Loaded({
         </Link>
         <header className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="mt-0.5 grid h-11 w-11 shrink-0 place-items-center rounded-full bg-ev-slate-soft text-ev-slate">
+            <span className="mt-0.5 grid h-11 w-11 shrink-0 place-items-center rounded-full bg-ev-coat-soft text-ev-coat">
               <KindIcon item={{ variant }} size={20} />
             </span>
             <div className="min-w-0 flex-1">
@@ -179,12 +179,16 @@ function Loaded({
           hasTranscript={segments.length > 0 || Boolean(meeting.transcriptOverrideMd)}
           hasBrief={hasBrief}
         />
+      ) : meeting.status === 'recording' && meeting.source === 'bot' ? (
+        <AppAlert tone="info">
+          The notetaker is in this meeting now. The transcript and brief arrive a few minutes after the call ends.
+        </AppAlert>
       ) : meeting.status === 'failed' ? (
         <AppAlert>This one didn&apos;t finish: {meeting.statusError || 'no details were given.'}</AppAlert>
       ) : null}
 
       {firstRun && meeting.status === 'complete' ? (
-        <div role="status" className="flex items-center gap-3 rounded-[var(--ev-r-panel)] bg-ev-honey-soft px-4 py-3 text-sm text-ev-honey-ink">
+        <div role="status" className="flex items-center gap-3 rounded-[var(--ev-r-panel)] bg-ev-manila-soft px-4 py-3 text-sm text-ev-manila-ink">
           <Mascot size={28} state="happy" />
           <p>
             Your first brief is ready. Use <strong>Copy for AI</strong> to paste it into Claude, ChatGPT or Cursor.
@@ -197,7 +201,7 @@ function Loaded({
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-5">
           {hasBrief || segments.length > 0 ? (
-            <Section title="Brief" icon={<Sparkles className="h-4 w-4 text-ev-slate" />}>
+            <Section title="Brief" icon={<Sparkles className="h-4 w-4 text-ev-coat" />}>
               {meeting.summaryOverrideMd ? (
                 <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-ev-ink">
                   {meeting.summaryOverrideMd}
@@ -250,9 +254,13 @@ function Loaded({
               ) : (
                 <p className="text-sm text-ev-ink-2">The brief appears here once the transcript is done.</p>
               )}
-              <div className="mt-5 border-t border-ev-line pt-3">
-                <BriefControls data={data} meetingId={meetingId} onSaved={onSaved} />
-              </div>
+              {/* The pipeline writes the brief once the recording is processed;
+                  regenerating from a partial transcript would race it. */}
+              {isMeetingLive(data) ? null : (
+                <div className="mt-5 border-t border-ev-line pt-3">
+                  <BriefControls data={data} meetingId={meetingId} onSaved={onSaved} />
+                </div>
+              )}
             </Section>
           ) : null}
 
@@ -297,7 +305,7 @@ function Bullets({ items }: { items: string[] }) {
     <ul className="space-y-1.5 text-sm text-ev-ink">
       {items.map((text, i) => (
         <li key={i} className="flex gap-2.5">
-          <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ev-slate" />
+          <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ev-coat" />
           {text}
         </li>
       ))}

@@ -26,3 +26,39 @@ is the right place for anything intrusive.
 
 Fixes go into `main` and the latest macOS release. Older desktop builds pick
 them up through the in-app updater.
+
+## How the Mac app is locked down
+
+Some of the Mac app's choices look loose from the outside. Each one is
+deliberate.
+
+- **Not sandboxed.** The "This Mac" clean-up reads other processes (their
+  working folder, ports and parent) to find leftovers, which the App Sandbox
+  forbids. Every read is limited to processes owned by the signed-in user.
+  The app does use the hardened runtime and is notarized.
+- **Entitlements** (`desktop/src-tauri/entitlements.plist`):
+  - `device.audio-input` and screen capture: recording is the product.
+  - `automation.apple-events`: pasting a transcript into the app you're
+    using.
+  - `network.client`: talking to eavesy.com and the updater.
+  - `files.user-selected.read-write`: exports and imports you pick.
+
+  The app has no JIT or unsigned-memory exceptions. The web view's JavaScript
+  runs in WebKit's own process. Every signed build is launched in CI ("Launch
+  the signed app" in `macos-release.yml`), and it can't ship unless it stays
+  up and its web view's code calls into the app within 90 s.
+- **Private API** (`macOSPrivateApi`): only for transparent windows (the
+  recording HUD and assistant cards). Tauri needs it for window transparency
+  on macOS.
+- **Capture engine.** The app runs the `SwiftAudio` sidecar only if it is
+  signed by the same Apple team as the app itself, so a replaced binary never
+  runs.
+- **Local agent socket.** It lives in a folder only you can open (mode 0700,
+  owned by you; the app refuses to listen otherwise), and it only accepts
+  connections from your own user.
+- **Updates** are signed. The update key is pinned in `tauri.conf.json`, and
+  a test holds a second copy of it, so changing the key means editing that
+  test too, which shows up in review.
+- **Dependencies.** CI runs `cargo audit` on the app's Rust crates. Each
+  ignored advisory, with why it can't reach the Mac app, is in
+  `desktop/src-tauri/.cargo/audit.toml`.

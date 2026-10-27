@@ -1,0 +1,1 @@
+.ev-menu.ev-language-menu { max-height: min(320px, var(--radix-dropdown-menu-content-available-height)); overflow-y: auto; overscroll-behavior: contain; }

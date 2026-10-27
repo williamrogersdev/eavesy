@@ -46,8 +46,18 @@ export const Route = createFileRoute('/api/templates')({
         const parsedBody = createSchema.safeParse(await request.json().catch(() => null));
         if (!parsedBody.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
         const body = parsedBody.data;
-        const id = await templatesRepo.create(getDb(), { userId: actor.userId, ...body });
-        return Response.json({ id });
+        try {
+          const id = await templatesRepo.create(getDb(), { userId: actor.userId, ...body });
+          return Response.json({ id });
+        } catch (error) {
+          if (error instanceof templatesRepo.TooManyTemplates) {
+            return Response.json(
+              { error: 'too_many_templates', message: `You can keep up to ${templatesRepo.TEMPLATE_LIMIT} templates. Delete one to add another.` },
+              { status: 409 },
+            );
+          }
+          throw error;
+        }
       },
 
       PATCH: async ({ request }) => {

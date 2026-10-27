@@ -1,0 +1,100 @@
+[
+  {
+    "name": "speech continues after a correction",
+    "source": "Check the post hog errors.",
+    "text": "Check the PostHog errors.",
+    "incoming": "Check the post hog errors. Then make a plan.",
+    "expected": "Check the PostHog errors. Then make a plan."
+  },
+  {
+    "name": "unfinished phrase grows while its beginning is edited",
+    "source": "Check the tickets",
+    "text": "Review the tickets",
+    "incoming": "Check the tickets that arrived overnight.",
+    "expected": "Review the tickets that arrived overnight."
+  },
+  {
+    "name": "recognizer settles untouched words",
+    "source": "check the tickets today",
+    "text": "Review the tickets today",
+    "incoming": "Check the tickets tomorrow.",
+    "expected": "Review the tickets tomorrow."
+  },
+  {
+    "name": "user wins conflicting recognition",
+    "source": "Send it to Jon.",
+    "text": "Send it to Jane.",
+    "incoming": "Send it to John. And copy Sam.",
+    "expected": "Send it to Jane. And copy Sam."
+  },
+  {
+    "name": "deleting all previous speech still allows new speech",
+    "source": "Old words.",
+    "text": "",
+    "incoming": "Old words. New words.",
+    "expected": " New words."
+  },
+  {
+    "name": "typed insertion at the end precedes continued speech",
+    "source": "Hello.",
+    "text": "Hello. Typed addition.",
+    "incoming": "Hello. Spoken addition.",
+    "expected": "Hello. Typed addition. Spoken addition."
+  },
+  {
+    "name": "line breaks and unicode corrections survive",
+    "source": "Meet Jose today.",
+    "text": "Meet José\ntoday.",
+    "incoming": "Meet Jose today. Bring coffee.",
+    "expected": "Meet José\ntoday. Bring coffee."
+  },
+  {
+    "name": "empty source accepts typing plus new speech",
+    "source": "",
+    "text": "Notes: ",
+    "incoming": "Hello there.",
+    "expected": "Notes: Hello there."
+  },
+  {
+    "name": "unchanged incoming text preserves a deletion",
+    "source": "um hello",
+    "text": "hello",
+    "incoming": "um hello",
+    "expected": "hello"
+  },
+  {
+    "name": "recognition only",
+    "source": "Hello",
+    "text": "Hello",
+    "incoming": "Hello again",
+    "expected": "Hello again"
+  },
+  {
+    "name": "already merged completion is idempotent",
+    "source": "Hello wrong.",
+    "text": "Hello right.",
+    "incoming": "Hello right. More words.",
+    "expected": "Hello right. More words."
+  },
+  {
+    "name": "multiple corrections with continued speech",
+    "source": "Jon needs teh report.",
+    "text": "Jane needs the report.",
+    "incoming": "Jon needs teh report. By Friday.",
+    "expected": "Jane needs the report. By Friday."
+  },
+  {
+    "name": "already merged typed insertion is not duplicated",
+    "source": "Hello.",
+    "text": "Hello. Typed addition.",
+    "incoming": "Hello. Typed addition. Spoken addition.",
+    "expected": "Hello. Typed addition. Spoken addition."
+  },
+  {
+    "name": "typed prefix remains single when an updated saved copy contains it",
+    "source": "hello",
+    "text": "Notes: hello!",
+    "incoming": "Notes: hello there",
+    "expected": "Notes: hello! there"
+  }
+]

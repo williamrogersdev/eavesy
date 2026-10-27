@@ -10,6 +10,16 @@ export function plainTranscript(text: string): string {
 
 export type HistoryFilter = 'all' | 'voice' | 'meetings' | 'screens' | 'notes';
 
+/**
+ * Whether focus arriving in the search field opens it from an icon into a
+ * field. Asked for ("/") or moved there from another control (Tab, a closing
+ * filter menu) opens it; the panel's quiet focus on open and the window
+ * getting focus back (nothing to come from) leave it an icon until you type.
+ */
+export function searchFocusOpens({ asked, quiet, fromElement }: { asked: boolean; quiet: boolean; fromElement: boolean }): boolean {
+  return asked || (!quiet && fromElement);
+}
+
 export const FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'voice', label: 'Voice' },
@@ -18,22 +28,28 @@ export const FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'notes', label: 'Notes' },
 ];
 
+/** How each source reads in the panel, and which filter shows it. The one table for both. */
+const SOURCE_KIND: Record<Recording['source'], { label: string; filter: Exclude<HistoryFilter, 'all'> }> = {
+  mic: { label: 'Voice note', filter: 'voice' },
+  dictation: { label: 'Voice note', filter: 'voice' },
+  both: { label: 'Meeting', filter: 'meetings' },
+  system: { label: 'Meeting', filter: 'meetings' },
+  screen: { label: 'Video', filter: 'screens' },
+  screenshot: { label: 'Screenshot', filter: 'screens' },
+  image: { label: 'Image', filter: 'screens' },
+  note: { label: 'Note', filter: 'notes' },
+  upload: { label: 'Upload', filter: 'voice' },
+};
+
 export function filterOf(rec: Recording): Exclude<HistoryFilter, 'all'> {
-  switch (rec.source) {
-    case 'both':
-    case 'system':
-      return 'meetings';
-    case 'screen':
-    case 'screenshot':
-    case 'image':
-      return 'screens';
-    case 'note':
-      return 'notes';
-    case 'upload':
-      return rec.hasVideo ? 'screens' : 'voice';
-    default:
-      return 'voice';
-  }
+  if (rec.source === 'upload') return rec.hasVideo ? 'screens' : 'voice';
+  return (SOURCE_KIND[rec.source] ?? SOURCE_KIND.mic).filter;
+}
+
+/** The kind label on a row's meta line ("Voice note", "Meeting"); an upload shows its title. */
+export function kindLabel(rec: Recording): string {
+  if (rec.source === 'upload') return rec.title || 'Upload';
+  return (SOURCE_KIND[rec.source] ?? SOURCE_KIND.mic).label;
 }
 
 /** Newest first, narrowed by chip and search (title + transcript). */
@@ -103,4 +119,40 @@ export function clock(sec: number): string {
 
 export function timeOfDay(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * What the history area shows. Until the first page arrives it is loading (search
+ * and an empty list, never the empty mascot), and a failed load is never "empty".
+ */
+export type HistoryView = 'loading' | 'empty' | 'list';
+export function historyView(page: { counts: { all: number } } | null, error: string | null, live: boolean): HistoryView {
+  if (live) return 'list';
+  if (page === null) return error ? 'list' : 'loading';
+  return page.counts.all === 0 && !error ? 'empty' : 'list';
+}
+
+/** Whether two rows carry the same data, field by field (every Recording field is flat). */
+export function sameRecording(a: Recording, b: Recording): boolean {
+  if (a === b) return true;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof Recording>;
+  for (const key of keys) if (a[key] !== b[key]) return false;
+  return true;
+}
+
+/**
+ * Keeps the previous object for every row whose data didn't change, so memoized
+ * rows skip re-rendering after a refresh. Returns `previous` itself when nothing changed.
+ */
+export function reuseRows(previous: readonly Recording[], next: Recording[]): Recording[] {
+  if (previous.length === 0) return next;
+  const old = new Map(previous.map((row) => [row.id, row]));
+  let changed = previous.length !== next.length;
+  const rows = next.map((row, index) => {
+    const kept = old.get(row.id);
+    const out = kept && sameRecording(kept, row) ? kept : row;
+    if (out !== previous[index]) changed = true;
+    return out;
+  });
+  return changed ? rows : (previous as Recording[]);
 }

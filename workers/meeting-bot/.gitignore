@@ -1,0 +1,3 @@
+bot/target
+node_modules
+!bot/Cargo.lock

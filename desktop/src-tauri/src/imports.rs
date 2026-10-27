@@ -287,9 +287,7 @@ fn clipboard_file_paths() -> Vec<PathBuf> { Vec::new() }
 /// gone is fine; if the Trash refuses, the capture is put back.
 #[tauri::command]
 pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
-    let recording = store::load_all(&app)
-        .into_iter()
-        .find(|recording| recording.id == id)
+    let recording = store::get(&app, &id)?
         .ok_or("That capture is already gone.")?;
     let live = app.state::<audio::Captures>().is_busy() && crate::hud::current().session_id.as_deref() == Some(id.as_str());
     if recording.status == "recording" || live {
@@ -307,11 +305,24 @@ pub async fn delete_capture(app: AppHandle, id: String) -> Result<(), String> {
             return Err("That capture's folder is outside your Eavesy folder, so it was left alone.".into());
         }
     }
-    let dismissed = crate::cloud_pull::dismiss(&app, &id)?;
+    // Sync bookkeeping never stops a delete: at worst a pulled copy comes back later.
+    let dismissed = crate::cloud_pull::dismiss(&app, &id).unwrap_or_else(|error| {
+        tracing::warn!("cloud pull: could not note the delete: {error}");
+        false
+    });
+    let dismissed_image = crate::capture_sync::dismiss(&app, &id).unwrap_or_else(|error| {
+        tracing::warn!("capture sync: could not note the delete: {error}");
+        false
+    });
     let undismiss = || {
         if dismissed {
             if let Err(error) = crate::cloud_pull::undismiss(&app, &id) {
-                eprintln!("cloud pull: could not restore {id} after a failed delete: {error}");
+                tracing::warn!(%id, "cloud pull: could not restore after a failed delete: {error}");
+            }
+        }
+        if dismissed_image {
+            if let Err(error) = crate::capture_sync::undismiss(&app, &id) {
+                tracing::warn!(%id, "capture sync: could not restore after a failed delete: {error}");
             }
         }
     };

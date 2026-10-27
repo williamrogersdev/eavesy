@@ -15,6 +15,9 @@ pub struct Caption {
     pub is_final: bool,
     pub start_ms: i64,
     pub end_ms: i64,
+    /// Words only the fast preview recognizer has heard: shown live, never
+    /// pasted or stored.
+    pub preview: bool,
 }
 
 /// Whether captions are running for a track, and why not when they aren't.
@@ -41,29 +44,82 @@ pub enum Paste {
     OnDevice(String),
     /// Transcribe the clip with cloud Whisper instead, for this reason.
     Whisper(String),
+    /// Paste nothing: the recognizer heard no words in a silent clip, and
+    /// Whisper only invents some for silence ("Thank you."). Says why.
+    Silent(String),
 }
+
+/// How close to the end of the clip the on-device words must reach for the
+/// quick paste: a recognizer running behind has only the start of what was
+/// said, sometimes a single "yeah", and pasting that loses the rest.
+pub const QUICK_PASTE_SLACK_MS: i64 = 3_000;
+
+/// A mic level at or above this is sound: the capture engine's own bar for an
+/// active 30 ms frame (about -48 dBFS), below quiet speech at arm's length.
+pub const ACTIVE_RMS: f64 = 0.004;
+/// Fewer readings than this say too little about a clip to call it silent.
+const MIN_LEVEL_READINGS: i64 = 5;
 
 /// The captions of one recording, and how they ended.
 #[derive(Debug, Default)]
 pub struct CaptionLog {
     finals: Vec<Caption>,
-    /// Per track, what the recognizer is hearing past its last final.
-    partials: BTreeMap<String, Caption>,
+    /// Unsettled phrases by track and range; several may be awaiting finals.
+    partials: BTreeMap<(String, i64), Caption>,
     unavailable: Option<String>,
+    /// Audio a recognizer lost before the recording stopped.
+    dropped_live: i64,
     /// How captions ended, merged over every track that reported.
     done: Option<CaptionsDone>,
+    /// Mic level readings: how many, how many were sound, and the loudest.
+    levels: i64,
+    loud_levels: i64,
+    loudest: f64,
+}
+
+pub(crate) fn same_phrase(a: &Caption, b: &Caption) -> bool {
+    let overlap = a.end_ms.min(b.end_ms) - a.start_ms.max(b.start_ms);
+    let longest = (a.end_ms - a.start_ms).max(b.end_ms - b.start_ms);
+    let shortest = (a.end_ms - a.start_ms).min(b.end_ms - b.start_ms);
+    if a.track != b.track { return false; }
+    // Track/start identifies the recognizer hypothesis; its final text may
+    // differ completely from the provisional text at that same audio offset.
+    if a.start_ms == b.start_ms { return true; }
+    // Volatile Apple ranges include silence before the first word; settled
+    // ranges narrow to speech. Compare coverage of the narrower hypothesis.
+    let coverage = if a.is_final && b.is_final { longest } else { shortest };
+    if overlap <= 0 || overlap <= coverage / 2 { return false; }
+    let normalize = |text: &str| format!(" {} ", text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).collect::<Vec<_>>().join(" "));
+    let left = normalize(&a.text);
+    let right = normalize(&b.text);
+    // Time ranges alone cannot identify a revision. Keep distinct text even
+    // when recognizer windows overlap heavily; growing partials contain their
+    // earlier text, while a corrected final at the same start replaces it.
+    if left.trim().is_empty() || right.trim().is_empty() { return false; }
+    // Apple may re-emit the same settled sentence with slightly shifted
+    // timestamps/casing. Identical words over the same audio are one phrase;
+    // distinct settled words (including contained phrases) must both survive.
+    if a.is_final && b.is_final { return left == right; }
+    left.contains(&right) || right.contains(&left)
 }
 
 impl CaptionLog {
     pub fn record(&mut self, caption: &Caption) {
-        if caption.text.trim().is_empty() {
+        // Preview words are for the HUD alone. The engine replaces them with
+        // the accurate recognizer's text, and puts that back at Stop.
+        if caption.preview || caption.text.trim().is_empty() {
             return;
         }
+        // A new phrase is not a revision of every earlier phrase on a track.
+        // Keep disjoint partials until their own final arrives, including when
+        // the previous recognition window is still draining at rollover.
+        self.partials.retain(|_, previous| !same_phrase(previous, caption));
         if caption.is_final {
+            self.finals.retain(|previous| !same_phrase(previous, caption));
             self.finals.push(caption.clone());
-            self.partials.remove(&caption.track);
-        } else {
-            self.partials.insert(caption.track.clone(), caption.clone());
+        } else if !self.finals.iter().any(|settled| same_phrase(settled, caption)) {
+            self.partials.insert((caption.track.clone(), caption.start_ms), caption.clone());
         }
     }
 
@@ -80,6 +136,35 @@ impl CaptionLog {
         });
     }
 
+    pub fn note_dropped(&mut self, count: i64) {
+        self.dropped_live += count.max(1);
+    }
+
+    /// One `level` reading from the capture engine.
+    pub fn note_level(&mut self, rms: f64) {
+        if !rms.is_finite() { return; }
+        self.levels += 1;
+        if rms >= ACTIVE_RMS { self.loud_levels += 1; }
+        self.loudest = self.loudest.max(rms);
+    }
+
+    /// Whether the clip was measured and had next to no sound in it.
+    fn silent(&self) -> bool {
+        // Not one loud reading: anything louder goes to Whisper, which filters
+        // invented phrases itself, rather than risk dropping quiet words.
+        self.levels >= MIN_LEVEL_READINGS && self.loud_levels == 0
+    }
+
+    /// Whether the recognizer ran to a clean finish over the whole clip and
+    /// heard no words in it. One that could not run or lost audio heard nothing
+    /// only because it was not listening.
+    pub fn heard_no_words(&self) -> bool {
+        self.unavailable.is_none()
+            && self.dropped_live == 0
+            && self.done.is_some_and(|done| !done.failed && !done.timed_out && done.dropped == 0)
+            && self.spoken_text().is_empty()
+    }
+
     /// Whether a track has reported how its captions ended.
     pub fn is_done(&self) -> bool {
         self.done.is_some()
@@ -87,10 +172,29 @@ impl CaptionLog {
 
     /// What to paste the moment a dictation stops, without waiting for the
     /// recognizer to finish cleanly: every final plus what it was still
-    /// hearing. Only a recognizer that could not run, failed, or lost audio
-    /// (or heard nothing) sends the clip to Whisper instead.
-    pub fn quick_paste(&self) -> Paste {
-        self.decide(false)
+    /// hearing, as long as those words reach close to the end of the
+    /// `clip_ms`-long clip. A recognizer that could not run, failed, lost
+    /// audio, heard no words in a clip with sound in it, or is still behind
+    /// sends the clip to Whisper; a silent clip with no words pastes nothing.
+    /// So does a note that ends in more than `QUICK_PASTE_SLACK_MS` of
+    /// silence: it pastes a moment later, whole, rather than risk a gap.
+    pub fn quick_paste(&self, clip_ms: i64) -> Paste {
+        if self.dropped_live > 0 {
+            return Paste::Whisper(format!("{} audio buffers never reached the recognizer", self.dropped_live));
+        }
+        match self.decide(false) {
+            Paste::OnDevice(_) if self.heard_until() < clip_ms - QUICK_PASTE_SLACK_MS => Paste::Whisper(format!(
+                "on-device words stop at {:.1}s of a {:.1}s clip",
+                self.heard_until() as f64 / 1000.0,
+                clip_ms as f64 / 1000.0
+            )),
+            decision => decision,
+        }
+    }
+
+    /// Where in the clip the last word the recognizer reported ends.
+    fn heard_until(&self) -> i64 {
+        self.finals.iter().chain(self.partials.values()).map(|c| c.end_ms).max().unwrap_or(0)
     }
 
     /// The on-device text, if every bit of the clip reached the recognizer and
@@ -117,8 +221,20 @@ impl CaptionLog {
             }
             _ => {}
         }
+        // Reaching the end is not enough: a recognizer that lost its first
+        // window can report a perfectly final tail. Transcribe the full clip
+        // rather than presenting that tail as the whole message. A long quiet
+        // lead-in takes the same conservative fallback.
+        if self.finals.iter().chain(self.partials.values()).map(|c| c.start_ms).min().is_some_and(|start| start > QUICK_PASTE_SLACK_MS) {
+            return Paste::Whisper("on-device words are missing the beginning of the clip".to_string());
+        }
         let text = self.spoken_text();
-        if text.is_empty() {
+        if text.is_empty() && self.heard_no_words() && self.silent() {
+            Paste::Silent(format!(
+                "no words and a silent clip: loudest level {:.4}, {} of {} readings above {ACTIVE_RMS}",
+                self.loudest, self.loud_levels, self.levels
+            ))
+        } else if text.is_empty() {
             Paste::Whisper("no words recognized on device".to_string())
         } else {
             Paste::OnDevice(text)
@@ -131,26 +247,25 @@ impl CaptionLog {
         }
     }
 
+    #[cfg(test)]
     fn sorted_finals(&self) -> Vec<&Caption> {
         let mut finals: Vec<&Caption> = self.finals.iter().collect();
         finals.sort_by_key(|c| (c.start_ms, c.end_ms));
         finals
     }
 
-    /// What each track was still hearing past its last final, in spoken order.
-    fn trailing_partials(&self) -> Vec<&Caption> {
-        let mut partials: Vec<&Caption> = self.partials.values().collect();
-        partials.sort_by_key(|c| (c.start_ms, c.end_ms));
-        partials
+    fn spoken_captions(&self) -> Vec<&Caption> {
+        let mut heard: Vec<_> = self.finals.iter().chain(self.partials.values()).collect();
+        heard.sort_by_key(|caption| (caption.start_ms, caption.end_ms));
+        heard
     }
 
     /// Everything heard, as one plain paragraph: the text to paste. The words
     /// the recognizer was still working on at the end count too: the user said
     /// them, and they are usually the last words of the note.
     pub fn spoken_text(&self) -> String {
-        self.sorted_finals()
+        self.spoken_captions()
             .into_iter()
-            .chain(self.trailing_partials())
             .map(|c| c.text.trim())
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
@@ -172,8 +287,7 @@ impl CaptionLog {
     /// heard even if it did not finish cleanly: some text now beats none. With
     /// both sides captioned, each turn is labelled the way the cloud labels it.
     pub fn transcript(&self) -> Option<String> {
-        let mut heard = self.sorted_finals();
-        heard.extend(self.trailing_partials());
+        let heard = self.spoken_captions();
         let both_sides = heard.iter().any(|c| c.track == "mic") && heard.iter().any(|c| c.track == "system");
         let mut turns: Vec<(&str, String)> = Vec::new();
         for caption in heard {
@@ -211,7 +325,186 @@ mod tests {
             is_final,
             start_ms,
             end_ms: start_ms + 500,
+            preview: false,
         }
+    }
+
+    /// Opt-in integration check for actual CaptionEngines.swift output. The
+    /// fixture harness runs without mic capture, playback or foreground input.
+    #[test]
+    #[ignore = "requires EAVESY_CAPTION_FIXTURE from the signed speech fixture harness"]
+    fn real_speech_fixture_preserves_the_whole_message_for_paste() {
+        let path = std::env::var("EAVESY_CAPTION_FIXTURE").expect("caption fixture path");
+        let input = std::fs::read_to_string(path).expect("read caption events");
+        let mut log = CaptionLog::default();
+        for line in input.lines().filter(|line| !line.trim().is_empty()) {
+            let event: serde_json::Value = serde_json::from_str(line).expect("caption event");
+            assert_eq!(event["event"], "caption");
+            log.record(&Caption {
+                session_id: "fixture".into(), track: "mic".into(),
+                text: event["text"].as_str().expect("text").into(),
+                is_final: event["final"].as_bool().expect("final"),
+                start_ms: event["startMs"].as_i64().expect("start"),
+                end_ms: event["endMs"].as_i64().expect("end"),
+                preview: event["preview"].as_bool().unwrap_or(false),
+            });
+        }
+        log.finish(CLEAN);
+        let Paste::OnDevice(text) = log.paste() else { panic!("fixture must produce complete on-device text") };
+        let normalized = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect::<String>();
+        let normalized = normalized.split_whitespace().map(|word| match word { "1st" => "first", "2" => "two", "3" => "three", _ => word }).collect::<Vec<_>>().join(" ");
+        for sentence in ["blue notebook", "kitchen table", "three green apples", "meeting tomorrow",
+            "first draft", "every sentence in order", "red folder", "last friday", "printed pages",
+            "beside the window", "two proposals", "important differences", "new chairs",
+            "notebooks for everyone", "short break", "delivery schedule", "first section explains the problem",
+            "middle section describes our plan", "last section lists the next steps", "close the windows",
+            "turn off the lights", "spare key in the drawer", "call alex before"] {
+            assert!(normalized.contains(sentence), "missing phrase {sentence:?} in {text}");
+        }
+        assert_eq!(log.quick_paste(50_814), Paste::OnDevice(text.clone()));
+        if let Ok(path) = std::env::var("EAVESY_CAPTION_PASTE_OUTPUT") {
+            std::fs::write(path, text).expect("save assembled paste");
+        }
+    }
+
+    #[test]
+    fn quick_paste_keeps_earlier_phrases_while_finals_are_pending() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Start of the message.", false, 0));
+        log.record(&caption("Middle of the message.", false, 2_000));
+        log.record(&caption("Trailing end.", false, 4_000));
+        assert_eq!(log.quick_paste(5_000), Paste::OnDevice("Start of the message. Middle of the message. Trailing end.".into()));
+        // Older finals can arrive after the next phrase starts.
+        log.record(&caption("Start of the message.", true, 0));
+        log.record(&caption("Middle of the message.", true, 2_000));
+        assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
+        log.record(&caption("Trailing end.", true, 4_000));
+        assert_eq!(log.spoken_text(), "Start of the message. Middle of the message. Trailing end.");
+    }
+
+    fn preview(text: &str, start_ms: i64, end_ms: i64) -> Caption {
+        Caption { preview: true, end_ms, ..caption(text, false, start_ms) }
+    }
+
+    #[test]
+    fn preview_words_are_never_pasted() {
+        let mut log = CaptionLog::default();
+        log.record(&preview("Okay so on the posters", 0, 2_500));
+        assert_eq!(log.spoken_text(), "");
+        assert!(matches!(log.quick_paste(3_000), Paste::Whisper(_)));
+        // A preview under the accurate text's start leaves that text alone.
+        log.record(&Caption { end_ms: 2_000, ..caption("Okay, so I'm the", false, 0) });
+        log.record(&preview("Okay, so I'm the posters migration", 0, 3_000));
+        assert_eq!(log.spoken_text(), "Okay, so I'm the");
+        assert_eq!(log.quick_paste(4_000), Paste::OnDevice("Okay, so I'm the".into()));
+    }
+
+    #[test]
+    fn the_engine_handover_from_preview_to_final_pastes_only_the_final() {
+        // What the engine sends: a preview, the final's words under the
+        // preview's start, the final itself, then the next stretch's preview.
+        let mut log = CaptionLog::default();
+        log.record(&preview("So the posters migration look fine, but", 0, 4_000));
+        log.record(&Caption { end_ms: 3_900, ..caption("So the post migration looks fine.", false, 0) });
+        log.record(&Caption { end_ms: 3_900, ..caption("So the post migration looks fine.", true, 100) });
+        log.record(&preview("but Siobhan said", 3_900, 5_000));
+        assert_eq!(log.spoken_text(), "So the post migration looks fine.");
+        assert!(log.partials.is_empty());
+    }
+
+    #[test]
+    fn slight_window_boundary_overlap_keeps_both_phrases() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("First sentence.", true, 0);
+        first.end_ms = 1_000;
+        let mut next = caption("Next sentence.", true, 900);
+        next.end_ms = 2_000;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "First sentence. Next sentence.");
+        let mut revision = first.clone();
+        revision.start_ms = 0;
+        revision.text = "Corrected first sentence.".into();
+        log.record(&revision);
+        assert_eq!(log.spoken_text(), "Corrected first sentence. Next sentence.");
+    }
+
+    #[test]
+    fn heavy_window_overlap_does_not_discard_distinct_text() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("Please bring the red notebook.", true, 0);
+        first.end_ms = 2_000;
+        let mut next = caption("Then close the kitchen window.", true, 500);
+        next.end_ms = 2_500;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "Please bring the red notebook. Then close the kitchen window.");
+    }
+
+    #[test]
+    fn settled_speech_replaces_a_provisional_range_that_includes_silence() {
+        let mut log = CaptionLog::default();
+        let mut partial = caption("The blue Notebook is on the kitchen table.", false, 0);
+        partial.end_ms = 23_159;
+        let mut settled = caption("The blue notebook is on the kitchen table.", true, 18_060);
+        settled.end_ms = 21_240;
+        log.record(&partial);
+        log.record(&settled);
+        // Late volatile updates for the same audio cannot resurrect it.
+        log.record(&partial);
+        assert_eq!(log.spoken_text(), settled.text);
+        assert!(matches!(log.quick_paste(23_159), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn timestamp_jitter_does_not_repeat_the_same_settled_sentence() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("The blue Notebook is on the kitchen table.", true, 1_000);
+        first.end_ms = 4_000;
+        let mut revision = caption("The blue notebook is on the kitchen table.", true, 1_040);
+        revision.end_ms = 4_020;
+        log.record(&first);
+        log.record(&revision);
+        assert_eq!(log.spoken_text(), "The blue notebook is on the kitchen table.");
+        // Repeating the same words later is real speech, not a duplicate.
+        log.record(&caption("The blue notebook is on the kitchen table.", true, 5_000));
+        assert_eq!(log.spoken_text(), "The blue notebook is on the kitchen table. The blue notebook is on the kitchen table.");
+    }
+
+    #[test]
+    fn a_contained_final_at_a_different_start_is_still_spoken() {
+        let mut log = CaptionLog::default();
+        let mut first = caption("Okay.", true, 0);
+        first.end_ms = 2_000;
+        let mut next = caption("Okay. Then close the window.", true, 500);
+        next.end_ms = 2_500;
+        log.record(&first);
+        log.record(&next);
+        assert_eq!(log.spoken_text(), "Okay. Okay. Then close the window.");
+    }
+
+    #[test]
+    fn quiet_lead_in_threshold_is_deliberately_conservative() {
+        for start in [QUICK_PASTE_SLACK_MS, QUICK_PASTE_SLACK_MS + 1] {
+            let mut log = CaptionLog::default();
+            log.record(&caption("Complete words after silence.", true, start));
+            log.finish(CLEAN);
+            // Without independent audio coverage evidence, silence and a lost
+            // first window are indistinguishable. Prefer full-clip recovery.
+            assert_eq!(matches!(log.quick_paste(start + 500), Paste::OnDevice(_)), start == QUICK_PASTE_SLACK_MS);
+        }
+    }
+
+    #[test]
+    fn revisions_replace_only_their_phrase_without_duplicating_words() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("First", false, 0));
+        log.record(&caption("First sentence.", false, 0));
+        log.record(&caption("Last", false, 2_000));
+        log.record(&caption("First sentence.", true, 0));
+        log.record(&caption("Last sentence.", true, 2_000));
+        log.record(&caption("Last sentence.", true, 2_000));
+        assert_eq!(log.spoken_text(), "First sentence. Last sentence.");
     }
 
     #[test]
@@ -328,7 +621,7 @@ mod tests {
         log.finish(CaptionsDone { dropped: 2, timed_out: false, failed: false });
         log.finish(CLEAN);
         assert!(matches!(log.paste(), Paste::Whisper(_)));
-        assert!(matches!(log.quick_paste(), Paste::Whisper(_)));
+        assert!(matches!(log.quick_paste(1_000), Paste::Whisper(_)));
     }
 
     #[test]
@@ -337,14 +630,52 @@ mod tests {
         log.record(&caption("Send it", true, 0));
         log.record(&caption("today", false, 900));
         assert!(!log.is_done());
-        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
+        assert_eq!(log.quick_paste(2_000), Paste::OnDevice("Send it today".into()));
         log.finish(CaptionsDone { timed_out: true, ..CLEAN });
-        assert_eq!(log.quick_paste(), Paste::OnDevice("Send it today".into()));
-        assert!(matches!(CaptionLog::default().quick_paste(), Paste::Whisper(_)), "nothing heard");
+        assert_eq!(log.quick_paste(2_000), Paste::OnDevice("Send it today".into()));
+        assert!(matches!(CaptionLog::default().quick_paste(2_000), Paste::Whisper(_)), "nothing heard");
         let mut failed = CaptionLog::default();
         failed.record(&caption("x", true, 0));
         failed.finish(CaptionsDone { failed: true, ..CLEAN });
-        assert!(matches!(failed.quick_paste(), Paste::Whisper(_)));
+        assert!(matches!(failed.quick_paste(2_000), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn the_quick_paste_needs_words_within_the_slack_of_the_end() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Start.", true, 0));
+        log.record(&caption("Done.", true, 9_500)); // ends at 10_000
+        assert!(matches!(log.quick_paste(10_000 + QUICK_PASTE_SLACK_MS), Paste::OnDevice(_)));
+        assert!(matches!(log.quick_paste(10_001 + QUICK_PASTE_SLACK_MS), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn a_final_tail_alone_must_not_pass_for_the_whole_message() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("Only the trailing end.", true, 35_000));
+        log.finish(CLEAN);
+        assert!(matches!(log.quick_paste(36_000), Paste::Whisper(_)));
+        assert!(matches!(log.paste(), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn audio_lost_while_recording_sends_the_quick_paste_to_whisper() {
+        let mut log = CaptionLog::default();
+        log.record(&caption("the last words", true, 9_500));
+        log.note_dropped(3);
+        assert!(matches!(log.quick_paste(10_000), Paste::Whisper(_)));
+    }
+
+    #[test]
+    fn a_recognizer_that_is_behind_never_pastes_just_the_start() {
+        // 40 seconds said; the recognizer has only got to the first word.
+        let mut log = CaptionLog::default();
+        log.record(&caption("Yeah", false, 0));
+        assert!(matches!(log.quick_paste(40_000), Paste::Whisper(_)));
+        // Words up to near the end: a short pause before stopping is fine.
+        log.record(&caption("Yeah, so the plan is this.", true, 0));
+        log.record(&caption("and that's it", false, 37_000));
+        assert_eq!(log.quick_paste(40_000), Paste::OnDevice("Yeah, so the plan is this. and that's it".into()));
     }
 
     #[test]
@@ -362,7 +693,51 @@ mod tests {
         let mut unavailable = heard();
         unavailable.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: Some("locale unsupported".into()) });
         assert_eq!(finished(&mut unavailable, CLEAN), Paste::Whisper("captions unavailable: locale unsupported".into()));
-        assert!(whisper(finished(&mut CaptionLog::default(), CLEAN)), "silence");
+        // No words, but no level readings to show the clip was silent either.
+        assert!(whisper(finished(&mut CaptionLog::default(), CLEAN)), "unmeasured");
+    }
+
+    fn with_levels(levels: &[f64]) -> CaptionLog {
+        let mut log = CaptionLog::default();
+        levels.iter().for_each(|rms| log.note_level(*rms));
+        log
+    }
+
+    #[test]
+    fn a_silent_clip_with_no_words_pastes_nothing() {
+        // 3 s of room tone; a bad reading says nothing either way.
+        let mut levels = vec![0.001; 30];
+        levels[10] = f64::NAN;
+        let mut log = with_levels(&levels);
+        assert!(matches!(log.quick_paste(3_000), Paste::Whisper(_)), "not finished yet");
+        log.finish(CLEAN);
+        assert!(log.heard_no_words());
+        assert!(matches!(log.quick_paste(3_000), Paste::Silent(_)));
+        assert!(matches!(log.paste(), Paste::Silent(_)));
+    }
+
+    #[test]
+    fn sound_or_a_recognizer_that_did_not_listen_still_goes_to_whisper() {
+        let whisper = |paste: Paste| matches!(paste, Paste::Whisper(_));
+        // Any sound and no words: maybe a soft word it missed.
+        let mut levels = vec![0.001; 30];
+        levels[10] = 0.02;
+        assert!(whisper(finished(&mut with_levels(&levels), CLEAN)));
+        let silence = || with_levels(&[0.0005; 30]);
+        assert!(whisper(finished(&mut silence(), CaptionsDone { failed: true, ..CLEAN })));
+        assert!(whisper(finished(&mut silence(), CaptionsDone { timed_out: true, ..CLEAN })));
+        assert!(whisper(finished(&mut silence(), CaptionsDone { dropped: 2, ..CLEAN })));
+        let mut unavailable = silence();
+        unavailable.note_status(&CaptionStatus { session_id: "s".into(), track: "mic".into(), live: false, detail: None });
+        assert!(whisper(finished(&mut unavailable, CLEAN)));
+        assert!(!unavailable.heard_no_words());
+        // Too few readings to know.
+        assert!(whisper(finished(&mut with_levels(&[0.0005; 4]), CLEAN)));
+        // Words heard in a quiet clip are still pasted.
+        let mut whispered = silence();
+        whispered.record(&caption("Okay.", true, 0));
+        assert_eq!(finished(&mut whispered, CLEAN), Paste::OnDevice("Okay.".into()));
+        assert!(!whispered.heard_no_words());
     }
 
     #[test]

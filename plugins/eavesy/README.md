@@ -27,6 +27,15 @@ claude mcp add --transport http eavesy https://mcp.eavesy.com
   transport, OAuth).
 - `skills/eavesy-context`: when and how to use the Eavesy tools.
 
+## Saved prompts as slash commands
+
+Prompts you save in Eavesy (Mac app: Settings → Prompts) show up in Claude
+Code's slash menu as `/mcp__eavesy__<name>`, for example
+`/mcp__eavesy__triage-support-tickets`. Each takes one optional argument,
+`details`, which fills the prompt's `{{details}}` slot or is added at the end.
+Claude Code splits arguments on spaces, so it fits one word, like
+`/mcp__eavesy__triage-support-tickets billing`.
+
 ## Local server (coming)
 
 A local stdio server that reads `~/Eavesy/Recordings` directly (including

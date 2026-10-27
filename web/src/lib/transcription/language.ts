@@ -88,22 +88,84 @@ export function languageName(code: string | null | undefined): string {
 }
 
 /**
+ * A language the user doesn't speak needs this much certainty to be kept:
+ * accented English heard as Welsh or Dutch usually lands well below it.
+ */
+export const CONFIDENT_OUTSIDE_SPOKEN = 0.85;
+
+/** Most people record in one or two languages; a few more covers everyone else. */
+export const MAX_SPOKEN_LANGUAGES = 5;
+
+/**
  * When Whisper detected the language itself, whether to transcribe the clip
- * again in the language the meeting has been in so far. A confident switch is
- * kept, since people do change language mid-call; an unsure one that
- * disagrees with the meeting is far more often a misdetection than a switch.
+ * again in a likelier one. A confident switch is kept, since people do change
+ * language mid-call. An unsure detection is retried in the language the
+ * meeting has been in so far, and one outside the languages the user speaks
+ * must be near certain, else it is retried in the one of theirs most likely.
  */
 export function retryLanguage(opts: {
   setting: string | null | undefined;
   detected: string | undefined;
   probability: number | undefined;
   established: string | null | undefined;
+  spoken?: readonly string[];
 }): string | undefined {
-  if (whisperLanguage(opts.setting)) return undefined;
-  const established = opts.established?.trim().toLowerCase();
-  if (!established || established === opts.detected) return undefined;
-  if (opts.probability === undefined || opts.probability >= CONFIDENT_DETECTION) return undefined;
+  if (whisperLanguage(opts.setting) || !opts.detected || opts.probability === undefined) return undefined;
+  const established = opts.established?.trim().toLowerCase() || undefined;
+  if (established === opts.detected) return undefined;
+  const spoken = opts.spoken ?? [];
+  if (spoken.length > 0 && !spoken.includes(opts.detected) && opts.probability < CONFIDENT_OUTSIDE_SPOKEN) {
+    return established ?? spoken[0];
+  }
+  if (!established || opts.probability >= CONFIDENT_DETECTION) return undefined;
   return established;
+}
+
+/** Offered languages only, without repeats, in the order given. */
+export function normalizeSpokenLanguages(codes: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const raw of codes) {
+    if (typeof raw !== 'string') continue;
+    const code = raw.trim().toLowerCase();
+    if (!isNotesLanguage(code) || out.includes(code)) continue;
+    out.push(code);
+    if (out.length >= MAX_SPOKEN_LANGUAGES) break;
+  }
+  return out;
+}
+
+export function parseSpokenLanguages(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? normalizeSpokenLanguages(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The languages a user speaks: the ones they chose, else the fixed language
+ * they used to transcribe in, else none (detect anything).
+ */
+export function spokenLanguages(user: {
+  spokenLanguagesJson?: string | null;
+  defaultLanguage?: string | null;
+}): string[] {
+  const chosen = parseSpokenLanguages(user.spokenLanguagesJson);
+  if (chosen.length > 0) return chosen;
+  const fixed = whisperLanguage(user.defaultLanguage);
+  return fixed && isNotesLanguage(fixed) ? [fixed] : [];
+}
+
+/** The offered languages among a browser's preferences, e.g. ['en-GB', 'es-419'] → ['en', 'es']. */
+export function languagesFromLocales(locales: readonly string[]): string[] {
+  return normalizeSpokenLanguages(
+    locales.map((locale) => {
+      const code = locale.split('-')[0]?.toLowerCase() ?? '';
+      return code === 'nb' || code === 'nn' ? 'no' : code;
+    }),
+  );
 }
 
 /** The language most of these lines were heard in, if any were labelled. */

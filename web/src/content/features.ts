@@ -32,6 +32,19 @@ export interface FeaturePage {
 
 export const FEATURE_PAGES: FeaturePage[] = [
   {
+    slug: 'walkthroughs', icon: Radio, eyebrow: 'Screen and voice', name: 'Walkthroughs',
+    title: 'Record a walkthrough your AI can investigate',
+    description: 'Capture screen video and narration on your Mac. Review the transcript, add visual evidence, and hand the context to your AI assistant.',
+    intro: 'Use Video mode to show a bug, design, or product flow while explaining what you see. Eavesy saves the recording locally and processes signed-in audio into a transcript and brief. Share the text and the visual evidence your agent needs.',
+    highlights: [
+      { title: 'Screen, microphone, and computer audio', body: 'Video mode captures the walkthrough after you grant the required macOS permissions.' },
+      { title: 'Keep the source files', body: 'The recording stays in a normal folder with available transcript, brief, and metadata files.' },
+      { title: 'Choose the evidence to share', body: 'Add screenshots or a supported video attachment when your task needs visual inspection. A transcript alone does not describe every visible detail.' },
+      { title: 'Clear processing boundaries', body: 'On-device captions can provide preliminary words. Sign in for the cloud transcript and brief. Version 0.5.4 does not automatically extract a visual frame timeline.' },
+    ],
+    related: ['bot-free-capture', 'transcription', 'files-you-own'],
+  },
+  {
     slug: 'quick-capture',
     icon: ClipboardPaste,
     eyebrow: 'Drop things in',
@@ -40,7 +53,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     description:
       'In the Mac app, press ⌘V to save clipboard text or an image, or take a screenshot. Each one is stored as a Markdown or image file you can copy into any AI agent.',
     intro:
-      'Not everything your AI needs is a recording. Open the Eavesy launcher with ⌘⇧Space and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window, or drop a file in. Everything lands in a normal folder on your disk, next to your recordings, and stays on your Mac.',
+      'Not everything your AI needs is a recording. Open the Eavesy launcher with ⌘⇧Space and press ⌘V: text on your clipboard is saved as a Markdown note and an image is saved as a PNG, both in your capture history. Take a screenshot from the same window, or drop a file in. Everything lands in a normal folder on your disk, next to your recordings. When you are signed in, screenshots and images also sync to your other Macs; signed out, they stay on this one.',
     highlights: [
       { title: 'Clipboard text and images', body: 'Press ⌘V in the launcher to save whatever you copied last, a message, an order, a snippet of code, or an image, as a capture.' },
       { title: 'Screenshots', body: 'Take a screenshot of your display from the launcher (macOS 14 or later). Eavesy’s own window is left out of the image.' },
@@ -64,12 +77,12 @@ export const FEATURE_PAGES: FeaturePage[] = [
       'Eavesy records from your Mac instead of joining your call. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
     highlights: [
       { title: 'Three modes', body: 'Talk uses your mic only. Meeting adds the audio your Mac plays, without recording the screen. Video records your screen, its audio, and your mic.' },
-      { title: 'No meeting bot', body: 'Nothing joins the participant list. Eavesy records from your Mac while you handle consent according to your organization and local requirements.' },
+      { title: 'No meeting bot needed', body: 'Recording from your Mac adds nothing to the participant list. For a call you can’t record from your Mac, you can send a visible Eavesy Notetaker instead. Either way, you handle consent according to your organization and local requirements.' },
       { title: 'Works in person too', body: 'No meeting link required. Record a hallway conversation, a workshop, or a 1:1 over coffee the same way you record a Zoom call.' },
       { title: 'Shortcuts to start', body: 'Press ⌘⇧D to talk from anywhere, or ⌘⇧Space to open the launcher and start a meeting or video.' },
     ],
     faqs: [
-      { q: 'Does anyone on the call know I’m recording?', a: 'Eavesy does not add a participant to the call. Tell participants when required and follow the consent laws in your jurisdiction and your organization’s policy.' },
+      { q: 'Does anyone on the call know I’m recording?', a: 'Recording from your Mac does not add a participant to the call. The optional Notetaker joins under the visible name “Eavesy Notetaker” and says in the chat that it is transcribing. Tell participants when required and follow the consent laws in your jurisdiction and your organization’s policy.' },
       { q: 'Does it work for in-person meetings?', a: 'Yes. Meeting mode records your Mac’s microphone directly, so no meeting link is needed. It works in the room just as well as on a call.' },
     ],
     related: ['live-summary', 'transcription', 'privacy'],
@@ -86,7 +99,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       'Long Mac recordings are processed in recoverable rolling segments, and the completed session is finalized after you stop: a polished title, a TL;DR, the decisions and steps, all sitting on top of the complete transcript. It’s structured as Markdown so you can paste it straight into an AI agent — no reformatting, no re-explaining what it missed.',
     highlights: [
       { title: 'Built to paste into agents', body: 'Clean Markdown with clear sections — copy the whole brief into Claude, Cursor, or ChatGPT as structured context.' },
-      { title: 'Decisions & steps', body: 'Commitments, next steps, and the actions you took are pulled out and grouped so nothing slips through the cracks.' },
+      { title: 'Decisions & steps', body: 'Commitments, next steps, and the actions you took are pulled out and grouped for review against the original transcript.' },
       { title: 'Shape every brief', body: 'Edit the Markdown directly, re-run a session with built-in coding, research, customer, and meeting formats, or create your own reusable template.' },
       { title: 'The full transcript, always', body: 'The brief stays attached to the complete, copyable transcript, so you retain the source material.' },
     ],
@@ -118,14 +131,14 @@ export const FEATURE_PAGES: FeaturePage[] = [
     icon: Search,
     eyebrow: 'Search everything',
     name: 'Semantic search',
-    title: 'Search every word you’ve ever recorded',
+    title: 'Find context in your completed recordings',
     description:
       'Semantic search across all your meetings. Find the moment a decision was made, even when you don’t remember the exact words used.',
     intro:
-      'Your meetings become a searchable knowledge base. Eavesy indexes every transcript so you can ask for a topic in plain language and jump straight to the moment it came up — across every conversation you’ve recorded.',
+      'Your meetings become a searchable knowledge base. Eavesy indexes every transcript so you can ask for a topic in plain language and jump straight to the moment it came up — across completed, available account recordings. Retrieval and answer context can have limits; inspect source passages before relying on a result.',
     highlights: [
       { title: 'Meaning, not just keywords', body: 'Semantic search finds the right moment even when the words you search for aren’t the words that were said.' },
-      { title: 'Across every meeting', body: 'Search spans your entire history, not just one recording, so past context is always a query away.' },
+      { title: 'Across every meeting', body: 'Search can span completed recordings in your account. Processing state, indexing, and retrieval limits affect what is available.' },
       { title: 'Open the matching session', body: 'Results show a relevant excerpt and link back to the recording where that context was found.' },
     ],
     related: ['transcription', 'live-summary', 'files-you-own'],
@@ -179,7 +192,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       { title: 'Platform providers do not train on content', body: 'Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for model training unless the customer explicitly opts in.' },
       { title: 'Encrypted in transit and at rest', body: 'TLS protects data in transit; Cloudflare-managed encryption protects object storage and database data at rest.' },
       { title: 'Capture is explicit', body: 'Recording begins only after you start it and grant the required microphone or screen permissions.' },
-      { title: 'Clear deletion controls', body: 'Delete any recording, or your whole account, from the app; cloud copies are permanently removed. Local folders remain yours.' },
+      { title: 'Clear deletion controls', body: 'Delete recordings or your account from the app. Cloud removal completes through the documented deletion process; local folders remain under your control.' },
     ],
     related: ['files-you-own', 'bot-free-capture'],
   },

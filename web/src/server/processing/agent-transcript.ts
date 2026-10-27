@@ -34,7 +34,9 @@ export async function handleAgentTranscript(
   const project = await projectsRepo.getForMeeting(db, meeting);
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
-  const apiKey = plan.summary.apiKey ?? env.ANTHROPIC_API_KEY;
+  // Credit pilot imports keep cleanup model-free; no unmetered provider call.
+  const apiKey = meeting.source === 'import' && env.AI_SUMMARY_PROVIDER === 'workers-ai'
+    ? undefined : plan.summary.apiKey ?? env.ANTHROPIC_API_KEY;
 
   const result = await buildAgentTranscript(apiKey ? anthropicForUser(apiKey) : null, {
     turns,
@@ -44,7 +46,7 @@ export async function handleAgentTranscript(
       title: meeting.title,
       startedAt: meeting.startedAt,
       project: project?.name,
-      recorderName: kind === 'conversation' ? speakerName('you', names) : undefined,
+      recorderName: kind === 'conversation' && lines.some((line) => line.speakerId === 'you') ? speakerName('you', names) : undefined,
     },
   });
   if (apiKey && result.fallbackChunks > 0) {

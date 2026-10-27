@@ -21,6 +21,7 @@ export type MenuProps = {
   trigger: ReactNode;
   items: MenuItem[];
   align?: 'start' | 'end';
+  contentClassName?: string;
   /** Non-interactive content above the items, e.g. name and email. */
   header?: ReactNode;
   open?: boolean;
@@ -28,12 +29,12 @@ export type MenuProps = {
 };
 
 /** Raised, r12 popover with 28px items and full keyboard navigation (Radix). */
-export function Menu({ trigger, items, align = 'end', header, open, onOpenChange }: MenuProps) {
+export function Menu({ trigger, items, align = 'end', header, open, onOpenChange, contentClassName }: MenuProps) {
   return (
     <DropdownMenu.Root open={open} onOpenChange={onOpenChange} modal={false}>
       <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="ev-menu ev" align={align} sideOffset={6} collisionPadding={8}>
+        <DropdownMenu.Content className={`ev-menu ev ${contentClassName ?? ''}`} align={align} sideOffset={6} collisionPadding={8}>
           {header && (
             <>
               <div className="ev-menu-header">{header}</div>

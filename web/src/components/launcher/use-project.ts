@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseProject, type ProjectSummary } from '@/lib/api/projects';
 import { frontWindow, listDesktopProjects, onLauncherOpened, setProjectChoice, type FrontWindow } from '@/lib/desktop/bridge';
 import { matchProject } from '@/lib/projects';
@@ -39,6 +39,8 @@ export interface ProjectChoice {
   detected: ProjectSummary | null;
   front: FrontWindow | null;
   setMode: (mode: ProjectMode) => void;
+  /** Fetch the projects again after one was made or changed here. */
+  reload: () => void;
 }
 
 export function resolveProject(
@@ -49,6 +51,20 @@ export function resolveProject(
   if (mode === 'none') return null;
   if (mode === 'auto') return detected;
   return projects.find((project) => project.id === mode.pinned) ?? detected;
+}
+
+/**
+ * What the native side files hotkey recordings by. Signed out (or no projects)
+ * it is an empty list, so a stale choice never outlives the account.
+ */
+export function projectChoicePayload(enabled: boolean, mode: ProjectMode, projects: ProjectSummary[]) {
+  return {
+    follow: mode === 'auto',
+    pinned: enabled && typeof mode === 'object' ? mode.pinned : null,
+    projects: enabled
+      ? projects.map((project) => ({ id: project.id, terms: project.match.length > 0 ? project.match : [project.name] }))
+      : [],
+  };
 }
 
 /** Which project a recording started from the launcher belongs to. Desktop only. */
@@ -101,19 +117,23 @@ export function useProject(enabled: boolean): ProjectChoice {
     }
   }, []);
 
+  // Signed out: forget the account's projects, so nothing records into one of them.
   useEffect(() => {
-    if (!enabled || projects.length === 0) return;
-    void setProjectChoice({
-      follow: mode === 'auto',
-      pinned: typeof mode === 'object' ? mode.pinned : null,
-      projects: projects.map((project) => ({
-        id: project.id,
-        terms: project.match.length > 0 ? project.match : [project.name],
-      })),
-    }).catch(() => undefined);
+    if (enabled) return;
+    setProjects((current) => (current.length ? [] : current));
+    setFront(null);
+  }, [enabled]);
+
+  // Always tell the native side, an empty list included, and once more on sign-out.
+  const wasEnabled = useRef(false);
+  useEffect(() => {
+    if (!enabled && !wasEnabled.current) return;
+    wasEnabled.current = enabled;
+    void setProjectChoice(projectChoicePayload(enabled, mode, projects)).catch(() => undefined);
   }, [enabled, mode, projects]);
 
   const detected = useMemo(() => matchProject(projects, front), [projects, front]);
   const active = useMemo(() => resolveProject(projects, mode, detected), [projects, mode, detected]);
-  return { projects, mode, active, detected, front, setMode };
+  const reload = useCallback(() => { void refresh(); }, [refresh]);
+  return { projects, mode, active, detected, front, setMode, reload };
 }

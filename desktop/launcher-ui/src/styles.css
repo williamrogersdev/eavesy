@@ -134,196 +134,725 @@ body {
   }
 }
 
-/* HUD: a dark glass pill that floats over whatever is on screen, in both
-   appearances (DESIGN.md → HUD). Red only while the mic is live. */
+/* HUD: a charcoal pill that floats over whatever is on screen, in both
+   appearances (DESIGN.md → HUD). It draws its own shape, so the window and
+   the pill always agree. Coral only while the mic is live. */
 .eavesy-control {
+  --ctl-ink: #f7f1e8;
+  --ctl-ink-2: rgb(247 241 232 / 0.74);
+  --ctl-ink-3: rgb(247 241 232 / 0.5);
+  --ctl-hover: rgb(255 248 238 / 0.11);
+  --ctl-line: rgb(255 244 228 / 0.16);
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  border-radius: var(--ev-r-hud);
-  border: 1px solid var(--ev-hud-line);
-  background: var(--ev-hud);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
-  color: var(--ev-hud-ink);
-  font: var(--ev-t-ui);
-  font-size: 12px;
+  border-radius: 18px;
+  background: rgb(34 32 30 / 0.97);
+  box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.09);
+  color: var(--ctl-ink);
+  font: 550 12.5px/16px var(--ev-font-round);
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  transition: border-color var(--ev-d-state) ease;
+  transition: box-shadow var(--ev-d-state) ease, background-color var(--ev-d-state) ease, color var(--ev-d-state) ease;
 }
-/* A window taller than one bar (the transcript, or a tall control): a card, not a pill. */
-@media (min-height: 68px) { .eavesy-control { border-radius: 16px; } }
-/* Room for the transcript sheet: square off into a card. */
-.eavesy-control:has(.ctl-transcript) { border-radius: 16px; }
+/* A change of phase fades the new content in rather than swapping it hard.
+   The two names alternate (data-swap) so every change restarts it. Opacity
+   only: moving text would blur it, and the window has already taken its size. */
+.eavesy-control[data-swap="a"] > * { animation: ctl-swap-a var(--ev-d-state) ease-out both; }
+.eavesy-control[data-swap="b"] > * { animation: ctl-swap-b var(--ev-d-state) ease-out both; }
+@keyframes ctl-swap-a { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ctl-swap-b { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .eavesy-control > * { animation: none !important; }
+}
+.eavesy-control[data-size="wide"],
+.eavesy-control[data-size="result"] { border-radius: 18px; }
+.eavesy-control[data-size="shot"] { border-radius: 20px; }
 .eavesy-control[data-phase="recording"] {
-  border-color: color-mix(in srgb, var(--ev-rec) 80%, transparent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 0 0 1px color-mix(in srgb, var(--ev-rec) 35%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 42%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
-/* Low on the screen the transcript opens above the bar, which stays put. */
-.eavesy-control[data-grow="up"] { flex-direction: column-reverse; }
+/* See-through (Settings → General → Recording control): the screen behind shows through,
+   the edge and the words stay readable over it. */
+.eavesy-control[data-translucent] {
+  background: rgb(34 32 30 / 0.78);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+.eavesy-control[data-translucent][data-phase="recording"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 26%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
 
-/* The bar never gives up its height: if the window has not grown yet, the
-   transcript is the part that waits, never drawn over the bar. */
-.ctl-bar {
-  container-type: size;
-  flex: 1 1 auto;
-  min-height: 38px;
+.ctl-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 36px;
+  padding: 0 5px 0 4px;
+  white-space: nowrap;
 }
-.ctl-transcript {
-  flex: 0 1 96px;
+.eavesy-control[data-size="bar"] .ctl-top { height: 40px; padding: 0 6px; gap: 4px; }
+.eavesy-control[data-size="wide"] .ctl-top,
+.eavesy-control[data-size="result"] .ctl-top,
+.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding: 2px 6px 0 6px; gap: 4px; }
+.ctl-below {
+  flex: 1 1 auto;
   min-height: 0;
+  margin: 4px 6px 10px;
+  padding: 0 10px;
   overflow-y: auto;
-  padding: 10px 14px 10px;
-  border-top: 1px solid var(--ev-hud-line);
-  /* Older lines fade out under the top edge instead of being cut in half. */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
-  font: var(--ev-t-body);
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--ev-hud-ink);
-  white-space: pre-wrap;
+  overflow-x: hidden;
+  scrollbar-width: thin;
   user-select: text;
   -webkit-user-select: text;
 }
-.eavesy-control[data-grow="up"] .ctl-transcript { border-top: 0; border-bottom: 1px solid var(--ev-hud-line); }
-.ctl-transcript p + p { margin-top: 4px; }
-/* While recording the words sit back: a quiet echo of what is being heard. */
-.eavesy-control[data-phase="recording"] .ctl-transcript { color: var(--ev-hud-ink-2); }
-.ctl-transcript-hint { font-style: italic; opacity: 0.75; }
-.ctl-transcript-notice { color: #9fe0bd; font-weight: 600; }
-.eavesy-control[data-phase="failed"] .ctl-transcript-notice { color: #ffc9b5; }
-
-.ctl-grid {
-  display: grid;
-  height: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  grid-template-areas: "mark title actions tools";
+/* Whole 20px lines (four, or as many as Settings asks for while recording):
+   bottom scrolling must not expose half a line. */
+.eavesy-control[data-size="wide"] .ctl-below,
+.eavesy-control[data-size="result"] .ctl-below { flex: 0 0 calc(var(--ctl-lines, 4) * 20px); height: calc(var(--ctl-lines, 4) * 20px); }
+.eavesy-control[data-size="shot"].ctl-below { padding: 2px; }
+/* The drawer a finished dictation opens on hover: the same charcoal as
+   recording, so stopping never turns the control into another object. */
+.eavesy-control[data-size="result"] .ctl-stamp + .ctl-say { margin-left: 4px; }
+/* The words that went out, in a well you can click into and correct. */
+.eavesy-control[data-size="result"] .ctl-below {
+  flex: 1 1 auto;
+  height: auto;
+  margin: 0 7px 7px;
+  padding: 4px 9px;
+  border-radius: 11px;
+  transition: background var(--ev-d-state) ease, box-shadow var(--ev-d-state) ease;
+}
+.eavesy-control[data-size="result"] .ctl-below:hover { background: var(--ctl-hover); }
+.eavesy-control[data-size="result"] .ctl-below:focus-within { background: var(--ctl-hover); box-shadow: inset 0 0 0 1px var(--ctl-line); }
+.eavesy-control[data-size="result"] .ctl-editor:focus-visible { box-shadow: none; }
+/* The language finder takes the words' place: its list scrolls, not the well. */
+.eavesy-control[data-size="result"] .ctl-below[data-finding] { padding-top: 6px; padding-bottom: 6px; overflow: hidden; }
+/* Under the words in the drawer: how dictations are written, as the setting
+   it is. The tone is a native pop-up (its list opens over the control, so
+   the window never has to hold it); For AI is a switch, lit cream when on;
+   Translate, at the row's end, opens the language finder over the words. */
+.ctl-foot { flex: none; padding: 0 7px 7px; }
+.ctl-tones { display: flex; align-items: center; gap: 2px; }
+.ctl-field { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; color: var(--ctl-ink-2); font: 600 11.5px/24px var(--ev-font-round); }
+.ctl-select { position: relative; display: inline-flex; align-items: center; }
+.ctl-select > select {
+  height: 24px;
+  max-width: 150px;
+  padding: 0 24px 0 9px;
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgb(255 248 238 / 0.1);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
+  color: var(--ctl-ink);
+  font: 600 11.5px/24px var(--ev-font-round);
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background var(--ev-d-press) ease;
+}
+.ctl-select > select:hover:not(:disabled) { background: rgb(255 248 238 / 0.16); }
+.ctl-select > select:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+.ctl-select > select:disabled { opacity: 0.5; }
+.ctl-select-icon { position: absolute; right: 7px; width: 12px; height: 12px; color: var(--ctl-ink-3); pointer-events: none; }
+.ctl-switch-row {
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 8px 0 5px;
+  gap: 7px;
+  height: 24px;
+  padding: 0 5px 0 8px;
+  border-radius: 12px;
+  color: var(--ctl-ink-2);
+  font: 600 11.5px/24px var(--ev-font-round);
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
 }
-.ctl-mark {
-  grid-area: mark;
-  display: grid;
-  place-items: center;
+.ctl-switch-row:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-switch-row[aria-checked="true"] { color: var(--ctl-ink); }
+.ctl-switch-row:disabled { cursor: default; opacity: 0.6; }
+.ctl-switch-row:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+.ctl-switch {
+  position: relative;
+  flex: none;
   width: 26px;
+  height: 16px;
+  border-radius: 8px;
+  background: rgb(255 248 238 / 0.22);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
+  transition: background var(--ev-d-state) var(--ev-ease-out);
+}
+.ctl-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ctl-ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform var(--ev-d-state) var(--ev-ease-spring), background var(--ev-d-state) var(--ev-ease-out);
+}
+.ctl-switch-row[aria-checked="true"] .ctl-switch { background: var(--ctl-ink); box-shadow: none; }
+.ctl-switch-row[aria-checked="true"] .ctl-switch::after { transform: translateX(10px); background: #221e1b; }
+/* Translate, and the language finder it opens in place of the words: a
+   search box, then the languages as chips (recent ones first), so the one
+   you want is a couple of keystrokes or one click away. */
+.ctl-translate { display: inline-flex; align-items: center; gap: 5px; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-translate:disabled { opacity: 0.6; }
+.ctl-finder { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; }
+.ctl-find {
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+  background: rgb(255 248 238 / 0.1);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
+  color: var(--ctl-ink);
+  font: 600 11.5px/24px var(--ev-font-round);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ctl-find::placeholder { color: var(--ctl-ink-3); }
+.ctl-find::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.ctl-find:focus-visible { box-shadow: inset 0 0 0 1px var(--ctl-ink-3); }
+.ctl-langs {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 3px;
+  min-height: 0;
+  padding-bottom: 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+}
+.ctl-lang {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  color: var(--ctl-ink-2);
+  font: 600 11.5px/22px var(--ev-font-round);
+  white-space: nowrap;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-lang[data-recent] { color: var(--ctl-ink); box-shadow: inset 0 0 0 1px var(--ctl-line); }
+.ctl-lang[data-active] { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-lang[aria-selected="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
+@media (prefers-reduced-motion: reduce) {
+  .ctl-switch, .ctl-switch::after { transition: none; }
+}
+.ctl-tone {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 12px;
+  color: var(--ctl-ink-2);
+  font: 600 11.5px/24px var(--ev-font-round);
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-tone:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-tone[aria-pressed="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
+.ctl-tone:disabled { cursor: default; }
+.ctl-tone:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+/* In the drawer the words take all the room above the tones, and a long
+   dictation scrolls; the last line fades while more is below it. */
+.eavesy-control[data-size="result"] .ctl-editor { height: 100%; }
+.ctl-below[data-more] .ctl-editor { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+/* The words while they're being rewritten: dimmed and breathing, not editable. */
+.ctl-below[data-busy] .ctl-words { animation: ctl-breathe 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ctl-below[data-busy] .ctl-words { animation: none; opacity: 0.6; }
+}
+/* "· 16 words" after Pasted: quieter than the stamp itself. */
+.ctl-stamp-sub { font-weight: 550; opacity: 0.78; }
+.ctl-fill { flex: 1 1 auto; min-width: 4px; }
+
+/* The snoop, in cream on the charcoal. */
+.ctl-mark {
+  --ev-mascot-body: #f2ebdf;
+  --ev-mascot-band: #9e9389;
+  --ev-mascot-eye: #161312;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  transition: background var(--ev-d-press) ease;
+}
+.ctl-mark:hover { background: var(--ctl-hover); }
+
+.ctl-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--ctl-ink-2);
+  font: inherit;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-btn:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-btn:disabled { opacity: 0.35; }
+.ctl-icon { width: 24px; padding: 0; }
+.ctl-primary { background: var(--ctl-ink); color: #221e1b; font-weight: 650; padding: 0 10px 0 9px; }
+.ctl-primary:hover:not(:disabled) { background: #fff; color: #221e1b; }
+.ctl-talk { color: var(--ctl-ink); padding: 0 6px 0 8px; }
+.ctl-kbd {
+  margin-left: 1px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgb(255 248 238 / 0.08);
+  color: var(--ctl-ink-3);
+  font: 600 10.5px/16px var(--ev-font-round);
+}
+
+
+.ctl-stop {
   height: 26px;
-  margin-right: 4px;
-  border-radius: 9999px;
+  padding: 0 11px 0 10px;
+  background: var(--ev-rec);
+  color: #fff;
+  font-weight: 650;
 }
-.ctl-mark:hover { background: rgb(255 255 255 / 0.12); }
-.ctl-timer {
+.ctl-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 86%, #fff); color: #fff; }
+.ctl-discard { color: #ffc870; padding: 0 8px; font-weight: 650; }
+
+.ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
+.ctl-quiet { color: var(--ctl-ink-2); }
+.ctl-mic { display: inline-flex; flex: none; color: var(--ctl-ink-2); }
+.ctl-mic[data-heard] { color: var(--ctl-ink); }
+.ctl-warn { color: #ffc870; }
+
+/* Marking during a screen recording: evidence tags are manila. */
+.ctl-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--ctl-line); }
+.ctl-count { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 0 4px; color: var(--ctl-ink-2); font-variant-numeric: tabular-nums; }
+.ctl-tag {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 5px 5px 5px 1px;
+  background: var(--ev-manila);
+  color: #2b1d05;
+  font: 700 11px/18px var(--ev-font-round);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--ev-hud-ink);
 }
+.ctl-marker { color: var(--ctl-ink); background: rgb(255 248 238 / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
+.ctl-marker > svg { color: var(--ev-manila); }
+.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(255 248 238 / 0.08); }
+.ctl-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--ctl-ink-2);
+  font: inherit;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-seg-btn:hover { color: var(--ctl-ink); }
+.ctl-seg-btn[aria-pressed="true"] { background: var(--ev-manila); color: #2b1d05; font-weight: 650; }
+.eavesy-control[data-size="video"] .ctl-top { gap: 4px; }
+.eavesy-control[data-marking="true"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-manila) 60%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
 /* The one unmistakable sign the mic is live. */
 .ctl-rec {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 0 3px;
+  border-radius: 999px;
   background: var(--ev-rec);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent);
-  animation: ctl-rec-pulse 1.4s ease-out infinite;
+  animation: ctl-rec-pulse 1.6s ease-out infinite;
 }
 @keyframes ctl-rec-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 60%, transparent); }
-  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 5px transparent; }
 }
-.ctl-done { display: inline-flex; align-items: center; gap: 4px; color: #9fe0bd; font-weight: 600; }
-.ctl-writing { animation: ctl-breathe 1.2s ease-in-out infinite; }
-@keyframes ctl-breathe { 50% { opacity: 0.55; } }
-.eavesy-control[data-phase="recording"] .ctl-stop { color: #fff; background: var(--ev-rec); padding: 0 9px; }
-.eavesy-control[data-phase="recording"] .ctl-stop:hover:not(:disabled) { color: #fff; background: color-mix(in srgb, var(--ev-rec) 85%, #fff); }
-.ctl-stop .ctl-label { display: inline; }
-@media (prefers-reduced-motion: reduce) {
-  .ctl-rec, .ctl-writing { animation: none; }
+.ctl-timer {
+  flex: none;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
 }
-.ctl-quiet { color: var(--ev-hud-ink-2); }
-.ctl-error {
+
+.ctl-bars {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  margin-left: 6px;
+}
+.ctl-bars > i {
+  width: 2.5px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--ctl-ink-2);
+  transform-origin: center;
+  transform: scaleY(calc(0.28 + var(--lvl, 0) * 0.5));
+  animation: ctl-bar 0.9s ease-in-out infinite alternate;
+  transition: transform 120ms linear;
+}
+.ctl-bars > i:nth-child(2) { animation-delay: -0.3s; }
+.ctl-bars > i:nth-child(3) { animation-delay: -0.6s; }
+.ctl-bars > i:nth-child(4) { animation-delay: -0.15s; }
+.ctl-bars > i:nth-child(5) { animation-delay: -0.45s; }
+@keyframes ctl-bar {
+  from { transform: scaleY(calc(0.25 + var(--lvl, 0) * 0.25)); }
+  to { transform: scaleY(calc(0.42 + var(--lvl, 0) * 0.58)); }
+}
+
+/* Status copy wraps into the same readable area as transcript text. */
+.ctl-line {
   min-width: 0;
-  white-space: normal;
-  line-height: 1.2;
-  color: #ffc9b5;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 12.5px/18px var(--ev-font-text);
+}
+.ctl-ticker, .ctl-words {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ctl-ink);
+  font: 400 13px/20px var(--ev-font-text);
+}
+.ctl-ticker > bdi { direction: ltr; }
+/* Live words sit back while you talk and while they're written down: a
+   glance, not the thing to read. Clicking in to fix one brings full ink. */
+.eavesy-control[data-phase="recording"] .ctl-words:not(:focus),
+.eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(247 241 232 / 0.62); }
+.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: rgb(34 32 30 / 0.66); }
+.ctl-hint { color: var(--ctl-ink-2); }
+
+.ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
+.ctl-dots > i { width: 3px; height: 3px; border-radius: 999px; background: currentColor; animation: ctl-dot 1.2s ease-in-out infinite; }
+.ctl-dots > i:nth-child(2) { animation-delay: 0.15s; }
+.ctl-dots > i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ctl-dot { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+.ctl-breathe { animation: ctl-breathe 1.2s ease-in-out infinite; }
+@keyframes ctl-breathe { 50% { opacity: 0.5; } }
+
+/* A rubber stamp on the case file: what just happened to the capture. */
+.ctl-stamp {
+  --stamp: #7fd8a4;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stamp) 16%, transparent);
+  color: var(--stamp);
+  font: 650 12px/22px var(--ev-font-round);
+  animation: ctl-stamp 240ms var(--ev-ease-spring) both;
+}
+.ctl-stamp[data-tone="manila"] { --stamp: #f0c879; }
+/* A stamp with a word in it gives way in a narrow pill instead of pushing Close out. */
+.ctl-stamp[data-fit] { flex: 0 1 auto; min-width: 0; }
+.ctl-stamp-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-stamp[data-tone="warn"] { --stamp: #ffc870; }
+@keyframes ctl-stamp {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.ctl-shot {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgb(255 248 238 / 0.05);
+  cursor: zoom-in;
+}
+.ctl-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ctl-shot-wait { display: block; width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ctl-rec, .ctl-bars > i, .ctl-dots > i, .ctl-breathe, .ctl-ticker[data-working], .ctl-stamp { animation: none; }
+}
+
+/* The result is editable in place, with the same type and spacing as live words. */
+.ctl-editor {
+  display: block;
+  width: 100%;
+  height: calc(var(--ctl-lines, 4) * 20px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  overflow-y: auto;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ctl-editor:focus-visible { box-shadow: inset 0 -1px 0 var(--ctl-ink-3); }
+
+/* The marker: a see-through panel over the recorded screen (marker.tsx).
+   Dimmed around what is being pointed at; tags are manila evidence markers. */
+html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
+.mk-root {
+  position: fixed;
+  inset: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: 550 12.5px/16px var(--ev-font-round);
+}
+.mk-root[data-tool="area"] { cursor: crosshair; }
+.mk-dim { position: absolute; inset: 0; background: rgb(22 19 18 / 0.26); }
+.mk-spot {
+  position: absolute;
+  border-radius: 6px;
+  outline: 2px solid var(--ev-manila);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgb(255 253 248 / 0.75), 0 0 0 100vmax rgb(22 19 18 / 0.26);
+  background: color-mix(in srgb, var(--ev-manila) 10%, transparent);
+  pointer-events: none;
+  transition: left 90ms ease, top 90ms ease, width 90ms ease, height 90ms ease;
+}
+.mk-spot[data-tool="area"] { outline-style: dashed; transition: none; }
+.mk-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 520px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px 7px 7px 2px;
+  background: var(--ev-manila);
+  color: #2b1d05;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.mk-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.mk-chip-quiet { flex: none; color: color-mix(in srgb, #2b1d05 72%, transparent); font-weight: 550; }
+.mk-size {
+  position: absolute;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--ev-hud);
+  color: var(--ev-hud-ink);
+  font: 600 11px/14px var(--ev-font-text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.mk-tagged {
+  position: absolute;
+  border-radius: 6px;
+  outline: 2px solid var(--ev-manila);
+  outline-offset: 2px;
+  pointer-events: none;
+}
+.mk-tag {
+  position: absolute;
+  top: -14px;
+  left: -14px;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 6px 6px 6px 1px;
+  background: var(--ev-manila);
+  box-shadow: 0 0 0 2px var(--ev-raised), 0 4px 10px -4px rgb(0 0 0 / 0.45);
+  color: #2b1d05;
+  font: 700 12px/22px var(--ev-font-round);
+}
+/* "Tagged #2" lands like a rubber stamp on the case file, then lifts off. */
+.mk-stamp {
+  position: absolute;
+  padding: 2px 10px;
+  border: 2px solid var(--ev-manila-ink);
+  border-radius: 6px;
+  background: rgb(255 253 248 / 0.92);
+  color: var(--ev-manila-ink);
+  font: 800 15px/20px var(--ev-font-round);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+  animation: mk-stamp 1600ms var(--ev-ease-spring) both;
+}
+@keyframes mk-stamp {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-4deg) scale(1.5); }
+  14% { opacity: 1; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(-4deg) scale(1); }
+}
+.mk-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 8px;
+  border-radius: 16px;
+  background: var(--ev-hud);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line), 0 18px 44px -16px rgb(0 0 0 / 0.6);
+  color: var(--ev-hud-ink);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.mk-hint[data-top] { top: 72px; bottom: auto; }
+.mk-mascot {
+  --ev-mascot-body: #f2ebdf;
+  --ev-mascot-band: #9e9389;
+  --ev-mascot-eye: #161312;
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+.mk-bubble {
+  position: relative;
+  margin: 0;
+  padding: 6px 11px;
+  border-radius: 12px;
+  background: var(--ev-raised);
+  color: var(--ev-ink);
+  font: 550 13px/18px var(--ev-font-round);
+}
+.mk-bubble::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--ev-raised);
+  transform: translateY(-50%) rotate(45deg);
+}
+.mk-error { margin: 0; color: #ffc870; }
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgb(255 248 238 / 0.1);
+  color: var(--ev-hud-ink);
+  font: inherit;
+}
+.mk-btn:hover { background: rgb(255 248 238 / 0.18); }
+.mk-kbd {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgb(255 248 238 / 0.1);
+  color: var(--ev-hud-ink-2);
+  font: 600 11px/18px var(--ev-font-round);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-spot { transition: none; }
+  .mk-stamp { animation-duration: 1ms; animation-delay: 0s; opacity: 1; transform: translate(-50%, -50%) rotate(-4deg); }
+}
+
+/* Video retains its controls when instructions or an action error appear. */
+.eavesy-control[data-size="video"] { border-radius: 18px; }
+.eavesy-control[data-size="video"] .ctl-top { min-width: 0; }
+.eavesy-control[data-size="video"] .ctl-below { margin: 0; padding: 0 10px 6px; overflow: hidden; }
+.ctl-video-help { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 11px; line-height: 14px; color: var(--ctl-ink-2); }
+.ctl-video-help > span { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mk-chip { max-width: min(324px, calc(100vw - 16px)); overflow: hidden; }
+
+.ctl-video-help > .ctl-video-count { display: inline-flex; flex: none; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.mk-root { touch-action: none; }
+
+/* The reply card for Claude Code sessions (agents.tsx): the HUD's dark coat,
+   manila for the one action that sends. */
+.ag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  background: var(--ev-hud);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line);
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-body);
+}
+.ag-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ag-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--ev-hud-line);
+  font: var(--ev-t-small);
+}
+.ag-kind[data-kind='approval'], .ag-kind[data-kind='question'] { background: var(--ev-manila); color: var(--ev-manila-ink); }
+.ag-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--ev-t-ui); }
+.ag-more { flex: none; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
+.ag-summary { margin: 0; font: var(--ev-t-head); }
+.ag-message {
+  margin: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  color: var(--ev-hud-ink-2);
+  font: var(--ev-t-small);
 }
-
-.ctl-title {
-  grid-area: title;
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
+.ag-reply {
+  resize: none;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: rgb(255 240 220 / 0.08);
+  box-shadow: inset 0 0 0 1px var(--ev-hud-line);
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-body);
+  outline: none;
 }
-/* Clips from the start, so the newest words stay in view. */
-.ctl-caption {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
-}
-.ctl-caption { flex: 1 1 0; }
-.ctl-caption > bdi { direction: ltr; }
-.ctl-caption { color: var(--ev-hud-ink-2); }
-.ctl-caption[data-final] { color: var(--ev-hud-ink); }
-.ctl-caption-label { margin-right: 4px; color: rgb(255 255 255 / 0.5); font-weight: 600; }
-.ctl-actions,
-.ctl-tools { display: flex; align-items: center; gap: 1px; }
-.ctl-actions { grid-area: actions; }
-.ctl-tools { grid-area: tools; }
-.ctl-tools::before {
-  content: "";
-  width: 1px;
-  height: 14px;
-  margin: 0 3px;
-  background: rgb(255 255 255 / 0.14);
-}
-.ctl-btn {
-  display: flex;
+.ag-reply:focus { box-shadow: inset 0 0 0 1.5px var(--ev-manila); }
+.ag-reply::placeholder { color: var(--ev-hud-ink-2); }
+.ag-note { margin: 0; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
+.ag-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.ag-btn, .ag-icon {
+  display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 24px;
-  min-width: 24px;
-  justify-content: center;
-  padding: 0 5px;
-  border-radius: 9999px;
-  color: var(--ev-hud-ink-2);
-  font-weight: 500;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-small);
+  cursor: default;
 }
-.ctl-btn:hover:not(:disabled) { background: rgb(255 255 255 / 0.12); color: #fff; }
-.ctl-btn:disabled { opacity: 0.4; }
-.ctl-close:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); }
-.ctl-label { display: none; }
+.ag-btn { padding: 5px 9px; box-shadow: inset 0 0 0 1px var(--ev-hud-line); }
+.ag-icon { flex: none; padding: 3px; color: var(--ev-hud-ink-2); }
+.ag-btn:hover, .ag-icon:hover { background: rgb(255 240 220 / 0.08); }
+.ag-btn[data-primary] { background: var(--ev-manila); color: var(--ev-manila-ink); box-shadow: none; }
+.ag-btn[data-primary]:hover { background: var(--ev-manila-shade); }
+.ag-btn:disabled { opacity: 0.45; }
 
-@container (min-width: 380px) {
-  .ctl-label { display: inline; }
-}
-@container (min-height: 68px) {
-  .ctl-grid {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: 1fr 1fr;
-    grid-template-areas: "mark title tools" "actions actions actions";
-    padding: 0;
-  }
-  .ctl-mark { margin-left: 8px; }
-  .ctl-tools { padding-right: 6px; }
-  .ctl-tools::before { display: none; }
-  .ctl-actions {
-    height: 100%;
-    justify-content: space-around;
-    border-top: 1px solid rgb(255 255 255 / 0.1);
-  }
-  .ctl-label { display: inline; }
-}
+/* Eavesy's answer on the pill: the full reply, scrolling when it runs long. */
+.ctl-answer { flex: 1; min-height: 0; overflow-y: auto; user-select: text; }
+.ctl-reply-hint { flex: none; margin: 4px 0 0; color: var(--ev-ink-3); font: var(--ev-t-small); }

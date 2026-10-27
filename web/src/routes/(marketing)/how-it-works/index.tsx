@@ -27,7 +27,7 @@ const STAGES = [
   {
     n: '02',
     title: 'Eavesy turns it into Markdown',
-    body: 'Text and images are saved as they are. While you record, live captions are made on your Mac. When you’re signed in, the audio also uploads in segments for a cloud transcript and a brief with a title, summary, decisions, and action items. Segments mean a dropped connection or a restart doesn’t lose the recording.',
+    body: 'Text and images are saved as they are. While you record, live captions are made on your Mac. When you’re signed in, the audio also uploads in segments for a cloud transcript and a brief with a title, summary, decisions, and action items. Segments reduce the amount at risk from a dropped connection or restart; check the completed result after recovery.',
   },
   {
     n: '03',

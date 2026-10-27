@@ -18,12 +18,12 @@ export function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
 export function mergeTranslations(
   previous: Translations,
   sources: ReadonlyMap<string, string>,
-  entries: readonly [string, unknown][],
+  entries: readonly (readonly [string, string])[],
 ): Translations {
   const next = { ...previous };
   for (const [id, text] of entries) {
     const source = sources.get(id);
-    if (source !== undefined && typeof text === 'string') next[id] = { source, text };
+    if (source !== undefined) next[id] = { source, text };
   }
   return next;
 }
@@ -39,43 +39,43 @@ export function translateErrorMessage(status: number): string {
   return status === 429 ? 'Translation limit reached for today.' : 'Could not translate.';
 }
 
-/** What the Translate button does: hide, or show and fetch any lines not tried yet. */
-export function toggleTranslation(showing: boolean, untried: number): { showing: boolean; load: boolean } {
-  return showing ? { showing: false, load: false } : { showing: true, load: untried > 0 };
-}
-
 /**
- * Pages through the translate endpoint until it has nothing left or a page adds
- * no new lines. Returns the ids that came back and whether the server finished.
+ * Pages through the translate endpoint, which answers with every line
+ * translated so far, until nothing remains. Throws when a page adds nothing
+ * or the page budget runs out, so the caller can offer a retry.
  */
 export async function requestTranslations({
   meetingId,
   target,
+  signal,
   onPage,
   fetchImpl = fetch,
 }: {
   meetingId: string;
   target: string;
-  onPage: (entries: [string, unknown][]) => void;
+  signal?: AbortSignal;
+  onPage: (entries: [string, string][]) => void;
   fetchImpl?: typeof fetch;
-}): Promise<{ ids: Set<string>; complete: boolean }> {
-  const ids = new Set<string>();
+}): Promise<void> {
+  let previousCount = -1;
   for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
     const res = await fetchImpl(`/api/meetings/${meetingId}/translate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ to: target }),
+      signal,
     });
     if (!res.ok) throw new Error(translateErrorMessage(res.status));
-    const body: unknown = await res.json();
-    const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
-    const entries = typeof record.lines === 'object' && record.lines !== null ? Object.entries(record.lines) : [];
+    const value: unknown = await res.json();
+    if (!value || typeof value !== 'object') throw new Error('Could not read the translation.');
+    const data = value as { lines?: unknown; remaining?: unknown };
+    if (!data.lines || typeof data.lines !== 'object' || Array.isArray(data.lines)) throw new Error('Could not read the translation.');
+    const entries = Object.entries(data.lines).filter((pair): pair is [string, string] => typeof pair[1] === 'string');
+    if (signal?.aborted) return;
     onPage(entries);
-    const before = ids.size;
-    for (const [id] of entries) ids.add(id);
-    const remaining = typeof record.remaining === 'number' ? record.remaining : 0;
-    if (remaining === 0) return { ids, complete: true };
-    if (ids.size === before) break;
+    if (data.remaining === 0) return;
+    if (entries.length === previousCount) throw new Error('Translation stopped early. Choose the language again to retry.');
+    previousCount = entries.length;
   }
-  return { ids, complete: false };
+  throw new Error('This meeting needs another pass. Choose the language again to continue.');
 }

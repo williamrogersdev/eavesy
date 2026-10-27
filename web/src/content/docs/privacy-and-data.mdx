@@ -10,17 +10,27 @@ order: 50
 Without an account, nothing leaves your Mac. Captures are files in your
 recordings folder, and Talk text and live captions are made on-device.
 
-Even when you're signed in, the Mac app never uploads screenshots, clipboard
-captures, notes or imported files. Only recordings (Talk, Meeting and Video)
-are uploaded, so they can be transcribed and summarized.
+Even when you're signed in, the Mac app doesn't upload clipboard text, notes
+or imported files.
 
 ## What goes to the cloud
 
-When you sign in, the Mac app uploads recording audio. Your account then holds
-the audio, transcripts, briefs, notes and search index for those recordings.
+When you sign in, the Mac app uploads recording audio (Talk, Meeting and
+Video) so it can be transcribed and summarized. Your account then holds the
+audio, transcripts, briefs, notes and search index for those recordings.
+
+A signed-in Mac also uploads its screenshots and pasted images to your
+account, so they appear in the history on your other signed-in Macs and in
+the web app. Sign out and new screenshots stay on that Mac only. Delete one
+in the web app to remove the cloud copy.
 
 The web app stores what you make there: browser recordings, capture bar
 screenshots and videos, dictations and drops.
+
+When you send the [Notetaker](/docs/notetaker) to a call, it records the call's
+audio, the participants' display names and who was speaking when. It doesn't
+record video. The notetaker runs on Cloudflare, and its recordings are stored
+and deleted like your other recordings.
 
 Data is encrypted in transit with TLS and at rest with Cloudflare-managed
 encryption.
@@ -29,7 +39,7 @@ encryption.
 
 | Provider | What it does |
 | --- | --- |
-| Cloudflare | Hosting, storage and database, plus Workers AI for transcription and search embeddings |
+| Cloudflare | Hosting, storage and database, the Notetaker, plus Workers AI for transcription and search embeddings |
 | Anthropic | Briefs, action items and chat |
 | Clerk | Sign-in |
 | OpenRouter | Only if you connect your own account |

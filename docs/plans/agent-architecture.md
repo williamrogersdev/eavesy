@@ -3,7 +3,8 @@
 Status: proposal (2026-10-17). It builds on
 [agent-connector.md](agent-connector.md), the research and feature plan. This
 doc covers how the features fit together so they don't turn into a pile of
-unrelated parts.
+unrelated parts. Voice on top of send and ask (spoken replies, clarify mode,
+CLI channels) is planned in [voice-conversation.md](voice-conversation.md).
 
 ## The goal
 
@@ -35,7 +36,9 @@ them, so it must never depend on any single vendor.
    cloud is only for sync and for reaching web-only clients.
 6. **The human approves, the agent never holds secrets.** Secrets, file access
    and stopping any process outside the calling session's own tagged tree need
-   a click in Eavesy's own UI. No API, tool or agent can approve them. An agent
+   a click in Eavesy's own UI, or a permission mode the human turned on there
+   by click ([assistant.md](assistant.md) C8). No API, tool or agent can
+   approve them or turn a mode on. An agent
    may stop processes *it* started (its own services and its tagged
    descendants), because that's cleanup, not control.
 7. **Fast or it doesn't ship.** Every step has a speed budget (see
@@ -202,9 +205,9 @@ test fails CI if either server's tool list or schemas drift from the spec.
 | Tier | Who | Can |
 |---|---|---|
 | Human | Eavesy UI, hotkeys | Everything. The only tier that can approve grants and stop processes outside a session's own tree |
-| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes the core recorded as its own session's (see the ownership rule above) |
+| Local agent | CLI and stdio MCP (same user, identified by peer pid) | Read Items, send/ask, run services, *request* grants, stop processes the core recorded as its own session's (see the ownership rule above). *Request* browser and computer tasks and secret rotation, each behind a card ([assistant.md](assistant.md) N4). Never sees a secret's value |
 | Browser extension | Your browser, authenticated by native messaging | Register tabs as Sessions, receive delivered Items, capture page content |
-| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. **No process control, no grants, ever** |
+| Remote | Cloud MCP via the Mac link | Read synced Items, `save`, `send_to_human`, `ask_human`, and, if you opt in, a read-only `machine_status` summary. Local-only Items need a per-request approval in the HUD. *Request* a browser task in Eavesy's own signed-out browser, with a click per request (changed 2026-10-24 by [assistant.md](assistant.md) N4). **No process control, no grants, no secrets, ever**, including by driving an app |
 
 ### Mac link authentication
 
@@ -376,9 +379,13 @@ touched*. There's no big-bang refactor.
 
 ## Deliberate choices and pushback
 
-- **No chat UI of our own.** Eavesy sends to the tools you already use and
-  doesn't try to replace them. Once Eavesy has a chat box, it's competing
-  with Claude and ChatGPT instead of making them better.
+- **A conversation with Eavesy, never a chat with someone else's model.**
+  (Changed 2026-10-24 by [assistant.md](assistant.md); it was "No chat UI of
+  our own".) Eavesy has its own conversation with you about your Mac, your
+  captures and your agents, with both sides on screen. It still doesn't wrap
+  Claude or ChatGPT, show their chats or try to replace them: it sends to
+  the tools you already use. Rules 4 and 6 stand, and assistant.md's tier
+  table enforces them.
 - **No orchestrator and no required launcher.** `eavesy run` is optional. Watch
   works without it, and tagging just makes it more precise. Making agents
   run "through Eavesy" would make Eavesy a dependency people resent.
@@ -392,7 +399,10 @@ touched*. There's no big-bang refactor.
 - **A running CLI session can't be fully driven from outside.** There's no
   vendor API to inject a prompt into a live Claude Code or Codex session.
   Focus-and-paste plus the inbox is the honest way to do it. If vendors add
-  an API, it becomes one more delivery method in the router.
+  an API, it becomes one more delivery method in the router. Claude Code's
+  channels (research preview) are that API for the CLI. See
+  [voice-conversation.md](voice-conversation.md), piece 5. Paste stays the
+  fallback everywhere else.
 - **The Mac link is a new Durable Object binding.** Under AGENTS.md, a wrangler
   binding change means "stop and ask" before merge. Grants also touch
   security, so the same applies.

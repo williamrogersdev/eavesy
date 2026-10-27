@@ -16,8 +16,8 @@ const STYLES: Record<
   },
   tip: {
     icon: Lightbulb,
-    ring: 'border-ev-slate/40 bg-ev-slate-soft',
-    iconColor: 'text-ev-slate',
+    ring: 'border-ev-coat/40 bg-ev-coat-soft',
+    iconColor: 'text-ev-coat',
     label: 'Tip',
   },
   warning: {

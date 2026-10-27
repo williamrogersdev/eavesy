@@ -1,0 +1,44 @@
+---
+title: "cursor"
+description: "Workflow details"
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "A bug report to paste", "path": "/templates/ai-bug-report"}, {"title": "Local media sharing", "path": "/guides/share-local-recordings-with-ai"}, {"title": "Dictation behavior", "path": "/features/dictation"}]
+---
+
+## Speak into the input you are using
+
+Place your cursor in the intended Cursor text input and use Eavesy Talk. Stop after a short test sentence, then check where the words landed. Accessibility permission allows automatic pasting; the selected target field still matters. Inspect technical identifiers before submitting a prompt.
+
+You can also copy a completed recording brief or a note into Cursor manually. Add a focused instruction explaining what the agent should do with that context rather than pasting a large transcript without a question.
+
+## Add the screenshot when appearance matters
+
+Attach the image through the input supported by your installed Cursor client. If the agent runs locally, it may also inspect a permitted image path. Do not assume a remote agent can read local files. Ask it to describe the actual visible evidence before diagnosing a layout issue.
+
+## Optional hosted MCP connection
+
+Cursor supports remote MCP connections. Add Eavesy's hosted URL through the MCP settings of your installed client, or use this configuration with a client supporting HTTP OAuth:
+
+```json
+{
+  "mcpServers": {
+    "eavesy": { "url": "https://mcp.eavesy.com" }
+  }
+}
+```
+
+Authenticate with Eavesy when prompted and approve the connection. Confirm the tools are available with a narrow recording lookup. This covers supported synced account recordings and dictations, not your Mac's local screenshot library. See [Cursor's MCP documentation](https://cursor.com/docs/mcp) for current configuration locations and client behavior.
+
+## Keep the handoff small
+
+For a bug, give the starting state, the triggering action, expected behavior, observed behavior, and one relevant screenshot. Eavesy does not need to control Cursor or send your whole library to make that context useful.
+
+## Review the prompt before running the agent
+
+A compact bug prompt should name the affected control, starting state, triggering action, and expected result, then point to an accessible screenshot. The [editable bug report](/templates/ai-bug-report) helps assemble those fields without generating facts for you.
+
+If you use local walkthrough context, ask Cursor to identify the files it opened and the screen state it inspected. The copied text can include OCR and file references; those references still depend on the agent’s actual environment and permissions.
+
+After the investigation, rerun the same UI steps and inspect the result yourself. Keep the capture as a record of the original symptom, and keep the agent’s explanation separate from the observations in that recording.

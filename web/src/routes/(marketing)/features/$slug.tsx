@@ -10,6 +10,7 @@ import {
 } from '@/components/marketing/page-chrome';
 import { JsonLd, faqSchema } from '@/components/seo/json-ld';
 import { seoHead } from '@/lib/seo-head';
+import { ContentSupplement } from '@/components/marketing/content-supplement';
 
 export const Route = createFileRoute('/(marketing)/features/$slug')({
   loader: ({ params }) => {
@@ -68,7 +69,7 @@ function FeatureDetailPage() {
                 className="rounded-2xl border border-ev-line bg-ev-raised p-6"
               >
                 <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-ev-slate-soft text-ev-slate">
+                  <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-ev-coat-soft text-ev-coat">
                     <Check className="h-3.5 w-3.5" strokeWidth={3} />
                   </span>
                   <div>
@@ -117,11 +118,11 @@ function FeatureDetailPage() {
                     href={`/features/${r.slug}`}
                     className="group flex items-center gap-3 rounded-xl border border-ev-line bg-ev-raised p-4 transition hover:border-ev-line-strong hover:bg-ev-well"
                   >
-                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-slate-soft text-ev-slate">
+                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-ev-coat-soft text-ev-coat">
                       <Icon className="h-4 w-4" />
                     </span>
                     <span className="text-sm font-medium text-ev-ink">{r.name}</span>
-                    <ArrowRight className="ml-auto h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-slate" />
+                    <ArrowRight className="ml-auto h-4 w-4 text-ev-ink-2 transition group-hover:text-ev-coat" />
                   </Link>
                 );
               })}
@@ -130,6 +131,7 @@ function FeatureDetailPage() {
         </section>
       )}
 
+      <ContentSupplement collection="feature-details" slug={feature.slug} />
       <CTASection />
     </main>
   );

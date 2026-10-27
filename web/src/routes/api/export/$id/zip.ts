@@ -12,15 +12,11 @@ import { guardBurst, guardUserQuota } from '@/server/rate-limit';
 export const Route = createFileRoute('/api/export/$id/zip')({
   server: {
     handlers: {
-      GET: async ({ request, params }) => {
+      GET: async ({ params }) => {
         const { id } = params;
-        const url = new URL(request.url);
-
         let actor;
         try {
-          actor = await resolveActor({
-            anonymousSessionToken: url.searchParams.get('anonymousSessionToken') ?? undefined,
-          });
+          actor = await resolveActor();
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
