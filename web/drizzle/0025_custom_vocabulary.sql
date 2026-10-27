@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `custom_vocabulary_json` text;

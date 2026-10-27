@@ -1,0 +1,20 @@
+# cargo audit (CI: ci.yml "Desktop"). Each ignored advisory says why it can't
+# reach the shipped Mac app. Revisit when the dependency that pulls it in moves.
+# Ignores apply on every target, so re-check each one after a Cargo.lock change:
+#   cargo tree -e normal,build --target aarch64-apple-darwin -i zip
+#   cargo tree -e normal,build --target aarch64-apple-darwin -i quick-xml@0.39.4
+# Each must print only "warning: nothing to print." (also for x86_64-apple-darwin).
+[advisories]
+ignore = [
+  # quick-xml 0.39 is only a build-time dependency of wayland-scanner, under
+  # arboard's Linux clipboard backend. It isn't compiled for macOS.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # zip 4.6 is tauri-plugin-updater's Windows-only dependency (it unpacks .zip
+  # updates there). The Mac updater uses .tar.gz and never links zip.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]
+# Unmaintained, unsound and yanked notices are reported but don't fail the build.
+informational_warnings = ["unmaintained", "unsound", "yanked"]

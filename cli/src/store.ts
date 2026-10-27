@@ -1,12 +1,13 @@
 // Reads the Eavesy Recordings folder. The format is documented in
 // web/src/content/docs/session-folder-format.mdx: one folder per capture, with
 // `meeting.json` for recorded sessions and `capture.json` for clipboard notes,
-// pasted images and screenshots (written by desktop/src-tauri/src/visual.rs).
+// pasted images, screenshots and imports (desktop/src-tauri/src/visual.rs, imports.rs).
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
 
-export const KINDS = ['meeting', 'note', 'image', 'screenshot', 'file'] as const;
+/** `meeting` covers every recording (mic, meeting, screen, imported audio or video). */
+export const KINDS = ['meeting', 'note', 'image', 'screenshot'] as const;
 export type Kind = (typeof KINDS)[number];
 
 export interface CaptureFile {
@@ -101,7 +102,6 @@ export function kindOf(source: string): Kind {
     case 'note':
     case 'image':
     case 'screenshot':
-    case 'file':
       return source;
     default:
       return 'meeting';

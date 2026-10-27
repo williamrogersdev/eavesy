@@ -38,8 +38,8 @@ function ConfiguredSignInPage() {
   return (
     <AuthFrame>
       {!isLoaded ? (
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <BrandMark className="h-10 w-10" />
+        <div className="flex flex-col items-center gap-3 text-ev-ink-2">
+          <BrandMark size={40} />
           <Loader2 className="h-6 w-6 animate-spin" />
           <span className="text-sm">Preparing secure sign-in…</span>
         </div>
@@ -55,17 +55,17 @@ function ConfiguredSignInPage() {
 function AlreadySignedIn({ href }: { href: string }) {
   const pairing = href.includes('pair=') || href.startsWith('/connect/mac');
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-border bg-background p-8 text-center shadow-xl shadow-black/5">
-      <BrandMark className="h-10 w-10" />
+    <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-ev-line bg-ev-paper p-8 text-center shadow-[var(--ev-e-2)]">
+      <BrandMark size={40} />
       <h1 className="text-lg font-semibold">You&apos;re already signed in</h1>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-ev-ink-2">
         {pairing
           ? 'Continue to approve the Mac that’s waiting to pair.'
           : 'Head to your dashboard to start capturing context.'}
       </p>
       <a
         href={href}
-        className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90"
+        className="inline-flex items-center gap-2 rounded-full bg-ev-coat px-5 py-2.5 font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover"
       >
         {pairing ? 'Continue pairing' : 'Go to your dashboard'}
         <ArrowRight className="h-4 w-4" />

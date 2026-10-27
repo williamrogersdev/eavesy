@@ -1,6 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { consumeRateLimit, type FailMode, type RateLimitResult } from '@/server/rate-limit-store';
+import {
+  type FailMode,
+  type QuotaScope,
+  type RateLimitResult,
+  consumeRateLimit,
+  refundRateLimit,
+  userQuotaPolicy,
+} from '@/server/rate-limit-store';
 
 export type { FailMode, RateLimitResult } from '@/server/rate-limit-store';
 
@@ -54,18 +61,29 @@ function tooMany(error: string, retryAfterSec: number, code?: string): Response 
   });
 }
 
+/** What each spend scope's daily budget is called when it runs out. */
+const SPEND_SCOPES = {
+  transcribe: 'transcription',
+  process: 'transcription',
+  translation: 'transcription',
+  'agent-reply': 'reply suggestion',
+  assistant: 'assistant',
+} as const;
+
+export type SpendScope = keyof typeof SPEND_SCOPES;
+
 /**
  * Per-IP burst limit plus a global daily budget for routes that spend AI
  * capacity. Both fail closed: an unreachable counter must not unlock spend.
  */
 export async function guardSpend(
   request: Request,
-  scope: 'transcribe' | 'process',
+  scope: SpendScope,
   defaults: { perMin: number; perDay: number },
 ): Promise<Response | null> {
   const ip = clientIp(request);
-  const perMin = intEnv(`RL_${scope.toUpperCase()}_PER_MIN`, defaults.perMin);
-  const perDay = intEnv(`BUDGET_${scope.toUpperCase()}_PER_DAY`, defaults.perDay);
+  const perMin = intEnv(`RL_${envName(scope)}_PER_MIN`, defaults.perMin);
+  const perDay = intEnv(`BUDGET_${envName(scope)}_PER_DAY`, defaults.perDay);
 
   const rl = await rateLimit({ key: `${scope}:${ip}`, limit: perMin, windowSec: 60, failMode: 'closed' });
   if (!rl.allowed) return tooMany('Too many requests. Please slow down and try again shortly.', rl.retryAfterSec);
@@ -73,10 +91,19 @@ export async function guardSpend(
   const budget = await consumeDailyBudget({ name: scope, limit: perDay, failMode: 'closed' });
   if (budget.allowed) warnAtSpendThresholds(scope, perDay - budget.remaining, perDay);
   if (!budget.allowed) {
-    return tooMany('Daily free transcription capacity has been reached. Please try again tomorrow.', 3600);
+    return tooMany(`Daily free ${SPEND_SCOPES[scope]} capacity has been reached. Please try again tomorrow.`, 3600);
   }
 
   return null;
+}
+
+/**
+ * Gives back one unit of a spend scope's global daily budget for a request
+ * whose model call failed, so a provider outage doesn't lock everyone out
+ * until midnight UTC. `chargedAt` is a time taken just before `guardSpend`.
+ */
+export async function refundSpend(scope: SpendScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), { key: `budget:${scope}`, windowSec: DAY_SEC }, chargedAt);
 }
 
 const SPEND_WARNING_PERCENTS = [50, 80, 100] as const;
@@ -92,42 +119,29 @@ function warnAtSpendThresholds(scope: string, used: number, limit: number) {
   console.warn(JSON.stringify({ message: 'spend budget threshold reached', scope, percent, used, limit }));
 }
 
-/**
- * Daily per-user quotas. `failMode` is per scope: segment uploads carry a
- * user's live recording, so they stay up if the counter is unavailable; every
- * other scope spends AI capacity or produces large downloads and fails closed.
- */
-export const USER_DAILY_QUOTAS = {
-  // One-minute segments, two tracks: 2,400 is 20 hours of recording a day.
-  segment: { limit: 2_400, failMode: 'open' },
-  transcribe: { limit: 300, failMode: 'closed' },
-  process: { limit: 100, failMode: 'closed' },
-  dictation: { limit: 500, failMode: 'closed' },
-  capture: { limit: 300, failMode: 'closed' },
-  drop: { limit: 500, failMode: 'closed' },
-  chat: { limit: 300, failMode: 'closed' },
-  regenerate: { limit: 60, failMode: 'closed' },
-  search: { limit: 1_000, failMode: 'closed' },
-  export: { limit: 10, failMode: 'closed' },
-  'meeting-export': { limit: 200, failMode: 'closed' },
-} as const satisfies Record<string, { limit: number; failMode: FailMode }>;
-
-export type QuotaScope = keyof typeof USER_DAILY_QUOTAS;
+export { USER_DAILY_QUOTAS, type QuotaScope } from '@/server/rate-limit-store';
 
 function envName(scope: string): string {
   return scope.toUpperCase().replaceAll('-', '_');
 }
 
-export async function guardUserQuota(userId: string, scope: QuotaScope): Promise<Response | null> {
-  const quota = USER_DAILY_QUOTAS[scope];
-  const limit = intEnv(`QUOTA_${envName(scope)}_PER_DAY`, quota.limit);
-  const result = await consumeDailyBudget({ name: `user:${scope}:${userId}`, limit, failMode: quota.failMode });
+function quotaPolicy(userId: string, scope: QuotaScope) {
+  return userQuotaPolicy(scope, userId, process.env);
+}
+
+export async function guardUserQuota(userId: string, scope: QuotaScope, now = Date.now()): Promise<Response | null> {
+  const result = await consumeRateLimit(db(), quotaPolicy(userId, scope), now);
   if (result.allowed) return null;
   return tooMany(
     'You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.',
     3600,
     'daily_quota',
   );
+}
+
+/** Gives back one use of a quota the request turned out not to need; `chargedAt` is the `now` it was charged at. */
+export async function refundUserQuota(userId: string, scope: QuotaScope, chargedAt: number): Promise<void> {
+  await refundRateLimit(db(), quotaPolicy(userId, scope), chargedAt);
 }
 
 /**
@@ -143,6 +157,7 @@ export const BURST_LIMITS = {
   'device-pair': { limit: 10, windowSec: 60, failMode: 'closed' },
   'device-pair-check': { limit: 30, windowSec: 60, failMode: 'closed' },
   'meeting-export': { limit: 10, windowSec: 60, failMode: 'closed' },
+  'meeting-bot': { limit: 10, windowSec: 60, failMode: 'closed' },
   // Live transcript polls and stream (re)connects: a web tab streaming plus a
   // Mac polling every 5 s is about 15 a minute, so this allows a few of each.
   'live-transcript': { limit: 60, windowSec: 60, failMode: 'open' },

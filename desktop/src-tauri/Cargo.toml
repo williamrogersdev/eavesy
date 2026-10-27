@@ -1,11 +1,16 @@
 [package]
 name = "eavesy"
-version = "0.2.0"
+version = "0.9.0"
 description = "Eavesy desktop shell"
 authors = ["Eavesy contributors"]
 license = "Apache-2.0"
 publish = false
 edition = "2021"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
 
 [lib]
 name = "eavesy_lib"
@@ -15,6 +20,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
+base64 = "0.22"
+libc = "0.2"
 tauri = { version = "2.0", features = ["macos-private-api", "tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-fs = "2.0"
@@ -28,7 +35,7 @@ tauri-plugin-updater = "2.0"
 
 window-vibrancy = "0.6"
 
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "hooks"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -42,15 +49,6 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 png = "0.17"
 
-sentry = { version = "0.48.5", default-features = false, features = [
-    "backtrace",
-    "debug-images",
-    "panic",
-    "reqwest",
-    "rustls",
-    "tracing",
-    "transport",
-] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
 tracing-appender = "0.2"
@@ -61,11 +59,16 @@ reqwest = { version = "0.12", default-features = false, features = [
     "multipart",
     "rustls-tls",
     "json",
+    "stream",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "18ffb9a201fbf6fedfaa382fd4b92315ea30ab1a" }
 security-framework = "3"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString", "NSError"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"] }
 
 [features]
 default = ["custom-protocol"]
@@ -76,3 +79,15 @@ base64 = "0.22"
 minisign-verify = "0.2.5"
 wiremock = "0.6"
 tauri = { version = "2.0", features = ["test"] }
+
+[[example]]
+name = "history-benchmark"
+path = "../bench/history.rs"
+
+# Legacy objc macros test this feature internally; it is not an app feature.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[[example]]
+name = "next-performance"
+path = "../bench/next-performance.rs"

@@ -10,7 +10,7 @@ import { useEffect, type ReactNode } from 'react';
 import { siteConfig } from '@/lib/site';
 import appCss from '@/styles/globals.css?url';
 import { RootError, RootNotFound } from '@/components/ui/root-fallbacks';
-import { initBrowserErrorReporting } from '@/lib/observability/browser';
+import { initBrowserAnalytics } from '@/lib/observability/browser';
 
 export const Route = createRootRoute({
   errorComponent: RootError,
@@ -58,7 +58,7 @@ export const Route = createRootRoute({
       { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' },
       {
         rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap',
+        href: 'https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&family=Nunito:wght@400..800&display=swap',
       },
     ],
   }),
@@ -66,7 +66,7 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
-  useEffect(initBrowserErrorReporting, []);
+  useEffect(initBrowserAnalytics, []);
   return (
     <RootDocument>
       <Outlet />
@@ -76,7 +76,7 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="ev h-full antialiased">
       <head>
         <HeadContent />
       </head>

@@ -1,0 +1,65 @@
+---
+title: "A meeting decision kept as reusable Markdown"
+description: "Use a short fictional transcript to practice creating a portable note without inventing missing owners or dates."
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "Obsidian workflow", "path": "/integrations/obsidian"}, {"title": "Decision log template", "path": "/templates/decision-log"}, {"title": "Action items template", "path": "/templates/meeting-action-items"}]
+download: "/resources/examples/launch-transcript.md"
+downloadLabel: "Copy or download the Markdown"
+---
+
+This teaching example uses a fictional three-line conversation. The downloadable transcript and brief are hand-authored examples, not customer data or a claim about a generated Eavesy result. They demonstrate the structure you can use with your own reviewed recording.
+
+## Read the source
+
+```text
+00:01 You: We agreed to launch on Friday.
+00:05 Them: The help page still needs a review.
+00:09 You: We have not assigned an owner for that review yet.
+```
+
+The source establishes a launch decision and an unresolved review task. It does not establish a calendar date, a time zone, the remote speaker's name, or who will do the review. Do not fill those gaps from a plausible story.
+
+## Write a compact note
+
+The [sample brief](/resources/examples/launch-brief.md) preserves the decision and the missing information. It points back to the source passages. Open both Markdown files in any text editor to inspect the result; no Eavesy account is needed to use this example.
+
+In a real Eavesy capture, sign in for the completed cloud brief, then review it against the transcript and audio. Local recording files remain in the capture folder. A processing placeholder should not be treated as a completed summary.
+
+## Keep it in a notes vault
+
+Copy the sample brief into an Obsidian vault or your usual project folder. Give the note a useful title and link it to the project. If you move a whole capture folder, preserve references to any source media you want to retain. JSON metadata remains a separate file; it does not automatically become YAML frontmatter.
+
+## Carry uncertainty forward
+
+An action list for this source can say “Help page review — owner unassigned.” It cannot assign that work to the speaker who mentioned it. A decision log can record “Friday” while stating that the exact date needs confirmation.
+
+Try changing the example to include an explicit owner, then update only the fields the new source establishes. The goal is a reusable record that remains faithful to what was captured.
+
+## The resulting project note
+
+```markdown
+# Launch planning — reviewed note
+
+## Decision
+Launch on Friday.
+Source: launch-transcript.md, 00:01.
+
+## Follow-up requiring assignment
+The help page still needs review (00:05).
+No owner has been assigned (00:09).
+
+## Open questions
+- Which calendar date does Friday mean?
+- Who owns the help page review, and when is it due?
+- Is review a launch prerequisite? The source does not say.
+```
+
+This note is deliberately smaller than a meeting recap. Each claim has a source, and each missing detail remains a question. Save it as a `.md` file in your project folder; an Obsidian vault can open the same ordinary Markdown.
+
+## Turn the note into a follow-up request
+
+You could ask participants to confirm the calendar date and assign the review. That request is a proposed next action, not evidence that either detail was already agreed. Keep the historical source unchanged and add confirmed updates as a new note or decision entry.
+
+For practice, fill the [decision log](/templates/decision-log) and [action items template](/templates/meeting-action-items) from the three lines above. The first can contain the launch choice. The second should keep the review unassigned until a source establishes ownership.

@@ -44,7 +44,7 @@ pub fn archive_is_playable(path: &Path) -> bool {
         } else if size == 0 {
             size = len - offset;
         }
-        if size < header_len || offset + size > len {
+        if size < header_len || offset.checked_add(size).is_none_or(|end| end > len) {
             return false;
         }
         has_ftyp |= &kind == b"ftyp";
@@ -93,14 +93,14 @@ pub const DEFERRED_NOTE: &str = "recovery deferred: ";
 pub fn recover_or_defer<R: Runtime>(app: &AppHandle<R>, session_id: &str, reason: &str) -> Option<Salvage> {
     match salvage(app, session_id, reason) {
         Ok(outcome) => {
-            eprintln!("recovered interrupted recording {session_id}: {outcome:?}");
+            tracing::info!(%session_id, "recovered interrupted recording: {outcome:?}");
             Some(outcome)
         }
         Err(error) => {
-            eprintln!("could not recover recording {session_id} yet: {error}");
+            tracing::warn!(%session_id, "could not recover recording yet: {error}");
             crate::telemetry::capture("recording recovery deferred", &error);
             if let Err(error) = sqlite::defer_session(app, session_id, 0, Some(&format!("{DEFERRED_NOTE}{error}"))) {
-                eprintln!("could not note deferred recovery for {session_id}: {error}");
+                tracing::warn!(%session_id, "could not note deferred recovery: {error}");
             }
             None
         }
@@ -115,7 +115,7 @@ pub fn retry_deferred<R: Runtime>(app: &AppHandle<R>) {
                 recover_or_defer(app, &id, "it could not be finished when the recording ended");
             }
         }
-        Err(error) => eprintln!("{error}"),
+        Err(error) => tracing::warn!("deferred recovery: {error}"),
     }
 }
 
@@ -168,7 +168,7 @@ pub fn salvage<R: Runtime>(app: &AppHandle<R>, session_id: &str, reason: &str) -
         }
     };
     if let Err(error) = save_local_recording(app, &session, folder.as_deref(), duration_ms, has_audio, status) {
-        eprintln!("recovered {session_id} but could not update its local files: {error}");
+        tracing::warn!(%session_id, "recovered, but could not update its local files: {error}");
         crate::telemetry::capture("recording recovery files not written", &error);
     }
     Ok(outcome)
@@ -182,7 +182,7 @@ fn save_local_recording<R: Runtime>(
     has_audio: bool,
     status: &str,
 ) -> Result<(), String> {
-    let existing = store::load_all(app).into_iter().find(|recording| recording.id == session.id);
+    let existing = store::get(app, &session.id)?;
     let recording = match existing {
         Some(mut recording) => {
             if recording.status != status || recording.has_audio != has_audio {

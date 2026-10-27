@@ -9,7 +9,7 @@ import { VERSION } from './version';
 const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
 /** Images larger than this are listed by path instead of inlined. */
 const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
-/** Total inlined per get_capture call; the rest are listed by path only. */
+/** Total inlined per get call; the rest are listed by path only. */
 const MAX_INLINE_TOTAL_BYTES = 12 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -19,40 +19,45 @@ const IMAGE_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
 };
 
+/** Same annotations as the hosted server's read tools (workers/mcp). */
+const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+
 const kindSchema = { type: 'string', enum: [...KINDS], description: 'Only captures of this kind.' };
 const limitSchema = { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum results (default 20).' };
 
+// Tool names are the canonical ones from docs/plans/agent-architecture.md
+// ("One tool spec, two MCP servers"), so they carry over when the hosted server moves to them.
 export const TOOLS = [
   {
-    name: 'search_captures',
+    name: 'search',
     description:
-      'Search Eavesy captures stored on this Mac (meetings, clipboard notes, pasted images, screenshots, dropped files), including ones that never upload. Every query word must appear in the title or a text file.',
+      'Search Eavesy captures stored on this Mac (meetings, clipboard notes, pasted images, screenshots, imported files), including ones that never upload. Every query word must appear in the title or a text file.',
     inputSchema: {
       type: 'object',
       properties: { query: { type: 'string', description: 'Words to look for.' }, kind: kindSchema, limit: limitSchema },
       required: ['query'],
     },
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
   },
   {
-    name: 'get_capture',
+    name: 'get',
     description:
       'Read one local Eavesy capture by id: metadata, its Markdown files (summary, transcript, notes, note) and, for screenshots and images, the image itself.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Capture id from search_captures or recent_captures, or the folder name.' },
+        id: { type: 'string', description: 'Capture id from search or recent, an unambiguous id prefix, or the folder name.' },
         include_images: { type: 'boolean', description: 'Attach image files (default true).' },
       },
       required: ['id'],
     },
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
   },
   {
-    name: 'recent_captures',
+    name: 'recent',
     description: 'List the most recent local Eavesy captures, newest first.',
     inputSchema: { type: 'object', properties: { kind: kindSchema, limit: limitSchema } },
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
   },
 ] as const;
 
@@ -95,17 +100,17 @@ function limitArg(value: unknown) {
 
 export function callTool(root: string, name: string, args: Record<string, unknown>): Content[] {
   switch (name) {
-    case 'search_captures': {
+    case 'search': {
       if (typeof args.query !== 'string' || !args.query.trim()) throw new ToolError('query is required');
       const hits = search(root, args.query, { kind: kindArg(args.kind), limit: limitArg(args.limit) });
       const results = hits.map((h) => ({ ...summarize(h.capture), matchedIn: h.matchedIn, snippet: h.snippet }));
       return [{ type: 'text', text: JSON.stringify({ root, results }, null, 2) }];
     }
-    case 'recent_captures': {
+    case 'recent': {
       const results = recent(root, { kind: kindArg(args.kind), limit: limitArg(args.limit) }).map(summarize);
       return [{ type: 'text', text: JSON.stringify({ root, results }, null, 2) }];
     }
-    case 'get_capture': {
+    case 'get': {
       if (typeof args.id !== 'string' || !args.id.trim()) throw new ToolError('id is required');
       const capture = getCapture(root, args.id);
       if (!capture) throw new ToolError(`no capture with id ${args.id} in ${root}`);
@@ -160,7 +165,7 @@ export function handleMessage(root: string, message: unknown): object | null {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'eavesy-local', version: VERSION },
-        instructions: `Read-only access to Eavesy captures on this Mac (${root}): meetings, clipboard notes, pasted images and screenshots, including ones that never upload. Use recent_captures or search_captures, then get_capture.`,
+        instructions: `Read-only access to Eavesy captures on this Mac (${root}): meetings, clipboard notes, pasted images and screenshots, including ones that never upload. Use recent or search, then get.`,
       });
     }
     case 'ping':

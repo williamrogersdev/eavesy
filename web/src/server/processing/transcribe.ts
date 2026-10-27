@@ -1,15 +1,23 @@
-import { and, eq, gte, inArray, isNull, lt, lte, ne, or } from 'drizzle-orm';
-import { meetings, meetingSegments, summaries, transcriptSegments, users } from '@/db/schema';
-import { encode } from '@/db/codec';
-import { MODELS } from '@/lib/ai/client';
-import { summarizeMeeting } from '@/lib/ai/summarize';
+import * as dictionary from '@/db/repo/dictionary';
+import { repairTranscriptSegments, repairAi } from '@/lib/ai/repair-transcript';
+import { guardedImportWrite } from './import-guard';
+import { createAiRunner } from '@/lib/ai/credit-runner';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { meetings, meetingSegments, transcriptSegments, users } from '@/db/schema';
+import * as projectsRepo from '@/db/repo/projects';
+import { upsertSummary } from '@/db/repo/summaries';
+import { summarizeMeeting, summarizeMeetingModel } from '@/lib/ai/summarize';
+import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
+import { retryLanguage, spokenLanguages, whisperLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/workers-ai';
+import { parseVocabulary } from '@/lib/transcription/vocabulary';
 import {
   ECHO_WINDOW_MS,
   findEchoLines,
   isHallucination,
+  isQuietAudio,
   isSilentTrack,
   speakerForTrack,
 } from '@/lib/transcription/two-track';
@@ -22,7 +30,8 @@ import {
   SegmentBusyError,
   runBatched,
 } from './shared';
-import { logMeetingComplete } from './summarize';
+import { logMeetingComplete, resendFollowUps } from './summarize';
+import { queueRecap } from '@/server/email/recaps';
 
 /** Rolling notes refresh each time the transcribed audio crosses another interval. */
 export const ROLLING_NOTES_EVERY_MS = 4 * 60 * 1_000;
@@ -45,20 +54,28 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const user = userRow ? await openUserKeys(userRow) : undefined;
   if (meeting.status === 'complete') {
-    if (!user?.isAnonymous) await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    await resendFollowUps(db, env, meetingId, userRow, { anonymous: Boolean(user?.isAnonymous) });
     return;
   }
+  if (meeting.deletedAt) return;
   if (!meeting.audioR2Key) throw new Error('recording has no audio object');
 
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
+  const entries = await dictionary.listForTranscription(db, meeting.userId);
+  const project = await projectsRepo.getForMeeting(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
+    contextBlurb: meeting.contextBlurb,
+    vocabulary: [...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
+    spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
+  const language = whisperLanguage(meeting.language) ?? transcription.language ?? null;
 
-  await runBatched(db, transcription.segments.map((segment, index) => {
+  const repaired = await repairTranscriptSegments(transcription.segments, { dictionary: entries, ai: repairAi(env) });
+  await runBatched(db, repaired.map((segment, index) => {
     const id = `web_${meetingId}_${index}_${segment.startMs}`;
     return db
       .insert(transcriptSegments)
@@ -69,7 +86,9 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
         endMs: segment.endMs,
         speakerId: segment.speakerId,
         text: segment.text,
+        rawText: segment.rawText,
         confidence: segment.confidence,
+        language,
         isEdited: false,
         isFinal: true,
       })
@@ -79,15 +98,18 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
           startMs: segment.startMs,
           endMs: segment.endMs,
           text: segment.text,
+        rawText: segment.rawText,
           confidence: segment.confidence,
+          language,
           isFinal: true,
         },
+        setWhere: eq(transcriptSegments.isEdited, false),
       });
   }));
 
   if (transcription.segments.length > 0) await recordFirstTranscript(db, meeting);
 
-  const fullText = transcription.segments
+  const fullText = repaired
     .map((segment) => `${segment.speakerId ? `${segment.speakerId}: ` : ''}${segment.text}`)
     .join('\n');
   const now = Date.now();
@@ -95,30 +117,12 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     const plan = resolveModelPlan(user);
     const summary = await summarizeMeeting({
       transcript: fullText,
-      contextBlurb: meeting.contextBlurb ?? undefined,
+      contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
+      notesLanguage: userRow?.notesLanguage,
     });
-    const generatedByModel = plan.openRouter
-      ? 'openrouter:anthropic/claude-sonnet-4.6'
-      : plan.summary.apiKey
-        ? `byo-anthropic:${MODELS.summary}`
-        : MODELS.summary;
-    const values = {
-      tldr: summary.tldr,
-      decisionsJson: encode(summary.decisions),
-      actionItemsJson: encode(summary.actionItems),
-      followUpsJson: encode(summary.followUps),
-      openQuestionsJson: encode(summary.openQuestions),
-      topicsJson: encode(summary.topics),
-      mentionsJson: encode(summary.mentions),
-      generatedByModel,
-      generatedAt: now,
-    };
-    await db
-      .insert(summaries)
-      .values({ id: `summary_${meetingId}`, meetingId, ...values })
-      .onConflictDoUpdate({ target: summaries.meetingId, set: values });
+    await upsertSummary(db, { meetingId, summary, generatedByModel: summarizeMeetingModel(plan), generatedAt: now });
     await db
       .update(meetings)
       .set({
@@ -147,7 +151,9 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
 
   if (!user?.isAnonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
+    if (fullText.trim()) await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
   }
+  if (fullText.trim()) await queueRecap(env, userRow, meetingId);
 }
 
 export async function handleTranscribeSegment(
@@ -211,20 +217,78 @@ export async function handleTranscribeSegment(
     eq(meetingSegments.id, segment.id),
     eq(meetingSegments.transcribeClaimedAt, claimedAt),
   );
+  // Settled under this claim, so neither a redelivery nor the recovery sweep
+  // pays for Whisper on audio nobody will read.
+  const abandon = () =>
+    db
+      .update(meetingSegments)
+      .set({ transcribeStatus: 'failed', transcribeClaimedAt: null })
+      .where(ownClaim);
   try {
-    if (!isSilentTrack(track, segment.activeMs)) {
+    if (transcriptionAbandoned(meeting)) {
+      await abandon();
+      return;
+    }
+    const micOnly = track === 'mic' && !(await hasSystemTrack(db, meetingId));
+    if (!isSilentTrack(track, segment.activeMs, { micOnly })) {
       const object = await env.AUDIO_BUCKET.get(segment.r2Key);
       if (!object) throw new Error(`segment object missing: ${segment.r2Key}`);
       const audio = new Uint8Array(await object.arrayBuffer());
-      const transcription = await new WorkersAiSegmentTranscriber(env.AI).transcribe({
+      const transcriber = new WorkersAiSegmentTranscriber(meeting.source === 'import' ? createAiRunner(env, 'import-transcription') : env.AI);
+      const prefs = await userPrefs(db, meeting.userId);
+      const entries = await dictionary.listForTranscription(db, meeting.userId);
+      const request = {
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
-      });
+        vocabulary: [
+          ...entries.map(e => e.to),
+          ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
+          ...prefs.vocabulary,
+        ],
+      };
+      let transcription = await transcriber.transcribe(request);
+      let language = whisperLanguage(meeting.language) ?? transcription.language;
+      if (!whisperLanguage(meeting.language) && transcription.segments.length > 0) {
+        const retry = retryLanguage({
+          setting: meeting.language,
+          detected: transcription.language,
+          probability: transcription.languageProbability,
+          established: await establishedLanguage(db, meetingId),
+          spoken: prefs.spoken,
+        });
+        if (retry) {
+          const again = await transcriber.transcribe({ ...request, language: retry });
+          if (again.segments.length > 0) {
+            transcription = again;
+            language = again.language ?? retry;
+          }
+        }
+      }
       const speakerId = speakerForTrack(track);
-      const lines = transcription.segments.filter((relative) => !isHallucination(relative));
+      const glossary = request.vocabulary;
+      // A near-silent segment's stock phrases are invented, even on a mic-only note.
+      const quiet = isQuietAudio(segment.activeMs);
+      let lines = transcription.segments.filter(
+        (relative) => !isHallucination(relative, { lenient: micOnly, quiet, glossary }),
+      );
+      // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
+      // the user's own note, so give it one more pass without VAD, keeping the
+      // strict filter so silence does not turn into "Thank you."
+      if (micOnly && lines.length === 0 && segment.activeMs !== 0) {
+        const retry = await transcriber.transcribe({ ...request, language, vadFilter: false });
+        language ??= retry.language;
+        lines = retry.segments.filter((relative) => !isHallucination(relative, { quiet, glossary }));
+      }
 
-      await runBatched(db, lines.map((relative) => {
+      // Deleted or cancelled while Whisper ran.
+      const current = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
+      if (!current || transcriptionAbandoned(current)) {
+        await abandon();
+        return;
+      }
+      const repaired = await repairTranscriptSegments(lines, { dictionary: entries, ai: repairAi(env) });
+      const writes = repaired.map((relative) => {
         const relativeStart = Math.max(0, relative.startMs);
         const absoluteStart = segment.offsetMs + relativeStart;
         const absoluteEnd = Math.max(
@@ -244,7 +308,9 @@ export async function handleTranscribeSegment(
             endMs: absoluteEnd,
             speakerId,
             text: relative.text,
+            rawText: relative.rawText,
             confidence: relative.confidence,
+            language: language ?? null,
             isFinal: true,
             isEdited: false,
           })
@@ -255,11 +321,21 @@ export async function handleTranscribeSegment(
               endMs: absoluteEnd,
               speakerId,
               text: relative.text,
+            rawText: relative.rawText,
               confidence: relative.confidence,
+              language: language ?? null,
               isFinal: true,
             },
+            setWhere: eq(transcriptSegments.isEdited, false),
           });
-      }));
+      });
+      if (meeting.source === 'import') {
+        // Completed batches remain available for resume; every later write
+        // rechecks cancellation. Cancelled recordings stay excluded from memory.
+        for (let at = 0; at < writes.length; at += 50) {
+          await env.DB.batch(writes.slice(at, at + 50).map(write => guardedImportWrite(env, write.toSQL(), meetingId)));
+        }
+      } else await runBatched(db, writes);
       if (lines.length > 0) await recordFirstTranscript(db, meeting, segment);
     }
 
@@ -289,7 +365,7 @@ export async function handleTranscribeSegment(
       )
       .limit(1);
     if (
-      siblingsPending.length === 0 &&
+      meeting.source !== 'import' && siblingsPending.length === 0 &&
       crossesRollingNotesBoundary(segment) &&
       (await claimRollingNotes(db, meetingId, idx))
     ) {
@@ -307,6 +383,50 @@ export async function handleTranscribeSegment(
       .where(ownClaim);
     throw error;
   }
+}
+
+/** A meeting whose audio no longer needs transcribing: deleted, or an import that failed. */
+function transcriptionAbandoned(meeting: { deletedAt: number | null; source: string; status: string }) {
+  return meeting.deletedAt !== null || (meeting.source === 'import' && meeting.status === 'failed');
+}
+
+async function userPrefs(db: Db, userId: string): Promise<{ vocabulary: string[]; spoken: string[] }> {
+  const row = await db
+    .select({
+      customVocabularyJson: users.customVocabularyJson,
+      spokenLanguagesJson: users.spokenLanguagesJson,
+      defaultLanguage: users.defaultLanguage,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return {
+    vocabulary: parseVocabulary(row[0]?.customVocabularyJson).reverse(),
+    spoken: row[0] ? spokenLanguages(row[0]) : [],
+  };
+}
+
+/** The language most of the meeting has been spoken in so far, by amount of text. */
+async function establishedLanguage(db: Db, meetingId: string): Promise<string | undefined> {
+  const weight = sql<number>`sum(length(${transcriptSegments.text}))`;
+  const row = await db
+    .select({ language: transcriptSegments.language, weight })
+    .from(transcriptSegments)
+    .where(and(eq(transcriptSegments.meetingId, meetingId), isNotNull(transcriptSegments.language)))
+    .groupBy(transcriptSegments.language)
+    .orderBy(desc(weight))
+    .limit(1);
+  return row[0]?.language ?? undefined;
+}
+
+/** Whether any part of the meeting recorded the computer's audio: a two-sided call. */
+async function hasSystemTrack(db: Db, meetingId: string): Promise<boolean> {
+  const row = await db
+    .select({ id: meetingSegments.id })
+    .from(meetingSegments)
+    .where(and(eq(meetingSegments.meetingId, meetingId), eq(meetingSegments.track, 'system')))
+    .limit(1);
+  return row.length > 0;
 }
 
 /**

@@ -1,0 +1,76 @@
+---
+title: "Decision log template"
+description: "Keep the decision, reasoning, source, and unresolved questions in one portable Markdown note."
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "Find the source decision", "path": "/guides/find-decisions-in-recordings"}, {"title": "Review a cited answer", "path": "/examples/library-answer-with-sources"}, {"title": "Keep it in Obsidian", "path": "/integrations/obsidian"}]
+download: "/resources/templates/decision-log.md"
+downloadLabel: "Copy or download the Markdown"
+---
+
+A decision log preserves what was agreed and why, so a later reader can distinguish the choice from the conversation around it. Use one entry per decision. The template is plain Markdown and works independently of Eavesy.
+
+## Distinguish proposals from agreements
+
+Set the status explicitly. A speaker saying “we could ship Friday” has proposed a date; “we agreed to ship Friday” establishes a different kind of claim. If the discussion never resolved the choice, use needs confirmation rather than writing a final decision.
+
+## Keep a source pointer
+
+Add the recording title, a timestamp when available, and a short supporting excerpt. A summary is convenient for navigation, but the underlying transcript and audio help you check nuance. Retain enough surrounding context to understand whether a later sentence reversed the decision.
+
+## Leave missing fields empty
+
+Do not assign the speaker as owner merely because they described the decision. If no due date was stated, write “not assigned” rather than generating one. Separate a requested next action from something the participants actually committed to doing.
+
+## Worked example
+
+Decision: launch on Friday. Status: agreed. Supporting excerpt: “We agreed to launch on Friday.” Owner: not established. This is a deliberately small illustrative source, also used in the [cited answer example](/examples/library-answer-with-sources). It does not establish a specific calendar date or time zone.
+
+## Use it with Eavesy
+
+Find the relevant recording, check the passage, and copy the decision and source into this note. Save it beside the recording or in your notes vault. If a later meeting changes the plan, add a new entry and mark the old one superseded instead of silently replacing the historical record.
+
+
+## Use the editor or keep your own file
+
+The editable form on this page produces a Markdown draft from your fields. **Load fictional example** shows a teaching scenario; replace its facts before using the output. **Copy your draft** includes your edits, while the blank download above remains available if you prefer your own editor. Reloading the page clears the in-page draft, so copy or download it before leaving.
+
+## Review before you share
+
+Read the preview as if you were the recipient. Can you open each cited source? Are expectations separate from observations? Does every assignment or deadline come from evidence? Leave missing information explicit. A well-formatted note still needs source review before it becomes an issue, commitment, or instruction to act.
+
+## Copyable template
+
+```markdown
+# Decision log
+
+## Decision
+[One sentence stating the agreed choice.]
+
+## Status
+[Proposed / agreed / superseded / needs confirmation]
+
+## Date and scope
+- Decision date:
+- Project or topic:
+
+## Reasoning
+[Why was this choice made? Use only established reasons.]
+
+## Source
+- Recording or document:
+- Timestamp or section:
+- Supporting excerpt:
+
+## Ownership and follow-up
+- Owner, if assigned:
+- Next step:
+- Due date, if agreed:
+
+## Open questions
+[What remains unestablished?]
+
+## Superseded by
+[Link to a later decision when applicable.]
+```

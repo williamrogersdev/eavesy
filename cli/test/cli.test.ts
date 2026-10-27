@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run, type Io } from '../src/main';
 import { VERSION } from '../src/version';
@@ -13,9 +12,7 @@ async function cli(argv: string[], extra: Partial<Io> = {}) {
   const code = await run(argv, {
     out: (t) => (out += t),
     err: (t) => (err += t),
-    readStdin: async () => '',
     env: { EAVESY_RECORDINGS: FIXTURE, HOME: '/nonexistent' },
-    credential: () => null,
     ...extra,
   });
   return { code, out, err };
@@ -46,20 +43,8 @@ describe('eavesy', () => {
     expect((await cli(['get', 'nope'])).code).toBe(1);
   });
 
-  test('drop - reads stdin and saves locally when signed out', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'eavesy-cli-'));
-    const res = await cli(['drop', '-', '--root', root, '--title', 'From Claude', '--json'], { readStdin: async () => 'agent note' });
-    expect(res.code).toBe(0);
-    const result = JSON.parse(res.out);
-    expect(result.via).toBe('local');
-    expect(readFileSync(join(result.folder, 'note.md'), 'utf8')).toBe('agent note');
-    expect(result.folder).toContain('From Claude');
-  });
-
-  test('drop - on a terminal explains instead of waiting', async () => {
-    const res = await cli(['drop', '-'], { stdinIsTTY: true, readStdin: () => new Promise(() => {}) });
-    expect(res.code).toBe(2);
-    expect(res.err).toContain('pbpaste | eavesy drop -');
+  test('drop is not a command: the CLI is read-only', async () => {
+    expect((await cli(['drop', '-'])).code).toBe(2);
   });
 
   test('usage errors exit 2; help and version exit 0', async () => {
@@ -67,6 +52,7 @@ describe('eavesy', () => {
     expect((await cli(['recent', '--kind', 'podcast'])).code).toBe(2);
     expect((await cli(['recent', '--limit', '0'])).code).toBe(2);
     expect((await cli(['search'])).code).toBe(2);
+    expect((await cli(['recent', '--kidn', 'note'])).code).toBe(2);
     expect((await cli([])).code).toBe(2);
     expect(await cli(['--help'])).toMatchObject({ code: 0 });
     expect((await cli(['-v'])).out.trim()).toBe(VERSION);

@@ -1,0 +1,302 @@
+'use client';
+
+import { RotateCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Button, StatusDisc, type DiscStatus } from '@/components/launcher/ui';
+import type { PermissionStatus, Permissions, PrivacyPane } from '@/lib/desktop/bridge';
+import type { SetupPermissionKind } from './use-setup-permissions';
+
+/** How much Eavesy needs a permission. Shown as a quiet tag after the name. */
+type Need = 'required' | 'recommended' | 'optional' | 'not-needed';
+
+interface PermissionSpec {
+  kind: SetupPermissionKind;
+  label: string;
+  hint: string;
+  /** Shown once macOS won't ask again, so only System Settings helps. */
+  settingsHint: string;
+  pane: PrivacyPane;
+  need: Need;
+  /** macOS applies a new grant only after Eavesy reopens. */
+  relaunch?: boolean;
+}
+
+const TAG: Record<Need, string | null> = {
+  required: 'required',
+  recommended: null,
+  optional: 'optional',
+  'not-needed': 'not needed',
+};
+
+/**
+ * Whether a shortcut is the fn key on its own, which needs Input Monitoring.
+ * fn held with a key ("Fn+Space", shown "fn Space") doesn't: it needs Accessibility instead.
+ */
+export function usesFnKey(...accelerators: string[]): boolean {
+  return accelerators.some((accel) => accel.trim().toLowerCase() === 'fn');
+}
+
+export function permissionSpecs(fnInUse: boolean): PermissionSpec[] {
+  return [
+    {
+      kind: 'mic',
+      label: 'Microphone',
+      hint: 'Lets Eavesy hear you while you talk. It only listens while its ears are up.',
+      settingsHint: 'Turn on Eavesy under Microphone in System Settings. This list updates on its own.',
+      pane: 'microphone',
+      need: 'required',
+    },
+    {
+      kind: 'speech',
+      label: 'Speech Recognition',
+      hint: 'Shows live captions and pastes the moment you stop talking.',
+      settingsHint: 'Turn on Eavesy under Speech Recognition in System Settings.',
+      pane: 'speech',
+      need: 'recommended',
+    },
+    {
+      kind: 'accessibility',
+      label: 'Accessibility',
+      hint: 'Lets Eavesy type the transcript where your cursor is.',
+      settingsHint: 'Turn on Eavesy under Accessibility in System Settings. This list updates on its own.',
+      pane: 'accessibility',
+      need: 'recommended',
+    },
+    {
+      kind: 'inputMonitoring',
+      label: 'Input Monitoring',
+      hint: fnInUse ? 'Lets the fn key start dictation.' : 'Only needed if you use fn as a shortcut.',
+      settingsHint: 'Turn on Eavesy under Input Monitoring in System Settings, then reopen Eavesy.',
+      pane: 'input_monitoring',
+      need: fnInUse ? 'recommended' : 'not-needed',
+      relaunch: true,
+    },
+    {
+      kind: 'notifications',
+      label: 'Notifications',
+      hint: 'Tells you when sign-in finishes or an update is ready.',
+      settingsHint: 'Turn on notifications for Eavesy in System Settings → Notifications.',
+      pane: 'notifications',
+      need: 'optional',
+    },
+    {
+      kind: 'screen',
+      label: 'Screen Recording',
+      hint: 'For screenshots, screen videos and meeting audio. You can turn it on later.',
+      settingsHint: 'Turn on Eavesy under Screen & System Audio Recording, then reopen Eavesy.',
+      pane: 'screen',
+      need: 'optional',
+      relaunch: true,
+    },
+  ];
+}
+
+export function isGranted(permissions: Permissions | null, kind: SetupPermissionKind): boolean | undefined {
+  if (!permissions) return undefined;
+  return permissions[kind] ?? false;
+}
+
+/** Same answers from macOS, so there's nothing new to render. */
+export function samePermissions(a: Permissions | null, b: Permissions | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof Permissions>;
+  for (const key of keys) {
+    if (key !== 'status' && a[key] !== b[key]) return false;
+  }
+  const sa = (a.status ?? {}) as Partial<Record<string, PermissionStatus>>;
+  const sb = (b.status ?? {}) as Partial<Record<string, PermissionStatus>>;
+  for (const kind of new Set([...Object.keys(sa), ...Object.keys(sb)])) {
+    if (sa[kind] !== sb[kind]) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a permissions list on screen should keep re-checking: only while one
+ * of its rows that matters here (anything but "not needed") is still off.
+ */
+export function needsPermissionPoll(permissions: Permissions | null, fnInUse: boolean): boolean {
+  if (!permissions) return true;
+  return permissionSpecs(fnInUse).some((spec) => spec.need !== 'not-needed' && !isGranted(permissions, spec.kind));
+}
+
+/**
+ * Whether macOS has already answered, so Allow would do nothing and only System Settings helps.
+ * Screen Recording and Accessibility can't tell "never asked" from "said no" (`notGranted`), so
+ * those count as unanswered until Eavesy has asked once.
+ */
+export function answered(permissions: Permissions | null, kind: SetupPermissionKind): boolean {
+  const status: PermissionStatus | undefined = permissions?.status?.[kind];
+  if (kind === 'mic' && status === undefined) return !!permissions?.micAsked;
+  return status === 'denied' || status === 'restricted';
+}
+
+/** Kinds macOS reports only as granted or not, so "asked once" stands in for "denied". */
+export const REMEMBERS_ASKING: ReadonlySet<SetupPermissionKind> = new Set(['screen', 'accessibility']);
+
+export interface RowState {
+  granted: boolean | undefined;
+  disc: DiscStatus;
+  /** Allow would show nothing more, so the button opens System Settings. */
+  inSettings: boolean;
+  showRelaunch: boolean;
+}
+
+/**
+ * What a row shows. `asked`: the user went through Allow (and it ran) or Open Settings in this
+ * panel. `grantedAtStart`: whether it was on when the row first had permissions to show.
+ */
+export function permissionRowState({ permissions, kind, relaunch, checking, asked, grantedAtStart }: {
+  permissions: Permissions | null;
+  kind: SetupPermissionKind;
+  relaunch: boolean;
+  checking: boolean;
+  asked: boolean;
+  grantedAtStart: boolean | undefined;
+}): RowState {
+  const granted = isGranted(permissions, kind);
+  const denied = answered(permissions, kind);
+  const newlyGranted = granted === true && grantedAtStart === false;
+  return {
+    granted,
+    disc: checking ? 'checking' : granted ? 'granted' : denied ? 'denied' : 'pending',
+    inSettings: denied || asked,
+    showRelaunch: relaunch && (newlyGranted || (asked && !granted)),
+  };
+}
+
+export function PermissionChecklistRow({
+  spec,
+  permissions,
+  checking,
+  onRequest,
+  onOpenSettings,
+  onRelaunch,
+}: {
+  spec: PermissionSpec;
+  permissions: Permissions | null;
+  checking: boolean;
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
+  onOpenSettings: (pane: PrivacyPane) => void;
+  onRelaunch: () => void;
+}) {
+  const granted = isGranted(permissions, spec.kind);
+  // Asked in this panel: a second Allow would show nothing, so it opens System Settings instead.
+  const [asked, setAsked] = useState(false);
+  // Granted while this list was open: some permissions need Eavesy to reopen before they work.
+  const [grantedAtStart, setGrantedAtStart] = useState(granted);
+  if (grantedAtStart === undefined && granted !== undefined) setGrantedAtStart(granted);
+  const { disc: status, inSettings, showRelaunch } = permissionRowState({
+    permissions, kind: spec.kind, relaunch: !!spec.relaunch, checking, asked, grantedAtStart,
+  });
+  const tag = TAG[spec.need];
+
+  const act = () => {
+    if (inSettings) {
+      onOpenSettings(spec.pane);
+      setAsked(true);
+      return;
+    }
+    // Only a request that ran counts as asked; a failed one leaves Allow in place.
+    void onRequest(spec.kind).then((ran) => {
+      if (ran && REMEMBERS_ASKING.has(spec.kind)) setAsked(true);
+    });
+  };
+
+  return (
+    <div className="ev-perm" data-need={spec.need}>
+      <StatusDisc status={status} />
+      <div className="min-w-0">
+        <div className="ev-perm-title">
+          {spec.label}
+          {tag && <span className="ev-perm-tag">{tag}</span>}
+        </div>
+        <p className="ev-perm-hint">
+          {showRelaunch && granted
+            ? 'On. macOS applies this after Eavesy reopens.'
+            : inSettings && !granted
+              ? spec.settingsHint
+              : spec.hint}
+        </p>
+      </div>
+      <div className="ev-perm-action">
+        {showRelaunch && (
+          <Button variant={granted ? 'primary' : 'ghost'} size="sm" icon={RotateCw} onClick={onRelaunch} title="Quit and reopen Eavesy">
+            Reopen
+          </Button>
+        )}
+        {granted ? (
+          !showRelaunch && <span className="ev-perm-on">On</span>
+        ) : (
+          <Button
+            variant={spec.need === 'required' ? 'primary' : 'outline'}
+            size="sm"
+            disabled={checking || granted === undefined}
+            onClick={act}
+          >
+            {inSettings ? 'Open Settings' : 'Allow'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every permission Eavesy uses, with live status. The same rows in onboarding and in
+ * Settings ▸ Permissions. Each Allow asks macOS for one permission; the panel steps aside
+ * (Rust lowers it) so the system alert can be clicked.
+ */
+export function PermissionChecklist({
+  permissions,
+  checking,
+  fnInUse,
+  only,
+  onRequest,
+  onOpenSettings,
+  onRelaunch,
+}: {
+  permissions: Permissions | null;
+  checking: SetupPermissionKind | null;
+  fnInUse: boolean;
+  /** Limit to these kinds, in this order. */
+  only?: SetupPermissionKind[];
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
+  onOpenSettings: (pane: PrivacyPane) => void;
+  onRelaunch: () => void;
+}) {
+  const specs = permissionSpecs(fnInUse);
+  const rows = only ? only.flatMap((kind) => specs.filter((spec) => spec.kind === kind)) : specs;
+  return (
+    <>
+      {rows.map((spec) => (
+        <PermissionChecklistRow
+          key={spec.kind}
+          spec={spec}
+          permissions={permissions}
+          checking={checking === spec.kind}
+          onRequest={onRequest}
+          onOpenSettings={onOpenSettings}
+          onRelaunch={onRelaunch}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Plays a one-shot callback each time another permission turns on. */
+export function useOnGrant(permissions: Permissions | null, onGrant: () => void) {
+  const count = permissions
+    ? (['mic', 'speech', 'accessibility', 'inputMonitoring', 'notifications', 'screen'] as const)
+      .filter((kind) => permissions[kind]).length
+    : null;
+  const previous = useRef<number | null>(null);
+  const callback = useRef(onGrant);
+  useEffect(() => { callback.current = onGrant; });
+  useEffect(() => {
+    if (count === null) return;
+    if (previous.current !== null && count > previous.current) callback.current();
+    previous.current = count;
+  }, [count]);
+}

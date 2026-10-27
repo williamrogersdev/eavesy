@@ -1,49 +1,81 @@
 ---
-title: Privacy & your data
-description: Where your data lives, who can touch it, and the controls you have over it.
-category: Account & data
-order: 41
+title: Privacy and your data
+description: What stays on your Mac, what goes to the cloud, who processes it, and how to export or delete it.
+category: Account and data
+order: 50
 ---
 
-Eavesy is built local-first and privacy-first. Here&rsquo;s exactly how your
-data is handled.
+## What stays on your Mac
 
-## Where it lives
+Without an account, nothing leaves your Mac. Captures are files in your
+recordings folder, and Talk text and live captions are made on-device.
 
-- **Mac app:** source files are written to a folder on your disk. A private cloud
-  copy supports transcription, search, sync, and recovery after you pair the app.
-- **Browser:** recordings, transcripts, and briefs are stored under your signed-in
-  account so processing can finish and you can return to them later.
+Even when you're signed in, the Mac app doesn't upload clipboard text, notes
+or imported files.
 
-## Encryption
+## What goes to the cloud
 
-- **In transit:** TLS.
-- **At rest:** Cloudflare-managed encryption protects audio in object storage
-  and metadata in the database.
+When you sign in, the Mac app uploads recording audio (Talk, Meeting and
+Video) so it can be transcribed and summarized. Your account then holds the
+audio, transcripts, briefs, notes and search index for those recordings.
 
-## Model-provider policies
+A signed-in Mac also uploads its screenshots and pasted images to your
+account, so they appear in the history on your other signed-in Macs and in
+the web app. Sign out and new screenshots stay on that Mac only. Delete one
+in the web app to remove the cloud copy.
 
-Eavesy does not train models on your recordings. Cloudflare states that Workers
-AI customer content is not used to train models or improve its services without
-explicit consent. Anthropic states that its commercial API data is not used for
-model training unless the customer explicitly opts in. If you connect your own
-OpenRouter account, provider training and retention follow the privacy settings
-you control in OpenRouter.
+The web app stores what you make there: browser recordings, capture bar
+screenshots and videos, dictations and drops.
 
-<Callout type="privacy">
-Capture only happens while a recording is running, and only with the macOS
-permissions you grant. Stop a recording and nothing is being captured.
-</Callout>
+When you send the [Notetaker](/docs/notetaker) to a call, it records the call's
+audio, the participants' display names and who was speaking when. It doesn't
+record video. The notetaker runs on Cloudflare, and its recordings are stored
+and deleted like your other recordings.
 
-## Your controls
+Data is encrypted in transit with TLS and at rest with Cloudflare-managed
+encryption.
 
-- **Export everything** from Settings → Your data, or a single meeting bundle or
-  capture from its detail page.
-- **Delete** any recording or capture in the app; its cloud copies (audio,
-  transcript, search index) are permanently removed within a day.
-- **Delete your account** from Settings → Your data. Everything stored in the
-  cloud is permanently removed and your Mac is signed out; local folders remain
-  yours.
+## Who processes it
 
-For the full list of subprocessors, see the [security page](/security) and the
-[privacy policy](/privacy).
+| Provider | What it does |
+| --- | --- |
+| Cloudflare | Hosting, storage and database, the Notetaker, plus Workers AI for transcription and search embeddings |
+| Anthropic | Briefs, action items and chat |
+| Clerk | Sign-in |
+| OpenRouter | Only if you connect your own account |
+| PostHog | Product analytics and scrubbed error reports, never recording content |
+
+Eavesy does not train models on your content. Cloudflare and Anthropic state
+that customer content is not used for training unless the customer opts in. If
+you connect OpenRouter, the privacy settings you choose there apply.
+
+## Your own AI keys
+
+In the web app under **Settings → AI providers**, you can connect your
+OpenRouter account or add an Anthropic API key. Summaries and chat then bill to
+your account. Keys are entered on the web and stored encrypted. Requests still
+pass through Eavesy so it can build the prompt.
+
+The Mac app keeps only its device token in your Keychain. It never holds your
+AI keys.
+
+## Export
+
+- **Everything:** in the web app, open **Settings → Your data** and choose
+  **Export everything**.
+- **One recording:** download its bundle from the recording's page.
+- **On a Mac:** your files are already on disk.
+
+Exports count toward the [fair-use limits](/docs/fair-use-limits).
+
+## Delete
+
+- **One recording:** delete it in the app. Its cloud copies, including audio,
+  transcript and search index, are permanently removed within a day.
+- **Your account:** open **Settings → Your data** and choose **Delete**.
+  Everything in the cloud is removed and your Mac is signed out.
+
+Deleting in the cloud never touches the files on your Mac.
+
+For the full policy, see the [privacy page](/privacy) and the
+[security page](/security).

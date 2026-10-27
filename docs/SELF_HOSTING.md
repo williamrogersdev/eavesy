@@ -103,7 +103,15 @@ bunx wrangler secret put NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 bunx wrangler secret put ANTHROPIC_API_KEY
 bunx wrangler secret put OPS_METRICS_TOKEN     # random string, protects /api/ops/metrics
 bunx wrangler secret put BYO_KEY_SECRET        # random 32+ chars; encrypts users' own provider keys
+bunx wrangler secret put GOOGLE_CLIENT_ID      # optional: Settings → Connections → Google Calendar
+bunx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
+
+For Google Calendar, create an OAuth client (type "Web application") in Google
+Cloud Console with the redirect URI `https://<your-domain>/api/connections/google/callback`,
+enable the Google Calendar API, and add the `openid`, `email` and
+`calendar.events.readonly` scopes to the consent screen. Without these two
+secrets the Connect button says Google isn't set up.
 
 Processing Worker (`cd workers/processing`):
 
@@ -114,8 +122,8 @@ bunx wrangler secret put ANTHROPIC_API_KEY
 The MCP Worker needs no secrets. If your web app isn't at `https://eavesy.com`,
 set the MCP Worker's `APP_URL` variable to its origin (for example
 `bunx wrangler deploy --var APP_URL:https://app.example.com`), because MCP
-OAuth sends people there to sign in and approve a connection. `SENTRY_DSN` is
-optional on all three. Stripe
+OAuth sends people there to sign in and approve a connection. PostHog
+(`POSTHOG_KEY`) is optional on all three. Stripe
 variables are only relevant if you enable paid plans.
 
 Secrets must exist before first use; `wrangler secret put` requires the Worker

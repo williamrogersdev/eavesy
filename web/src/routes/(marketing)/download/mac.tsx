@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { createServerFn } from '@tanstack/react-start';
-import { Apple, Mic, Folder, Zap } from 'lucide-react';
+import { Apple, AudioLines, Camera, Check, Clapperboard, Copy, FolderOpen, Users } from 'lucide-react';
+import { Bubble, Mascot } from '@/components/launcher/ui';
+import { LauncherPreview } from '@/components/marketing/launcher-preview';
+import { GithubMark } from '@/components/github-mark';
+import { siteConfig } from '@/lib/site';
 import { useEffect, useState } from 'react';
 import { Link } from '@/components/ui/app-link';
 import { seoHead } from '@/lib/seo-head';
@@ -26,7 +30,7 @@ export const Route = createFileRoute('/(marketing)/download/mac')({
   head: () =>
     seoHead({
       title: 'Download Eavesy for Mac',
-      description: 'Free for Mac. Press a hotkey, talk through the work, and get a brief any AI can use.',
+      description: 'Free and open source for Mac. Talk, record meetings and your screen, and keep it all as Markdown your AI can use.',
       path: '/download/mac',
     }),
   component: DownloadMacPage,
@@ -56,90 +60,153 @@ function DownloadMacPage() {
   }, [start, available]);
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-10 px-6 py-16">
-      <header className="text-center">
-        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted/40">
-          <Apple className="h-6 w-6" />
-        </span>
-        <h1 className="mt-5 text-4xl font-semibold tracking-tight">
-          {started ? 'Your download is starting' : 'Eavesy for Mac'}
-        </h1>
-        <p className="mt-3 text-muted-foreground">
-          {started
-            ? 'Open Eavesy.dmg from your Downloads, then drag Eavesy into Applications.'
-            : 'Press a hotkey, talk through the work, and get a brief and transcript any AI can use. Free.'}
-        </p>
-      </header>
+    <main>
+      <section className="ev-roofline">
+        <div className="mx-auto grid max-w-6xl items-center gap-12 px-6 pb-20 pt-14 lg:grid-cols-[1.05fr_1fr] lg:pt-20">
+          <div>
+            <div className="flex items-end gap-3">
+              <Mascot size={64} state={started ? 'happy' : 'idle'} />
+              <Bubble tail="left" className="mb-4">
+                {started ? 'On its way. See you in Applications.' : 'Hi! I live in your menu bar.'}
+              </Bubble>
+            </div>
+            <h1 className="mt-6 text-balance font-round text-4xl font-extrabold tracking-tight text-ev-ink sm:text-5xl">
+              {started ? 'Your download is starting' : 'Eavesy for Mac'}
+            </h1>
+            <p className="mt-4 max-w-lg text-lg leading-relaxed text-ev-ink-2">
+              {started
+                ? 'Open Eavesy.dmg from your Downloads, then drag Eavesy into Applications.'
+                : 'Talk, record a meeting or your screen, grab a screenshot. Everything lands as Markdown on your Mac, ready to paste to your AI. Free and open source.'}
+            </p>
 
-      {!available ? (
-        <p className="text-center text-sm text-muted-foreground">
-          The download is being updated. Please check back in a few minutes.
-        </p>
-      ) : device === 'other' ? (
-        <div className="mx-auto max-w-sm rounded-lg border border-border bg-muted/30 p-5 text-center text-sm">
-          <p className="font-medium">Eavesy runs on Mac.</p>
-          <p className="mt-1 text-muted-foreground">
-            Open <span className="font-mono">eavesy.com/download/mac</span> on your Mac to install it.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-2">
-          <a
-            href={DMG_URL}
-            className="inline-flex items-center gap-2.5 rounded-xl bg-action px-6 py-3 text-base font-semibold text-white shadow-lg shadow-action/25 hover:bg-action-hover"
-          >
-            <Apple className="h-5 w-5" />
-            {started ? 'Download again' : 'Download for Mac'}
-          </a>
-          <p className="text-xs text-muted-foreground">macOS 13 or later · Apple Silicon</p>
-        </div>
-      )}
+            <div className="mt-8">
+              {!available ? (
+                <p className="rounded-[var(--ev-r-pop)] bg-ev-well px-4 py-3 text-sm text-ev-ink-2">
+                  The download is being updated. Check back in a few minutes.
+                </p>
+              ) : device === 'other' ? (
+                <div className="max-w-md rounded-[var(--ev-r-pop)] bg-ev-raised p-4 text-sm shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)]">
+                  <p className="font-round font-bold text-ev-ink">Eavesy runs on Mac.</p>
+                  <p className="mt-1 text-ev-ink-2">
+                    Open <span className="font-semibold text-ev-ink">eavesy.com/download/mac</span> on your Mac to install it,
+                    or record from any browser with the <Link href="/app/record" className="font-semibold text-ev-coat underline underline-offset-2">web recorder</Link>.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <a
+                    href={DMG_URL}
+                    className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ev-coat px-6 font-round text-base font-bold text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-[0.98]"
+                  >
+                    <Apple className="h-5 w-5" />
+                    {started ? 'Download again' : 'Download for Mac'}
+                  </a>
+                  <a
+                    href={siteConfig.github}
+                    className="inline-flex h-12 items-center gap-2 rounded-full px-5 font-round text-sm font-bold text-ev-ink shadow-[inset_0_0_0_1px_var(--ev-line-strong)] transition hover:bg-[var(--ev-hover)]"
+                  >
+                    <GithubMark className="h-4 w-4" /> View source
+                  </a>
+                </div>
+              )}
+              <p className="mt-3 font-round text-[13px] font-semibold text-ev-ink-3">
+                Apple silicon · macOS 13 or later · Notarized, updates itself
+              </p>
+            </div>
 
-      <section className="rounded-lg border border-border p-6 text-sm">
-        <h2 className="text-base font-semibold">Getting started</h2>
-        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-muted-foreground">
-          <li>Open Eavesy.dmg and drag Eavesy into Applications.</li>
-          <li>Open Eavesy. Setup asks for the microphone; Screen Recording is optional.</li>
-          <li>Sign in with one click to get transcripts and briefs (optional, free).</li>
-          <li>Press your hotkey to start recording. Files are saved under <code>~/Eavesy/Recordings</code>.</li>
+            <div className="mt-8 max-w-md">
+              <p className="font-round text-[13px] font-bold text-ev-ink-2">Prefer Homebrew?</p>
+              <CopyCommand text={BREW} />
+              <p className="mt-3 text-sm leading-relaxed text-ev-ink-2">
+                Both install the same app in Applications. Already have Eavesy? Open it and choose Update instead of installing another copy.
+              </p>
+            </div>
+          </div>
+
+          <div className="relative">
+            <LauncherPreview />
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-6 py-16">
+        <h2 className="font-round text-2xl font-extrabold text-ev-ink">Up and running in a minute</h2>
+        <ol className="mt-6 grid gap-4 md:grid-cols-4">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="rounded-[var(--ev-r-panel)] bg-ev-raised p-5 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)]">
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-ev-coat-soft font-round text-sm font-extrabold text-ev-coat">
+                {i + 1}
+              </span>
+              <h3 className="mt-3 font-round text-[15px] font-bold text-ev-ink">{step.title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-ev-ink-2">{step.body}</p>
+            </li>
+          ))}
         </ol>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card icon={<Mic className="h-4 w-4" />} title="Screen, call audio, mic">
-          Records calls, walkthroughs and bug reproductions without adding a meeting bot.
-        </Card>
-        <Card icon={<Folder className="h-4 w-4" />} title="Files on your disk">
-          Every recording is a folder with audio, <code>transcript.md</code> and <code>summary.md</code>.
-        </Card>
-        <Card icon={<Zap className="h-4 w-4" />} title="One hotkey">
-          Start, stop, search and paste from anywhere on your Mac.
-        </Card>
+      <section className="bg-ev-well">
+        <div className="mx-auto max-w-6xl px-6 py-16">
+          <h2 className="font-round text-2xl font-extrabold text-ev-ink">What it captures</h2>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {MODES.map(({ icon: Icon, title, body }) => (
+              <div key={title} className="rounded-[var(--ev-r-panel)] bg-ev-raised p-5 shadow-[var(--ev-e-2)]">
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-ev-paper text-ev-ink-2 shadow-[0_0_0_1px_var(--ev-line)]">
+                  <Icon size={18} strokeWidth={1.75} />
+                </span>
+                <h3 className="mt-3 font-round text-[15px] font-bold text-ev-ink">{title}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-ev-ink-2">{body}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-ev-ink-2">
+            <span className="inline-flex items-center gap-1.5"><FolderOpen className="h-4 w-4" /> Saved under ~/Eavesy as plain Markdown and audio</span>
+            <span className="inline-flex items-center gap-1.5"><GithubMark className="h-3.5 w-3.5" /> Apache-2.0, <a href={siteConfig.github} className="font-semibold text-ev-coat underline underline-offset-2">on GitHub</a></span>
+          </p>
+        </div>
       </section>
 
-      <div className="text-center text-sm text-muted-foreground">
-        Already installed? <Link href="/sign-in" className="text-foreground underline underline-offset-2">Sign in</Link>
+      <div className="py-10 text-center text-sm text-ev-ink-2">
+        Already installed? <Link href="/sign-in" className="font-semibold text-ev-coat underline underline-offset-2">Sign in</Link> to sync your library.
       </div>
     </main>
   );
 }
 
-function Card({
-  icon,
-  title,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
+const BREW = 'brew install --cask williamrogersdev/eavesy/eavesy';
+
+const STEPS = [
+  { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications. If Eavesy is already there, replace it rather than keep both.' },
+  { title: 'Allow the mic', body: 'Setup asks for the microphone. Screen Recording and the rest are optional.' },
+  { title: 'Sign in, if you like', body: 'Free sign-in adds cloud transcripts, briefs and sync. You can stay local.' },
+  { title: 'Press ⌘⇧Space', body: 'Opens Eavesy from anywhere. ⌘⇧D starts Talk and types where your cursor is.' },
+];
+
+const MODES = [
+  { icon: AudioLines, title: 'Talk', body: 'Dictate into any app, or keep a voice note. Your mic only.' },
+  { icon: Users, title: 'Meeting', body: 'Both sides of a call, from your mic and system audio. No bot joins.' },
+  { icon: Clapperboard, title: 'Video', body: 'Your screen with its sound and your voice, for walkthroughs and bug reports.' },
+  { icon: Camera, title: 'Screenshots and clipboard', body: 'Screenshots, pasted text and dropped files, all in one searchable history.' },
+];
+
+function CopyCommand({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="rounded-lg border border-border p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <span>{icon}</span>
-        {title}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{children}</p>
+    <div className="mt-1.5 flex h-10 items-center gap-2 rounded-full bg-ev-well pl-4 pr-1 text-sm text-ev-ink">
+      <span className="min-w-0 flex-1 truncate">{text}</span>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+        className="inline-flex h-8 items-center gap-1 rounded-full bg-ev-raised px-3 font-round text-xs font-bold text-ev-ink shadow-[var(--ev-e-2)] hover:bg-ev-paper"
+        aria-label="Copy Homebrew command"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
     </div>
   );
 }

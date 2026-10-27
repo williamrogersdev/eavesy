@@ -28,7 +28,7 @@ function CaptureDetailPage() {
       const res = await fetch(`/api/captures/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       refreshLibrary();
-      await router.push('/app?tab=captures');
+      await router.push('/app?filter=screens');
     } catch (err) {
       setDeleting(false);
       setDeleteError(err instanceof Error ? err.message : 'delete failed');
@@ -38,8 +38,8 @@ function CaptureDetailPage() {
   return (
     <AppPage width="reading" className="gap-4">
       <Link
-        href="/app?tab=captures"
-        className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        href="/app?filter=screens"
+        className="inline-flex w-fit items-center gap-1 text-xs text-ev-ink-2 hover:text-ev-ink"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Library
@@ -50,13 +50,13 @@ function CaptureDetailPage() {
           {error.message}
         </AppAlert>
       ) : loading || !data ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-ev-ink-2">Loading…</p>
       ) : (
         <>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="truncate text-lg font-semibold tracking-tight">{data.title}</h1>
-              <p className="mt-0.5 text-xs text-muted-foreground">
+              <p className="mt-0.5 text-xs text-ev-ink-2">
                 {new Date(data.createdAt).toLocaleString()} · {formatBytes(data.bytes)}
                 {data.durationSec ? ` · ${formatDuration(data.durationSec * 1000)}` : ''}
                 {data.width && data.height ? ` · ${data.width}×${data.height}` : ''}
@@ -78,7 +78,7 @@ function CaptureDetailPage() {
                 }}
                 disabled={deleting}
                 aria-label="Delete capture"
-                className={cn(appButton('ghost', 'sm'), 'hover:text-danger')}
+                className={cn(appButton('ghost', 'sm'), 'hover:text-ev-warn-ink')}
               >
                 {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               </button>
@@ -86,10 +86,10 @@ function CaptureDetailPage() {
           </div>
 
           {confirmingDelete ? (
-            <div role="alertdialog" aria-labelledby="delete-capture-title" className="flex flex-col gap-3 rounded-md border border-danger/25 bg-danger-soft px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div role="alertdialog" aria-labelledby="delete-capture-title" className="flex flex-col gap-3 rounded-[var(--ev-r-ctl)] border border-ev-warn-ink bg-ev-warn-soft px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 id="delete-capture-title" className="text-sm font-semibold text-danger">Delete this capture permanently?</h2>
-                <p className="mt-0.5 text-xs text-danger/80">The media and its transcript cannot be recovered.</p>
+                <h2 id="delete-capture-title" className="text-sm font-semibold text-ev-warn-ink">Delete this capture permanently?</h2>
+                <p className="mt-0.5 text-xs text-ev-warn-ink/80">The media and its transcript cannot be recovered.</p>
               </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setConfirmingDelete(false)} disabled={deleting} className={appButton('ghost', 'sm')}>Cancel</button>
@@ -102,7 +102,7 @@ function CaptureDetailPage() {
 
           {deleteError ? <AppAlert>{deleteError}</AppAlert> : null}
 
-          <div className="flex items-center justify-center overflow-hidden rounded-lg bg-black/90">
+          <div className="flex items-center justify-center overflow-hidden rounded-[var(--ev-r-media)] bg-black/90">
             {data.kind === 'image' ? (
               <img src={data.url} alt={data.title} className="max-h-[70vh] w-auto rounded" />
             ) : (

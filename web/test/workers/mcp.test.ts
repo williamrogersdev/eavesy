@@ -5,6 +5,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { worker as mcpWorker } from '../../../workers/mcp/src/index';
 import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
 import { MCP_TOKEN_TTL_MS } from '../../src/server/mcp-token-policy';
+import { drizzle } from 'drizzle-orm/d1';
+import * as schema from '../../src/db/schema';
+import { pollForDevice, resolveForDevice } from '../../src/server/agent-inbox';
 
 interface TestEnv {
   DB: D1Database;
@@ -210,11 +213,18 @@ describe('MCP scopes', () => {
     const { token } = await mint();
     const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
     expect(tools.map((tool) => tool.name)).toEqual([
+      'send_to_human',
+      'ask_human',
+      'search_library',
+      'ask_library',
       'search_meetings',
       'get_meeting',
       'recent_meetings',
+      'list_projects',
       'search_dictations',
       'get_action_items',
+      'get_account_info',
+      'sign_out',
     ]);
     expect(tools.every((tool) => tool.scope === undefined)).toBe(true);
   });
@@ -231,6 +241,347 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(5);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(12);
+  });
+});
+
+describe('MCP account tools', () => {
+  const rpc = async (token: string, method: string, params?: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      }),
+      mcpEnv(),
+    )).json<{
+      result?: { tools?: { name: string; annotations?: Record<string, boolean> }[]; content?: { text: string }[] };
+      error?: unknown;
+    }>();
+  const callJson = async (token: string, name: string) =>
+    JSON.parse((await rpc(token, 'tools/call', { name, arguments: {} })).result?.content?.[0]?.text ?? 'null');
+
+  it('mark only the library tools as read-only', async () => {
+    const { token } = await mint();
+    const tools = (await rpc(token, 'tools/list')).result?.tools ?? [];
+    const hints = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
+    expect(hints.search_meetings).toEqual({ readOnlyHint: true, openWorldHint: false });
+    expect(hints.get_account_info?.readOnlyHint).toBe(true);
+    expect(hints.send_to_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(hints.ask_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(hints.sign_out).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    expect(tools.every((tool) => tool.annotations !== undefined)).toBe(true);
+  });
+
+  it('say which account and connection the token belongs to', async () => {
+    await testEnv.DB.prepare(`UPDATE users SET email = 'ada@example.com', display_name = 'Ada' WHERE id = 'user_mcp'`).run();
+    const minted = await mint(['write']);
+    const info = await callJson(minted.token, 'get_account_info');
+    expect(info).toEqual({
+      email: 'ada@example.com',
+      name: 'Ada',
+      connection: {
+        name: 'Claude',
+        access: ['read', 'write'],
+        kind: 'token',
+        created_at: expect.any(String),
+        expires_at: new Date(minted.expiresAt).toISOString(),
+      },
+    });
+  });
+
+  it('sign out only the calling connection', async () => {
+    const first = await mint();
+    const second = await mint();
+    expect((await callJson(first.token, 'sign_out')).status).toBe('signed_out');
+    const after = await call('https://mcp.eavesy.com/', { authorization: `Bearer ${first.token}` });
+    expect(after.status).toBe(401);
+    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(12);
+  });
+});
+
+describe('MCP meetings', () => {
+  const call = async (token: string, name: string, args: Record<string, unknown>) => {
+    const body = await (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { isError?: boolean; content?: { text: string }[] } }>();
+    return JSON.parse(body.result?.content?.[0]?.text ?? 'null') as Record<string, unknown> & Record<string, unknown>[];
+  };
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'user_mcp', 'eavesy', 'Mac recorder.', '["Tauri"]', '[]')`,
+    ).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO meetings (id, user_id, title, started_at, source, status, folder_id, speaker_names_json, agent_transcript_md, transcript_kind, created_at, updated_at)
+       VALUES ('m1', 'user_mcp', 'Cask fix', ?, 'desktop', 'complete', 'p1', '{"you":"Will"}', '<transcript kind="conversation">
+Will: Bump it.
+</transcript>', 'conversation', ?, ?),
+              ('m2', 'user_mcp', 'Other', ?, 'desktop', 'complete', NULL, NULL, NULL, NULL, ?, ?)`,
+    ).bind(now, now, now, now - 1, now, now).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES ('t1', 'm1', 0, 1000, 'you', 'um bump it')`,
+    ).run();
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM transcript_segments'),
+      testEnv.DB.prepare('DELETE FROM meetings'),
+      testEnv.DB.prepare('DELETE FROM folders'),
+    ]);
+  });
+
+  it('give the agent-ready transcript by default and the raw one on request', async () => {
+    const { token } = await mint();
+    const agent = await call(token, 'get_meeting', { id: 'm1' });
+    expect(agent).toMatchObject({ project: 'eavesy', transcript_kind: 'conversation' });
+    expect(agent.transcript).toContain('Will: Bump it.');
+    const raw = await call(token, 'get_meeting', { id: 'm1', transcript_format: 'raw' });
+    expect(raw.transcript).toBe('[00:00] Will: um bump it');
+  });
+
+  it('list projects and filter recent meetings by one', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'list_projects', {})).toEqual([
+      { name: 'eavesy', about: 'Mac recorder.', terms: ['Tauri'], people: null, recordings: 1 },
+    ]);
+    const recent = await call(token, 'recent_meetings', { project: 'Eavesy' });
+    expect(recent.map((meeting) => meeting.id)).toEqual(['m1']);
+    expect(recent[0].project).toBe('eavesy');
+  });
+
+  const raw = async (token: string, body: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { content?: { text: string }[] }; error?: { code: number; message: string } }>();
+  const tool = (token: string, name: string, args: unknown) =>
+    raw(token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+
+  it('clamp list limits to 1–50 and ignore ones that are not numbers', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'recent_meetings', { limit: -1 })).toHaveLength(1);
+    expect(await call(token, 'recent_meetings', { limit: 0 })).toHaveLength(2);
+    expect(await call(token, 'recent_meetings', { limit: 'lots' })).toHaveLength(2);
+    expect(await call(token, 'recent_meetings', { limit: 1e9 })).toHaveLength(2);
+  });
+
+  it('hide imports that have not finished, as search does', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO meetings (id, user_id, title, started_at, source, status, created_at, updated_at)
+       VALUES ('m3', 'user_mcp', 'Half imported', ?, 'import', 'processing', ?, ?)`,
+    ).bind(now + 1, now, now).run();
+    expect((await call(token, 'recent_meetings', {})).map((meeting) => meeting.id)).toEqual(['m1', 'm2']);
+    expect((await tool(token, 'get_meeting', { id: 'm3' })).error?.message).toBe('not found');
+  });
+
+  it('match LIKE wildcards literally and refuse a query that is not text', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at)
+       VALUES ('d1', 'user_mcp', 'a', 'rename user_id', 1, ?), ('d2', 'user_mcp', 'b', 'rename userXid', 1, ?),
+              ('d3', 'user_mcp', 'c', '100% done', 1, ?), ('d4', 'user_mcp', 'd', '100 done', 1, ?)`,
+    ).bind(now, now, now, now).run();
+    try {
+      expect((await call(token, 'search_dictations', { query: 'user_id' })).map((d) => d.id)).toEqual(['d1']);
+      expect((await call(token, 'search_dictations', { query: '100%' })).map((d) => d.id)).toEqual(['d3']);
+      expect(await call(token, 'search_dictations', { query: 42 })).toEqual([]);
+    } finally {
+      await testEnv.DB.prepare('DELETE FROM dictations').run();
+    }
+  });
+
+  it('count model-backed tools against the user’s daily quotas, as the web app does', async () => {
+    const { token } = await mint();
+    const day = Math.floor(Date.now() / 86_400_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1000, ?)')
+      .bind(`budget:user:search:user_mcp:${day}`, (day + 1) * 86_400_000).run();
+    try {
+      const refused = await tool(token, 'search_meetings', { query: 'cask' });
+      expect(refused.error).toEqual({ code: -32602, message: expect.stringContaining('today’s limit') });
+      const library = await tool(token, 'search_library', { query: 'cask fix' });
+      expect(library.error?.message).toContain('today’s limit');
+      // Tools that don't call a model are not counted.
+      expect((await tool(token, 'recent_meetings', {})).error).toBeUndefined();
+
+      // A search whose model call fails gives its use back. (The test Worker
+      // has no AI binding, so embedding the query throws.)
+      await testEnv.DB.prepare('UPDATE rate_limits SET count = 5').run();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      expect((await tool(token, 'search_meetings', { query: 'cask' })).error?.code).toBe(-32000);
+      expect(await testEnv.DB.prepare('SELECT count FROM rate_limits').first()).toEqual({ count: 5 });
+    } finally {
+      await testEnv.DB.prepare('DELETE FROM rate_limits').run();
+    }
+  });
+
+  it('answer a request that is not an object, and keep internal errors to themselves', async () => {
+    const { token } = await mint();
+    expect((await raw(token, null)).error?.code).toBe(-32600);
+    expect((await raw(token, [1, 2])).error?.code).toBe(-32600);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // The test Worker has no AI binding, so embedding the query throws inside.
+    const failed = await tool(token, 'search_meetings', { query: 'cask' });
+    expect(failed.error).toEqual({ code: -32000, message: 'The tool call failed. Please try again.' });
+    expect((await tool(token, 'no_such_tool', {})).error?.message).toBe('unknown tool: no_such_tool');
+  });
+});
+
+describe('MCP prompts', () => {
+  const rpc = async (token: string, method: string, params?: unknown) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      }),
+      mcpEnv(),
+    )).json<{
+      result?: {
+        capabilities?: Record<string, unknown>;
+        prompts?: { name: string; title: string; description: string; arguments: unknown[] }[];
+        messages?: { role: string; content: { type: string; text: string } }[];
+      };
+      error?: { message: string };
+    }>();
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at)
+       VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
+    ).bind(now, now).run();
+    await testEnv.DB.prepare(
+      `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at) VALUES
+       ('prm_1', 'user_mcp', 'Triage tickets', 'triage-tickets', 'Search every support ticket.
+Then debug each one.', ?, ?),
+       ('prm_2', 'user_mcp', 'Focus', 'focus', 'Look at {{details}} first.', ?, ?),
+       ('prm_3', 'user_other', 'Not yours', 'not-yours', 'Secret', ?, ?)`,
+    ).bind(now, now, now, now, now, now).run();
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.prepare('DELETE FROM saved_prompts').run();
+  });
+
+  it('are offered at initialize and listed by slug, only the caller’s own', async () => {
+    const { token } = await mint();
+    expect((await rpc(token, 'initialize', { protocolVersion: '2025-06-18' })).result?.capabilities)
+      .toMatchObject({ prompts: { listChanged: false } });
+    expect((await rpc(token, 'prompts/list')).result?.prompts).toEqual([
+      { name: 'focus', title: 'Focus', description: 'Look at {{details}} first.', arguments: [{ name: 'details', description: 'Anything to add for this run', required: false }] },
+      { name: 'triage-tickets', title: 'Triage tickets', description: 'Search every support ticket.', arguments: [{ name: 'details', description: 'Anything to add for this run', required: false }] },
+    ]);
+  });
+
+  it('give the prompt text with the details filled in, and count the use', async () => {
+    const { token } = await mint();
+    const got = (await rpc(token, 'prompts/get', { name: 'triage-tickets', arguments: { details: 'only billing' } })).result;
+    expect(got?.messages).toEqual([{ role: 'user', content: { type: 'text', text: 'Search every support ticket.\nThen debug each one.\n\nonly billing' } }]);
+    const slotted = (await rpc(token, 'prompts/get', { name: 'focus', arguments: { details: 'auth' } })).result;
+    expect(slotted?.messages?.[0]?.content.text).toBe('Look at auth first.');
+    const used = await testEnv.DB.prepare(`SELECT use_count FROM saved_prompts WHERE id = 'prm_1'`).first<{ use_count: number }>();
+    expect(used?.use_count).toBe(1);
+  });
+
+  it('stay hidden from a connection without read access', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
+    expect((await rpc(token, 'prompts/list')).result?.prompts).toEqual([]);
+    expect((await rpc(token, 'prompts/get', { name: 'focus' })).error?.message).toContain('can’t read your prompts');
+    expect((await rpc(token, 'prompts/get', { name: 'nope' })).error?.message).toContain('can’t read your prompts');
+    const counted = await testEnv.DB.prepare(`SELECT use_count FROM saved_prompts WHERE id = 'prm_2'`).first<{ use_count: number }>();
+    expect(counted?.use_count).toBe(0);
+  });
+
+  it('refuse another user’s prompt and one that doesn’t exist', async () => {
+    const { token } = await mint();
+    expect((await rpc(token, 'prompts/get', { name: 'not-yours' })).error?.message).toContain('No saved prompt');
+    expect((await rpc(token, 'prompts/get', { name: 'nope' })).error?.message).toContain('No saved prompt');
+  });
+});
+
+describe('MCP messages to the human', () => {
+  const call = async (token: string, name: string, args: Record<string, unknown>) => {
+    const body = await (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { content?: { text: string }[] }; error?: { message: string } }>();
+    return body.error ? { error: body.error.message } : (JSON.parse(body.result?.content?.[0]?.text ?? 'null') as Record<string, unknown>);
+  };
+  const db = () => drizzle(testEnv.DB, { schema });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM agent_messages'),
+      testEnv.DB.prepare('DELETE FROM agent_listeners'),
+      testEnv.DB.prepare('DELETE FROM rate_limits'),
+    ]);
+  });
+
+  it('say the Mac is offline at once when none is listening', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'ask_human', { question: 'Ship it?' })).toEqual({ status: 'mac_offline' });
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
+  it('keep nothing for someone who never turned messages on', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'send_to_human', { text: 'Done.' })).toEqual({ status: 'not_enabled' });
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
+  it('queue a message for a Mac that comes back, under the connection’s name', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare("INSERT INTO agent_listeners (device_id, user_id, seen_at) VALUES ('mac-a', 'user_mcp', ?)").bind(Date.now() - 60 * 60 * 1000).run();
+    expect(await call(token, 'send_to_human', { text: 'The report is ready.', spoken: 'Report ready.' })).toMatchObject({ status: 'queued' });
+    const { items } = await pollForDevice(db(), 'user_mcp', 'mac-a');
+    expect(items).toEqual([expect.objectContaining({ kind: 'send', source: 'Claude', text: 'The report is ready.', spoken: 'Report ready.' })]);
+    expect(await call(token, 'send_to_human', {})).toEqual({ error: 'text is required' });
+  });
+
+  it('refuse once too many wait, without spending the connection’s rate limit', async () => {
+    const { token } = await mint();
+    await pollForDevice(db(), 'user_mcp', 'mac-a');
+    const now = Date.now();
+    for (let i = 0; i < 20; i += 1) {
+      await testEnv.DB.prepare(
+        "INSERT INTO agent_messages (id, user_id, mcp_token_id, source, kind, text, status, created_at, expires_at) VALUES (?, 'user_mcp', 't', 'x', 'send', 'hi', 'pending', ?, ?)",
+      ).bind(`m${i}`, now, now + 60_000).run();
+    }
+    expect(await call(token, 'send_to_human', { text: 'One more.' })).toEqual({ error: expect.stringContaining('Too many messages') });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'mcp-human:%'").first('n')).toBe(0);
+  });
+
+  it('return the answer typed on the Mac to the call that asked', async () => {
+    const { token } = await mint();
+    await pollForDevice(db(), 'user_mcp', 'mac-a');
+    const asking = call(token, 'ask_human', { question: 'Flag or not?', choices: ['flag', 'no flag'], timeout_sec: 30 });
+    let id: string | undefined;
+    for (let i = 0; i < 50 && !id; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      id = (await pollForDevice(db(), 'user_mcp', 'mac-a')).waiting[0];
+    }
+    expect(id).toBeDefined();
+    expect(await resolveForDevice(db(), 'user_mcp', 'mac-a', id!, { status: 'answered', text: 'no flag' })).toBe(true);
+    expect(await asking).toEqual({ status: 'answered', text: 'no flag' });
   });
 });

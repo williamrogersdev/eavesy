@@ -1,134 +1,277 @@
 'use client';
 
-import { Check, Globe, Loader2 } from 'lucide-react';
-import { type ReactNode } from 'react';
-import { type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
-import { PermissionRow } from '@/components/launcher/permission-row';
-import { cn } from '@/lib/utils';
+import { Check } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
+import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
+import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
+import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
+import type { SetupPermissionKind } from './use-setup-permissions';
+import { useLiveLines } from './use-live-lines';
+
+const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Try it'] as const;
 
 export function SetupView({
+  step,
+  onStep,
   paired,
   connecting,
+  account,
   permissions,
   checking,
+  listening,
+  liveSessionId,
+  dictationHotkey,
+  toggleHotkey,
   onConnect,
   onCancelConnect,
   onRequest,
-  onOpenSettings,
+  onOpenPrivacy,
+  onRelaunch,
+  onShortcutsChanged,
   onFinish,
 }: {
+  /** Kept by the launcher so a detour to Settings comes back to the same step. */
+  step: number;
+  onStep: (step: number) => void;
   paired: boolean;
   connecting: boolean;
+  account: AccountInfo | null | undefined;
   permissions: Permissions | null;
-  checking: 'mic' | 'screen' | null;
+  checking: SetupPermissionKind | null;
+  /** A dictation is recording right now (the mic is live). */
+  listening: boolean;
+  /** The recording running now, for its words as they are heard. */
+  liveSessionId: string | null;
+  dictationHotkey: string;
+  toggleHotkey: string;
   onConnect: () => void;
   onCancelConnect: () => void;
-  onRequest: (kind: 'mic' | 'screen') => void;
-  onOpenSettings: (pane: PrivacyPane) => void;
+  onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
+  onOpenPrivacy: (pane: PrivacyPane) => void;
+  onRelaunch: () => void;
+  /** A shortcut was changed on the Shortcuts step. */
+  onShortcutsChanged: () => void;
   onFinish: () => void;
 }) {
-  const micReady = permissions?.mic === true;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-4">
-        <h2 className="text-[15px] font-semibold text-foreground">Set up Eavesy</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">Two quick steps, then you&apos;re recording.</p>
+  const setStep = onStep;
+  const [cheer, setCheer] = useState(false);
+  const [tried, setTried] = useState('');
+  // Only a paste proves dictation reached the cursor; typing in the box doesn't count.
+  const [pasted, setPasted] = useState(false);
+  const fnInUse = usesFnKey(dictationHotkey, toggleHotkey);
+  const micOn = permissions?.mic === true;
+  const pasteOn = permissions?.accessibility === true;
+  const talk = dictationHotkey || '⌘⇧D';
+  const shortcuts = useShortcuts(onShortcutsChanged);
+  const tryBox = useRef<HTMLTextAreaElement>(null);
+  const hearing = useLiveLines(step === 3 && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
+  // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
+  useEffect(() => {
+    if (step !== 3) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void setDictationInPanel(true).catch(() => {});
+    void onDictationText((text, sessionId) => {
+      const box = tryBox.current;
+      const caret = box ? { start: box.selectionStart, end: box.selectionEnd } : null;
+      setTried((current) => {
+        const start = caret?.start ?? current.length;
+        const end = caret?.end ?? current.length;
+        const before = current.slice(0, start);
+        const joined = before && !/\s$/.test(before) ? `${before} ${text}` : `${before}${text}`;
+        return joined + current.slice(end);
+      });
+      setPasted(true);
+      tryBox.current?.focus();
+      void ackDictationText(sessionId).catch(() => {});
+    }).then((unlisten) => { if (disposed) unlisten(); else off = unlisten; });
+    return () => {
+      disposed = true;
+      off?.();
+      void setDictationInPanel(false).catch(() => {});
+    };
+  }, [step]);
 
-        <SetupSection step={1} title="Sign in" complete={paired}>
-          {paired ? (
-            <p className="text-xs text-muted-foreground">Signed in. Transcripts and summaries sync to your account.</p>
-          ) : (
-            <>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Turns recordings into transcripts and summaries you can search anywhere.
-              </p>
-              <div className="mt-2.5 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onConnect}
-                  disabled={connecting}
-                  className="inline-flex h-8 items-center gap-2 rounded-lg bg-[var(--lr-brand)] px-3 text-xs font-semibold text-white shadow-sm transition hover:brightness-110 active:brightness-95 disabled:opacity-70"
-                >
-                  {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
-                  {connecting ? 'Finish in your browser…' : 'Sign in with browser'}
-                </button>
-                {connecting && (
-                  <button type="button" onClick={onCancelConnect} className="h-8 rounded-lg px-2 text-xs text-muted-foreground hover:bg-[var(--lr-hover)] hover:text-foreground">
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-        </SetupSection>
+  // Signing in finishes in the browser; when it does, move on by ourselves.
+  // (The step lives in the launcher, so this runs as an effect, not during render.)
+  const wasPaired = useRef(paired);
+  useEffect(() => {
+    if (paired && !wasPaired.current && step === 0) onStep(1);
+    wasPaired.current = paired;
+  }, [paired, step, onStep]);
 
-        <SetupSection step={2} title="Allow the microphone" complete={micReady}>
-          <div className="-mx-2 grid">
-            <PermissionRow
-              label="Microphone"
-              hint="Needed for voice notes and dictation."
-              settingsHint="Turn on Eavesy under Microphone in System Settings. This page updates on its own."
-              granted={permissions?.mic}
-              answered={permissions?.micAsked}
-              checking={checking === 'mic'}
-              onRequest={() => onRequest('mic')}
-              onOpenSettings={() => onOpenSettings('microphone')}
-            />
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">Screen Recording and pasting into other apps can be turned on later in Settings.</p>
-        </SetupSection>
-      </div>
+  // One small lift each time macOS turns something on.
+  useOnGrant(permissions, () => setCheer(true));
+  useEffect(() => {
+    if (!cheer) return;
+    const id = window.setTimeout(() => setCheer(false), 1200);
+    return () => window.clearTimeout(id);
+  }, [cheer]);
 
-      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-2.5">
-        <span className="min-w-0 text-[11px] leading-snug text-muted-foreground">
-          Eavesy lives in your menu bar. Recordings stay in ~/Eavesy.
-        </span>
-        {paired && micReady ? (
-          <span className="inline-flex h-8 shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-500">
-            <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> All set
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={onFinish}
-            disabled={!micReady}
-            title={micReady ? 'Use Eavesy without an account. Recordings stay on this Mac.' : 'Allow the microphone first'}
-            className="h-8 shrink-0 rounded-lg px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-[var(--lr-hover)] hover:text-foreground disabled:opacity-40"
-          >
-            Skip for now
-          </button>
-        )}
-      </div>
-    </div>
+  const heard = pasted && tried.trim().length > 0;
+  const mascot: MascotState = listening
+    ? 'listening'
+    : cheer || (step === 3 && heard)
+      ? 'happy'
+      : step === 0 && connecting
+        ? 'thinking'
+        : step === 1 && micOn
+          ? 'listening'
+          : 'idle';
+
+  const bubble: ReactNode = [
+    paired
+      ? 'Nice to meet you properly. Your captures will sync to your account.'
+      : connecting
+        ? "I'll wait here while you finish in the browser."
+        : "Hi, I'm Eavesy. I live up here and write things down for you.",
+    !micOn
+      ? "I'll need to borrow your ears. Only while you're talking to me, promise."
+      : permissions?.speech === false
+        ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
+        : !pasteOn
+          ? 'One more and I can type for you, right where your cursor is.'
+          : fnInUse && permissions?.inputMonitoring === false
+            ? 'One more so I can hear a tap of fn.'
+            : 'Lovely. That’s everything I need.',
+    'Two keys are all you need. You can change them any time.',
+    heard
+      ? "Heard you. That's it, I'll be in the menu bar, under the hat icon."
+      : listening
+        ? "I'm listening. Tap again when you're done."
+        : "Go on, say something. I'll show you what I heard.",
+  ][step];
+
+  const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
+  const next = (label = 'Continue', disabled = false, title?: string) => (
+    <Button variant="primary" size="md" disabled={disabled} title={title} onClick={() => setStep(step + 1)}>
+      {label}
+    </Button>
   );
-}
 
-function SetupSection({
-  step,
-  title,
-  complete,
-  children,
-}: {
-  step: number;
-  title: string;
-  complete: boolean;
-  children: ReactNode;
-}) {
+  let body: ReactNode;
+  let footer: ReactNode;
+  if (step === 0) {
+    body = (
+      <>
+        <h2 className="ev-onb-title">{paired ? "You're signed in" : 'Sign in, or stay local'}</h2>
+        <p className="ev-onb-lead">
+          {paired
+            ? `${account?.email ?? account?.name ?? 'This Mac'} is connected. Transcripts and summaries sync to your account.`
+            : 'Recordings stay in ~/Eavesy on this Mac either way. Signing in adds transcripts, summaries and sync across your devices.'}
+        </p>
+        {connecting && <p className="ev-onb-note">Click “Approve this Mac” on the page that opened. This updates on its own.</p>}
+      </>
+    );
+    footer = paired ? (
+      <>{back}{next()}</>
+    ) : connecting ? (
+      <>
+        <Button variant="ghost" size="md" onClick={onCancelConnect}>Cancel</Button>
+        <Button variant="primary" size="md" loading disabled>Waiting for you in the browser…</Button>
+      </>
+    ) : (
+      <>
+        <Button variant="ghost" size="md" onClick={() => setStep(1)}>Stay local for now</Button>
+        <Button variant="primary" size="md" onClick={onConnect}>Sign in at eavesy.com</Button>
+      </>
+    );
+  } else if (step === 1) {
+    body = (
+      <>
+        <h2 className="ev-onb-title">Let Eavesy hear you</h2>
+        <p className="ev-onb-lead">macOS asks once for each one. This list updates on its own.</p>
+        <div className="ev-card">
+          <PermissionChecklist
+            permissions={permissions}
+            checking={checking}
+            fnInUse={fnInUse}
+            only={['mic', 'speech', 'accessibility', 'inputMonitoring']}
+            onRequest={onRequest}
+            onOpenSettings={onOpenPrivacy}
+            onRelaunch={onRelaunch}
+          />
+        </div>
+        {!micOn && <p className="ev-onb-note">Allow the microphone to continue. Screenshots, video and notifications can wait for Settings.</p>}
+      </>
+    );
+    footer = <>{back}{next('Continue', !micOn, micOn ? undefined : 'Allow the microphone first')}</>;
+  } else if (step === 2) {
+    body = (
+      <>
+        <h2 className="ev-onb-title">Your shortcuts</h2>
+        <p className="ev-onb-lead">They work from any app, even when this panel is closed.</p>
+        {/* Click a shortcut to change it; fn setup steps show under the row that uses it. */}
+        <div className="ev-card">
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
+        </div>
+      </>
+    );
+    footer = <>{back}{next()}</>;
+  } else {
+    body = (
+      <>
+        <h2 className="ev-onb-title">Try it once</h2>
+        <p className="ev-onb-lead">
+          {usesFnKey(talk)
+            ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
+            : <>Hold <Kbd keys={talk} />, say something, then let go. Your words land in the box.</>}
+        </p>
+        <textarea
+          ref={tryBox}
+          autoFocus
+          data-listening={listening || undefined}
+          className="ev-onb-try"
+          value={tried}
+          onChange={(event) => {
+            setTried(event.target.value);
+            const inputType = (event.nativeEvent as InputEvent).inputType;
+            if (inputType === 'insertFromPaste') setPasted(true);
+            else if (!event.target.value.trim()) setPasted(false);
+          }}
+          placeholder={listening ? 'Listening… keep talking' : 'Your words land here…'}
+          rows={3}
+          aria-label="Try dictation here"
+        />
+        <p className="ev-onb-note" role="status">
+          {heard ? (
+            <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
+          ) : listening ? (
+            <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
+          ) : pasteOn ? (
+            'Nothing to send anywhere. This box is just for practice.'
+          ) : (
+            <>Accessibility is off, so I’ll copy instead of paste. Press <Kbd keys="⌘V" /> here.</>
+          )}
+        </p>
+      </>
+    );
+    footer = (
+      <>
+        {back}
+        <Button variant="primary" size="md" onClick={onFinish}>Start using Eavesy</Button>
+      </>
+    );
+  }
+
   return (
-    <section className="mt-4 flex gap-3">
-      <span
-        className={cn(
-          'mt-px grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-semibold',
-          complete ? 'bg-emerald-500 text-white' : 'border border-border text-muted-foreground',
-        )}
-        aria-hidden="true"
-      >
-        {complete ? <Check className="h-3 w-3" strokeWidth={3} /> : step}
-      </span>
-      <div className="min-w-0 flex-1">
-        <h3 className="text-[13px] font-medium leading-5 text-foreground">{title}</h3>
-        <div className="mt-1">{children}</div>
+    <div className="ev-onb">
+      <div className="ev-onb-scroll">
+        <div className="ev-onb-hero">
+          <Mascot state={mascot} size={96} recording={listening} />
+          <Bubble tail="left" className="ev-onb-bubble">{bubble}</Bubble>
+        </div>
+        <div className="ev-steps" role="img" aria-label={`Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}>
+          {STEPS.map((name, i) => (
+            <i key={name} data-state={i < step ? 'done' : i === step ? 'on' : undefined} />
+          ))}
+          <span>Step {step + 1} of {STEPS.length}</span>
+        </div>
+        {body}
       </div>
-    </section>
+      <div className="ev-onb-foot">{footer}</div>
+    </div>
   );
 }

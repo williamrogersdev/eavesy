@@ -1,0 +1,49 @@
+---
+title: Open source and self-hosting
+description: Eavesy's licence, where the code lives, how to run your own server, and how to contribute.
+category: Open source
+order: 60
+---
+
+Eavesy is open source under the Apache License 2.0. The Mac app, the web app,
+the processing worker and the MCP server all live in one repository:
+[github.com/williamrogersdev/eavesy](https://github.com/williamrogersdev/eavesy).
+
+eavesy.com runs the same code you can read there.
+
+## What's in the repository
+
+| Folder | What it is |
+| --- | --- |
+| `desktop/` | The Mac app |
+| `web/` | The web app, the site and these docs |
+| `workers/processing` | Transcription and brief processing |
+| `workers/mcp` | The MCP server |
+| `docs/` | Architecture, self-hosting, deploys and releases |
+
+## Run your own server
+
+You can run Eavesy in your own Cloudflare account and point the Mac app at it.
+You'll need a Cloudflare account on the Workers Paid plan, a Clerk application
+for sign-in, and an Anthropic API key.
+
+Follow
+[docs/SELF_HOSTING.md](https://github.com/williamrogersdev/eavesy/blob/main/docs/SELF_HOSTING.md).
+It also covers a local mode for hacking on Eavesy with no accounts at all.
+
+On your own server, you can change the [fair-use limits](/docs/fair-use-limits)
+with environment variables.
+
+## Contribute
+
+Issues and pull requests are welcome. For anything bigger than a small fix,
+open an issue first. Setup, the test commands, and the sign-off rules are in
+[CONTRIBUTING.md](https://github.com/williamrogersdev/eavesy/blob/main/CONTRIBUTING.md).
+
+Found a mistake in these docs? Every page has an **Edit this page on GitHub**
+link at the bottom.
+
+## Next
+
+- [Getting started](/docs/getting-started)
+- [Fair-use limits](/docs/fair-use-limits)

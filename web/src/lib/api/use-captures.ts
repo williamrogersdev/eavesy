@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { isRecord } from '@/lib/json';
 import { createResource } from './shared-resource';
 
 export interface CaptureItem {
@@ -64,7 +65,7 @@ export function useCapture(id: string) {
   return { data, loading, error };
 }
 
-function parseCaptureList(value: unknown): CaptureItem[] {
+export function parseCaptureList(value: unknown): CaptureItem[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   return value.items.flatMap((item) => {
     const capture = parseCaptureItem(item);
@@ -103,10 +104,6 @@ function parseCaptureItem(value: unknown): CaptureItem | null {
     transcriptError: nullableString(value.transcriptError),
     createdAt: value.createdAt,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isCaptureKind(value: unknown): value is CaptureItem['kind'] {

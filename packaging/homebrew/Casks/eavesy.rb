@@ -1,6 +1,6 @@
 cask "eavesy" do
-  version "0.2.0"
-  sha256 "ec322152ac2e1d0ee21c840eaa84b3bb9d004821b2eababd9c73200772724ed7"
+  version "0.4.0"
+  sha256 "b11aeb4dd159935425733e4b9a0f657a30baa94ba7389c0231fd33164da5aebc"
 
   url "https://eavesy.com/api/downloads/mac/Eavesy_#{version}_aarch64.dmg"
   name "Eavesy"
@@ -16,7 +16,7 @@ cask "eavesy" do
 
   auto_updates true
   depends_on arch: :arm64
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "Eavesy.app"
 

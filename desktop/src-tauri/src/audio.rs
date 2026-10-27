@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -23,8 +24,37 @@ pub struct Captures(pub Mutex<HashMap<String, Session>>, pub AtomicUsize);
 
 impl Captures {
     pub fn is_busy(&self) -> bool {
+        self.is_starting() || self.0.lock().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+
+    /// Whether a capture is on its way up but not running yet.
+    pub fn is_starting(&self) -> bool {
         self.1.load(Ordering::SeqCst) > 0
-            || self.0.lock().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+
+    /// Claims the right to start a capture. Only one runs at a time: a second
+    /// hotkey press, the HUD and the launcher can all ask at once, and two
+    /// engines would fight over the mic and leave one recording orphaned.
+    fn claim_start(&self) -> Result<Starting<'_>, String> {
+        let running = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !running.is_empty() || self.1.fetch_add(1, Ordering::SeqCst) > 0 {
+            if running.is_empty() {
+                self.1.fetch_sub(1, Ordering::SeqCst);
+            }
+            return Err(ALREADY_CAPTURING.to_string());
+        }
+        Ok(Starting(&self.1))
+    }
+}
+
+const ALREADY_CAPTURING: &str = "A recording is already running. Stop it before starting another.";
+
+/// A start in progress; it ends when this is dropped, whether or not it worked.
+struct Starting<'a>(&'a AtomicUsize);
+
+impl Drop for Starting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -79,14 +109,28 @@ struct CaptureEvent {
     track: Option<String>,
     #[serde(default, rename = "peakRms")]
     peak_rms: Option<f64>,
+    #[serde(default)]
+    rms: Option<f64>,
     #[serde(default, rename = "activeMs")]
     active_ms: Option<i64>,
     #[serde(default)]
     text: Option<String>,
     #[serde(default, rename = "final")]
     is_final: Option<bool>,
+    #[serde(default)]
+    preview: Option<bool>,
     #[serde(default, rename = "endMs")]
     end_ms: Option<i64>,
+    #[serde(default, rename = "epochMs")]
+    epoch_ms: Option<i64>,
+    #[serde(default, rename = "displayX")]
+    display_x: Option<f64>,
+    #[serde(default, rename = "displayY")]
+    display_y: Option<f64>,
+    #[serde(default, rename = "displayWidth")]
+    display_width: Option<f64>,
+    #[serde(default, rename = "displayHeight")]
+    display_height: Option<f64>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -99,6 +143,10 @@ struct CaptureEvent {
     timed_out: Option<bool>,
     #[serde(default)]
     failed: Option<bool>,
+    #[serde(default, rename = "firstBufferMs")]
+    first_buffer_ms: Option<i64>,
+    #[serde(default, rename = "audioFromMs")]
+    audio_from_ms: Option<i64>,
 }
 
 impl CaptureEvent {
@@ -111,6 +159,7 @@ impl CaptureEvent {
             is_final: self.is_final.unwrap_or(false),
             start_ms: self.start_ms.unwrap_or(0),
             end_ms: self.end_ms.or(self.start_ms).unwrap_or(0),
+            preview: self.preview.unwrap_or(false),
         })
     }
 
@@ -121,8 +170,18 @@ impl CaptureEvent {
             session_id: session_id.to_string(),
             track: self.track.clone().unwrap_or_else(|| "mic".to_string()),
             live,
-            detail: if live { self.engine.clone() } else { self.reason.clone() },
+            detail: if live {
+                self.engine.clone()
+            } else {
+                self.reason.clone()
+            },
         })
+    }
+
+    /// Audio a recognizer lost while the recording was still going.
+    fn captions_dropped(&self) -> Option<i64> {
+        (self.event == "captions_dropped").then_some(())?;
+        Some(self.dropped.unwrap_or(1))
     }
 
     fn captions_done(&self) -> Option<CaptionsDone> {
@@ -146,20 +205,25 @@ pub(crate) fn capture_bin(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(sidecar) = exe.parent().map(|d| d.join("SwiftAudio")) {
             if sidecar.exists() {
+                crate::sidecar_trust::check(&sidecar)?;
                 return Ok(sidecar);
             }
         }
     }
-    if let Ok(resource) =
-        app.path().resolve("SwiftAudio", tauri::path::BaseDirectory::Resource)
+    if let Ok(resource) = app
+        .path()
+        .resolve("SwiftAudio", tauri::path::BaseDirectory::Resource)
     {
         if resource.exists() {
+            crate::sidecar_trust::check(&resource)?;
             return Ok(resource);
         }
     }
-    Err("capture engine not found — build swift-audio and set EAVESY_CAPTURE_BIN, \
+    Err(
+        "capture engine not found — build swift-audio and set EAVESY_CAPTURE_BIN, \
          or reinstall the app"
-        .to_string())
+            .to_string(),
+    )
 }
 
 fn captures_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -182,19 +246,14 @@ pub struct Permissions {
     /// Speech Recognition, for live captions and the dictation paste.
     #[serde(default)]
     pub speech: bool,
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXIsProcessTrusted() -> bool;
-}
-
-fn accessibility_granted() -> bool {
-    #[cfg(target_os = "macos")]
-    return unsafe { AXIsProcessTrusted() };
-    #[cfg(not(target_os = "macos"))]
-    true
+    /// Input Monitoring, for the Fn / Globe shortcut.
+    #[serde(default)]
+    pub input_monitoring: bool,
+    #[serde(default)]
+    pub notifications: bool,
+    /// Each permission's status, telling "never asked" apart from "denied".
+    #[serde(default)]
+    pub status: crate::permissions::PermissionStatuses,
 }
 
 #[tauri::command(async)]
@@ -233,20 +292,52 @@ fn check_permissions_inner(
     if !prompt {
         args.push("--no-prompt");
     }
-    let mut permissions = run_preflight(&bin, &args)?;
+    let _yielded = prompt.then(|| crate::panel::yield_for_system_prompt(&app));
+    let (mut permissions, mut statuses) = run_preflight(&bin, &args)?;
     if !permissions.screen {
         std::thread::sleep(Duration::from_millis(700));
-        if let Ok(again) = run_preflight(&bin, &["--preflight", "--no-prompt"]) {
+        if let Ok((again, again_statuses)) = run_preflight(&bin, &["--preflight", "--no-prompt"]) {
             permissions.screen = again.screen;
             permissions.mic |= again.mic;
             permissions.speech |= again.speech;
+            statuses = again_statuses;
         }
     }
-    permissions.accessibility = accessibility_granted();
+    crate::permissions::complete(
+        &mut permissions,
+        statuses.0.as_deref(),
+        statuses.1.as_deref(),
+    );
     Ok(permissions)
 }
 
-fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, String> {
+/// Asks for one permission alone, so only one macOS prompt is ever on screen.
+pub fn request_permission(
+    app: AppHandle,
+    request: crate::permissions::Request,
+) -> Result<Permissions, String> {
+    let bin = capture_bin(&app)?;
+    let result = {
+        let _yielded = crate::panel::yield_for_system_prompt(&app);
+        run_preflight(&bin, &["--preflight", "--request", request.sidecar_arg()])
+    };
+    let (mut permissions, statuses) =
+        result.inspect_err(|error| crate::telemetry::capture("capture.permissions", error))?;
+    crate::permissions::complete(
+        &mut permissions,
+        statuses.0.as_deref(),
+        statuses.1.as_deref(),
+    );
+    Ok(permissions)
+}
+
+/// The sidecar's microphone and speech statuses, when it sends them.
+type SidecarStatuses = (Option<String>, Option<String>);
+
+fn run_preflight(
+    bin: &std::path::Path,
+    args: &[&str],
+) -> Result<(Permissions, SidecarStatuses), String> {
     let output = Command::new(bin)
         .args(args)
         .output()
@@ -264,18 +355,24 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, St
         screen: bool,
         #[serde(default)]
         speech: bool,
+        mic_status: Option<String>,
+        speech_status: Option<String>,
     }
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if let Ok(parsed) = serde_json::from_str::<Line>(line) {
             if parsed.event == "permissions" {
-                return Ok(Permissions {
+                let permissions = Permissions {
                     mic: parsed.mic,
                     mic_asked: parsed.mic_asked,
                     screen: parsed.screen,
                     accessibility: false,
                     speech: parsed.speech,
-                });
+                    input_monitoring: false,
+                    notifications: false,
+                    status: Default::default(),
+                };
+                return Ok((permissions, (parsed.mic_status, parsed.speech_status)));
             }
         }
     }
@@ -286,6 +383,13 @@ fn run_preflight(bin: &std::path::Path, args: &[&str]) -> Result<Permissions, St
     ))
 }
 
+/// What the user said about a recording before it started.
+#[derive(Clone, Copy, Default)]
+struct SessionContext<'a> {
+    blurb: Option<&'a str>,
+    project_id: Option<&'a str>,
+}
+
 #[tauri::command(async)]
 pub fn start_capture(
     app: AppHandle,
@@ -293,12 +397,45 @@ pub fn start_capture(
     source: Option<String>,
     context_blurb: Option<String>,
     dictation: Option<bool>,
+    project_id: Option<String>,
+) -> Result<CaptureSession, String> {
+    start_audio_capture(
+        &app,
+        &state,
+        source,
+        context_blurb,
+        dictation,
+        project_id,
+        Instant::now(),
+    )
+}
+
+/// `asked_at`: when the user asked (the hotkey press), which the time to the
+/// first audio is measured from.
+pub fn start_audio_capture(
+    app: &AppHandle,
+    state: &State<'_, Captures>,
+    source: Option<String>,
+    context_blurb: Option<String>,
+    dictation: Option<bool>,
+    project_id: Option<String>,
+    asked_at: Instant,
 ) -> Result<CaptureSession, String> {
     let source = source.unwrap_or_else(|| "mixed".to_string());
     let dictation = dictation.unwrap_or(false) && source == "mic";
-    let result = spawn_capture(&app, &state, "audio", &source, false, context_blurb.as_deref(), dictation);
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_audio", error);
+    let context = SessionContext {
+        blurb: context_blurb.as_deref(),
+        project_id: project_id.as_deref(),
+    };
+    let result = spawn_capture(
+        app, state, "audio", &source, false, context, dictation, asked_at,
+    );
+    match &result {
+        Ok(_) => crate::telemetry::track(
+            "recording_started",
+            serde_json::json!({ "kind": if dictation { "dictation" } else { "audio" } }),
+        ),
+        Err(error) => crate::telemetry::capture("capture.start_audio", error),
     }
     result
 }
@@ -309,22 +446,37 @@ pub fn start_screen_capture(
     state: State<'_, Captures>,
     mic: Option<bool>,
 ) -> Result<CaptureSession, String> {
-    let result = spawn_capture(&app, &state, "screen", "system", mic.unwrap_or(false), None, false);
-    if let Err(error) = &result {
-        crate::telemetry::capture("capture.start_screen", error);
+    let result = spawn_capture(
+        &app,
+        &state,
+        "screen",
+        "system",
+        mic.unwrap_or(false),
+        SessionContext::default(),
+        false,
+        Instant::now(),
+    );
+    match &result {
+        Ok(_) => {
+            crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" }))
+        }
+        Err(error) => crate::telemetry::capture("capture.start_screen", error),
     }
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: &AppHandle,
     state: &State<'_, Captures>,
     mode: &str,
     source: &str,
     mic: bool,
-    context_blurb: Option<&str>,
+    context: SessionContext<'_>,
     dictation: bool,
+    asked_at: Instant,
 ) -> Result<CaptureSession, String> {
+    let _starting = state.claim_start()?;
     let bin = capture_bin(app)?;
     let id = uuid::Uuid::new_v4().to_string();
     let started_at_ms = now_ms();
@@ -354,75 +506,121 @@ fn spawn_capture(
         }
     };
 
-    let log = captures_dir(app).ok().and_then(|dir| {
-        rotate_log(&dir.join("capture.log"));
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("capture.log"))
-            .ok()
-    });
-
-    let mut cmd = Command::new(&bin);
-    cmd.arg("--mode")
-        .arg(mode)
-        .arg("--out")
-        .arg(&out_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(match log {
-            Some(file) => Stdio::from(file),
-            None => Stdio::null(),
-        });
+    let mut args: Vec<OsString> = vec![
+        "--mode".into(),
+        mode.into(),
+        "--out".into(),
+        out_path.clone().into(),
+    ];
     if mode == "screen" {
-        cmd.arg("--mic").arg(if mic { "true" } else { "false" });
+        args.extend(["--mic".into(), if mic { "true" } else { "false" }.into()]);
     } else {
-        // Captions run in the system language; on-device recognition either
-        // supports it or says it doesn't. Dictation always runs them for its
-        // paste; meetings and voice notes only with the Live captions setting.
+        // Captions run in the account's transcription language, or with
+        // `auto` start in the system's and follow what is spoken. Dictation
+        // always runs them for its paste; meetings and voice notes only with
+        // the Live captions setting.
         if dictation {
-            cmd.arg("--captions").arg("mic");
+            args.extend(["--captions".into(), "mic".into()]);
         } else if crate::settings::load(app).live_captions() {
-            cmd.arg("--captions").arg("all");
+            args.extend(["--captions".into(), "all".into()]);
+        }
+        if let Some(language) = crate::vocabulary::cached_language(app) {
+            args.extend(["--language".into(), language.into()]);
         }
         if let Err(e) = std::fs::create_dir_all(&segment_dir) {
             discard();
             return Err(format!("could not create segment queue: {e}"));
         }
-        cmd.arg("--source")
-            .arg(source)
-            .arg("--segment-dir")
-            .arg(&segment_dir)
-            .arg("--segment-sec")
-            .arg(crate::settings::load(app).segment_sec().to_string());
+        args.extend([
+            "--source".into(),
+            source.into(),
+            "--segment-dir".into(),
+            segment_dir.clone().into(),
+            "--segment-sec".into(),
+            crate::settings::load(app).segment_sec().to_string().into(),
+        ]);
+        // The words on disk, not a fetch: a capture never waits on the network.
+        // The refresh below lands for the next one, so the first capture after
+        // pairing, or after the words change on the web, runs without them.
+        if let Some(words) = crate::vocabulary::sidecar_arg(&crate::vocabulary::cached(app)) {
+            args.extend(["--vocabulary".into(), words.into()]);
+        }
+        // Read per capture, spare engine included: it gets these args only
+        // when it takes the capture.
+        if !crate::settings::load(app).fast_live_words() {
+            args.push("--no-preview".into());
+        }
+        crate::vocabulary::refresh(app);
     }
 
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
+    let cold = || -> Result<crate::standby::Started, String> {
+        let mut child = Command::new(&bin)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(capture_log(app))
+            .spawn()
+            .map_err(|e| format!("could not start capture engine: {e}"))?;
+        let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
+        Ok((child, stdin, stdout))
+    };
+
+    // Audio captures go to the spare engine when there is one; anything that
+    // goes wrong handing it over falls back to a cold start.
+    let spare = (mode == "audio")
+        .then(crate::standby::take)
+        .flatten()
+        .and_then(|engine| {
+            engine
+                .start(&args)
+                .map_err(|error| tracing::warn!("{error}; starting the capture engine cold"))
+                .ok()
+        });
+    let mut warm = spare.is_some();
+    let mut started = match spare.map_or_else(cold, Ok) {
+        Ok(started) => started,
+        Err(error) => {
             discard();
-            return Err(format!("could not start capture engine: {e}"));
+            return Err(error);
         }
     };
-    let stdin = child.stdin.take().ok_or("capture stdin unavailable")?;
-    let stdout = child.stdout.take().ok_or("capture stdout unavailable")?;
-    let reader = BufReader::new(stdout);
 
-    state.1.fetch_add(1, Ordering::SeqCst);
-
-    let reader = match await_ready(reader, START_TIMEOUT) {
-        Ok(r) => r,
-        Err(msg) => {
-            let msg = match child.try_wait() {
-                Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
-                _ => msg,
-            };
-            let _ = child.kill();
-            let _ = child.wait();
-            state.1.fetch_sub(1, Ordering::SeqCst);
-            discard();
-            return Err(msg);
+    let (mut child, stdin, reader, first_video) = loop {
+        let (mut child, stdin, stdout) = started;
+        let not_ready = match await_ready(BufReader::new(stdout), START_TIMEOUT) {
+            Ok((reader, ready, first_video)) => {
+                log_start_latency(&id, warm, asked_at.elapsed(), &ready);
+                break (child, stdin, reader, first_video);
+            }
+            Err(not_ready) => not_ready,
+        };
+        let timed_out = not_ready == NotReady::TimedOut;
+        let msg = not_ready.message();
+        let mut msg = match child.try_wait() {
+            Ok(Some(status)) => format!("{msg} (capture engine exit status: {status})"),
+            _ => msg,
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        // A spare that failed after taking the capture gets one cold retry. A
+        // start that timed out (a prompt left unanswered) would only time out again.
+        if warm && !timed_out {
+            tracing::warn!("spare capture engine failed: {msg}; starting the capture engine cold");
+            warm = false;
+            match cold() {
+                Ok(retry) => {
+                    started = retry;
+                    continue;
+                }
+                Err(error) => msg = format!("{msg}; starting it cold failed too: {error}"),
+            }
         }
+        discard();
+        if mode == "audio" {
+            prepare_standby(app);
+        }
+        return Err(msg);
     };
 
     if mode == "audio" {
@@ -433,24 +631,38 @@ fn spawn_capture(
             &segment_dir,
             source,
             &title,
-            context_blurb,
+            context.blurb,
             started_at_ms,
         ) {
             let _ = child.kill();
             let _ = child.wait();
-            state.1.fetch_sub(1, Ordering::SeqCst);
             discard();
             return Err(error);
         }
+        // The project is a convenience: a recording without one is still a recording.
+        if let Some(project_id) = context.project_id {
+            if let Err(error) = crate::sqlite::set_session_project(app, &id, project_id) {
+                eprintln!("{error}");
+            }
+        }
     }
-    if let Err(error) = crate::sqlite::with_open(app, |conn| crate::live_transcript::begin_metrics(conn, &id, now_ms()))
-        .and_then(|r| r)
+    if let Err(error) = crate::sqlite::with_open(app, |conn| {
+        crate::live_transcript::begin_metrics(conn, &id, now_ms())
+    })
+    .and_then(|r| r)
     {
         eprintln!("{error}");
     }
     let captions = Arc::new(Mutex::new(CaptionLog::default()));
+    // Before the event reader starts, so the first frame's timing has a session to land in.
+    if mode == "screen" {
+        crate::moments::begin(app, &id, started_at_ms);
+        if let Some(video) = first_video {
+            register_video_start(&id, &video);
+        }
+    }
     let events = stream_events(app.clone(), id.clone(), reader, captions.clone());
-    state.0.lock().unwrap().insert(
+    state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
         id.clone(),
         Session {
             child,
@@ -464,7 +676,6 @@ fn spawn_capture(
             dictation,
         },
     );
-    state.1.fetch_sub(1, Ordering::SeqCst);
 
     // A voice note pastes back into the box it started in. Meetings and screen
     // recordings run too long for that: they target the box focused at stop.
@@ -477,9 +688,15 @@ fn spawn_capture(
         crate::hud::HudState {
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
-            mode: Some(mode.to_string()),
-            started_at_ms: Some(started_at_ms),
+            mode: Some(match mode {
+                "screen" => "video",
+                "audio" if source == "mic" && crate::assistant::voice::starting() => crate::assistant::voice::MODE,
+                other => other,
+            }.to_string()),
+            // The timer counts from the mic going live, not from the key press.
+            started_at_ms: Some(now_ms()),
             message: None,
+            notice: None,
         },
     );
 
@@ -491,45 +708,157 @@ fn spawn_capture(
     })
 }
 
+/// The engine's stderr: the capture log, rotated before it grows too large.
+fn capture_log(app: &AppHandle) -> Stdio {
+    captures_dir(app)
+        .ok()
+        .and_then(|dir| {
+            rotate_log(&dir.join("capture.log"));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("capture.log"))
+                .ok()
+        })
+        .map_or_else(Stdio::null, Stdio::from)
+}
+
+/// Makes sure a spare engine is waiting for the next capture. In the
+/// background: launching one is quick, but never worth holding up a caller.
+pub fn prepare_standby(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let made = crate::standby::refill(|| {
+            let mut cmd = Command::new(capture_bin(&app)?);
+            cmd.arg("--standby").stderr(capture_log(&app));
+            Ok(cmd)
+        });
+        if let Err(error) = made {
+            tracing::warn!("{error}");
+        }
+    });
+}
+
+/// Gets Apple's on-device speech model ready in the background at launch:
+/// reserved for Eavesy and downloaded if missing. Without it every recording
+/// falls back to the older recognizer, whose captions lag by ~30 s.
+pub fn prepare_speech_model(app: &AppHandle) {
+    let Ok(bin) = capture_bin(app) else { return };
+    let language = crate::vocabulary::cached_language(app);
+    std::thread::spawn(move || {
+        let mut command = Command::new(bin);
+        command.arg("--prepare-speech");
+        if let Some(language) = language {
+            command.args(["--language", language.as_str()]);
+        }
+        match command.output() {
+            Ok(output) => {
+                let line = String::from_utf8_lossy(&output.stdout);
+                let state = serde_json::from_str::<serde_json::Value>(
+                    line.trim().lines().last().unwrap_or(""),
+                )
+                .ok()
+                .and_then(|value| {
+                    Some((
+                        value.get("locale")?.as_str()?.to_string(),
+                        value.get("state")?.as_str()?.to_string(),
+                    ))
+                });
+                match state {
+                    Some((locale, state)) => {
+                        tracing::info!(locale, state, "speech model for {locale}: {state}")
+                    }
+                    None => tracing::warn!("speech model check gave no answer"),
+                }
+            }
+            Err(error) => tracing::warn!("speech model check did not run: {error}"),
+        }
+    });
+}
+
+/// How long the press waited for its first audio, in the app log (which goes
+/// into copied diagnostics). `audio_from_ms` is when that audio begins, from
+/// the engine's own start: anything said before it was never recorded.
+fn log_start_latency(session_id: &str, warm: bool, waited: Duration, ready: &CaptureEvent) {
+    let first_audio_ms = waited.as_millis() as u64;
+    let engine = if warm { "spare" } else { "cold" };
+    tracing::info!(
+        session_id,
+        engine,
+        first_audio_ms,
+        engine_first_buffer_ms = ready.first_buffer_ms,
+        engine_audio_from_ms = ready.audio_from_ms,
+        "first audio {first_audio_ms} ms after the press ({engine} engine)"
+    );
+}
+
+/// Why an engine never said `ready`.
+#[derive(Debug, PartialEq)]
+enum NotReady {
+    /// Nothing within the start timeout: most likely a permission prompt
+    /// left unanswered.
+    TimedOut,
+    /// The engine reported an error or exited.
+    Failed(String),
+}
+
+impl NotReady {
+    fn message(self) -> String {
+        match self {
+            NotReady::TimedOut => "timed out starting the recording — the microphone/screen permission prompt \
+                                   may not have been answered. Grant access in System Settings and try again."
+                .to_string(),
+            NotReady::Failed(msg) => msg,
+        }
+    }
+}
+
+/// Waits for the engine's `ready`, which it sends with its first audio buffer.
+/// Preserve the first-frame event, which precedes `ready` for narrated video.
+/// Dropping it leaves marking permanently stuck in the starting state.
+fn read_ready<R: BufRead>(reader: &mut R) -> Result<(CaptureEvent, Option<CaptureEvent>), String> {
+    let mut first_video = None;
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => return Err("capture engine exited before it was ready (check permissions)".into()),
+            Ok(_) => {
+                if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
+                    match ev.event.as_str() {
+                        "ready" => return Ok((ev, first_video)),
+                        "video_start" => { first_video.get_or_insert(ev); }
+                        "error" => return Err(ev.message.unwrap_or_else(|| "capture failed".into())),
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => return Err(format!("capture engine read failed: {e}")),
+        }
+    }
+}
+
+fn register_video_start(session_id: &str, ev: &CaptureEvent) {
+    if let (Some(epoch_ms), Some(x), Some(y), Some(width), Some(height)) =
+        (ev.epoch_ms, ev.display_x, ev.display_y, ev.display_width, ev.display_height)
+    {
+        crate::moments::video_started(session_id, epoch_ms, crate::moments::Rect { x, y, width, height });
+    }
+}
+
 fn await_ready(
     reader: BufReader<ChildStdout>,
     timeout: Duration,
-) -> Result<BufReader<ChildStdout>, String> {
+) -> Result<(BufReader<ChildStdout>, CaptureEvent, Option<CaptureEvent>), NotReady> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = reader;
-        let result = loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    break Err(
-                        "capture engine exited before it was ready (check permissions)".to_string(),
-                    )
-                }
-                Ok(_) => {
-                    if let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) {
-                        match ev.event.as_str() {
-                            "ready" => break Ok(()),
-                            "error" => {
-                                break Err(ev.message.unwrap_or_else(|| "capture failed".to_string()))
-                            }
-                            _ => continue,
-                        }
-                    }
-                }
-                Err(e) => break Err(format!("capture engine read failed: {e}")),
-            }
-        };
-        let _ = tx.send(result.map(|()| reader));
+        let result = read_ready(&mut reader);
+        let _ = tx.send(result.map(|(ready, video)| (reader, ready, video)));
     });
     match rx.recv_timeout(timeout) {
-        Ok(Ok(reader)) => Ok(reader),
-        Ok(Err(msg)) => Err(msg),
-        Err(_) => Err(
-            "timed out starting the recording — the microphone/screen permission prompt may not \
-             have been answered. Grant access in System Settings and try again."
-                .to_string(),
-        ),
+        Ok(Ok(ready)) => Ok(ready),
+        Ok(Err(msg)) => Err(NotReady::Failed(msg)),
+        Err(_) => Err(NotReady::TimedOut),
     }
 }
 
@@ -541,113 +870,211 @@ fn stream_events(
 ) -> mpsc::Receiver<CaptureEvent> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-    let mut warning: Option<String> = None;
-    let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
-    let mut captioned = false;
-    loop {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) else {
-                    continue;
-                };
-                if ev.event == "segment" {
-                    if let (Some(path), Some(index), Some(start_ms), Some(duration_ms), Some(bytes)) = (
-                        ev.path.clone(),
-                        ev.index,
-                        ev.start_ms,
-                        ev.duration_ms,
-                        ev.bytes,
-                    ) {
-                        let segment = crate::sqlite::SegmentManifest {
-                            path,
-                            index,
-                            track: ev.track.clone().unwrap_or_else(|| "mixed".to_string()),
-                            start_ms,
-                            duration_ms,
-                            bytes,
-                            peak_rms: ev.peak_rms,
-                            active_ms: ev.active_ms,
-                        };
-                        if let Err(error) = crate::sqlite::record_segment(&app, &session_id, &segment) {
-                            eprintln!("could not queue segment {index}: {error}");
-                        } else {
-                            crate::sync::wake();
-                            let _ = app.emit("recording:segment", index);
+        let mut warning: Option<String> = None;
+        let writer = crate::live_transcript::CaptionWriter::spawn(app.clone());
+        let mut captioned = false;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let Ok(ev) = serde_json::from_str::<CaptureEvent>(line.trim()) else {
+                        continue;
+                    };
+                    if ev.event == "level" {
+                        let rms = ev.rms.unwrap_or(0.0);
+                        captions.lock().unwrap_or_else(|e| e.into_inner()).note_level(rms);
+                        // Only the control draws the level: ten a second
+                        // is not worth waking every other window for.
+                        let _ = app.emit_to(
+                            "hud",
+                            "recording:level",
+                            serde_json::json!({"sessionId":session_id,"rms":rms}),
+                        );
+                        continue;
+                    }
+                    if ev.event == "video_start" {
+                        register_video_start(&session_id, &ev);
+                        continue;
+                    }
+                    if ev.event == "segment" {
+                        if let (
+                            Some(path),
+                            Some(index),
+                            Some(start_ms),
+                            Some(duration_ms),
+                            Some(bytes),
+                        ) = (
+                            ev.path.clone(),
+                            ev.index,
+                            ev.start_ms,
+                            ev.duration_ms,
+                            ev.bytes,
+                        ) {
+                            let segment = crate::sqlite::SegmentManifest {
+                                path,
+                                index,
+                                track: ev.track.clone().unwrap_or_else(|| "mixed".to_string()),
+                                start_ms,
+                                duration_ms,
+                                bytes,
+                                peak_rms: ev.peak_rms,
+                                active_ms: ev.active_ms,
+                            };
+                            if let Err(error) =
+                                crate::sqlite::record_segment(&app, &session_id, &segment)
+                            {
+                                eprintln!("could not queue segment {index}: {error}");
+                            } else {
+                                crate::sync::wake();
+                                let _ = app.emit("recording:segment", index);
+                            }
                         }
+                        continue;
                     }
-                    continue;
-                }
-                if let Some(caption) = ev.caption(&session_id) {
-                    if !captioned {
-                        captioned = true;
-                        // Off this thread: it must never wait on the database.
-                        let (app, session_id) = (app.clone(), session_id.clone());
-                        std::thread::spawn(move || {
-                            crate::live_transcript::report_first(&app, &session_id, crate::live_transcript::Milestone::Caption);
-                        });
+                    if let Some(caption) = ev.caption(&session_id) {
+                        if !captioned {
+                            captioned = true;
+                            // Off this thread: it must never wait on the database.
+                            let (app, session_id) = (app.clone(), session_id.clone());
+                            std::thread::spawn(move || {
+                                crate::live_transcript::report_first(
+                                    &app,
+                                    &session_id,
+                                    crate::live_transcript::Milestone::Caption,
+                                );
+                            });
+                        }
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .record(&caption);
+                        if caption.is_final
+                            && !caption.preview
+                            && !writer.push(caption.clone())
+                            && writer.dropped() == 1
+                        {
+                            eprintln!("live captions: storing is behind; dropping finals until it catches up");
+                        }
+                        let _ = app.emit("recording:caption", &caption);
+                        continue;
                     }
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).record(&caption);
-                    if caption.is_final && !writer.push(caption.clone()) && writer.dropped() == 1 {
-                        eprintln!("live captions: storing is behind; dropping finals until it catches up");
+                    if let Some(status) = ev.caption_status(&session_id) {
+                        if !status.live {
+                            tracing::warn!(session_id = %session_id, reason = status.detail.as_deref().unwrap_or("unavailable"), "live captions off");
+                        }
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .note_status(&status);
+                        let _ = app.emit("recording:captions_status", &status);
+                        continue;
                     }
-                    let _ = app.emit("recording:caption", &caption);
-                    continue;
-                }
-                if let Some(status) = ev.caption_status(&session_id) {
-                    if !status.live {
-                        eprintln!("live captions off: {}", status.detail.as_deref().unwrap_or("unavailable"));
+                    if let Some(count) = ev.captions_dropped() {
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .note_dropped(count);
+                        continue;
                     }
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).note_status(&status);
-                    let _ = app.emit("recording:captions_status", &status);
-                    continue;
+                    if let Some(done) = ev.captions_done() {
+                        captions
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .finish(done);
+                        continue;
+                    }
+                    if ev.event == "segment_error" {
+                        let message = ev
+                            .message
+                            .unwrap_or_else(|| "segment finalization failed".to_string());
+                        eprintln!("segment could not be written: {message}");
+                        crate::telemetry::capture("capture.segment_failed", &message);
+                        continue;
+                    }
+                    if ev.event == "warning" {
+                        let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
+                        tracing::warn!(session_id = %session_id, "capture engine: {message}");
+                        crate::telemetry::capture("capture.stopped_early", &message);
+                        warning = Some(message);
+                        continue;
+                    }
+                    if matches!(ev.event.as_str(), "done" | "error") {
+                        let _ = tx.send(ev);
+                        break;
+                    }
                 }
-                if let Some(done) = ev.captions_done() {
-                    captions.lock().unwrap_or_else(|e| e.into_inner()).finish(done);
-                    continue;
-                }
-                if ev.event == "segment_error" {
-                    let message = ev.message.unwrap_or_else(|| "segment finalization failed".to_string());
-                    eprintln!("segment could not be written: {message}");
-                    crate::telemetry::capture("capture.segment_failed", &message);
-                    continue;
-                }
-                if ev.event == "warning" {
-                    let message = ev.message.unwrap_or_else(|| "capture stopped".to_string());
-                    crate::telemetry::capture("capture.stopped_early", &message);
-                    warning = Some(message);
-                    continue;
-                }
-                if matches!(ev.event.as_str(), "done" | "error") {
-                    let _ = tx.send(ev);
+                Err(error) => {
+                    let _ = tx.send(CaptureEvent {
+                        event: "error".to_string(),
+                        message: Some(format!("capture engine read failed: {error}")),
+                        ..Default::default()
+                    });
                     break;
                 }
             }
-            Err(error) => {
-                let _ = tx.send(CaptureEvent {
-                    event: "error".to_string(),
-                    message: Some(format!("capture engine read failed: {error}")),
-                    ..Default::default()
-                });
-                break;
-            }
         }
-    }
-    drop(tx);
-    stopped_on_its_own(&app, &session_id, warning);
+        drop(tx);
+        stopped_on_its_own(&app, &session_id, warning);
     });
     rx
 }
 
+/// Tells a recording's capture engine what language the cloud heard last, so
+/// captions set to follow the spoken language can move to it. True once the
+/// engine has the line. The write never waits: if the engine has stopped
+/// reading, the hint fails and the poller sends it again next time. It runs
+/// under the captures lock, so it never overlaps the "stop" line, which is
+/// only written once the session has left the map.
+pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
+    use std::os::fd::AsRawFd;
+    let Some(language) = crate::vocabulary::clean_language(language) else {
+        return false;
+    };
+    let line = format!("{}\n", serde_json::json!({ "language": language }));
+    let captures = app.state::<Captures>();
+    let sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(session) = sessions.get(session_id) else {
+        return false;
+    };
+    write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
+}
+
+/// One write to a pipe that may be full: all of `bytes` or nothing. Lines this
+/// short are under PIPE_BUF, so the write is atomic. The flags belong to the
+/// engine's stdin, so they are put back before returning; callers keep every
+/// other write to it from running meanwhile.
+fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
+    // SAFETY: `fd` is an open descriptor owned by the caller for this call.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+            return false;
+        }
+        let written = loop {
+            let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+            if written >= 0
+                || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
+                break written;
+            }
+        };
+        libc::fcntl(fd, libc::F_SETFL, flags);
+        usize::try_from(written).is_ok_and(|written| written == bytes.len())
+    }
+}
+
 fn stopped_on_its_own(app: &AppHandle, session_id: &str, warning: Option<String>) {
     let captures = app.state::<Captures>();
-    if !captures.0.lock().unwrap().contains_key(session_id) {
+    if !captures.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(session_id) {
         return;
     }
     let reason = warning.unwrap_or_else(|| "the capture engine stopped unexpectedly".to_string());
     let (title, body) = match stop_capture_inner(app.clone(), captures, session_id.to_string()) {
-        Ok(_) => ("Recording stopped early", format!("Everything up to that point was saved. Reason: {reason}")),
+        Ok(_) => (
+            "Recording stopped early",
+            format!("Everything up to that point was saved. Reason: {reason}"),
+        ),
         Err(error) if error == NO_ACTIVE_CAPTURE => return,
         Err(error) => {
             show_stop_failed(app, session_id, &error);
@@ -683,23 +1110,237 @@ pub fn stop_capture(
     if let Err(error) = &result {
         crate::telemetry::capture("capture.stop", error);
         if error != NO_ACTIVE_CAPTURE {
-            show_stop_failed(&app, &session_id, error);
+            if !show_stop_failed(&app, &session_id, error) {
+                // The words were already pasted (Done), or the user moved on:
+                // say what went wrong without taking that back. Whether the
+                // words reached the paste is the HUD's story, not this one's;
+                // the engine's own words stay in the log and Copy Diagnostics.
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("Recording not fully saved")
+                    .body("The audio file couldn't be finished. Copy Diagnostics has the details.")
+                    .show();
+            }
+        } else if !Stopping::in_flight_or_just_finished(&session_id) {
+            // Shown as stopping by the key press, but something else stopped
+            // it first, and nothing is still finishing it, nor finished it a
+            // moment ago (its words may still be on their way to the paste).
+            let idle = crate::hud::HudState { session_id: Some(session_id.clone()), ..crate::hud::HudState::idle() };
+            crate::hud::advance_from(&app, &session_id, &[crate::hud::Phase::Transcribing], idle);
         }
     }
     result
 }
 
-fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) {
-    crate::hud::set_state(
+/// Ends a capture and throws it away: nothing is saved, pasted, uploaded or
+/// kept in History, and the cloud meeting its live segments made is deleted
+/// by the sync loop.
+#[tauri::command(async)]
+pub fn cancel_capture(
+    app: AppHandle,
+    state: State<'_, Captures>,
+    session_id: String,
+) -> Result<(), String> {
+    let (session, _stopping) = {
+        let mut captures = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let audio = captures.get(&session_id).ok_or(NO_ACTIVE_CAPTURE)?.mode == "audio";
+        // Marked discarded before anything is thrown away: a cancel that can't
+        // say so leaves the capture running, rather than a row that launch
+        // recovery or the upload queue would bring back without its files.
+        if audio {
+            crate::sqlite::discard_recording(&app, &session_id)
+                .map_err(|error| format!("Couldn’t cancel the recording: {error}"))?;
+        }
+        let session = captures.remove(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
+        // Out of the map and marked as stopping together, so neither the
+        // engine exiting nor a racing Stop reports it as stopped early.
+        (session, Stopping::start(&session_id))
+    };
+    let Session { mut child, stdin, events, out_path, mode, .. } = session;
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    // The reader drops its sender once it has read the engine's last line.
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        if events.recv_timeout(left).is_err() {
+            break;
+        }
+    }
+
+    crate::moments::end(&app, &session_id);
+    crate::dictation::disarm(&session_id);
+    crate::assistant::voice::take(&session_id);
+    crate::agents::take_answer(&session_id);
+    if mode == "audio" {
+        // Again, for segments the reader queued while the engine was dying.
+        if let Err(error) = crate::sqlite::discard_recording(&app, &session_id) {
+            crate::telemetry::capture("capture.cancel", &error);
+        }
+        crate::sync::wake();
+        prepare_standby(&app);
+    }
+    remove_cancelled_files(
+        fs_writer::recordings_root(&app).ok().as_deref(),
+        captures_dir(&app).ok().as_deref(),
+        &session_id,
+        &out_path,
+        &mode,
+    );
+    crate::telemetry::track("recording_cancelled", serde_json::json!({ "kind": mode }));
+    crate::hud::advance_from(
+        &app,
+        &session_id,
+        &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing],
+        crate::hud::HudState { session_id: Some(session_id.clone()), ..crate::hud::HudState::idle() },
+    );
+    crate::agents::dictation_ended(&app);
+    Ok(())
+}
+
+/// What a cancelled capture wrote: its folder in the recordings folder (only
+/// ever one made for it), or its video and stats, and its segment queue.
+fn remove_cancelled_files(
+    recordings_root: Option<&std::path::Path>,
+    captures_dir: Option<&std::path::Path>,
+    session_id: &str,
+    out_path: &std::path::Path,
+    mode: &str,
+) {
+    let remove = |result: std::io::Result<()>, what: &str| match result {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!(%session_id, "could not remove a cancelled recording's {what}: {error}");
+        }
+        _ => {}
+    };
+    if mode == "audio" {
+        let root = recordings_root.and_then(|root| root.canonicalize().ok());
+        let folder = out_path.parent().and_then(|folder| folder.canonicalize().ok());
+        match (folder, root) {
+            (Some(folder), Some(root)) if folder != root && folder.starts_with(&root) => {
+                remove(std::fs::remove_dir_all(&folder), "folder");
+            }
+            _ => remove(std::fs::remove_file(out_path), "audio"),
+        }
+    } else {
+        remove(std::fs::remove_file(out_path), "video");
+        remove(std::fs::remove_file(format!("{}.capture.json", out_path.display())), "stats");
+    }
+    if let Some(dir) = captures_dir {
+        remove(std::fs::remove_dir_all(dir.join(session_id)), "segments");
+    }
+}
+
+/// The sessions some stop is finishing right now, and the ones a stop just
+/// finished, so a second stop racing either (and finding no capture) leaves
+/// the HUD to the first: its words may still be on their way to the paste.
+static STOPPING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static JUST_STOPPED: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// How long after a stop finishes a duplicate stop is still told to stand
+/// down: as long as `show_stopping` gives a stop to end in Saved, Done or
+/// Failed before it drops a stuck pill to Idle itself, so standing down can
+/// never leave the control saying it is writing for longer than that.
+const JUST_STOPPED_FOR: Duration = crate::hud::STOPPING_TIMEOUT;
+
+struct Stopping(String);
+
+impl Stopping {
+    fn start(session_id: &str) -> Self {
+        STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(session_id.to_string());
+        Stopping(session_id.to_string())
+    }
+
+    fn in_flight_or_just_finished(session_id: &str) -> bool {
+        if STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|id| id == session_id) {
+            return true;
+        }
+        let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
+        recent.iter().any(|(id, _)| id == session_id)
+    }
+}
+
+impl Drop for Stopping {
+    fn drop(&mut self) {
+        // Moved from "stopping" to "just stopped" under the first lock, so no
+        // check lands in between and sees neither.
+        let mut stopping = STOPPING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(index) = stopping.iter().position(|id| *id == self.0) {
+            stopping.remove(index);
+        }
+        let mut recent = JUST_STOPPED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.retain(|(_, at)| at.elapsed() < JUST_STOPPED_FOR);
+        recent.push((self.0.clone(), Instant::now()));
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::remove_cancelled_files;
+
+    #[test]
+    fn a_cancelled_capture_removes_its_own_folder_and_nothing_outside_the_recordings_folder() {
+        let base = std::env::temp_dir().join(format!("eavesy-cancel-{}", uuid::Uuid::new_v4()));
+        let root = base.join("Recordings");
+        let captures = base.join("captures");
+        let folder = root.join("2026-10-25 Talk");
+        let queue = captures.join("session").join("segments");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&queue).unwrap();
+        std::fs::write(folder.join("audio.m4a"), b"audio").unwrap();
+        std::fs::write(folder.join("audio.m4a.capture.json"), b"{}").unwrap();
+
+        remove_cancelled_files(Some(&root), Some(&captures), "session", &folder.join("audio.m4a"), "audio");
+        assert!(!folder.exists() && !captures.join("session").exists());
+        assert!(root.exists() && captures.exists());
+
+        // A capture whose folder isn't inside the recordings folder loses only its audio.
+        let elsewhere = base.join("Elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("audio.m4a"), b"audio").unwrap();
+        std::fs::write(elsewhere.join("keep.txt"), b"mine").unwrap();
+        remove_cancelled_files(Some(&root), Some(&captures), "other", &elsewhere.join("audio.m4a"), "audio");
+        assert!(!elsewhere.join("audio.m4a").exists());
+        assert!(elsewhere.join("keep.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod stopping_tests {
+    use super::Stopping;
+
+    #[test]
+    fn a_stop_counts_while_running_and_for_a_while_after() {
+        assert!(!Stopping::in_flight_or_just_finished("stop-test-a"));
+        let guard = Stopping::start("stop-test-a");
+        assert!(Stopping::in_flight_or_just_finished("stop-test-a"));
+        drop(guard);
+        assert!(Stopping::in_flight_or_just_finished("stop-test-a"));
+        assert!(!Stopping::in_flight_or_just_finished("stop-test-b"));
+    }
+}
+
+/// Shows a failed stop, but only over the recording itself or its "Writing
+/// it down…": never over words already pasted (Done), a result the user
+/// dismissed, or another capture. Returns whether it showed.
+fn show_stop_failed(app: &AppHandle, session_id: &str, error: &str) -> bool {
+    crate::hud::advance_from(
         app,
+        session_id,
+        &[crate::hud::Phase::Recording, crate::hud::Phase::Transcribing],
         crate::hud::HudState {
             phase: crate::hud::Phase::Failed,
             session_id: Some(session_id.to_string()),
             mode: None,
             started_at_ms: None,
             message: Some(error.to_string()),
+            notice: None,
         },
-    );
+    )
 }
 
 fn stop_capture_inner(
@@ -707,12 +1348,13 @@ fn stop_capture_inner(
     state: State<'_, Captures>,
     session_id: String,
 ) -> Result<StoredRecording, String> {
-    let session = state
-        .0
-        .lock()
-        .unwrap()
-        .remove(&session_id)
-        .ok_or(NO_ACTIVE_CAPTURE)?;
+    let (session, _stopping) = {
+        let mut captures = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let session = captures.remove(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
+        // Marked while the capture lock is still held, so a second stop that
+        // finds no capture always sees this one in flight.
+        (session, Stopping::start(&session_id))
+    };
     let Session {
         mut child,
         mut stdin,
@@ -731,6 +1373,12 @@ fn stop_capture_inner(
 
     let _ = writeln!(stdin, "stop");
     let _ = stdin.flush();
+    let moments = crate::moments::end(&app, &session_id);
+    crate::hud::show_stopping(&app, &session_id);
+
+    // Dictation pastes now, while the engine is still sealing its files.
+    let pasted_early =
+        dictation && paste_dictation_now(&app, &session_id, &captions, started_at_ms);
 
     let result = match await_done(events, STOP_TIMEOUT) {
         Ok(done) => finish_stopped_capture(
@@ -745,6 +1393,8 @@ fn stop_capture_inner(
             reserved_audio_folder,
             &captions,
             dictation,
+            pasted_early,
+            moments,
         ),
         Err(msg) => {
             crate::telemetry::capture("capture failed to finalize", &msg);
@@ -753,6 +1403,11 @@ fn stop_capture_inner(
             Err(msg)
         }
     };
+    // The engine is done with the mic: line up the next one. Only audio
+    // captures take a spare.
+    if mode == "audio" {
+        prepare_standby(&app);
+    }
     match result {
         Err(error) if mode == "audio" => Err(salvage_after_failed_stop(&app, &session_id, error)),
         result => result,
@@ -795,6 +1450,8 @@ fn finish_stopped_capture(
     reserved_audio_folder: Option<PathBuf>,
     captions: &Mutex<CaptionLog>,
     dictation: bool,
+    pasted_early: bool,
+    moments: Option<crate::moments::Moments>,
 ) -> Result<StoredRecording, String> {
     let app = app.clone();
     let session_id = session_id.to_string();
@@ -829,46 +1486,87 @@ fn finish_stopped_capture(
         summary: None,
         // What the Mac heard on device, so the recording is readable and
         // pasteable the moment it stops. The cloud transcript replaces it.
-        transcript: captions.lock().unwrap_or_else(|e| e.into_inner()).transcript(),
+        transcript: captions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .transcript(),
         notes: None,
         has_audio: true,
         has_video: is_screen,
         folder_path: folder.to_str().map(|s| s.to_string()),
     };
     let audio_dest = finalize_recording_folder(Some(&app), &final_src, &folder, &rec)?;
+    if is_screen {
+        let original_stats = PathBuf::from(format!("{}.capture.json", out_path.display()));
+        let stats = if original_stats.exists() {
+            original_stats
+        } else {
+            PathBuf::from(format!("{}.capture.json", final_src.display()))
+        };
+        if stats.exists() {
+            if let Err(error) = std::fs::rename(&stats, folder.join("microphone.json"))
+                .or_else(|_| std::fs::copy(&stats, folder.join("microphone.json")).map(|_| ()))
+            {
+                // Verification metadata must never orphan already-finalized media.
+                // A missing file is reported explicitly by walkthrough processing.
+                eprintln!("Could not save microphone verification: {error}");
+            }
+        }
+        if let Some(moments) = &moments {
+            crate::moments::save(moments, &folder);
+        }
+    }
+
     store::append(&app, rec.clone())?;
-    // Only a recording that was stored gets a paste target.
-    crate::dictation::rearm_at_stop(&rec.id);
+    if let Some(text) = crate::live_edit::corrected(&rec.id, rec.transcript.as_deref().unwrap_or("")) {
+        store::save_live_preview_transcript(&app, &rec.id, &text)?;
+    }
+    crate::telemetry::track(
+        "recording_saved",
+        serde_json::json!({
+            "kind": if dictation { "dictation" } else if is_screen { "screen" } else { "audio" },
+            "duration_sec": rec.duration_sec,
+        }),
+    );
+    // Only a recording that was stored gets a paste target. Dictation chose
+    // its target as it stopped, and may have pasted already.
+    if !dictation {
+        crate::dictation::rearm_at_stop(&rec.id);
+    }
     let armed = crate::dictation::is_armed(&rec.id);
     // Plain text for the paste: speaker labels belong in the transcript, not
     // in whatever box the user is typing in.
-    let on_device_paste = Some(captions.lock().unwrap_or_else(|e| e.into_inner()).spoken_text())
-        .filter(|text| !text.is_empty());
+    let on_device_paste = Some(
+        captions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .spoken_text(),
+    )
+    .filter(|text| !text.is_empty());
     let _ = app.emit("recordings:updated", ());
 
-    crate::hud::set_state(
-        &app,
-        crate::hud::HudState {
-            phase: if is_screen {
-                crate::hud::Phase::Done
-            } else {
-                crate::hud::Phase::Saved
+    // A dictation that pasted already shows its words in the HUD; one still
+    // waiting for its words stays on "Writing it down…" until they arrive.
+    if !pasted_early && !dictation {
+        crate::hud::set_state(
+            &app,
+            crate::hud::HudState {
+                phase: if is_screen {
+                    crate::hud::Phase::Done
+                } else {
+                    crate::hud::Phase::Saved
+                },
+                session_id: Some(rec.id.clone()),
+                mode: Some(if is_screen { "video" } else { "audio" }.to_string()),
+                started_at_ms: None,
+                message: None,
+                notice: None,
             },
-            session_id: Some(rec.id.clone()),
-            mode: Some(if is_screen { "video" } else { "audio" }.to_string()),
-            started_at_ms: None,
-            message: None,
-        },
-    );
+        );
+    }
 
     if is_screen {
-        crate::transcribe::spawn(
-            app.clone(),
-            rec.id.clone(),
-            audio_dest,
-            Some(folder.clone()),
-            false,
-        );
+        crate::walkthrough::spawn(app.clone(), rec.id.clone());
     } else {
         let archive_bytes = std::fs::metadata(&audio_dest)
             .map(|m| m.len() as i64)
@@ -881,7 +1579,7 @@ fn finish_stopped_capture(
             archive_bytes,
         )?;
         crate::sync::wake();
-        if dictation {
+        if dictation && !pasted_early {
             paste_dictation(&app, &rec.id, audio_dest, captions);
         }
     }
@@ -896,8 +1594,9 @@ fn finish_stopped_capture(
             crate::dictation::deliver_at_stop(&app, &rec.id, text);
         }
     }
-    if pasting {
-        // The text goes back into the app the user was in; don't take focus from it.
+    if pasting || dictation || source == "mic" {
+        // The text goes back into the app the user was in, and a voice note
+        // lives in the HUD: don't take focus from the app the user is in.
         return Ok(rec);
     }
 
@@ -913,29 +1612,86 @@ fn pastes_at_stop(dictation: bool, armed: bool, on_device_text: bool) -> bool {
     armed && (dictation || on_device_text)
 }
 
+/// How long a stopping dictation waits for the recognizer's last finals
+/// before it pastes what it has (finals plus the words still in progress).
+const QUICK_PASTE_WAIT: Duration = Duration::from_millis(300);
+
+/// Waits briefly for the recognizer to settle, then pastes the on-device text
+/// straight away, before the engine has sealed its files or anything is
+/// stored. Returns false when there is nothing trustworthy to paste yet; the
+/// clip then goes to Whisper once it is saved.
+fn paste_dictation_now(
+    app: &AppHandle,
+    session_id: &str,
+    captions: &Mutex<CaptionLog>,
+    started_at_ms: i64,
+) -> bool {
+    // How long the clip is, measured as it stops: the wait below adds no audio.
+    let clip_ms = now_ms() - started_at_ms;
+    let deadline = std::time::Instant::now() + QUICK_PASTE_WAIT;
+    while std::time::Instant::now() < deadline
+        && !captions.lock().unwrap_or_else(|e| e.into_inner()).is_done()
+    {
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    crate::dictation::rearm_at_stop(session_id);
+    let decision = captions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .quick_paste(clip_ms);
+    match decision {
+        Paste::OnDevice(text) => {
+            crate::dictation::deliver_dictation(app, session_id, &text);
+            true
+        }
+        Paste::Silent(reason) => {
+            paste_nothing(app, session_id, &reason);
+            true
+        }
+        Paste::Whisper(reason) => {
+            eprintln!("dictation: no quick paste ({reason}); waiting for the saved clip");
+            false
+        }
+    }
+}
+
+/// A dictation of silence: paste nothing, and say so instead of "Writing it
+/// down…". The clip is still saved; its cloud transcript must not paste later.
+pub(crate) fn paste_nothing(app: &AppHandle, session_id: &str, reason: &str) {
+    eprintln!("dictation: nothing to paste ({reason})");
+    crate::dictation::disarm(session_id);
+    let for_eavesy = crate::assistant::voice::take(session_id);
+    let failed = crate::hud::HudState {
+        phase: crate::hud::Phase::Failed,
+        session_id: Some(session_id.to_string()),
+        mode: None,
+        started_at_ms: None,
+        message: Some(if for_eavesy { "Didn't hear anything, so nothing was sent to Eavesy." } else { "Didn't hear anything, so nothing was pasted." }.to_string()),
+        notice: None,
+    };
+    crate::hud::advance_from(app, session_id, &[crate::hud::Phase::Transcribing], failed);
+}
+
 /// Pastes a dictation the moment it stops: the on-device text when it can be
 /// trusted, otherwise a quick cloud Whisper pass on the clip. Either way the
 /// recording is already queued to upload, and the cloud transcript stays its
 /// record; if both of these fail, that transcript is pasted when it is ready.
-fn paste_dictation(app: &AppHandle, session_id: &str, audio: PathBuf, captions: &Mutex<CaptionLog>) {
-    let decision = captions.lock().unwrap_or_else(|e| e.into_inner()).paste();
+fn paste_dictation(
+    app: &AppHandle,
+    session_id: &str,
+    audio: PathBuf,
+    captions: &Mutex<CaptionLog>,
+) {
+    let (decision, heard_on_device) = {
+        let log = captions.lock().unwrap_or_else(|e| e.into_inner());
+        (log.paste(), !log.heard_no_words())
+    };
     match decision {
-        Paste::OnDevice(text) => {
-            crate::dictation::deliver_at_stop(app, session_id, &text);
-            crate::hud::set_state(
-                app,
-                crate::hud::HudState {
-                    phase: crate::hud::Phase::Done,
-                    session_id: Some(session_id.to_string()),
-                    mode: None,
-                    started_at_ms: None,
-                    message: Some(text),
-                },
-            );
-        }
+        Paste::OnDevice(text) => crate::dictation::deliver_dictation(app, session_id, &text),
+        Paste::Silent(reason) => paste_nothing(app, session_id, &reason),
         Paste::Whisper(reason) => {
             eprintln!("dictation: using Whisper for the paste ({reason})");
-            crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio);
+            crate::transcribe::paste_with_whisper(app.clone(), session_id.to_string(), audio, heard_on_device);
         }
     }
 }
@@ -1054,7 +1810,7 @@ fn sync_parent_directory(parent: &std::path::Path) {
 
 #[tauri::command]
 pub fn capture_state(state: State<'_, Captures>) -> CaptureState {
-    let count = state.0.lock().unwrap().len();
+    let count = state.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len();
     if count == 0 {
         CaptureState::Idle
     } else {
@@ -1103,7 +1859,65 @@ fn reap_child(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_preserves_video_timing_before_microphone_ready() {
+        let bytes = concat!(
+            "{\"event\":\"level\",\"rms\":0.1}\n",
+            "{\"event\":\"video_start\",\"epochMs\":1234,\"displayX\":-1440,\"displayY\":0,\"displayWidth\":1440,\"displayHeight\":900}\n",
+            "{\"event\":\"video_start\",\"epochMs\":9999}\n",
+            "{\"event\":\"ready\"}\n",
+            "{\"event\":\"done\"}\n"
+        );
+        let mut reader = std::io::Cursor::new(bytes);
+        let (ready, video) = super::read_ready(&mut reader).unwrap();
+        assert_eq!(ready.event, "ready");
+        let video = video.unwrap();
+        assert_eq!(video.epoch_ms, Some(1234));
+        assert_eq!(video.display_x, Some(-1440.0));
+        let mut rest = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut rest).unwrap();
+        assert!(rest.contains("done"));
+    }
+
+    #[test]
+    fn startup_handles_audio_and_fails_before_ready() {
+        assert!(super::read_ready(&mut std::io::Cursor::new("{\"event\":\"ready\"}\n")).unwrap().1.is_none());
+        let error = super::read_ready(&mut std::io::Cursor::new("{\"event\":\"error\",\"message\":\"denied\"}\n")).err().unwrap();
+        assert_eq!(error, "denied");
+    }
     use super::*;
+
+    #[test]
+    fn a_hint_to_an_engine_that_stopped_reading_fails_instead_of_waiting() {
+        use std::os::fd::AsRawFd;
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let fd = stdin.as_raw_fd();
+        assert!(write_without_waiting(fd, b"{\"language\":\"es\"}\n"));
+        let chunk = [b'x'; 4096];
+        let mut full = false;
+        for _ in 0..1024 {
+            if !write_without_waiting(fd, &chunk) {
+                full = true;
+                break;
+            }
+        }
+        assert!(full, "the pipe filled without blocking");
+        assert!(!write_without_waiting(fd, b"{\"language\":\"fr\"}\n"));
+        // SAFETY: reading the flags of an open descriptor.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "the engine's stdin is left blocking"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     #[test]
     fn capture_log_is_rotated_once_it_is_large() {
@@ -1133,15 +1947,25 @@ mod tests {
                 is_final: true,
                 start_ms: 1200,
                 end_ms: 2050,
+                preview: false,
             })
         );
         assert_eq!(ev.caption_status("rec"), None);
-        let partial: CaptureEvent =
-            serde_json::from_str(r#"{"event":"caption","startMs":0,"text":"hel","track":"system"}"#).unwrap();
+        let partial: CaptureEvent = serde_json::from_str(
+            r#"{"event":"caption","startMs":0,"text":"hel","track":"system"}"#,
+        )
+        .unwrap();
         let partial = partial.caption("rec").unwrap();
         assert!(!partial.is_final);
+        assert!(!partial.preview);
         assert_eq!(partial.track, "system");
-        let segment: CaptureEvent = serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
+        let preview: CaptureEvent = serde_json::from_str(
+            r#"{"event":"caption","final":false,"preview":true,"startMs":0,"text":"hel lo","track":"mic"}"#,
+        )
+        .unwrap();
+        assert!(preview.caption("rec").unwrap().preview);
+        let segment: CaptureEvent =
+            serde_json::from_str(r#"{"event":"segment","index":1}"#).unwrap();
         assert_eq!(segment.caption("rec"), None);
     }
 
@@ -1151,7 +1975,14 @@ mod tests {
             r#"{"dropped":2,"event":"captions_done","failed":false,"timedOut":true,"track":"mic"}"#,
         )
         .unwrap();
-        assert_eq!(ev.captions_done(), Some(CaptionsDone { dropped: 2, timed_out: true, failed: false }));
+        assert_eq!(
+            ev.captions_done(),
+            Some(CaptionsDone {
+                dropped: 2,
+                timed_out: true,
+                failed: false
+            })
+        );
         assert_eq!(ev.caption("rec"), None);
     }
 
@@ -1172,8 +2003,15 @@ mod tests {
         assert!(!off.live);
         let mut log = CaptionLog::default();
         log.note_status(&off);
-        log.finish(CaptionsDone { dropped: 0, timed_out: false, failed: false });
-        assert_eq!(log.paste(), Paste::Whisper("captions unavailable: speech recognition not authorized".into()));
+        log.finish(CaptionsDone {
+            dropped: 0,
+            timed_out: false,
+            failed: false,
+        });
+        assert_eq!(
+            log.paste(),
+            Paste::Whisper("captions unavailable: speech recognition not authorized".into())
+        );
     }
 
     #[test]
@@ -1256,8 +2094,14 @@ mod tests {
 
         assert!(!source.exists());
         assert!(!audio_source.exists());
-        assert_eq!(std::fs::read(folder.join("screen.mp4")).unwrap(), b"non-empty video");
-        assert_eq!(std::fs::read(folder.join("audio.m4a")).unwrap(), b"non-empty audio");
+        assert_eq!(
+            std::fs::read(folder.join("screen.mp4")).unwrap(),
+            b"non-empty video"
+        );
+        assert_eq!(
+            std::fs::read(folder.join("audio.m4a")).unwrap(),
+            b"non-empty audio"
+        );
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(folder.join("meeting.json")).unwrap()).unwrap();
         assert_eq!(manifest["files"]["audio"], "audio.m4a");

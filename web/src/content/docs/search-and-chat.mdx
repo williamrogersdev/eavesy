@@ -1,0 +1,48 @@
+---
+title: Search and chat
+description: Find a past recording by meaning, and ask questions about one recording.
+category: Transcripts and briefs
+order: 22
+---
+
+Search and chat work on recordings and dictations saved to your account, so
+they need you to be signed in.
+
+## Search
+
+Open **Search** in the web app and describe what you're looking for. Search
+matches meaning as well as words, so "when did we pick the launch date" can
+find a moment where nobody said "launch". Each result shows an excerpt and
+links to the recording.
+
+Your library on the web also lists every recording with its title and date,
+and you can filter it by title.
+
+## Ask across completed recordings
+
+Open **Ask your library** in the web app to ask a focused question across completed account recordings. Supported answers include source excerpts and links to recordings. Cloud answers need to be enabled. An answer can abstain, leave parts unanswered, or warn about context limits; inspect the sources before relying on it.
+
+Use **Refresh library index** when older recordings need indexing. Queueing work is not the same as finishing processing. Follow any limit or retry message shown by the app.
+
+See the [decision retrieval guide](/guides/find-decisions-in-recordings) and the [source-checking example](/examples/library-answer-with-sources).
+
+## Chat with a recording
+
+Open a recording on the web and ask a question in the chat beside it, such as
+"What are my action items?" or "Draft a follow-up email". Answers come from
+that recording's transcript.
+
+## Search your files on disk
+
+Everything the Mac app saves is plain Markdown, so Spotlight, `grep`, your
+editor, or an agent with file access can search it too. Screenshots and
+clipboard notes only live on disk, so this is the way to search them.
+
+```bash
+grep -ril "pricing" ~/Eavesy/Recordings/*/transcript.md
+```
+
+## Next
+
+- [Your files](/docs/session-folder-format)
+- [Connect an agent over MCP](/docs/connect-mcp)

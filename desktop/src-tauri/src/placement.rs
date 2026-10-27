@@ -20,12 +20,19 @@ fn companion_positions(origin: PhysicalPosition<i32>, area: PhysicalSize<u32>, p
         let offset = match position {
             LauncherPosition::TopLeft => margin,
             LauncherPosition::TopRight => area.width as i32 - margin - width as i32,
-            LauncherPosition::TopCenter => (area.width as i32 - width as i32) / 2,
+            LauncherPosition::TopCenter | LauncherPosition::BottomCenter => (area.width as i32 - width as i32) / 2,
         };
         origin.x + offset.max(0)
     };
-    let hud = PhysicalPosition::new(horizontal(pill.width), origin.y + margin);
     let max_panel_y = origin.y + (area.height as i32 - panel.height as i32).max(0);
+    if matches!(position, LauncherPosition::BottomCenter) {
+        // Docked at the bottom: the panel opens upwards and ends where the control does.
+        let hud_y = origin.y + (area.height as i32 - margin - pill.height as i32).max(0);
+        let hud = PhysicalPosition::new(horizontal(pill.width), hud_y);
+        let launcher_y = (hud_y + pill.height as i32 - panel.height as i32).clamp(origin.y, max_panel_y);
+        return (PhysicalPosition::new(horizontal(panel.width), launcher_y), hud);
+    }
+    let hud = PhysicalPosition::new(horizontal(pill.width), origin.y + margin);
     let launcher = PhysicalPosition::new(horizontal(panel.width), hud.y.min(max_panel_y));
     (launcher, hud)
 }
@@ -50,12 +57,24 @@ fn panel_origin_for(anchor_x: f64, anchor_y: f64, panel: (f64, f64), area: (f64,
     ((anchor_x - panel.0 / 2.0).clamp(area.0, max_x), anchor_y.clamp(area.1, max_y))
 }
 
+/// Whether a control at this frame sits in the lower half of its screen, so
+/// the panel and the transcript open upwards and the control stays put.
+pub fn in_lower_half(app: &AppHandle, x: f64, y: f64, height: f64) -> bool {
+    let middle = y + height / 2.0;
+    work_area_at(app, x, middle).is_some_and(|area| middle > area.1 + area.3 / 2.0)
+}
+
 pub fn place(app: &AppHandle) {
     if let (Some(frame), Some(main)) = (crate::hud::user_frame(app), app.get_webview_window("main")) {
         let anchor = (frame.x + frame.width / 2.0, frame.y);
         if let (Some(area), Ok(scale), Ok(size)) = (work_area_at(app, anchor.0, anchor.1 + 1.0), main.scale_factor(), main.outer_size()) {
             let size = size.to_logical::<f64>(scale);
-            let (x, y) = panel_origin_for(anchor.0, anchor.1, (size.width, size.height), area);
+            let top = if in_lower_half(app, anchor.0, frame.y, frame.height) {
+                frame.y + frame.height - size.height
+            } else {
+                anchor.1
+            };
+            let (x, y) = panel_origin_for(anchor.0, top, (size.width, size.height), area);
             let _ = main.set_position(tauri::LogicalPosition::new(x, y));
             return;
         }
@@ -89,6 +108,13 @@ mod tests {
         assert_eq!(panel_origin_for(700.0, 300.0, (420.0, 440.0), area), (490.0, 300.0));
         assert_eq!(panel_origin_for(1400.0, 300.0, (420.0, 440.0), area), (1020.0, 300.0));
         assert_eq!(panel_origin_for(700.0, 800.0, (420.0, 440.0), area), (490.0, 460.0));
+    }
+    #[test]
+    fn bottom_center_docks_the_control_low_and_opens_the_panel_upwards() {
+        let (panel, pill) = companion_positions(PhysicalPosition::new(0,25), PhysicalSize::new(1440,875), PhysicalSize::new(420,440), PhysicalSize::new(272,40), 1.0, LauncherPosition::BottomCenter);
+        assert_eq!(pill.y + 40, 25 + 875 - 16);
+        assert_eq!(panel.y + 440, pill.y + 40);
+        assert_eq!(panel.x + 210, pill.x + 136);
     }
     #[test]
     fn top_left_hugs_the_left_margin() {

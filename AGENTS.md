@@ -4,11 +4,15 @@ Monorepo: `web/` (TanStack Start on Cloudflare Workers — read `web/AGENTS.md`
 before touching it), `workers/processing`, `workers/mcp`, `desktop/` (Tauri +
 Swift). Setup and the exact CI commands are in `CONTRIBUTING.md`.
 
+Don't test by driving the owner's own desktop (computer use). Run
+`scripts/test-local.sh` for headless checks, and `desktop/scripts/vm-test.sh`
+to drive the real Mac app inside a throwaway VM
+(`docs/TESTING-ENVIRONMENTS.md`).
+
 ## Definition of done: the PR is merged
 
 A task that changes code is **not finished when the PR is opened**. It is
-finished when the PR is merged into `main` (or when you hit one of the stop
-conditions below and have told the user exactly why). Don't end your turn on
+finished when the PR is merged into `main`. Don't end your turn on
 "PR created" or "draft ready for review". Keep going.
 
 The loop, every time:
@@ -44,22 +48,24 @@ The loop, every time:
 If you're picking up a session and find your own open PR from earlier, start
 at step 5 for that PR before doing anything else.
 
-## Stop and ask instead of merging when
+## You have full rein
 
-Every merge to `main` deploys straight to production (eavesy.com). Turn off
-auto-merge (`gh pr merge <n> --disable-auto`) and ask the user before merging
-if the PR:
+This is the owner's personal project. Agents may change anything in the repo
+(workflows, wrangler config, auth, migrations, this file) and merge it once CI
+is green, without asking first. Use judgement on things that can't be undone
+(data-destroying D1 migrations, deleting user data): make them safe or
+reversible rather than stopping. If CI is still red after three real attempts
+on the same failure, say what's wrong and where.
 
-- adds a D1 migration in `web/drizzle/` that is **not purely additive**
-  (drops/renames a column or table, rewrites data, changes a constraint);
-- changes `.github/workflows/deploy.yml`, `macos-release.yml`, wrangler
-  bindings/routes, secrets handling, or auth (`web/src/start.ts`, Clerk config,
-  MCP OAuth/token scopes);
-- would cut a desktop release or tag (`v*`) or touch the Homebrew cask version;
-- needs `--admin` or any bypass of branch protection to merge — never use it;
-- is still red after three real fix attempts on the same failure.
+## Desktop releases
 
-When you stop, say which condition hit, what's left, and the PR link.
+Agents may cut Mac app releases when the user asks, following
+`docs/RELEASING.md`: `gh workflow run release-desktop.yml -f bump=patch` (or
+`minor`) opens the version-bump PR with auto-merge, and the tag is pushed
+automatically when it lands. Drive that PR to merged like any other, then see
+the macOS release run through: the publish approval and the Homebrew cask PR.
+If you ever tag by hand, push only that tag (`git push origin
+desktop-vX.Y.Z`, never `--tags`).
 
 ## Hard rules
 

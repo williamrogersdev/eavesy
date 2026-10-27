@@ -1,40 +1,29 @@
 ---
-title: Introducing Eavesy — context capture for your AI
-description: Why we built a recorder that turns what you see and say into a brief your AI agent can actually use.
+title: Introducing Eavesy for context you can keep
+description: Capture voice, screen recordings, screenshots, and notes on your Mac, then hand reviewed context to your AI.
 date: 2026-06-10
+modified: 2026-10-20
 author: The Eavesy team
 category: Announcement
 tags: ['Announcements']
 ---
 
-Your AI agent is only as good as the context you give it — and most of that
-context lives in things it never saw: the call you just had, the screen you were
-walking through, the thing you said out loud. Getting it into the agent means
-retyping, screenshotting, and re-explaining. We built **Eavesy** to skip all of
-that: hit record, and it turns what you see and say into a brief you can paste
-straight into Claude, Cursor, or ChatGPT.
+Eavesy keeps the things you would otherwise have to explain again: a conversation, a screen walkthrough, a screenshot, or a note copied from another app. The Mac app saves them as normal files, and you choose what to give your AI assistant.
 
-## Eyes and ears
+## Choose the capture for the task
 
-Eavesy captures your screen plus the audio your Mac is already playing and your
-microphone. That means any call — Zoom, Google Meet, Teams — a screen
-walkthrough, or an in-person conversation, with no bot in the participant list
-and no bot joining the participant list.
+Talk records your microphone and can paste on-device recognition into the app you are using. Meeting records your microphone and computer audio. Video adds the screen. Clipboard text, images, and screenshots can also be kept as local captures.
 
-## A brief, not just a transcript
+Capturing the screen does not mean a text-only assistant has inspected it. For a visual task, attach the relevant screenshot or use a local agent that can open the image. See the [walkthrough guide](/guides/screen-recording-to-markdown).
 
-When you stop, Eavesy distills the session into a clean Markdown brief: a TL;DR,
-the key decisions, the steps you took, and the full transcript underneath. It's
-structured to paste straight into an AI agent — one copy, and your agent is
-caught up.
+## Local files and optional cloud processing
 
-## Context you own
+Recording, on-device captions, and on-device dictation can work without an account when the required permissions and recognition are available. Sign in for cloud audio transcription, summaries, and synced access. Processing can finish after you stop, so check that the transcript and brief are complete before using them.
 
-Every session is written to a real folder on your disk: Markdown, JSON, and
-audio. Point an agent at it, open it in Obsidian, grep it from the terminal. If
-you ever stop using Eavesy, your context stays exactly where it is.
+The Mac app keeps Markdown, JSON, and available media in a [recording folder](/docs/session-folder-format). Local screenshots and clipboard notes are not uploaded to the hosted MCP server. You can inspect the files in an editor or copy a brief into your notes vault.
 
-## Try it now
+## Hand over the evidence deliberately
 
-[Capture one with a free browser account](/sign-up), or
-[download the Mac app](/download/mac). We'd love to hear what you think.
+Paste the relevant text into an assistant, give a local coding agent a permitted file path, or authorize hosted MCP access to supported synced recordings and dictations. These paths have different access boundaries. A path pasted into a browser chat does not upload the file.
+
+Start with a [worked example](/examples), a [copyable template](/templates), or the [Mac download](/download/mac). Review generated text against its source before treating it as a decision or an instruction.

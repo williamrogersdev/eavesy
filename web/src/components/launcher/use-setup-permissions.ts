@@ -1,74 +1,87 @@
+import { useCallback, useEffect, useState } from 'react';
 import {
-  useCallback,
-  useEffect,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-  type RefObject,
-  type MutableRefObject,
-} from 'react';
-import {
-  completeSetup,
   errMsg,
   openPrivacySettings,
   checkPermissions,
+  requestAccessibility,
+  requestInputMonitoring,
+  requestMicrophone,
+  requestNotifications,
+  requestScreen,
+  requestSpeech,
   type Permissions,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
-import { type Flash, type LauncherView, type RunTask } from './types';
+import { needsPermissionPoll, samePermissions } from './permission-checklist';
+import { type Flash, type RunTask } from './types';
 
+export type SetupPermissionKind = 'mic' | 'screen' | 'speech' | 'accessibility' | 'inputMonitoring' | 'notifications';
+
+/**
+ * What Eavesy may use on this Mac, re-checked whenever the window comes back to
+ * the front. `poll` says a permissions list is on screen: it then re-checks every
+ * 2s as well, but only while one of its rows that matters (`fnInUse` decides
+ * Input Monitoring) is still off.
+ */
 export function useSetupPermissions({
   desktop,
-  view,
-  setView,
-  setupForced,
-  searchRef,
-  recording,
-  setupPaired,
-  dictationHotkey,
+  poll,
+  fnInUse,
   flash,
   runTask,
 }: {
   desktop: boolean;
-  view: LauncherView;
-  setView: Dispatch<SetStateAction<LauncherView>>;
-  setupForced: MutableRefObject<boolean>;
-  searchRef: RefObject<HTMLInputElement | null>;
-  recording: object | null;
-  setupPaired: boolean;
-  dictationHotkey: string;
+  poll: boolean;
+  fnInUse: boolean;
   flash: Flash;
   runTask: RunTask;
 }) {
-  const [setupPermissions, setSetupPermissions] = useState<Permissions | null>(null);
-  const [checkingSetupPermissions, setCheckingSetupPermissions] = useState<'mic' | 'screen' | null>(null);
+  const [setupPermissions, setPermissionsState] = useState<Permissions | null>(null);
+  const [checkingSetupPermissions, setCheckingSetupPermissions] = useState<SetupPermissionKind | null>(null);
+
+  // Polls mostly return the same answers: keep the old object so nothing re-renders.
+  const setSetupPermissions = useCallback((next: Permissions | null) => {
+    setPermissionsState((current) => (samePermissions(current, next) ? current : next));
+  }, []);
 
   const refreshPermissionsQuietly = useCallback(async () => {
     const permissions = await checkPermissions({ prompt: false, needScreen: false });
     if (permissions) setSetupPermissions(permissions);
-  }, []);
+  }, [setSetupPermissions]);
 
-  const requestSetupPermission = useCallback(async (kind: 'mic' | 'screen') => {
+  // One macOS prompt at a time: each request asks for a single permission. Resolves with
+  // whether the request ran; a failure is shown here and resolves false.
+  const requestSetupPermission = useCallback(async (kind: SetupPermissionKind): Promise<boolean> => {
     setCheckingSetupPermissions(kind);
     try {
-      // First launch is when Speech Recognition is asked for (with the mic),
-      // so live captions never prompt in the middle of a meeting.
-      setSetupPermissions(await checkPermissions({ needScreen: kind === 'screen', needSpeech: kind === 'mic' }));
+      if (kind === 'mic') {
+        setSetupPermissions(await requestMicrophone());
+      } else if (kind === 'screen') {
+        setSetupPermissions(await requestScreen());
+      } else if (kind === 'speech') {
+        setSetupPermissions(await requestSpeech());
+      } else {
+        if (kind === 'accessibility') await requestAccessibility();
+        else if (kind === 'inputMonitoring') await requestInputMonitoring();
+        else await requestNotifications();
+        await refreshPermissionsQuietly();
+      }
+      return true;
     } catch (error) {
-      flash(errMsg(error, 'Could not check permissions'), 8000);
+      flash(errMsg(error, 'Couldn’t check permissions'), 8000);
+      return false;
     } finally {
       setCheckingSetupPermissions(null);
     }
-  }, [flash]);
+  }, [flash, refreshPermissionsQuietly, setSetupPermissions]);
 
   const openPrivacy = useCallback((pane: PrivacyPane) => {
-    runTask(() => openPrivacySettings(pane), 'Could not open System Settings');
+    runTask(() => openPrivacySettings(pane), 'Couldn’t open System Settings');
   }, [runTask]);
 
-  const permissionsView = desktop && (view === 'setup' || view === 'settings');
-  const allAllowed = !!setupPermissions?.mic && !!setupPermissions?.screen && !!setupPermissions?.accessibility;
+  const polling = poll && needsPermissionPoll(setupPermissions, fnInUse);
   useEffect(() => {
-    if (!permissionsView || allAllowed) return;
+    if (!desktop) return;
     let busy = false;
     const refresh = () => {
       if (busy) return;
@@ -76,31 +89,16 @@ export function useSetupPermissions({
       void refreshPermissionsQuietly().catch(() => {}).finally(() => { busy = false; });
     };
     refresh();
-    const id = window.setInterval(refresh, 2000);
-    return () => window.clearInterval(id);
-  }, [permissionsView, allAllowed, refreshPermissionsQuietly]);
-
-  const finishSetup = useCallback(async () => {
-    try {
-      await completeSetup();
-      setupForced.current = false;
-      setView('list');
-      searchRef.current?.focus();
-    } catch (error) {
-      flash(errMsg(error, 'Could not finish setup'));
-    }
-  }, [flash, searchRef, setView, setupForced]);
-
-  useEffect(() => {
-    if (view !== 'setup' || recording || !setupPaired || !setupPermissions?.mic) return;
-    const id = window.setTimeout(() => {
-      runTask(async () => {
-        await finishSetup();
-        if (dictationHotkey) flash(`You're set. Press ${dictationHotkey} anywhere to record.`, 5000);
-      }, 'Could not finish setup');
-    }, 700);
-    return () => window.clearTimeout(id);
-  }, [view, recording, setupPaired, setupPermissions?.mic, finishSetup, runTask, flash, dictationHotkey]);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    const id = polling ? window.setInterval(refresh, 2000) : undefined;
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (id !== undefined) window.clearInterval(id);
+    };
+  }, [desktop, polling, refreshPermissionsQuietly]);
 
   return {
     setupPermissions,
@@ -108,6 +106,5 @@ export function useSetupPermissions({
     checkingSetupPermissions,
     requestSetupPermission,
     openPrivacy,
-    finishSetup,
   };
 }

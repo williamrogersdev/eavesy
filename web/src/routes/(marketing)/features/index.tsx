@@ -46,23 +46,23 @@ function FeaturesPage() {
                 <Link
                   key={feature.slug}
                   href={`/features/${feature.slug}`}
-                  className="group flex flex-col rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-white/20 hover:bg-white/[0.04]"
+                  className="group flex flex-col rounded-2xl border border-ev-line bg-ev-raised p-6 transition hover:border-ev-line-strong hover:bg-ev-well"
                 >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ev-coat-soft text-ev-coat">
                     <Icon className="h-5 w-5" />
                   </span>
-                  <h2 className="mt-5 text-lg font-semibold text-white">
+                  <h2 className="mt-5 text-lg font-semibold text-ev-ink">
                     {feature.name}
                   </h2>
                   {feature.availability === 'coming-soon' ? (
-                    <span className="mt-2 w-fit rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-white/55">
+                    <span className="mt-2 w-fit rounded-full border border-ev-line bg-ev-well px-2.5 py-1 text-[11px] font-semibold text-ev-ink-2">
                       Coming soon
                     </span>
                   ) : null}
-                  <p className="mt-2 flex-1 text-sm leading-relaxed text-white/55">
+                  <p className="mt-2 flex-1 text-sm leading-relaxed text-ev-ink-2">
                     {feature.description}
                   </p>
-                  <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-accent transition group-hover:gap-2">
+                  <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-ev-coat transition group-hover:gap-2">
                     Learn more <ArrowRight className="h-4 w-4" />
                   </span>
                 </Link>

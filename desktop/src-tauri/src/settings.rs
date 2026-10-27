@@ -5,6 +5,13 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
+/// Talk to Eavesy. Not ⌥Space, which Raycast, ChatGPT and Alfred all default
+/// to; not ⌃Space or ⌃⌥Space, which macOS uses to switch input sources (and
+/// ⌃⌥ is VoiceOver's key); not ⌘⌥Space, Finder search.
+pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
+/// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
+/// moves it when another app also uses it.
+pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
 /// Recording segment length. Each sealed segment is uploaded and transcribed on
 /// its own, so this bounds how stale the cloud transcript is while recording.
 pub const DEFAULT_SEGMENT_SEC: u32 = 60;
@@ -21,6 +28,7 @@ pub enum LauncherPosition {
     TopRight,
     #[default]
     TopCenter,
+    BottomCenter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -41,6 +49,8 @@ pub struct PanelSize {
 pub struct Settings {
     pub toggle_hotkey: String,
     pub dictation_hotkey: String,
+    #[serde(default = "default_assistant_hotkey")]
+    pub assistant_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -65,9 +75,105 @@ pub struct Settings {
     /// On-device live captions for meetings and voice notes (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_captions: Option<bool>,
+    /// Copy new macOS screenshots into the history (on unless turned off). A new
+    /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_screenshots: Option<bool>,
+    /// A short sound as a recording starts and stops (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_sounds: Option<bool>,
+    /// Lines of live words the control shows while recording: 0, 1, 2 or 4
+    /// (off unless chosen: the plain bar is quieter while you talk).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_preview_lines: Option<u8>,
+    /// A see-through control instead of a solid one (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_translucent: Option<bool>,
+    /// Live words from a second, fast recognizer about a second sooner, until
+    /// the accurate one catches up (on unless turned off). Read as each
+    /// capture starts, so a change applies from the next recording.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_live_words: Option<bool>,
+    /// A finished dictation opens with its words, editable, and the tone row,
+    /// instead of only a Pasted stamp (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_result_preview: Option<bool>,
+    /// Eavesy says when a Claude Code session finishes or needs you, and sends
+    /// the reply you approve back into it (off unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_voice: Option<bool>,
+    /// How long a finished session waits for your reply before it ends its
+    /// turn; 0 never waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_hold_secs: Option<u32>,
+    /// Eavesy shows and says what agents send through your Eavesy connection
+    /// (`send_to_human`, `ask_human`), and sends your typed answer back (off
+    /// unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_messages: Option<bool>,
+    /// How Eavesy talks (assistant.md G4). Unset is the default style; a value this
+    /// build can't read is too, rather than costing every other setting.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_style: Option<crate::assistant::style::Style>,
+    /// The macOS voice Eavesy speaks with; unset is the one in System Settings.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_voice: Option<String>,
+    /// Words per minute; unset is the voice's own speed.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_voice_rate: Option<u16>,
+    /// Eavesy keeps notes and sends them with your messages (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_memory: Option<bool>,
+    /// Set once the Talk to Eavesy shortcut is the person's own choice, or
+    /// Eavesy moved it off the old ⌥Space default: never move it again.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub assistant_hotkey_settled: Option<bool>,
+    /// "action:accelerator:app" for each shortcut another app also uses that
+    /// Eavesy has already said so about at startup, so it says so once.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub shortcut_conflicts_noted: Option<Vec<String>>,
 }
 
+/// Reads a field that can't be trusted to be well formed: anything unreadable is unset.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
+    let value = <serde_json::Value as Deserialize>::deserialize(deserializer)?;
+    match serde_json::from_value(value.clone()) {
+        Ok(read) => Ok(Some(read)),
+        Err(error) => {
+            if !value.is_null() {
+                tracing::warn!("ignoring a settings value this build can't read ({error}): {value}");
+            }
+            Ok(None)
+        }
+    }
+}
+
+pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
+pub const MAX_AGENT_HOLD_SECS: u32 = 1_800;
+
 impl Settings {
+    pub fn assistant_memory(&self) -> bool {
+        self.assistant_memory.unwrap_or(true)
+    }
+
+    /// The voice to speak in, as saved. Speaking checks it against this Mac's
+    /// voices, since the file can be edited by hand and a voice can be removed.
+    pub fn voice(&self) -> crate::agents::speak::Voice {
+        crate::agents::speak::Voice { name: self.assistant_voice.clone(), rate: self.assistant_voice_rate }
+    }
+
+    pub fn agent_voice(&self) -> bool {
+        self.agent_voice.unwrap_or(false)
+    }
+
+    pub fn agent_messages(&self) -> bool {
+        self.agent_messages.unwrap_or(false)
+    }
+
+    pub fn agent_hold_secs(&self) -> u32 {
+        self.agent_hold_secs.unwrap_or(DEFAULT_AGENT_HOLD_SECS).min(MAX_AGENT_HOLD_SECS)
+    }
+
     pub fn segment_sec(&self) -> u32 {
         self.segment_sec
             .unwrap_or(DEFAULT_SEGMENT_SEC)
@@ -77,6 +183,31 @@ impl Settings {
     pub fn live_captions(&self) -> bool {
         self.live_captions.unwrap_or(true)
     }
+
+    /// One of the line counts the control is drawn for; anything else reads as off.
+    pub fn hud_preview_lines(&self) -> u8 {
+        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(0)
+    }
+
+    pub fn hud_result_preview(&self) -> bool {
+        self.hud_result_preview.unwrap_or(true)
+    }
+
+    pub fn fast_live_words(&self) -> bool {
+        self.fast_live_words.unwrap_or(true)
+    }
+
+    pub fn add_screenshots(&self) -> bool {
+        self.add_screenshots.unwrap_or(true)
+    }
+
+    pub fn capture_sounds(&self) -> bool {
+        self.capture_sounds.unwrap_or(true)
+    }
+}
+
+fn default_assistant_hotkey() -> String {
+    DEFAULT_ASSISTANT_HOTKEY.to_string()
 }
 
 fn new_device_id() -> String {
@@ -88,6 +219,7 @@ impl Default for Settings {
         Self {
             toggle_hotkey: DEFAULT_TOGGLE_HOTKEY.to_string(),
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
+            assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
@@ -98,6 +230,21 @@ impl Default for Settings {
             api_base_url: None,
             segment_sec: None,
             live_captions: None,
+            add_screenshots: None,
+            capture_sounds: None,
+            hud_preview_lines: None,
+            hud_translucent: None,
+            fast_live_words: None,
+            hud_result_preview: None,
+            agent_voice: None,
+            agent_hold_secs: None,
+            agent_messages: None,
+            assistant_style: None,
+            assistant_voice: None,
+            assistant_voice_rate: None,
+            assistant_memory: None,
+            assistant_hotkey_settled: None,
+            shortcut_conflicts_noted: None,
         }
     }
 }
@@ -110,38 +257,137 @@ pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
+/// Every read and write of settings.json goes through this lock, so a
+/// load-modify-save never interleaves with another one and a reader never
+/// sees a file another thread is replacing.
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The device id from the last file that parsed. A damaged file must never
+/// hand out a new one: it names the Keychain item that holds the credential.
+static KNOWN_DEVICE_ID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn known_device_id() -> Option<String> {
+    KNOWN_DEVICE_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+fn remember_device_id(id: &str) {
+    *KNOWN_DEVICE_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id.to_string());
+}
+
 pub fn load(app: &AppHandle) -> Settings {
-    let settings = load_unapplied(app);
+    let settings = match settings_path(app) {
+        Ok(path) => {
+            let _guard = lock();
+            load_at(&path, &keychain::System)
+        }
+        Err(_) => fallback(None, &keychain::System),
+    };
     crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    crate::agents::speak::set_voice(settings.voice());
     settings
 }
 
-fn load_unapplied(app: &AppHandle) -> Settings {
-    let path = match settings_path(app) {
-        Ok(p) => p,
-        Err(_) => return Settings::default(),
+/// Loads the settings, lets `change` edit them, and saves the result, all
+/// under one lock so concurrent writers never undo each other. `change` must
+/// only edit fields: anything that loads settings itself would deadlock.
+pub fn update(app: &AppHandle, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+    let path = settings_path(app)?;
+    let settings = {
+        let _guard = lock();
+        update_at(&path, &keychain::System, change)?
     };
+    crate::base_url::set_settings_override(settings.api_base_url.as_deref());
+    crate::agents::speak::set_voice(settings.voice());
+    Ok(settings)
+}
 
-    match std::fs::read_to_string(&path) {
+/// Defaults for when the file can't be used, keeping the device id whenever
+/// one can be found: from the damaged text, this run, or the Keychain.
+fn fallback(raw: Option<&str>, keychain: &impl Keychain) -> Settings {
+    let mut settings = Settings::default();
+    if let Some(id) = salvage_device_id(raw, known_device_id, || keychain.accounts().unwrap_or_default()) {
+        settings.device_id = id;
+    }
+    settings
+}
+
+/// The device id a damaged settings file still names, or one known some other
+/// way. The Keychain only counts when it holds exactly one Eavesy credential.
+fn salvage_device_id(
+    raw: Option<&str>,
+    known: impl FnOnce() -> Option<String>,
+    accounts: impl FnOnce() -> Vec<String>,
+) -> Option<String> {
+    static DEVICE_ID: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""device_id"\s*:\s*"([^"\\]+)""#).unwrap());
+    raw.and_then(|raw| DEVICE_ID.captures(raw))
+        .map(|found| found[1].to_string())
+        .or_else(known)
+        .or_else(|| match accounts().as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        })
+}
+
+/// Reads the file, assuming the lock is held. A file that is missing gets
+/// defaults written; one that doesn't parse is kept as `settings.json.bad`
+/// and replaced by defaults with its device id; one that can't be read at
+/// all is left alone.
+fn load_at(path: &std::path::Path, keychain: &impl Keychain) -> Settings {
+    match std::fs::read_to_string(path) {
         Ok(raw) => match serde_json::from_str::<Settings>(&raw) {
             Ok(settings) => {
+                remember_device_id(&settings.device_id);
+                // Written back when serde filled anything in: a device id
+                // generated just now must be the one used next time too.
                 if serde_json::to_string_pretty(&settings).ok().as_deref() != Some(raw.as_str()) {
-                    let _ = save(app, &settings);
+                    let _ = save_at(path, &settings);
                 }
                 settings
             }
-            Err(_) => {
-                let defaults = Settings::default();
-                let _ = save(app, &defaults);
-                defaults
+            Err(error) => {
+                let settings = fallback(Some(&raw), keychain);
+                let bad = path.with_extension("json.bad");
+                tracing::warn!("settings.json could not be read ({error}); kept it as {}", bad.display());
+                if std::fs::rename(path, &bad).is_ok() || !path.exists() {
+                    let _ = save_at(path, &settings);
+                }
+                remember_device_id(&settings.device_id);
+                settings
             }
         },
-        Err(_) => {
-            let defaults = Settings::default();
-            let _ = save(app, &defaults);
-            defaults
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let settings = fallback(None, keychain);
+            let _ = save_at(path, &settings);
+            remember_device_id(&settings.device_id);
+            settings
+        }
+        Err(error) => {
+            tracing::warn!("settings.json could not be opened ({error}); using defaults without saving");
+            fallback(None, keychain)
         }
     }
+}
+
+fn update_at(path: &std::path::Path, keychain: &impl Keychain, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+    let mut settings = load_at(path, keychain);
+    change(&mut settings);
+    save_at(path, &settings)?;
+    Ok(settings)
+}
+
+/// Replaces the file in one step (a temporary file renamed over it), so a
+/// reader sees the old settings or the new, never half of either.
+fn save_at(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("could not serialize settings: {e}"))?;
+    crate::fs_writer::atomic_write(path, json.as_bytes()).map_err(|e| format!("could not write settings: {e}"))?;
+    remember_device_id(&settings.device_id);
+    Ok(())
 }
 
 /// Where builds before the Security framework switch stored the credential, using
@@ -219,6 +465,8 @@ pub(crate) trait Keychain {
     fn read_legacy(&self, account: &str) -> Legacy;
     /// Succeeds when there is no item.
     fn delete_legacy(&self, account: &str) -> Result<(), String>;
+    /// The accounts (device ids) holding an Eavesy credential.
+    fn accounts(&self) -> Result<Vec<String>, String>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -404,6 +652,25 @@ mod keychain {
                 status => Err(format!("security exited with {status:?} removing the old credential")),
             }
         }
+
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+            match ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .service(DEVICE_TOKEN_SERVICE)
+                .load_attributes(true)
+                .limit(Limit::All)
+                .search()
+            {
+                Ok(found) => Ok(found
+                    .iter()
+                    .filter_map(|item| item.simplify_dict()?.get("acct").cloned())
+                    .filter(|account| !account.is_empty())
+                    .collect()),
+                Err(error) if error.code() == ITEM_NOT_FOUND => Ok(Vec::new()),
+                Err(error) => Err(format!("Keychain search failed: {error}")),
+            }
+        }
     }
 }
 
@@ -429,19 +696,10 @@ mod keychain {
         fn delete_legacy(&self, _account: &str) -> Result<(), String> {
             Ok(())
         }
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
     }
-}
-
-pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("could not create config dir: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(settings)
-        .map_err(|e| format!("could not serialize settings: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("could not write settings: {e}"))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -468,6 +726,36 @@ mod tests {
     }
 
     #[test]
+    fn live_words_are_off_unless_a_line_count_is_chosen() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.hud_preview_lines(), 0);
+        settings.hud_preview_lines = Some(4);
+        assert_eq!(settings.hud_preview_lines(), 4);
+        settings.hud_preview_lines = Some(3);
+        assert_eq!(settings.hud_preview_lines(), 0);
+    }
+
+    #[test]
+    fn a_finished_dictation_shows_its_words_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.hud_result_preview());
+        settings.hud_result_preview = Some(false);
+        assert!(!settings.hud_result_preview());
+    }
+
+    #[test]
+    fn fast_live_words_are_on_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.fast_live_words());
+        assert!(!serde_json::to_string(&settings).unwrap().contains("fast_live_words"));
+        settings.fast_live_words = Some(false);
+        assert!(!settings.fast_live_words());
+        let saved: Settings =
+            serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","fast_live_words":false}"#).unwrap();
+        assert!(!saved.fast_live_words());
+    }
+
+    #[test]
     fn live_captions_are_on_unless_turned_off() {
         let mut settings = Settings::default();
         assert!(settings.live_captions());
@@ -478,6 +766,40 @@ mod tests {
         )
         .unwrap();
         assert!(saved.live_captions(), "settings saved before this existed");
+    }
+
+    #[test]
+    fn talk_to_eavesy_keeps_a_saved_shortcut_and_defaults_off_option_space() {
+        assert_eq!(Settings::default().assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_ne!(DEFAULT_ASSISTANT_HOTKEY, OLD_ASSISTANT_HOTKEY);
+        // Saved before Talk to Eavesy existed: the current default.
+        let before: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
+        assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_eq!(before.assistant_hotkey_settled, None);
+        // A saved ⌥Space is read as it is; moving it is the migration's call.
+        let old: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey":"Alt+Space"}"#).unwrap();
+        assert_eq!(old.assistant_hotkey, OLD_ASSISTANT_HOTKEY);
+        let settled: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey_settled":true,"shortcut_conflicts_noted":["assistant:Alt+Space:Raycast"]}"#).unwrap();
+        assert_eq!(settled.assistant_hotkey_settled, Some(true));
+        assert_eq!(settled.shortcut_conflicts_noted.as_deref(), Some(&["assistant:Alt+Space:Raycast".to_string()][..]));
+        // Unset markers stay out of the file; a damaged one reads as unset.
+        let written = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!written.contains("assistant_hotkey_settled") && !written.contains("shortcut_conflicts_noted"), "{written}");
+        let damaged: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey_settled":"yes"}"#).unwrap();
+        assert_eq!(damaged.assistant_hotkey_settled, None);
+    }
+
+    #[test]
+    fn screenshots_are_added_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.add_screenshots());
+        settings.add_screenshots = Some(false);
+        assert!(!settings.add_screenshots());
+        let saved: Settings = serde_json::from_str(
+            r#"{"toggle_hotkey":"a","dictation_hotkey":"b","auto_import_screenshots":false}"#,
+        )
+        .unwrap();
+        assert!(saved.add_screenshots(), "the old off-by-default value");
     }
 
     #[derive(Default)]
@@ -520,6 +842,104 @@ mod tests {
             *self.legacy.borrow_mut() = None;
             Ok(())
         }
+        fn accounts(&self) -> Result<Vec<String>, String> {
+            Ok(self.item.borrow().iter().map(|_| "from-keychain".to_string()).collect())
+        }
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("eavesy-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_missing_file_gets_defaults_written() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let settings = load_at(&path, &FakeKeychain::default());
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.device_id, settings.device_id);
+        assert_eq!(load_at(&path, &FakeKeychain::default()).device_id, settings.device_id, "stable once written");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_unreadable_assistant_style_costs_only_itself() {
+        let raw = r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"keep-me","capture_sounds":false,"assistant_style":{"preset":"unhinged"},"assistant_voice":7,"assistant_voice_rate":"fast"}"#;
+        let settings: Settings = serde_json::from_str(raw).unwrap();
+        assert_eq!(settings.device_id, "keep-me");
+        assert_eq!(settings.capture_sounds, Some(false));
+        assert_eq!((settings.assistant_style, settings.assistant_voice, settings.assistant_voice_rate), (None, None, None));
+        let plain: Settings = serde_json::from_str(r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"d","assistant_style":{"preset":"plain"}}"#).unwrap();
+        assert_eq!(plain.assistant_style.unwrap().preset, crate::assistant::style::Preset::Plain);
+    }
+
+    #[test]
+    fn a_damaged_file_is_kept_aside_and_its_device_id_survives() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let damaged = r#"{"toggle_hotkey":"Cmd+K","dictation_hotkey":"Cmd+D","device_id":"keep-me","hud_fra"#;
+        std::fs::write(&path, damaged).unwrap();
+        let settings = load_at(&path, &FakeKeychain::default());
+        assert_eq!(settings.device_id, "keep-me");
+        assert_eq!(std::fs::read_to_string(dir.join("settings.json.bad")).unwrap(), damaged);
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.device_id, "keep-me");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_empty_file_keeps_a_device_id_known_some_other_way() {
+        assert_eq!(salvage_device_id(Some(""), || Some("known".into()), Vec::new), Some("known".into()));
+        assert_eq!(salvage_device_id(Some(""), || None, || vec!["only".into()]), Some("only".into()));
+        // Two credentials: no way to tell which is this Mac's.
+        assert_eq!(salvage_device_id(None, || None, || vec!["a".into(), "b".into()]), None);
+        assert_eq!(
+            salvage_device_id(Some(r#"{"device_id": "from-file"}"#), || Some("known".into()), Vec::new),
+            Some("from-file".into())
+        );
+        let keychain = FakeKeychain { item: RefCell::new(Some("token".into())), ..Default::default() };
+        assert_eq!(salvage_device_id(Some("{"), || None, || keychain.accounts().unwrap()), Some("from-keychain".into()));
+    }
+
+    #[test]
+    fn concurrent_updates_never_lose_each_other() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let threads: Vec<_> = (0..8u8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        let _guard = lock();
+                        update_at(&path, &FakeKeychain::default(), |settings| match n {
+                            0 => settings.live_captions = Some(false),
+                            1 => settings.capture_sounds = Some(false),
+                            2 => settings.hud_hidden = true,
+                            3 => settings.setup_completed = true,
+                            4 => settings.add_screenshots = Some(false),
+                            5 => settings.fast_live_words = Some(false),
+                            6 => settings.hud_result_preview = Some(false),
+                            _ => settings.hud_preview_lines = Some(2),
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let saved: Settings = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.live_captions, Some(false));
+        assert_eq!(saved.capture_sounds, Some(false));
+        assert!(saved.hud_hidden && saved.setup_completed);
+        assert_eq!(saved.add_screenshots, Some(false));
+        assert_eq!(saved.fast_live_words, Some(false));
+        assert_eq!(saved.hud_result_preview, Some(false));
+        assert_eq!(saved.hud_preview_lines, Some(2));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn legacy(token: &str) -> FakeKeychain {

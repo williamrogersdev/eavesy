@@ -1,23 +1,28 @@
-//! Error reporting and the app log.
+//! Error tracking, product analytics and the app log.
 //!
-//! Sentry events keep the failing operation and the error text so a report is
-//! actionable, but the text is scrubbed first. Recording folders are named
-//! after meeting titles, so any path under the recordings root, a home
-//! directory, `/Volumes` or `/private` collapses to a placeholder (keeping a
-//! trailing OS error such as "Permission denied"); only app-owned paths with
-//! generated names survive. Tokens, API keys, emails, IPs, query strings and
-//! quoted file names are replaced. Audio,
-//! transcripts, notes and summaries are never attached.
+//! Errors and a few product events go to PostHog when the build was given a
+//! project key (`EAVESY_POSTHOG_KEY` at compile time); without one nothing
+//! leaves the Mac. Events carry an anonymous per-install id, never an
+//! account, email or device name. Error reports keep the failing operation
+//! and the error text so they are actionable, but the text is scrubbed first.
+//! Recording folders are named after meeting titles, so any path under the
+//! recordings root, a home directory, `/Volumes` or `/private` collapses to a
+//! placeholder (keeping a trailing OS error such as "Permission denied"); only
+//! app-owned paths with generated names survive. Tokens, API keys, emails,
+//! IPs, query strings and quoted file names are replaced. Audio, transcripts,
+//! notes and summaries are never attached.
 //!
 //! App logs go to a daily-rotating file in `~/Library/Logs/<identifier>`
 //! (seven files kept), plus stderr in debug builds.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock, RwLock};
+use std::time::Duration;
 
 use regex::{Captures, Regex};
-use sentry::integrations::tracing::EventFilter;
-use sentry::protocol::{Breadcrumb, Event, Level, Value};
+use serde_json::{json, Map, Value};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
@@ -25,26 +30,206 @@ use tracing_subscriber::prelude::*;
 const IDENTIFIER: &str = "com.eavesy.desktop";
 pub const LOG_FILE_PREFIX: &str = "eavesy";
 const MAX_TEXT: usize = 1_000;
+const RECENT_LOG_LINES: usize = 30;
+const DEFAULT_POSTHOG_HOST: &str = "https://us.i.posthog.com";
 
 pub struct Guards {
-    _sentry: sentry::ClientInitGuard,
     _log: Option<WorkerGuard>,
 }
 
 pub fn init() -> Guards {
     let log = init_logging();
-    let dsn = option_env!("SENTRY_DSN").unwrap_or("");
-    let options = sentry::ClientOptions::default()
-        .release(env!("CARGO_PKG_VERSION"))
-        .environment(if cfg!(debug_assertions) { "development" } else { "production" })
-        .send_default_pii(false)
-        .traces_sample_rate(0.0)
-        .max_breadcrumbs(50)
-        .before_breadcrumb(|breadcrumb| Some(scrub_breadcrumb(breadcrumb)))
-        .before_send(|event| Some(sanitize_event(event)));
-    Guards {
-        _sentry: sentry::init((dsn, options)),
-        _log: log,
+    start_sender();
+    Guards { _log: log }
+}
+
+/// `EAVESY_NO_TELEMETRY=1` turns sending off for that launch: anyone can use
+/// it to opt out, and the release workflow's launch test sets it so test runs
+/// don't reach production. The local log is still written.
+fn posthog_key() -> Option<&'static str> {
+    if std::env::var_os("EAVESY_NO_TELEMETRY").is_some_and(|value| value == "1") {
+        return None;
+    }
+    option_env!("EAVESY_POSTHOG_KEY").filter(|key| !key.trim().is_empty())
+}
+
+fn posthog_endpoint() -> String {
+    let host = option_env!("EAVESY_POSTHOG_HOST")
+        .filter(|host| !host.trim().is_empty())
+        .unwrap_or(DEFAULT_POSTHOG_HOST);
+    format!("{}/i/v0/e/", host.trim_end_matches('/'))
+}
+
+type Outgoing = (Value, Option<mpsc::Sender<()>>);
+
+static SENDER: OnceLock<Option<mpsc::SyncSender<Outgoing>>> = OnceLock::new();
+const QUEUE_LIMIT: usize = 64;
+
+/// One background thread posts events in order; an event that finds the
+/// queue full, or whose send fails, is dropped rather than retried, so telemetry never slows the app down.
+fn start_sender() {
+    SENDER.get_or_init(|| {
+        posthog_key()?;
+        let (tx, rx) = mpsc::sync_channel::<Outgoing>(QUEUE_LIMIT);
+        std::thread::Builder::new()
+            .name("posthog".into())
+            .spawn(move || {
+                let Ok(client) = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build() else {
+                    return;
+                };
+                let endpoint = posthog_endpoint();
+                for (body, done) in rx {
+                    let _ = client
+                        .post(&endpoint)
+                        .header("content-type", "application/json")
+                        .body(body.to_string())
+                        .send();
+                    if let Some(done) = done {
+                        let _ = done.send(());
+                    }
+                }
+            })
+            .ok()?;
+        Some(tx)
+    });
+}
+
+/// An anonymous id for this install, kept next to the app's data. It is not
+/// tied to the Eavesy account or the Mac's name.
+fn install_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        let path = dirs::data_dir().map(|dir| dir.join(IDENTIFIER).join("analytics-id"));
+        if let Some(existing) = path
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|id| id.trim().to_owned())
+            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+        {
+            return existing;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        if let Some(path) = path {
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = std::fs::write(path, &id);
+        }
+        id
+    })
+}
+
+/// The version this copy ran last time, read before this launch records its
+/// own, so `app_launched` can show whether an update actually took effect.
+/// Kept per install location so a stray copy doesn't overwrite it.
+pub fn previous_version(location: &str) -> Option<String> {
+    let path = dirs::data_dir()?.join(IDENTIFIER).join(format!("last-version-{location}"));
+    let previous = std::fs::read_to_string(&path).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    if previous.as_deref() != Some(env!("CARGO_PKG_VERSION")) {
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, env!("CARGO_PKG_VERSION")));
+        if let Err(error) = written {
+            capture("telemetry.last_version", &error.to_string());
+        }
+    }
+    previous
+}
+
+fn os_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| tauri_plugin_os::version().to_string())
+}
+
+fn event_body(event: &str, properties: Value) -> Value {
+    let mut props = match properties {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    props.insert("$lib".into(), "eavesy-desktop".into());
+    props.insert("service".into(), "desktop".into());
+    props.insert("release".into(), env!("CARGO_PKG_VERSION").into());
+    props.insert("$app_version".into(), env!("CARGO_PKG_VERSION").into());
+    props.insert(
+        "environment".into(),
+        (if cfg!(debug_assertions) { "development" } else { "production" }).into(),
+    );
+    props.insert("$os".into(), "Mac OS X".into());
+    props.insert("$os_version".into(), os_version().into());
+    props.insert("arch".into(), std::env::consts::ARCH.into());
+    props.insert("$process_person_profile".into(), false.into());
+    json!({
+        "api_key": posthog_key().unwrap_or_default(),
+        "event": event,
+        "distinct_id": install_id(),
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "properties": props,
+    })
+}
+
+fn enqueue(event: &str, properties: Value, done: Option<mpsc::Sender<()>>) -> bool {
+    let Some(Some(sender)) = SENDER.get() else { return false };
+    sender.try_send((event_body(event, properties), done)).is_ok()
+}
+
+/// A product event. Properties must be fixed categories or counts, never
+/// text the user wrote, said or named.
+pub fn track(event: &'static str, properties: Value) {
+    enqueue(event, properties, None);
+}
+
+/// A product event sent just before the app quits or relaunches: waits up
+/// to `wait` for the send so it isn't lost with the process.
+pub fn track_before_exit(event: &'static str, properties: Value, wait: Duration) {
+    let (done, sent) = mpsc::channel();
+    if enqueue(event, properties, Some(done)) {
+        let _ = sent.recv_timeout(wait);
+    }
+}
+
+/// Recent app log lines, scrubbed as they are recorded, sent with each error
+/// so a report shows what led up to it.
+static RECENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
+fn recent_logs() -> Vec<String> {
+    RECENT_LOGS
+        .try_lock()
+        .map(|lines| lines.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+struct RecentLogs;
+
+/// Keeps only the log message: structured fields can carry anything the
+/// call site had in hand, so they never reach a report.
+#[derive(Default)]
+struct MessageVisitor(String);
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.0 = value.to_owned();
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RecentLogs {
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut message = MessageVisitor::default();
+        event.record(&mut message);
+        let metadata = event.metadata();
+        let text = scrub_text(&format!("{} {}: {}", metadata.level(), metadata.target(), message.0));
+        if let Ok(mut lines) = RECENT_LOGS.lock() {
+            if lines.len() == RECENT_LOG_LINES {
+                lines.pop_front();
+            }
+            lines.push_back(text);
+        }
     }
 }
 
@@ -75,29 +260,41 @@ fn init_logging() -> Option<WorkerGuard> {
     };
     let stderr_layer = cfg!(debug_assertions)
         .then(|| tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
-    // Log lines become breadcrumbs on the next reported error; `capture`
-    // sends the error itself, so nothing here creates events.
-    let sentry_layer = sentry::integrations::tracing::layer().event_filter(|metadata| {
-        match *metadata.level() {
-            tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO => {
-                EventFilter::Breadcrumb
-            }
-            _ => EventFilter::Ignore,
-        }
-    });
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::filter::LevelFilter::INFO)
         .with(file_layer)
         .with(stderr_layer)
-        .with(sentry_layer)
+        .with(RecentLogs)
         .try_init();
 
-    // The Sentry panic integration chains to this hook, so panics land in the
-    // log file as well as in Sentry.
-    std::panic::set_hook(Box::new(|info| {
-        tracing::error!(target: "panic", "{}", scrub_text(&info.to_string()));
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = scrub_text(&info.to_string());
+        tracing::error!(target: "panic", "{message}");
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", scrub_text(location.file()), location.line()))
+            .unwrap_or_default();
+        // The process may be about to abort: wait briefly for the send.
+        let (done, sent) = mpsc::channel();
+        if enqueue("$exception", panic_properties(&message, &location), Some(done)) {
+            let _ = sent.recv_timeout(Duration::from_secs(3));
+        }
+        previous(info);
     }));
     guard
+}
+
+fn panic_properties(message: &str, location: &str) -> Value {
+    json!({
+        "$exception_list": [{
+            "type": "panic",
+            "value": message,
+            "mechanism": { "handled": false, "synthetic": false },
+        }],
+        "$exception_fingerprint": format!("desktop:panic:{location}"),
+        "recent_logs": recent_logs(),
+    })
 }
 
 fn patterns() -> &'static [(Regex, &'static str)] {
@@ -130,7 +327,7 @@ fn patterns() -> &'static [(Regex, &'static str)] {
 }
 
 /// Recordings-root paths the watcher is using, as given and canonicalized.
-static RECORDINGS_ROOTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+static RECORDINGS_ROOTS: RwLock<Vec<Regex>> = RwLock::new(Vec::new());
 
 pub fn set_recordings_root(root: &Path) {
     let mut roots = vec![root.to_string_lossy().into_owned()];
@@ -138,8 +335,14 @@ pub fn set_recordings_root(root: &Path) {
         roots.push(canonical.to_string_lossy().into_owned());
     }
     roots.retain(|root| root.len() > 1);
+    let compiled = roots
+        .iter()
+        .filter_map(|root| {
+            Regex::new(&format!("(?:file://)?{}({PATH_REST})", regex::escape(root))).ok()
+        })
+        .collect();
     if let Ok(mut current) = RECORDINGS_ROOTS.write() {
-        *current = roots;
+        *current = compiled;
     }
 }
 
@@ -196,13 +399,10 @@ fn opaque_run() -> &'static Regex {
 pub fn scrub_text(text: &str) -> String {
     let mut out = text.to_owned();
     if let Ok(roots) = RECORDINGS_ROOTS.read() {
-        for root in roots.iter() {
-            let pattern = format!("(?:file://)?{}{PATH_REST}", regex::escape(root));
-            if let Ok(pattern) = Regex::new(&pattern) {
-                out = pattern
-                    .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[0][root.len()..]))
-                    .into_owned();
-            }
+        for pattern in roots.iter() {
+            out = pattern
+                .replace_all(&out, |caps: &Captures| collapse("<recordings>/…", &caps[1]))
+                .into_owned();
         }
     }
     out = app_path().replace_all(&out, "<app>$1").into_owned();
@@ -238,60 +438,27 @@ pub fn scrub_text(text: &str) -> String {
     out
 }
 
-fn scrub_value(value: &mut Value) {
-    match value {
-        Value::String(text) => *text = scrub_text(text),
-        Value::Array(items) => items.iter_mut().for_each(scrub_value),
-        Value::Object(map) => map.values_mut().for_each(scrub_value),
-        _ => {}
-    }
-}
-
-fn scrub_breadcrumb(mut breadcrumb: Breadcrumb) -> Breadcrumb {
-    breadcrumb.message = breadcrumb.message.map(|message| scrub_text(&message));
-    breadcrumb.data.values_mut().for_each(scrub_value);
-    breadcrumb
-}
-
-fn sanitize_event(mut event: Event<'static>) -> Event<'static> {
-    event.request = None;
-    event.user = None;
-    event.server_name = None;
-    event.extra.values_mut().for_each(scrub_value);
-    for breadcrumb in &mut event.breadcrumbs.values {
-        *breadcrumb = scrub_breadcrumb(std::mem::take(breadcrumb));
-    }
-    event.message = event.message.map(|message| scrub_text(&message));
-    if let Some(entry) = &mut event.logentry {
-        entry.message = scrub_text(&entry.message);
-        entry.params.iter_mut().for_each(scrub_value);
-    }
-    for exception in &mut event.exception {
-        exception.value = exception.value.as_deref().map(scrub_text);
-        if let Some(stacktrace) = &mut exception.stacktrace {
-            for frame in &mut stacktrace.frames {
-                frame.abs_path = frame.abs_path.as_deref().map(scrub_text);
-                frame.vars.clear();
-            }
-        }
-    }
-    event
-}
-
-/// Log a failed operation and report it to Sentry. Issues group by operation
-/// and reason; the scrubbed detail is the event message.
+/// Log a failed operation and report it to PostHog. Issues group by
+/// operation and reason; the scrubbed detail is the exception value.
 pub fn capture(operation: &'static str, detail: &str) {
     let reason = reason(detail);
     let detail = scrub_text(detail);
-    sentry::with_scope(
-        |scope| {
-            scope.set_tag("operation", operation);
-            scope.set_tag("reason", reason);
-            scope.set_fingerprint(Some(&["desktop", operation, reason]));
-        },
-        || sentry::capture_message(&format!("{operation}: {detail}"), Level::Error),
-    );
+    enqueue("$exception", capture_properties(operation, reason, &detail), None);
     tracing::error!(operation, reason, "{detail}");
+}
+
+fn capture_properties(operation: &str, reason: &str, scrubbed_detail: &str) -> Value {
+    json!({
+        "$exception_list": [{
+            "type": operation,
+            "value": format!("{operation}: {scrubbed_detail}"),
+            "mechanism": { "handled": true, "synthetic": true },
+        }],
+        "$exception_fingerprint": format!("desktop:{operation}:{reason}"),
+        "operation": operation,
+        "reason": reason,
+        "recent_logs": recent_logs(),
+    })
 }
 
 fn reason(detail: &str) -> &'static str {
@@ -340,9 +507,7 @@ fn reason(detail: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use sentry::protocol::{Breadcrumb, Event, Exception, Frame, Stacktrace};
-
-    use super::{reason, sanitize_event, scrub_text};
+    use super::{capture_properties, event_body, panic_properties, reason, scrub_text};
 
     #[test]
     fn failure_reasons_are_fixed_categories() {
@@ -366,8 +531,12 @@ mod tests {
                 "could not create ~/…",
             ),
             (
-                "recording at /Volumes/Archive/Meetings/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
+                "recording at /Volumes/Réunions/Acquisition of Initech/summary.md: No such file or directory (os error 2)",
                 "recording at <recordings>/…: No such file or directory (os error 2)",
+            ),
+            (
+                "open file:///Volumes/Réunions/Board offsite/notes.md: Permission denied (os error 13)",
+                "open <recordings>/…: Permission denied (os error 13)",
             ),
             (
                 "file:///private/var/folders/xy/Board offsite.m4a missing",
@@ -379,7 +548,7 @@ mod tests {
                 "The file “…” couldn’t be opened.",
             ),
         ];
-        super::set_recordings_root(std::path::Path::new("/Volumes/Archive/Meetings"));
+        super::set_recordings_root(std::path::Path::new("/Volumes/Réunions"));
         for (input, expected) in cases {
             assert_eq!(scrub_text(input), expected, "input: {input}");
         }
@@ -419,38 +588,36 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_keeps_the_error_but_not_user_data() {
-        let mut event = Event::default();
-        event.message = Some("upload failed for dana@example.com".to_owned());
-        event.server_name = Some("personal-mac".into());
-        event.extra.insert("detail".to_owned(), "/Users/dana/Eavesy/Secret plans/notes.md".into());
-        event.breadcrumbs.values.push(Breadcrumb {
-            message: Some("opened /Users/dana/Eavesy/Secret plans/audio.m4a".to_owned()),
-            ..Default::default()
-        });
-        event.exception.values.push(Exception {
-            value: Some("called `Result::unwrap()` on /Users/dana/Eavesy/Secret plans/audio.m4a".to_owned()),
-            stacktrace: Some(Stacktrace {
-                frames: vec![Frame {
-                    abs_path: Some("/Users/runner/work/eavesy/desktop/src-tauri/src/sync.rs".to_owned()),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
+    fn error_reports_keep_the_operation_but_not_user_data() {
+        let detail = scrub_text("upload failed for dana@example.com at /Users/dana/Eavesy/Secret plans/audio.m4a");
+        let body = event_body("$exception", capture_properties("sync.run", "other", &detail));
+        let exception = &body["properties"]["$exception_list"][0];
+        assert_eq!(exception["type"], "sync.run");
+        assert_eq!(exception["value"], "sync.run: upload failed for [email] at ~/…");
+        assert_eq!(body["properties"]["$exception_fingerprint"], "desktop:sync.run:other");
+        assert_eq!(body["properties"]["$process_person_profile"], false);
+        assert!(uuid::Uuid::parse_str(body["distinct_id"].as_str().unwrap()).is_ok());
+        let serialized = body.to_string();
+        assert!(!serialized.contains("Secret plans"));
+        assert!(!serialized.contains("dana"));
+    }
 
-        let event = sanitize_event(event);
-        assert_eq!(event.message.as_deref(), Some("upload failed for [email]"));
-        assert!(event.server_name.is_none());
-        assert_eq!(event.extra["detail"], "~/…");
-        assert_eq!(event.breadcrumbs.values[0].message.as_deref(), Some("opened ~/…"));
-        let exception = &event.exception.values[0];
-        assert_eq!(exception.value.as_deref(), Some("called `Result::unwrap()` on ~/…"));
-        assert_eq!(
-            exception.stacktrace.as_ref().unwrap().frames[0].abs_path.as_deref(),
-            Some("~/…")
-        );
-        assert!(!format!("{event:?}").contains("Secret plans"));
+    #[test]
+    fn recent_logs_keep_the_message_but_not_fields() {
+        use tracing_subscriber::prelude::*;
+        let subscriber = tracing_subscriber::registry().with(super::RecentLogs);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(title = "Board layoffs with Dana", "recording stopped");
+        });
+        let logs = super::recent_logs();
+        assert!(logs.iter().any(|line| line.ends_with("recording stopped")));
+        assert!(!logs.iter().any(|line| line.contains("Board layoffs")));
+    }
+
+    #[test]
+    fn panics_are_unhandled_and_grouped_by_location() {
+        let properties = panic_properties("panicked at src/sync.rs:12:5: boom", "src/sync.rs:12");
+        assert_eq!(properties["$exception_list"][0]["mechanism"]["handled"], false);
+        assert_eq!(properties["$exception_fingerprint"], "desktop:panic:src/sync.rs:12");
     }
 }

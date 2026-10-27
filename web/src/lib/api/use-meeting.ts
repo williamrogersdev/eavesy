@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isRecord } from '@/lib/json';
 import { createResource } from './shared-resource';
 import type { TranscriptRange } from '@/lib/transcription/live-transcript';
-import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 
 export interface UseMeetingResult<T> {
   data: T | null;
@@ -99,13 +99,7 @@ export function useMeeting<T = unknown>(
 }
 
 function meetingUrl(meetingId: string, suffix = '') {
-  const token =
-    typeof window !== 'undefined'
-      ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY)
-      : null;
-  const url = new URL(`/api/meetings/${meetingId}${suffix}`, window.location.origin);
-  if (token) url.searchParams.set('anonymousSessionToken', token);
-  return url;
+  return new URL(`/api/meetings/${meetingId}${suffix}`, window.location.origin);
 }
 
 export interface LiveTranscriptDelta<L> {
@@ -177,6 +171,9 @@ export interface MeetingListItem {
   startedAt: number;
   durationSec?: number | null;
   status?: string;
+  source?: string | null;
+  platform?: string | null;
+  deviceName?: string | null;
 }
 
 export const meetingList = createResource('/api/meetings/list', parseMeetingList);
@@ -185,7 +182,7 @@ export function useMeetings() {
   return meetingList.use();
 }
 
-function parseMeetingList(value: unknown): MeetingListItem[] {
+export function parseMeetingList(value: unknown): MeetingListItem[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   return value.items.flatMap((item) => {
     if (
@@ -203,10 +200,9 @@ function parseMeetingList(value: unknown): MeetingListItem[] {
       startedAt: item.startedAt,
       durationSec: typeof item.durationSec === 'number' ? item.durationSec : null,
       status: typeof item.status === 'string' ? item.status : undefined,
+      source: typeof item.source === 'string' ? item.source : null,
+      platform: typeof item.platform === 'string' ? item.platform : null,
+      deviceName: typeof item.deviceName === 'string' ? item.deviceName : null,
     }];
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

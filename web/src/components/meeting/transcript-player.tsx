@@ -2,7 +2,11 @@
 
 import { ArrowLeftRight, Check, Clipboard, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { LanguagePicker } from '@/components/translation/language-picker';
+import { isLanguage, type Language } from '@/lib/translation/languages';
+import { useMe } from '@/lib/api/use-me';
+import { languageName } from '@/lib/transcription/language';
+import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
 
 export interface TranscriptLine {
@@ -12,6 +16,7 @@ export interface TranscriptLine {
   speakerId?: string | null;
   text: string;
   confidence?: number | null;
+  language?: string | null;
   isEdited?: boolean;
   isFinal?: boolean;
 }
@@ -27,6 +32,7 @@ export function TranscriptPlayer({
   lines,
   chapters,
   speakerNamesJson,
+  agentTranscript,
   onChanged,
 }: {
   meetingId: string;
@@ -34,6 +40,7 @@ export function TranscriptPlayer({
   lines: TranscriptLine[];
   chapters: Chapter[];
   speakerNamesJson: string | null;
+  agentTranscript?: string | null;
   onChanged: () => void;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -55,6 +62,13 @@ export function TranscriptPlayer({
       }),
     [lines, pending],
   );
+  const { data: me } = useMe();
+  const [chosenLanguage, setChosenLanguage] = useState<Language | null | undefined>(undefined);
+  const [translationRevision, setTranslationRevision] = useState(0);
+  const target = chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
+  const translation = useTranslation(meetingId, shown, target, translationRevision);
+  const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
+
   const labelled = hasBothSides(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
   const names = parseSpeakerNames(speakerNamesJson);
   const nameOf = (id: string | null | undefined) => (labelled && id ? speakerName(id, names) : null);
@@ -128,6 +142,7 @@ export function TranscriptPlayer({
         speakerId: line.speakerId ?? null,
         text: line.text,
         confidence: line.confidence ?? null,
+        language: line.language ?? null,
         isEdited: line.isEdited ?? false,
       }),
     });
@@ -147,16 +162,16 @@ export function TranscriptPlayer({
   const copyText = shown
     .map((line) => {
       const who = nameOf(line.speakerId);
-      return `[${clockLabel(line.startMs)}] ${who ? `${who}: ` : ''}${line.text}`;
+      return `[${clockLabel(line.startMs)}] ${who ? `${who}: ` : ''}${translated(line) ?? line.text}`;
     })
     .join('\n');
 
   if (shown.length === 0 && !audioUrl) return null;
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4 rounded-[var(--ev-r-panel)] bg-ev-raised p-4 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)] sm:p-5">
       {audioUrl ? (
-        <div className="sticky top-0 z-10 -mx-2 rounded-lg border border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+        <div className="sticky top-2 z-10 rounded-full bg-ev-well/95 py-1.5 pl-1.5 pr-4 backdrop-blur">
           <audio
             ref={audio}
             src={audioUrl}
@@ -167,18 +182,24 @@ export function TranscriptPlayer({
             onLoadedMetadata={(e) => {
               const seconds = e.currentTarget.duration;
               if (Number.isFinite(seconds)) setDurationMs(seconds * 1_000);
+              const requested = Number(new URLSearchParams(window.location.search).get('t'));
+              if (Number.isFinite(requested) && requested > 0 && Number.isFinite(seconds)) {
+                const start = Math.min(requested, seconds);
+                e.currentTarget.currentTime = start;
+                setNowMs(start * 1000);
+              }
             }}
           />
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-95"
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
             </button>
-            <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+            <span className="w-24 shrink-0 font-round text-xs font-semibold tabular-nums text-ev-ink-2">
               {clockLabel(nowMs)} / {durationMs ? clockLabel(durationMs) : '--:--'}
             </span>
             <div className="relative flex-1">
@@ -189,7 +210,7 @@ export function TranscriptPlayer({
                 step={250}
                 value={Math.min(nowMs, durationMs || nowMs)}
                 onChange={(e) => seek(Number(e.target.value), playing)}
-                className="w-full accent-[var(--color-accent,currentColor)]"
+                className="w-full accent-[var(--ev-coat)]"
                 aria-label="Seek"
               />
               {durationMs
@@ -197,7 +218,7 @@ export function TranscriptPlayer({
                     <span
                       key={chapter.startMs}
                       title={chapter.title}
-                      className="pointer-events-none absolute top-0 h-1.5 w-0.5 -translate-x-1/2 rounded bg-muted-foreground/60"
+                      className="pointer-events-none absolute top-0 h-1.5 w-0.5 -translate-x-1/2 rounded bg-ev-ink-3"
                       style={{ left: `${(chapter.startMs / durationMs) * 100}%` }}
                     />
                   ))
@@ -208,12 +229,10 @@ export function TranscriptPlayer({
       ) : null}
 
       {chapters.length || labelled ? (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           {chapters.length ? (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Chapters
-              </h3>
+              <h3 className="mb-1.5 font-round text-[13px] font-bold text-ev-ink-2">Chapters</h3>
               <ol className="space-y-0.5">
                 {chapters.map((chapter, i) => (
                   <li key={chapter.startMs}>
@@ -221,11 +240,11 @@ export function TranscriptPlayer({
                       type="button"
                       onClick={() => seek(chapter.startMs)}
                       className={cn(
-                        'flex w-full items-baseline gap-2 rounded px-1.5 py-0.5 text-left text-sm hover:bg-muted',
-                        activeChapter === i && 'bg-muted font-medium',
+                        'flex w-full items-baseline gap-2 rounded-[var(--ev-r-ctl)] px-2 py-1 text-left text-sm text-ev-ink hover:bg-[var(--ev-hover)]',
+                        activeChapter === i && 'bg-ev-coat-soft font-semibold text-ev-coat',
                       )}
                     >
-                      <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      <span className="w-12 shrink-0 font-round text-xs tabular-nums text-ev-ink-3">
                         {clockLabel(chapter.startMs)}
                       </span>
                       {chapter.title}
@@ -236,20 +255,42 @@ export function TranscriptPlayer({
             </div>
           ) : null}
           {labelled ? (
-            <SpeakerNames meetingId={meetingId} names={names} onSaved={onChanged} />
+            <SpeakerNames meetingId={meetingId} names={names} partialMs={partialAttributionMs(names)} onSaved={onChanged} />
           ) : null}
         </div>
       ) : null}
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transcript</h2>
-          <CopyText text={copyText} />
+          <h2 className="font-round text-[15px] font-extrabold text-ev-ink">Transcript</h2>
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {translation.spoken.length > 0 ? (
+              <span className="font-round text-xs font-semibold text-ev-ink-3" title="Languages heard in this meeting">
+                {translation.spoken.map(languageName).join(' · ')}
+              </span>
+            ) : null}
+            {!target && agentTranscript?.trim() ? (
+              <>
+                <CopyText
+                  text={agentTranscript}
+                  label="Copy for AI"
+                  title="Fillers removed, turns merged, code terms formatted: ready to paste into an agent"
+                />
+                <CopyText text={copyText} label="Copy raw" title="Every line shown, with timestamps" />
+              </>
+            ) : (
+              <CopyText text={copyText} label={target ? "Copy translation" : "Copy transcript"} disabled={!!target && (translation.loading || !!translation.error)} />
+            )}
+            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
+          </div>
         </div>
         <div
-          className="max-h-[32rem] overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-sm leading-relaxed"
+          className="-mx-2 max-h-[36rem] overflow-y-auto text-[14.5px] leading-relaxed text-ev-ink"
           onWheel={() => setFollowPlayback(false)}
         >
+          {translation.error ? (
+            <p className="px-2 pb-1 text-xs text-ev-warn-ink">{translation.error}</p>
+          ) : null}
           {shown.map((line, i) => {
             const who = nameOf(line.speakerId);
             const sameSpeaker = i > 0 && nameOf(shown[i - 1].speakerId) === who;
@@ -258,12 +299,13 @@ export function TranscriptPlayer({
             return (
               <div key={line.id}>
                 {heading ? (
-                  <h3 className="mb-1 mt-3 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground first:mt-1">
+                  <h3 className="mb-1 mt-4 px-2 font-round text-[13px] font-bold text-ev-coat first:mt-1">
                     {heading}
                   </h3>
                 ) : null}
                 <Line
                   line={line}
+                  translation={translated(line)}
                   who={who && !(sameSpeaker && !heading) ? who : null}
                   active={line.id === activeId}
                   follow={followPlayback && playing}
@@ -289,9 +331,9 @@ export function TranscriptPlayer({
       </div>
 
       {undo ? (
-        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-background px-4 py-2 text-sm shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ev-raised px-4 py-2 text-sm text-ev-ink shadow-[var(--ev-e-3)]">
           Line deleted.
-          <button type="button" onClick={() => void restore()} className="font-medium text-accent hover:underline">
+          <button type="button" onClick={() => void restore()} className="font-round font-bold text-ev-coat hover:underline">
             Undo
           </button>
         </div>
@@ -302,6 +344,7 @@ export function TranscriptPlayer({
 
 function Line({
   line,
+  translation,
   who,
   active,
   follow,
@@ -312,6 +355,7 @@ function Line({
   onDelete,
 }: {
   line: TranscriptLine;
+  translation?: string;
   who: string | null;
   active: boolean;
   follow: boolean;
@@ -338,20 +382,20 @@ function Line({
     <div
       ref={ref}
       className={cn(
-        'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded px-2 py-1',
-        active ? 'bg-accent/10' : 'hover:bg-muted/60',
+        'group relative grid grid-cols-[3.5rem_1fr] gap-x-3 rounded-[var(--ev-r-ctl)] px-2 py-1.5',
+        active ? 'bg-ev-coat-soft' : 'hover:bg-[var(--ev-hover)]',
       )}
     >
       <button
         type="button"
         onClick={onPlay}
-        className="self-start pt-0.5 text-left font-mono text-xs tabular-nums text-muted-foreground hover:text-accent"
+        className="self-start pt-0.5 text-left font-round text-xs tabular-nums text-ev-ink-3 hover:text-ev-coat"
         title="Play from here"
       >
         {clockLabel(line.startMs)}
       </button>
       <div className="min-w-0 pr-20">
-        {who ? <div className="text-xs font-semibold text-foreground">{who}</div> : null}
+        {who ? <div className="font-round text-[13px] font-bold text-ev-ink">{who}</div> : null}
         {draft !== null ? (
           <textarea
             autoFocus
@@ -367,16 +411,21 @@ function Line({
               }
               if (e.key === 'Escape') setDraft(null);
             }}
-            className="w-full resize-none rounded border border-accent/50 bg-background px-2 py-1 outline-none"
+            className="w-full resize-none rounded-[var(--ev-r-ctl)] bg-ev-paper px-2 py-1 shadow-[var(--ev-focus)] outline-none"
           />
         ) : (
-          <p onClick={onPlay} className="cursor-pointer">
-            {line.text}
-          </p>
+          <div onClick={onPlay} className="cursor-pointer">
+            <p>{translation || line.text}</p>
+            {translation ? (
+              <p className="text-xs text-ev-ink-3" lang={line.language ?? undefined}>
+                {line.text}
+              </p>
+            ) : null}
+          </div>
         )}
       </div>
       {draft === null ? (
-        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-md border border-border bg-background p-0.5 group-hover:flex">
+        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-[var(--ev-r-ctl)] bg-ev-raised p-0.5 shadow-[var(--ev-e-2)] group-hover:flex">
           <IconButton label="Edit line" onClick={() => setDraft(line.text)}>
             <Pencil className="h-3.5 w-3.5" />
           </IconButton>
@@ -397,20 +446,28 @@ function Line({
 function SpeakerNames({
   meetingId,
   names,
+  partialMs,
   onSaved,
 }: {
   meetingId: string;
   names: Record<string, string>;
+  /** Where speaker names stop, for a call too long for the notetaker to name all of. */
+  partialMs: number | null;
   onSaved: () => void;
 }) {
   return (
     <div>
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Speakers</h3>
+      <h3 className="mb-1.5 font-round text-[13px] font-bold text-ev-ink-2">Speakers</h3>
       <div className="space-y-1.5">
         {(['you', 'them'] as const).map((id) => (
           <SpeakerName key={id} meetingId={meetingId} id={id} name={speakerName(id, names)} onSaved={onSaved} />
         ))}
       </div>
+      {partialMs !== null ? (
+        <p className="mt-1.5 text-xs text-ev-ink-3">
+          Speakers are named up to {clockLabel(partialMs)}; the rest of the call is unattributed.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -440,7 +497,7 @@ function SpeakerName({
   };
   return (
     <label className="flex items-center gap-2 text-sm">
-      <span className="w-12 shrink-0 text-xs text-muted-foreground">{id === 'you' ? 'Mic' : 'Call'}</span>
+      <span className="w-12 shrink-0 text-xs text-ev-ink-3">{id === 'you' ? 'Mic' : 'Call'}</span>
       <input
         value={draft ?? name}
         onChange={(e) => setDraft(e.target.value)}
@@ -451,7 +508,7 @@ function SpeakerName({
           if (e.key === 'Escape') setDraft(null);
         }}
         maxLength={60}
-        className="flex-1 rounded-md border border-border bg-background px-2 py-1 outline-none focus:border-accent/50"
+        className="min-w-0 flex-1 rounded-[var(--ev-r-ctl)] bg-ev-well px-2.5 py-1 text-ev-ink outline-none focus:bg-ev-paper focus:shadow-[var(--ev-focus)]"
         aria-label={id === 'you' ? 'Name for the microphone speaker' : 'Name for the call speaker'}
       />
     </label>
@@ -465,18 +522,20 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      className="rounded-[6px] p-1 text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {children}
     </button>
   );
 }
 
-function CopyText({ text }: { text: string }) {
+function CopyText({ text, label, title, disabled = false }: { text: string; label: string; title?: string; disabled?: boolean }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [text]);
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => { void (async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -486,12 +545,89 @@ function CopyText({ text }: { text: string }) {
           /* clipboard unavailable */
         }
       })(); }}
-      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      title={title}
+      className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
     >
       {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-      {copied ? 'Copied' : 'Copy transcript'}
+      {copied ? 'Copied' : label}
     </button>
   );
+}
+
+/** Each request translates a few hundred lines; a long meeting takes a few. */
+const MAX_TRANSLATE_PAGES = 20;
+
+/** The languages heard in these lines, most spoken first. */
+function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
+  const weight = new Map<string, number>();
+  for (const line of lines) {
+    if (line.language) weight.set(line.language, (weight.get(line.language) ?? 0) + line.text.length);
+  }
+  return [...weight].sort((a, b) => b[1] - a[1]).map(([language]) => language);
+}
+
+/**
+ * Translations of the lines heard in another language than `target`. Each one
+ * is kept with the text it was made from, so an edited line is translated again.
+ */
+function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: Language | null, revision: number) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<Record<string, { source: string; text: string }>>({});
+  const cache = useRef(new Map<string, Record<string, { source: string; text: string }>>());
+  const spoken = useMemo(() => spokenLanguages(lines), [lines]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const key = `${meetingId}:${target}`;
+    let known = { ...(cache.current.get(key) ?? {}) };
+    setDone(known); setError(null); setLoading(false);
+    if (!target) return;
+    const missing = lines.filter(line => line.language !== target && known[line.id]?.source !== line.text);
+    if (!missing.length) return;
+    setLoading(true);
+    const sources = new Map(lines.map(line => [line.id, line.text]));
+    void (async () => {
+      try {
+        let previousCount = -1;
+        for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
+          const res = await fetch(`/api/meetings/${meetingId}/translate`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ to: target }), signal: controller.signal,
+          });
+          if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
+          const value: unknown = await res.json();
+          if (!value || typeof value !== 'object') throw new Error('Could not read the translation.');
+          const data = value as { lines?: unknown; remaining?: unknown };
+          if (!data.lines || typeof data.lines !== 'object' || Array.isArray(data.lines)) throw new Error('Could not read the translation.');
+          const entries = Object.entries(data.lines).filter((pair): pair is [string, string] => typeof pair[1] === 'string');
+          if (controller.signal.aborted) return;
+          const fresh = { ...known };
+          for (const [id, text] of entries) {
+            const source = sources.get(id);
+            if (source !== undefined) fresh[id] = { source, text };
+          }
+          known = fresh;
+          cache.current.set(key, fresh); setDone(fresh);
+          if (data.remaining === 0) return;
+          if (entries.length === previousCount) throw new Error('Translation stopped early. Choose the language again to retry.');
+          previousCount = entries.length;
+        }
+        throw new Error('This meeting needs another pass. Choose the language again to continue.');
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not translate.');
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [meetingId, target, lines, revision]);
+
+  return {
+    spoken, showing: !!target, loading, error,
+    textFor: (line: TranscriptLine) => {
+      const entry = done[line.id];
+      return entry && entry.source === line.text && entry.text !== line.text ? entry.text : undefined;
+    },
+  };
 }
 
 export function clockLabel(ms: number): string {

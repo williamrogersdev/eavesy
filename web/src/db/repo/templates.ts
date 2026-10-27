@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { promptTemplates } from '../schema';
@@ -6,12 +6,18 @@ import { promptTemplates } from '../schema';
 export type Template = typeof promptTemplates.$inferSelect;
 export type AppliesTo = Template['appliesTo'];
 
+/** Brief and dictation templates one account may keep. */
+export const TEMPLATE_LIMIT = 200;
+
+export class TooManyTemplates extends Error {}
+
 export async function listForUser(db: AppDb, userId: string): Promise<Template[]> {
   return await db
     .select()
     .from(promptTemplates)
     .where(eq(promptTemplates.userId, userId))
-    .orderBy(asc(promptTemplates.sortOrder));
+    .orderBy(asc(promptTemplates.sortOrder))
+    .limit(TEMPLATE_LIMIT);
 }
 
 export async function getForUser(db: AppDb, args: { id: string; userId: string }) {
@@ -37,17 +43,13 @@ export async function create(
   },
 ): Promise<string> {
   const id = pid('tpl');
-  await db.insert(promptTemplates).values({
-    id,
-    userId: args.userId,
-    name: args.name,
-    systemPrompt: args.systemPrompt,
-    description: args.description,
-    hotkey: args.hotkey,
-    appliesTo: args.appliesTo,
-    isDefault: args.isDefault ?? false,
-    sortOrder: args.sortOrder ?? 0,
-  });
+  // The limit check and the insert are one statement, so concurrent creates can't pass it together.
+  const rows = await db.insert(promptTemplates).select(sql`
+    SELECT ${id}, ${args.userId}, ${args.name}, ${args.description ?? null}, ${args.hotkey ?? null},
+      ${args.systemPrompt}, ${args.appliesTo}, ${args.isDefault ? 1 : 0}, ${args.sortOrder ?? 0}
+    WHERE (SELECT count(*) FROM prompt_templates WHERE user_id = ${args.userId}) < ${TEMPLATE_LIMIT}
+  `).returning({ id: promptTemplates.id });
+  if (!rows[0]) throw new TooManyTemplates('too_many_templates');
   return id;
 }
 

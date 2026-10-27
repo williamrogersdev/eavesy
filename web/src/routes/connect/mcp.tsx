@@ -103,24 +103,25 @@ function ConnectMcpPage() {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-muted/35 px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-background p-8 text-center shadow-xl shadow-black/5">
-        <BrandMark className="mx-auto h-10 w-10" />
+    <main className="flex min-h-dvh items-center justify-center bg-ev-well px-4">
+      <div className="w-full max-w-sm rounded-[var(--ev-r-panel)] border border-ev-line bg-ev-paper p-8 text-center shadow-[var(--ev-e-2)]">
+        <BrandMark size={40} className="mx-auto" />
         <h1 className="mt-5 text-lg font-semibold">
           {request ? `Connect ${request.clientName} to Eavesy?` : 'Connect an AI assistant'}
         </h1>
         {request ? (
           <>
-            <p className="mt-2 text-sm text-muted-foreground">
-              It will be able to search and read your meetings, dictations and action items.
+            <p className="mt-2 text-sm text-ev-ink-2">
+              It will be able to search and read your meetings, dictations and action items, and send you
+              messages on your Mac if you turn that on in the Eavesy app.
             </p>
             {request.redirectHost ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                You’ll be sent back to <span className="font-mono">{request.redirectHost}</span>
+              <p className="mt-2 text-xs text-ev-ink-2">
+                You’ll be sent back to <span className="font-round">{request.redirectHost}</span>
               </p>
             ) : null}
             {request.canWrite ? (
-              <label className="mt-4 flex items-start gap-2 rounded-lg bg-muted/60 p-3 text-left text-xs">
+              <label className="mt-4 flex items-start gap-2 rounded-[var(--ev-r-pop)] bg-ev-well p-3 text-left text-xs">
                 <input
                   type="checkbox"
                   className="mt-0.5"
@@ -137,14 +138,14 @@ function ConnectMcpPage() {
             Signed in as <span className="font-medium">{email}</span>
           </p>
         ) : null}
-        {error ? <p role="alert" className="mt-4 text-sm text-danger">{error}</p> : null}
+        {error ? <p role="alert" className="mt-4 text-sm text-ev-warn-ink">{error}</p> : null}
         {request ? (
           <div className="mt-5 flex gap-2">
             <button
               type="button"
               onClick={() => void decide('deny')}
               disabled={busy}
-              className="inline-flex h-10 flex-1 items-center justify-center rounded-lg border border-border text-sm font-medium hover:bg-muted disabled:opacity-60"
+              className="inline-flex h-10 flex-1 items-center justify-center rounded-[var(--ev-r-pop)] border border-ev-line text-sm font-medium hover:bg-[var(--ev-hover)] disabled:opacity-60"
             >
               Cancel
             </button>
@@ -152,14 +153,14 @@ function ConnectMcpPage() {
               type="button"
               onClick={() => void decide('approve')}
               disabled={busy}
-              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full bg-ev-coat font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover disabled:opacity-60"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Allow
             </button>
           </div>
         ) : null}
-        <button type="button" onClick={switchAccount} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={switchAccount} className="mt-3 text-xs text-ev-ink-2 hover:text-ev-ink">
           Use a different account
         </button>
       </div>

@@ -5,7 +5,10 @@ Swift capture sidecar.
 
 ## Responsibilities
 
-- `launcher-ui/`: offline Vite UI bundled into the application.
+- `launcher-ui/`: offline Vite UI bundled into the application. Its look and
+  copy follow [`DESIGN.md`](DESIGN.md) (palette, mascot, primitives, capture
+  lifecycle). `bun run dev` serves the panel at `/` and a primitives gallery
+  at `/gallery.html`.
 - `swift-audio/`: ScreenCaptureKit + AVAudioEngine capture, rolling AAC/M4A
   segments, full-session archive, sleep/wake recovery, atomic manifests.
 - `src-tauri/src/audio.rs`: sidecar lifecycle and event bridge.

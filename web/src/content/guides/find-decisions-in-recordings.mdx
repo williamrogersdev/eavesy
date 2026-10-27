@@ -1,0 +1,58 @@
+---
+title: "Find a past decision in your recording library"
+description: "Search synced recordings, ask a focused question, and check the source passage before reusing the answer."
+date: "2026-10-20"
+modified: "2026-10-21"
+author: "Eavesy"
+related: [{"title": "A cited answer example", "path": "/examples/library-answer-with-sources"}, {"title": "Hosted MCP setup", "path": "/docs/connect-mcp"}, {"title": "Search and chat", "path": "/docs/search-and-chat"}]
+---
+
+Start with a concrete question and a small amount of context: the project, the decision, or the recording title. Eavesy's web library can retrieve evidence from completed account recordings. It cannot know a decision that was never captured or infer a missing owner reliably.
+
+## Make sure the source is available
+
+Sign in to the web app and check that the relevant recording is complete. A local screenshot or note is not part of the hosted transcript library. Imported recordings need to finish processing too. If older recordings need indexing, use **Refresh library index** in **Ask your library** and wait for processing.
+
+Queued indexing is not instant completion. If you reach a limit or see a retry message, use the displayed recovery action rather than interpreting an empty answer as evidence that nothing was discussed.
+
+## Ask a question the source can answer
+
+Open **Ask your library** and ask something specific, such as “In the recording titled Design review, what launch date did we agree?” A known title helps focus retrieval. For a broad question, include distinguishing terms instead of only “what did we decide?”
+
+Library answers require cloud AI processing to be enabled. A deployment that reports answers unavailable can still have recordings and supported search. Follow the visible state of your account rather than assuming every self-hosted instance enables the same services.
+
+## Inspect the source
+
+An answer can include claims, quoted evidence, and a link to the source recording with a timestamp. Open the source and read or listen around that point. Check whether the sentence was a proposal, a final agreement, or something corrected later.
+
+Answers may report missing evidence, unanswered parts, or context limits. Preserve those warnings when you reuse the answer. A retrieved selection is not a guarantee that every mention across a large library was considered.
+
+## Keep unknown details unknown
+
+If the source establishes a date but no owner, record the date and leave the owner unassigned. If two recordings disagree, inspect their dates and context before deciding which supersedes the other. The [decision log template](/templates/decision-log) separates the decision, source, and open questions.
+
+For an agent workflow, the hosted MCP server exposes library retrieval as well as recording lookup. Its access remains scoped to your account and the connection you approve.
+
+## Work through a question in three passes
+
+First locate a likely source: search for a project name, a distinctive phrase, or the recording title. Then ask the narrow question you need answered. Finally, open the cited passage and check whether a later statement changes the result. Retrieval helps you reach evidence; it does not replace reviewing it.
+
+Useful questions include:
+
+- “In the launch planning recording, was Friday proposed or agreed?”
+- “Who explicitly accepted the help page review?”
+- “Which passage explains the decision, and which details remain unanswered?”
+
+Avoid combining unrelated projects into one question when you can investigate them separately. If two recordings conflict, retain both source references and the sequence of decisions rather than choosing whichever answer sounds more decisive.
+
+## When nothing useful comes back
+
+| Result | What to do |
+| --- | --- |
+| The source recording is still processing | Wait for completion before interpreting search results |
+| The recording exists but needs indexing | Use the available index refresh and check its resulting state |
+| The answer has unanswered parts | Keep those parts unresolved; inspect the source or ask a narrower question |
+| The only source is a local note or screenshot | Use local file access or an attachment rather than hosted transcript retrieval |
+| Sources disagree | Review the dates and surrounding statements, then record what superseded what |
+
+Once verified, save the choice with the [decision log template](/templates/decision-log). Include the supporting excerpt, a source the future reader can open, and the exact details still awaiting confirmation.

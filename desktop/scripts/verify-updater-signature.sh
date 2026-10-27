@@ -25,5 +25,23 @@ if [[ -z "$CARGO_BIN" ]]; then
 fi
 
 cd "$DESKTOP/src-tauri"
+# The example builds the app crate, whose build script requires the Swift
+# sidecar and the bundled frontend to exist. The publish job only has the
+# notarized artifacts, so empty placeholders stand in for them; nothing built
+# here is shipped.
+CLEANUP=()
+cleanup() { if (( ${#CLEANUP[@]} )); then rm -rf "${CLEANUP[@]}"; fi; }
+trap cleanup EXIT
+SIDECAR="binaries/SwiftAudio-$(rustc -vV | sed -n 's/^host: //p')"
+if [[ ! -e "$SIDECAR" ]]; then
+  mkdir -p binaries
+  : > "$SIDECAR"
+  CLEANUP+=("$DESKTOP/src-tauri/$SIDECAR")
+fi
+if [[ ! -e frontend-shell ]]; then
+  mkdir -p frontend-shell
+  : > frontend-shell/index.html
+  CLEANUP+=("$DESKTOP/src-tauri/frontend-shell")
+fi
 "$CARGO_BIN" run --quiet --locked --example verify_updater_signature -- \
   "$ARCHIVE" "$SIGNATURE" "$DESKTOP/src-tauri/tauri.conf.json"

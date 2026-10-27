@@ -11,6 +11,8 @@ final class AudioRecorder: NSObject, Recorder {
     private let segmentSec: Double
     private let segmentHardCapSec: Double
     private let captions: [Track: LiveCaptions]
+    /// A mic session a standby built ahead of time, used by the first start.
+    private var micWarmup: MicWarmup?
 
     private let writerQueue = DispatchQueue(label: "com.eavesy.swiftaudio.writer")
 
@@ -70,9 +72,10 @@ final class AudioRecorder: NSObject, Recorder {
 
     init(
         outPath: String, source: AudioSource, segmentDir: String?, segmentSec: Double,
-        captions: [Track: LiveCaptions] = [:]
+        captions: [Track: LiveCaptions] = [:], micWarmup: MicWarmup? = nil
     ) {
         self.captions = captions
+        self.micWarmup = micWarmup
         self.outPath = outPath
         self.source = source
         self.segmentDir = segmentDir
@@ -82,6 +85,8 @@ final class AudioRecorder: NSObject, Recorder {
     }
 
     func start() {
+        // Only a recording with the mic uses a prepared mic session.
+        if source == .system { micWarmup = nil }
         setupWriter()
         installSleepWakeObservers()
         startCaptureSources()
@@ -214,6 +219,22 @@ final class AudioRecorder: NSObject, Recorder {
         guard let device = AVCaptureDevice.default(for: .audio) else {
             fail("no default audio input device available")
         }
+        let warm = micWarmup
+        micWarmup = nil
+        // Access was confirmed just before this (requestMicAccessThen). A
+        // session that does not come up, say its device went away while it
+        // waited, is dropped for a fresh one.
+        if let warm, warm.matches(device) {
+            warm.output.setSampleBufferDelegate(self, queue: micOutputQueue)
+            warm.session.startRunning()
+            if warm.session.isRunning {
+                captureSession = warm.session
+                return
+            }
+            warm.output.setSampleBufferDelegate(nil, queue: nil)
+            warm.release()
+            FileHandle.standardError.write(Data("prepared mic session did not start; building a fresh one\n".utf8))
+        }
         guard let input = try? AVCaptureDeviceInput(device: device) else {
             fail("could not open microphone input")
         }
@@ -337,7 +358,14 @@ final class AudioRecorder: NSObject, Recorder {
 
             if !self.didEmitReady {
                 self.didEmitReady = true
-                EventEmitter.ready()
+                // How long the press waited, and when the audio it got begins:
+                // anything said before that was never recorded. Only the
+                // microphone stamps buffers on the host clock.
+                let ms = StartClock.ms()
+                let audioFrom = self.source == .mic ? StartClock.ms(to: self.firstPTS) : nil
+                FileHandle.standardError.write(Data(
+                    "first audio buffer \(ms) ms after start, audio from \(audioFrom.map { "\($0) ms" } ?? "unknown")\n".utf8))
+                EventEmitter.ready(firstBufferMs: ms, audioFromMs: audioFrom)
             }
         }
     }

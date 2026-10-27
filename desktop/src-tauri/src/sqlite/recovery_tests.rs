@@ -241,6 +241,21 @@ fn launch_recovery_fails_a_capture_with_nothing_saved_instead_of_polling_it() {
 }
 
 #[test]
+fn launch_recovery_leaves_a_cancelled_capture_alone() {
+    let mut fixture = Fixture::new();
+    fixture.capture("cancelled", 1);
+    discard_recording(fixture.handle(), "cancelled").unwrap();
+    fixture.restart();
+
+    let (status, _, error) = fixture.status("cancelled");
+    assert_eq!((status.as_str(), error), ("recording", None), "must not be recovered");
+    assert!(crate::store::load_all(fixture.handle()).is_empty());
+    assert!(next_session(fixture.handle()).unwrap().unwrap().discarded);
+    forget_discarded(fixture.handle(), "cancelled").unwrap();
+    assert!(next_session(fixture.handle()).unwrap().is_none());
+}
+
+#[test]
 fn launch_recovery_waits_for_an_unmounted_recording_folder() {
     let mut fixture = Fixture::new();
     let archive = fixture.capture("external-disk", 2);

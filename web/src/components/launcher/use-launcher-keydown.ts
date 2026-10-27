@@ -1,13 +1,11 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
-import { copyText, hidePanel, pasteToFrontmost } from '@/lib/desktop/bridge';
+import { copyText, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
-import { type Action, type Flash, type Item, type LauncherView, type RunTask } from './types';
+import { type Action, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown } from './format';
 
+/** Keys for the web palette: arrows pick, Return opens, ⌘K shows actions, Esc clears. */
 export function useLauncherKeyDown({
-  desktop,
-  view,
-  setView,
   actionsOpen,
   setActionsOpen,
   actionsSel,
@@ -22,13 +20,9 @@ export function useLauncherKeyDown({
   runPrimary,
   goSettings,
   openActions,
-  pasteFromClipboard,
   flash,
   runTask,
 }: {
-  desktop: boolean;
-  view: LauncherView;
-  setView: Dispatch<SetStateAction<LauncherView>>;
   actionsOpen: boolean;
   setActionsOpen: (open: boolean) => void;
   actionsSel: number;
@@ -43,7 +37,6 @@ export function useLauncherKeyDown({
   runPrimary: () => void;
   goSettings: () => void;
   openActions: () => void;
-  pasteFromClipboard: () => void;
   flash: Flash;
   runTask: RunTask;
 }) {
@@ -52,29 +45,6 @@ export function useLauncherKeyDown({
       const meta = e.metaKey || e.ctrlKey;
 
       if (meta && e.key === ',') { e.preventDefault(); goSettings(); return; }
-      if (desktop && view === 'list' && meta && e.key.toLowerCase() === 'v' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
-        e.preventDefault();
-        pasteFromClipboard();
-        return;
-      }
-      if (view === 'settings') {
-        if (e.key === 'Escape') { e.preventDefault(); setView('list'); }
-        return;
-      }
-      if (view === 'setup') {
-        if (e.key === 'Escape' && desktop) {
-          e.preventDefault();
-          runTask(hidePanel, 'Could not close the launcher');
-        }
-        return;
-      }
-      if (view === 'context') {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setView('list');
-        }
-        return;
-      }
 
       if (actionsOpen) {
         if (e.key === 'Escape') {
@@ -123,10 +93,10 @@ export function useLauncherKeyDown({
         e.preventDefault();
         if (meta && currentRec) {
           runTask(
-            () => pasteToFrontmost(currentRec.transcript ?? ''),
-            'Could not paste transcript',
+            async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
+            'Couldn’t paste the transcript',
           );
-          if (!desktop) flash('Transcript copied — paste anywhere');
+          flash('Transcript copied — paste anywhere');
         } else {
           runPrimary();
         }
@@ -134,11 +104,7 @@ export function useLauncherKeyDown({
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (query) {
-          setQuery('');
-        } else if (desktop) {
-          runTask(hidePanel, 'Could not close the launcher');
-        }
+        if (query) setQuery('');
         return;
       }
       if (meta && currentRec) {
@@ -146,26 +112,18 @@ export function useLauncherKeyDown({
         if (k === 'c' && !e.shiftKey) {
           e.preventDefault();
           runTask(async () => {
-            await copyText(currentRec.transcript ?? '');
+            await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
             flash('Transcript copied');
-          }, 'Could not copy transcript');
+          }, 'Couldn’t copy the transcript');
         } else if (k === 'c' && e.shiftKey) {
           e.preventDefault();
           runTask(async () => {
             await copyText(currentRec.summary ?? currentRec.transcript ?? '');
             flash('Summary copied');
-          }, 'Could not copy summary');
+          }, 'Couldn’t copy the summary');
         } else if (k === 'd') {
           e.preventDefault();
           downloadMarkdown(currentRec);
-        } else if (k === 'j') {
-          e.preventDefault();
-          runTask(async () => {
-            await copyText(
-              `Here is a meeting transcript. Summarize the key decisions and action items.\n\n---\n${currentRec.transcript ?? ''}`,
-            );
-            flash('Prompt copied');
-          }, 'Could not copy prompt');
         }
       }
     },
@@ -176,15 +134,11 @@ export function useLauncherKeyDown({
       items.length,
       currentRec,
       query,
-      desktop,
-      view,
       runPrimary,
       goSettings,
       openActions,
       flash,
       runTask,
-      pasteFromClipboard,
-      setView,
       setActionsOpen,
       setActionsSel,
       setSelected,

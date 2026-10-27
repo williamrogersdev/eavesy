@@ -1,4 +1,3 @@
-import { drop, findCredential, type Credential } from './drop';
 import { serveStdio, summarize } from './mcp';
 import { getCapture, isKind, KINDS, recent, resolveRoot, search, type Capture, type Kind } from './store';
 import { VERSION } from './version';
@@ -6,37 +5,27 @@ import { VERSION } from './version';
 export const USAGE = `eavesy ${VERSION}: your local Eavesy captures, for you and your agents
 
 Usage:
-  eavesy mcp                      Run a stdio MCP server (search_captures, get_capture, recent_captures)
+  eavesy mcp                      Run a read-only stdio MCP server (search, get, recent)
   eavesy search <query…>          Search titles, notes, summaries and transcripts
   eavesy get <id>                 Print one capture (id, id prefix or folder name)
   eavesy recent [--kind <kind>]   List recent captures, newest first
-  eavesy drop <file|->            Send a file, or text from stdin, to your devices
-                                  (saved to the local Recordings folder when not signed in)
 
 Options:
   --root <dir>     Recordings folder (default: the app's setting, then ~/Eavesy/Recordings)
   --kind <kind>    ${KINDS.join(' | ')}
   --limit <n>      Maximum results (default 20)
   --json           Machine-readable output
-  --title <text>   Title for a local drop
-  --local          drop: skip the cloud and save locally
   -h, --help       Show this help
   -v, --version    Show the version
 
-Add it to Claude Code:  claude mcp add eavesy -- eavesy mcp
-Without the app:        claude mcp add eavesy -- bunx @eavesy/cli mcp
+Add it to Claude Code next to the hosted Eavesy server:
+  claude mcp add eavesy-local --scope user -- node /path/to/eavesy/cli/dist/eavesy.js mcp
 `;
 
 export interface Io {
   out: (text: string) => void;
   err: (text: string) => void;
-  readStdin: () => Promise<string>;
-  /** stdin is a terminal, so `drop -` would wait for typing. */
-  stdinIsTTY?: boolean;
   env: Record<string, string | undefined>;
-  /** Overrides the credential lookup (tests). */
-  credential?: () => Credential | null;
-  fetch?: typeof fetch;
 }
 
 interface Parsed {
@@ -44,7 +33,8 @@ interface Parsed {
   flags: Record<string, string | true>;
 }
 
-const VALUE_FLAGS = new Set(['root', 'kind', 'limit', 'title']);
+const VALUE_FLAGS = new Set(['root', 'kind', 'limit']);
+const BOOLEAN_FLAGS = new Set(['json', 'help', 'version']);
 
 export function parseArgs(argv: string[]): Parsed {
   const positionals: string[] = [];
@@ -60,6 +50,7 @@ export function parseArgs(argv: string[]): Parsed {
     else if (arg.startsWith('--')) {
       const eq = arg.indexOf('=');
       const name = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
+      if (!VALUE_FLAGS.has(name) && !BOOLEAN_FLAGS.has(name)) throw new UsageError(`unknown option: --${name}`);
       if (eq !== -1) flags[name] = arg.slice(eq + 1);
       else if (VALUE_FLAGS.has(name)) {
         const value = argv[++i];
@@ -158,25 +149,6 @@ export async function run(argv: string[], io: Io): Promise<number> {
         const media = capture.files.filter((f) => f.role !== 'text');
         if (media.length) io.out(`files:\n${media.map((f) => `  ${f.path}`).join('\n')}\n`);
         for (const [name, body] of Object.entries(capture.text)) io.out(`\n--- ${name} ---\n${body.trimEnd()}\n`);
-        return 0;
-      }
-
-      case 'drop': {
-        if (rest.length !== 1) throw new UsageError('drop needs one file path, or - to read text from stdin');
-        const title = flagString(flags, 'title');
-        if (rest[0] === '-' && io.stdinIsTTY) throw new UsageError('drop - reads text from a pipe, e.g. pbpaste | eavesy drop -');
-        const local = flags.local === true;
-        // Before reading stdin, so a configuration error does not swallow piped text.
-        const credential = local ? null : (io.credential ?? (() => findCredential({ env: io.env })))();
-        const input =
-          rest[0] === '-'
-            ? { kind: 'text' as const, text: await io.readStdin(), title }
-            : { kind: 'file' as const, path: rest[0], title };
-        const result = await drop(input, { root, local, credential, fetch: io.fetch });
-        if (result.note) io.err(`${result.note}; saved locally instead.\n`);
-        if (json) io.out(`${JSON.stringify(result, null, 2)}\n`);
-        else if (result.via === 'cloud') io.out(result.id ? `Sent to your devices (${result.id}).\n` : 'Sent to your devices.\n');
-        else io.out(`Saved to ${result.folder}\n`);
         return 0;
       }
 

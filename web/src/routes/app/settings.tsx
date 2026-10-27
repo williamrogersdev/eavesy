@@ -1,12 +1,20 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
-import { HotkeyRecorder } from '@/components/launcher/hotkey-recorder';
-import { getSettings, isDesktop } from '@/lib/desktop/bridge';
+import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
+import { MCP_URL, parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
+import { NOTES_LANGUAGES } from '@/lib/transcription/language';
+import { DICTATION_STYLES, dictationStyle, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { SpokenLanguages } from '@/components/settings/spoken-languages';
+import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
+import { ChipInput } from '@/components/ui/chip-input';
+import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
+import { Link } from '@/components/ui/app-link';
+import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
 
 interface Me {
   id: string;
@@ -18,20 +26,18 @@ interface Me {
   isAnonymous: boolean;
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
+  notesLanguage: string | null;
+  spokenLanguages: string[];
+  customVocabulary: string[];
+  dictationStyle: DictationStyle;
+  dictationForAgents: boolean;
+  emailRecaps: boolean;
+  emailRecapTranscript: boolean;
+  emailRecapsAvailable: boolean;
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
   openRouterConnectedAt?: number | null;
-}
-
-interface McpToken {
-  id: string;
-  name: string;
-  createdAt: number;
-  lastUsedAt?: number | null;
-  expiresAt: number | null;
-  canWrite: boolean;
-  usesLegacyUrl: boolean;
 }
 
 /** A client config with the token in the Authorization header, not the URL. */
@@ -53,35 +59,38 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [anthropic, setAnthropic] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [pairing, setPairing] = useState(false);
-  const [pairResult, setPairResult] = useState<string | null>(null);
+  const vocabularySave = useRef(0);
+  const savedVocabulary = useRef<{ attempt: number; words: string[] }>({ attempt: 0, words: [] });
+  const navigate = useNavigate();
+  const toast = useSaveToast();
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
   const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
   const [mcpAllowWrite, setMcpAllowWrite] = useState(false);
-  const [pairCode] = useState(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('pair');
-  });
-  const [toggleHotkey, setToggleHotkey] = useState('Cmd+Shift+Space');
-  const [dictationHotkey, setDictationHotkey] = useState('Cmd+Shift+D');
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'openrouter') {
-      return { kind: 'ok', text: 'OpenRouter connected — AI usage now bills to your account.' };
-    }
-    if (params.get('error')?.startsWith('openrouter')) {
-      return { kind: 'error', text: 'Could not connect OpenRouter. Please try again.' };
-    }
-    return null;
-  });
+  // Read from the URL after hydration, so the server and first client render agree.
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (window.location.hash === '#projects') void navigate({ to: '/app/projects', replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Old Mac builds opened /app/settings?pair=CODE; /connect/mac approves codes now.
+    const pairCode = params.get('pair');
+    if (pairCode) {
+      window.location.replace(`/connect/mac?code=${encodeURIComponent(pairCode)}`);
+      return;
+    }
+    if (params.get('connected') === 'openrouter') {
+      setNotice({ kind: 'ok', text: 'OpenRouter connected — chat, translation, regenerated briefs and screenshot descriptions now bill to your account.' });
+    } else if (params.get('error')?.startsWith('openrouter')) {
+      setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Please try again.' });
+    }
+    const googleNotice = googleOutcome(params);
+    if (googleNotice) setNotice(googleNotice);
     if (params.has('connected') || params.has('error')) {
       window.history.replaceState({}, '', '/app/settings');
     }
@@ -95,16 +104,9 @@ function SettingsPage() {
         if (!account) throw new Error('Server returned invalid account settings');
         setMe(account);
         setDisplayName(account.displayName ?? '');
+        savedVocabulary.current = { attempt: 0, words: account.customVocabulary };
       })
       .catch(() => setError('Could not load account settings.'));
-    if (isDesktop()) {
-      void getSettings()
-        .then((s) => {
-          if (s?.toggle_hotkey) setToggleHotkey(s.toggle_hotkey);
-          if (s?.dictation_hotkey) setDictationHotkey(s.dictation_hotkey);
-        })
-        .catch(() => setError('Could not load desktop hotkeys.'));
-    }
     void fetch('/api/mcp-tokens')
       .then(async (response): Promise<unknown> => (response.ok ? response.json() : []))
       .then((tokens) => setMcpTokens(parseMcpTokens(tokens)))
@@ -113,7 +115,6 @@ function SettingsPage() {
 
   const save = async () => {
     setSaving(true);
-    setSaved(false);
     setError(null);
     try {
       const payload: Record<string, string> = {
@@ -127,6 +128,12 @@ function SettingsPage() {
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (!anthropic) {
+        setMe((current) => (current ? { ...current, displayName: displayName.trim() } : current));
+        void refreshMe();
+        toast.show();
+        return;
+      }
       const freshResponse = await fetch('/api/me');
       if (!freshResponse.ok) throw new Error(`Server returned ${freshResponse.status}`);
       const fresh = parseMe(await freshResponse.json());
@@ -134,7 +141,7 @@ function SettingsPage() {
       setMe(fresh);
       void refreshMe();
       setAnthropic('');
-      setSaved(true);
+      toast.show();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save settings.');
     } finally {
@@ -142,24 +149,66 @@ function SettingsPage() {
     }
   };
 
-  const approvePairing = async () => {
-    if (!pairCode) return;
-    setPairing(true);
-    setPairResult(null);
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages' | 'dictationStyle' | 'dictationForAgents'>>) => {
+    const previous = me;
+    setError(null);
+    if (previous) setMe({ ...previous, ...change });
     try {
-      const response = await fetch('/api/devices/pair', {
-        method: 'POST',
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: pairCode }),
+        body: JSON.stringify(change),
       });
-      if (!response.ok) throw new Error('This pairing code is invalid or expired.');
-      setPairResult('This Mac is connected. You can return to Eavesy.');
-    } catch (error) {
-      setPairResult(error instanceof Error ? error.message : 'Could not pair this Mac.');
-    } finally {
-      setPairing(false);
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      void refreshMe();
+      toast.show();
+    } catch (cause) {
+      setMe(previous);
+      setError(cause instanceof Error ? cause.message : 'Could not save the language.');
     }
   };
+
+  const saveRecaps = async (change: Partial<Pick<Me, 'emailRecaps' | 'emailRecapTranscript'>>) => {
+    const previous = me;
+    setError(null);
+    if (previous) setMe({ ...previous, ...change });
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(change),
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        throw new Error(isRecord(body) && typeof body.error === 'string' && body.error !== 'invalid_request' ? body.error : `Server returned ${response.status}`);
+      }
+      toast.show();
+    } catch (cause) {
+      setMe(previous);
+      setError(cause instanceof Error ? cause.message : 'Could not save email recaps.');
+    }
+  };
+
+  const saveVocabulary = async (customVocabulary: string[]) => {
+    const attempt = ++vocabularySave.current;
+    setError(null);
+    setMe((current) => (current ? { ...current, customVocabulary } : current));
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ customVocabulary }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (attempt > savedVocabulary.current.attempt) savedVocabulary.current = { attempt, words: customVocabulary };
+      if (attempt === vocabularySave.current) toast.show();
+    } catch (cause) {
+      if (attempt !== vocabularySave.current) return;
+      setMe((current) => (current ? { ...current, customVocabulary: savedVocabulary.current.words } : current));
+      setError(cause instanceof Error ? `Could not save your words: ${cause.message}` : 'Could not save your words.');
+    }
+  };
+
 
   const createMcpToken = async () => {
     setMcpBusy(true);
@@ -225,11 +274,11 @@ function SettingsPage() {
     return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
   }
   if (!me) {
-    return <AppPage width="compact"><p role="status" className="text-sm text-muted-foreground">Loading settings…</p></AppPage>;
+    return <AppPage width="compact"><p role="status" className="text-sm text-ev-ink-2">Loading settings…</p></AppPage>;
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
-  const input = 'h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-accent/60';
+  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
 
   return (
     <AppPage width="compact">
@@ -237,26 +286,7 @@ function SettingsPage() {
 
       {error ? <AppAlert>{error}</AppAlert> : null}
       {notice ? <AppAlert tone={notice.kind === 'ok' ? 'success' : 'danger'}>{notice.text}</AppAlert> : null}
-      {saved ? <AppAlert tone="success">Saved.</AppAlert> : null}
 
-      {pairCode ? (
-        <AppAlert tone="info">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Approve code <span className="font-mono font-semibold">{pairCode}</span> to connect this Mac.
-              {pairResult ? <span className="block text-xs text-muted-foreground">{pairResult}</span> : null}
-            </span>
-            <button
-              type="button"
-              onClick={() => void approvePairing()}
-              disabled={pairing || pairResult?.startsWith('This Mac')}
-              className={appButton('primary', 'sm')}
-            >
-              {pairing ? 'Connecting…' : 'Approve this Mac'}
-            </button>
-          </div>
-        </AppAlert>
-      ) : null}
 
       <AppSection title="Account">
         <Row label="Email">
@@ -269,9 +299,9 @@ function SettingsPage() {
               type="text"
               autoComplete="name"
               value={displayName}
-              onChange={(e) => {
-                setDisplayName(e.target.value);
-                setSaved(false);
+              onChange={(e) => setDisplayName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && nameChanged && !saving) void save();
               }}
               className={input}
             />
@@ -284,23 +314,120 @@ function SettingsPage() {
         </Row>
       </AppSection>
 
-      {isDesktop() ? (
-        <AppSection title="Shortcuts" description="Click a shortcut, then press the keys you want.">
-          <Row label="Open Eavesy">
-            <HotkeyRecorder action="toggle" initial={toggleHotkey} label="Launcher" />
-          </Row>
-          <Row label="Start dictation">
-            <HotkeyRecorder action="dictation" initial={dictationHotkey} label="Dictation" />
-          </Row>
-        </AppSection>
-      ) : null}
+      <AppSection title="Transcription">
+        <Row
+          label="Languages you speak"
+          hint="Eavesy picks up whichever of these is spoken, line by line, even when a call switches between them. Leave it empty to detect any language."
+          htmlFor="settings-language"
+        >
+          <SpokenLanguages
+            id="settings-language"
+            value={me.spokenLanguages}
+            onChange={(spokenLanguages) => void saveLanguage({ spokenLanguages, defaultLanguage: 'auto' })}
+          />
+        </Row>
+        <Row
+          label="Notes language"
+          hint="Notes are written in this language, and transcripts in any other language get a Translate button. Same as the meeting keeps each meeting in the language it was spoken in."
+          htmlFor="settings-notes-language"
+        >
+          <select
+            id="settings-notes-language"
+            value={me.notesLanguage ?? ''}
+            onChange={(e) => void saveLanguage({ notesLanguage: e.target.value || null })}
+            className={`${input} sm:w-56`}
+          >
+            <option value="">Same as the meeting</option>
+            {NOTES_LANGUAGES.map((language) => (
+              <option key={language.code} value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row
+          label="Dictation tone"
+          hint={DICTATION_STYLES.find((style) => style.id === me.dictationStyle)?.hint ?? ''}
+          htmlFor="settings-dictation-style"
+        >
+          <select
+            id="settings-dictation-style"
+            value={me.dictationStyle}
+            onChange={(e) => void saveLanguage({ dictationStyle: dictationStyle(e.target.value) })}
+            className={`${input} sm:w-56`}
+          >
+            {DICTATION_STYLES.map((style) => (
+              <option key={style.id} value={style.id}>
+                {style.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row label="Format dictation for AI agents" hint={FOR_AGENTS_HINT} htmlFor="settings-dictation-agents">
+          <input
+            id="settings-dictation-agents"
+            type="checkbox"
+            checked={me.dictationForAgents}
+            onChange={(e) => void saveLanguage({ dictationForAgents: e.target.checked })}
+          />
+        </Row>
+        <div className="flex flex-col gap-1.5">
+          <div>
+            <label htmlFor="settings-vocabulary" className="text-sm">Custom words</label>
+            <p className="text-xs text-ev-ink-2">
+              Names, products and jargon to spell your way in every recording. Words for one client or codebase belong
+              in <Link href="/app/projects" className="underline underline-offset-2 hover:text-ev-ink">Projects</Link>.
+            </p>
+          </div>
+          <ChipInput
+            id="settings-vocabulary"
+            label="Custom words"
+            value={me.customVocabulary}
+            onChange={(next) => void saveVocabulary(next)}
+            max={MAX_VOCABULARY_TERMS}
+            maxLength={MAX_TERM_LENGTH}
+            placeholder="Eavesy, Priya Raman, Kubernetes…"
+            hint="Press Enter or comma after each, or paste a list. Saves as you go."
+          />
+        </div>
+      </AppSection>
 
       <TemplateManager />
+
+      <AppSection
+        title="Email recaps"
+        description={me.emailRecapsAvailable
+          ? `When a meeting finishes, Eavesy emails ${me.email ?? 'you'} its TL;DR, decisions, action items and a link to the transcript. Only you get it.`
+          : 'Email recaps are not set up on this server.'}
+      >
+        <Row label="Email me a recap" hint="One email per finished meeting, to your account's address." htmlFor="settings-email-recaps">
+          <input
+            id="settings-email-recaps"
+            type="checkbox"
+            checked={me.emailRecaps}
+            disabled={!me.emailRecapsAvailable || me.isAnonymous || !me.email}
+            onChange={(e) => void saveRecaps({ emailRecaps: e.target.checked })}
+          />
+        </Row>
+        <Row label="Attach the transcript" hint="Adds the full transcript as a text file." htmlFor="settings-email-recap-transcript">
+          <input
+            id="settings-email-recap-transcript"
+            type="checkbox"
+            checked={me.emailRecapTranscript}
+            disabled={!me.emailRecapsAvailable || !me.emailRecaps}
+            onChange={(e) => void saveRecaps({ emailRecapTranscript: e.target.checked })}
+          />
+        </Row>
+      </AppSection>
+
+      <AppSection title="Accounts" description="Calendars Eavesy can read.">
+        <GoogleCalendarRows onError={setError} />
+      </AppSection>
 
       <AppSection title="AI providers" description="Optional. Without these, Eavesy’s own AI is used.">
         <Row
           label="OpenRouter"
-          hint={me.hasOpenRouterKey ? 'Connected — AI usage bills to your OpenRouter credits.' : 'Run on your own account across OpenAI, Anthropic, Google and more.'}
+          hint={me.hasOpenRouterKey ? 'Connected — chat, translation, regenerated briefs and screenshot descriptions bill to your OpenRouter credits. Recordings are still summarized on Eavesy\'s account, or your Anthropic key.' : 'Run chat, translation, regenerated briefs and screenshot descriptions on your own account.'}
         >
           {me.hasOpenRouterKey ? (
             <button
@@ -329,10 +456,7 @@ function SettingsPage() {
               type="password"
               placeholder="sk-ant-…"
               value={anthropic}
-              onChange={(e) => {
-                setAnthropic(e.target.value);
-                setSaved(false);
-              }}
+              onChange={(e) => setAnthropic(e.target.value)}
               autoComplete="off"
               className={input}
             />
@@ -346,11 +470,11 @@ function SettingsPage() {
       </AppSection>
 
       <AppSection
-        title="AI assistants (MCP)"
-        description="A connection that lets Claude, Codex or another assistant search your recordings. Connections are read-only unless you allow writes, and last 90 days."
+        title="AI apps (MCP)"
+        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, make a token here: read-only unless you allow writes, and it lasts 90 days.`}
         action={
           <span className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
               <input
                 type="checkbox"
                 checked={mcpAllowWrite}
@@ -376,7 +500,7 @@ function SettingsPage() {
                 rows={newMcpConfig.split('\n').length}
                 wrap="off"
                 aria-label="New MCP configuration"
-                className="min-w-0 flex-1 resize-none rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+                className="min-w-0 flex-1 resize-none rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1 font-mono text-xs text-ev-ink"
               />
               <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
@@ -388,13 +512,13 @@ function SettingsPage() {
           </AppAlert>
         ) : null}
         {mcpTokens.length ? (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
             {mcpTokens.map((token) => (
               <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                 <span className="min-w-0">
                   <span className="block truncate">
                     {token.name}
-                    <span className="ml-2 text-xs text-muted-foreground">
+                    <span className="ml-2 text-xs text-ev-ink-2">
                       {token.canWrite ? 'read & write · ' : 'read-only · '}
                       {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
                       {token.expiresAt
@@ -405,7 +529,7 @@ function SettingsPage() {
                     </span>
                   </span>
                   {token.usesLegacyUrl ? (
-                    <span className="block text-xs text-danger">
+                    <span className="block text-xs text-ev-warn-ink">
                       Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
                     </span>
                   ) : null}
@@ -425,10 +549,92 @@ function SettingsPage() {
         ) : null}
       </AppSection>
 
+      <AppSection title="Personal dictionary">
+        <DictionarySettings />
+      </AppSection>
       <AppSection title="Your data">
         <AccountData email={me.email} />
       </AppSection>
+
+      <SaveToast text={toast.text} />
     </AppPage>
+  );
+}
+
+const GOOGLE_ERRORS: Record<string, string> = {
+  google_cancelled: 'Google wasn’t connected: the Google screen was closed or cancelled.',
+  google_no_calendar: 'Google was connected without calendar access. Connect again and leave the calendar box ticked.',
+  google_expired: 'That Google sign-in took too long. Connect again.',
+  google_unavailable: 'Google isn’t set up on this Eavesy server yet.',
+  google_failed: 'Couldn’t connect Google. Try again.',
+};
+
+/** The notice for `?connected=google` or `?error=google_…`, pointing back to the Mac app when it started there. */
+function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; text: string } | null {
+  const back = params.get('from') === 'mac' ? ' You can go back to the Eavesy app.' : '';
+  if (params.get('connected') === 'google') return { kind: 'ok', text: `Google Calendar connected.${back}` };
+  const error = params.get('error');
+  if (error && error in GOOGLE_ERRORS) return { kind: 'error', text: GOOGLE_ERRORS[error] + back };
+  return null;
+}
+
+/** Google Calendar in Settings → Accounts: Connect, or each linked account with Disconnect. */
+function GoogleCalendarRows({ onError }: { onError: (message: string) => void }) {
+  const [status, setStatus] = useState<CalendarStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  /** The connection Google couldn't be told about, so Disconnect kept it. */
+  const [stuck, setStuck] = useState<string | null>(null);
+  const load = useCallback(() => {
+    void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
+  }, [onError]);
+  useEffect(load, [load]);
+  if (!status) return <p className="text-xs text-ev-ink-2">Checking…</p>;
+  const google = status.connections.filter((connection) => connection.provider === 'google');
+  const disconnect = (id: string, force = false) => {
+    setBusy(id);
+    setStuck(null);
+    void disconnectCalendar(id, force)
+      .then((done) => { if (done) load(); else setStuck(id); })
+      .catch(() => onError('Could not disconnect Google.'))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <>
+      {google.map((connection) => (
+        <Row
+          key={connection.id}
+          label="Google Calendar"
+          hint={connection.needsReconnect
+            ? `${connection.accountEmail} · Google stopped sharing this calendar. Connect it again.`
+            : `${connection.accountEmail} · ${connection.upcoming} upcoming ${connection.upcoming === 1 ? 'meeting' : 'meetings'}`}
+        >
+          {connection.needsReconnect ? (
+            <a href="/api/connections/google" className={appButton('primary', 'sm')}>Reconnect</a>
+          ) : (
+            <button type="button" disabled={busy === connection.id} onClick={() => disconnect(connection.id)} className={appButton('ghost', 'sm')}>
+              {busy === connection.id ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          )}
+        </Row>
+      ))}
+      {stuck ? (
+        <AppAlert tone="danger">
+          <p className="text-xs">{NOT_REVOKED}</p>
+          <span className="mt-2 flex gap-2">
+            <button type="button" onClick={() => disconnect(stuck)} className={appButton('secondary', 'sm')}>Try again</button>
+            <button type="button" onClick={() => disconnect(stuck, true)} className={appButton('ghost', 'sm')}>Remove anyway</button>
+          </span>
+        </AppAlert>
+      ) : null}
+      <Row
+        label={google.length ? 'Another Google account' : 'Google Calendar'}
+        hint={status.available.google ? 'Read-only access to your upcoming meetings.' : 'Google isn’t set up on this Eavesy server yet.'}
+      >
+        {status.available.google ? (
+          <a href="/api/connections/google" className={appButton(google.length ? 'secondary' : 'primary', 'sm')}>Connect</a>
+        ) : null}
+      </Row>
+    </>
   );
 }
 
@@ -454,34 +660,23 @@ function parseMe(value: unknown): Me | null {
     isAnonymous: value.isAnonymous,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
+    notesLanguage: typeof value.notesLanguage === 'string' ? value.notesLanguage : null,
+    spokenLanguages: Array.isArray(value.spokenLanguages)
+      ? value.spokenLanguages.filter((code): code is string => typeof code === 'string')
+      : [],
+    customVocabulary: Array.isArray(value.customVocabulary)
+      ? value.customVocabulary.filter((term): term is string => typeof term === 'string')
+      : [],
+    dictationStyle: dictationStyle(value.dictationStyle),
+    dictationForAgents: value.dictationForAgents === true,
+    emailRecaps: value.emailRecaps === true,
+    emailRecapTranscript: value.emailRecapTranscript === true,
+    emailRecapsAvailable: value.emailRecapsAvailable === true,
     hasAnthropicKey: value.hasAnthropicKey,
     anthropicKeyHint: nullableString(value.anthropicKeyHint),
     hasOpenRouterKey: value.hasOpenRouterKey,
     openRouterConnectedAt: nullableNumber(value.openRouterConnectedAt),
   };
-}
-
-function parseMcpTokens(value: unknown): McpToken[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item): McpToken[] => {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== 'string' ||
-      typeof item.name !== 'string' ||
-      typeof item.createdAt !== 'number'
-    ) {
-      return [];
-    }
-    return [{
-      id: item.id,
-      name: item.name,
-      createdAt: item.createdAt,
-      lastUsedAt: nullableNumber(item.lastUsedAt),
-      expiresAt: nullableNumber(item.expiresAt),
-      canWrite: Array.isArray(item.scopes) && item.scopes.includes('write'),
-      usesLegacyUrl: item.usesLegacyUrl === true,
-    }];
-  });
 }
 
 function nullableString(value: unknown): string | null {
@@ -510,7 +705,7 @@ function Row({
         <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm">
           {label}
         </Label>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+        {hint ? <p className="text-xs text-ev-ink-2">{hint}</p> : null}
       </div>
       <div className="flex min-w-0 flex-1 justify-start sm:justify-end">{children}</div>
     </div>

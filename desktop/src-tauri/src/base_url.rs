@@ -48,7 +48,7 @@ pub fn set_settings_override(value: Option<&str>) {
     let normalized = value.and_then(|v| match normalize(v) {
         Ok(url) => Some(url),
         Err(error) => {
-            eprintln!("ignoring api_base_url in settings: {error}");
+            tracing::warn!("ignoring api_base_url in settings: {error}");
             None
         }
     });
@@ -62,6 +62,11 @@ fn resolve(env: Option<String>, settings: Option<String>, compiled: Option<&str>
         .or(settings)
         .or_else(|| compiled.and_then(|v| normalize(v).ok()))
         .unwrap_or_else(|| DEFAULT_BASE.to_string())
+}
+
+/// `path` (starting with `/`) on the server at `base`, however `base` ends.
+pub fn join(base: &str, path: &str) -> String {
+    format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
 }
 
 pub fn api_base() -> String {
@@ -94,6 +99,13 @@ mod tests {
         assert!(!same_origin("https://evil.example/connect", "https://eavesy.example.com"));
         assert!(!same_origin("http://eavesy.example.com/x", "https://eavesy.example.com"));
         assert!(!same_origin("javascript:alert(1)", "https://eavesy.example.com"));
+    }
+
+    #[test]
+    fn paths_join_the_base_with_one_slash() {
+        assert_eq!(join("https://eavesy.com", "/api/me"), "https://eavesy.com/api/me");
+        assert_eq!(join("https://eavesy.com/", "/api/me"), "https://eavesy.com/api/me");
+        assert_eq!(join("https://eavesy.com/", "api/me"), "https://eavesy.com/api/me");
     }
 
     #[test]

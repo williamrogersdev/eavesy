@@ -4,14 +4,66 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Lets the release workflow start CI on a branch it pushed (pushes made with
+  # GITHUB_TOKEN start no workflows on their own).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
 
 jobs:
+  # Decides which of the two required jobs this change needs. A job skipped by
+  # its `if` still reports success, so both required checks always resolve;
+  # if this job itself fails, both run.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE...$HEAD")"
+          printf '%s\n' "$files"
+          web=false
+          desktop=false
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            [[ "$f" != */* && "$f" == *.md ]] && continue
+            case "$f" in
+              .github/workflows/ci.yml) web=true; desktop=true ;;
+              desktop/*) desktop=true ;;
+              docs/*|packaging/*|plugins/*|LICENSE|NOTICE) ;;
+              .github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/dependabot.yml) ;;
+              .github/workflows/macos-release.yml|.github/workflows/release-desktop.yml|.github/workflows/tag-desktop-release.yml) ;;
+              *) web=true ;;
+            esac
+          done <<< "$files"
+          echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" | tee -a "$GITHUB_OUTPUT"
+
   web:
     name: Web + Workers
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -22,6 +74,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd workers/meeting-bot && bun install --frozen-lockfile)
           (cd cli && bun install --frozen-lockfile)
       - name: Check migration numbering
         run: scripts/check-migrations.sh
@@ -35,18 +88,33 @@ jobs:
             echo "VITE_APP_URL=https://eavesy.com"
           } > web/.env.production
       # Build must run before typecheck: it generates src/routeTree.gen.ts
-      # (gitignored), which tsc needs to resolve the route tree types.
+      # (gitignored), which the type checker needs to resolve the route tree types.
       - name: Build
         working-directory: web
         run: bun run build
       - name: Typecheck
         run: |
-          (cd web && bunx tsc --noEmit)
-          (cd workers/processing && bunx tsc --noEmit)
-          (cd workers/mcp && bunx tsc --noEmit)
+          (cd web && bun run typecheck)
+          (cd workers/processing && bun run typecheck)
+          (cd workers/mcp && bun run typecheck)
+          (cd workers/meeting-bot && bun run typecheck)
+      # Keep upstream diagnostics visible while the pinned tsrs is experimental.
+      # tsrs remains the required gate; this reference check is advisory.
+      - name: TypeScript reference (advisory)
+        continue-on-error: true
+        run: |
+          status=0
+          (cd web && bun run typecheck:tsc) || status=1
+          (cd workers/processing && bun run typecheck:tsc) || status=1
+          (cd workers/mcp && bun run typecheck:tsc) || status=1
+          (cd web && bun run typecheck:tsc --project test/tsconfig.json) || status=1
+          exit "$status"
       - name: Lint
         working-directory: web
-        run: bunx eslint . --max-warnings 0
+        run: bun run lint
+      - name: Lint rule parity
+        working-directory: web
+        run: bun run lint:parity
       - name: Test
         working-directory: web
         run: bun test src
@@ -67,10 +135,24 @@ jobs:
         run: |
           (cd workers/processing && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/processing")
           (cd workers/mcp && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/mcp")
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Meeting bot (Rust)
+        working-directory: workers/meeting-bot
+        run: |
+          bun run test:bot
+          bun run lint:bot
+      - name: Meeting bot image
+        # The image deploy.yml ships: catches a broken Dockerfile or package
+        # before it reaches production.
+        run: docker build --platform linux/amd64 -t eavesy-meeting-bot:ci workers/meeting-bot
 
   desktop:
     name: Desktop (Rust + Swift)
-    runs-on: macos-15
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -78,9 +160,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: clippy
+      # Only main saves the cache, so PR runs restore main's warm cache
+      # instead of each branch storing (and evicting) its own copy.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prebuild
         run: desktop/scripts/prebuild.sh
       - name: Swift tests
@@ -92,3 +177,11 @@ jobs:
       - name: Clippy
         working-directory: desktop/src-tauri
         run: cargo clippy --locked -- -D warnings
+      # Known-vulnerable crates fail the build. Exceptions, each with its
+      # reason, live in desktop/src-tauri/.cargo/audit.toml.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+      - name: Audit dependencies
+        working-directory: desktop/src-tauri
+        run: cargo audit

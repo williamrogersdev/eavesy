@@ -1,54 +1,62 @@
 ---
 title: Getting started
-description: What Eavesy is, how it works, and the fastest path to your first capture.
+description: What Eavesy is, the ways to capture, and the fastest path to your first note.
 category: Getting started
 order: 1
 ---
 
-Eavesy is a **local, AI-first assistant**. You drop things into it (text or
-an image from your clipboard, screenshots, dictation, and recordings of your
-screen and voice) and it turns them into clean, structured Markdown context that
-is quick to paste into any AI agent or reach over MCP. The Mac app saves
-everything as files on your disk.
+Eavesy is a small Mac app that keeps what you say, hear, see and copy as plain
+files on your disk. Each capture becomes Markdown you can paste into an AI
+agent, open in any editor, or let an agent read over MCP.
 
-Recording is one capability, not the whole product. When you record, no bot
-joins your call or appears in the participant list. You still need to tell
-people when required. The Mac app keeps local source files and sends audio to a
-private cloud copy for transcription, summaries, search, sync, and recovery.
+Eavesy is free and [open source](/docs/open-source). The Mac app works without
+an account. Signing in adds cloud transcripts, briefs, search and sync.
 
-## The two ways to use it
+## Ways to capture
 
-- **The browser recorder** — create a free account and record without a
-  download. It captures your microphone or a shared screen and uploads as
-  you record for a transcript and AI brief, with no length limit. [Learn more →](/docs/browser-recorder)
-- **The Mac app** — captures your **screen and system audio** for full-fidelity
-  capture, unlimited length, sync, semantic search, and files written straight
-  to your disk. [Install it →](/docs/installing-the-mac-app)
+| Mode | What it records | Good for |
+| --- | --- | --- |
+| [Talk](/docs/talk-and-dictation) | Your microphone | Dictation and voice memos |
+| [Meeting](/docs/meetings) | Your microphone and the audio your Mac plays | Calls and in-person conversations |
+| [Video](/docs/video) | Your screen, its audio and your microphone | Walkthroughs and bug reports |
+| [Screenshot](/docs/screenshots-and-notes) | An area of your screen | Something you want an agent to see |
+| [Clipboard and notes](/docs/screenshots-and-notes) | Text or an image you copied, or a file you drop in | Messages, snippets, reference files |
 
-<Callout type="tip">
-Not sure which to start with? Try the browser recorder to get a feel for it,
-then install the Mac app when you want to capture full calls with system audio.
-</Callout>
+Recording from your Mac adds no bot to your calls. For a Meet or Teams call you
+can't record from your Mac, you can send the [Notetaker](/docs/notetaker), which
+joins as a visible participant. Either way, you are responsible for telling
+people when you record them.
 
-## The fastest path
+## Your first capture
 
-1. [Download the Mac app](/download/mac) (or open the
-   [browser recorder](/sign-up)).
-2. Open the launcher with your global hotkey. Press **⌘V** to save text or an
-   image from your clipboard, take a screenshot, dictate, or start a recording.
-3. For a recording, press **stop** and wait for processing.
-4. Copy the Markdown into your agent, or
-   [connect it over MCP](/docs/connect-mcp).
+1. [Install the Mac app](/docs/installing-the-mac-app). Download the DMG or
+   run `brew install --cask williamrogersdev/eavesy/eavesy`.
+2. Open Eavesy with **⌘⇧Space**. Grant the Microphone permission when asked.
+3. Press **⌘⇧D**, say a sentence, and press **⌘⇧D** again. If your cursor was
+   in a text field, the words are pasted there.
+4. Open the launcher again to see the capture. It is also saved as a folder in
+   `~/Eavesy/Recordings`.
 
-## What you get from a recording
+From here you can [record a meeting](/docs/meetings), copy the Markdown into
+an agent, or [connect an agent over MCP](/docs/connect-mcp).
 
-- A clean **title** and **TL;DR**
-- **Decisions** and owner-tagged **action items**
-- The complete, copyable **transcript**
-- The **audio**, and a **Markdown + JSON** copy you own
+## With or without an account
 
-## Where to go next
+Without an account, everything stays on your Mac. Talk gives you on-device
+text, and meetings get on-device live captions while they run.
+
+When you sign in at eavesy.com, the Mac app also uploads audio so you get:
+
+- a full cloud transcript that replaces the live captions,
+- a brief with a title, summary, decisions and action items,
+- search and chat across your recordings, and
+- access for agents over [MCP](/docs/connect-mcp).
+
+You can also [record in the browser](/docs/browser-recorder) without
+installing anything. Browser recordings need an account.
+
+## Next
 
 - [Install the Mac app](/docs/installing-the-mac-app)
-- [Record your first session](/docs/recording-your-first-meeting)
-- [Feed a session to your AI agent](/docs/context-for-agents)
+- [Keyboard shortcuts](/docs/keyboard-shortcuts)
+- [Your files](/docs/session-folder-format)

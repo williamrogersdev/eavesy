@@ -35,6 +35,9 @@ vi.mock('../../src/server/auth', () => ({
 }));
 
 // Owners' calls get through to the model; answer locally instead of calling out.
+vi.mock('../../src/lib/ai/translate', () => ({
+  translateLines: async ({ lines }: { lines: { id: string; text: string }[] }) => new Map(lines.map(line => [line.id, `Translated: ${line.text}`])),
+}));
 vi.mock('../../src/lib/ai/chat-meeting', () => ({ chatWithMeeting: async () => 'Stub reply' }));
 vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -60,9 +63,13 @@ const RECORDING = 'meet_owner_recording';
 const LINE = 'line_owner';
 const CAPTURE = 'cap_owner';
 const TEMPLATE = 'tpl_owner';
+const PROJECT = 'proj_owner';
 const MCP_TOKEN = 'mcp_owner';
+const CALENDAR = 'cal_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
+const BOT = 'bot_owner';
+const PROMPT = 'prm_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -94,6 +101,34 @@ const meetingCall = (suffix = '', body?: unknown): Call => ({
 const SIGNED_IN = { status: 401 };
 
 const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
+  '/api/assistant/consolidate': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Merges only the caller-submitted notes for the authenticated paired-device quota; reads and stores no user data' } },
+  '/api/assistant/check': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Compares only the caller-submitted request and action for the authenticated paired-device quota; reads and stores no user data' } },
+  '/api/assistant/turn': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Runs one model step over the caller-submitted conversation for the authenticated paired-device quota; reads and stores no user data' } },
+  '/api/agents/reply-suggestion': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Summarizes only the caller-submitted agent message for the authenticated browser or paired-device quota; reads and stores no user data' } },
+  '/api/agents/inbox': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Paired devices only; hands the calling device only its own user’s agent messages (agent-inbox tests cover other users and other Macs)' } },
+  '/api/agents/inbox/$id': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Paired devices only; answers an ask only when it belongs to the caller’s user and was shown on the calling device' } },
+  '/api/translation': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Translates only the caller-submitted text or bounded audio, using the authenticated browser or paired-device quota; reads and stores no recording data' } },
+  '/api/dictionary': Object.fromEntries(['GET', 'POST', 'PUT', 'DELETE'].map(method => [method, {
+    unauthenticated: SIGNED_IN,
+    scopedToCaller: 'Dictionary ownership comes from authenticated browser or paired device identity; feedback service tests verify stale text, cross-owner reads and writes, and forgetting',
+  }])),
+  '/api/imports/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/imports/' }, excludes: [MEETING] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a recording only for the authenticated owner; service tests cover deduplication and isolation' },
+  },
+  '/api/imports/$': Object.fromEntries(['GET', 'PUT', 'POST', 'DELETE'].map(method => [method, {
+    unauthenticated: SIGNED_IN, scopedToCaller: 'Import service checks meeting and import ownership before any read or mutation; service tests exercise all methods across owners',
+  }])),
+  '/api/meeting-bots/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/meeting-bots/' }, excludes: [BOT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a notetaker only for the authenticated owner; the bot id never comes from the caller' },
+  },
+  '/api/meeting-bots/$id': {
+    DELETE: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/meeting-bots/${BOT}`, params: { id: BOT } }, status: 404 } },
+  },
+  '/api/webhooks/resend': { POST: { public: 'Resend email delivery webhook, authenticated by its Svix signature rather than a session; it only moves delivery rows forward' } },
+  '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
+  '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },
   '/api/account/': {
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'deletes only the caller’s account' },
   },
@@ -110,6 +145,12 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/captures': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/captures' }, excludes: [CAPTURE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a capture owned by the caller' },
+  },
+  '/api/captures/$id/audio': {
+    POST: {
+      unauthenticated: SIGNED_IN,
+      scopedToCaller: 'Transcribes only into a video capture the caller owns (404 otherwise); web-app-fixes tests cover both owners',
+    },
   },
   '/api/captures/$id': {
     GET: {
@@ -141,6 +182,22 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/drops/upload': {
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a drop owned by the caller' },
   },
+  '/api/calendar-connections': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/calendar-connections' }, excludes: [CALENDAR] } },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/calendar-connections', body: json({ id: CALENDAR }) },
+        unchanged: () => row('SELECT id FROM calendar_connections WHERE id = ?', CALENDAR),
+      },
+    },
+  },
+  '/api/connections/google': {
+    GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts Google OAuth for the caller' },
+  },
+  '/api/connections/google/callback': {
+    GET: { unauthenticated: { status: 302 }, scopedToCaller: 'stores the calendar on the caller' },
+  },
   '/api/connections/openrouter': {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts OAuth for the caller' },
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'disconnects only the caller' },
@@ -149,6 +206,16 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'stores the key on the caller' },
   },
   '/api/contact': { POST: { public: 'Public contact form, rate limited per IP' } },
+  '/api/devices/captures/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/devices/captures' }, excludes: [CAPTURE] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a capture owned by the calling device’s user' },
+  },
+  '/api/devices/captures/$id': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/devices/captures/${CAPTURE}`, params: { id: CAPTURE } }, status: 404 },
+    },
+  },
   '/api/devices/me': {
     GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'describes the calling device' },
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'signs out the calling device' },
@@ -164,6 +231,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/dictations': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/dictations' }, excludes: [DICTATION] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a dictation owned by the caller' },
+  },
+  '/api/dictations/polish': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'tidies the caller’s own words with their vocabulary; nothing is stored' },
   },
   '/api/downloads/mac/$file': { GET: { public: 'Public versioned app download' } },
   '/api/downloads/mac/latest': { GET: { public: 'Public app download' } },
@@ -238,6 +308,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/meetings/$id/regenerate': {
     POST: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/regenerate', {}), status: 404 } },
   },
+  '/api/meetings/$id/translate': {
+    POST: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/translate', { to: 'en' }), status: 404 } },
+  },
   '/api/meetings/list': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/meetings/list' }, excludes: [MEETING, RECORDING] } },
   },
@@ -286,6 +359,13 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   },
   '/api/sessions/$id/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/sessions/${RECORDING}`, params: { id: RECORDING } }, status: 404 } },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/sessions/${RECORDING}`, params: { id: RECORDING } },
+        unchanged: () => row('SELECT deleted_at FROM meetings WHERE id = ?', RECORDING),
+      },
+    },
   },
   '/api/sessions/$id/parts/$n': {
     PUT: {
@@ -321,7 +401,56 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
-  '/api/sessions/': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' } },
+  '/api/projects/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/projects' }, excludes: [PROJECT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a project owned by the caller' },
+  },
+  '/api/projects/$id/': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/projects/${PROJECT}`, params: { id: PROJECT }, body: json({ name: 'Mine now' }) },
+        unchanged: () => row('SELECT name FROM folders WHERE id = ?', PROJECT),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/projects/${PROJECT}`, params: { id: PROJECT } },
+        unchanged: () => row('SELECT id FROM folders WHERE id = ?', PROJECT),
+      },
+    },
+  },
+  '/api/projects/$id/suggestions': {
+    GET: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: `/api/projects/${PROJECT}/suggestions`, params: { id: PROJECT } }, status: 404 },
+    },
+  },
+  '/api/prompts/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/prompts' }, excludes: [PROMPT] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a prompt owned by the caller' },
+  },
+  '/api/prompts/$id': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/prompts/${PROMPT}`, params: { id: PROMPT }, body: json({ name: 'Mine now', body: 'Mine now' }) },
+        unchanged: () => row('SELECT name, slug, body, use_count FROM saved_prompts WHERE id = ?', PROMPT),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/prompts/${PROMPT}`, params: { id: PROMPT } },
+        unchanged: () => row('SELECT id FROM saved_prompts WHERE id = ?', PROMPT),
+      },
+    },
+  },
+  '/api/sessions/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/sessions' }, excludes: [MEETING] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' },
+  },
   '/api/templates': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/templates' }, excludes: [TEMPLATE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a template owned by the caller' },
@@ -401,6 +530,10 @@ beforeEach(async () => {
   // rate_limits only exists once the rate-limit migration has landed.
   await testEnv.DB.prepare('DELETE FROM rate_limits').run().catch(() => undefined);
   await resetTables(
+    'email_deliveries',
+    'meeting_bots',
+    'recording_imports',
+    'personal_dictionary',
     'transcript_segments',
     'meeting_segments',
     'summaries',
@@ -409,7 +542,11 @@ beforeEach(async () => {
     'drops',
     'dictations',
     'prompt_templates',
+    'saved_prompts',
+    'folders',
     'mcp_tokens',
+    'calendar_events',
+    'calendar_connections',
     'activity_log',
     'meetings',
     'device_pairing_codes',
@@ -427,7 +564,9 @@ async function seedOwner() {
   await insertMeeting({ id: MEETING, userId: OWNER, status: 'complete', audioR2Key: AUDIO_KEY });
   await insertMeeting({ id: RECORDING, userId: OWNER, status: 'recording' });
   await testEnv.AUDIO_BUCKET.put(AUDIO_KEY, new Uint8Array([1, 2, 3]));
+  await testEnv.AUDIO_BUCKET.put(`users/${OWNER}/captures/${CAPTURE}.png`, new Uint8Array([1, 2, 3]), { httpMetadata: { contentType: 'image/png' } });
   await testEnv.DB.batch([
+    testEnv.DB.prepare("INSERT INTO recording_imports(meeting_id,user_id,fingerprint,segment_count,duration_ms,state,created_at) VALUES (?,?,'owner-file',1,1000,'processing',?)").bind(MEETING,OWNER,now),
     testEnv.DB.prepare(
       `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, text, is_final, is_edited)
        VALUES (?, ?, 0, 1000, 'Owner line', 1, 0)`,
@@ -445,12 +584,32 @@ async function seedOwner() {
        VALUES (?, ?, 'Owner template', 'Owner prompt', 'meeting', 0)`,
     ).bind(TEMPLATE, OWNER),
     testEnv.DB.prepare(
+      `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at)
+       VALUES (?, ?, 'Owner prompt', 'owner-prompt', 'Owner prompt body', ?, ?)`,
+    ).bind(PROMPT, OWNER, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO folders (id, user_id, name, vocabulary_json, match_json) VALUES (?, ?, 'Owner project', '[]', '[]')`,
+    ).bind(PROJECT, OWNER),
+    testEnv.DB.prepare(
       `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at)
        VALUES (?, ?, 'Owner dictation', 'Owner words', 3, ?)`,
     ).bind(DICTATION, OWNER, now),
     testEnv.DB.prepare(
       `INSERT INTO mcp_tokens (id, user_id, token_hash, name, created_at) VALUES (?, ?, 'hash_owner', 'Owner', ?)`,
     ).bind(MCP_TOKEN, OWNER, now),
+    testEnv.DB.prepare(
+      `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
+       VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
+    ).bind(CALENDAR, OWNER, now),
+    // Not yet confirmed by the provider, so cancelling it makes no provider call.
+    testEnv.DB.prepare(
+      `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)
+       VALUES (?, ?, 'eavesy', 'https://meet.google.com/abc-defg-hij', 'meet', 'scheduling', ?, ?)`,
+    ).bind(BOT, OWNER, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO email_deliveries (id, user_id, meeting_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+       VALUES ('eml_owner', ?, ?, 'meeting_recap', 'owner@example.com', ?, 'resend', 'sent', ?, ?)`,
+    ).bind(OWNER, MEETING, `meeting_recap:${MEETING}:owner@example.com`, now, now),
   ]);
 }
 
@@ -521,3 +680,16 @@ describe.each(discovered.filter(({ routeId, method }) => POLICIES[routeId]?.[met
     });
   },
 );
+
+it('translates unknown-language meeting lines and finishes with a reusable cache', async () => {
+  actor.userId = OWNER;
+  const route = routeModules['../../src/routes/api/meetings/$id/translate.ts'].Route;
+  const post = handlersOf(route).POST!;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await post({ request: new Request(`https://test/api/meetings/${MEETING}/translate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'es' }),
+    }), params: { id: MEETING } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ remaining: 0, lines: { [LINE]: 'Translated: Owner line' } });
+  }
+});

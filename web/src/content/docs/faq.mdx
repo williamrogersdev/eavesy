@@ -1,58 +1,75 @@
 ---
 title: Frequently asked questions
-description: Quick answers about bots, privacy, supported apps, languages, and your files.
+description: Quick answers about accounts, bots, languages, devices, privacy, cost and the source code.
 category: Help
-order: 52
+order: 72
 ---
+
+## Do I need an account?
+
+Not for the Mac app. Choose **Stay local for now** and everything stays on your
+Mac, including on-device Talk text and live captions. An account adds cloud
+transcripts, briefs, search, chat and MCP. The browser recorder needs an
+account. [Sign in, or stay local →](/docs/installing-the-mac-app#sign-in-or-stay-local)
 
 ## Does Eavesy join my calls as a bot?
 
-No. Eavesy captures the audio and screen on your Mac, so nothing appears in the
-participant list. Tell participants when required and follow your organization&rsquo;s
-policy and applicable consent laws. It works with any calling app—and in person.
-[How capture works →](/docs/capturing-screen-and-audio)
+Not when you record from your Mac. The Mac app records the audio your Mac plays
+and your microphone, so nothing joins the call.
+[Meetings →](/docs/meetings)
 
-## Do I need an account to try it?
+For a Google Meet or Teams call you can't record from your Mac, you can send the
+Eavesy Notetaker. It joins as a visible participant named "Eavesy Notetaker".
+[Notetaker →](/docs/notetaker)
 
-Yes. The [browser recorder](/docs/browser-recorder) uses a free account so the
-finished transcript and brief have a private place to process and remain available.
-The Mac app pairs to that same account.
+Either way, tell people when you record them.
 
-## Which apps does it support?
+## Which Macs does it run on?
 
-Anything that plays audio or shows on your screen —
-[Zoom](/integrations/zoom), [Google Meet](/integrations/google-meet),
-[Teams](/integrations/microsoft-teams), [Webex](/integrations/webex),
-[Slack huddles](/integrations/slack), and
-[in-person conversations](/integrations/in-person). No extension or admin
-approval required. [See all integrations →](/docs/integrations-overview)
+Macs with Apple silicon on macOS 13 or later. Screenshots need macOS 14. Intel
+Macs aren't supported. [Install the Mac app →](/docs/installing-the-mac-app)
 
-## What languages are supported?
+## Is there an app for iPhone, Windows or Linux?
 
-Transcription handles dozens of languages automatically — you don&rsquo;t need
-to set one. [Transcripts &amp; summaries →](/docs/transcripts-and-summaries)
+No. On other computers you can [use Eavesy in the browser](/docs/browser-recorder).
 
-## Do you train AI models on my conversations?
+## Does it tell speakers apart?
 
-Eavesy does not train models on your recordings. Cloudflare Workers AI and
-Anthropic&rsquo;s commercial API state that customer content is not used for model
-training unless the customer explicitly opts in. A connected OpenRouter account
-follows the privacy settings you control there.
-[Privacy &amp; your data →](/docs/privacy-and-data)
+Meetings recorded on your Mac are labelled by track: **You** for your
+microphone and **Them** for the call's audio. Eavesy doesn't separate
+individual people there. A [Notetaker](/docs/notetaker) recording labels lines
+with the name of whoever the call shows speaking.
+
+## What languages does it support?
+
+Transcription is set to English by default. You can pick another language, or
+let it detect the language, under **Settings → Transcription → Spoken
+language** in the web app.
+[Transcripts and captions →](/docs/transcripts-and-summaries)
+
+## Do you train AI models on my content?
+
+No. Cloudflare and Anthropic state that customer content isn't used for
+training unless the customer opts in. If you connect your own OpenRouter
+account, its privacy settings apply.
+[Privacy and your data →](/docs/privacy-and-data)
 
 ## Where are my files?
 
-With the Mac app, every session is written to a folder on your disk as Markdown,
-JSON, and audio — formats you (and your agents) own.
-[The session folder format →](/docs/session-folder-format)
+In `~/Eavesy/Recordings`, one folder per capture.
+[Your files →](/docs/session-folder-format)
 
-## Can my AI agent read my sessions?
+## Can my agent read my captures?
 
-Yes — that&rsquo;s the point. Paste a brief into any agent, or point an agent
-with filesystem access at your Eavesy folder.
-[Context for AI agents →](/docs/context-for-agents)
+Yes. Paste them in, point the agent at your folder, or connect it over MCP.
+[Give your agent context →](/docs/context-for-agents)
 
 ## What does it cost?
 
-Eavesy is free to use. Everyone gets the same daily fair-use limits.
+Nothing. Everyone gets the same daily limits.
 [Fair-use limits →](/docs/fair-use-limits)
+
+## Is it open source?
+
+Yes, under the Apache License 2.0. You can read the code, run your own server,
+and contribute. [Open source and self-hosting →](/docs/open-source)

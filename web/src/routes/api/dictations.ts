@@ -1,14 +1,31 @@
+import * as dictionary from '@/db/repo/dictionary';
+import { repairTranscript, repairAi } from '@/lib/ai/repair-transcript';
+import type { CreditEnv } from '@/lib/ai/credit-runner';
+import { getCloudflareContext } from '@/server/cloudflare-context';
 import { createFileRoute } from '@tanstack/react-router';
+import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as activityRepo from '@/db/repo/activity';
 import * as dictationsRepo from '@/db/repo/dictations';
-import { applyTemplate, cleanDictation } from '@/lib/ai/clean-dictation';
+import { transcriptionPrefs } from '@/db/repo/users';
+import { applyTemplate } from '@/lib/ai/clean-dictation';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
 import { meetingFolderSlug } from '@/lib/utils';
-import { guardUserQuota } from '@/server/rate-limit';
+import { guardSpend, guardUserQuota } from '@/server/rate-limit';
+import { capBody } from '@/lib/http/cap-body';
 import { resolveActor } from '@/server/auth';
 import { dictationAudioKey, putAudio } from '@/server/r2';
 import { enqueue } from '@/server/queue';
+
+// A dictation is a short voice note; the web recorder's clips are well under this.
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_BODY_BYTES = MAX_AUDIO_BYTES + 64 * 1024;
+const tooLarge = () => Response.json({ error: 'audio too large' }, { status: 413 });
+
+const fieldsSchema = z.object({
+  targetApp: z.string().trim().max(200).optional(),
+  templatePrompt: z.string().max(8000).optional(),
+});
 
 export const Route = createFileRoute('/api/dictations')({
   server: {
@@ -20,26 +37,55 @@ export const Route = createFileRoute('/api/dictations')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
+        // Size and shape first, so a request that is refused anyway spends no quota.
+        if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return tooLarge();
+        if (!request.body) return Response.json({ error: 'missing audio' }, { status: 400 });
+        const { stream, overflowed } = capBody(request.body, MAX_BODY_BYTES);
+        let form: FormData;
+        try {
+          form = await new Response(stream, { headers: { 'content-type': request.headers.get('content-type') ?? '' } }).formData();
+        } catch {
+          return overflowed() ? tooLarge() : Response.json({ error: 'invalid request body' }, { status: 400 });
+        }
+        const file = form.get('audio');
+        if (!(file instanceof File) || file.size === 0) return Response.json({ error: 'missing audio' }, { status: 400 });
+        if (file.size > MAX_AUDIO_BYTES) return tooLarge();
+        const fields = fieldsSchema.safeParse({
+          targetApp: form.get('targetApp') ?? undefined,
+          templatePrompt: form.get('templatePrompt') ?? undefined,
+        });
+        if (!fields.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+        const { targetApp, templatePrompt } = fields.data;
+
         const overQuota = await guardUserQuota(actor.userId, 'dictation');
         if (overQuota) return overQuota;
-
-        const form = await request.formData().catch(() => null);
-        const file = form?.get('audio');
-        if (!form || !(file instanceof File)) return Response.json({ error: 'missing audio' }, { status: 400 });
-        const targetApp = (form.get('targetApp') as string | null) ?? undefined;
-        const templatePrompt = (form.get('templatePrompt') as string | null) ?? undefined;
+        const limited = await guardSpend(request, 'transcribe', { perMin: 20, perDay: 5000 });
+        if (limited) return limited;
 
         const db = getDb();
         const audio = new Uint8Array(await file.arrayBuffer());
-        const transcription = await transcribeAudioFile({
-          audio,
-          language: 'en',
-        });
+        const prefs = await transcriptionPrefs(db, actor.userId);
+        const entries = await dictionary.listForTranscription(db, actor.userId);
+        let transcription;
+        try {
+          transcription = await transcribeAudioFile({
+            audio,
+            language: prefs.language,
+            vocabulary: [...entries.map(e => e.to), ...prefs.vocabulary],
+            spoken: prefs.spoken,
+            voiceNote: true,
+          });
+        } catch (err) {
+          console.error('[dictation] transcription failed', err);
+          return Response.json({ error: 'transcription failed' }, { status: 502 });
+        }
 
         let cleaned: string | undefined;
         try {
           if (templatePrompt) cleaned = await applyTemplate(transcription.text, templatePrompt);
-          else cleaned = await cleanDictation(transcription.text);
+          else {
+            cleaned = (await repairTranscript(transcription.text, { clean: true, dictionary: entries, ai: repairAi(getCloudflareContext<CreditEnv>().env) })).text;
+          }
         } catch (err) {
           console.warn('[dictation] cleanup failed', err);
         }

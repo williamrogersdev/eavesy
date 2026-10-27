@@ -3,7 +3,10 @@ name: macOS release
 # Tag push `desktop-vX.Y.Z`: build, sign, notarize, attach to a draft GitHub
 # Release, then (after approval in the `macos-release` environment) publish to
 # R2 + the updater manifest and open a Homebrew cask bump PR.
+# Tags are pushed by tag-desktop-release.yml when a version bump lands on main.
 # Manual dispatch: release candidate only (CI artifacts, nothing published).
+# It can also build a candidate without some entitlements, to test whether the
+# signed app still runs without them (docs/plans/device-security.md, phase 0).
 # Secrets and setup: docs/RELEASING.md.
 
 on:
@@ -11,6 +14,11 @@ on:
     tags:
       - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      without_entitlements:
+        description: "Space-separated entitlements to leave out of this candidate (test builds only)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -89,7 +97,7 @@ jobs:
   build:
     name: Build, sign, and notarize
     needs: prepare
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     environment: macos-signing
     env:
@@ -122,16 +130,23 @@ jobs:
       - name: Verify web and Worker code
         run: |
           cd web
+          # Build first: it generates the route tree that lint and typecheck
+          # read (ci.yml runs them in the same order).
+          bun run build
           bun run lint
           bun run typecheck
           bun run test
-          bun run build
           cd ../workers/processing
-          bunx tsc --noEmit
+          bun run typecheck
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/processing-dry-run"
           cd ../mcp
-          bunx tsc --noEmit
+          bun run typecheck
           bunx wrangler deploy --dry-run --outdir "${RUNNER_TEMP}/mcp-dry-run"
+
+      # The Rust build script needs the launcher UI and the SwiftAudio sidecar
+      # (ci.yml runs the same prebuild before its Rust tests).
+      - name: Prebuild launcher UI and SwiftAudio sidecar
+        run: desktop/scripts/prebuild.sh
 
       - name: Verify desktop Rust core
         working-directory: desktop/src-tauri
@@ -160,12 +175,97 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
+      # Only on a manual run, and only these two: a tag build always ships the
+      # checked-in entitlements.
+      - name: Leave out entitlements for this test candidate
+        if: github.event_name == 'workflow_dispatch' && inputs.without_entitlements != ''
+        env:
+          WITHOUT: ${{ inputs.without_entitlements }}
+        run: |
+          PLIST=desktop/src-tauri/entitlements.plist
+          for key in $WITHOUT; do
+            case "$key" in
+              com.apple.security.cs.allow-jit|com.apple.security.cs.allow-unsigned-executable-memory) ;;
+              *) echo "::error::$key can't be left out by this workflow"; exit 1 ;;
+            esac
+            # Only a missing key is fine; a missing or broken plist still fails.
+            if /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" > /dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST"
+            else
+              # Recording always needs this one, so the file itself was read.
+              /usr/libexec/PlistBuddy -c "Print :com.apple.security.device.audio-input" "$PLIST" > /dev/null
+              echo "$key isn't in the checked-in entitlements"
+            fi
+          done
+          cat "$PLIST"
+
       # Apple credentials are deliberately absent here so Tauri does not
       # notarize the .app; the next step notarizes the exact final DMG.
       - name: Build signed release candidate
         env:
-          SENTRY_DSN: ${{ secrets.DESKTOP_SENTRY_DSN }}
+          EAVESY_POSTHOG_KEY: ${{ vars.DESKTOP_POSTHOG_KEY }}
+          EAVESY_POSTHOG_HOST: ${{ vars.DESKTOP_POSTHOG_HOST }}
         run: desktop/scripts/build-macos-release.sh
+
+      # The hardened runtime only applies to a signed build, so this is where a
+      # missing entitlement shows: the web view's JavaScript engine is killed
+      # at launch. Run the signed app and fail if it doesn't stay up. This only
+      # catches a crash in the first 25 seconds, which is when that happens.
+      - name: Launch the signed app
+        run: |
+          APP=desktop/src-tauri/target/release/bundle/macos/Eavesy.app
+          EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          test -x "$EXE" || { echo "::error::No executable at $EXE"; exit 1; }
+          codesign -d --entitlements - "$APP"
+          # The app refuses a capture engine that fails this: keep it the same as
+          # requirement() in sidecar_trust.rs. The app runs the engine next to
+          # its executable (capture_bin in audio.rs).
+          TEAM="$(codesign -dv --verbose=2 "$EXE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::The signed app has no team ID ($TEAM)"; exit 1; }
+          codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$TEAM\"" "$APP/Contents/MacOS/SwiftAudio"
+          # Only this launch's log counts.
+          LOGS=~/Library/Logs/com.eavesy.desktop
+          rm -f "$LOGS"/*.log
+          EAVESY_NO_TELEMETRY=1 "$EXE" > "${RUNNER_TEMP}/launch.log" 2>&1 &
+          PID=$!
+          # Staying up isn't enough: the web view's JavaScript runs in WebKit's
+          # own process, so a broken one leaves the app alive with a blank
+          # window. Wait, while the app is still running, for both 25 s up and
+          # the line it logs once a page's code has called into Rust
+          # (commands::WEB_VIEW_RUNNING). Give up after 90 s.
+          ready=""
+          for second in $(seq 1 90); do
+            sleep 1
+            if [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null; then
+              ready=$second
+              echo "Web view ran its JavaScript after $second s"
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              wait "$PID" || echo "exit status $?"
+              cat "${RUNNER_TEMP}/launch.log"
+              ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
+              echo "::error::The signed app quit $second seconds after launch"
+              exit 1
+            fi
+            [[ -n "$ready" && $second -ge 25 ]] && break
+          done
+          kill "$PID"
+          wait "$PID" 2>/dev/null || true
+          tail -50 "${RUNNER_TEMP}/launch.log"
+          # One last look, now the app has flushed its log on the way out.
+          [[ -z "$ready" ]] && grep -qh "web view is running" "$LOGS"/*.log 2>/dev/null && ready=late
+          if [[ -z "$ready" ]]; then
+            echo "::error::The signed app's web view didn't log that its JavaScript ran within 90 s"
+            exit 1
+          fi
+          # The app checks its own capture engine at launch (sidecar_trust::warm,
+          # finished well inside the 25 s: codesign is cut off at 15 s) and logs
+          # any refusal, so this tests the app's real requirement too. Both
+          # names are only ever logged as errors (sidecar_trust.rs).
+          if grep -hE 'sidecar_trust\.(verify|signer)' "$LOGS"/*.log; then
+            echo "::error::The signed app refused its own capture engine"
+            exit 1
+          fi
 
       - name: Notarize and validate release candidate
         env:
@@ -251,7 +351,7 @@ jobs:
     name: Publish to R2 and updater
     needs: [prepare, build, github-release]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v')
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     # Protected environment: required reviewers approve before this job runs.
     environment:
@@ -380,3 +480,19 @@ jobs:
           - DMG sha256: \`$SHA\`
 
           Opened by the macOS release workflow (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+
+      # The tap has no CI of its own, so this is its check: the cask URL must
+      # serve exactly the bytes that were notarized and published.
+      - name: Verify the cask download
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          SHA: ${{ steps.bump.outputs.sha }}
+        run: |
+          URL="$(sed -n -E 's/^[[:space:]]*url "([^"]*)".*/\1/p' "tap/$CASK_PATH" | head -1)"
+          URL="${URL//'#{version}'/$VERSION}"
+          echo "Checking $URL"
+          GOT="$(curl --fail --silent --show-error --location "$URL" | sha256sum | awk '{print $1}')"
+          if [[ "$GOT" != "$SHA" ]]; then
+            echo "::error::$URL has sha256 $GOT, expected $SHA"
+            exit 1
+          fi

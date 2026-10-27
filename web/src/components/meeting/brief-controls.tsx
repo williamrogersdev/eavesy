@@ -134,7 +134,7 @@ export function BriefControls({
             setConfirmReplace(false);
           }}
           aria-label="Brief format"
-          className="h-8 rounded-md border border-border bg-background px-2 text-[13px]"
+          className="h-8 rounded-full bg-ev-well px-3 font-round text-[13px] font-semibold text-ev-ink outline-none focus-visible:shadow-[var(--ev-focus)]"
         >
           {BRIEF_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}
           {templates.length ? <optgroup label="My templates">
@@ -165,7 +165,7 @@ export function BriefControls({
             Restore generated
           </button>
         ) : null}
-        {message ? <p aria-live="polite" className="text-xs text-muted-foreground">{message}</p> : null}
+        {message ? <p aria-live="polite" className="text-xs text-ev-ink-2">{message}</p> : null}
       </div>
 
       {editing ? (
@@ -176,7 +176,7 @@ export function BriefControls({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={16}
-            className="w-full rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed outline-none focus:border-accent/50"
+            className="mt-2 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper p-3 text-sm leading-relaxed text-ev-ink outline-none focus:border-ev-coat focus:shadow-[var(--ev-focus)]"
           />
           <div className="mt-2 flex justify-end gap-1.5">
             <button type="button" onClick={() => setEditing(false)} className={appButton('ghost', 'sm')}>Cancel</button>

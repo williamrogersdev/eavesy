@@ -41,7 +41,9 @@
       "Bash(bunx wrangler d1 migrations apply eavesy --local)",
       "Bash(cargo test --locked)",
       "Bash(swift test)",
-      "Bash(scripts/check-migrations.sh)"
+      "Bash(scripts/check-migrations.sh)",
+      "Bash(scripts/test-local.sh:*)",
+      "Bash(desktop/scripts/vm-test.sh:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -49,8 +51,6 @@
       "Bash(git push origin main:*)",
       "Bash(git push origin HEAD:main:*)",
       "Bash(gh pr merge * --admin*)",
-      "Bash(gh release:*)",
-      "Bash(git tag:*)",
       "Bash(git push --tags:*)",
       "Bash(bunx wrangler deploy)",
       "Bash(bunx wrangler secret:*)",

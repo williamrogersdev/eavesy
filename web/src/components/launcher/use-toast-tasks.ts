@@ -1,20 +1,24 @@
 import { useCallback, useState } from 'react';
 import { errMsg } from '@/lib/desktop/bridge';
 
-export function useToastTasks() {
-  const [toast, setToast] = useState<string | null>(null);
+export type ToastTone = 'info' | 'warn';
+export interface Toast { message: string; tone: ToastTone }
 
-  const flash = useCallback((msg: string, ms = 1600) => {
-    setToast(msg);
-    window.setTimeout(() => setToast((t) => (t === msg ? null : t)), ms);
+export function useToastTasks() {
+  const [toast, setToast] = useState<Toast | null>(null);
+
+  const flash = useCallback((message: string, ms = 1600, tone: ToastTone = 'info') => {
+    const next = { message, tone };
+    setToast(next);
+    window.setTimeout(() => setToast((t) => (t === next ? null : t)), ms);
   }, []);
 
   const runTask = useCallback(
-    (task: () => void | Promise<void>, fallback = 'That action could not be completed') => {
+    (task: () => void | Promise<void>, fallback = 'That didn’t work') => {
       void Promise.resolve()
         .then(task)
         .catch((error: unknown) => {
-          flash(errMsg(error, fallback), 5000);
+          flash(errMsg(error, fallback), 5000, 'warn');
         });
     },
     [flash],

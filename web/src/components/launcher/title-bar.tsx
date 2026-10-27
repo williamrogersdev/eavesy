@@ -1,57 +1,136 @@
 'use client';
 
-import { Settings, X } from 'lucide-react';
-import { hidePanel } from '@/lib/desktop/bridge';
-import { accountInitial, type AccountState } from '@/components/launcher/settings-view';
-import { formatDuration } from '@/lib/utils';
-import { type LauncherView, type RunTask } from './types';
+import { useState } from 'react';
+import { ArrowDownCircle, FolderOpen, Globe, Laptop, LogOut, Settings, X } from 'lucide-react';
+import { hidePanel, installUpdate, openRecordingsFolder, openSettingsWindow, openWebApp } from '@/lib/desktop/bridge';
+import { type AccountState } from '@/components/launcher/settings-view';
+import { Button, IconButton, Mascot, Menu, type MenuItem } from './ui';
+import { type RunTask } from './types';
+import { useUpdateStatus } from './use-update-status';
 
+/** Quiet "Update" pill, shown only once a newer version is ready to install. */
+function UpdateButton({ runTask }: { runTask: RunTask }) {
+  const status = useUpdateStatus();
+  const [installing, setInstalling] = useState(false);
+  if (status?.state !== 'available') return null;
+  const install = () => {
+    if (installing) return;
+    setInstalling(true);
+    runTask(
+      () => installUpdate().finally(() => setInstalling(false)),
+      'Couldn’t install the update',
+    );
+  };
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={ArrowDownCircle}
+      loading={installing}
+      disabled={installing}
+      onClick={install}
+      title={`Eavesy ${status.version} is ready (you have ${status.currentVersion}). Install and relaunch.`}
+    >
+      {installing ? 'Updating…' : 'Update'}
+    </Button>
+  );
+}
+
+/** What the panel's one mascot shows: idle, or the live capture's state (hat up while the mic is live). */
+export type TitleMascot = 'idle' | 'listening' | 'thinking';
+
+/**
+ * 44px drag region: close on the left, the mascot and name centred, then
+ * "Sign in" when signed out and one Settings menu that also holds the account.
+ * The mascot is the panel's only one, so it carries the live capture's state;
+ * the live card below has the words and Stop. The project chip lives in the
+ * tab row, next to the captures it applies to.
+ */
 export function TitleBar({
-  capturePhase,
-  elapsed,
-  view,
+  setup,
   account,
   connecting,
-  recording,
+  signedOut,
   goSettings,
+  connect,
+  disconnect,
   runTask,
-  stopRecording,
+  mascot = 'idle',
 }: {
-  capturePhase: string;
-  elapsed: number;
-  view: LauncherView;
+  /** First-run setup is showing: no update pill or sign-in button. */
+  setup: boolean;
   account: AccountState;
   connecting: boolean;
-  recording: boolean;
+  /** The sync loop's token was rejected: recordings wait on this Mac. */
+  signedOut: boolean;
   goSettings: () => void;
+  connect: () => void;
+  disconnect: () => void;
   runTask: RunTask;
-  stopRecording: () => Promise<void>;
+  mascot?: TitleMascot;
 }) {
-  return (
-    <div
-      data-tauri-drag-region
-      className="flex h-11 shrink-0 items-center justify-between border-b border-border px-4"
-    >
-      <button
-        type="button"
-        title="Close (esc)"
-        aria-label="Close"
-        onClick={() => runTask(hidePanel, 'Could not close the launcher')}
-        className="grid h-[18px] w-[18px] place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--lr-brand)] hover:text-white"
-      >
-        <X className="h-3 w-3" strokeWidth={2.5} />
-      </button>
-      <span data-tauri-drag-region className="select-none text-xs font-semibold text-foreground">
-        Eavesy {capturePhase === 'recording' && <span className="ml-2 font-mono font-normal tabular-nums">{formatDuration(elapsed * 1000)}</span>}
-      </span>
-      {view !== 'settings' && <div className="flex items-center gap-1">
-        {account === null && view !== 'setup' && <button type="button" onClick={goSettings} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-[var(--lr-hover)]">{connecting ? 'Connecting…' : 'Sign in'}</button>}
-        {account && <button type="button" onClick={goSettings} title={`Signed in${account.email ? ` as ${account.email}` : ''}`} aria-label="Account" className="grid h-6 w-6 place-items-center rounded-full bg-[var(--lr-brand)] text-[11px] font-semibold text-white">{accountInitial(account)}</button>}
-        <button type="button" aria-label="Settings" title="Settings (⌘,)" onClick={goSettings} className="grid h-7 w-7 place-items-center rounded-full text-muted-foreground hover:bg-[var(--lr-hover)] hover:text-foreground"><Settings className="h-4 w-4" /></button>
-      </div>}
-      {view === 'settings' && !recording && <span className="w-[18px]" aria-hidden="true" />}
-      {recording && view === 'settings' && <button type="button" onClick={() => runTask(stopRecording)} className="rounded-md bg-[var(--lr-brand)] px-2 py-1 text-xs text-white">Stop &amp; save</button>}
+  const folderItem: MenuItem = {
+    label: 'Open ~/Eavesy folder',
+    icon: FolderOpen,
+    onSelect: () => runTask(openRecordingsFolder, 'Couldn’t open your Eavesy folder'),
+  };
+  const settingsItem: MenuItem = { label: 'Settings', icon: Settings, kbd: '⌘,', onSelect: goSettings };
+  const machineItem: MenuItem = {
+    label: 'Clean up this Mac',
+    icon: Laptop,
+    onSelect: () => runTask(() => openSettingsWindow('machine'), 'Couldn’t open settings'),
+  };
 
+  return (
+    <div data-tauri-drag-region className="ev-tb">
+      <div data-tauri-drag-region className="ev-tb-start">
+        <button
+          type="button"
+          title="Close (esc)"
+          aria-label="Close"
+          onClick={() => runTask(hidePanel, 'Couldn’t close the panel')}
+          className="ev-tb-close"
+        >
+          <X size={11} strokeWidth={2.5} aria-hidden />
+        </button>
+      </div>
+      <div data-tauri-drag-region className="ev-tb-title">
+        <Mascot size={22} state={mascot} recording={mascot === 'listening'} />
+        <span data-tauri-drag-region className="ev-tb-word">Eavesy</span>
+      </div>
+      <div data-tauri-drag-region className="ev-tb-end">
+        {!setup && <UpdateButton runTask={runTask} />}
+        {!setup && account === null && (
+          <Button size="sm" variant="ghost" loading={connecting} onClick={connect}>
+            {connecting ? 'Waiting for you in the browser…' : 'Sign in'}
+          </Button>
+        )}
+        <Menu
+          align="end"
+          trigger={<IconButton label="Settings and account" icon={Settings} title="Settings (⌘,)" />}
+          header={account ? (
+            <>
+              <div className="ev-menu-header-title">{account.name ?? account.email ?? 'Eavesy account'}</div>
+              {account.name && account.email && <div className="ev-menu-header-sub">{account.email}</div>}
+              <div className="ev-menu-header-sub" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <span
+                  aria-hidden
+                  style={{ width: 6, height: 6, borderRadius: 99, background: signedOut ? 'var(--ev-warn-ink)' : 'var(--ev-leaf)' }}
+                />
+                {signedOut ? 'Sync paused: sign in again' : 'Syncing to eavesy.com'}
+              </div>
+            </>
+          ) : undefined}
+          items={account ? [
+            settingsItem,
+            machineItem,
+            { label: 'Open eavesy.com', icon: Globe, onSelect: () => runTask(openWebApp, 'Couldn’t open the web app') },
+            folderItem,
+            'separator',
+            { label: 'Sign out', icon: LogOut, tone: 'warn', onSelect: disconnect },
+          ] : [settingsItem, machineItem, folderItem]}
+        />
+      </div>
     </div>
   );
 }

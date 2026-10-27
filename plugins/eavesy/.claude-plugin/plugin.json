@@ -1,0 +1,10 @@
+{
+  "name": "eavesy",
+  "version": "0.1.0",
+  "description": "Give Claude Code your Eavesy meetings, dictations and action items over MCP. Sign in with OAuth, no token to paste.",
+  "author": { "name": "Eavesy", "email": "hello@eavesy.com" },
+  "homepage": "https://eavesy.com/docs/connect-mcp",
+  "repository": "https://github.com/williamrogersdev/eavesy",
+  "license": "Apache-2.0",
+  "keywords": ["mcp", "meetings", "transcripts", "dictation", "context"]
+}

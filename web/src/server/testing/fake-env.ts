@@ -5,13 +5,28 @@ import type { ProcessingEnv, ProcessingMessage } from '@/server/processing-worke
 
 const MIGRATIONS = join(import.meta.dir, '../../../drizzle');
 
-function fakeD1(sqlite: Database) {
+export function fakeD1(sqlite: Database) {
   const statement = (query: string, params: unknown[] = []) => ({
     bind: (...next: unknown[]) => statement(query, next),
     async all() {
       return { results: sqlite.query(query).all(...(params as never[])), success: true, meta: {} };
     },
+    runSync() {
+      if (/\bRETURNING\b/i.test(query)) {
+        const results = sqlite.query(query).all(...(params as never[]));
+        const meta = sqlite.query('SELECT changes() AS changes').get() as { changes: number };
+        return { results, success: true, meta };
+      }
+      const result = sqlite.query(query).run(...(params as never[]));
+      return { results: [], success: true, meta: { changes: result.changes } };
+    },
     async run() {
+      // D1 batch returns rows for mutations with RETURNING, too.
+      if (/\bRETURNING\b/i.test(query)) {
+        const results = sqlite.query(query).all(...(params as never[]));
+        const meta = sqlite.query('SELECT changes() AS changes').get() as { changes: number };
+        return { results, success: true, meta };
+      }
       const result = sqlite.query(query).run(...(params as never[]));
       return { results: [], success: true, meta: { changes: result.changes } };
     },
@@ -25,8 +40,14 @@ function fakeD1(sqlite: Database) {
   });
   return {
     prepare: (query: string) => statement(query),
-    async batch(statements: { run(): Promise<unknown> }[]) {
-      return Promise.all(statements.map((s) => s.run()));
+    // Serial SQLite transactions model batch rollback; real-D1 tests are the authority.
+    async batch(statements: { runSync(): unknown }[]) {
+      sqlite.exec('BEGIN');
+      try {
+        const results = statements.map(s => s.runSync());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) { sqlite.exec('ROLLBACK'); throw error; }
     },
     async exec(query: string) {
       sqlite.exec(query);
@@ -40,7 +61,9 @@ export interface SentMessage {
   delaySeconds?: number;
 }
 
-export function createFakeEnv(opts: { transcribe?: (audio: Uint8Array) => unknown } = {}) {
+export function createFakeEnv(
+  opts: { transcribe?: (audio: Uint8Array, request: { vadFilter: boolean; language?: string }) => unknown } = {},
+) {
   const sqlite = new Database(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
@@ -78,12 +101,20 @@ export function createFakeEnv(opts: { transcribe?: (audio: Uint8Array) => unknow
       async send(body: ProcessingMessage, options?: { delaySeconds?: number }) {
         sent.push({ body, delaySeconds: options?.delaySeconds });
       },
+      async sendBatch(messages: Iterable<{ body: ProcessingMessage; delaySeconds?: number }>) {
+        for (const { body, delaySeconds } of messages) sent.push({ body, delaySeconds });
+      },
     },
     AI: {
-      async run(model: string, input: { audio?: string; text?: string[] }) {
+      async run(
+        model: string,
+        input: { audio?: string; text?: string[]; vad_filter?: boolean; language?: string },
+      ) {
         if (model.includes('whisper')) {
           const audio = Uint8Array.from(atob(input.audio ?? ''), (c) => c.charCodeAt(0));
-          return opts.transcribe ? opts.transcribe(audio) : { text: '', segments: [] };
+          return opts.transcribe
+            ? opts.transcribe(audio, { vadFilter: input.vad_filter ?? true, language: input.language })
+            : { text: '', segments: [] };
         }
         return { data: (input.text ?? []).map(() => new Array(1024).fill(0)) };
       },

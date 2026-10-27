@@ -1,12 +1,10 @@
-import { ANONYMOUS_TOKEN_STORAGE_KEY } from '@/lib/runtime';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { clockLabel } from './transcript-player';
 import { type MeetingData, type MeetingMeta } from './types';
 
 export function audioUrl(meeting: MeetingMeta): string | null {
   if (!meeting.audioR2Key) return null;
-  const token = typeof window !== 'undefined' ? window.localStorage.getItem(ANONYMOUS_TOKEN_STORAGE_KEY) : null;
-  return `/api/audio/${meeting.audioR2Key}${token ? `?anonymousSessionToken=${encodeURIComponent(token)}` : ''}`;
+  return `/api/audio/${meeting.audioR2Key}`;
 }
 
 export function buildContextMd(data: MeetingData): string {
@@ -40,6 +38,8 @@ export function buildContextMd(data: MeetingData): string {
   }
   if (meeting.transcriptOverrideMd?.trim()) {
     out.push(meeting.transcriptOverrideMd.trim());
+  } else if (meeting.agentTranscriptMd?.trim()) {
+    out.push('## Transcript', '', meeting.agentTranscriptMd.trim());
   } else if (segments?.length) {
     const labelled = hasBothSides(segments.map((s) => ({ speakerId: s.speakerId ?? null })));
     const names = parseSpeakerNames(meeting.speakerNamesJson);

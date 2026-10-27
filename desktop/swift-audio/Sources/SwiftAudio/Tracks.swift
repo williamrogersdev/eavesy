@@ -26,7 +26,10 @@ func splitChunk(system: [Float], mic: [Float]) -> SplitChunk {
 
 struct TrackLevel {
     static let frameSamples = 1_440
-    static let activeThreshold = 0.01
+    /// RMS above which a 30ms frame counts as active (about -48 dBFS). The
+    /// server skips tracks with too little active time, so this sits below
+    /// quiet speech on a built-in mic at arm's length, not just a headset.
+    static let activeThreshold = 0.004
 
     private(set) var peakRms = 0.0
     private(set) var activeFrames = 0

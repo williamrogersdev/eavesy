@@ -3,6 +3,17 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Mac app, docs and release-only changes don't touch what this deploys.
+    paths-ignore:
+      - "desktop/**"
+      - "docs/**"
+      - "packaging/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/macos-release.yml"
+      - ".github/workflows/release-desktop.yml"
+      - ".github/workflows/tag-desktop-release.yml"
   workflow_dispatch:
 
 concurrency:
@@ -28,9 +39,11 @@ jobs:
       EAVESY_MCP_DOMAIN: ${{ vars.EAVESY_MCP_DOMAIN }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # One release id for the web, processing and MCP Workers and the browser
-      # bundle, so a Sentry issue maps straight to a commit.
-      SENTRY_RELEASE: ${{ github.sha }}
-      VITE_SENTRY_RELEASE: ${{ github.sha }}
+      # bundle, so a PostHog error maps straight to a commit.
+      RELEASE: ${{ github.sha }}
+      VITE_RELEASE: ${{ github.sha }}
+      # PostHog project API key (public, phc_…). Unset ships no analytics.
+      POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
     steps:
       - name: Check deploy configuration
         env:
@@ -52,6 +65,7 @@ jobs:
           (cd web && bun install --frozen-lockfile)
           (cd workers/processing && bun install --frozen-lockfile)
           (cd workers/mcp && bun install --frozen-lockfile)
+          (cd workers/meeting-bot && bun install --frozen-lockfile)
 
       - name: Render Wrangler configs
         run: node scripts/render-wrangler.mjs
@@ -60,7 +74,6 @@ jobs:
         env:
           CLERK_PK: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
           MAC_DMG_URL: ${{ vars.VITE_MAC_DMG_URL }}
-          BROWSER_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
         run: |
           {
             echo "VITE_CLERK_PUBLISHABLE_KEY=$CLERK_PK"
@@ -70,7 +83,7 @@ jobs:
             echo "VITE_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app"
             echo "VITE_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app"
             if [ -n "$MAC_DMG_URL" ]; then echo "VITE_MAC_DMG_URL=$MAC_DMG_URL"; fi
-            if [ -n "$BROWSER_SENTRY_DSN" ]; then echo "VITE_SENTRY_DSN=$BROWSER_SENTRY_DSN"; fi
+            if [ -n "$POSTHOG_KEY" ]; then echo "VITE_POSTHOG_KEY=$POSTHOG_KEY"; fi
           } > web/.env.production
 
       - name: Build
@@ -78,12 +91,24 @@ jobs:
         run: bun run build
       - name: Typecheck
         run: |
-          (cd web && bunx tsc --noEmit)
-          (cd workers/processing && bunx tsc --noEmit)
-          (cd workers/mcp && bunx tsc --noEmit)
+          (cd web && bun run typecheck)
+          (cd workers/processing && bun run typecheck)
+          (cd workers/mcp && bun run typecheck)
+          (cd workers/meeting-bot && bun run typecheck)
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Meeting bot tests
+        working-directory: workers/meeting-bot
+        run: |
+          bun run test:bot
+          bun run lint:bot
       - name: Lint
         working-directory: web
-        run: bunx eslint . --max-warnings 0
+        run: bun run lint
+      - name: Lint rule parity
+        working-directory: web
+        run: bun run lint:parity
       - name: Test
         working-directory: web
         run: bun test src
@@ -96,6 +121,33 @@ jobs:
 
       - name: Apply D1 migrations
         run: bun run db:apply:remote
+
+      # First: the web and processing Workers will bind to it, and a binding
+      # to a Worker that doesn't exist fails their deploy. Wrangler builds the
+      # bot's image with Docker and pushes it to the account's registry.
+      # Needs Cloudflare Containers on the account and Docker on the runner
+      # (docs/DEPLOY.md). A self-host without them removes the MEETING_BOTS
+      # bindings from web/wrangler.jsonc and workers/processing/wrangler.toml
+      # and this step; the notetaker page then says it isn't available.
+      - name: Deploy meeting bot Worker
+        id: meeting_bot
+        run: bun run deploy:meeting-bot
+      - name: Explain a meeting bot deploy failure
+        if: failure() && steps.meeting_bot.outcome == 'failure'
+        # Wrangler only says a Containers API call failed. Ask the API directly
+        # so the log shows why: its status and error messages, never the token.
+        run: |
+          for path in containers/me containers/applications; do
+            echo "GET /accounts/<account>/$path"
+            curl -sS -o /tmp/cf.json -w 'HTTP %{http_code}\n' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/$path" || true
+            jq -c '{success, errors, messages}' /tmp/cf.json 2>/dev/null || head -c 500 /tmp/cf.json
+            echo
+          done
+          echo "Token:"
+          curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify | jq -c '{success, errors, status: .result.status}' || true
 
       - name: Deploy processing Worker
         run: bun run deploy:processing
@@ -111,10 +163,13 @@ jobs:
             local url=$1 status
             for attempt in 1 2 3 4 5; do
               status=$(curl -s -o /tmp/body -w '%{http_code}' "$url" || echo 000)
-              if [ "$status" -ge 200 ] && [ "$status" -lt 500 ]; then
-                echo "ok $status $url"
-                return 0
-              fi
+              # 2xx and redirects are healthy. 401/403/429 can be the edge
+              # turning a CI runner away, not the app. A 404 or a 5xx is a
+              # broken deploy.
+              case "$status" in
+                2??|3??) echo "ok $status $url"; return 0 ;;
+                401|403|429) echo "::warning::$url returned $status; treating it as up"; return 0 ;;
+              esac
               sleep 5
             done
             echo "::error::$url returned $status"
@@ -131,8 +186,15 @@ jobs:
             exit 1
           fi
 
-      - name: Roll back web Worker
+      # The web, MCP and processing Workers ship together from one commit, so
+      # they go back together. The meeting bot Worker (a Durable Object with a
+      # container image) is left as deployed.
+      - name: Roll back Workers
         if: failure() && steps.smoke.outcome == 'failure'
-        working-directory: web
         run: |
-          ../scripts/cf bunx wrangler rollback --yes --message "auto-rollback: smoke test failed on ${GITHUB_SHA::7}"
+          message="auto-rollback: smoke test failed on ${GITHUB_SHA::7}"
+          failed=0
+          (cd web && ../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          (cd workers/mcp && ../../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          (cd workers/processing && ../../scripts/cf bunx wrangler rollback --yes --message "$message") || failed=1
+          exit $failed

@@ -1,7 +1,7 @@
 {
   "name": "@eavesy/cli",
   "version": "0.1.0",
-  "description": "Search your local Eavesy captures (meetings, clipboard notes, screenshots) from the terminal or any MCP client.",
+  "description": "Search your local Eavesy captures (meetings, clipboard notes, screenshots) from the terminal or any MCP client. Read-only.",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {
@@ -9,12 +9,21 @@
     "url": "git+https://github.com/williamrogersdev/eavesy.git",
     "directory": "cli"
   },
-  "homepage": "https://eavesy.com/docs/local-cli",
-  "keywords": ["eavesy", "mcp", "cli", "notes", "meetings"],
+  "homepage": "https://github.com/williamrogersdev/eavesy/tree/main/cli#readme",
+  "keywords": [
+    "eavesy",
+    "mcp",
+    "cli",
+    "notes",
+    "meetings"
+  ],
   "bin": {
     "eavesy": "dist/eavesy.js"
   },
-  "files": ["dist/eavesy.js", "README.md"],
+  "files": [
+    "dist/eavesy.js",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -23,7 +32,6 @@
   },
   "scripts": {
     "build": "bun build src/bin.ts --target node --outfile dist/eavesy.js",
-    "compile": "bun build src/bin.ts --compile --minify --outfile dist/eavesy",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "prepublishOnly": "bun run typecheck && bun test && bun run build"

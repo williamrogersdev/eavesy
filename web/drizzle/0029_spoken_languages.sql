@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `spoken_languages_json` text;
