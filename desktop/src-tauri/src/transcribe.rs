@@ -58,8 +58,13 @@ pub fn paste_with_whisper(app: AppHandle, id: String, audio: PathBuf, heard_on_d
     });
 }
 
-/// How long a paste waits for the tidied words before it types them as heard.
-const POLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1800);
+/// How long a paste waits for the tidied words before it types them as
+/// heard. At 1.8s half of all dictations ran out and went out with their
+/// "like"s and misheard words in, so a short one gets 4s and a long one,
+/// which the model takes longer to write out, a little more.
+fn polish_timeout(text: &str) -> std::time::Duration {
+    std::time::Duration::from_millis((4_000 + text.chars().count() as u64 * 2).min(8_000))
+}
 
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
@@ -70,7 +75,7 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> P
         return Polished { text: strip_fillers(text), written: None };
     };
     let started = std::time::Instant::now();
-    let result = polish_with(&credential, text, project, POLISH_TIMEOUT);
+    let result = polish_with(&credential, text, project, polish_timeout(text));
     let polish_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(polished) => {
@@ -109,8 +114,10 @@ pub struct Written {
 }
 
 /// The model-free part of tidying, as the server does it: "um", "uh", "hmm"
-/// and the like go, with the comma after them, and spacing is tidied. Never
-/// changes a word the user meant, so it is safe on their own corrections too.
+/// and the like go, with the comma after them, and so do "like", "you know"
+/// and "I mean" where commas set them apart as filler; spacing is tidied.
+/// Never changes a word the user meant, so it is safe on their own
+/// corrections too.
 pub fn strip_fillers(text: &str) -> String {
     let out = drop_fillers(text);
     let mut chars = out.chars();
@@ -131,10 +138,34 @@ pub fn drop_fillers(text: &str) -> String {
     static DOUBLED_PUNCT: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"([,;:])([,.;:!?])").unwrap());
     static SPACES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
+    // "like", "you know" or "I mean" opening the text or a clause and closed
+    // by a comma or the sentence's end. "I like, um, apples" and "as you
+    // know, it" are not this, nor is "like, five" (about five) or "a tool,
+    // like, a hammer" (such as): after a comma, "like" goes only when the
+    // comma follows a word like "and" or "so".
+    static DISCOURSE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(^|[,.;:!?])\s*(like|you know|i mean)(,|[.?!]|$)(\s*)(\S)?").unwrap()
+    });
     // Neighbouring fillers share a separator, so one pass can miss the next.
     let mut out = text.to_string();
     loop {
-        let next = FILLER.replace_all(&out, "$1$2").into_owned();
+        let next = FILLER.replace_all(&out, "$1$2");
+        let next = DISCOURSE.replace_all(&next, |caps: &regex::Captures| {
+            let before = &caps[1];
+            let after = caps.get(5).map_or("", |m| m.as_str());
+            let like = caps[2].eq_ignore_ascii_case("like");
+            let start = caps.get(0).map_or(0, |m| m.start());
+            if like && (after.starts_with(|c: char| c.is_ascii_digit()) || (before == "," && !follows_a_connective(&next[..start]))) {
+                return caps[0].to_string();
+            }
+            let terminates = matches!(before, "." | "!" | "?");
+            // One mark between the words either side: a sentence's end beats a comma.
+            let mark = if &caps[3] == "," || caps[3].is_empty() || terminates { before } else { &caps[3] };
+            let space = if after.is_empty() || mark.is_empty() { "" } else { " " };
+            // Dropped from the start of a sentence: the next word starts it.
+            let after = if terminates { after.to_uppercase() } else { after.to_string() };
+            format!("{mark}{space}{after}")
+        }).into_owned();
         if next == out { break; }
         out = next;
     }
@@ -142,6 +173,13 @@ pub fn drop_fillers(text: &str) -> String {
     let out = DOUBLED_PUNCT.replace_all(&out, "$2");
     let out = SPACES.replace_all(&out, " ");
     out.trim_start_matches(|c: char| c.is_whitespace() || ",.;:".contains(c)).trim_end().to_string()
+}
+
+/// Whether `text` ends in a word that only joins clauses ("and", "but",
+/// "so"…): a "like" set off by commas after one is filler, not "such as".
+fn follows_a_connective(text: &str) -> bool {
+    let word = text.rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+    ["and", "but", "so", "or", "yeah", "okay", "because", "then", "well"].iter().any(|w| word.eq_ignore_ascii_case(w))
 }
 
 /// How long a tone change waits for its rewrite: asked for, and watched, but
@@ -463,6 +501,32 @@ mod tests {
         assert_eq!(super::drop_fillers("um, iOS build, uh, fixed"), "iOS build, fixed");
     }
 
+    #[test]
+    fn spoken_filler_goes_where_commas_set_it_apart() {
+        use super::strip_fillers;
+        assert_eq!(strip_fillers("And, like, for example, but, like, yeah"), "And, for example, but, yeah");
+        assert_eq!(strip_fillers("Like, you know, it works."), "It works.");
+        assert_eq!(strip_fillers("It was huge, you know."), "It was huge.");
+        assert_eq!(strip_fillers("Ship it. I mean, today."), "Ship it. Today.");
+        assert_eq!(strip_fillers("So, like, you know, the build"), "So, the build");
+        // Meant words stay.
+        assert_eq!(strip_fillers("I like, um, apples"), "I like, apples");
+        assert_eq!(strip_fillers("As you know, it broke"), "As you know, it broke");
+        assert_eq!(strip_fillers("It costs, like, 5 dollars"), "It costs, like, 5 dollars");
+        assert_eq!(strip_fillers("What I mean, is this"), "What I mean, is this");
+        assert_eq!(strip_fillers("Looks like rain"), "Looks like rain");
+        assert_eq!(strip_fillers("I want a tool, like, a hammer"), "I want a tool, like, a hammer");
+        // One mark where the filler ended a sentence.
+        assert_eq!(strip_fillers("Ship it. You know. Next"), "Ship it. Next");
+        assert_eq!(strip_fillers("It works. Like."), "It works.");
+    }
+
+    #[test]
+    fn a_longer_dictation_waits_longer_for_its_polish() {
+        assert_eq!(super::polish_timeout("ship it"), std::time::Duration::from_millis(4_014));
+        assert_eq!(super::polish_timeout(&"word ".repeat(400)), std::time::Duration::from_millis(8_000));
+    }
+
     use super::*;
 
     #[test]
@@ -713,7 +777,7 @@ mod tests {
             &credential(&server),
             "um so ship it ship it today",
             None,
-            POLISH_TIMEOUT,
+            polish_timeout("um so ship it ship it today"),
         );
         assert_eq!(polished.map(|polished| polished.text), Ok("So ship it today.".to_string()));
     }
@@ -731,7 +795,7 @@ mod tests {
                 })))
                 .mount(&server),
         );
-        let polished = polish_with(&credential(&server), "um ship it today", Some("proj_1"), POLISH_TIMEOUT).unwrap();
+        let polished = polish_with(&credential(&server), "um ship it today", Some("proj_1"), polish_timeout("")).unwrap();
         assert_eq!(polished.text, "Ship it today.");
         assert_eq!(polished.written, Some(Written { style: "concise".into(), for_agents: true, project_id: Some("proj_1".into()), applied: true }));
         // Sent on to the HUD as the server spelled it, and without a project when there is none.
@@ -752,7 +816,7 @@ mod tests {
                 ))
                 .mount(&server),
         );
-        let polished = polish_with(&credential(&server), "fix the build", Some("proj_1"), POLISH_TIMEOUT);
+        let polished = polish_with(&credential(&server), "fix the build", Some("proj_1"), polish_timeout(""));
         assert_eq!(polished.map(|polished| polished.text), Ok("Fix the build.".to_string()));
     }
 
@@ -796,8 +860,8 @@ mod tests {
                 .await;
         });
         let credential = credential(&server);
-        assert_eq!(restyle_with(&credential, "Long words.", None, "concise", false, POLISH_TIMEOUT), Err("Too long to rewrite here".into()));
-        assert_eq!(restyle_with(&credential, "Ship it today.", None, "friendly", false, POLISH_TIMEOUT), Err("Couldn't rewrite it in that tone".into()));
+        assert_eq!(restyle_with(&credential, "Long words.", None, "concise", false, polish_timeout("")), Err("Too long to rewrite here".into()));
+        assert_eq!(restyle_with(&credential, "Ship it today.", None, "friendly", false, polish_timeout("")), Err("Couldn't rewrite it in that tone".into()));
     }
 
     #[test]
