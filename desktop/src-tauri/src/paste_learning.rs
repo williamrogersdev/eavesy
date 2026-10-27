@@ -233,9 +233,10 @@ mod mac {
                 *last() = Some(LastPaste { field, prefix: prefix.clone(), suffix: suffix.clone(), pasted: pasted.clone() });
             }
             notify(json!({"status":"watching"}));
-            let mut baseline = pasted.clone();
-            let mut candidate = pasted;
-            let mut stable = 0;
+            // Only the passage as the user leaves it is learned: a word half typed
+            // or mistyped and fixed a moment later must never become a rule.
+            let mut last_read = pasted.clone();
+            let mut settled = pasted.clone();
             for _ in 0..120 {
                 std::thread::sleep(Duration::from_millis(500));
                 if GENERATION.load(Ordering::SeqCst) != generation || !still_focused(&target) {
@@ -247,31 +248,19 @@ mod mac {
                 let Some(current) = super::passage(&value, &prefix, &suffix) else {
                     break;
                 };
-                if current == candidate {
-                    stable += 1;
-                } else {
-                    candidate = current;
-                    stable = 0;
+                if current == last_read {
+                    settled = current.clone();
                 }
-                if stable < 4
-                    || candidate == baseline
-                    || candidate.trim().is_empty()
-                    || candidate.encode_utf16().count() > 12_000
-                {
-                    continue;
-                }
-                match feedback(&baseline, &candidate) {
-                    Ok(result) => {
-                        baseline = candidate.clone();
-                        notify(json!({"status":"saved", "learned":result["learned"], "words":result["words"]}));
-                    }
-                    Err(_) => {
-                        notify(
-                            json!({"status":"failed", "message":"Could not save correction. Use Edit transcript in Eavesy to retry."}),
-                        );
-                        break;
-                    }
-                }
+                last_read = current;
+            }
+            if settled == pasted || settled.trim().is_empty() || settled.encode_utf16().count() > 12_000 {
+                return;
+            }
+            match feedback(&pasted, &settled) {
+                Ok(result) => notify(json!({"status":"saved", "learned":result["learned"], "words":result["words"]})),
+                Err(_) => notify(
+                    json!({"status":"failed", "message":"Could not save correction. Use Edit transcript in Eavesy to retry."}),
+                ),
             }
         }))
     }

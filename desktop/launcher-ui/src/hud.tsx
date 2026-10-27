@@ -342,7 +342,9 @@ function useLearned(): { text: string; title?: string; tone: 'leaf' | 'warn' } |
   useEvent('dictionary:learning', (payload) => {
     const event = payload as LearningEvent;
     const text = learnedLabel(event);
-    if (text) setLearned({ text, title: 'Saved to your dictionary', tone: 'leaf' });
+    if (text) setLearned({ text, tone: 'leaf', title: text.startsWith('Suggested')
+      ? 'Suggested for your dictionary. It applies once you make the same fix again, or keep it in Settings → Dictionary.'
+      : 'Saved to your dictionary' });
     else if (event.status === 'failed') setLearned({ text: 'Not saved to dictionary', title: event.message, tone: 'warn' });
   });
   useEffect(() => {

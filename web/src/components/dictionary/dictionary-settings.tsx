@@ -1,13 +1,16 @@
 import './dictionary.css';
 
 import { ArrowRight, Check, ListPlus, Pencil, Plus, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, IconButton } from '@/components/launcher/ui';
 import { dictionaryRequest } from '@/lib/desktop/bridge';
 import { MAX_BULK_REPLACEMENTS, parseReplacements } from '@/lib/dictionary/bulk';
 import { normalizeTerm } from '@/lib/dictionary/learning';
 
-type Entry = { id: string; from: string; to: string };
+type Entry = { id: string; from: string; to: string; origin?: 'manual' | 'learned' | null; seen?: number };
+
+/** Learned from one edit and not yet kept: listed for review, never applied (CONFIRMING_SIGHTINGS on the server). */
+const isSuggestion = (entry: Entry) => entry.origin !== 'manual' && (entry.seen ?? 1) < 2;
 type SaveResult = { learned?: number; skipped?: number; status?: string; message?: string };
 
 /** A list this long gets a filter box. */
@@ -49,7 +52,7 @@ function EntryRow({ entry, busy, onSave, onRemove }: {
       <button type="button" className="ev-dict-pair ev-dict-view" disabled={busy} onClick={start} aria-label={`Edit ${entry.from} → ${entry.to}`}>
         <span className="ev-dict-from">{entry.from}</span>
         <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
-        <span className="ev-dict-to">{entry.to}</span>
+        <span className="ev-dict-to">{entry.to}{entry.origin !== 'manual' && <span className="ev-dict-tag" title="Learned from fixes you made more than once">learned</span>}</span>
       </button>
       <span className="ev-dict-actions">
         <IconButton label={`Edit ${entry.from}`} icon={Pencil} disabled={busy} onClick={start} />
@@ -59,11 +62,29 @@ function EntryRow({ entry, busy, onSave, onRemove }: {
   );
 }
 
+function SuggestionRow({ entry, busy, onKeep, onDismiss }: { entry: Entry; busy: boolean; onKeep: () => void; onDismiss: () => void }) {
+  return (
+    <li className="ev-dict-row">
+      <span className="ev-dict-pair ev-dict-view" data-static>
+        <span className="ev-dict-from">{entry.from}</span>
+        <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
+        <span className="ev-dict-to">{entry.to}</span>
+      </span>
+      <span className="ev-dict-actions" data-shown>
+        <Button variant="outline" size="sm" icon={Check} disabled={busy} onClick={onKeep} aria-label={`Keep ${entry.from} → ${entry.to}`}>Keep</Button>
+        <IconButton label={`Dismiss ${entry.from} → ${entry.to}`} icon={X} disabled={busy} onClick={onDismiss} />
+      </span>
+    </li>
+  );
+}
+
 /**
  * Replacements: when Eavesy hears one thing, it types another. Add one, paste many,
  * edit or remove them in place. Fixes made to a transcript land here too.
+ * `active`: the section just came on screen, so the cursor waits in "Heard as".
  */
-export function DictionarySettings() {
+export function DictionarySettings({ active = false }: { active?: boolean }) {
+  const heardAs = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -83,6 +104,7 @@ export function DictionarySettings() {
     finally { setLoading(false); }
   }, [load]);
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { if (active && loaded) heardAs.current?.focus(); }, [active, loaded]);
 
   /** Runs one change, then shows the list as the server now has it. */
   const run = async (change: () => Promise<string>, undo?: Entry): Promise<boolean> => {
@@ -152,20 +174,38 @@ export function DictionarySettings() {
     return skipped ? `${added} ${skipped === 1 ? '1 line was' : `${skipped} lines were`} skipped: each side needs a word or short phrase, and they must differ.` : added;
   });
 
+  const suggestions = entries.filter(isSuggestion);
+  const kept = entries.filter((entry) => !isSuggestion(entry));
+
+  const keep = (entry: Entry) => void run(async () => {
+    await put({ from: entry.from, to: entry.to });
+    return `Kept “${entry.from} → ${entry.to}”.`;
+  });
+  const dismiss = (entry: Entry) => void run(async () => {
+    await dictionaryRequest('DELETE', { id: entry.id });
+    return `Dismissed “${entry.from} → ${entry.to}”.`;
+  }, entry);
+  const dismissAll = () => void run(async () => {
+    for (let at = 0; at < suggestions.length; at += 10) {
+      await Promise.all(suggestions.slice(at, at + 10).map((entry) => dictionaryRequest('DELETE', { id: entry.id })));
+    }
+    return suggestions.length === 1 ? 'Dismissed 1 suggestion.' : `Dismissed ${suggestions.length} suggestions.`;
+  });
+
   const query = normalizeTerm(filter);
-  const shown = query ? entries.filter((entry) => normalizeTerm(`${entry.from} ${entry.to}`).includes(query)) : entries;
+  const shown = query ? kept.filter((entry) => normalizeTerm(`${entry.from} ${entry.to}`).includes(query)) : kept;
   const disabled = !loaded || busy;
 
   return (
     <Card title="Replacements">
       <div className="ev-set-body flex flex-col gap-3">
         <p className="ev-set-hint">
-          When Eavesy hears the word on the left, it types the one on the right. When you fix a word in a transcript, Eavesy adds it here too.
+          When Eavesy hears the word on the left, it types the one on the right. When you fix a word in a transcript, Eavesy suggests it below, and uses it once you make the same fix again or keep it.
         </p>
 
         {bulk === null ? (
           <form className="ev-dict-pair ev-dict-add" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-            <input aria-label="Heard as" placeholder="Heard as, like “easy”" value={from} maxLength={128} disabled={disabled} onChange={(e) => setFrom(e.target.value)} className="ev-field-input" />
+            <input ref={heardAs} aria-label="Heard as" placeholder="Heard as, like “easy”" value={from} maxLength={128} disabled={disabled} onChange={(e) => setFrom(e.target.value)} className="ev-field-input" />
             <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
             <input aria-label="Type instead" placeholder="Type instead, like “Eavesy”" value={to} maxLength={128} disabled={disabled} onChange={(e) => setTo(e.target.value)} className="ev-field-input" />
             <span className="ev-dict-actions">
@@ -217,10 +257,25 @@ export function DictionarySettings() {
         {loading && <p role="status" className="ev-set-hint">Loading your dictionary…</p>}
         {error && <div role="alert" className="ev-settings-feedback"><p>{error}</p>{!loaded && <Button size="sm" variant="outline" disabled={busy || loading} onClick={() => void reload()}>Retry</Button>}</div>}
 
-        {entries.length > FILTER_FROM && (
+        {suggestions.length > 0 && (
+          <section className="ev-dict-suggested" aria-labelledby="dictionary-suggested">
+            <div className="ev-dict-bulk-foot">
+              <p id="dictionary-suggested" className="ev-set-label">Suggested from your edits · {suggestions.length}</p>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={dismissAll}>Dismiss all</Button>
+            </div>
+            <p className="ev-set-hint">Not used yet. Keep the ones that are right; the rest go away when you dismiss them.</p>
+            <ul className="ev-dict-list">
+              {suggestions.map((entry) => (
+                <SuggestionRow key={entry.id} entry={entry} busy={busy} onKeep={() => keep(entry)} onDismiss={() => dismiss(entry)} />
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {kept.length > FILTER_FROM && (
           <label className="ev-dict-filter">
             <Search size={13} aria-hidden />
-            <input aria-label="Find a replacement" placeholder={`Find in ${entries.length}`} value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <input aria-label="Find a replacement" placeholder={`Find in ${kept.length}`} value={filter} onChange={(e) => setFilter(e.target.value)} />
           </label>
         )}
         {shown.length > 0 && (
@@ -233,7 +288,7 @@ export function DictionarySettings() {
         {loaded && !entries.length && !error && (
           <p className="ev-set-hint">Nothing here yet. Add one above, or fix a word in a transcript and Eavesy will remember it.</p>
         )}
-        {loaded && entries.length > 0 && !shown.length && <p className="ev-set-hint">Nothing matches “{filter.trim()}”.</p>}
+        {loaded && kept.length > 0 && !shown.length && <p className="ev-set-hint">Nothing matches “{filter.trim()}”.</p>}
       </div>
     </Card>
   );

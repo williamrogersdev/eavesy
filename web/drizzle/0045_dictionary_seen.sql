@@ -1,0 +1,1 @@
+ALTER TABLE `personal_dictionary` ADD `seen` integer DEFAULT 1 NOT NULL;

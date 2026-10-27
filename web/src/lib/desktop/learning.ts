@@ -3,7 +3,8 @@ export interface LearningEvent {
   status: string;
   message?: string;
   learned?: number;
-  words?: { from: string; to: string }[] | null;
+  /** `pending`: seen once, kept as a suggestion until it is made again or kept in Settings. */
+  words?: { from: string; to: string; pending?: boolean }[] | null;
 }
 
 /** A short confirmation naming the word that was learned, or null when nothing new was saved. */
@@ -14,5 +15,6 @@ export function learnedLabel(event: LearningEvent): string | null {
   if (count === 0) return null;
   const first = words[0]?.to.trim();
   if (!first) return `Learned ${count} correction${count === 1 ? '' : 's'}`;
-  return count > 1 ? `Added “${first}” +${count - 1}` : `Added “${first}”`;
+  const verb = words.every((word) => word.pending) ? 'Suggested' : 'Added';
+  return count > 1 ? `${verb} “${first}” +${count - 1}` : `${verb} “${first}”`;
 }
