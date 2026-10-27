@@ -48,16 +48,16 @@ export const Route = createFileRoute('/api/dictations/polish')({
           return Response.json({ text: stripFillers(text), polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
 
-        const overQuota = await guardUserQuota(actor.userId, 'dictation');
-        if (overQuota) return overQuota;
-
-        const [user, entries, projectRow] = await Promise.all([
+        // All at once: the Mac app waits for these words before it pastes.
+        const [overQuota, user, entries, projectRow] = await Promise.all([
+          guardUserQuota(actor.userId, 'dictation'),
           usersRepo.getById(getDb(), actor.userId),
           dictionary.listForTranscription(getDb(), actor.userId),
           parsed.data.projectId
             ? projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
             : null,
         ]);
+        if (overQuota) return overQuota;
         const project = user ? projectRow : null;
         const byoKey = resolveModelPlan(user).summary.apiKey;
         const tone = writtenWith(parsed.data, user, project);

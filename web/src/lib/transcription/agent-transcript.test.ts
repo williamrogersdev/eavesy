@@ -53,6 +53,17 @@ describe('stripFillers', () => {
     expect(stripFillers('Um, I think that that is fine.')).toBe('I think that that is fine.');
     expect(stripFillers('Hmm. The umbrella stays.')).toBe('The umbrella stays.');
   });
+
+  test('drops "like", "you know" and "I mean" only where commas set them apart', () => {
+    expect(stripFillers('And, like, for example, but, like, yeah')).toBe('And, for example, but, yeah');
+    expect(stripFillers('Like, you know, it works.')).toBe('It works.');
+    expect(stripFillers('It was huge, you know.')).toBe('It was huge.');
+    expect(stripFillers('Ship it. I mean, today.')).toBe('Ship it. Today.');
+    expect(stripFillers('I like, um, apples')).toBe('I like, apples');
+    expect(stripFillers('As you know, it broke')).toBe('As you know, it broke');
+    expect(stripFillers('It costs, like, 5 dollars')).toBe('It costs, like, 5 dollars');
+    expect(stripFillers('Looks like rain')).toBe('Looks like rain');
+  });
 });
 
 describe('cleanedChunkIsValid', () => {

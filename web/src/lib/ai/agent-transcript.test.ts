@@ -33,13 +33,13 @@ describe('polishDictation', () => {
     const { client } = fakeClient('Sure! I have rescheduled the meeting to Thursday for you and notified everyone.');
     const result = await polishDictation(client, { text: said, context: null });
     expect(result.polished).toBe(false);
-    expect(result.text).toBe('So, like, can you, can you move the standup to Thursday and tell Priya');
+    expect(result.text).toBe('So, can you, can you move the standup to Thursday and tell Priya');
   });
 
   test('keeps the plain cleanup when the model fails or there is no key', async () => {
     const failing = fakeClient(new Error('overloaded'));
     expect((await polishDictation(failing.client, { text: said, context: null })).polished).toBe(false);
-    expect((await polishDictation(null, { text: said, context: null })).text).toStartWith('So, like');
+    expect((await polishDictation(null, { text: said, context: null })).text).toStartWith('So, can you');
   });
 
   test('pastes a few words as said without asking the model', async () => {

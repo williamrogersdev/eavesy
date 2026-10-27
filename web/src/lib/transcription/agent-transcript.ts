@@ -54,14 +54,27 @@ export function toTurns(
 }
 
 const FILLERS = /(^|[\s,.;:!?])(?:u+m+|u+h+m*|e+r+m+|h+m+|m+h*m+)(?=[\s,.;:!?]|$)[,.]?/gi;
+/** "like", "you know" or "I mean" opening the text or a clause, closed by a comma or the sentence's end. Not "like, 5" (about five). */
+const DISCOURSE = /(^|[,.;:!?])\s*(?:like(?!,\s*\d)|you know|i mean)(?:,|(?=[.?!]|$))\s*(\S)?/gi;
 const STUTTER_WORDS = new Set(['i', 'a', 'the', 'and', 'so', 'we', 'it', 'to', 'you', 'but', 'is', 'in', 'of']);
 
 /**
- * The safe part of cleanup, without a model: drops "um"/"uh"-style fillers
- * and stuttered short words, and tidies spacing. Never changes meaning.
+ * The safe part of cleanup, without a model: drops "um"/"uh"-style fillers,
+ * "like"/"you know"/"I mean" where commas set them apart, and stuttered short
+ * words, and tidies spacing. Never changes meaning.
  */
 export function stripFillers(text: string): string {
   let out = text.replace(FILLERS, '$1');
+  // Neighbouring ones share a comma, so one pass can miss the next.
+  for (let previous = ''; previous !== out; ) {
+    previous = out;
+    out = out.replace(DISCOURSE, (_match: string, before: string, after: string | undefined) => {
+      if (!after) return before;
+      // Dropped from the start of a sentence: the next word starts it.
+      const next = /[.!?]/.test(before) ? after.toUpperCase() : after;
+      return before ? `${before} ${next}` : next;
+    });
+  }
   out = out.replace(/\b(\w+)(?:[\s,]+\1\b)+/gi, (match: string, word: string) =>
     STUTTER_WORDS.has(word.toLowerCase()) || match.split(/[\s,]+/).length >= 3 ? word : match,
   );
