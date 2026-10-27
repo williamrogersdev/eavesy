@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "meeting-pending",
+  "title": "Pending sync",
+  "date": "2026-06-16T09:30:00+00:00",
+  "startedAt": 1781602200000,
+  "durationSeconds": 300,
+  "source": "mic",
+  "status": "processing",
+  "files": { "audio": null, "video": null, "summary": "summary.md", "transcript": "transcript.md", "notes": "notes.md" }
+}

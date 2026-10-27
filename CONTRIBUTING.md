@@ -85,6 +85,7 @@ bun bench/score.ts --check       # two-track transcription bench
 (cd ../workers/mcp && bun run typecheck && bunx wrangler deploy --dry-run --outdir /tmp/m)
 (cd ../workers/meeting-bot && bun run typecheck && bun run test:bot && bun run lint:bot)
 docker build --platform linux/amd64 ../workers/meeting-bot   # the bot's image
+(cd ../cli && bunx tsc --noEmit && bun test && bun run build)  # local CLI + stdio MCP
 
 # desktop
 cd desktop/src-tauri && cargo test --locked
