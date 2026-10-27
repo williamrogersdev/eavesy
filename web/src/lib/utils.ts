@@ -18,7 +18,8 @@ export function formatDuration(ms: number): string {
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  const kb = Math.round(bytes / 1024);
+  if (kb < 1024) return `${kb} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
@@ -26,11 +27,13 @@ export function meetingFolderSlug(title: string, startedAt: Date): string {
   const datePart = startedAt.toISOString().slice(0, 10);
   const safeTitle = title
     .normalize('NFKD')
+    .replace(/\s+/g, ' ')
     .replace(/[^\x20-\x7E]/g, '')
     .replace(/[\\/:*?"<>|]/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/ +/g, ' ')
     .trim()
-    .slice(0, 80);
+    .slice(0, 80)
+    .trimEnd();
   return `${datePart} ${safeTitle || 'Recording'}`;
 }
 
