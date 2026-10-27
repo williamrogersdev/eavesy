@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "meeting-design-review",
+  "remoteMeetingId": "mtg_123",
+  "title": "Design review",
+  "date": "2026-06-15T15:00:00+00:00",
+  "startedAt": 1781535600000,
+  "durationSeconds": 1820,
+  "source": "mixed",
+  "status": "complete",
+  "files": {
+    "audio": "audio.m4a",
+    "video": null,
+    "summary": "summary.md",
+    "transcript": "transcript.md",
+    "notes": "notes.md"
+  }
+}
