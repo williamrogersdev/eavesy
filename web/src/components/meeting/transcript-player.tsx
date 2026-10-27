@@ -8,6 +8,7 @@ import { useMe } from '@/lib/api/use-me';
 import { languageName } from '@/lib/transcription/language';
 import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
+import { mergeTranslations, requestTranslations, spokenLanguages, translationFor, type Translations } from './transcript-translation';
 
 export interface TranscriptLine {
   id: string;
@@ -554,18 +555,6 @@ function CopyText({ text, label, title, disabled = false }: { text: string; labe
   );
 }
 
-/** Each request translates a few hundred lines; a long meeting takes a few. */
-const MAX_TRANSLATE_PAGES = 20;
-
-/** The languages heard in these lines, most spoken first. */
-function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
-  const weight = new Map<string, number>();
-  for (const line of lines) {
-    if (line.language) weight.set(line.language, (weight.get(line.language) ?? 0) + line.text.length);
-  }
-  return [...weight].sort((a, b) => b[1] - a[1]).map(([language]) => language);
-}
-
 /**
  * Translations of the lines heard in another language than `target`. Each one
  * is kept with the text it was made from, so an edited line is translated again.
@@ -573,8 +562,8 @@ function spokenLanguages(lines: readonly TranscriptLine[]): string[] {
 function useTranslation(meetingId: string, lines: readonly TranscriptLine[], target: Language | null, revision: number) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<Record<string, { source: string; text: string }>>({});
-  const cache = useRef(new Map<string, Record<string, { source: string; text: string }>>());
+  const [done, setDone] = useState<Translations>({});
+  const cache = useRef(new Map<string, Translations>());
   const spoken = useMemo(() => spokenLanguages(lines), [lines]);
 
   useEffect(() => {
@@ -589,31 +578,15 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
     const sources = new Map(lines.map(line => [line.id, line.text]));
     void (async () => {
       try {
-        let previousCount = -1;
-        for (let page = 0; page < MAX_TRANSLATE_PAGES; page++) {
-          const res = await fetch(`/api/meetings/${meetingId}/translate`, {
-            method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ to: target }), signal: controller.signal,
-          });
-          if (!res.ok) throw new Error(res.status === 429 ? 'Translation limit reached for today.' : 'Could not translate.');
-          const value: unknown = await res.json();
-          if (!value || typeof value !== 'object') throw new Error('Could not read the translation.');
-          const data = value as { lines?: unknown; remaining?: unknown };
-          if (!data.lines || typeof data.lines !== 'object' || Array.isArray(data.lines)) throw new Error('Could not read the translation.');
-          const entries = Object.entries(data.lines).filter((pair): pair is [string, string] => typeof pair[1] === 'string');
-          if (controller.signal.aborted) return;
-          const fresh = { ...known };
-          for (const [id, text] of entries) {
-            const source = sources.get(id);
-            if (source !== undefined) fresh[id] = { source, text };
-          }
-          known = fresh;
-          cache.current.set(key, fresh); setDone(fresh);
-          if (data.remaining === 0) return;
-          if (entries.length === previousCount) throw new Error('Translation stopped early. Choose the language again to retry.');
-          previousCount = entries.length;
-        }
-        throw new Error('This meeting needs another pass. Choose the language again to continue.');
+        await requestTranslations({
+          meetingId,
+          target,
+          signal: controller.signal,
+          onPage: (entries) => {
+            known = mergeTranslations(known, sources, entries);
+            cache.current.set(key, known); setDone(known);
+          },
+        });
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not translate.');
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -623,10 +596,7 @@ function useTranslation(meetingId: string, lines: readonly TranscriptLine[], tar
 
   return {
     spoken, showing: !!target, loading, error,
-    textFor: (line: TranscriptLine) => {
-      const entry = done[line.id];
-      return entry && entry.source === line.text && entry.text !== line.text ? entry.text : undefined;
-    },
+    textFor: (line: TranscriptLine) => translationFor(done, line),
   };
 }
 
