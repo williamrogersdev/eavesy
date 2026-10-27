@@ -58,7 +58,7 @@ const FALLBACK: CategoryMeta = {
 };
 
 export function categoryMeta(category: string): CategoryMeta {
-  return CATEGORY_META[category] ?? FALLBACK;
+  return Object.hasOwn(CATEGORY_META, category) ? CATEGORY_META[category] : FALLBACK;
 }
 
 export const DOCS_REPO_EDIT_BASE = `${siteConfig.github}/edit/main/web/src/content/docs`;
