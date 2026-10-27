@@ -299,7 +299,7 @@ impl History {
             .prepare("SELECT category,count(*) FROM history_recordings GROUP BY category")
             .map_err(error)?;
         for row in stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))
             .map_err(error)?
         {
             let (category, count) = row.map_err(error)?;

@@ -160,9 +160,9 @@ impl History {
         }
         let cancelled = std::sync::Arc::new(cancelled);
         let check = cancelled.clone();
-        self.conn.progress_handler(100, Some(move || check()));
+        self.conn.progress_handler(100, Some(move || check())).map_err(error)?;
         let result = self.prepare_search();
-        self.conn.progress_handler(0, None::<fn() -> bool>);
+        self.conn.progress_handler(0, None::<fn() -> bool>).map_err(error)?;
         match result {
             Err(_) if cancelled() => Ok(false),
             other => other.map(|()| true),
@@ -170,7 +170,7 @@ impl History {
     }
 
     pub fn rollback_uncommitted(&self) -> Result<(), String> {
-        self.conn.progress_handler(0, None::<fn() -> bool>);
+        self.conn.progress_handler(0, None::<fn() -> bool>).map_err(error)?;
         if !self.conn.is_autocommit() {
             self.conn.execute_batch("ROLLBACK").map_err(error)?;
         }
@@ -213,9 +213,9 @@ impl History {
         if cancelled() {
             return Err("History search superseded".into());
         }
-        self.conn.progress_handler(100, Some(cancelled));
+        self.conn.progress_handler(100, Some(cancelled)).map_err(error)?;
         let result = self.page(offset, limit, query, category);
-        self.conn.progress_handler(0, None::<fn() -> bool>);
+        self.conn.progress_handler(0, None::<fn() -> bool>).map_err(error)?;
         result
     }
 
@@ -430,7 +430,7 @@ impl History {
             .prepare("SELECT category,count(*) FROM history_recordings GROUP BY category")
             .map_err(error)?;
         for row in stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))
             .map_err(error)?
         {
             let (category, count) = row.map_err(error)?;
