@@ -3,12 +3,14 @@ import { librarySources, askLibrary } from '../../../web/src/server/library-memo
 import { drizzle } from 'drizzle-orm/d1';
 import { and, desc, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
-import type { Ai, D1Database, VectorizeIndex } from '@cloudflare/workers-types';
+import type { Ai, D1Database, DurableObjectNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { clock } from '../../../web/src/lib/ai/chapters';
 import { sha256Hex } from '../../../web/src/lib/sha256';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
+import { createTextDrop, DropTooLargeError } from '../../../web/src/server/create-drop';
+import { MAX_TEXT_BYTES } from '../../../web/src/server/drops';
 import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
 import { reportError, withErrorReporting } from '../../../web/src/server/observability';
@@ -50,6 +52,9 @@ interface Env extends CreditEnv {
   DB: D1Database;
   AI: Ai;
   VECTORIZE: VectorizeIndex;
+  /** Drops (send_to_my_devices): the shared web helpers reach these through the `cloudflare:workers` env. */
+  AUDIO_BUCKET: R2Bucket;
+  DROPS_HUB: DurableObjectNamespace;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
   RELEASE?: string;
@@ -310,7 +315,8 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
         'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items. ' +
         'The prompts are ones the user saved in Eavesy to reuse. ' +
         'send_to_human and ask_human reach the user on their Mac, where Eavesy shows and reads them aloud; use them when ' +
-        'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything.',
+        'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything. ' +
+        'With write access, send_to_my_devices puts text such as a session handoff in the user\'s Drop inbox on their other devices.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -457,6 +463,9 @@ const READ_ONLY: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
 /** Reaches the user on their Mac: changes nothing in the library, but isn't a plain read either. */
 const MESSAGES_HUMAN: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
+/** The longest title send_to_my_devices accepts. */
+const DROP_TITLE_MAX_CHARS = 200;
+
 const TOOL_DEFS: ToolDef[] = [
   {
     name: 'send_to_human',
@@ -590,6 +599,23 @@ const TOOL_DEFS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     scope: 'read',
   },
+  {
+    name: 'send_to_my_devices',
+    description:
+      "Send text to the user's Eavesy Drop inbox. It appears at once on every device where they have Eavesy open, ready to copy. " +
+      'Use it to hand off long output such as a session handoff doc, a plan or a snippet the user wants on another computer. ' +
+      `Up to ${MAX_TEXT_BYTES / 1024 / 1024} MB. Drops are kept for 7 days. Returns {id, bytes}.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', minLength: 1, description: 'The text to send. Markdown is fine.' },
+        title: { type: 'string', maxLength: DROP_TITLE_MAX_CHARS, description: 'Optional heading, added as the first line of the drop.' },
+      },
+      required: ['text'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    scope: 'write',
+  },
 ];
 
 /** The columns a meeting search result shows. */
@@ -673,6 +699,26 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         ttlMs,
       });
       return waitForAnswer(db, id, Date.now() + ttlMs);
+    }
+    case 'send_to_my_devices': {
+      const body = typeof args.text === 'string' ? args.text : '';
+      if (!body.trim()) throw new UserFacingError('text is required');
+      const title = stringArg(args.title).replace(/\s+/g, ' ');
+      if (title.length > DROP_TITLE_MAX_CHARS) throw new UserFacingError(`title must be at most ${DROP_TITLE_MAX_CHARS} characters`);
+      const text = title ? `# ${title}\n\n${body}` : body;
+      const tooLarge = `text too large: the limit is ${MAX_TEXT_BYTES / 1024 / 1024} MB`;
+      // Checked before the quota, so an oversized call doesn't spend one.
+      if (new TextEncoder().encode(text).byteLength > MAX_TEXT_BYTES) throw new UserFacingError(tooLarge);
+      return withQuota(env, userId, 'drop', async () => {
+        try {
+          // Always the token owner's own inbox: no argument names a user or a device.
+          const drop = await createTextDrop(db, { userId, text, deviceLabel: `${token.name.slice(0, 54)} (MCP)`, origin: null });
+          return { id: drop.id, bytes: drop.bytes };
+        } catch (error) {
+          if (error instanceof DropTooLargeError) throw new UserFacingError(tooLarge);
+          throw error;
+        }
+      });
     }
     case 'search_library':
     case 'ask_library': {
