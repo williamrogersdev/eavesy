@@ -45,14 +45,15 @@ up next to your other notes.
 ## Connect over MCP
 
 Let the agent look things up itself. Add `https://mcp.eavesy.com` as a
-connector, sign in to Eavesy, and approve it. The agent can then search your
-recordings and dictations. Connections are read-only unless you allow writes.
+connector, sign in to Eavesy, and approve it. The agent can then search and
+read your recordings, dictations, notes and screenshots. Connections are
+read-only unless you allow writes.
 
 ```bash
 claude mcp add --scope user --transport http eavesy https://mcp.eavesy.com
 ```
 
-MCP reads from your account, so it only sees recordings that have synced. See
+MCP reads from your account, so it only sees what has synced. See
 [Connect an agent over MCP](/docs/connect-mcp) for each client.
 
 ## Shape the brief for the agent

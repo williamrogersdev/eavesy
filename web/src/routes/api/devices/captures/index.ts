@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { clampLimit } from '@/lib/http/clamp-limit';
 import { headerText } from '@/lib/http/header-text';
+import { readCappedBody } from '@/lib/http/cap-body';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { pid } from '@/db/ids';
@@ -90,10 +91,22 @@ export const Route = createFileRoute('/api/devices/captures/')({
         // One id names both the row and its R2 object.
         const captureId = pid('cap');
         const r2Key = captureKey({ userId: actor.userId, captureId, ext: type.ext });
-        const { readable, writable } = new FixedLengthStream(bytes);
-        const piped = (request.body as unknown as ReadableStream).pipeTo(writable);
+        // A note's text is kept on the row too, so search and MCP can read it without R2.
+        let noteText: string | null = null;
         try {
-          await Promise.all([putObject(r2Key, readable as unknown as Parameters<typeof putObject>[1], contentType), piped]);
+          if (type.kind === 'note') {
+            // Null when the body runs past content-length; shorter is caught below.
+            const body = await readCappedBody(request.body, bytes);
+            if (!body || body.byteLength !== bytes) throw new Error('note length does not match content-length');
+            // Lossy on purpose, as the Mac reads notes: bad bytes become U+FFFD in the
+            // searchable copy rather than stopping the note syncing. R2 keeps the original.
+            noteText = new TextDecoder().decode(body);
+            await putObject(r2Key, body, contentType);
+          } else {
+            const { readable, writable } = new FixedLengthStream(bytes);
+            const piped = (request.body as unknown as ReadableStream).pipeTo(writable);
+            await Promise.all([putObject(r2Key, readable as unknown as Parameters<typeof putObject>[1], contentType), piped]);
+          }
         } catch {
           // The Mac retries an interrupted upload under a new id, so nothing
           // written here is wanted, and only a stored capture counts.
@@ -116,6 +129,7 @@ export const Route = createFileRoute('/api/devices/captures/')({
             clientCaptureId: clientId.data,
             deviceId: actor.deviceId ?? null,
             createdAt,
+            ...(noteText === null ? {} : { transcript: noteText, transcriptStatus: 'complete' as const }),
           });
           return Response.json({ id }, { status: 201 });
         } catch (error) {

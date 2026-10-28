@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, devices } from '../schema';
@@ -107,7 +107,8 @@ export async function listForDevice(
       title: captures.title,
       contentType: captures.contentType,
       bytes: captures.bytes,
-      transcript: captures.transcript,
+      // A note's transcript is its whole text, which the Mac downloads anyway.
+      transcript: sql<string | null>`CASE WHEN ${captures.kind} = 'note' THEN NULL ELSE ${captures.transcript} END`,
       createdAt: captures.createdAt,
       deviceName: devices.name,
     })

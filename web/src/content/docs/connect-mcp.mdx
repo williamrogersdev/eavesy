@@ -112,11 +112,14 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 
 | Tool | What it does |
 |---|---|
+| `search` | Search everything in your library: recordings, dictations, notes, screenshots and other captures. Filter by `kinds`, `project`, and a `since`/`until` date range. |
+| `recent` | List your newest items, with the same filters. Good for "my last call" or "screenshots from this week". |
+| `get` | Get one item by the ID `search` or `recent` returned: a recording with its summary, your notes and the transcript; a dictation; a note's Markdown; or a screenshot with the image itself and any text read from it. |
 | `search_library` | Retrieve source passages from completed account recordings, with segment IDs and timestamps. |
 | `ask_library` | Answer from supported recording evidence when cloud answers are enabled; can abstain or report context limits. |
 | `list_projects` | List the projects available to the connection. |
 | `search_meetings` | Search recordings by title or transcript. Returns matches with an excerpt. |
-| `get_meeting` | Get one recording by ID, with its summary and full transcript. |
+| `get_meeting` | Get one recording by ID, with its summary, your notes and full transcript. |
 | `recent_meetings` | List the most recent recordings. |
 | `search_dictations` | Search your dictations. |
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
@@ -154,13 +157,21 @@ The other tools only read, and are marked read-only so a client can choose to
 run them without asking each time; whether it asks is up to the client.
 `ask_library` counts against your daily AI answer quota.
 
-The tool names say "meetings" because that is the name of a recording in the
-data model. Recordings need to be in your account, so
-recordings made on a Mac that isn't signed in are not available. Screenshots,
-clipboard captures and notes from the Mac app are not available over MCP
-(screenshots and images sync between your signed-in Macs, but MCP doesn't read
-them). An agent with file access
-can still [read them from disk](/docs/session-folder-format).
+`search` and `recent` return `{ items }`, each with an `id`, `kind`
+(`meeting`, `dictation`, `note`, `image`, `video` or `audio`), `title`,
+`excerpt`, `project` and `created_at`, both as text and as structured content.
+Dates are ISO 8601, like `2026-10-01`; times without an offset are UTC, and a
+bare `until` date includes that whole day. A `search` that includes recordings
+or dictations also matches by meaning and counts against your daily search
+quota; one over notes and captures only does not.
+
+The older tool names say "meetings" because that is the name of a recording in
+the data model. Everything has to be in your account to be found: recordings
+from a Mac that isn't signed in are not available, nor are notes, screenshots
+and images from a Mac that was signed out when you made them. Screenshots from
+the Mac app are found by title only, since their text is read only in the web
+app; `get` still returns the image. An agent with file access can [read
+anything from disk](/docs/session-folder-format).
 
 <Callout type="note">
 Requests are rate limited per connection. A read-only connection can't create,

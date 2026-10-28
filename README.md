@@ -51,8 +51,9 @@ What ships today:
 - **Web app** (`web/`): dashboard, browser recorder, search, summaries and
   transcripts you can copy or export as Markdown, and settings, including
   connecting your own OpenRouter account.
-- **Hosted MCP server** (`workers/mcp`): read-only tools to search recordings
-  and dictations and fetch summaries, transcripts, and action items.
+- **Hosted MCP server** (`workers/mcp`): tools to search and read everything
+  in your account (recordings, dictations, notes, screenshots and other
+  captures) and fetch summaries, transcripts and action items.
 
 Meeting recording is one capability, not the whole product. Not shipped yet:
 forwarding messages and orders from other apps, live captions, and the
