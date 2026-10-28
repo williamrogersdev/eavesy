@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, devices } from '../schema';
@@ -7,6 +7,13 @@ export type Capture = typeof captures.$inferSelect;
 export type CaptureKind = Capture['kind'];
 export type CaptureMode = Capture['captureMode'];
 export type TranscriptStatus = Capture['transcriptStatus'];
+
+/** The kinds a Mac shares with the user's other Macs. */
+export const DEVICE_SHARED_KINDS = ['image', 'note'] as const satisfies readonly CaptureKind[];
+
+export function isDeviceShared(kind: CaptureKind): boolean {
+  return (DEVICE_SHARED_KINDS as readonly CaptureKind[]).includes(kind);
+}
 
 /**
  * A transcript `processing` for longer than this never finished: the request
@@ -87,14 +94,15 @@ export async function getByClientId(
   return rows[0] ?? null;
 }
 
-/** Images another device can bring into its history: everything not uploaded by `exceptDeviceId`. */
-export async function listImagesForDevice(
+/** Images and notes another device can bring into its history: everything not uploaded by `exceptDeviceId`. */
+export async function listForDevice(
   db: AppDb,
   args: { userId: string; exceptDeviceId?: string; limit: number; offset: number },
 ) {
   return await db
     .select({
       id: captures.id,
+      kind: captures.kind,
       clientCaptureId: captures.clientCaptureId,
       title: captures.title,
       contentType: captures.contentType,
@@ -108,7 +116,7 @@ export async function listImagesForDevice(
     .where(
       and(
         eq(captures.userId, args.userId),
-        eq(captures.kind, 'image'),
+        inArray(captures.kind, [...DEVICE_SHARED_KINDS]),
         isNull(captures.deletedAt),
         args.exceptDeviceId
           ? or(isNull(captures.deviceId), ne(captures.deviceId, args.exceptDeviceId))
@@ -196,7 +204,10 @@ export async function listForUser(
     .limit(args.limit ?? 100);
 }
 
-/** Newest first; `before` (a `createdAt`) pages back through older captures. */
+/**
+ * Newest first; `before` (a `createdAt`) pages back through older captures.
+ * Notes synced between Macs are left out: the web app has no view for them.
+ */
 export async function listSummariesForUser(db: AppDb, args: { userId: string; limit?: number; before?: number }) {
   return await db
     .select({
@@ -217,6 +228,7 @@ export async function listSummariesForUser(db: AppDb, args: { userId: string; li
     .where(
       and(
         eq(captures.userId, args.userId),
+        ne(captures.kind, 'note'),
         isNull(captures.deletedAt),
         args.before === undefined ? undefined : lt(captures.createdAt, args.before),
       ),

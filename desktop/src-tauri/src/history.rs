@@ -340,14 +340,14 @@ impl History {
         Ok(found)
     }
 
-    /// Screenshots and images added after row `after`, oldest first, as
+    /// Screenshots, images and notes added after row `after`, oldest first, as
     /// (row, id). Rows only grow, so the last row seen is a high-water mark.
-    pub fn images_after(&self, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
+    pub fn shared_after(&self, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT rowid, id FROM history_recordings
-                 WHERE rowid > ?1 AND source IN ('screenshot','image') ORDER BY rowid LIMIT ?2",
+                 WHERE rowid > ?1 AND source IN ('screenshot','image','note') ORDER BY rowid LIMIT ?2",
             )
             .map_err(error)?;
         let rows = stmt
@@ -356,11 +356,11 @@ impl History {
         rows.collect::<rusqlite::Result<_>>().map_err(error)
     }
 
-    /// Every screenshot and image at or before row `upto`.
-    pub fn images_upto(&self, upto: i64) -> Result<Vec<String>, String> {
+    /// Every screenshot, image and note at or before row `upto`.
+    pub fn shared_upto(&self, upto: i64) -> Result<Vec<String>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id FROM history_recordings WHERE rowid <= ?1 AND source IN ('screenshot','image')")
+            .prepare("SELECT id FROM history_recordings WHERE rowid <= ?1 AND source IN ('screenshot','image','note')")
             .map_err(error)?;
         let rows = stmt.query_map([upto], |r| r.get(0)).map_err(error)?;
         rows.collect::<rusqlite::Result<_>>().map_err(error)
