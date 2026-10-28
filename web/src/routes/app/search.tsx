@@ -30,6 +30,7 @@ function SearchPage() {
     }
     setLoading(true);
     setHasSearched(true);
+    setKind('all');
     setError(null);
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(normalized)}`);

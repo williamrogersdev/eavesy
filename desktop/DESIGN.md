@@ -318,14 +318,13 @@ robot glyph to stand for Eavesy itself.
 │ ×              [m] Eavesy                 ⚙  │ 44  title bar, drag region
 ├──────────────────────────────────────────────┤
 │  Eavesy   Captures                           │ 34  underlined tabs, hairline below
-│ ═══════                                       │
-│ New capture             Saves to (▭ eavesy ▾) │ 26  section label, project chip
-│ ┌──────┐ ┌───────┐ ┌──────────┐ ┌─────┐       │
-│ │  🎙  │ │  👥   │ │    📷    │ │ 🎬  │       │ 58  four raised capture tiles
-│ │ Talk │ │Meeting│ │Screenshot│ │Video│       │
-│ └──────┘ └───────┘ └──────────┘ └─────┘       │
-│ ───────────────────────────────────────────── │
-│ (All) Voice  Meetings  Screens  Notes      ⌕  │ 34  list bar: type pills, search
+│  ═══════                                     │
+│ New capture            Saves to (▭ eavesy ▾) │ 26  section label, project chip
+│ ┌──────┐ ┌───────┐ ┌──────────┐ ┌───────┐    │
+│ │ Talk │ │Meeting│ │Screenshot│ │ Video │    │ 58  four raised capture tiles
+│ └──────┘ └───────┘ └──────────┘ └───────┘    │
+│ ──────────────────────────────────────────── │
+│ (All) Voice  Meetings  Screens  Notes     ⌕  │ 34  list bar: type pills, search
 │ Today                                         │
 │ ▏🎙 Voice note · 0:42          9:41  [⧉][⋯]  │ hover actions appear
 │ ▏  "Remind Sam the deck goes out…"           │ clamp 4 lines + fade + "More"
@@ -373,7 +372,8 @@ darkens the surface a touch and strengthens the line. While a capture runs,
 the label row goes and the tiles become a single 42px live bar in place: mascot, status, elapsed time, a quiet
 one-line ticker of the newest words, and Stop. Starting and writing use the
 same row without Stop. There is no second listening card or expandable text
-box above search. Search and history stay at the same position throughout.
+box above search. The live bar is shorter than the label and tiles it
+replaces, so the list moves up while recording and back when it ends.
 Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**

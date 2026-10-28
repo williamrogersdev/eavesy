@@ -74,7 +74,7 @@
 /* An open search takes the row; only the chosen type stays beside it. */
 .ev-listbar[data-search='true'] .ev-listbar-types { flex: none; }
 .ev-listbar[data-search='true'] .ev-chip[aria-pressed='false'] { display: none; }
-.ev-listbar[data-search='true'] .ev-chip[aria-pressed='true']:first-child { display: none; }
+.ev-listbar[data-search='true'] .ev-chip[data-all] { display: none; }
 /* Search is an icon at the row's end until used, then a field that takes the row's free width. */
 .ev-search {
   display: flex;

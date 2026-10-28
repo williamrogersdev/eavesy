@@ -714,6 +714,7 @@ export const CaptureHistory = memo(function CaptureHistory({
           {FILTERS.map((f) => (
             <Chip
               key={f.value}
+              data-all={f.value === 'all' || undefined}
               selected={filter === f.value}
               count={searching && !onlyPrompts ? counts[f.value] : undefined}
               onClick={() => setFilter(filter === f.value ? 'all' : f.value)}

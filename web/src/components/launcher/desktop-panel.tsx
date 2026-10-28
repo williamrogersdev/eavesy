@@ -88,7 +88,7 @@ export function DesktopPanel() {
   const [dictationHotkey, setDictationHotkey] = useState('');
   const composerRef = useRef<ComposerHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  // Search sits in the tab row, but its state belongs to the history it filters.
+  // Search lives in the history's list bar, which owns its state; the panel only focuses it.
   const panelRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   // Before the history has loaded there is no search yet, so the panel itself takes focus.
