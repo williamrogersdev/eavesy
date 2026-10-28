@@ -9,7 +9,7 @@ import { WorkersAiSegmentTranscriber } from '@/lib/transcription/provider/worker
 import { isHallucination } from '@/lib/transcription/two-track';
 import { vocabularyFromText } from '@/lib/transcription/vocabulary';
 import { BENCH, RATE, readWav, writeWav, type TruthLine } from '../common';
-import { NEMOTRON_MODEL, nemotronRequest, nemotronTurns } from './nemotron';
+import { NEMOTRON_MODEL, deepinfraForm, deepinfraTurns, nemotronRequest, nemotronTurns } from './nemotron';
 import { cpErrors, parseReference, wordErrors, words, type Turn, type WordErrors } from './score';
 
 const OUT = join(BENCH, 'out', 'engines');
@@ -18,7 +18,7 @@ const WHISPER_TIMEOUT_MS = 2 * 60 * 1000;
 
 const { values: args } = parseArgs({
   options: {
-    engines: { type: 'string', default: 'whisper,nemotron' },
+    engines: { type: 'string', default: 'whisper,nemotron,nemotron-deepinfra' },
     cases: { type: 'string' },
     only: { type: 'string' },
     language: { type: 'string', default: 'en' },
@@ -197,6 +197,28 @@ const nemotron: Engine = {
   },
 };
 
+const nemotronDeepinfra: Engine = {
+  name: 'nemotron-deepinfra',
+  speakers: true,
+  ready: () => (process.env.DEEPINFRA_API_KEY ? null : 'set DEEPINFRA_API_KEY'),
+  async run(c, call) {
+    const audioMs = (c.samples.length / RATE) * 1000;
+    if (audioMs > NEMOTRON_MAX_MS) throw new Error('longer than the model’s one-hour limit');
+    const response = await call(async () => {
+      const response = await fetch(`https://api.deepinfra.com/v1/inference/${NEMOTRON_MODEL}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${process.env.DEEPINFRA_API_KEY}` },
+        body: deepinfraForm(new Uint8Array(writeWav(floats(c.samples))), c.terms),
+        signal: AbortSignal.timeout(5 * 60 * 1000 + audioMs),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(`deepinfra ${response.status}: ${JSON.stringify(body).slice(0, 300)}`);
+      return body;
+    });
+    return deepinfraTurns(response);
+  },
+};
+
 interface Row {
   case: string;
   engine: string;
@@ -213,7 +235,9 @@ function inputIdentity(engine: Engine, c: Case): string {
   const settings =
     engine === whisper
       ? { language: args.language, terms: c.terms, segmentMs: SEGMENT_MS }
-      : { model: process.env.NEMOTRON_MODEL ?? NEMOTRON_MODEL, terms: c.terms };
+      : engine === nemotronDeepinfra
+        ? { model: NEMOTRON_MODEL, terms: c.terms }
+        : { model: process.env.NEMOTRON_MODEL ?? NEMOTRON_MODEL, terms: c.terms };
   return hash.update(JSON.stringify(settings)).digest('hex');
 }
 
@@ -290,7 +314,7 @@ function report(rows: Row[]): string {
   return `${lines.join('\n')}\n`;
 }
 
-const known = [whisper, nemotron];
+const known = [whisper, nemotron, nemotronDeepinfra];
 const asked = args.engines.split(',').map((name) => name.trim()).filter(Boolean);
 const unknown = asked.filter((name) => !known.some((engine) => engine.name === name));
 if (unknown.length) {

@@ -9,6 +9,7 @@ from our own kind of audio, not the vendor's leaderboard.
 |---|---|
 | `whisper` | The production call (`WorkersAiSegmentTranscriber`, Whisper Large v3 Turbo on Workers AI) on 4-minute pieces, as the app uploads them, with the production hallucination filter. |
 | `nemotron` | `nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B` through any OpenAI-compatible chat completions server, whole file at once (it takes up to an hour), with the model card's speaker-tag prompt. |
+| `nemotron-deepinfra` | The same model on DeepInfra's own inference endpoint ($0.002 a minute), which takes the audio as a form upload and the speaker-tag prompt as `initial_prompt`. Needs `DEEPINFRA_API_KEY`. |
 
 ## Recordings
 
@@ -41,7 +42,12 @@ in one request as a 16 kHz WAV (about 110 MiB for an hour); the model card's
 server takes up to 180 MiB, but a hosted provider or proxy may cap requests
 lower, so try a short recording first.
 
-Flags: `--engines whisper,nemotron`, `--only <recording>`, `--language en`
+DeepInfra does not document an OpenAI-style route for this model, so use
+`nemotron-deepinfra` there rather than pointing `NEMOTRON_BASE_URL` at it.
+Whether its `initial_prompt` carries the speaker-tag instruction is not
+documented either: if the report shows one speaker found, it did not.
+
+Flags: `--engines whisper,nemotron,nemotron-deepinfra`, `--only <recording>`, `--language en`
 (Whisper only), and `--replay`, which re-scores the saved responses without
 any network or spend.
 
