@@ -95,8 +95,11 @@ export const Route = createFileRoute('/api/devices/captures/')({
         let noteText: string | null = null;
         try {
           if (type.kind === 'note') {
+            // Null when the body runs past content-length; shorter is caught below.
             const body = await readCappedBody(request.body, bytes);
             if (!body || body.byteLength !== bytes) throw new Error('note length does not match content-length');
+            // Lossy on purpose, as the Mac reads notes: bad bytes become U+FFFD in the
+            // searchable copy rather than stopping the note syncing. R2 keeps the original.
             noteText = new TextDecoder().decode(body);
             await putObject(r2Key, body, contentType);
           } else {

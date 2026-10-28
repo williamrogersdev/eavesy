@@ -582,7 +582,8 @@ describe('MCP library items', () => {
     expect(items.find((item: { id: string }) => item.id === 'meet_meaning').excerpt).toBe('We talked about what to charge.');
     expect(items.find((item: { id: string }) => item.id === 'cap_shot').excerpt).toBe('Pricing page: $10 a month');
     expect(vectorQueries).toHaveLength(1);
-    expect(await testEnv.DB.prepare(`SELECT count FROM rate_limits WHERE key LIKE 'budget:user:search:%'`).first()).toEqual({ count: 1 });
+    const day = Math.floor(Date.now() / DAY);
+    expect(await testEnv.DB.prepare('SELECT count FROM rate_limits WHERE key = ?').bind(`budget:user:search:user_mcp:${day}`).first()).toEqual({ count: 1 });
 
     expect(await ids(token, 'search', { query: 'pricing', kinds: ['image'], project: 'Eavesy' })).toEqual(['cap_shot']);
     expect(await ids(token, 'search', { query: 'pricing', since: '2026-10-19' })).toEqual(['meet_words', 'meet_meaning']);
@@ -620,6 +621,12 @@ describe('MCP library items', () => {
     });
     expect(shot.result?.content?.[1]).toEqual({ type: 'image', mimeType: 'image/png', data: btoa(String.fromCharCode(...PNG)) });
     expect(shot.result?.structuredContent).toBeUndefined();
+
+    // Too big to attach: the text and details still come back.
+    await testEnv.DB.prepare(`UPDATE captures SET bytes = ? WHERE id = 'cap_shot'`).bind(4 * 1024 * 1024 + 1).run();
+    const big = await rpc(token, 'get', { id: 'cap_shot' });
+    expect(JSON.parse(big.result?.content?.[0]?.text ?? 'null')).toMatchObject({ text: 'Pricing page: $10 a month', image_attached: false });
+    expect(big.result?.content).toHaveLength(1);
 
     expect((await rpc(token, 'get', { id: 'cap_gone' })).error?.message).toBe('not found');
     expect((await rpc(token, 'get', { id: 'nope' })).error?.message).toBe('not found');

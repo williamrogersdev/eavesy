@@ -446,8 +446,9 @@ describe('captures', () => {
       transcript: '# Groceries\n\n- oat milk ☕️',
       transcript_status: 'complete',
     });
-    // A body shorter than it said is refused, not stored cut short.
+    // A body shorter or longer than it said is refused, not stored cut short.
     expect((await upload(note.byteLength + 5)).status).toBe(400);
+    expect((await upload(note.byteLength - 1)).status).toBe(400);
 
     const listed = async (token: string) => {
       const response = await call(DeviceCapturesRoute, 'GET', '/api/devices/captures', { headers: { authorization: `Bearer ${token}` } });
