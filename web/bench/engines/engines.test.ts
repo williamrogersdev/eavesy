@@ -20,6 +20,17 @@ describe('word error rate', () => {
     });
     expect(wordErrors(['a', 'b'], []).deletions).toBe(2);
     expect(wordErrors([], ['thank', 'you']).insertions).toBe(2);
+    expect(wordErrors(['the', 'cat', 'sat'], ['cat', 'sat', 'down'])).toMatchObject({ errors: 2, substitutions: 0, deletions: 1, insertions: 1 });
+  });
+
+  test('reads thousands separators as one number', () => {
+    expect(words('1,000 people')).toEqual(['1000', 'people']);
+  });
+
+  test('scores long recordings without a full table', () => {
+    const ref = Array.from({ length: 6_000 }, (_, i) => `w${i % 97}`);
+    const hyp = ref.map((word, i) => (i % 50 === 0 ? 'x' : word));
+    expect(wordErrors(ref, hyp)).toMatchObject({ errors: 120, substitutions: 120 });
   });
 });
 
@@ -89,10 +100,21 @@ describe('Nemotron 3.5 Transcribe', () => {
     ]);
   });
 
-  test('reads content given as parts and rejects an empty response', () => {
+  test('reads content given as parts and drops reasoning, closed or not', () => {
     expect(nemotronTurns({ choices: [{ message: { content: [{ type: 'text', text: '<spk:2> Hi' }] } }] })).toEqual([
       { speaker: 'spk:2', text: 'Hi' },
     ]);
+    expect(nemotronTurns({ choices: [{ message: { content: '<think>hmm</think><spk:0> Hi' } }] })).toEqual([
+      { speaker: 'spk:0', text: 'Hi' },
+    ]);
+    expect(nemotronTurns({ choices: [{ message: { content: '<spk:0> Hi <think>still going' } }] })).toEqual([
+      { speaker: 'spk:0', text: 'Hi' },
+    ]);
+  });
+
+  test('rejects a missing, empty or cut-off transcript instead of scoring it', () => {
     expect(() => nemotronTurns({ error: 'overloaded' })).toThrow('no transcript');
+    expect(() => nemotronTurns({ choices: [{ message: { content: '  ' } }] })).toThrow('no transcript');
+    expect(() => nemotronTurns({ choices: [{ finish_reason: 'length', message: { content: '<spk:0> Hi' } }] })).toThrow('cut off');
   });
 });
