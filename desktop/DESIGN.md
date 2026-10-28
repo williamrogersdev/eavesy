@@ -369,11 +369,14 @@ audio routing:
 
 Every tile is visually equal: no lead button and no colour fill. Hover
 darkens the surface a touch and strengthens the line. While a capture runs,
-the label row goes and the tiles become a single 42px live bar in place: mascot, status, elapsed time, a quiet
-one-line ticker of the newest words, and Stop. Starting and writing use the
-same row without Stop. There is no second listening card or expandable text
-box above search. The live bar is shorter than the label and tiles it
-replaces, so the list moves up while recording and back when it ends.
+the label row goes and the tiles become the live bar in place: a 28px head
+row (status, elapsed time, cancel and Stop) over up to four lines of the
+newest words, on the HUD's charcoal. The title bar's mascot is the only
+mascot while it runs. Starting and writing use the same bar without Stop.
+There is no second listening card or expandable text box above search. The
+bar's height follows its lines, not the 90px of label and tiles it replaces,
+so the list bar and history shift when a capture starts, as its words come
+in, and when it ends.
 Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
