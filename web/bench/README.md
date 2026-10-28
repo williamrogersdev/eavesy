@@ -3,6 +3,9 @@
 Scores who-said-what on scripted calls. It answers "did this change make
 attribution better or worse?" with numbers instead of a feeling.
 
+To compare Whisper with another transcription engine on the same audio, see
+[`engines/`](engines/README.md).
+
 | Scenario | What it checks |
 |---|---|
 | `call-headset` | Clean two-sided call: baseline recall and attribution. |

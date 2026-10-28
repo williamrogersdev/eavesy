@@ -130,7 +130,9 @@ jobs:
           node dist/eavesy.js recent --root test/fixtures/Recordings
       - name: Two-track bench
         working-directory: web
-        run: bun bench/score.ts --check
+        run: |
+          bun bench/score.ts --check
+          bun test bench/engines
       - name: Bundle workers
         run: |
           (cd workers/processing && bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/processing")
