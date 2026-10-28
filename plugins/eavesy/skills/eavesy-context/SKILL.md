@@ -45,6 +45,22 @@ already pasted the brief.
 Say which item you used (title and date) so the user can check it.
 "Meeting" means any recording, not only calls.
 
+## Changing the library
+
+With write access you can also change things, but only when the user asks
+you to:
+
+- `save_note` keeps Markdown (a plan, a decision log, a session summary) as
+  a note, optionally under a `project`. Prefer it to `send_to_my_devices`
+  when the user wants to keep the text, not just move it to another computer.
+- `update_action_item` ticks an item off (`completed: true`) or reopens it.
+  Take `meeting_id` and `index` from `get_action_items`, and pass the item's
+  `text` so a list that changed in the meantime is refused.
+- `set_project` files a recording, note or capture under a project (`null`
+  takes it out). `rename` gives an item a new title.
+
+Nothing can be deleted over MCP.
+
 ## Limits
 
 - Only what is in the user's account can be found. Notes, clipboard text,
