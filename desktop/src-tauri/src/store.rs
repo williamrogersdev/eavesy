@@ -96,13 +96,13 @@ pub fn ids<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<String>, String> {
 pub fn existing<R: Runtime>(app: &AppHandle<R>, ids: &[String]) -> Result<std::collections::HashSet<String>, String> {
     history(app)?.existing(ids)
 }
-/// Screenshots and images added after history row `after`, as (row, id).
-pub fn images_after<R: Runtime>(app: &AppHandle<R>, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
-    history(app)?.images_after(after, limit)
+/// Screenshots, images and notes added after history row `after`, as (row, id).
+pub fn shared_after<R: Runtime>(app: &AppHandle<R>, after: i64, limit: usize) -> Result<Vec<(i64, String)>, String> {
+    history(app)?.shared_after(after, limit)
 }
-/// Every screenshot and image at or before history row `upto`.
-pub fn images_upto<R: Runtime>(app: &AppHandle<R>, upto: i64) -> Result<Vec<String>, String> {
-    history(app)?.images_upto(upto)
+/// Every screenshot, image and note at or before history row `upto`.
+pub fn shared_upto<R: Runtime>(app: &AppHandle<R>, upto: i64) -> Result<Vec<String>, String> {
+    history(app)?.shared_upto(upto)
 }
 /// The newest history row.
 pub fn last_row<R: Runtime>(app: &AppHandle<R>) -> Result<i64, String> {

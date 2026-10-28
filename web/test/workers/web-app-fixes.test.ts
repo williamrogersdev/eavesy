@@ -1,13 +1,14 @@
 /// <reference types="vite/client" />
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handler, insertDeviceActor, insertMeeting, insertUser, requestBody, resetTables, row, testEnv } from './support';
+import { handler, insertDeviceActor, insertMeeting, insertUser, requestBody, resetTables, row, sha256, testEnv } from './support';
 import { Route as RegenerateRoute } from '../../src/routes/api/meetings/$id/regenerate';
 import { Route as SearchRoute } from '../../src/routes/api/search';
 import { Route as CapturesRoute } from '../../src/routes/api/captures';
 import { Route as CaptureRoute } from '../../src/routes/api/captures/$id';
 import { Route as CaptureAudioRoute } from '../../src/routes/api/captures/$id/audio';
 import { Route as DeviceCapturesRoute } from '../../src/routes/api/devices/captures/index';
+import { Route as DeviceCaptureRoute } from '../../src/routes/api/devices/captures/$id';
 import { Route as TemplatesRoute } from '../../src/routes/api/templates';
 import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
 import { TEMPLATE_LIMIT } from '../../src/db/repo/templates';
@@ -392,6 +393,59 @@ describe('captures', () => {
     expect(await row("SELECT count(*) AS n FROM captures WHERE user_id = 'user_reply'")).toEqual({ n: 1 });
     expect(await captureQuotaUsed('user_reply')).toBe(1);
     expect((await testEnv.AUDIO_BUCKET.list({ prefix: 'users/user_reply/' })).objects).toHaveLength(1);
+  });
+
+  it('shares a note from one Mac with the user’s other Macs, but keeps it out of the web list', async () => {
+    const fromMac = await insertDeviceActor('user_notes', 'device_notes_a');
+    const otherMac = 'eavesy_device_user_notes_b';
+    const now = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO devices (id, user_id, name, platform, root_folder_path, last_seen_at, created_at)
+         VALUES ('device_notes_b', 'user_notes', 'Other Mac', 'macos', '/tmp/Eavesy', ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO device_tokens (id, user_id, device_id, token_hash, name, created_at)
+         VALUES ('token_notes_b', 'user_notes', 'device_notes_b', ?, 'Other Mac', ?)`,
+      ).bind(await sha256(otherMac), now),
+    ]);
+    const note = new TextEncoder().encode('# Groceries\n\n- oat milk ☕️');
+    const upload = (length: number) => call(DeviceCapturesRoute, 'POST', '/api/devices/captures', {
+      headers: {
+        authorization: `Bearer ${fromMac}`,
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-length': String(length),
+        'x-client-capture-id': crypto.randomUUID(),
+        'x-title': 'Groceries',
+      },
+      body: requestBody(note),
+    });
+
+    expect((await upload(1024 * 1024 + 1)).status).toBe(413);
+    const created = await upload(note.byteLength);
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    expect(await row('SELECT kind, capture_mode, title, r2_key FROM captures WHERE id = ?', id)).toEqual({
+      kind: 'note',
+      capture_mode: 'note',
+      title: 'Groceries',
+      r2_key: `users/user_notes/captures/${id}.md`,
+    });
+
+    const listed = async (token: string) => {
+      const response = await call(DeviceCapturesRoute, 'GET', '/api/devices/captures', { headers: { authorization: `Bearer ${token}` } });
+      return ((await response.json()) as { items: { id: string; kind: string; contentType: string }[] }).items;
+    };
+    expect(await listed(otherMac)).toEqual([expect.objectContaining({ id, kind: 'note', contentType: 'text/markdown' })]);
+    expect(await listed(fromMac)).toEqual([]);
+
+    const downloaded = await call(DeviceCaptureRoute, 'GET', `/api/devices/captures/${id}`, { headers: { authorization: `Bearer ${otherMac}` } }, { id });
+    expect(downloaded.status).toBe(200);
+    expect(new TextDecoder().decode(await downloaded.arrayBuffer())).toBe('# Groceries\n\n- oat milk ☕️');
+
+    actor.userId = 'user_notes';
+    const web = await call(CapturesRoute, 'GET', '/api/captures');
+    expect(((await web.json()) as { items: unknown[] }).items).toEqual([]);
   });
 });
 

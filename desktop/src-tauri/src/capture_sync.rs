@@ -1,10 +1,11 @@
-//! Screenshots and pasted images, shared between the user's Macs.
+//! Screenshots, pasted images and notes, shared between the user's Macs.
 //!
 //! Meetings travel through `/api/sessions` (see `sync` and `cloud_pull`), but
-//! images never did: a screenshot taken on one Mac stayed in that Mac's
-//! history. This uploads this Mac's images to `/api/devices/captures` and
-//! brings the ones taken on the user's other devices into the history here,
-//! filed under the id the original Mac gave them so they are never doubled.
+//! these never did: a screenshot taken or a note written on one Mac stayed in
+//! that Mac's history. This uploads this Mac's images and notes to
+//! `/api/devices/captures` and brings the ones from the user's other devices
+//! into the history here, filed under the id the original Mac gave them so
+//! they are never doubled.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,21 +21,23 @@ use crate::sync::sync_state::{deep_walk_due, ListWalk, RetryGate, StateFile, DAY
 use crate::sync::Api;
 use crate::{fs_writer, store};
 
-/// Images one pass uploads or downloads, so a long history moves over a few
+/// Captures one pass uploads or downloads, so a long history moves over a few
 /// passes instead of holding up meeting uploads.
 const PER_PASS: usize = 10;
-/// Images asked for per page of the cloud list, and how many pages one pull reads.
+/// Captures asked for per page of the cloud list, and how many pages one pull reads.
 const PAGE: usize = 50;
 const MAX_PAGES: usize = 20;
-/// History rows looked at per pass for images added since the last pass.
+/// History rows looked at per pass for captures added since the last pass.
 const HISTORY_PAGE: usize = 500;
-/// The server's limit.
-const MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
+/// The server's limits.
+const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_NOTE_BYTES: u64 = 1024 * 1024;
+const NOTE_TYPE: &str = "text/markdown";
 /// What one pass uploads before it leaves the rest to the next pass. The
-/// first image of a pass always goes, whatever its size.
+/// first capture of a pass always goes, whatever its size.
 const PASS_BYTES: u64 = 64 * 1024 * 1024;
 const PASS_TIME: Duration = Duration::from_secs(120);
-/// How long an image that could not be downloaded is left alone, and how
+/// How long a capture that could not be downloaded is left alone, and how
 /// long an upload that was started is left alone if its outcome was lost.
 const FAILED_RETRY: Duration = Duration::from_secs(60 * 60);
 /// An upload that keeps failing is tried this many times, a minute after the
@@ -51,19 +54,19 @@ static FAILED: RetryGate = RetryGate::new(FAILED_RETRY);
 
 #[derive(Default, Serialize, Deserialize)]
 struct SyncState {
-    /// This Mac's images the server has.
+    /// This Mac's captures the server has.
     #[serde(default)]
     uploaded: BTreeSet<String>,
-    /// This Mac's images the server will never take (unsupported format, too large).
+    /// This Mac's captures the server will never take (unsupported format, too large).
     #[serde(default)]
     unsendable: BTreeSet<String>,
-    /// Images brought in from other devices, by local id.
+    /// Captures brought in from other devices, by local id.
     #[serde(default)]
     pulled: BTreeSet<String>,
-    /// Pulled images the user deleted on this Mac: never brought back.
+    /// Pulled captures the user deleted on this Mac: never brought back.
     #[serde(default)]
     dismissed: BTreeSet<String>,
-    /// The device each pulled image was taken on.
+    /// The device each pulled capture came from.
     #[serde(default)]
     origins: BTreeMap<String, String>,
     /// Where the last pull stopped reading the cloud list.
@@ -72,13 +75,13 @@ struct SyncState {
     /// When a pull last read the cloud list to its end.
     #[serde(default)]
     walked_at: Option<i64>,
-    /// Every image at or before this history row has been looked at for upload.
+    /// Every capture at or before this history row has been looked at for upload.
     #[serde(default)]
     upload_mark: i64,
     /// Uploads that failed, and when each is tried again.
     #[serde(default)]
     upload_retry: BTreeMap<String, UploadRetry>,
-    /// When the whole history was last checked for images the mark passed by.
+    /// When the whole history was last checked for captures the mark passed by.
     #[serde(default)]
     swept_at: Option<i64>,
     /// No uploads before this time: the server asked to slow down (429).
@@ -87,7 +90,7 @@ struct SyncState {
     /// The server refused captures from this device (403).
     #[serde(default)]
     refused: Option<Refusal>,
-    /// The folder of each image being pulled, used again if its save was cut short.
+    /// The folder of each capture being pulled, used again if its save was cut short.
     #[serde(default)]
     saving: BTreeMap<String, PathBuf>,
 }
@@ -122,7 +125,7 @@ struct CloudCapture {
 
 impl CloudCapture {
     /// The id it has in every Mac's history: the one the Mac that took it gave
-    /// it, or the cloud id for an image from the web.
+    /// it, or the cloud id for one from the web.
     fn local_id(&self) -> String {
         self.client_capture_id
             .as_deref()
@@ -154,13 +157,13 @@ fn fingerprint(token: &str) -> String {
     hex::encode(sha2::Sha256::digest(token.as_bytes()))
 }
 
-/// The device each image brought in from another device was taken on.
+/// The device each capture brought in from another device came from.
 pub fn origins<R: Runtime>(app: &AppHandle<R>) -> BTreeMap<String, String> {
     load_state(app).map(|state| state.origins).unwrap_or_default()
 }
 
-/// Called before a capture is deleted: a pulled image stays deleted on this
-/// Mac. Returns whether it was a pulled image, for `undismiss`.
+/// Called before a capture is deleted: a pulled capture stays deleted on this
+/// Mac. Returns whether it was a pulled capture, for `undismiss`.
 pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String> {
     if !load_state(app)?.pulled.contains(id) {
         return Ok(false);
@@ -181,7 +184,7 @@ pub fn undismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String>
     })
 }
 
-/// One pass each way. Returns how many images moved, so the loop can come
+/// One pass each way. Returns how many captures moved, so the loop can come
 /// back sooner when more are waiting.
 pub(crate) async fn run<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
     let sent = upload(app, api, token).await?;
@@ -201,14 +204,14 @@ enum Seen {
 }
 
 struct Plan {
-    /// The images to upload, in order: due retries, new images, then any the mark passed by.
+    /// The captures to upload, in order: due retries, new captures, then any the mark passed by.
     items: Vec<StoredRecording>,
     /// The rows after the mark, in order.
     scanned: Vec<(i64, String, Seen)>,
     mark: i64,
-    /// Retries whose image is gone from the history.
+    /// Retries whose capture is gone from the history.
     gone: Vec<String>,
-    /// Images the sweep chose, when it found nothing else: the sweep is
+    /// Captures the sweep chose, when it found nothing else: the sweep is
     /// complete once these are handled.
     swept: Option<Vec<String>>,
 }
@@ -254,7 +257,7 @@ fn plan_uploads<R: Runtime>(app: &AppHandle<R>, credential: &str, now: i64) -> R
     let mark = if state.upload_mark > store::last_row(app)? { 0 } else { state.upload_mark };
     let mut scanned = Vec::new();
     if items.len() < PER_PASS {
-        for (row, id) in store::images_after(app, mark, HISTORY_PAGE)? {
+        for (row, id) in store::shared_after(app, mark, HISTORY_PAGE)? {
             if items.len() >= PER_PASS {
                 break;
             }
@@ -273,11 +276,11 @@ fn plan_uploads<R: Runtime>(app: &AppHandle<R>, credential: &str, now: i64) -> R
         }
     }
 
-    // Once per launch and once a day: images the mark passed by, such as one
+    // Once per launch and once a day: captures the mark passed by, such as one
     // whose state was lost.
     let mut swept = None;
     if items.len() < PER_PASS && deep_walk_due(state.swept_at, now) {
-        let mut left = store::images_upto(app, mark)?
+        let mut left = store::shared_upto(app, mark)?
             .into_iter()
             .filter(|id| !settled(id) && !chosen.contains(id) && !FAILED.failed_recently(id));
         let mut taken = Vec::new();
@@ -385,13 +388,13 @@ async fn upload<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Resul
                     || error.downcast_ref::<RateLimited>().is_some()
                     || error.downcast_ref::<Refused>().is_some() =>
             {
-                // Nothing counts against this image: the whole pass stops.
+                // Nothing counts against this capture: the whole pass stops.
                 FAILED.forget(&recording.id);
                 halt = Some(error);
                 break;
             }
             Err(error) if crate::sync::is_permanent(&error) => {
-                tracing::warn!(id = %recording.id, "capture sync: the server will not take this image: {error:#}");
+                tracing::warn!(id = %recording.id, "capture sync: the server will not take this capture: {error:#}");
                 Outcome::Unsendable
             }
             Err(error) => {
@@ -520,6 +523,7 @@ fn content_type(path: &Path) -> Option<&'static str> {
 
 fn extension(content_type: &str) -> Option<&'static str> {
     Some(match content_type {
+        NOTE_TYPE => "md",
         "image/png" => "png",
         "image/jpeg" => "jpg",
         "image/webp" => "webp",
@@ -529,14 +533,24 @@ fn extension(content_type: &str) -> Option<&'static str> {
     })
 }
 
-/// Sends the image straight from its file, never whole in memory.
+/// The file a capture shares, its media type and the most the server takes.
+fn shared_file(recording: &StoredRecording, folder: &Path) -> Option<(PathBuf, &'static str, u64)> {
+    if recording.source == "note" {
+        let path = folder.join("note.md");
+        return path.is_file().then_some((path, NOTE_TYPE, MAX_NOTE_BYTES));
+    }
+    let path = image_file(folder)?;
+    let kind = content_type(&path)?;
+    Some((path, kind, MAX_IMAGE_BYTES))
+}
+
+/// Sends the capture straight from its file, never whole in memory.
 async fn upload_one(api: &Api, token: &str, recording: &StoredRecording) -> Result<Sent> {
     let Some(folder) = recording.folder_path.as_deref().map(Path::new) else { return Ok(Sent::Unsendable) };
-    let Some(path) = image_file(folder) else { return Ok(Sent::Unsendable) };
-    let Some(kind) = content_type(&path) else { return Ok(Sent::Unsendable) };
+    let Some((path, kind, max_bytes)) = shared_file(recording, folder) else { return Ok(Sent::Unsendable) };
     let file = tokio::fs::File::open(&path).await.with_context(|| format!("open {}", path.display()))?;
     let size = file.metadata().await.with_context(|| format!("stat {}", path.display()))?.len();
-    if size == 0 || size > MAX_UPLOAD_BYTES {
+    if size == 0 || size > max_bytes {
         return Ok(Sent::Unsendable);
     }
     let response = api
@@ -564,7 +578,7 @@ async fn upload_one(api: &Api, token: &str, recording: &StoredRecording) -> Resu
         403 => Err(anyhow!(Refused)),
         _ => {
             let error = crate::sync::http_error("upload capture", response).await;
-            // The body was cut off on the way: not this image's fault.
+            // The body was cut off on the way: not this capture's fault.
             if format!("{error}").contains("upload interrupted") {
                 Err(anyhow!("{error}"))
             } else {
@@ -574,7 +588,7 @@ async fn upload_one(api: &Api, token: &str, recording: &StoredRecording) -> Resu
     }
 }
 
-/// Downloads a few images taken on other devices. Returns how many arrived.
+/// Downloads a few images and notes from other devices. Returns how many arrived.
 async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
     let state = {
         let app = app.clone();
@@ -620,8 +634,8 @@ async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Pat
     let mut arrived = 0;
     for capture in wanted.into_iter().take(PER_PASS) {
         let id = capture.local_id();
-        let image = match download(api, token, &capture.id).await {
-            Ok(image) => image,
+        let body = match download(api, token, &capture.id).await {
+            Ok(body) => body,
             Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
             Err(error) => {
                 tracing::warn!(id = %capture.id, "capture sync: skipped: {error:#}");
@@ -632,7 +646,7 @@ async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Pat
         let saved = {
             let app = app.clone();
             let root = root.to_path_buf();
-            crate::sync::blocking(move || save(&app, &root, &capture, &image)).await
+            crate::sync::blocking(move || save(&app, &root, &capture, &body)).await
         };
         match saved {
             Ok(true) => arrived += 1,
@@ -658,7 +672,7 @@ async fn pull<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Pat
     }
     if arrived > 0 {
         if let Err(error) = app.emit("recordings:updated", ()) {
-            tracing::warn!("capture sync: could not announce new images: {error}");
+            tracing::warn!("capture sync: could not announce new captures: {error}");
         }
     }
     Ok(arrived)
@@ -678,14 +692,16 @@ async fn download(api: &Api, token: &str, id: &str) -> Result<Vec<u8>> {
     Ok(response.bytes().await.context("read capture")?.to_vec())
 }
 
-/// Writes the image's folder, marks it pulled, then adds it to the history.
+/// Writes the capture's folder, marks it pulled, then adds it to the history.
 /// Any failure removes the folder and the mark. Returns false when the user
 /// deleted it on this Mac while the pull was running.
-fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, capture: &CloudCapture, image: &[u8]) -> Result<bool, String> {
+fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, capture: &CloudCapture, body: &[u8]) -> Result<bool, String> {
     let id = capture.local_id();
-    let ext = extension(&capture.content_type).ok_or("unsupported image type")?;
+    let ext = extension(&capture.content_type).ok_or("unsupported capture type")?;
+    let note = capture.content_type == NOTE_TYPE;
+    let (file, source, untitled) = if note { ("note.md".to_string(), "note", "Note") } else { (format!("image.{ext}"), "image", "Screenshot") };
     let started = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(capture.created_at).unwrap_or_else(chrono::Utc::now);
-    let title = if capture.title.trim().is_empty() { "Screenshot" } else { capture.title.trim() };
+    let title = if capture.title.trim().is_empty() { untitled } else { capture.title.trim() };
     // A save cut short (the app quit) left its folder behind: use it again
     // rather than leave an orphan next to a second copy.
     let earlier = load_state(app)?
@@ -709,16 +725,18 @@ fn save<R: Runtime>(app: &AppHandle<R>, root: &Path, capture: &CloudCapture, ima
         title: title.to_string(),
         started_at_ms: capture.created_at,
         duration_sec: 0,
-        source: "image".into(),
+        source: source.into(),
         status: "complete".into(),
         summary: None,
-        transcript: capture.transcript.clone().filter(|text| !text.trim().is_empty()),
+        // A note's text is its transcript, as for one written on this Mac.
+        transcript: if note { Some(String::from_utf8_lossy(body).into_owned()) } else { capture.transcript.clone() }
+            .filter(|text| !text.trim().is_empty()),
         notes: None,
         has_audio: false,
         has_video: false,
         folder_path: Some(folder.to_string_lossy().into_owned()),
     };
-    let saved = std::fs::write(folder.join(format!("image.{ext}")), image)
+    let saved = std::fs::write(folder.join(file), body)
         .map_err(|error| error.to_string())
         .and_then(|()| serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string()))
         .and_then(|json| std::fs::write(folder.join("capture.json"), json).map_err(|error| error.to_string()))
@@ -801,6 +819,27 @@ mod tests {
         .unwrap();
     }
 
+    fn note(handle: &AppHandle<MockRuntime>, root: &Path, id: &str, text: &str) {
+        let folder = root.join(format!("Note-{id}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("note.md"), text).unwrap();
+        store::append(handle, StoredRecording {
+            id: id.into(),
+            title: "Note".into(),
+            started_at_ms: 1_700_000_000_000,
+            duration_sec: 0,
+            source: "note".into(),
+            status: "complete".into(),
+            summary: None,
+            transcript: Some(text.into()),
+            notes: None,
+            has_audio: false,
+            has_video: false,
+            folder_path: Some(folder.to_string_lossy().into_owned()),
+        })
+        .unwrap();
+    }
+
     fn listing(items: serde_json::Value) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_json(serde_json::json!({ "items": items }))
     }
@@ -825,6 +864,79 @@ mod tests {
 
         assert_eq!(upload(handle, &api, "token").await.unwrap(), 1);
         assert_eq!(upload(handle, &api, "token").await.unwrap(), 0, "already uploaded");
+    }
+
+    #[tokio::test]
+    async fn a_note_is_uploaded_once_as_markdown() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let id = uuid::Uuid::new_v4().to_string();
+        note(handle, &root, &id, "# Groceries\n\n- oat milk");
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/devices/captures"))
+            .and(header("x-client-capture-id", id.as_str()))
+            .and(header("content-type", "text/markdown"))
+            .and(header("content-length", "23"))
+            .and(header("x-title", "Note"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({ "id": "cap_1" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(upload(handle, &api, "token").await.unwrap(), 1);
+        assert_eq!(upload(handle, &api, "token").await.unwrap(), 0, "already uploaded");
+    }
+
+    #[tokio::test]
+    async fn a_note_over_the_server_limit_is_never_sent() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let id = uuid::Uuid::new_v4().to_string();
+        note(handle, &root, &id, &"x".repeat(MAX_NOTE_BYTES as usize + 1));
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/api/devices/captures")).respond_with(ResponseTemplate::new(201)).expect(0).mount(&server).await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(upload(handle, &api, "token").await.unwrap(), 0);
+        assert!(load_state(handle).unwrap().unsendable.contains(&id));
+    }
+
+    #[tokio::test]
+    async fn a_note_from_another_mac_arrives_as_a_note() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let theirs = uuid::Uuid::new_v4().to_string();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/devices/captures"))
+            .respond_with(listing(serde_json::json!([
+                { "id": "cap_note", "kind": "note", "clientCaptureId": theirs, "title": "Groceries", "contentType": "text/markdown", "bytes": 23, "createdAt": 1_700_000_100_000_i64, "deviceName": "MacBook Air" }
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/devices/captures/cap_note"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes("# Groceries\n\n- oat milk".as_bytes().to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST")).and(path("/api/devices/captures")).respond_with(ResponseTemplate::new(201)).expect(0).mount(&server).await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(run(handle, &api, "token", &root).await.unwrap(), 1);
+        let pulled = store::get(handle, &theirs).unwrap().expect("in the history");
+        assert_eq!(pulled.source, "note");
+        assert_eq!(pulled.title, "Groceries");
+        assert_eq!(pulled.transcript.as_deref(), Some("# Groceries\n\n- oat milk"));
+        let folder = PathBuf::from(pulled.folder_path.unwrap());
+        assert_eq!(std::fs::read_to_string(folder.join("note.md")).unwrap(), "# Groceries\n\n- oat milk");
+        assert_eq!(origins(handle).get(&theirs).map(String::as_str), Some("MacBook Air"));
+        assert_eq!(run(handle, &api, "token", &root).await.unwrap(), 0, "already here, and not sent back");
     }
 
     #[tokio::test]
