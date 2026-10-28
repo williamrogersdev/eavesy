@@ -65,5 +65,6 @@ export function nemotronTurns(response: unknown): Turn[] {
     const said = piece.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (said) turns.push({ speaker, text: said });
   }
+  if (turns.length === 0) throw new Error('no transcript after removing reasoning and special tokens');
   return turns;
 }

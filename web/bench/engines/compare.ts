@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -13,8 +14,6 @@ import { cpErrors, parseReference, wordErrors, words, type Turn, type WordErrors
 
 const OUT = join(BENCH, 'out', 'engines');
 const NEMOTRON_MAX_MS = 60 * 60 * 1000;
-/** The model card's vLLM `VLLM_MAX_AUDIO_CLIP_FILESIZE_MB`; hosted providers may take less. */
-const NEMOTRON_MAX_WAV_BYTES = 180 * 1024 * 1024;
 const WHISPER_TIMEOUT_MS = 2 * 60 * 1000;
 
 const { values: args } = parseArgs({
@@ -35,6 +34,8 @@ interface Case {
 }
 
 interface Saved {
+  /** What the responses were recorded from, so a replay of different input fails. */
+  input: string;
   ms: number;
   responses: unknown[];
 }
@@ -68,19 +69,19 @@ function scriptedCases(): Case[] {
   return readdirSync(dir)
     .filter((name) => existsSync(join(dir, name, 'truth.json')))
     .flatMap((name) => {
-      const files = ['mic.wav', 'system.wav'].map((file) => join(dir, name, file));
-      if (!files.every((file) => existsSync(file))) {
-        console.warn(`skipping ${name}: needs mic.wav and system.wav (run bun bench/generate.ts)`);
+      try {
+        const truth = JSON.parse(readFileSync(join(dir, name, 'truth.json'), 'utf8')) as { lines: TruthLine[] };
+        const [mic, system] = ['mic.wav', 'system.wav'].map((file) => readWav(readFileSync(join(dir, name, file))));
+        return [{
+          name,
+          samples: mix(mic, system),
+          reference: [...truth.lines].sort((a, b) => a.startMs - b.startMs).map((line) => ({ speaker: line.speaker, text: line.text })),
+          terms: [],
+        }];
+      } catch (error) {
+        console.warn(`skipping ${name}: ${error instanceof Error ? error.message : String(error)} (run bun bench/generate.ts again)`);
         return [];
       }
-      const truth = JSON.parse(readFileSync(join(dir, name, 'truth.json'), 'utf8')) as { lines: TruthLine[] };
-      const [mic, system] = files.map((file) => readWav(readFileSync(file)));
-      return [{
-        name,
-        samples: mix(mic, system),
-        reference: [...truth.lines].sort((a, b) => a.startMs - b.startMs).map((line) => ({ speaker: line.speaker, text: line.text })),
-        terms: [],
-      }];
     });
 }
 
@@ -181,7 +182,6 @@ const nemotron: Engine = {
     if (audioMs > NEMOTRON_MAX_MS) throw new Error('longer than the model’s one-hour limit');
     const response = await call(async () => {
       const wav = new Uint8Array(writeWav(floats(c.samples)));
-      if (wav.byteLength > NEMOTRON_MAX_WAV_BYTES) throw new Error(`${(wav.byteLength / 2 ** 20).toFixed(0)} MiB of audio is over the server's 180 MiB clip limit`);
       const key = process.env.NEMOTRON_API_KEY;
       const response = await fetch(nemotronUrl(), {
         method: 'POST',
@@ -207,17 +207,29 @@ interface Row {
   error?: string;
 }
 
+/** The audio and every setting that changes what an engine is sent. */
+function inputIdentity(engine: Engine, c: Case): string {
+  const hash = createHash('sha256').update(new Uint8Array(c.samples.buffer, c.samples.byteOffset, c.samples.byteLength));
+  const settings =
+    engine === whisper
+      ? { language: args.language, terms: c.terms, segmentMs: SEGMENT_MS }
+      : { model: process.env.NEMOTRON_MODEL ?? NEMOTRON_MODEL, terms: c.terms };
+  return hash.update(JSON.stringify(settings)).digest('hex');
+}
+
 async function measure(engine: Engine, c: Case): Promise<Row> {
   const file = join(OUT, c.name, `${engine.name}.json`);
   const base = { case: c.name, engine: engine.name, seconds: c.samples.length / RATE };
-  let saved: Saved = { ms: 0, responses: [] };
+  const input = inputIdentity(engine, c);
+  let saved: Saved = { input, ms: 0, responses: [] };
   try {
     let turns: Turn[];
     if (args.replay) {
       if (!existsSync(file)) throw new Error('nothing recorded yet');
       saved = JSON.parse(readFileSync(file, 'utf8')) as Saved;
+      const stale = `${file} was recorded from different audio or settings; record it again`;
+      if (saved.input !== input) throw new Error(stale);
       const queue = [...saved.responses];
-      const stale = `${file} does not match this audio; record it again`;
       turns = await engine.run(c, async () => {
         if (queue.length === 0) throw new Error(stale);
         return queue.shift();
@@ -225,15 +237,18 @@ async function measure(engine: Engine, c: Case): Promise<Row> {
       if (queue.length > 0) throw new Error(stale);
     } else {
       mkdirSync(join(OUT, c.name), { recursive: true });
-      // Saved after every paid call, so a failure later on does not lose the ones already made.
+      // Every paid call is saved as it lands, beside the last complete recording,
+      // which is only replaced once this one finishes.
+      const partial = `${file}.partial`;
       turns = await engine.run(c, async (send) => {
         const started = performance.now();
         const response = await send();
         saved.ms += performance.now() - started;
         saved.responses.push(response);
-        writeFileSync(file, `${JSON.stringify(saved, null, 2)}\n`);
+        writeFileSync(partial, `${JSON.stringify(saved, null, 2)}\n`);
         return response;
       });
+      renameSync(partial, file);
     }
     const ref = c.reference.flatMap((turn) => words(turn.text));
     const hyp = turns.flatMap((turn) => words(turn.text));

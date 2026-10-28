@@ -46,9 +46,11 @@ Flags: `--engines whisper,nemotron`, `--only <recording>`, `--language en`
 any network or spend.
 
 Every response is saved in `bench/out/engines/` (ignored by Git) as soon as
-it arrives, so a failure halfway through keeps what was already paid for;
-`report.md` goes there too. Replaying a recording whose saved responses no
-longer fit its audio fails and names the file to record again.
+it arrives, in `<engine>.json.partial` until the recording finishes, so a
+failure halfway through keeps what was already paid for and never replaces
+the last complete run; `report.md` goes there too. Each saved file records a
+hash of the audio and settings it came from, and replaying it against
+anything else fails and names the file to record again.
 
 ## Scores
 
