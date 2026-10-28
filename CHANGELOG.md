@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-28 - desktop
+
+### Added
+
+- Mac app: spell dictionary words with a second on-device recognizer ([#290](https://github.com/williamrogersdev/eavesy/pull/290))
+
 ## [0.9.2] - 2026-10-27 - desktop
 
 ### Fixed
