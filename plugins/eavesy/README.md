@@ -1,7 +1,7 @@
 # Eavesy plugin for Claude Code
 
 Connects Claude Code to [Eavesy](https://eavesy.com) so it can search your
-recordings, dictations and action items, and adds a skill that tells Claude
+recordings, dictations, notes, screenshots and action items, and adds a skill that tells Claude
 when to look there.
 
 ## Install

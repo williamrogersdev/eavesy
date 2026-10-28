@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { worker as mcpWorker } from '../../../workers/mcp/src/index';
 import { Route as McpTokensRoute } from '../../src/routes/api/mcp-tokens';
@@ -11,6 +11,7 @@ import { pollForDevice, resolveForDevice } from '../../src/server/agent-inbox';
 
 interface TestEnv {
   DB: D1Database;
+  AUDIO_BUCKET: R2Bucket;
   TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
 }
 
@@ -215,6 +216,9 @@ describe('MCP scopes', () => {
     expect(tools.map((tool) => tool.name)).toEqual([
       'send_to_human',
       'ask_human',
+      'search',
+      'recent',
+      'get',
       'search_library',
       'ask_library',
       'search_meetings',
@@ -241,7 +245,7 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(12);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(15);
   });
 });
 
@@ -296,7 +300,7 @@ describe('MCP account tools', () => {
     expect((await callJson(first.token, 'sign_out')).status).toBe('signed_out');
     const after = await call('https://mcp.eavesy.com/', { authorization: `Bearer ${first.token}` });
     expect(after.status).toBe(401);
-    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(12);
+    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(15);
   });
 });
 
@@ -438,6 +442,215 @@ Will: Bump it.
     const failed = await tool(token, 'search_meetings', { query: 'cask' });
     expect(failed.error).toEqual({ code: -32000, message: 'The tool call failed. Please try again.' });
     expect((await tool(token, 'no_such_tool', {})).error?.message).toBe('unknown tool: no_such_tool');
+  });
+});
+
+describe('MCP library items', () => {
+  const DAY = 86_400_000;
+  const T0 = Date.parse('2026-10-20T12:00:00Z');
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const vectorQueries: unknown[] = [];
+  const itemsEnv = () =>
+    ({
+      DB: testEnv.DB,
+      AUDIO_BUCKET: testEnv.AUDIO_BUCKET,
+      AI: { run: async () => ({ data: [Array.from({ length: 1024 }, () => 0.1)] }) },
+      VECTORIZE: {
+        query: async (...args: unknown[]) => {
+          vectorQueries.push(args);
+          return {
+            matches: [
+              { id: 'vec_meeting', score: 0.7, metadata: { userId: 'user_mcp', sourceType: 'meeting', sourceId: 'meet_meaning' } },
+              { id: 'vec_dictation', score: 0.6, metadata: { userId: 'user_mcp', sourceType: 'dictation', sourceId: 'dict_meaning' } },
+            ],
+          };
+        },
+      },
+    }) as unknown as Parameters<typeof mcpWorker.fetch>[1];
+  const rpc = async (token: string, name: string, args: Record<string, unknown>) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      itemsEnv(),
+    )).json<{
+      result?: { content?: { type: string; text?: string; data?: string; mimeType?: string }[]; structuredContent?: unknown };
+      error?: { code: number; message: string };
+    }>();
+  const call = async (token: string, name: string, args: Record<string, unknown>) =>
+    JSON.parse((await rpc(token, name, args)).result?.content?.[0]?.text ?? 'null');
+  const ids = async (token: string, name: string, args: Record<string, unknown>) =>
+    ((await call(token, name, args)).items as { id: string }[]).map((item) => item.id);
+
+  beforeEach(async () => {
+    vectorQueries.length = 0;
+    const capture = `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, transcript, transcript_status, folder_id, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, 'desktop', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(`INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'user_mcp', 'Eavesy', '', '[]', '[]')`),
+      testEnv.DB.prepare(
+        `INSERT INTO meetings (id, user_id, title, description, started_at, source, status, folder_id, created_at, updated_at)
+         VALUES ('meet_words', 'user_mcp', 'Pricing review', 'We set the price.', ?, 'desktop', 'complete', 'p1', ?, ?),
+                ('meet_meaning', 'user_mcp', 'Standup', 'Daily sync.', ?, 'desktop', 'complete', NULL, ?, ?)`,
+      ).bind(T0, T0, T0, T0 - DAY, T0, T0),
+      testEnv.DB.prepare(`INSERT INTO user_notes (meeting_id, content_md, updated_at) VALUES ('meet_words', 'Ask Ada about pricing.', ?)`).bind(T0),
+      testEnv.DB.prepare(
+        `INSERT INTO dictations (id, user_id, title, transcript, cleaned_text, duration_sec, created_at)
+         VALUES ('dict_words', 'user_mcp', 'Dictation', 'um pricing tiers', 'Pricing tiers.', 4, ?),
+                ('dict_meaning', 'user_mcp', 'Dictation', 'ship friday', NULL, 2, ?)`,
+      ).bind(T0 - 2 * DAY, T0 - 3 * DAY),
+      testEnv.DB.prepare(capture).bind('cap_note', 'user_mcp', 'note', 'note', 'Groceries', 'users/user_mcp/captures/cap_note.md', 'text/markdown', 30,
+        '# Groceries\n\n- oat milk\n- pricing stickers', 'complete', null, T0 - 4 * DAY, T0, null),
+      testEnv.DB.prepare(capture).bind('cap_old_note', 'user_mcp', 'note', 'note', 'Old note', 'users/user_mcp/captures/cap_old_note.md', 'text/markdown', 9,
+        null, 'none', null, T0 - 5 * DAY, T0, null),
+      testEnv.DB.prepare(capture).bind('cap_shot', 'user_mcp', 'image', 'screenshot', 'Screenshot', 'users/user_mcp/captures/cap_shot.png', 'image/png', PNG.byteLength,
+        'Pricing page: $10 a month', 'complete', 'p1', T0 - 6 * DAY, T0, null),
+      testEnv.DB.prepare(capture).bind('cap_gone', 'user_mcp', 'note', 'note', 'Pricing draft', 'users/user_mcp/captures/cap_gone.md', 'text/markdown', 5,
+        'pricing', 'complete', null, T0 - DAY, T0, T0),
+      testEnv.DB.prepare(
+        `INSERT INTO embeddings (id, user_id, source_type, source_id, chunk_idx, content_excerpt, created_at)
+         VALUES ('vec_meeting', 'user_mcp', 'meeting', 'meet_meaning', 0, 'We talked about what to charge.', ?),
+                ('vec_dictation', 'user_mcp', 'dictation', 'dict_meaning', 0, 'ship friday', ?)`,
+      ).bind(T0, T0),
+    ]);
+    await testEnv.AUDIO_BUCKET.put('users/user_mcp/captures/cap_old_note.md', 'Old words');
+    await testEnv.AUDIO_BUCKET.put('users/user_mcp/captures/cap_shot.png', PNG);
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM embeddings'),
+      testEnv.DB.prepare('DELETE FROM captures'),
+      testEnv.DB.prepare('DELETE FROM dictations'),
+      testEnv.DB.prepare('DELETE FROM user_notes'),
+      testEnv.DB.prepare('DELETE FROM meetings'),
+      testEnv.DB.prepare('DELETE FROM folders'),
+      testEnv.DB.prepare('DELETE FROM rate_limits'),
+    ]);
+  });
+
+  it('list everything newest first, with structured results, and filter by kind, project and date', async () => {
+    const { token } = await mint();
+    const response = await rpc(token, 'recent', {});
+    const parsed = JSON.parse(response.result?.content?.[0]?.text ?? 'null');
+    expect(response.result?.structuredContent).toEqual(parsed);
+    expect(parsed.items.map((item: { id: string }) => item.id)).toEqual([
+      'meet_words', 'meet_meaning', 'dict_words', 'dict_meaning', 'cap_note', 'cap_old_note', 'cap_shot',
+    ]);
+    expect(parsed.items[0]).toEqual({
+      id: 'meet_words',
+      kind: 'meeting',
+      title: 'Pricing review',
+      excerpt: 'We set the price.',
+      project: 'Eavesy',
+      created_at: '2026-10-20T12:00:00.000Z',
+      duration_sec: null,
+      url: 'https://eavesy.com/app/meetings/meet_words',
+    });
+    expect(parsed.items[4]).toMatchObject({ kind: 'note', excerpt: '# Groceries - oat milk - pricing stickers', url: null });
+
+    expect(await ids(token, 'recent', { kinds: ['note', 'image'] })).toEqual(['cap_note', 'cap_old_note', 'cap_shot']);
+    expect(await ids(token, 'recent', { kinds: 'dictation' })).toEqual(['dict_words', 'dict_meaning']);
+    // Dictations have no project, so a project leaves them out.
+    expect(await ids(token, 'recent', { project: 'eavesy' })).toEqual(['meet_words', 'cap_shot']);
+    expect(await ids(token, 'recent', { since: '2026-10-16', until: '2026-10-18' })).toEqual(['dict_words', 'dict_meaning', 'cap_note']);
+    expect(await ids(token, 'recent', { until: '2026-10-19T00:00:00Z' })).toEqual(['dict_words', 'dict_meaning', 'cap_note', 'cap_old_note', 'cap_shot']);
+    expect(await ids(token, 'recent', { limit: 2 })).toEqual(['meet_words', 'meet_meaning']);
+  });
+
+  it('refuse a kind, date or project it does not know', async () => {
+    const { token } = await mint();
+    expect((await rpc(token, 'recent', { kinds: ['email'] })).error?.message).toContain('unknown kind "email"');
+    expect((await rpc(token, 'recent', { since: 'last week' })).error?.message).toContain('since must be an ISO 8601');
+    expect((await rpc(token, 'recent', { since: '2026-10-20', until: '2026-10-01' })).error?.message).toBe('since must be before until');
+    expect((await rpc(token, 'search', { query: 'x', project: 'nope' })).error?.message).toBe('no project named "nope"');
+  });
+
+  it('search words across every kind and meaning across recordings and dictations, best first', async () => {
+    const { token } = await mint();
+    const { items } = await call(token, 'search', { query: 'pricing' });
+    expect(items.map((item: { id: string; score: number }) => [item.id, item.score])).toEqual([
+      ['meet_words', 1],
+      ['dict_words', 1],
+      ['cap_note', 1],
+      ['cap_shot', 1],
+      ['meet_meaning', 0.7],
+      ['dict_meaning', 0.6],
+    ]);
+    expect(items.find((item: { id: string }) => item.id === 'meet_meaning').excerpt).toBe('We talked about what to charge.');
+    expect(items.find((item: { id: string }) => item.id === 'cap_shot').excerpt).toBe('Pricing page: $10 a month');
+    expect(vectorQueries).toHaveLength(1);
+    const day = Math.floor(Date.now() / DAY);
+    expect(await testEnv.DB.prepare('SELECT count FROM rate_limits WHERE key = ?').bind(`budget:user:search:user_mcp:${day}`).first()).toEqual({ count: 1 });
+
+    expect(await ids(token, 'search', { query: 'pricing', kinds: ['image'], project: 'Eavesy' })).toEqual(['cap_shot']);
+    expect(await ids(token, 'search', { query: 'pricing', since: '2026-10-19' })).toEqual(['meet_words', 'meet_meaning']);
+    expect(await call(token, 'search', { query: '  ' })).toEqual({ items: [] });
+  });
+
+  it('search notes and captures without a model call or a quota', async () => {
+    const { token } = await mint();
+    expect(await ids(token, 'search', { query: 'oat milk', kinds: ['note', 'image', 'video', 'audio'] })).toEqual(['cap_note']);
+    expect(vectorQueries).toHaveLength(0);
+    expect(await testEnv.DB.prepare(`SELECT count(*) AS n FROM rate_limits WHERE key LIKE 'budget:user:%'`).first()).toEqual({ n: 0 });
+  });
+
+  it('get a recording with the user’s notes, a dictation, a note and a screenshot with its image', async () => {
+    const { token } = await mint();
+    expect(await call(token, 'get', { id: 'meet_words' })).toMatchObject({
+      kind: 'meeting',
+      title: 'Pricing review',
+      notes: 'Ask Ada about pricing.',
+      project: 'Eavesy',
+    });
+    expect(await call(token, 'get_meeting', { id: 'meet_words' })).toMatchObject({ notes: 'Ask Ada about pricing.' });
+    expect(await call(token, 'get', { id: 'dict_words' })).toMatchObject({ kind: 'dictation', text: 'Pricing tiers.', transcript: 'um pricing tiers' });
+    expect(await call(token, 'get', { id: 'cap_note' })).toMatchObject({ kind: 'note', text: '# Groceries\n\n- oat milk\n- pricing stickers' });
+    // A note from before its text was kept on the row is read from R2.
+    expect(await call(token, 'get', { id: 'cap_old_note' })).toMatchObject({ text: 'Old words' });
+
+    const shot = await rpc(token, 'get', { id: 'cap_shot' });
+    expect(JSON.parse(shot.result?.content?.[0]?.text ?? 'null')).toMatchObject({
+      kind: 'image',
+      text: 'Pricing page: $10 a month',
+      project: 'Eavesy',
+      image_attached: true,
+      url: 'https://eavesy.com/app/captures/cap_shot',
+    });
+    expect(shot.result?.content?.[1]).toEqual({ type: 'image', mimeType: 'image/png', data: btoa(String.fromCharCode(...PNG)) });
+    expect(shot.result?.structuredContent).toBeUndefined();
+
+    // Too big to attach: the text and details still come back.
+    await testEnv.DB.prepare(`UPDATE captures SET bytes = ? WHERE id = 'cap_shot'`).bind(4 * 1024 * 1024 + 1).run();
+    const big = await rpc(token, 'get', { id: 'cap_shot' });
+    expect(JSON.parse(big.result?.content?.[0]?.text ?? 'null')).toMatchObject({ text: 'Pricing page: $10 a month', image_attached: false });
+    expect(big.result?.content).toHaveLength(1);
+
+    expect((await rpc(token, 'get', { id: 'cap_gone' })).error?.message).toBe('not found');
+    expect((await rpc(token, 'get', { id: 'nope' })).error?.message).toBe('not found');
+  });
+
+  it('never reach another user’s items', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at) VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, transcript, created_at, updated_at)
+         VALUES ('cap_theirs', 'user_other', 'note', 'note', 'desktop', 'Pricing', 'users/user_other/captures/cap_theirs.md', 'text/markdown', 7, 'pricing', ?, ?)`,
+      ).bind(now, now),
+    ]);
+    try {
+      expect(await ids(token, 'search', { query: 'pricing', kinds: ['note'] })).toEqual(['cap_note']);
+      expect(await ids(token, 'recent', { kinds: ['note'] })).not.toContain('cap_theirs');
+      expect((await rpc(token, 'get', { id: 'cap_theirs' })).error?.message).toBe('not found');
+    } finally {
+      await testEnv.DB.prepare(`DELETE FROM captures WHERE user_id = 'user_other'`).run();
+    }
   });
 });
 

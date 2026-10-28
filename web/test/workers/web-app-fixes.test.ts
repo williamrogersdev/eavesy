@@ -437,18 +437,25 @@ describe('captures', () => {
     const created = await upload(note.byteLength);
     expect(created.status).toBe(201);
     const { id } = (await created.json()) as { id: string };
-    expect(await row('SELECT kind, capture_mode, title, r2_key FROM captures WHERE id = ?', id)).toEqual({
+    expect(await row('SELECT kind, capture_mode, title, r2_key, transcript, transcript_status FROM captures WHERE id = ?', id)).toEqual({
       kind: 'note',
       capture_mode: 'note',
       title: 'Groceries',
       r2_key: `users/user_notes/captures/${id}.md`,
+      // Kept on the row so search and MCP can read it.
+      transcript: '# Groceries\n\n- oat milk ☕️',
+      transcript_status: 'complete',
     });
+    // A body shorter or longer than it said is refused, not stored cut short.
+    expect((await upload(note.byteLength + 5)).status).toBe(400);
+    expect((await upload(note.byteLength - 1)).status).toBe(400);
 
     const listed = async (token: string) => {
       const response = await call(DeviceCapturesRoute, 'GET', '/api/devices/captures', { headers: { authorization: `Bearer ${token}` } });
       return ((await response.json()) as { items: { id: string; kind: string; contentType: string }[] }).items;
     };
-    expect(await listed(otherMac)).toEqual([expect.objectContaining({ id, kind: 'note', contentType: 'text/markdown' })]);
+    // The list leaves a note's text out: the Mac downloads it anyway.
+    expect(await listed(otherMac)).toEqual([expect.objectContaining({ id, kind: 'note', contentType: 'text/markdown', transcript: null })]);
     expect(await listed(fromMac)).toEqual([]);
 
     const downloaded = await call(DeviceCaptureRoute, 'GET', `/api/devices/captures/${id}`, { headers: { authorization: `Bearer ${otherMac}` } }, { id });
