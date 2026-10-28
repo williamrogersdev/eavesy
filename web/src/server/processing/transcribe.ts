@@ -147,7 +147,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
       .where(eq(meetings.id, meetingId));
   }
 
-  await logMeetingComplete(db, meeting.userId, meetingId, now);
+  await logMeetingComplete(db, env, meeting.userId, meetingId, now);
 
   if (!user?.isAnonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });

@@ -3,7 +3,7 @@ import { librarySources, askLibrary } from '../../../web/src/server/library-memo
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import { and, desc, eq, gte, inArray, isNull, lte, ne, or, type SQL, sql } from 'drizzle-orm';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
-import type { Ai, D1Database, DurableObjectNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
+import type { Ai, D1Database, DurableObjectNamespace, Queue, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 
 import * as schema from '../../../web/src/db/schema';
 import { clock } from '../../../web/src/lib/ai/chapters';
@@ -51,6 +51,11 @@ import {
   validateAuthorization,
   withQuery,
 } from '../../../web/src/server/mcp-oauth';
+import { UserFacingError } from './errors';
+import { apiError, apiJson, CORS_HEADERS as API_CORS_HEADERS, routeApi } from './rest';
+import { openApiDocument } from './openapi';
+import type { QueueMessage } from '../../../web/src/server/queue';
+import { emitWebhookEvent, webhookItem } from '../../../web/src/server/webhooks';
 
 interface Env extends CreditEnv {
   DB: D1Database;
@@ -59,6 +64,8 @@ interface Env extends CreditEnv {
   /** Drops (send_to_my_devices): the shared web helpers reach these through the `cloudflare:workers` env. */
   AUDIO_BUCKET: R2Bucket;
   DROPS_HUB: DurableObjectNamespace;
+  /** Cleaned-transcript rebuilds and webhook deliveries. */
+  PROCESSING_QUEUE: Queue<QueueMessage>;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
   RELEASE?: string;
@@ -226,6 +233,7 @@ export const worker = {
     const path = url.pathname.split('/').filter(Boolean);
     const oauth = await routeOAuth(request, env, url, path);
     if (oauth) return oauth;
+    if (path[0] === 'v1') return serveApi(request, env, url, path.slice(1));
     const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1] ?? '';
     const viaPath = !bearer && Boolean(path[0]);
     const rawToken = bearer || path[0];
@@ -271,6 +279,41 @@ export const worker = {
     return response;
   },
 } satisfies ExportedHandler<Env>;
+
+/** The REST API under /v1: the same keys, limits and tools as MCP. Only the Authorization header carries the key. */
+async function serveApi(request: Request, env: Env, url: URL, segments: string[]): Promise<Response> {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: API_CORS_HEADERS });
+  if (segments.length === 1 && segments[0] === 'openapi.json') {
+    if (request.method !== 'GET') return apiError(405, 'use GET', { allow: 'GET' });
+    return apiJson(openApiDocument(url.origin), 200, { 'cache-control': 'public, max-age=300' });
+  }
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+  if (!bearer) return apiError(401, 'send your API key in the header Authorization: Bearer <key>');
+  const token = await resolveToken(env, bearer, false);
+  if (token === 'expired') return apiError(401, 'this API key has expired. Make a new one in Eavesy settings.');
+  if (!token) return apiError(401, 'this API key is not valid');
+  const limited = await consumeRateLimit(env.DB, {
+    key: `mcp:${token.id}`,
+    limit: MCP_REQUESTS_PER_MINUTE,
+    windowSec: 60,
+    failMode: 'open',
+  });
+  if (!limited.allowed) return apiError(429, 'too many requests', { 'retry-after': String(limited.retryAfterSec) });
+  return routeApi(
+    request,
+    {
+      env,
+      userId: token.userId,
+      tokenId: token.id,
+      scopes: parseMcpScopes(token.scopesJson),
+      call: async (name, args) => {
+        const result = await callTool(env, token.userId, name, args, token);
+        return result instanceof ToolOutput ? result.value : result;
+      },
+    },
+    segments,
+  );
+}
 
 async function serve(request: Request, env: Env, token: TokenRow, scopes: McpScope[]): Promise<Response> {
   const userId = token.userId;
@@ -399,9 +442,6 @@ interface RpcRequest {
   method: unknown;
   params: Record<string, unknown>;
 }
-
-/** An error whose message is written for the person calling the tool. */
-class UserFacingError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -825,7 +865,7 @@ async function withQuota<T>(env: Env, userId: string, scope: QuotaScope, run: ()
   const chargedAt = Date.now();
   const result = await consumeRateLimit(env.DB, policy, chargedAt);
   if (!result.allowed) {
-    throw new UserFacingError('You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.');
+    throw new UserFacingError('You’ve reached today’s limit for this. It resets at midnight UTC — contact support if you need more.', 429);
   }
   try {
     return await run();
@@ -936,6 +976,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           await env.AUDIO_BUCKET.delete(r2Key).catch(() => undefined);
           throw error;
         }
+        await emitWebhookEvent(env, userId, 'capture.created', webhookItem({ id, kind: 'note', title, createdAt }), createdAt);
         return { id, kind: 'note', title, project: project?.name ?? null, created_at: iso(createdAt) };
       });
     }
@@ -960,13 +1001,13 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           )
           .limit(1)
       )[0];
-      if (!row) throw new UserFacingError('no recording with a summary has that id');
+      if (!row) throw new UserFacingError('no recording with a summary has that id', 404);
       const items = parseJsonArray(row.actionItemsJson);
       const item = items[index];
-      if (!isRecord(item)) throw new UserFacingError(`that recording has no action item ${index}`);
+      if (!isRecord(item)) throw new UserFacingError(`that recording has no action item ${index}`, 404);
       const expected = stringArg(args.text);
       if (expected && stringArg(item.text) !== expected) {
-        throw new UserFacingError(`action item ${index} reads "${stringArg(item.text)}" now. Read the list again before changing it.`);
+        throw new UserFacingError(`action item ${index} reads "${stringArg(item.text)}" now. Read the list again before changing it.`, 409);
       }
       const updated = { ...item, completed: args.completed };
       const [result] = parseActionItems(JSON.stringify([updated]));
@@ -979,7 +1020,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         .set({ actionItemsJson: JSON.stringify(next), userEditedAt: Date.now() })
         .where(and(eq(schema.summaries.id, row.id), eq(schema.summaries.actionItemsJson, row.actionItemsJson)))
         .returning({ id: schema.summaries.id });
-      if (!written.length) throw new UserFacingError('the action items changed while updating. Read the list again and retry.');
+      if (!written.length) throw new UserFacingError('the action items changed while updating. Read the list again and retry.', 409);
       return { meeting_id: meetingId, ...result, index };
     }
     case 'set_project': {
@@ -1012,7 +1053,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         }
         if (await getDictation(env, db, userId, id, args)) throw new UserFacingError('dictations have no project');
       }
-      throw new UserFacingError('not found');
+      throw new UserFacingError('not found', 404);
     }
     case 'rename': {
       const id = stringArg(args.id);
@@ -1047,7 +1088,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           if (renamed[0]) return { id, kind: renamed[0].kind, title };
         }
       }
-      throw new UserFacingError('not found');
+      throw new UserFacingError('not found', 404);
     }
     case 'search_library':
     case 'ask_library': {
@@ -1133,7 +1174,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         const found = await lookup(env, db, userId, id, args);
         if (found) return found;
       }
-      throw new UserFacingError('not found');
+      throw new UserFacingError('not found', 404);
     }
     case 'search_meetings': {
       const query = stringArg(args.query);
@@ -1157,7 +1198,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       const id = stringArg(args.id);
       if (!id) throw new UserFacingError('id is required');
       const meeting = await getMeeting(env, db, userId, id, args);
-      if (!meeting) throw new UserFacingError('not found');
+      if (!meeting) throw new UserFacingError('not found', 404);
       const { kind: _kind, ...rest } = meeting;
       return rest;
     }

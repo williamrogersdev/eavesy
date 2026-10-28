@@ -1,0 +1,147 @@
+---
+title: API and webhooks
+description: Read and change your Eavesy library over a REST API with an API key, and get a signed webhook when a recording finishes or a note is saved.
+category: Agents
+order: 42
+modified: 2026-10-28
+---
+
+Everything an agent can do over [MCP](/docs/connect-mcp) also works as a plain
+REST API, for scripts, automations and apps that don't speak MCP. Webhooks go
+the other way: Eavesy sends a signed POST to your URL when something new
+arrives, so you don't have to poll.
+
+The API is described in OpenAPI 3.1 at
+[`https://mcp.eavesy.com/v1/openapi.json`](https://mcp.eavesy.com/v1/openapi.json).
+Point a client generator, Postman or an agent at it.
+
+## Make an API key
+
+1. Sign in to the web app and open **Settings → AI apps and API keys**.
+2. Tick **Allow writes** only if the key should be able to change things.
+3. Select **New key**. The key (`nt_…`) is shown once. Copy it somewhere safe.
+
+A key is read-only unless you allowed writes. It stops working after 90 days
+without use, and you can revoke it on the same page at any time. The same keys
+work for MCP clients that can't sign in.
+
+Send the key in the `Authorization` header:
+
+```bash
+curl https://mcp.eavesy.com/v1/items?kinds=meeting&limit=5 \
+  -H "Authorization: Bearer $EAVESY_KEY"
+```
+
+## Endpoints
+
+All paths are under `https://mcp.eavesy.com/v1`.
+
+| Method and path | What it does | Access |
+| --- | --- | --- |
+| `GET /items` | The newest items: recordings, dictations, notes and captures. Filter with `kinds`, `project`, `since`, `until`, `limit`. | read |
+| `GET /search?q=` | Search titles and text, and recordings and dictations by meaning. Same filters. | read |
+| `GET /items/{id}` | One item in full: a recording's summary, your notes and transcript; a note's Markdown; text read from a screenshot. | read |
+| `GET /items/{id}/file` | A capture's original file (image, video, audio or note). | read |
+| `PATCH /items/{id}` | Rename an item (`title`) or file it under a project (`project`, or `null` to take it out). If it fails partway, send it again. | write |
+| `POST /notes` | Save Markdown as a note (`text`, optional `title` and `project`). | write |
+| `GET /action-items` | Action items from your recordings (`status`: `open`, `completed` or `all`; `owner`). | read |
+| `PATCH /meetings/{id}/action-items/{index}` | Mark one done or open (`completed`, and `text` to guard against a list that changed). | write |
+| `GET /projects` | Your projects. | read |
+| `GET /me` | The account and key in use. | read |
+| `GET`, `POST /webhooks`; `GET`, `PATCH`, `DELETE /webhooks/{id}`; `POST /webhooks/{id}/test` | Manage webhooks (below). Reading needs read access; the rest needs write. | read / write |
+
+`kinds` takes a comma-separated list of `meeting`, `dictation`, `note`,
+`image`, `video` and `audio`. "Meeting" means any recording. `since` and
+`until` take ISO 8601 dates or times; a bare `until` date includes that whole
+UTC day.
+
+Errors come back as JSON with an HTTP status:
+
+```json
+{ "error": { "code": "not_found", "message": "not found" } }
+```
+
+### Limits
+
+A key can make 120 requests a minute. Searches that include recordings or
+dictations count against your daily search limit, and saved notes against your
+daily capture limit, the same as in the app. See
+[fair-use limits](/docs/fair-use-limits). Nothing can be deleted from your
+library through the API.
+
+## Webhooks
+
+Add a webhook in **Settings → Webhooks**, or with `POST /webhooks`:
+
+```bash
+curl https://mcp.eavesy.com/v1/webhooks \
+  -H "Authorization: Bearer $EAVESY_KEY" \
+  -H "content-type: application/json" \
+  -d '{"url": "https://example.com/hooks/eavesy", "events": ["recording.completed"]}'
+```
+
+The answer includes a signing secret (`whsec_…`). It is shown once, so keep it.
+Leave out `events` to get all of them. An account can have up to 10 webhooks,
+and each URL must be `https://` with a public host name. A webhook added with
+an API key sends only while that key works, so revoking the key stops it too.
+One added in settings keeps going until you remove it.
+
+### Events
+
+| Event | Sent when |
+| --- | --- |
+| `recording.completed` | A recording finished processing. Its summary is ready if it has one. |
+| `dictation.created` | A dictation was saved to your account. |
+| `capture.created` | A note, screenshot, image, video or audio capture was saved, from a Mac, the web app or an agent. |
+| `webhook.test` | Only from **Test** in settings or `POST /webhooks/{id}/test`. |
+
+Each delivery is a JSON POST:
+
+```json
+{
+  "id": "evt_01JB…",
+  "type": "recording.completed",
+  "timestamp": "2026-10-28T14:03:11.000Z",
+  "data": {
+    "id": "meet_01JB…",
+    "kind": "meeting",
+    "title": "Design review",
+    "created_at": "2026-10-28T13:30:00.000Z",
+    "url": "https://eavesy.com/app/meetings/meet_01JB…"
+  }
+}
+```
+
+The event names the item. Fetch the rest with `GET /items/{id}`.
+
+### Check the signature
+
+Deliveries are signed the way [Standard Webhooks](https://www.standardwebhooks.com)
+signs them, so its libraries verify them:
+
+```ts
+import { Webhook } from 'standardwebhooks';
+
+const payload = await request.text();
+const event = new Webhook(process.env.EAVESY_WEBHOOK_SECRET).verify(payload, {
+  'webhook-id': request.headers.get('webhook-id'),
+  'webhook-timestamp': request.headers.get('webhook-timestamp'),
+  'webhook-signature': request.headers.get('webhook-signature'),
+});
+```
+
+To check it by hand: `webhook-signature` is `v1,` followed by the base64
+HMAC-SHA256 of `{webhook-id}.{webhook-timestamp}.{body}`, keyed with the
+base64-decoded part of the secret after `whsec_`. Refuse a timestamp more than
+a few minutes old.
+
+### Retries
+
+Answer with any `2xx` within 15 seconds. Anything else, a redirect included,
+counts as a failure and is retried 7 times over about 27 hours with the same
+`webhook-id`. Events can arrive more than once and out of order, so use the id
+to drop repeats.
+
+If 5 events in a row fail every attempt, Eavesy turns the webhook off and says
+why in settings. Turn it back on there, or with `PATCH /webhooks/{id}` and
+`{"enabled": true}`.

@@ -19,6 +19,7 @@ import { handleCleanup, handlePurgeAccount } from './processing/cleanup';
 import { collectBotRecording } from './meeting-bots/service';
 import { checkCanary, startCanaries } from './meeting-bots/canary';
 import { reconcileRecaps, sendRecap } from './email/recaps';
+import { deliverWebhook } from './webhooks';
 
 /** The processing Worker's queue handler, for both the main queue and its dead-letter queue. */
 export async function queue(batch: MessageBatch<ProcessingMessage>, env: ProcessingEnv) {
@@ -139,6 +140,9 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       return;
     case 'check-canary':
       await checkCanary(db, env, message.botId, message.check);
+      return;
+    case 'deliver-webhook':
+      await deliverWebhook(db, env.PROCESSING_QUEUE, message);
       return;
     default: {
       const unhandled: never = message;

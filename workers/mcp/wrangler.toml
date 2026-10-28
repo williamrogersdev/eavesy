@@ -31,7 +31,8 @@ name = "DROPS_HUB"
 class_name = "DropsHub"
 script_name = "eavesy"
 
-# set_project queues the same cleaned-transcript rebuild as a move in the web app.
+# set_project queues the same cleaned-transcript rebuild as a move in the web app,
+# and save_note queues webhook deliveries for the processing Worker to send.
 [[queues.producers]]
 queue = "eavesy-processing"
 binding = "PROCESSING_QUEUE"

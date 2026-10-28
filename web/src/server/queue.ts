@@ -1,6 +1,7 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { Queue } from '@cloudflare/workers-types';
 import type { BotPlatform } from '@/server/meeting-bots/service';
+import type { WebhookDelivery } from '@/server/webhooks';
 
 export type QueueMessage =
   | { kind: 'process-recording'; meetingId: string }
@@ -29,7 +30,9 @@ export type QueueMessage =
   /** Judge a canary bot's run (meeting-bots/canary.ts); `check` counts re-looks. */
   | { kind: 'check-canary'; botId: string; platform?: BotPlatform; check?: number }
   /** Email the owner the recap of a completed meeting, if they turned recaps on. */
-  | { kind: 'send-recap'; meetingId: string };
+  | { kind: 'send-recap'; meetingId: string }
+  /** One attempt to POST an event to one of the account's webhook endpoints (server/webhooks.ts). */
+  | WebhookDelivery;
 
 export function getQueue(): Queue<QueueMessage> {
   const { env } = getCloudflareContext();

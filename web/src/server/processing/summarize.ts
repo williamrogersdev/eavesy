@@ -21,6 +21,7 @@ import { resolveModelPlan } from '@/lib/providers/router';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { openUserKeys } from '@/server/secret-box';
 import { queueRecap } from '@/server/email/recaps';
+import { emitWebhookEvent, webhookItem, type WebhookEnv } from '@/server/webhooks';
 import {
   type Db,
   type ProcessingEnv,
@@ -145,7 +146,7 @@ export async function handleSummarize(
           ? { status: 'failed', statusError: 'The recording could not be transcribed.', updatedAt: now }
           : { status: 'complete', statusError: null, updatedAt: now })
         .where(eq(meetings.id, meetingId));
-      if (failedSegments === 0) await logMeetingComplete(db, meeting.userId, meetingId, now);
+      if (failedSegments === 0) await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     }
     return;
   }
@@ -161,7 +162,7 @@ export async function handleSummarize(
       .update(meetings)
       .set({ title: quickNoteTitle(segments, meeting.title), status: 'complete', statusError: partial, updatedAt: now })
       .where(eq(meetings.id, meetingId));
-    await logMeetingComplete(db, meeting.userId, meetingId, now);
+    await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     return;
@@ -303,7 +304,7 @@ async function writeSummary(
       )
       .returning({ id: meetings.id });
     if (!completed.length) return;
-    await logMeetingComplete(db, meeting.userId, meetingId, now);
+    await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     await queueRecap(env, userRow, meetingId);
@@ -338,6 +339,8 @@ export async function resendFollowUps(
   if (!opts.anonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId, onlyIfMissing: true });
+    // Only does anything if the run that completed it died before logging it.
+    if (user) await logMeetingComplete(db, env, user.id, meetingId, Date.now());
   }
   const summarized = await db
     .select({ id: summaries.id })
@@ -370,17 +373,38 @@ export function quickNoteTitle(lines: { text: string }[], fallback: string) {
   return words.length > 8 ? `${head}…` : head;
 }
 
-export async function logMeetingComplete(db: Db, userId: string, meetingId: string, now: number) {
+/**
+ * Records that the meeting finished, and the first time, tells the account's
+ * webhooks. The event is queued before the row is written, under an id fixed
+ * per meeting: a run that dies in between, or can't queue it, leaves no row,
+ * so the next one (or resendFollowUps) sends it again and receivers drop the
+ * repeat by id. A failed send never holds up the meeting's own follow-ups.
+ */
+export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string, meetingId: string, now: number) {
+  const id = `act_complete_${meetingId}`;
+  const logged = await db.select({ id: activityLog.id }).from(activityLog).where(eq(activityLog.id, id)).limit(1);
+  if (logged.length) return;
+  const meeting = (
+    await db
+      .select({ title: meetings.title, startedAt: meetings.startedAt })
+      .from(meetings)
+      .where(eq(meetings.id, meetingId))
+      .limit(1)
+  )[0];
+  const queued =
+    !meeting ||
+    (await emitWebhookEvent(
+      env,
+      userId,
+      'recording.completed',
+      webhookItem({ id: meetingId, kind: 'meeting', title: meeting.title, createdAt: meeting.startedAt }),
+      now,
+      { eventId: `evt_completed_${meetingId}` },
+    ));
+  if (!queued) return;
   await db
     .insert(activityLog)
-    .values({
-      id: `act_complete_${meetingId}`,
-      userId,
-      eventType: 'meeting.complete',
-      meetingId,
-      metadataJson: '{}',
-      createdAt: now,
-    })
+    .values({ id, userId, eventType: 'meeting.complete', meetingId, metadataJson: '{}', createdAt: now })
     .onConflictDoNothing();
 }
 

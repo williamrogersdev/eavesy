@@ -85,6 +85,8 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
       return;
     // The hourly cron re-sends deleted-meeting and expiry purges; the rest are
     // best effort on a meeting that is already usable.
+    // Only a D1 error gets here: a failed POST queues its own retry (server/webhooks.ts).
+    case 'deliver-webhook':
     case 'rolling-summarize':
     case 'agent-transcript':
     case 'cleanup-anonymous':

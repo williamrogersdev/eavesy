@@ -70,6 +70,7 @@ const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
 const BOT = 'bot_owner';
 const PROMPT = 'prm_owner';
+const WEBHOOK = 'whk_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -254,6 +255,27 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
         unchanged: () => row('SELECT revoked_at FROM mcp_tokens WHERE id = ?', MCP_TOKEN),
       },
     },
+  },
+  '/api/webhook-endpoints': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/webhook-endpoints' }, excludes: [WEBHOOK] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'adds an endpoint to the caller’s own account' },
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/webhook-endpoints', body: json({ id: WEBHOOK, url: 'https://elsewhere.example.com/hook' }) },
+        unchanged: () => row('SELECT url FROM webhook_endpoints WHERE id = ?', WEBHOOK),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/webhook-endpoints', body: json({ id: WEBHOOK }) },
+        unchanged: () => row('SELECT id FROM webhook_endpoints WHERE id = ?', WEBHOOK),
+      },
+    },
+  },
+  '/api/webhook-endpoints/test': {
+    POST: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/webhook-endpoints/test', body: json({ id: WEBHOOK }) }, status: 404 } },
   },
   '/api/oauth/authorize': {
     GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'describes an OAuth client registration; reads no user data' },
@@ -545,6 +567,7 @@ beforeEach(async () => {
     'saved_prompts',
     'folders',
     'mcp_tokens',
+    'webhook_endpoints',
     'calendar_events',
     'calendar_connections',
     'activity_log',
@@ -597,6 +620,10 @@ async function seedOwner() {
     testEnv.DB.prepare(
       `INSERT INTO mcp_tokens (id, user_id, token_hash, name, created_at) VALUES (?, ?, 'hash_owner', 'Owner', ?)`,
     ).bind(MCP_TOKEN, OWNER, now),
+    testEnv.DB.prepare(
+      `INSERT INTO webhook_endpoints (id, user_id, url, secret, events_json, created_at, updated_at)
+       VALUES (?, ?, 'https://owner.example.com/hook', 'whsec_b3duZXI=', '["capture.created"]', ?, ?)`,
+    ).bind(WEBHOOK, OWNER, now, now),
     testEnv.DB.prepare(
       `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
        VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
