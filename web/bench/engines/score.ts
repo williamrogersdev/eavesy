@@ -28,6 +28,7 @@ export function words(text: string): string[] {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/['’]/g, '')
+    .replace(/(\d),(?=\d{3}\b)/g, '$1')
     .replace(/(\d)[:.,](\d)/g, '$1 $2')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
@@ -35,37 +36,47 @@ export function words(text: string): string[] {
     .flatMap(spelled);
 }
 
+/** Edit distance over words, two rows at a time so an hour-long recording needs kilobytes, not a full table. */
 export function wordErrors(ref: readonly string[], hyp: readonly string[]): WordErrors {
   const cols = hyp.length + 1;
-  const cost = new Uint32Array((ref.length + 1) * cols);
-  for (let j = 0; j <= hyp.length; j += 1) cost[j] = j;
+  const row = () => ({ cost: new Uint32Array(cols), sub: new Uint32Array(cols), del: new Uint32Array(cols), ins: new Uint32Array(cols) });
+  let prev = row();
+  let next = row();
+  for (let j = 0; j < cols; j += 1) {
+    prev.cost[j] = j;
+    prev.ins[j] = j;
+  }
   for (let i = 1; i <= ref.length; i += 1) {
-    cost[i * cols] = i;
-    for (let j = 1; j <= hyp.length; j += 1) {
-      const same = ref[i - 1] === hyp[j - 1] ? 0 : 1;
-      cost[i * cols + j] = Math.min(cost[(i - 1) * cols + j - 1] + same, cost[(i - 1) * cols + j] + 1, cost[i * cols + j - 1] + 1);
+    next.cost[0] = i;
+    next.sub[0] = 0;
+    next.del[0] = i;
+    next.ins[0] = 0;
+    for (let j = 1; j < cols; j += 1) {
+      const same = ref[i - 1] === hyp[j - 1];
+      const diagonal = prev.cost[j - 1] + (same ? 0 : 1);
+      const deletion = prev.cost[j] + 1;
+      const insertion = next.cost[j - 1] + 1;
+      if (diagonal <= deletion && diagonal <= insertion) {
+        next.cost[j] = diagonal;
+        next.sub[j] = prev.sub[j - 1] + (same ? 0 : 1);
+        next.del[j] = prev.del[j - 1];
+        next.ins[j] = prev.ins[j - 1];
+      } else if (deletion <= insertion) {
+        next.cost[j] = deletion;
+        next.sub[j] = prev.sub[j];
+        next.del[j] = prev.del[j] + 1;
+        next.ins[j] = prev.ins[j];
+      } else {
+        next.cost[j] = insertion;
+        next.sub[j] = next.sub[j - 1];
+        next.del[j] = next.del[j - 1];
+        next.ins[j] = next.ins[j - 1] + 1;
+      }
     }
+    [prev, next] = [next, prev];
   }
-  let i = ref.length;
-  let j = hyp.length;
-  let substitutions = 0;
-  let deletions = 0;
-  let insertions = 0;
-  while (i > 0 || j > 0) {
-    const here = cost[i * cols + j];
-    if (i > 0 && j > 0 && here === cost[(i - 1) * cols + j - 1] + (ref[i - 1] === hyp[j - 1] ? 0 : 1)) {
-      if (ref[i - 1] !== hyp[j - 1]) substitutions += 1;
-      i -= 1;
-      j -= 1;
-    } else if (i > 0 && here === cost[(i - 1) * cols + j] + 1) {
-      deletions += 1;
-      i -= 1;
-    } else {
-      insertions += 1;
-      j -= 1;
-    }
-  }
-  return { errors: substitutions + deletions + insertions, refWords: ref.length, hypWords: hyp.length, substitutions, deletions, insertions };
+  const last = cols - 1;
+  return { errors: prev.cost[last], refWords: ref.length, hypWords: hyp.length, substitutions: prev.sub[last], deletions: prev.del[last], insertions: prev.ins[last] };
 }
 
 function bySpeaker(turns: readonly Turn[]): string[][] {
@@ -85,6 +96,7 @@ function bySpeaker(turns: readonly Turn[]): string[][] {
 export function cpErrors(ref: readonly Turn[], hyp: readonly Turn[]): WordErrors & { refSpeakers: number; hypSpeakers: number } {
   const refs = bySpeaker(ref);
   const hyps = bySpeaker(hyp);
+  // Recognized speakers are tracked as bits of a 32-bit mask; 12 keeps the memo small and far inside it.
   if (hyps.length > 12) throw new Error(`too many recognized speakers to pair: ${hyps.length}`);
   const pair = refs.map((r) => hyps.map((h) => wordErrors(r, h)));
   const memo = new Map<string, { errors: number; picks: number[] }>();

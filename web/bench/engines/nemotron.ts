@@ -2,7 +2,11 @@ import type { Turn } from './score';
 
 export const NEMOTRON_MODEL = 'nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B';
 
-/** The model card's speaker-attribution prompt, plus its "Context terms" line when there is vocabulary. */
+/**
+ * The model card's speaker-attribution prompt, verbatim, plus its "Context
+ * terms" line when there is vocabulary. It names four tags; the model labels
+ * up to eight speakers.
+ */
 export function nemotronPrompt(terms: readonly string[] = []): string {
   const prompt =
     'Transcribe this audio with punctuation and capitalization. Include all spoken words and verbal fillers. ' +
@@ -30,18 +34,26 @@ export function nemotronRequest(wav: Uint8Array, opts: { model?: string; terms?:
 }
 
 function content(response: unknown): string {
-  const message = (response as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message;
-  const value = message?.content;
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('');
-  }
-  throw new Error(`no transcript in the response: ${JSON.stringify(response).slice(0, 300)}`);
+  const choice = (response as { choices?: { finish_reason?: unknown; message?: { content?: unknown } }[] })?.choices?.[0];
+  if (choice?.finish_reason === 'length') throw new Error('the transcript was cut off at the token limit');
+  const value = choice?.message?.content;
+  const text =
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value)
+        ? value.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('')
+        : '';
+  if (!text.trim()) throw new Error(`no transcript in the response: ${JSON.stringify(response).slice(0, 300)}`);
+  return text;
 }
 
-/** Turns from `<spk:N>` tags. Text before the first tag has no speaker; other special tokens are dropped. */
+/**
+ * Turns from `<spk:N>` tags. Text before the first tag has no speaker. Other
+ * angle-bracket tokens are the model's special tokens and are dropped, as is
+ * any reasoning, closed or not.
+ */
 export function nemotronTurns(response: unknown): Turn[] {
-  const text = content(response).replace(/<think>[\s\S]*?<\/think>/g, '');
+  const text = content(response).replace(/<think>[\s\S]*?(<\/think>|$)/g, '');
   const turns: Turn[] = [];
   let speaker: string | null = null;
   for (const piece of text.split(/(<spk:\d+>)/)) {

@@ -35,22 +35,32 @@ CLOUDFLARE_ACCOUNT_ID=… NEMOTRON_BASE_URL=https://…/v1 NEMOTRON_API_KEY=… 
 `NEMOTRON_BASE_URL` is the `/v1` root of a server that takes the model card's
 request: a self-hosted vLLM (`http://127.0.0.1:8000/v1`, one 80 GB H100 for
 BF16) or a hosted provider that serves the model. Set `NEMOTRON_MODEL` if the
-provider names it differently. An engine with no credentials is skipped.
+provider names it differently. An engine with no credentials is skipped. An
+API key is only sent over https, or to this machine. The whole recording goes
+in one request as a 16 kHz WAV (about 110 MiB for an hour); the model card's
+server takes up to 180 MiB, but a hosted provider or proxy may cap requests
+lower, so try a short recording first.
 
 Flags: `--engines whisper,nemotron`, `--only <recording>`, `--language en`
 (Whisper only), and `--replay`, which re-scores the saved responses without
 any network or spend.
 
-Every response and `report.md` land in `bench/out/engines/` (ignored by Git).
+Every response is saved in `bench/out/engines/` (ignored by Git) as soon as
+it arrives, so a failure halfway through keeps what was already paid for;
+`report.md` goes there too. Replaying a recording whose saved responses no
+longer fit its audio fails and names the file to record again.
 
 ## Scores
 
 - **WER**: word error rate over the whole recording, after lowercasing,
-  dropping punctuation and spelling out 0 to 99, so "5" and "five" match.
-  Silence reports the words invented instead.
+  dropping punctuation and thousands separators and spelling out 0 to 99, so
+  "5" and "five" match. Bigger numbers and decimals are not spelled out, so
+  write them in `reference.txt` the way the engines will. Silence reports the
+  words invented instead.
 - **cpWER**: speaker-attributed WER. Each reference speaker's words are
   paired with one recognized speaker's, picking the pairing with the fewest
-  errors, so words given to the wrong person count. Only Nemotron labels
+  errors, so words given to the wrong person count, and a transcript with no
+  speaker tags scores as one speaker. Only Nemotron labels
   speakers on one track; Whisper's "you" and "them" come from the two-track
   split, which `bench/score.ts` measures.
 - **Speed**: audio length over the time the calls took, including the
