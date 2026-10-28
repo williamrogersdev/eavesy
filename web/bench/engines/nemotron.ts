@@ -47,13 +47,39 @@ function content(response: unknown): string {
   return text;
 }
 
+/** DeepInfra's own inference endpoint: a form with the audio file, the prompt riding in `initial_prompt`. */
+export function deepinfraForm(wav: Uint8Array, terms: readonly string[] = []): FormData {
+  const form = new FormData();
+  form.append('audio', new Blob([wav.slice()], { type: 'audio/wav' }), 'audio.wav');
+  form.append('initial_prompt', nemotronPrompt(terms));
+  form.append('temperature', '0');
+  return form;
+}
+
+/** DeepInfra answers like Whisper: `text`, or failing that the `segments` in order. */
+export function deepinfraTurns(response: unknown): Turn[] {
+  const root = (response ?? {}) as { text?: unknown; segments?: { text?: unknown }[] };
+  const text =
+    typeof root.text === 'string' && root.text.trim()
+      ? root.text
+      : Array.isArray(root.segments)
+        ? root.segments.map((segment) => (typeof segment?.text === 'string' ? segment.text : '')).join(' ')
+        : '';
+  if (!text.trim()) throw new Error(`no transcript in the response: ${JSON.stringify(response).slice(0, 300)}`);
+  return turnsFromText(text);
+}
+
+export function nemotronTurns(response: unknown): Turn[] {
+  return turnsFromText(content(response));
+}
+
 /**
  * Turns from `<spk:N>` tags. Text before the first tag has no speaker. Other
  * angle-bracket tokens are the model's special tokens and are dropped, as is
  * any reasoning, closed or not.
  */
-export function nemotronTurns(response: unknown): Turn[] {
-  const text = content(response).replace(/<think>[\s\S]*?(<\/think>|$)/g, '');
+function turnsFromText(raw: string): Turn[] {
+  const text = raw.replace(/<think>[\s\S]*?(<\/think>|$)/g, '');
   const turns: Turn[] = [];
   let speaker: string | null = null;
   for (const piece of text.split(/(<spk:\d+>)/)) {

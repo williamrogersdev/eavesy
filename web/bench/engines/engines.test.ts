@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { nemotronPrompt, nemotronRequest, nemotronTurns } from './nemotron';
+import { deepinfraForm, deepinfraTurns, nemotronPrompt, nemotronRequest, nemotronTurns } from './nemotron';
 import { cpErrors, parseReference, wordErrors, words } from './score';
 
 describe('word error rate', () => {
@@ -117,5 +117,25 @@ describe('Nemotron 3.5 Transcribe', () => {
     expect(() => nemotronTurns({ choices: [{ message: { content: '  ' } }] })).toThrow('no transcript');
     expect(() => nemotronTurns({ choices: [{ finish_reason: 'length', message: { content: '<spk:0> Hi' } }] })).toThrow('cut off');
     expect(() => nemotronTurns({ choices: [{ message: { content: '<think>thinking</think><spk:0> <|im_end|>' } }] })).toThrow('after removing');
+  });
+});
+
+describe('Nemotron 3.5 Transcribe on DeepInfra', () => {
+  test('uploads the audio as a form with the prompt', () => {
+    const form = deepinfraForm(new Uint8Array([1, 2, 3]), ['Eavesy']);
+    expect(form.get('audio')).toBeInstanceOf(Blob);
+    expect(form.get('initial_prompt')).toEndWith('Context terms: Eavesy.');
+    expect(form.get('temperature')).toBe('0');
+  });
+
+  test('reads speaker tags from the text, or from the segments when the text is empty', () => {
+    expect(deepinfraTurns({ text: '<spk:0> Shall we start? <spk:1> Yes.', segments: [] })).toEqual([
+      { speaker: 'spk:0', text: 'Shall we start?' },
+      { speaker: 'spk:1', text: 'Yes.' },
+    ]);
+    expect(deepinfraTurns({ text: '', segments: [{ text: '<spk:0> Hello' }, { text: 'world' }] })).toEqual([
+      { speaker: 'spk:0', text: 'Hello world' },
+    ]);
+    expect(() => deepinfraTurns({ text: '', segments: [] })).toThrow('no transcript');
   });
 });
