@@ -801,6 +801,101 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A recording with a saved transcript whose edits go to the cloud.
+    fn transcribed(root: &Path) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+        let folder = root.join("recording");
+        std::fs::create_dir_all(&folder).unwrap();
+        let app = isolated_mock_app(root);
+        sqlite::initialize(app.handle()).unwrap();
+        let mut recording = sample_recording(&folder);
+        recording.transcript = Some("Original transcript".to_string());
+        fs_writer::persist_recording_artifacts(Some(app.handle()), &folder, &recording, None, None)
+            .unwrap();
+        store::append(app.handle(), recording).unwrap();
+        uploaded_here(app.handle(), "meeting-1");
+        (app, folder)
+    }
+
+    fn after_restart(root: &Path) -> tauri::App<tauri::test::MockRuntime> {
+        let restarted = isolated_mock_app(root);
+        sqlite::initialize(restarted.handle()).unwrap();
+        seed_existing_files(restarted.handle());
+        restarted
+    }
+
+    fn assert_correction_everywhere(app: &AppHandle<tauri::test::MockRuntime>, folder: &Path, correction: &str) {
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
+        assert_eq!(store::get(app, "meeting-1").unwrap().unwrap().transcript.as_deref(), Some(correction));
+        let edit = sqlite::next_file_edit(app).unwrap().expect("correction should be queued for the cloud");
+        assert_eq!((edit.role.as_str(), edit.content_md.as_str()), ("transcript", correction));
+        sqlite::mark_operation_done(app, &edit.operation_id).unwrap();
+        seed_existing_files(app);
+        assert!(sqlite::next_file_edit(app).unwrap().is_none(), "a reconciled correction is queued once");
+    }
+
+    #[test]
+    fn restart_keeps_a_correction_whose_save_was_interrupted_after_the_file_landed() {
+        // The process dying after transcript.md was renamed into place, before
+        // or after History took the correction, but always before COMMIT. The
+        // rollback order itself is guarded by the double-fault test below.
+        for history_saved in [false, true] {
+            let root = std::env::temp_dir().join(format!("eavesy-interrupted-{}", uuid::Uuid::new_v4()));
+            let (app, folder) = transcribed(&root);
+            let correction = "Interrupted correction.\nSecond line.";
+            fs_writer::atomic_write(&folder.join("transcript.md"), correction.as_bytes()).unwrap();
+            if history_saved {
+                store::apply_external_edit(app.handle(), "meeting-1", "transcript", correction.to_string())
+                    .unwrap();
+            }
+            drop(app);
+
+            let restarted = after_restart(&root);
+            assert_correction_everywhere(restarted.handle(), &folder, correction);
+            drop(restarted);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_failed_commit_whose_history_restore_also_fails_keeps_the_correction_on_disk() {
+        let root = std::env::temp_dir().join(format!("eavesy-double-fault-{}", uuid::Uuid::new_v4()));
+        let (app, folder) = transcribed(&root);
+        sqlite::with_open(app.handle(), |conn| conn.execute_batch(
+            "CREATE TABLE fault_parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE fault_guard(parent_id INTEGER REFERENCES fault_parent(id) DEFERRABLE INITIALLY DEFERRED);
+             CREATE TRIGGER fail_commit AFTER UPDATE ON pending_operations BEGIN INSERT INTO fault_guard VALUES(99); END;
+             CREATE TRIGGER fail_commit_insert AFTER INSERT ON pending_operations BEGIN INSERT INTO fault_guard VALUES(99); END;"
+        )).unwrap().unwrap();
+        let data = app.path().app_data_dir().unwrap();
+        let history = rusqlite::Connection::open(data.join("history.sqlite3")).unwrap();
+        history.execute_batch(
+            "CREATE TRIGGER fail_history_restore BEFORE UPDATE ON history_content
+             WHEN NEW.transcript = 'Original transcript'
+             BEGIN SELECT RAISE(ABORT, 'injected history restore failure'); END;",
+        ).unwrap();
+        drop(history);
+
+        let correction = "Kept although both writes failed.";
+        crate::live_edit::update("meeting-1", "Original transcript".into(), correction.into(), 1).unwrap();
+        let error = store::save_live_preview_transcript(app.handle(), "meeting-1", correction).unwrap_err();
+        assert!(error.contains("stays in transcript.md"), "{error}");
+        assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
+        assert_eq!(store::get(app.handle(), "meeting-1").unwrap().unwrap().transcript.as_deref(), Some(correction));
+        assert!(sqlite::next_file_edit(app.handle()).unwrap().is_none(), "the failed commit queued nothing");
+        sqlite::with_open(app.handle(), |conn| conn.execute_batch(
+            "DROP TRIGGER fail_commit; DROP TRIGGER fail_commit_insert; DROP TABLE fault_guard; DROP TABLE fault_parent;"
+        )).unwrap().unwrap();
+        // The HUD's Retry resends the same text: the kept file is ours, not a foreign edit.
+        assert!(store::save_live_preview_transcript(app.handle(), "meeting-1", correction).unwrap());
+        assert_eq!(sqlite::next_file_edit(app.handle()).unwrap().unwrap().content_md, correction);
+        drop(app);
+
+        let restarted = after_restart(&root);
+        assert_correction_everywhere(restarted.handle(), &folder, correction);
+        drop(restarted);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn live_edit_matches_a_differently_cased_folder_path() {
