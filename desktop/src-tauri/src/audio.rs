@@ -520,7 +520,8 @@ fn spawn_capture(
         // always runs them for its paste; meetings and voice notes only with
         // the Live captions setting.
         if dictation {
-            args.extend(["--captions".into(), "mic".into()]);
+            // `--dictation` also spells the account's words with a second recognizer.
+            args.extend(["--captions".into(), "mic".into(), "--dictation".into()]);
         } else if crate::settings::load(app).live_captions() {
             args.extend(["--captions".into(), "all".into()]);
         }
