@@ -27,7 +27,7 @@ describe('word error rate', () => {
     expect(words('1,000 people')).toEqual(['1000', 'people']);
   });
 
-  test('scores long recordings without a full table', () => {
+  test('counts errors across a long recording', () => {
     const ref = Array.from({ length: 6_000 }, (_, i) => `w${i % 97}`);
     const hyp = ref.map((word, i) => (i % 50 === 0 ? 'x' : word));
     expect(wordErrors(ref, hyp)).toMatchObject({ errors: 120, substitutions: 120 });
@@ -116,5 +116,6 @@ describe('Nemotron 3.5 Transcribe', () => {
     expect(() => nemotronTurns({ error: 'overloaded' })).toThrow('no transcript');
     expect(() => nemotronTurns({ choices: [{ message: { content: '  ' } }] })).toThrow('no transcript');
     expect(() => nemotronTurns({ choices: [{ finish_reason: 'length', message: { content: '<spk:0> Hi' } }] })).toThrow('cut off');
+    expect(() => nemotronTurns({ choices: [{ message: { content: '<think>thinking</think><spk:0> <|im_end|>' } }] })).toThrow('after removing');
   });
 });

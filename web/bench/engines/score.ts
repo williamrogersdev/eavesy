@@ -96,7 +96,8 @@ function bySpeaker(turns: readonly Turn[]): string[][] {
 export function cpErrors(ref: readonly Turn[], hyp: readonly Turn[]): WordErrors & { refSpeakers: number; hypSpeakers: number } {
   const refs = bySpeaker(ref);
   const hyps = bySpeaker(hyp);
-  // Recognized speakers are tracked as bits of a 32-bit mask; 12 keeps the memo small and far inside it.
+  // Recognized speakers are bits of a 32-bit mask. Capping them at 12 keeps the
+  // memo to 2^12 masks per reference speaker; references name only a handful.
   if (hyps.length > 12) throw new Error(`too many recognized speakers to pair: ${hyps.length}`);
   const pair = refs.map((r) => hyps.map((h) => wordErrors(r, h)));
   const memo = new Map<string, { errors: number; picks: number[] }>();
