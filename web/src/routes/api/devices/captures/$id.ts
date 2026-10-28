@@ -5,7 +5,7 @@ import { safeMediaType } from '@/lib/http/media-type';
 import { resolveIngestActor } from '@/server/device-auth';
 import { getObject } from '@/server/r2';
 
-// The image of one capture, for a Mac bringing it into its history.
+// The image or note of one capture, for a Mac bringing it into its history.
 export const Route = createFileRoute('/api/devices/captures/$id')({
   server: {
     handlers: {
@@ -17,7 +17,7 @@ export const Route = createFileRoute('/api/devices/captures/$id')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const capture = await capturesRepo.get(getDb(), { captureId: params.id, userId: actor.userId });
-        if (!capture || capture.kind !== 'image') return Response.json({ error: 'not found' }, { status: 404 });
+        if (!capture || !capturesRepo.isDeviceShared(capture.kind)) return Response.json({ error: 'not found' }, { status: 404 });
         const object = await getObject(capture.r2Key);
         if (!object) return Response.json({ error: 'not found' }, { status: 404 });
         return new Response(object.body as unknown as ReadableStream, {
