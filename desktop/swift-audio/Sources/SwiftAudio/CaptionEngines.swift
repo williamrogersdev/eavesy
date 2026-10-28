@@ -12,6 +12,7 @@ enum CaptionEngines {
         locale: Locale,
         vocabulary: [String] = [],
         preview: Bool,
+        spell: Bool = false,
         completion: @escaping (Result<SpeechEngine, CaptionUnavailable>) -> Void
     ) {
         // Asking without a usage description kills the process (TCC), so check first.
@@ -29,7 +30,9 @@ enum CaptionEngines {
             Task {
                 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
-                        switch await AnalyzerEngine.make(locale: locale, vocabulary: vocabulary, preview: preview) {
+                        switch await AnalyzerEngine.make(
+                            locale: locale, vocabulary: vocabulary, preview: preview, spell: spell)
+                        {
                         case .success(let engine):
                             completion(.success(engine))
                             return
@@ -222,7 +225,7 @@ final class SFSpeechEngine: SpeechEngine {
     enum SpeechModels {
         enum State: String { case installed, downloading, unsupported }
 
-        static func prepare(_ transcribers: [SpeechTranscriber], locale: Locale, wait: Bool) async -> State {
+        static func prepare(_ transcribers: [any SpeechModule], locale: Locale, wait: Bool) async -> State {
             await reserve(locale)
             switch await AssetInventory.status(forModules: transcribers) {
             case .installed:
@@ -240,9 +243,9 @@ final class SFSpeechEngine: SpeechEngine {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var inFlight: [String: Task<Void, Never>] = [:]
 
-        /// One download per language at a time, however many recordings ask.
-        private static func installing(_ transcribers: [SpeechTranscriber], locale: Locale) -> Task<Void, Never> {
-            let key = locale.identifier(.bcp47)
+        /// One download per language and model at a time, however many recordings ask.
+        private static func installing(_ transcribers: [any SpeechModule], locale: Locale) -> Task<Void, Never> {
+            let key = ([locale.identifier(.bcp47)] + transcribers.map { "\(type(of: $0))" }).joined(separator: " ")
             lock.lock()
             defer { lock.unlock() }
             if let running = inFlight[key] { return running }
@@ -291,20 +294,30 @@ final class SFSpeechEngine: SpeechEngine {
     /// way), though its finals are never the preview's text. The preview is
     /// best effort: if it fails or falls behind, captions carry on with the
     /// accurate one alone.
+    ///
+    /// A dictation with custom words runs a third, DictationTranscriber, in
+    /// an analyzer of its own: it only spells those words in the accurate
+    /// finals (see `Speller`), re-sending a final under its start when it
+    /// hears one after the final went out. It is best effort too.
     @available(macOS 26.0, *)
     final class AnalyzerEngine: SpeechEngine {
         let name = "speech-analyzer"
         private let transcriber: SpeechTranscriber
         /// Nil when the setting for faster live words is off.
         private let previewer: SpeechTranscriber?
+        /// Nil unless a dictation with custom words, with its model on this Mac.
+        private let speller: DictationTranscriber?
         private let vocabulary: [String]
         private let format: AVAudioFormat
         private var analyzer: SpeechAnalyzer?
         private var previewAnalyzer: SpeechAnalyzer?
+        private var spellAnalyzer: SpeechAnalyzer?
+        private var spellResults: Task<Void, Never>?
         private var converter: AVAudioConverter?
         private let input: AsyncStream<AnalyzerInput>
         private let feed: AsyncStream<AnalyzerInput>.Continuation
         private let previewInput: AsyncStream<AnalyzerInput>
+        private let spellInput: AsyncStream<AnalyzerInput>
         private var results: Task<Void, Never>?
         private var running: Task<Void, Never>?
         private let relay: DraftRelay
@@ -329,7 +342,7 @@ final class SFSpeechEngine: SpeechEngine {
         }
 
         static func make(
-            locale: Locale, vocabulary: [String], preview: Bool
+            locale: Locale, vocabulary: [String], preview: Bool, spell: Bool = false
         ) async -> Result<SpeechEngine, CaptionUnavailable> {
             guard SpeechTranscriber.isAvailable else {
                 return .failure(CaptionUnavailable(reason: "transcriber unavailable on this Mac"))
@@ -347,27 +360,53 @@ final class SFSpeechEngine: SpeechEngine {
                 // This recording falls back; the download carries on for next time.
                 return .failure(CaptionUnavailable(reason: "model for \(supported.identifier) downloading"))
             }
-            guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: transcribers) else {
+            var speller = spell && !vocabulary.isEmpty ? await Self.speller(locale: supported) : nil
+            var format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: transcribers + [speller].compactMap { $0 })
+            if format == nil, speller != nil {
+                speller = nil
+                format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: transcribers)
+            }
+            guard let format else {
                 return .failure(CaptionUnavailable(reason: "no compatible audio format"))
             }
             return .success(
                 AnalyzerEngine(
-                    transcriber: transcribers[0], previewer: transcribers.dropFirst().first, vocabulary: vocabulary,
-                    format: format))
+                    transcriber: transcribers[0], previewer: transcribers.dropFirst().first, speller: speller,
+                    vocabulary: vocabulary, format: format))
+        }
+
+        /// The transcriber that hears custom words, once its model is on this
+        /// Mac; the first dictation that asks starts the download.
+        static func speller(locale: Locale, wait: Bool = false) async -> DictationTranscriber? {
+            guard let supported = await DictationTranscriber.supportedLocale(equivalentTo: locale) else { return nil }
+            let speller = DictationTranscriber(
+                locale: supported, contentHints: [], transcriptionOptions: [.punctuation], reportingOptions: [],
+                attributeOptions: [.audioTimeRange])
+            guard await SpeechModels.prepare([speller], locale: supported, wait: wait) == .installed else { return nil }
+            return speller
         }
 
         private init(
-            transcriber: SpeechTranscriber, previewer: SpeechTranscriber?, vocabulary: [String], format: AVAudioFormat
+            transcriber: SpeechTranscriber, previewer: SpeechTranscriber?, speller: DictationTranscriber?,
+            vocabulary: [String], format: AVAudioFormat
         ) {
             self.transcriber = transcriber
             self.previewer = previewer
+            self.speller = speller
             self.vocabulary = vocabulary
             self.format = format
             (input, feed) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
             let (previewInput, previewFeed) = AsyncStream.makeStream(
                 of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
             self.previewInput = previewInput
-            relay = DraftRelay(previewFeed: previewFeed)
+            let (spellInput, spellFeed) = AsyncStream.makeStream(
+                of: AnalyzerInput.self, bufferingPolicy: .bufferingNewest(500))
+            self.spellInput = spellInput
+            relay = DraftRelay(
+                previewFeed: previewFeed, spellFeed: speller == nil ? nil : spellFeed,
+                speller: Speller(vocabulary: speller == nil ? [] : vocabulary))
+            if speller == nil { spellFeed.finish() }
         }
 
         func start(sink: CaptionSink) throws {
@@ -380,8 +419,7 @@ final class SFSpeechEngine: SpeechEngine {
             results = Task {
                 do {
                     for try await result in transcriber.results {
-                        let heard = relay.heard(result)
-                        relay.update { $0.accurate(heard) }
+                        relay.accurate(relay.heard(result.text, range: result.range, isFinal: result.isFinal))
                     }
                 } catch {
                     relay.sink?.engineFailed(error.localizedDescription)
@@ -390,6 +428,7 @@ final class SFSpeechEngine: SpeechEngine {
             let input = self.input
             let vocabulary = self.vocabulary
             let startPreview = preview()
+            let startSpelling = spelling()
             running = Task {
                 do {
                     try await Self.apply(vocabulary, to: analyzer)
@@ -399,6 +438,7 @@ final class SFSpeechEngine: SpeechEngine {
                     return
                 }
                 await startPreview()
+                await startSpelling()
             }
         }
 
@@ -416,7 +456,7 @@ final class SFSpeechEngine: SpeechEngine {
             Task {
                 do {
                     for try await result in previewer.results {
-                        let heard = relay.heard(result)
+                        let heard = relay.heard(result.text, range: result.range, isFinal: result.isFinal)
                         relay.update { $0.fast(heard) }
                     }
                 } catch {
@@ -431,6 +471,34 @@ final class SFSpeechEngine: SpeechEngine {
                     try await analyzer.start(inputSequence: input)
                 } catch {
                     relay.endPreview("live preview did not start: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        /// The custom-word analyzer, beside the accurate one, started like
+        /// `preview`. Its failures only end the spelling.
+        private func spelling() -> () async -> Void {
+            guard let speller else { return {} }
+            let analyzer = SpeechAnalyzer(modules: [speller])
+            spellAnalyzer = analyzer
+            let relay = self.relay
+            spellResults = Task {
+                do {
+                    for try await result in speller.results where result.isFinal {
+                        relay.spelled(relay.heard(result.text, range: result.range, isFinal: true).words)
+                    }
+                } catch {
+                    relay.endSpelling("spelling custom words failed: \(error.localizedDescription)")
+                }
+            }
+            let input = spellInput
+            let vocabulary = self.vocabulary
+            return {
+                do {
+                    try await Self.apply(vocabulary, to: analyzer)
+                    try await analyzer.start(inputSequence: input)
+                } catch {
+                    relay.endSpelling("spelling custom words did not start: \(error.localizedDescription)")
                 }
             }
         }
@@ -458,28 +526,47 @@ final class SFSpeechEngine: SpeechEngine {
                 relay.sink?.audioDropped(1)
             }
             relay.preview(converted)
+            relay.spell(converted)
         }
 
         func finish(_ done: @escaping () -> Void) {
             // What is pasted at Stop must be the accurate text alone.
             relay.endPreview(nil)
             feed.finish()
+            relay.endSpellFeed()
             let analyzer = self.analyzer
             let previewAnalyzer = self.previewAnalyzer
+            let spellAnalyzer = self.spellAnalyzer
             let running = self.running
             let results = self.results
+            let spellResults = self.spellResults
             let relay = self.relay
             Task {
                 await previewAnalyzer?.cancelAndFinishNow()
             }
             Task {
                 await running?.value
+                let spelled = Task {
+                    try? await spellAnalyzer?.finalizeAndFinishThroughEndOfInput()
+                    await spellResults?.value
+                }
                 try? await analyzer?.finalizeAndFinishThroughEndOfInput()
                 await results?.value
+                // The paste waits on this, so the custom words get a moment
+                // past the accurate text and no more.
+                let late = Task {
+                    try? await Task.sleep(for: Self.spellGrace)
+                    await spellAnalyzer?.cancelAndFinishNow()
+                }
+                await spelled.value
+                late.cancel()
                 relay.drain()
                 done()
             }
         }
+
+        /// How long Stop waits for custom words once the accurate text is in.
+        static let spellGrace: Duration = .milliseconds(800)
 
         private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
             if buffer.format == format { return buffer }
@@ -517,14 +604,26 @@ final class SFSpeechEngine: SpeechEngine {
         /// Only touched on `queue`.
         private var draft = LiveDraft()
         private var previewFeed: AsyncStream<AnalyzerInput>.Continuation?
+        private var spellFeed: AsyncStream<AnalyzerInput>.Continuation?
+        /// Only touched on `queue`.
+        private var speller: Speller
+        /// Accurate finals as heard, and as last sent, for spelling again
+        /// when custom words arrive after them. Only touched on `queue`.
+        private var finals: [(heard: Heard, sent: String)] = []
+        static let maxFinals = 100
         /// Where on the recording clock the first buffer fed in starts. The
         /// analyzers are fed contiguous audio without timestamps (stamped input
         /// fails as soon as a converted buffer's length rounds past the next
         /// stamp) and their times are shifted by this.
         private var offsetMs: Int64?
 
-        init(previewFeed: AsyncStream<AnalyzerInput>.Continuation) {
+        init(
+            previewFeed: AsyncStream<AnalyzerInput>.Continuation,
+            spellFeed: AsyncStream<AnalyzerInput>.Continuation?, speller: Speller
+        ) {
             self.previewFeed = previewFeed
+            self.spellFeed = spellFeed
+            self.speller = speller
         }
 
         func noteStart(_ atMs: Int64) {
@@ -543,6 +642,66 @@ final class SFSpeechEngine: SpeechEngine {
             }
         }
 
+        /// The custom-word transcriber gets the same audio. One that loses
+        /// audio would misplace its words, so spelling ends there.
+        func spell(_ buffer: AVAudioPCMBuffer) {
+            let feed = lock.withLock { spellFeed }
+            if case .dropped = feed?.yield(AnalyzerInput(buffer: buffer)) {
+                endSpelling("spelling custom words fell behind")
+            }
+        }
+
+        /// No more audio for the custom-word transcriber; what it heard still counts.
+        func endSpellFeed() {
+            let feed = lock.withLock {
+                let feed = spellFeed
+                spellFeed = nil
+                return feed
+            }
+            feed?.finish()
+        }
+
+        /// Spelling stops: finals already spelled stay as sent.
+        func endSpelling(_ reason: String) {
+            let wasFed = lock.withLock { spellFeed != nil }
+            endSpellFeed()
+            if wasFed { FileHandle.standardError.write(Data("\(reason)\n".utf8)) }
+        }
+
+        /// An accurate result, with custom words spelled in a final.
+        func accurate(_ heard: Heard) {
+            queue.async { [self] in
+                guard heard.isFinal, !speller.isEmpty else {
+                    send(draft.accurate(heard))
+                    return
+                }
+                let spelled = speller.spell(heard)
+                finals.append((heard, spelled.text))
+                if finals.count > Self.maxFinals { finals.removeFirst(finals.count - Self.maxFinals) }
+                send(draft.accurate(spelled))
+            }
+        }
+
+        /// Custom-word finals: accurate finals they fall in are spelled again
+        /// and re-sent under the same start when that changes them.
+        func spelled(_ words: [HeardWord]) {
+            guard !words.isEmpty else { return }
+            queue.async { [self] in
+                speller.hear(words)
+                let from = words[0].startMs
+                let to = words[words.count - 1].endMs
+                for index in finals.indices where finals[index].heard.endMs > from && finals[index].heard.startMs < to {
+                    let final = speller.spell(finals[index].heard)
+                    guard final.text != finals[index].sent else { continue }
+                    finals[index].sent = final.text
+                    send([
+                        DraftCaption(
+                            text: final.text, isFinal: true, startMs: final.startMs, endMs: final.endMs, preview: false)
+                    ])
+                }
+            }
+        }
+
         /// Back to the accurate text alone; `reason` is why, when it failed.
         func endPreview(_ reason: String?) {
             let feed = lock.withLock {
@@ -558,12 +717,15 @@ final class SFSpeechEngine: SpeechEngine {
         /// Sends what changed, in order: results from the two analyzers
         /// arrive on separate tasks.
         func update(_ change: @escaping (inout LiveDraft) -> [DraftCaption]) {
-            queue.async { [self] in
-                for caption in change(&draft) {
-                    sink?.recognized(
-                        text: caption.text, isFinal: caption.isFinal, startMs: caption.startMs, endMs: caption.endMs,
-                        preview: caption.preview)
-                }
+            queue.async { [self] in send(change(&draft)) }
+        }
+
+        /// Only on `queue`.
+        private func send(_ captions: [DraftCaption]) {
+            for caption in captions {
+                sink?.recognized(
+                    text: caption.text, isFinal: caption.isFinal, startMs: caption.startMs, endMs: caption.endMs,
+                    preview: caption.preview)
             }
         }
 
@@ -572,22 +734,22 @@ final class SFSpeechEngine: SpeechEngine {
             queue.sync {}
         }
 
-        func heard(_ result: SpeechTranscriber.Result) -> Heard {
+        func heard(_ result: AttributedString, range: CMTimeRange, isFinal: Bool) -> Heard {
             let offset = lock.withLock { offsetMs ?? 0 }
             func ms(_ time: CMTime) -> Int64 {
                 offset + (time.seconds.isFinite ? Int64(time.seconds * 1000) : 0)
             }
             var words: [HeardWord] = []
-            if result.isFinal {
+            if isFinal {
                 // Untimed runs (spacing, punctuation) go with the next timed word.
                 var pending = ""
-                for run in result.text.runs {
-                    let text = String(result.text[run.range].characters)
-                    guard let range = run.audioTimeRange else {
+                for run in result.runs {
+                    let text = String(result[run.range].characters)
+                    guard let timed = run.audioTimeRange else {
                         pending += text
                         continue
                     }
-                    words.append(HeardWord(text: pending + text, startMs: ms(range.start), endMs: ms(range.end)))
+                    words.append(HeardWord(text: pending + text, startMs: ms(timed.start), endMs: ms(timed.end)))
                     pending = ""
                 }
                 if !pending.isEmpty, let last = words.popLast() {
@@ -595,8 +757,8 @@ final class SFSpeechEngine: SpeechEngine {
                 }
             }
             return Heard(
-                text: String(result.text.characters), isFinal: result.isFinal,
-                startMs: ms(result.range.start), endMs: ms(result.range.end), words: words)
+                text: String(result.characters), isFinal: isFinal,
+                startMs: ms(range.start), endMs: ms(range.end), words: words)
         }
     }
 #endif

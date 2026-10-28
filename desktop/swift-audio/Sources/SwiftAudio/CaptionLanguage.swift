@@ -209,6 +209,7 @@ final class CaptionLanguages {
     private let current: Locale
     private let vocabulary: [String]
     private let preview: Bool
+    private let spell: Bool
     private let lock = NSLock()
     private var tracks: [LiveCaptions] = []
     private var lastMs: Int64 = 0
@@ -216,11 +217,12 @@ final class CaptionLanguages {
     /// The language the engines are actually running in.
     private var running: String
 
-    init(locale: Locale, follows: Bool, vocabulary: [String], preview: Bool) {
+    init(locale: Locale, follows: Bool, vocabulary: [String], preview: Bool, spell: Bool) {
         let current = Locale.current
         self.current = current
         self.vocabulary = vocabulary
         self.preview = preview
+        self.spell = spell
         running = CaptionLanguage.base(of: locale)
         var resolve: ((String) -> Locale?)?
         follower = LanguageFollower(current: locale, follows: follows) { language in
@@ -297,11 +299,13 @@ final class CaptionLanguages {
         }
         let vocabulary = self.vocabulary
         let preview = self.preview
+        let spell = self.spell
         let follower = self.follower
         let tally = SwitchTally(tracks: tracks.count)
         for track in tracks {
             track.switchEngine({ ready in
-                CaptionEngines.make(locale: locale, vocabulary: vocabulary, preview: preview, completion: ready)
+                CaptionEngines.make(
+                    locale: locale, vocabulary: vocabulary, preview: preview, spell: spell, completion: ready)
             }, outcome: { outcome in
                 if outcome == .switched {
                     EventEmitter.emit(["event": "captions_language", "track": track.track, "language": locale.identifier])

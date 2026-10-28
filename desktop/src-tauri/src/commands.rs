@@ -150,6 +150,8 @@ fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<
     #[cfg(target_os = "macos")]
     {
         let learning_target = if learn { crate::paste_learning::capture() } else { None };
+        // Fixes made to the last paste are learned from before these words land beside it.
+        crate::paste_learning::superseded();
         if let Err(error) = crate::dictation::press_paste() {
             eprintln!("paste: {error}");
             // The words stay on the clipboard for ⌘V: nothing is put back.
