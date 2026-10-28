@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-28 - desktop
+
+### Added
+
+- Mac app: clear panel layout with always-visible type filters ([#299](https://github.com/williamrogersdev/eavesy/pull/299))
+- Mac app: sync notes between Macs ([#298](https://github.com/williamrogersdev/eavesy/pull/298))
+
+### Fixed
+
+- Mac app: keep a transcript correction when its save and rollback both fail ([#301](https://github.com/williamrogersdev/eavesy/pull/301))
+
 ## [0.9.3] - 2026-10-28 - desktop
 
 ### Added
