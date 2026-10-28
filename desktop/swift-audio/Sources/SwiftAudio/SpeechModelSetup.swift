@@ -25,6 +25,8 @@ enum SpeechModelSetup {
                     state = await SpeechModels.prepare(
                         AnalyzerEngine.transcribers(locale: supported), locale: supported, wait: true
                     ).rawValue
+                    // Dictation's custom-word model too, best effort.
+                    _ = await AnalyzerEngine.speller(locale: supported, wait: true)
                 }
             #endif
             semaphore.signal()

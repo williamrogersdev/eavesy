@@ -72,14 +72,16 @@ if CommandLine.arguments.contains("--standby") {
 let args = Arguments.parse(argv)
 
 let languages = CaptionLanguages(
-    locale: args.locale, follows: args.followsSpeech, vocabulary: args.vocabulary, preview: args.preview)
+    locale: args.locale, follows: args.followsSpeech, vocabulary: args.vocabulary, preview: args.preview,
+    spell: args.spell)
 let captions = Dictionary(
     uniqueKeysWithValues: args.captions.map { track in
         (
             track,
             LiveCaptions(track: track.rawValue, emit: EventEmitter.emit, onFinal: languages.heard) { ready in
                 CaptionEngines.make(
-                    locale: args.locale, vocabulary: args.vocabulary, preview: args.preview, completion: ready)
+                    locale: args.locale, vocabulary: args.vocabulary, preview: args.preview, spell: args.spell,
+                    completion: ready)
             }
         )
     })
