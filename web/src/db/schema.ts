@@ -320,9 +320,9 @@ export const captures = sqliteTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id),
-    kind: text('kind', { enum: ['image', 'video', 'audio'] }).notNull(),
+    kind: text('kind', { enum: ['image', 'video', 'audio', 'note'] }).notNull(),
     captureMode: text('capture_mode', {
-      enum: ['screenshot', 'webcam', 'screen', 'audio'],
+      enum: ['screenshot', 'webcam', 'screen', 'audio', 'note'],
     }).notNull(),
     source: text('source', { enum: ['web', 'desktop', 'extension'] })
       .notNull()

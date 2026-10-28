@@ -68,11 +68,16 @@ fn polish_timeout(text: &str) -> std::time::Duration {
 
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
-/// words as heard when the Mac isn't signed in or the server can't help in time.
+/// words as heard, with the dictionary's fixes, when the Mac isn't signed in or the
+/// server can't help in time.
 /// `project` picks that project's tone and words over the account's.
 pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> Polished {
+    let as_heard = || Polished {
+        text: crate::vocabulary::apply_corrections(&strip_fillers(text), &crate::vocabulary::cached_corrections(app)),
+        written: None,
+    };
     let Some(credential) = settings::device_credential(app) else {
-        return Polished { text: strip_fillers(text), written: None };
+        return as_heard();
     };
     let started = std::time::Instant::now();
     let result = polish_with(&credential, text, project, polish_timeout(text));
@@ -83,8 +88,8 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> P
             polished
         }
         Err(error) => {
-            tracing::warn!(polish_ms, "dictation: typing the words as heard, fillers dropped ({error})");
-            Polished { text: strip_fillers(text), written: None }
+            tracing::warn!(polish_ms, "dictation: typing the words as heard, fillers dropped, own spellings applied ({error})");
+            as_heard()
         }
     }
 }

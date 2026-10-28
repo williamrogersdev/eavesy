@@ -32,6 +32,8 @@ struct Arguments {
     let vocabulary: [String]
     /// Faster live words from a second, fast recognizer; `--no-preview` turns it off.
     let preview: Bool
+    /// `--dictation`: a third recognizer spells the user's words (see `Speller`).
+    let spell: Bool
 
     static func parse(_ argv: [String]) -> Arguments {
         var dict: [String: String] = [:]
@@ -94,7 +96,8 @@ struct Arguments {
             locale: locale,
             followsSpeech: language?.lowercased() == CaptionLanguage.auto,
             vocabulary: parseVocabulary(dict["vocabulary"]),
-            preview: dict["no-preview"]?.lowercased() != "true")
+            preview: dict["no-preview"]?.lowercased() != "true",
+            spell: dict["dictation"]?.lowercased() == "true")
     }
 
     /// The host sends at most 100 words; this holds to that whatever it sends.

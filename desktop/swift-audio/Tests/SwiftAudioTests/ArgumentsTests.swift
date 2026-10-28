@@ -41,6 +41,12 @@ final class ArgumentsTests: XCTestCase {
         XCTAssertFalse(parse(["--no-preview", "--vocabulary", "Eavesy"]).preview)
     }
 
+    func testOnlyDictationSpellsCustomWords() {
+        XCTAssertFalse(parse([]).spell)
+        XCTAssertTrue(parse(["--captions", "mic", "--dictation", "--vocabulary", "Eavesy"]).spell)
+        XCTAssertTrue(parse(["--dictation"]).spell)
+    }
+
     func testVocabularyIsCapped() {
         let many = (0..<150).map { "word\($0)" }.joined(separator: "\n")
         XCTAssertEqual(parse(["--vocabulary", many]).vocabulary.count, 100)
