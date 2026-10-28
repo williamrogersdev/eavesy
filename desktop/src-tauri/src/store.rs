@@ -146,7 +146,7 @@ pub fn page<R: Runtime>(
     if request.is_some_and(|token| token.cancelled()) {
         return Err("History search superseded".into());
     }
-    let reader = match History::read_only(&path) {
+    let mut reader = match History::read_only(&path) {
         Ok(reader) if reader.import_complete()? => reader,
         _ => {
             // An interrupted/failed import can leave an existing SQLite file.
