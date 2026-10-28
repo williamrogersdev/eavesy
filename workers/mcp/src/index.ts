@@ -1,7 +1,7 @@
 import { createAiRunner, creditsConfigured, type CreditEnv } from '../../../web/src/lib/ai/credit-runner';
 import { librarySources, askLibrary } from '../../../web/src/server/library-memory';
-import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
+import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
+import { and, desc, eq, gte, inArray, isNull, lte, ne, or, type SQL, sql } from 'drizzle-orm';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Ai, D1Database, DurableObjectNamespace, R2Bucket, VectorizeIndex } from '@cloudflare/workers-types';
 
@@ -312,7 +312,8 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
       capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
       serverInfo: { name: 'eavesy', version: '0.1.0' },
       instructions:
-        'Search and retrieve the authenticated user\'s Eavesy meetings, dictations, and action items. ' +
+        'Search and retrieve the authenticated user\'s Eavesy library: recordings, dictations, notes, screenshots and other captures, ' +
+        'and action items. Start with search or recent, then get an item by its id. ' +
         'The prompts are ones the user saved in Eavesy to reuse. ' +
         'send_to_human and ask_human reach the user on their Mac, where Eavesy shows and reads them aloud; use them when ' +
         'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything. ' +
@@ -367,8 +368,11 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
     }
     try {
       const result = await callTool(env, userId, name, args, token);
+      const value = result instanceof ToolOutput ? result.value : result;
       return jsonRpc(body.id, {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(value, null, 2) }, ...(result instanceof ToolOutput ? result.attachments : [])],
+        // Only tools that declare an outputSchema promise a structured result.
+        ...(def?.outputSchema ? { structuredContent: value } : {}),
       });
     } catch (err) {
       // Only our own messages reach the client; anything else may carry SQL or internals.
@@ -450,6 +454,8 @@ interface ToolDef {
   annotations: ToolAnnotations;
   /** The scope a connection needs to see and call this tool. */
   scope: McpScope;
+  /** The shape of `structuredContent` in this tool's results. */
+  outputSchema?: Record<string, unknown>;
 }
 
 interface ToolAnnotations {
@@ -465,6 +471,53 @@ const MESSAGES_HUMAN: ToolAnnotations = { readOnlyHint: false, destructiveHint: 
 
 /** The longest title send_to_my_devices accepts. */
 const DROP_TITLE_MAX_CHARS = 200;
+
+/** Everything search, recent and get reach. "meeting" is any recording, as in the other tools. */
+const ITEM_KINDS = ['meeting', 'dictation', 'note', 'image', 'video', 'audio'] as const;
+type ItemKind = (typeof ITEM_KINDS)[number];
+type CaptureKind = Exclude<ItemKind, 'meeting' | 'dictation'>;
+const CAPTURE_KINDS: readonly CaptureKind[] = ['note', 'image', 'video', 'audio'];
+/** get attaches an image this size or smaller, as the local CLI does. */
+const IMAGE_ATTACH_MAX_BYTES = 4 * 1024 * 1024;
+const ATTACHABLE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const EXCERPT_CHARS = 240;
+
+const ITEM_FILTER_PROPERTIES = {
+  kinds: {
+    type: 'array',
+    items: { type: 'string', enum: ITEM_KINDS },
+    description: 'Only these kinds. Leave out for everything.',
+  },
+  project: { type: 'string', description: 'Only items filed under this project (by name, see list_projects). Dictations have no project, so they are left out.' },
+  since: { type: 'string', description: 'Only items from this ISO 8601 date or time on, like 2026-10-01 or 2026-10-01T09:00:00Z. Times without an offset are UTC.' },
+  until: { type: 'string', description: 'Only items up to this ISO 8601 date or time. A bare date includes that whole UTC day.' },
+  limit: { type: 'number', minimum: 1, maximum: 50, default: 10 },
+};
+
+const ITEM_LIST_OUTPUT = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          kind: { type: 'string', enum: ITEM_KINDS },
+          title: { type: 'string' },
+          excerpt: { type: ['string', 'null'] },
+          project: { type: ['string', 'null'] },
+          created_at: { type: 'string', description: 'When it was recorded or captured (ISO 8601).' },
+          duration_sec: { type: ['number', 'null'] },
+          url: { type: ['string', 'null'] },
+          score: { type: 'number', description: 'search only: 1 for a word match, lower for a match by meaning.' },
+        },
+        required: ['id', 'kind', 'title', 'excerpt', 'project', 'created_at', 'duration_sec', 'url'],
+      },
+    },
+  },
+  required: ['items'],
+};
 
 const TOOL_DEFS: ToolDef[] = [
   {
@@ -503,6 +556,51 @@ const TOOL_DEFS: ToolDef[] = [
       required: ['question'],
     },
     annotations: MESSAGES_HUMAN,
+    scope: 'read',
+  },
+  {
+    name: 'search',
+    description:
+      "Search everything in the user's Eavesy library: recordings (meetings, calls, videos), dictations, notes, and " +
+      'screenshots, images, video and audio captures. Matches titles and text, including text read from screenshots; ' +
+      'recordings and dictations also match by meaning, and a call that includes them counts against the user\'s daily search quota. ' +
+      'Filter by kinds, project and a since/until range. Returns {items}, best match first. Pass an item\'s id to get for the whole thing.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', minLength: 1, maxLength: 1000 }, ...ITEM_FILTER_PROPERTIES },
+      required: ['query'],
+    },
+    outputSchema: ITEM_LIST_OUTPUT,
+    annotations: READ_ONLY,
+    scope: 'read',
+  },
+  {
+    name: 'recent',
+    description:
+      "List the newest items in the user's library, newest first: recordings, dictations, notes and captures. " +
+      'Use it for "my last call", "what I noted yesterday" or "screenshots from this week", with kinds, project and since/until. ' +
+      'Returns {items}. Pass an item\'s id to get for the whole thing.',
+    inputSchema: { type: 'object', properties: ITEM_FILTER_PROPERTIES },
+    outputSchema: ITEM_LIST_OUTPUT,
+    annotations: READ_ONLY,
+    scope: 'read',
+  },
+  {
+    name: 'get',
+    description:
+      'Get one item by the id search or recent returned. A recording comes with its summary, the user\'s own notes and the full ' +
+      'transcript (cleaned up for an agent unless transcript_format is "raw"); a dictation with its text; a note with its Markdown; ' +
+      `a screenshot or image with any text read from it and the image itself (up to ${IMAGE_ATTACH_MAX_BYTES / 1024 / 1024} MB); ` +
+      'a video or audio capture with its transcript.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        transcript_format: { type: 'string', enum: ['agent', 'raw'], default: 'agent' },
+      },
+      required: ['id'],
+    },
+    annotations: READ_ONLY,
     scope: 'read',
   },
   { name: 'search_library', description: 'Find current transcript evidence across completed recordings, with segment IDs and timestamps.', inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 3, maxLength: 1000 } }, required: ['query'] }, annotations: READ_ONLY, scope: 'read' },
@@ -625,6 +723,7 @@ const MEETING_LISTING = {
   description: schema.meetings.description,
   startedAt: schema.meetings.startedAt,
   durationSec: schema.meetings.durationSec,
+  folderId: schema.meetings.folderId,
 };
 /** Vectorize returns at most 50 matches when metadata is asked for. */
 const VECTOR_TOP_K_MAX = 50;
@@ -730,93 +829,90 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         return name === 'ask_library' ? askLibrary(db, userId, question, opts) : librarySources(db, userId, question, opts);
       });
     }
-    case 'search_meetings': {
+    case 'search': {
       const query = stringArg(args.query);
-      if (!query) return [];
-      const q = containsPattern(query);
+      if (!query) return { items: [] };
+      if (query.length > 1000) throw new UserFacingError('query must be at most 1000 characters');
+      const filter = await itemFilter(db, userId, args);
       const limit = clampLimit(args.limit);
-      const titleRows = await db
-        .select(MEETING_LISTING)
-        .from(schema.meetings)
-        .where(
-          and(
-            eq(schema.meetings.userId, userId),
-            isNull(schema.meetings.deletedAt),
-            visibleMeeting(),
-            or(
-              contains(schema.meetings.title, q),
-              contains(schema.meetings.description, q),
-              contains(schema.meetings.summaryOverrideMd, q),
-              contains(schema.meetings.transcriptOverrideMd, q),
-            ),
-          ),
-        )
-        .orderBy(desc(schema.meetings.startedAt))
-        .limit(limit);
-
-      const matches = await withQuota(env, userId, 'search', async () => {
-        const queryVector = (await embedTexts(createAiRunner(env, 'mcp-search'), [query]))[0];
-        return env.VECTORIZE.query(queryVector, {
-          topK: Math.min(limit * 3, VECTOR_TOP_K_MAX),
-          filter: { userId },
-          returnMetadata: 'all',
-        });
-      });
-      const semantic = matches.matches
-        .map((match) => {
-          const metadata = asMetadata(match.metadata);
-          return metadata.sourceType === 'meeting' && metadata.sourceId
-            ? { meetingId: metadata.sourceId, vectorId: String(match.id), score: match.score }
-            : null;
-        })
-        .filter((match): match is { meetingId: string; vectorId: string; score: number } => match !== null);
-      const semanticIds = [...new Set(semantic.map((match) => match.meetingId))];
-      const [semanticRows, excerptRows] = await Promise.all([
-        semanticIds.length
+      const byMeaning = filter.kinds.includes('meeting') || filter.kinds.includes('dictation');
+      const semantic = byMeaning ? await semanticMatches(env, userId, query, Math.min(limit * 3, VECTOR_TOP_K_MAX)) : [];
+      const excerpts = await vectorExcerpts(db, userId, semantic);
+      const [meetings, dictations, captures] = await Promise.all([
+        filter.kinds.includes('meeting') ? meetingHits(db, userId, query, limit, filter, semantic, excerpts) : [],
+        filter.kinds.includes('dictation') && !filter.project ? dictationHits(db, userId, query, limit, filter, semantic, excerpts) : [],
+        captureKinds(filter).length ? captureHits(db, userId, query, limit, filter) : [],
+      ]);
+      const hits: ScoredItem[] = [
+        ...meetings.map(({ meeting, score, excerpt }) => ({ ...meetingItem(meeting, filter.projects, excerpt), score })),
+        ...dictations,
+        ...captures,
+      ];
+      return {
+        items: hits
+          .sort((a, b) => b.score - a.score || b.created_at.localeCompare(a.created_at))
+          .slice(0, limit),
+      };
+    }
+    case 'recent': {
+      const filter = await itemFilter(db, userId, args);
+      const limit = clampLimit(args.limit);
+      const [meetings, dictations, captures] = await Promise.all([
+        filter.kinds.includes('meeting')
           ? db
               .select(MEETING_LISTING)
               .from(schema.meetings)
-              .where(
-                and(
-                  eq(schema.meetings.userId, userId),
-                  isNull(schema.meetings.deletedAt),
-                  visibleMeeting(),
-                  inArray(schema.meetings.id, semanticIds),
-                ),
-              )
-          : Promise.resolve([]),
-        semantic.length
+              .where(meetingScope(userId, filter))
+              .orderBy(desc(schema.meetings.startedAt))
+              .limit(limit)
+          : [],
+        filter.kinds.includes('dictation') && !filter.project
           ? db
-              .select({ id: schema.embeddings.id, contentExcerpt: schema.embeddings.contentExcerpt })
-              .from(schema.embeddings)
-              .where(
-                and(
-                  eq(schema.embeddings.userId, userId),
-                  inArray(schema.embeddings.id, semantic.map((match) => match.vectorId)),
-                ),
-              )
-          : Promise.resolve([]),
+              .select(DICTATION_LISTING)
+              .from(schema.dictations)
+              .where(dictationScope(userId, filter))
+              .orderBy(desc(schema.dictations.createdAt))
+              .limit(limit)
+          : [],
+        captureKinds(filter).length
+          ? db
+              .select(CAPTURE_LISTING)
+              .from(schema.captures)
+              .where(captureScope(userId, filter))
+              .orderBy(desc(schema.captures.createdAt))
+              .limit(limit)
+          : [],
       ]);
-      const semanticByMeeting = new Map(semantic.map((match) => [match.meetingId, match]));
-      const excerpts = new Map(excerptRows.map((row) => [row.id, row.contentExcerpt]));
-      const merged = new Map(titleRows.map((meeting) => [meeting.id, { meeting, score: 1, excerpt: meeting.description }]));
-      for (const meeting of semanticRows) {
-        const match = semanticByMeeting.get(meeting.id);
-        if (!match) continue;
-        const prior = merged.get(meeting.id);
-        if (!prior || match.score > prior.score) {
-          merged.set(meeting.id, {
-            meeting,
-            score: match.score,
-            excerpt: excerpts.get(match.vectorId) ?? meeting.description,
-          });
-        }
+      const items: ItemListing[] = [
+        ...meetings.map((m) => meetingItem(m, filter.projects, m.description)),
+        ...dictations.map((d) => dictationItem(d, excerptOf(d.cleanedText ?? d.transcript))),
+        ...captures.map((c) => captureItem(c, filter.projects, c.text)),
+      ];
+      return { items: items.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit) };
+    }
+    case 'get': {
+      const id = stringArg(args.id);
+      if (!id) throw new UserFacingError('id is required');
+      // Ids carry their kind as a prefix; anything else is tried as each kind in turn.
+      const lookups = id.startsWith('cap_')
+        ? [getCapture]
+        : id.startsWith('dict_')
+          ? [getDictation]
+          : [getMeeting, getDictation, getCapture];
+      for (const lookup of lookups) {
+        const found = await lookup(env, db, userId, id, args);
+        if (found) return found;
       }
-
-      return [...merged.values()]
-        .sort((a, b) => b.score - a.score || b.meeting.startedAt - a.meeting.startedAt)
-        .slice(0, limit)
-        .map(({ meeting: m, score, excerpt }) => ({
+      throw new UserFacingError('not found');
+    }
+    case 'search_meetings': {
+      const query = stringArg(args.query);
+      if (!query) return [];
+      const limit = clampLimit(args.limit);
+      const filter: ItemFilter = { kinds: ['meeting'], projects: [] };
+      const semantic = await semanticMatches(env, userId, query, Math.min(limit * 3, VECTOR_TOP_K_MAX));
+      const hits = await meetingHits(db, userId, query, limit, filter, semantic, await vectorExcerpts(db, userId, semantic));
+      return hits.map(({ meeting: m, score, excerpt }) => ({
         id: m.id,
         title: m.title,
         description: m.description,
@@ -824,94 +920,24 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         score,
         started_at: new Date(m.startedAt).toISOString(),
         duration_sec: m.durationSec,
-        url: `https://eavesy.com/app/meetings/${m.id}`,
+        url: meetingUrl(m.id),
       }));
     }
     case 'get_meeting': {
       const id = stringArg(args.id);
       if (!id) throw new UserFacingError('id is required');
-      const m = (
-        await db
-          .select()
-          .from(schema.meetings)
-          .where(
-            and(
-              eq(schema.meetings.id, id),
-              eq(schema.meetings.userId, userId),
-              isNull(schema.meetings.deletedAt),
-              visibleMeeting(),
-            ),
-          )
-          .limit(1)
-      )[0];
-      if (!m) throw new UserFacingError('not found');
-      const summary = (
-        await db.select().from(schema.summaries).where(eq(schema.summaries.meetingId, id)).limit(1)
-      )[0];
-      const segments = await db
-        .select()
-        .from(schema.transcriptSegments)
-        .where(eq(schema.transcriptSegments.meetingId, id))
-        .orderBy(schema.transcriptSegments.startMs);
-      const names = parseSpeakerNames(m.speakerNamesJson);
-      const project = m.folderId
-        ? (
-            await db
-              .select({ name: schema.folders.name })
-              .from(schema.folders)
-              .where(and(eq(schema.folders.id, m.folderId), eq(schema.folders.userId, userId)))
-              .limit(1)
-          )[0]
-        : undefined;
-      return {
-        id: m.id,
-        title: m.title,
-        description: m.description,
-        started_at: new Date(m.startedAt).toISOString(),
-        duration_sec: m.durationSec,
-        summary: m.summaryOverrideMd ?? (summary
-          ? {
-              tldr: summary.tldr,
-              decisions: JSON.parse(summary.decisionsJson),
-              action_items: JSON.parse(summary.actionItemsJson),
-              follow_ups: JSON.parse(summary.followUpsJson),
-              open_questions: JSON.parse(summary.openQuestionsJson),
-              topics: JSON.parse(summary.topicsJson),
-              mentions: JSON.parse(summary.mentionsJson),
-            }
-          : null),
-        project: project?.name ?? null,
-        transcript_kind: m.transcriptKind ?? null,
-        transcript:
-          m.transcriptOverrideMd ??
-          (args.transcript_format !== 'raw' && m.agentTranscriptMd ? m.agentTranscriptMd : null) ??
-          segments
-            .map((s) => `[${clock(s.startMs)}] ${s.speakerId ? speakerName(s.speakerId, names) : 'Speaker'}: ${s.text}`)
-            .join('\n'),
-        url: `https://eavesy.com/app/meetings/${m.id}`,
-      };
+      const meeting = await getMeeting(env, db, userId, id, args);
+      if (!meeting) throw new UserFacingError('not found');
+      const { kind: _kind, ...rest } = meeting;
+      return rest;
     }
     case 'recent_meetings': {
       const limit = clampLimit(args.limit);
-      const projects = await db
-        .select({ id: schema.folders.id, name: schema.folders.name })
-        .from(schema.folders)
-        .where(eq(schema.folders.userId, userId));
-      const projectArg = stringArg(args.project);
-      const projectName = projectArg.toLowerCase();
-      const only = projectName ? projects.find((p) => p.name.toLowerCase() === projectName) : undefined;
-      if (projectName && !only) throw new UserFacingError(`no project named "${projectArg}"`);
+      const { projects, project } = await projectArg(db, userId, args.project);
       const rows = await db
-        .select({ ...MEETING_LISTING, folderId: schema.meetings.folderId })
+        .select(MEETING_LISTING)
         .from(schema.meetings)
-        .where(
-          and(
-            eq(schema.meetings.userId, userId),
-            isNull(schema.meetings.deletedAt),
-            visibleMeeting(),
-            only ? eq(schema.meetings.folderId, only.id) : undefined,
-          ),
-        )
+        .where(meetingScope(userId, { kinds: ['meeting'], projects, project }))
         .orderBy(desc(schema.meetings.startedAt))
         .limit(limit);
       return rows.map((m) => ({
@@ -1037,6 +1063,489 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
     default:
       throw new UserFacingError(`unknown tool: ${name}`);
   }
+}
+
+type Db = DrizzleD1Database<typeof schema>;
+
+/** A tool result that also carries other MCP content, such as an image. */
+class ToolOutput {
+  constructor(
+    readonly value: Record<string, unknown>,
+    readonly attachments: { type: 'image'; data: string; mimeType: string }[],
+  ) {}
+}
+
+interface Project {
+  id: string;
+  name: string;
+}
+
+/** What search and recent were asked to cover. */
+interface ItemFilter {
+  kinds: ItemKind[];
+  /** All the user's projects, to name an item's. */
+  projects: Project[];
+  /** Set when the call asked for one project. */
+  project?: Project;
+  since?: number;
+  until?: number;
+}
+
+interface ItemListing {
+  id: string;
+  kind: ItemKind;
+  title: string;
+  excerpt: string | null;
+  project: string | null;
+  created_at: string;
+  duration_sec: number | null;
+  url: string | null;
+}
+
+interface ScoredItem extends ItemListing {
+  score: number;
+}
+
+interface VectorMatch {
+  sourceType: string;
+  sourceId: string;
+  vectorId: string;
+  score: number;
+}
+
+type MeetingRow = Pick<typeof schema.meetings.$inferSelect, 'id' | 'title' | 'description' | 'startedAt' | 'durationSec' | 'folderId'>;
+type DictationRow = Pick<typeof schema.dictations.$inferSelect, 'id' | 'title' | 'transcript' | 'cleanedText' | 'durationSec' | 'createdAt'>;
+type CaptureRow = Pick<typeof schema.captures.$inferSelect, 'id' | 'kind' | 'title' | 'durationSec' | 'folderId' | 'createdAt'> & {
+  text: string | null;
+};
+
+const DICTATION_LISTING = {
+  id: schema.dictations.id,
+  title: schema.dictations.title,
+  transcript: schema.dictations.transcript,
+  cleanedText: schema.dictations.cleanedText,
+  durationSec: schema.dictations.durationSec,
+  createdAt: schema.dictations.createdAt,
+};
+
+const CAPTURE_COLUMNS = {
+  id: schema.captures.id,
+  kind: schema.captures.kind,
+  title: schema.captures.title,
+  durationSec: schema.captures.durationSec,
+  folderId: schema.captures.folderId,
+  createdAt: schema.captures.createdAt,
+};
+/** A note's text can run to a megabyte, so a listing reads only its start. */
+const CAPTURE_LISTING = {
+  ...CAPTURE_COLUMNS,
+  text: sql<string | null>`substr(${schema.captures.transcript}, 1, ${EXCERPT_CHARS * 2})`,
+};
+
+async function projectArg(db: Db, userId: string, value: unknown): Promise<{ projects: Project[]; project?: Project }> {
+  const projects = await db
+    .select({ id: schema.folders.id, name: schema.folders.name })
+    .from(schema.folders)
+    .where(eq(schema.folders.userId, userId));
+  const name = stringArg(value);
+  if (!name) return { projects };
+  const project = projects.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!project) throw new UserFacingError(`no project named "${name}"`);
+  return { projects, project };
+}
+
+async function itemFilter(db: Db, userId: string, args: Record<string, unknown>): Promise<ItemFilter> {
+  const kinds = kindsArg(args.kinds);
+  const since = timeArg(args.since, 'since', false);
+  const until = timeArg(args.until, 'until', true);
+  if (since !== undefined && until !== undefined && since > until) throw new UserFacingError('since must be before until');
+  return { kinds, since, until, ...(await projectArg(db, userId, args.project)) };
+}
+
+/** Every kind when none is named. One kind on its own, not in a list, is fine too. */
+function kindsArg(value: unknown): ItemKind[] {
+  if (value === undefined || value === null) return [...ITEM_KINDS];
+  const named: unknown[] = Array.isArray(value) ? value : [value];
+  const unknownKind = named.find((kind) => !(ITEM_KINDS as readonly unknown[]).includes(kind));
+  if (unknownKind !== undefined) throw new UserFacingError(`unknown kind "${String(unknownKind)}": use ${ITEM_KINDS.join(', ')}`);
+  return named.length ? ITEM_KINDS.filter((kind) => named.includes(kind)) : [...ITEM_KINDS];
+}
+
+/** An ISO 8601 date or time as epoch ms. A bare date as `until` runs to the end of that UTC day. */
+function timeArg(value: unknown, name: string, endOfDay: boolean): number | undefined {
+  const text = stringArg(value);
+  if (!text) return undefined;
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms)) throw new UserFacingError(`${name} must be an ISO 8601 date or time, like 2026-10-01 or 2026-10-01T09:00:00Z`);
+  return endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(text) ? ms + 86_400_000 - 1 : ms;
+}
+
+function inRange(column: SQLiteColumn, filter: ItemFilter): SQL | undefined {
+  return and(
+    filter.since === undefined ? undefined : gte(column, filter.since),
+    filter.until === undefined ? undefined : lte(column, filter.until),
+  );
+}
+
+function meetingScope(userId: string, filter: ItemFilter): SQL | undefined {
+  return and(
+    eq(schema.meetings.userId, userId),
+    isNull(schema.meetings.deletedAt),
+    visibleMeeting(),
+    filter.project ? eq(schema.meetings.folderId, filter.project.id) : undefined,
+    inRange(schema.meetings.startedAt, filter),
+  );
+}
+
+function dictationScope(userId: string, filter: ItemFilter): SQL | undefined {
+  return and(eq(schema.dictations.userId, userId), isNull(schema.dictations.deletedAt), inRange(schema.dictations.createdAt, filter));
+}
+
+function captureKinds(filter: ItemFilter): CaptureKind[] {
+  return CAPTURE_KINDS.filter((kind) => filter.kinds.includes(kind));
+}
+
+function captureScope(userId: string, filter: ItemFilter): SQL | undefined {
+  return and(
+    eq(schema.captures.userId, userId),
+    isNull(schema.captures.deletedAt),
+    inArray(schema.captures.kind, captureKinds(filter)),
+    filter.project ? eq(schema.captures.folderId, filter.project.id) : undefined,
+    inRange(schema.captures.createdAt, filter),
+  );
+}
+
+const meetingUrl = (id: string) => `https://eavesy.com/app/meetings/${id}`;
+const iso = (ms: number) => new Date(ms).toISOString();
+const projectName = (projects: Project[], folderId: string | null) => projects.find((p) => p.id === folderId)?.name ?? null;
+
+function meetingItem(m: MeetingRow, projects: Project[], excerpt: string | null): ItemListing {
+  return {
+    id: m.id,
+    kind: 'meeting',
+    title: m.title,
+    excerpt: excerptOf(excerpt),
+    project: projectName(projects, m.folderId),
+    created_at: iso(m.startedAt),
+    duration_sec: m.durationSec,
+    url: meetingUrl(m.id),
+  };
+}
+
+function dictationItem(d: DictationRow, excerpt: string | null): ItemListing {
+  return {
+    id: d.id,
+    kind: 'dictation',
+    title: d.title,
+    excerpt: excerptOf(excerpt),
+    project: null,
+    created_at: iso(d.createdAt),
+    duration_sec: d.durationSec,
+    url: null,
+  };
+}
+
+function captureItem(c: CaptureRow, projects: Project[], excerpt: string | null): ItemListing {
+  return {
+    id: c.id,
+    kind: c.kind,
+    title: c.title,
+    excerpt: excerptOf(excerpt),
+    project: projectName(projects, c.folderId),
+    created_at: iso(c.createdAt),
+    duration_sec: c.durationSec,
+    // The web app has no page for a note yet.
+    url: c.kind === 'note' ? null : `https://eavesy.com/app/captures/${c.id}`,
+  };
+}
+
+/** Whitespace folded, cut to EXCERPT_CHARS. */
+function excerptOf(text: string | null | undefined): string | null {
+  const flat = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  return flat.length > EXCERPT_CHARS ? `${flat.slice(0, EXCERPT_CHARS - 1)}…` : flat;
+}
+
+/** The part of `text` around the first place `query` appears, or its start. */
+function snippet(text: string, query: string): string {
+  const at = text.toLowerCase().indexOf(query.toLowerCase());
+  return at > 80 ? `…${text.slice(at - 80)}` : text;
+}
+
+/** The query matched by meaning across recordings and dictations. Counts against the search quota. */
+async function semanticMatches(env: Env, userId: string, query: string, topK: number): Promise<VectorMatch[]> {
+  const result = await withQuota(env, userId, 'search', async () => {
+    const queryVector = (await embedTexts(createAiRunner(env, 'mcp-search'), [query]))[0];
+    return env.VECTORIZE.query(queryVector, { topK, filter: { userId }, returnMetadata: 'all' });
+  });
+  return result.matches.flatMap((match) => {
+    const metadata = asMetadata(match.metadata);
+    return metadata.sourceType && metadata.sourceId
+      ? [{ sourceType: metadata.sourceType, sourceId: metadata.sourceId, vectorId: String(match.id), score: match.score }]
+      : [];
+  });
+}
+
+/** The stored text of each matched chunk, by vector id. */
+async function vectorExcerpts(db: Db, userId: string, matches: VectorMatch[]): Promise<Map<string, string | null>> {
+  if (!matches.length) return new Map();
+  const rows = await db
+    .select({ id: schema.embeddings.id, contentExcerpt: schema.embeddings.contentExcerpt })
+    .from(schema.embeddings)
+    .where(and(eq(schema.embeddings.userId, userId), inArray(schema.embeddings.id, matches.map((match) => match.vectorId))));
+  return new Map(rows.map((row) => [row.id, row.contentExcerpt]));
+}
+
+/** Each source's best-scoring match of one type. */
+function bestBySource(matches: VectorMatch[], sourceType: string): Map<string, VectorMatch> {
+  const best = new Map<string, VectorMatch>();
+  for (const match of matches) {
+    if (match.sourceType !== sourceType) continue;
+    const prior = best.get(match.sourceId);
+    if (!prior || match.score > prior.score) best.set(match.sourceId, match);
+  }
+  return best;
+}
+
+/** Recordings whose title or text has the query (score 1), merged with those that match by meaning. */
+async function meetingHits(
+  db: Db,
+  userId: string,
+  query: string,
+  limit: number,
+  filter: ItemFilter,
+  semantic: VectorMatch[],
+  excerpts: Map<string, string | null>,
+): Promise<{ meeting: MeetingRow; score: number; excerpt: string | null }[]> {
+  const q = containsPattern(query);
+  const best = bestBySource(semantic, 'meeting');
+  const [titleRows, semanticRows] = await Promise.all([
+    db
+      .select(MEETING_LISTING)
+      .from(schema.meetings)
+      .where(
+        and(
+          meetingScope(userId, filter),
+          or(
+            contains(schema.meetings.title, q),
+            contains(schema.meetings.description, q),
+            contains(schema.meetings.summaryOverrideMd, q),
+            contains(schema.meetings.transcriptOverrideMd, q),
+          ),
+        ),
+      )
+      .orderBy(desc(schema.meetings.startedAt))
+      .limit(limit),
+    best.size
+      ? db
+          .select(MEETING_LISTING)
+          .from(schema.meetings)
+          .where(and(meetingScope(userId, filter), inArray(schema.meetings.id, [...best.keys()])))
+      : Promise.resolve([]),
+  ]);
+  const merged = new Map(titleRows.map((meeting) => [meeting.id, { meeting, score: 1, excerpt: meeting.description }]));
+  for (const meeting of semanticRows) {
+    const match = best.get(meeting.id);
+    if (!match) continue;
+    const prior = merged.get(meeting.id);
+    if (!prior || match.score > prior.score) {
+      merged.set(meeting.id, { meeting, score: match.score, excerpt: excerpts.get(match.vectorId) ?? meeting.description });
+    }
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.score - a.score || b.meeting.startedAt - a.meeting.startedAt)
+    .slice(0, limit);
+}
+
+async function dictationHits(
+  db: Db,
+  userId: string,
+  query: string,
+  limit: number,
+  filter: ItemFilter,
+  semantic: VectorMatch[],
+  excerpts: Map<string, string | null>,
+): Promise<ScoredItem[]> {
+  const q = containsPattern(query);
+  const best = bestBySource(semantic, 'dictation');
+  const [wordRows, semanticRows] = await Promise.all([
+    db
+      .select(DICTATION_LISTING)
+      .from(schema.dictations)
+      .where(
+        and(
+          dictationScope(userId, filter),
+          or(contains(schema.dictations.title, q), contains(schema.dictations.transcript, q), contains(schema.dictations.cleanedText, q)),
+        ),
+      )
+      .orderBy(desc(schema.dictations.createdAt))
+      .limit(limit),
+    best.size
+      ? db
+          .select(DICTATION_LISTING)
+          .from(schema.dictations)
+          .where(and(dictationScope(userId, filter), inArray(schema.dictations.id, [...best.keys()])))
+      : Promise.resolve([]),
+  ]);
+  const byWord = new Set(wordRows.map((d) => d.id));
+  return [
+    ...wordRows.map((d) => ({ ...dictationItem(d, snippet(d.cleanedText ?? d.transcript, query)), score: 1 })),
+    ...semanticRows.flatMap((d) => {
+      const match = best.get(d.id);
+      if (!match || byWord.has(d.id)) return [];
+      return [{ ...dictationItem(d, excerpts.get(match.vectorId) ?? d.cleanedText ?? d.transcript), score: match.score }];
+    }),
+  ];
+}
+
+/** Notes and captures whose title or text (a note's Markdown, text read from a screenshot, a transcript) has the query. */
+async function captureHits(db: Db, userId: string, query: string, limit: number, filter: ItemFilter): Promise<ScoredItem[]> {
+  const q = containsPattern(query);
+  const text = schema.captures.transcript;
+  const rows = await db
+    .select({
+      ...CAPTURE_COLUMNS,
+      // From a little before the first match. instr is 0 when only the title matched, which starts at the top.
+      text: sql<string | null>`substr(${text}, max(1, instr(lower(${text}), lower(${query})) - 80), ${EXCERPT_CHARS * 2})`,
+    })
+    .from(schema.captures)
+    .where(and(captureScope(userId, filter), or(contains(schema.captures.title, q), contains(text, q))))
+    .orderBy(desc(schema.captures.createdAt))
+    .limit(limit);
+  return rows.map((c) => ({ ...captureItem(c, filter.projects, c.text), score: 1 }));
+}
+
+async function folderName(db: Db, userId: string, folderId: string | null): Promise<string | null> {
+  if (!folderId) return null;
+  const row = (
+    await db
+      .select({ name: schema.folders.name })
+      .from(schema.folders)
+      .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
+      .limit(1)
+  )[0];
+  return row?.name ?? null;
+}
+
+async function getMeeting(_env: Env, db: Db, userId: string, id: string, args: Record<string, unknown>) {
+  const m = (
+    await db
+      .select()
+      .from(schema.meetings)
+      .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
+      .limit(1)
+  )[0];
+  if (!m) return null;
+  const [summary, segments, notes, project] = await Promise.all([
+    db.select().from(schema.summaries).where(eq(schema.summaries.meetingId, id)).limit(1).then((rows) => rows[0]),
+    db
+      .select()
+      .from(schema.transcriptSegments)
+      .where(eq(schema.transcriptSegments.meetingId, id))
+      .orderBy(schema.transcriptSegments.startMs),
+    db
+      .select({ contentMd: schema.userNotes.contentMd })
+      .from(schema.userNotes)
+      .where(eq(schema.userNotes.meetingId, id))
+      .limit(1)
+      .then((rows) => rows[0]?.contentMd),
+    folderName(db, userId, m.folderId),
+  ]);
+  const names = parseSpeakerNames(m.speakerNamesJson);
+  return {
+    kind: 'meeting' as const,
+    id: m.id,
+    title: m.title,
+    description: m.description,
+    started_at: iso(m.startedAt),
+    duration_sec: m.durationSec,
+    summary: m.summaryOverrideMd ?? (summary
+      ? {
+          tldr: summary.tldr,
+          decisions: JSON.parse(summary.decisionsJson),
+          action_items: JSON.parse(summary.actionItemsJson),
+          follow_ups: JSON.parse(summary.followUpsJson),
+          open_questions: JSON.parse(summary.openQuestionsJson),
+          topics: JSON.parse(summary.topicsJson),
+          mentions: JSON.parse(summary.mentionsJson),
+        }
+      : null),
+    /** What the user wrote about the recording themselves. */
+    notes: notes?.trim() ? notes : null,
+    project,
+    transcript_kind: m.transcriptKind ?? null,
+    transcript:
+      m.transcriptOverrideMd ??
+      (args.transcript_format !== 'raw' && m.agentTranscriptMd ? m.agentTranscriptMd : null) ??
+      segments
+        .map((s) => `[${clock(s.startMs)}] ${s.speakerId ? speakerName(s.speakerId, names) : 'Speaker'}: ${s.text}`)
+        .join('\n'),
+    url: meetingUrl(m.id),
+  };
+}
+
+async function getDictation(_env: Env, db: Db, userId: string, id: string, _args: Record<string, unknown>) {
+  const d = (
+    await db
+      .select()
+      .from(schema.dictations)
+      .where(and(eq(schema.dictations.id, id), eq(schema.dictations.userId, userId), isNull(schema.dictations.deletedAt)))
+      .limit(1)
+  )[0];
+  if (!d) return null;
+  return {
+    kind: 'dictation' as const,
+    id: d.id,
+    title: d.title,
+    text: d.cleanedText ?? d.transcript,
+    transcript: d.transcript,
+    cleaned: d.cleanedText,
+    target_app: d.targetApp,
+    created_at: iso(d.createdAt),
+    duration_sec: d.durationSec,
+  };
+}
+
+async function getCapture(env: Env, db: Db, userId: string, id: string, _args: Record<string, unknown>) {
+  const c = (
+    await db
+      .select()
+      .from(schema.captures)
+      .where(and(eq(schema.captures.id, id), eq(schema.captures.userId, userId), isNull(schema.captures.deletedAt)))
+      .limit(1)
+  )[0];
+  if (!c) return null;
+  let text = c.transcript;
+  // Notes uploaded before their text was kept on the row are read from R2.
+  if (text === null && c.kind === 'note') {
+    const object = await env.AUDIO_BUCKET.get(c.r2Key);
+    text = object ? await object.text() : null;
+  }
+  const attach = c.kind === 'image' && c.bytes <= IMAGE_ATTACH_MAX_BYTES && ATTACHABLE_IMAGE_TYPES.includes(c.contentType);
+  const image = attach ? await env.AUDIO_BUCKET.get(c.r2Key) : null;
+  const { excerpt: _excerpt, ...listing } = captureItem({ ...c, text: null }, [], null);
+  const value = {
+    ...listing,
+    project: await folderName(db, userId, c.folderId),
+    capture_mode: c.captureMode,
+    source: c.source,
+    content_type: c.contentType,
+    bytes: c.bytes,
+    width: c.width,
+    height: c.height,
+    /** A note's Markdown, text read from a screenshot or image, or a video or audio transcript. */
+    text,
+    text_status: c.transcriptStatus,
+    image_attached: image !== null,
+  };
+  if (!image) return value;
+  return new ToolOutput(value, [{ type: 'image', data: base64(new Uint8Array(await image.arrayBuffer())), mimeType: c.contentType }]);
+}
+
+function base64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }
 
 interface ActionItemResult {
