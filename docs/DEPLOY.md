@@ -74,7 +74,7 @@ Bindings by service:
 |---|---|
 | `eavesy` | D1 `DB`, R2 `AUDIO_BUCKET`, KV `CACHE`, Queue producer, Vectorize, AI |
 | `eavesy-processing` | D1, R2, Queue consumer/producer, Vectorize, AI |
-| `eavesy-mcp` | D1, R2 `AUDIO_BUCKET`, Queue producer, Vectorize, AI, the web Worker's `DROPS_HUB` Durable Object |
+| `eavesy-mcp` | D1, R2 `AUDIO_BUCKET`, Queue producer (transcript rebuilds, webhook deliveries), Vectorize, AI, the web Worker's `DROPS_HUB` Durable Object. Serves MCP at `/` and the REST API at `/v1` |
 
 ## Secrets
 

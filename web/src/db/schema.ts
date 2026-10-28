@@ -534,6 +534,34 @@ export const mcpTokens = sqliteTable(
   ],
 );
 
+/** Where an account's events are POSTed, signed with `secret` (Standard Webhooks). */
+export const webhookEndpoints = sqliteTable(
+  'webhook_endpoints',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    url: text('url').notNull(),
+    description: text('description').notNull().default(''),
+    secret: text('secret').notNull(),
+    eventsJson: text('events_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    disabledAt: integer('disabled_at'),
+    disabledReason: text('disabled_reason'),
+    lastAttemptAt: integer('last_attempt_at'),
+    lastSuccessAt: integer('last_success_at'),
+    lastStatus: integer('last_status'),
+    lastError: text('last_error'),
+    /** Events in a row that ran out of retries; the endpoint is turned off at WEBHOOK_DISABLE_AFTER. */
+    failedEvents: integer('failed_events').notNull().default(0),
+    /** The API key or MCP connection that added it, if not the web app: it sends only while that key works. */
+    createdByTokenId: text('created_by_token_id'),
+  },
+  (t) => [index('webhook_endpoints_user_idx').on(t.userId)],
+);
+
 /** MCP clients registered through OAuth dynamic client registration. All are public (PKCE, no secret). */
 export const oauthClients = sqliteTable('oauth_clients', {
   id: text('id').primaryKey(),

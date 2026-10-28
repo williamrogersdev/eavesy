@@ -76,7 +76,7 @@ write tool is `send_to_my_devices`, which puts text in your **Drop** inbox. A
 read-only connection never sees write tools in its tool list, and calling one
 is refused.
 
-Every approved app is listed in **Settings → AI assistants (MCP)** on the web
+Every approved app is listed in **Settings → AI apps and API keys** on the web
 and in **Settings → Connections** in the Mac app, where you can revoke it. Revoking cuts it off at once. An app you haven't used for
 90 days has to be approved again.
 
@@ -84,10 +84,12 @@ and in **Settings → Connections** in the Mac app, where you can revoke it. Rev
 
 For clients that can't sign in with OAuth, create a token by hand:
 
-1. Sign in to the web app and open **Settings → AI assistants (MCP)**.
+1. Sign in to the web app and open **Settings → AI apps and API keys**.
 2. Tick **Allow writes** only if this connection should be able to write.
-3. Select **New connection**. Eavesy shows a ready-made client configuration
+3. Select **New key**. Eavesy shows a ready-made client configuration
    once. Paste it into your agent's MCP settings.
+
+The same key works with the [REST API](/docs/api-and-webhooks).
 
 The configuration looks like this:
 

@@ -5,6 +5,7 @@ import { isRecord, optionalString } from '@/lib/json';
 import { MCP_URL, parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
 import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
+import { WebhookSettings } from '@/components/settings/webhook-settings';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
@@ -65,6 +66,7 @@ function SettingsPage() {
   const toast = useSaveToast();
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
   const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
+  const [newMcpKey, setNewMcpKey] = useState<string | null>(null);
   const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [mcpBusy, setMcpBusy] = useState(false);
   const [mcpAllowWrite, setMcpAllowWrite] = useState(false);
@@ -225,6 +227,7 @@ function SettingsPage() {
       const token = isRecord(created) ? optionalString(created.token) : undefined;
       if (!serverUrl || !token) throw new Error('Server returned an invalid MCP connection');
       setNewMcpConfig(mcpClientConfig(serverUrl, token));
+      setNewMcpKey(token);
       setMcpCopyStatus('idle');
       const refreshResponse = await fetch('/api/mcp-tokens');
       if (!refreshResponse.ok) throw new Error('Could not refresh MCP connections');
@@ -246,6 +249,7 @@ function SettingsPage() {
     if (!response.ok) throw new Error('Could not revoke MCP connection');
     setMcpTokens((tokens) => tokens.filter((token) => token.id !== id));
     setNewMcpConfig(null);
+    setNewMcpKey(null);
     setMcpCopyStatus('idle');
   };
 
@@ -470,8 +474,8 @@ function SettingsPage() {
       </AppSection>
 
       <AppSection
-        title="AI apps (MCP)"
-        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, make a token here: read-only unless you allow writes, and it lasts 90 days.`}
+        title="AI apps and API keys"
+        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, or for the Eavesy API (${MCP_URL}/v1), make a key here: read-only unless you allow writes, and it stops working after 90 days unused.`}
         action={
           <span className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
@@ -483,7 +487,7 @@ function SettingsPage() {
               Allow writes
             </label>
             <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
-              {mcpBusy ? 'Creating…' : 'New connection'}
+              {mcpBusy ? 'Creating…' : 'New key'}
             </button>
           </span>
         }
@@ -491,7 +495,7 @@ function SettingsPage() {
         {newMcpConfig ? (
           <AppAlert tone="success">
             <p className="text-xs font-medium">
-              Add this to your assistant’s MCP settings now. The token won’t be shown again.
+              Add this to your assistant’s MCP settings now. The key won’t be shown again.
             </p>
             <div className="mt-2 flex items-start gap-2">
               <textarea
@@ -506,6 +510,12 @@ function SettingsPage() {
                 {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
               </button>
             </div>
+            {newMcpKey ? (
+              <p className="mt-2 text-xs">
+                For the API, send it as <code className="font-mono">Authorization: Bearer {newMcpKey}</code>.{' '}
+                <a href={`${MCP_URL}/v1/openapi.json`} className="underline">OpenAPI spec</a>
+              </p>
+            ) : null}
             <p aria-live="polite" className="sr-only">
               {mcpCopyStatus === 'copied' ? 'MCP configuration copied to clipboard.' : ''}
             </p>
@@ -547,6 +557,13 @@ function SettingsPage() {
             ))}
           </ul>
         ) : null}
+      </AppSection>
+
+      <AppSection
+        title="Webhooks"
+        description="Eavesy POSTs a signed event to your URL when a recording finishes, or a dictation, note or capture is saved. Retried for about a day if your server doesn’t answer."
+      >
+        <WebhookSettings />
       </AppSection>
 
       <AppSection title="Personal dictionary">

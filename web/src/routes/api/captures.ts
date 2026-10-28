@@ -12,6 +12,7 @@ import { extractVisualText, isSupportedImageType } from '@/lib/vision';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
 import { captureKey, deleteObject, mediaProxyUrl, putObject } from '@/server/r2';
+import { emitWebhookEvent, webhookEnv, webhookItem } from '@/server/webhooks';
 
 const KIND_EXT: Record<string, { kind: 'image' | 'video'; ext: string }> = {
   'image/png': { kind: 'image', ext: 'png' },
@@ -154,6 +155,7 @@ export const Route = createFileRoute('/api/captures')({
           eventType: 'capture.create',
           metadata: { kind: mapped.kind, captureMode },
         });
+        await emitWebhookEvent(webhookEnv(), actor.userId, 'capture.created', webhookItem({ id, kind: mapped.kind, title, createdAt: Date.now() }));
 
         return Response.json({ id });
       },

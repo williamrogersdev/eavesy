@@ -140,7 +140,7 @@ fewer, capped at 100 passes per run.
 
 ## MCP tokens
 
-Connections created in **Settings → AI assistants (MCP)** issue a token that
+Connections created in **Settings → AI apps and API keys** issue a token that
 goes in the `Authorization` header and expires after 90 days **without use**.
 Each use slides the expiry to 90 days out, with at most one write per token per
 day. Settings shows the current expiry date.

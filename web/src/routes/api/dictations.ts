@@ -16,6 +16,7 @@ import { capBody } from '@/lib/http/cap-body';
 import { resolveActor } from '@/server/auth';
 import { dictationAudioKey, putAudio } from '@/server/r2';
 import { enqueue } from '@/server/queue';
+import { emitWebhookEvent, webhookEnv, webhookItem } from '@/server/webhooks';
 
 // A dictation is a short voice note; the web recorder's clips are well under this.
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
@@ -118,6 +119,7 @@ export const Route = createFileRoute('/api/dictations')({
           dictationId: id,
         });
         await enqueue({ kind: 'embed-dictation', dictationId: id });
+        await emitWebhookEvent(webhookEnv(), actor.userId, 'dictation.created', webhookItem({ id, kind: 'dictation', title: deriveTitle(cleaned ?? transcription.text), createdAt: Date.now() }));
 
         return Response.json({
           id,
