@@ -123,7 +123,8 @@ export function openApiDocument(origin: string) {
           tags: ['Library'],
           operationId: 'updateItem',
           summary: 'Rename an item or file it under a project',
-          description: 'Send `title`, `project` or both. Dictations have no project.',
+          description:
+            'Send `title`, `project` or both. Dictations have no project. The project is changed first: if the rename then fails, the project change stays. Both are safe to repeat, so send the same request again.',
           parameters: [pathParam('id', 'The item’s id.')],
           requestBody: body({
             type: 'object',

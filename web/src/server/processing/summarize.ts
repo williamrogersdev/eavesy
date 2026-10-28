@@ -376,8 +376,9 @@ export function quickNoteTitle(lines: { text: string }[], fallback: string) {
 /**
  * Records that the meeting finished, and the first time, tells the account's
  * webhooks. The event is queued before the row is written, under an id fixed
- * per meeting: a run that dies in between leaves no row, so the next one
- * (or resendFollowUps) sends it again and receivers drop the repeat by id.
+ * per meeting: a run that dies in between, or can't queue it, leaves no row,
+ * so the next one (or resendFollowUps) sends it again and receivers drop the
+ * repeat by id. A failed send never holds up the meeting's own follow-ups.
  */
 export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string, meetingId: string, now: number) {
   const id = `act_complete_${meetingId}`;
@@ -390,16 +391,17 @@ export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string
       .where(eq(meetings.id, meetingId))
       .limit(1)
   )[0];
-  if (meeting) {
-    await emitWebhookEvent(
+  const queued =
+    !meeting ||
+    (await emitWebhookEvent(
       env,
       userId,
       'recording.completed',
       webhookItem({ id: meetingId, kind: 'meeting', title: meeting.title, createdAt: meeting.startedAt }),
       now,
-      { eventId: `evt_completed_${meetingId}`, throwOnFailure: true },
-    );
-  }
+      { eventId: `evt_completed_${meetingId}` },
+    ));
+  if (!queued) return;
   await db
     .insert(activityLog)
     .values({ id, userId, eventType: 'meeting.complete', meetingId, metadataJson: '{}', createdAt: now })

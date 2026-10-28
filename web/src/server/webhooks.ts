@@ -312,7 +312,7 @@ function addedByLiveKey(token: TokenRow | null, tokenId: string | null, now: num
 /**
  * Queues an event for every enabled endpoint of the account that subscribes
  * to it. Best effort: an event that can't be queued is reported, and the
- * caller's own work goes on.
+ * caller's own work goes on. Says whether it was queued (or had nowhere to go).
  */
 export async function emitWebhookEvent(
   env: WebhookEnv,
@@ -320,8 +320,8 @@ export async function emitWebhookEvent(
   type: WebhookEventType,
   data: WebhookItem,
   now = Date.now(),
-  opts: { eventId?: string; throwOnFailure?: boolean } = {},
-) {
+  opts: { eventId?: string } = {},
+): Promise<boolean> {
   try {
     const db = drizzle(env.DB, { schema });
     const endpoints = await db
@@ -332,14 +332,15 @@ export async function emitWebhookEvent(
     const targets = endpoints.filter(
       (endpoint) => parseEvents(endpoint.eventsJson).includes(type) && addedByLiveKey(endpoint.token, endpoint.tokenId, now),
     );
-    if (!targets.length) return;
+    if (!targets.length) return true;
     const event: WebhookEvent = { id: opts.eventId ?? pid('evt', now), type, timestamp: new Date(now).toISOString(), data };
     for (const endpoint of targets) {
       await env.PROCESSING_QUEUE.send({ kind: 'deliver-webhook', endpointId: endpoint.id, event, attempt: 1 });
     }
+    return true;
   } catch (error) {
-    if (opts.throwOnFailure) throw error;
     reportError('webhook event not queued', error, { event_type: type, item_id: data.id });
+    return false;
   }
 }
 

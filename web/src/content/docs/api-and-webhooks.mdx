@@ -42,7 +42,7 @@ All paths are under `https://mcp.eavesy.com/v1`.
 | `GET /search?q=` | Search titles and text, and recordings and dictations by meaning. Same filters. | read |
 | `GET /items/{id}` | One item in full: a recording's summary, your notes and transcript; a note's Markdown; text read from a screenshot. | read |
 | `GET /items/{id}/file` | A capture's original file (image, video, audio or note). | read |
-| `PATCH /items/{id}` | Rename an item (`title`) or file it under a project (`project`, or `null` to take it out). | write |
+| `PATCH /items/{id}` | Rename an item (`title`) or file it under a project (`project`, or `null` to take it out). If it fails partway, send it again. | write |
 | `POST /notes` | Save Markdown as a note (`text`, optional `title` and `project`). | write |
 | `GET /action-items` | Action items from your recordings (`status`: `open`, `completed` or `all`; `owner`). | read |
 | `PATCH /meetings/{id}/action-items/{index}` | Mark one done or open (`completed`, and `text` to guard against a list that changed). | write |

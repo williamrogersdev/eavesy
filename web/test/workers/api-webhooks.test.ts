@@ -332,7 +332,7 @@ describe('Webhooks', () => {
     queue.send.mockClear();
     queue.send.mockRejectedValueOnce(new Error('queue down'));
     const processingEnv = { DB: testEnv.DB, PROCESSING_QUEUE: queue };
-    await expect(logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0)).rejects.toThrow('queue down');
+    await logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0);
     expect(await row(`SELECT id FROM activity_log WHERE id = 'act_complete_meet_one'`)).toBeNull();
 
     await logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0);
