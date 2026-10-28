@@ -18,6 +18,7 @@ interface Webhook {
   disabledReason: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  addedWithKey: boolean;
 }
 
 function parseWebhook(value: unknown): Webhook | null {
@@ -30,6 +31,7 @@ function parseWebhook(value: unknown): Webhook | null {
     disabledReason: typeof value.disabled_reason === 'string' ? value.disabled_reason : null,
     lastSuccessAt: typeof value.last_success_at === 'string' ? value.last_success_at : null,
     lastError: typeof value.last_error === 'string' ? value.last_error : null,
+    addedWithKey: typeof value.created_by_key_id === 'string',
   };
 }
 
@@ -131,6 +133,7 @@ export function WebhookSettings() {
                 <span className="block truncate font-mono text-xs">{webhook.url}</span>
                 <span className={webhook.enabled && !webhook.lastError ? 'block text-xs text-ev-ink-2' : 'block text-xs text-ev-warn-ink'}>
                   {EVENTS.filter((event) => webhook.events.includes(event.id)).map((event) => event.label).join(', ')} · {statusLine(webhook)}
+                  {webhook.addedWithKey ? ' · added with an API key, stops if the key is revoked' : null}
                 </span>
               </span>
               <span className="flex shrink-0 gap-1">

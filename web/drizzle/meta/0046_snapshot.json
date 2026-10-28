@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9f557ed7-8390-4066-b271-b26f76523fa1",
+  "id": "dad64e4e-c1fd-4099-8920-c08eafd7101b",
   "prevId": "9ad565ee-6732-422e-b384-a97fc51c447f",
   "tables": {
     "activity_log": {
@@ -4484,6 +4484,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "created_by_token_id": {
+          "name": "created_by_token_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

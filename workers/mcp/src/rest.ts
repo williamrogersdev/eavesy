@@ -25,6 +25,8 @@ export interface ApiEnv {
 export interface ApiContext {
   env: ApiEnv;
   userId: string;
+  /** The API key (or MCP connection) making the call. */
+  tokenId: string;
   scopes: McpScope[];
   call(name: string, args: Record<string, unknown>): Promise<unknown>;
 }
@@ -93,6 +95,9 @@ function itemFilters(query: URLSearchParams): Record<string, unknown> {
   return args;
 }
 
+/** As rename's own limit. */
+const TITLE_MAX_CHARS = 200;
+
 function notFound(): never {
   throw new UserFacingError('not found', 404);
 }
@@ -150,9 +155,14 @@ export const API_ROUTES: ApiRoute[] = [
     handle: async ({ ctx, params, body }) => {
       const input = await body();
       if (input.title === undefined && !('project' in input)) throw new UserFacingError('nothing to change: send title, project or both');
+      // Checked up front, and the project set first: it is the change that can be refused for the item
+      // itself (a dictation has none), so a refused request changes nothing.
+      if (input.title !== undefined && (typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > TITLE_MAX_CHARS)) {
+        throw new UserFacingError(`title must be text of 1 to ${TITLE_MAX_CHARS} characters`);
+      }
       let result: Record<string, unknown> = {};
-      if (input.title !== undefined) result = { ...result, ...(await ctx.call('rename', { id: params.id, title: input.title })) as object };
       if ('project' in input) result = { ...result, ...(await ctx.call('set_project', { id: params.id, project: input.project })) as object };
+      if (input.title !== undefined) result = { ...result, ...(await ctx.call('rename', { id: params.id, title: input.title })) as object };
       return result;
     },
   },
@@ -189,7 +199,8 @@ export const API_ROUTES: ApiRoute[] = [
     method: 'POST',
     path: '/webhooks',
     scope: 'write',
-    handle: async ({ ctx, body }) => apiJson(await createWebhookEndpoint(drizzle(ctx.env.DB, { schema }), ctx.userId, await body()), 201),
+    handle: async ({ ctx, body }) =>
+      apiJson(await createWebhookEndpoint(drizzle(ctx.env.DB, { schema }), ctx.userId, await body(), ctx.tokenId), 201),
   },
   {
     method: 'GET',

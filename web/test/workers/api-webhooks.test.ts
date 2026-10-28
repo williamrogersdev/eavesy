@@ -79,6 +79,7 @@ beforeEach(async () => {
     testEnv.DB.prepare('DELETE FROM activity_log'),
     testEnv.DB.prepare('DELETE FROM summaries'),
     testEnv.DB.prepare('DELETE FROM captures'),
+    testEnv.DB.prepare('DELETE FROM dictations'),
     testEnv.DB.prepare('DELETE FROM meetings'),
     testEnv.DB.prepare('DELETE FROM folders'),
     testEnv.DB.prepare('DELETE FROM rate_limits'),
@@ -100,6 +101,9 @@ beforeEach(async () => {
       `INSERT INTO summaries (id, meeting_id, tldr, action_items_json, generated_by_model, generated_at)
        VALUES ('sum_one', 'meet_one', 'Short.', ?, 'test', ?)`,
     ).bind(JSON.stringify([{ text: 'Ship the cask', completed: false }]), T0),
+    testEnv.DB.prepare(
+      `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at) VALUES ('dict_one', 'user_api', 'Dictation', 'ship it', 2, ?)`,
+    ).bind(T0),
     testEnv.DB.prepare(
       `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, created_at, updated_at)
        VALUES ('cap_shot', 'user_api', 'image', 'screenshot', 'desktop', 'Screenshot', 'users/user_api/captures/cap_shot.png', 'image/png', 3, ?, ?)`,
@@ -171,6 +175,13 @@ describe('REST API', () => {
     });
     expect(await row(`SELECT title, folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ title: 'Daily standup', folder_id: 'p1' });
     expect((await apiJson(key, 'PATCH', '/items/meet_one', {})).status).toBe(400);
+    // A refused part refuses the whole request: the title is not changed either.
+    expect((await apiJson(key, 'PATCH', '/items/dict_one', { title: 'Renamed', project: null })).body).toMatchObject({
+      error: { message: 'dictations have no project' },
+    });
+    expect((await apiJson(key, 'PATCH', '/items/meet_one', { title: 'x'.repeat(201), project: null })).status).toBe(400);
+    expect(await row(`SELECT title FROM dictations WHERE id = 'dict_one'`)).toEqual({ title: 'Dictation' });
+    expect(await row(`SELECT title, folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ title: 'Daily standup', folder_id: 'p1' });
     expect((await apiJson(key, 'PATCH', '/items/meet_theirs', { title: 'Mine' })).status).toBe(404);
 
     const note = await apiJson(key, 'POST', '/notes', { text: '# Plan\n\nShip it' });
@@ -203,6 +214,10 @@ describe('Webhooks', () => {
     expect(webhookUrlProblem('https://0x7f000001/hook')).toBe('url must use a host name, not an IP address');
     expect(webhookUrlProblem('https://[::1]/hook')).toBe('url must use a host name, not an IP address');
     expect(webhookUrlProblem('https://localhost/hook')).toBe('url must be a public address');
+    expect(webhookUrlProblem('https://localhost./hook')).toBe('url must be a public address');
+    expect(webhookUrlProblem('https://127.0.0.1./hook')).toBe('url must use a host name, not an IP address');
+    expect(webhookUrlProblem('https://printer.local./hook')).toBe('url must be a public address');
+    expect(webhookUrlProblem('https://hooks.example.com./eavesy')).toBeNull();
     expect(webhookUrlProblem('https://printer.local/hook')).toBe('url must be a public address');
     expect(webhookUrlProblem('https://user:pw@hooks.example.com/')).toBe('url must not contain a user name or password');
     expect(webhookUrlProblem('not a url')).toContain('full URL');
@@ -303,8 +318,51 @@ describe('Webhooks', () => {
     await logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0 + 1);
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(queue.send.mock.calls[0][0]).toMatchObject({
-      event: { type: 'recording.completed', data: { id: 'meet_one', kind: 'meeting', title: 'Standup', url: 'https://eavesy.com/app/meetings/meet_one' } },
+      event: {
+        id: 'evt_completed_meet_one',
+        type: 'recording.completed',
+        data: { id: 'meet_one', kind: 'meeting', title: 'Standup', url: 'https://eavesy.com/app/meetings/meet_one' },
+      },
     });
+  });
+
+  it('send recording.completed again, under the same id, when the first queueing failed', async () => {
+    const key = await mint(['read', 'write']);
+    await apiJson(key, 'POST', '/webhooks', { url: 'https://hooks.example.com/all' });
+    queue.send.mockClear();
+    queue.send.mockRejectedValueOnce(new Error('queue down'));
+    const processingEnv = { DB: testEnv.DB, PROCESSING_QUEUE: queue };
+    await expect(logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0)).rejects.toThrow('queue down');
+    expect(await row(`SELECT id FROM activity_log WHERE id = 'act_complete_meet_one'`)).toBeNull();
+
+    await logMeetingComplete(db(), processingEnv, 'user_api', 'meet_one', T0);
+    expect(queue.send.mock.calls.map(([message]) => (message as WebhookDelivery).event.id)).toEqual(['evt_completed_meet_one', 'evt_completed_meet_one']);
+    expect(await row(`SELECT id FROM activity_log WHERE id = 'act_complete_meet_one'`)).toEqual({ id: 'act_complete_meet_one' });
+  });
+
+  it('added with a key stop when that key is revoked; ones added in settings keep going', async () => {
+    const key = await mint(['read', 'write']);
+    const viaKey = (await apiJson(key, 'POST', '/webhooks', { url: 'https://hooks.example.com/key' })).body;
+    expect(viaKey.created_by_key_id).toMatch(/^mcp_/);
+    await testEnv.DB.prepare(
+      `INSERT INTO webhook_endpoints (id, user_id, url, secret, events_json, created_at, updated_at)
+       VALUES ('whk_settings', 'user_api', 'https://hooks.example.com/settings', 'whsec_c2V0dGluZ3M=', '["capture.created"]', ?, ?)`,
+    ).bind(T0, T0).run();
+    await testEnv.DB.prepare('UPDATE mcp_tokens SET revoked_at = ?').bind(T0).run();
+    queue.send.mockClear();
+
+    await emitWebhookEvent({ DB: testEnv.DB, PROCESSING_QUEUE: queue }, 'user_api', 'capture.created', { id: 'cap_x', kind: 'note', title: 'x', created_at: '', url: null });
+    expect(queue.send.mock.calls.map(([message]) => (message as WebhookDelivery).endpointId)).toEqual(['whk_settings']);
+
+    const fetchMock = vi.fn(async () => new Response('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+    await deliverWebhook(db(), queue, {
+      kind: 'deliver-webhook',
+      endpointId: String(viaKey.id),
+      attempt: 1,
+      event: { id: 'evt_1', type: 'capture.created', timestamp: '', data: {} },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('fire capture.created when an agent saves a note', async () => {

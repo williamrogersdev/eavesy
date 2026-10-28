@@ -339,6 +339,8 @@ export async function resendFollowUps(
   if (!opts.anonymous) {
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId, onlyIfMissing: true });
+    // Only does anything if the run that completed it died before logging it.
+    if (user) await logMeetingComplete(db, env, user.id, meetingId, Date.now());
   }
   const summarized = await db
     .select({ id: summaries.id })
@@ -371,21 +373,16 @@ export function quickNoteTitle(lines: { text: string }[], fallback: string) {
   return words.length > 8 ? `${head}…` : head;
 }
 
-/** Records that the meeting finished, and on the first time only, tells the account's webhooks. */
+/**
+ * Records that the meeting finished, and the first time, tells the account's
+ * webhooks. The event is queued before the row is written, under an id fixed
+ * per meeting: a run that dies in between leaves no row, so the next one
+ * (or resendFollowUps) sends it again and receivers drop the repeat by id.
+ */
 export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string, meetingId: string, now: number) {
-  const logged = await db
-    .insert(activityLog)
-    .values({
-      id: `act_complete_${meetingId}`,
-      userId,
-      eventType: 'meeting.complete',
-      meetingId,
-      metadataJson: '{}',
-      createdAt: now,
-    })
-    .onConflictDoNothing()
-    .returning({ id: activityLog.id });
-  if (!logged.length) return;
+  const id = `act_complete_${meetingId}`;
+  const logged = await db.select({ id: activityLog.id }).from(activityLog).where(eq(activityLog.id, id)).limit(1);
+  if (logged.length) return;
   const meeting = (
     await db
       .select({ title: meetings.title, startedAt: meetings.startedAt })
@@ -393,8 +390,20 @@ export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string
       .where(eq(meetings.id, meetingId))
       .limit(1)
   )[0];
-  if (!meeting) return;
-  await emitWebhookEvent(env, userId, 'recording.completed', webhookItem({ id: meetingId, kind: 'meeting', title: meeting.title, createdAt: meeting.startedAt }), now);
+  if (meeting) {
+    await emitWebhookEvent(
+      env,
+      userId,
+      'recording.completed',
+      webhookItem({ id: meetingId, kind: 'meeting', title: meeting.title, createdAt: meeting.startedAt }),
+      now,
+      { eventId: `evt_completed_${meetingId}`, throwOnFailure: true },
+    );
+  }
+  await db
+    .insert(activityLog)
+    .values({ id, userId, eventType: 'meeting.complete', meetingId, metadataJson: '{}', createdAt: now })
+    .onConflictDoNothing();
 }
 
 function summaryValues(parsed: Record<string, unknown>) {

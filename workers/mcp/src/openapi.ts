@@ -243,7 +243,9 @@ export function openApiDocument(origin: string) {
           tags: ['Webhooks'],
           operationId: 'createWebhook',
           summary: 'Add a webhook endpoint',
-          description: 'At most 10 per account. The response is the only time the signing secret is shown.',
+          description:
+            'At most 10 per account. The response is the only time the signing secret is shown. ' +
+            'A webhook added with a key sends only while that key works: revoking the key stops it.',
           requestBody: body({
             type: 'object',
             properties: {
@@ -486,8 +488,12 @@ export function openApiDocument(origin: string) {
             last_success_at: { type: ['string', 'null'], format: 'date-time' },
             last_status: { type: ['integer', 'null'] },
             last_error: { type: ['string', 'null'] },
+            created_by_key_id: {
+              type: ['string', 'null'],
+              description: 'The key that added it over the API. It sends only while that key works; null when added in Eavesy settings.',
+            },
           },
-          required: ['id', 'url', 'description', 'events', 'enabled', 'disabled_reason', 'created_at', 'last_attempt_at', 'last_success_at', 'last_status', 'last_error'],
+          required: ['id', 'url', 'description', 'events', 'enabled', 'disabled_reason', 'created_at', 'last_attempt_at', 'last_success_at', 'last_status', 'last_error', 'created_by_key_id'],
         },
         WebhookEvent: {
           type: 'object',

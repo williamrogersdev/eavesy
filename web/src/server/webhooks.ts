@@ -2,11 +2,12 @@ import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import type { D1Database } from '@cloudflare/workers-types';
 import * as schema from '@/db/schema';
-import { webhookEndpoints } from '@/db/schema';
+import { mcpTokens, webhookEndpoints } from '@/db/schema';
 import { pid } from '@/db/ids';
 import { isRecord } from '@/lib/json';
 import { reportError } from '@/server/observability';
 import { getCloudflareContext } from '@/server/cloudflare-context';
+import { mcpTokenExpiresAt } from '@/server/mcp-token-policy';
 
 type Db = DrizzleD1Database<typeof schema>;
 type Endpoint = typeof webhookEndpoints.$inferSelect;
@@ -103,7 +104,8 @@ export function webhookUrlProblem(raw: string): string | null {
   }
   if (url.protocol !== 'https:') return 'url must start with https://';
   if (url.username || url.password) return 'url must not contain a user name or password';
-  const host = url.hostname.toLowerCase();
+  // `localhost.` and `127.0.0.1.` name the same hosts as without the dot.
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
   // The URL parser has already turned every IPv4 spelling into dotted decimal.
   if (host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host)) return 'url must use a host name, not an IP address';
   if (!host.includes('.') || /\.(localhost|local|internal|home\.arpa)$/.test(host)) return 'url must be a public address';
@@ -160,6 +162,7 @@ export function webhookView(endpoint: Endpoint) {
     last_success_at: iso(endpoint.lastSuccessAt),
     last_status: endpoint.lastStatus,
     last_error: endpoint.lastError,
+    created_by_key_id: endpoint.createdByTokenId,
   };
 }
 export type WebhookView = ReturnType<typeof webhookView>;
@@ -184,7 +187,17 @@ export async function getWebhookEndpoint(db: Db, userId: string, id: string): Pr
   return endpoint ? webhookView(endpoint) : null;
 }
 
-export async function createWebhookEndpoint(db: Db, userId: string, input: unknown): Promise<WebhookView & { secret: string }> {
+/**
+ * `createdByTokenId` is the API key or MCP connection adding it, if any: the
+ * endpoint then sends only while that key works, so revoking a key also stops
+ * what it set up.
+ */
+export async function createWebhookEndpoint(
+  db: Db,
+  userId: string,
+  input: unknown,
+  createdByTokenId: string | null = null,
+): Promise<WebhookView & { secret: string }> {
   const body = isRecord(input) ? input : {};
   const url = urlArg(body.url);
   const events = body.events === undefined ? [...WEBHOOK_EVENTS] : eventsArg(body.events);
@@ -203,6 +216,7 @@ export async function createWebhookEndpoint(db: Db, userId: string, input: unkno
       eventsJson: JSON.stringify(events),
       createdAt: now,
       updatedAt: now,
+      createdByTokenId,
     })
     .returning();
   return { ...webhookView(row), secret: row.secret };
@@ -284,25 +298,47 @@ export async function testWebhookEndpoint(db: Db, userId: string, id: string) {
   return { delivered: result.error === null, status: result.status, error: result.error, event_id: event.id };
 }
 
+type TokenRow = typeof mcpTokens.$inferSelect;
+
+/** Whether the key that added an endpoint still works. An endpoint added in the web app has none. */
+function addedByLiveKey(token: TokenRow | null, tokenId: string | null, now: number): boolean {
+  if (tokenId === null) return true;
+  if (!token || token.revokedAt !== null) return false;
+  // An OAuth connection lasts as long as its refresh token.
+  const expiresAt = token.clientId ? token.refreshExpiresAt : mcpTokenExpiresAt(token);
+  return expiresAt === null || expiresAt > now;
+}
+
 /**
  * Queues an event for every enabled endpoint of the account that subscribes
  * to it. Best effort: an event that can't be queued is reported, and the
  * caller's own work goes on.
  */
-export async function emitWebhookEvent(env: WebhookEnv, userId: string, type: WebhookEventType, data: WebhookItem, now = Date.now()) {
+export async function emitWebhookEvent(
+  env: WebhookEnv,
+  userId: string,
+  type: WebhookEventType,
+  data: WebhookItem,
+  now = Date.now(),
+  opts: { eventId?: string; throwOnFailure?: boolean } = {},
+) {
   try {
     const db = drizzle(env.DB, { schema });
     const endpoints = await db
-      .select({ id: webhookEndpoints.id, eventsJson: webhookEndpoints.eventsJson })
+      .select({ id: webhookEndpoints.id, eventsJson: webhookEndpoints.eventsJson, tokenId: webhookEndpoints.createdByTokenId, token: mcpTokens })
       .from(webhookEndpoints)
+      .leftJoin(mcpTokens, eq(mcpTokens.id, webhookEndpoints.createdByTokenId))
       .where(and(eq(webhookEndpoints.userId, userId), isNull(webhookEndpoints.disabledAt)));
-    const targets = endpoints.filter((endpoint) => parseEvents(endpoint.eventsJson).includes(type));
+    const targets = endpoints.filter(
+      (endpoint) => parseEvents(endpoint.eventsJson).includes(type) && addedByLiveKey(endpoint.token, endpoint.tokenId, now),
+    );
     if (!targets.length) return;
-    const event: WebhookEvent = { id: pid('evt', now), type, timestamp: new Date(now).toISOString(), data };
+    const event: WebhookEvent = { id: opts.eventId ?? pid('evt', now), type, timestamp: new Date(now).toISOString(), data };
     for (const endpoint of targets) {
       await env.PROCESSING_QUEUE.send({ kind: 'deliver-webhook', endpointId: endpoint.id, event, attempt: 1 });
     }
   } catch (error) {
+    if (opts.throwOnFailure) throw error;
     reportError('webhook event not queued', error, { event_type: type, item_id: data.id });
   }
 }
@@ -312,9 +348,17 @@ export async function emitWebhookEvent(env: WebhookEnv, userId: string, type: We
  * next one itself, so the queue's own retries are left for D1 errors.
  */
 export async function deliverWebhook(db: Db, queue: QueueLike, delivery: WebhookDelivery, now = Date.now()) {
-  const endpoint = (await db.select().from(webhookEndpoints).where(eq(webhookEndpoints.id, delivery.endpointId)).limit(1))[0];
-  // Deleted or turned off since the event was queued.
-  if (!endpoint || endpoint.disabledAt !== null) return;
+  const found = (
+    await db
+      .select({ endpoint: webhookEndpoints, token: mcpTokens })
+      .from(webhookEndpoints)
+      .leftJoin(mcpTokens, eq(mcpTokens.id, webhookEndpoints.createdByTokenId))
+      .where(eq(webhookEndpoints.id, delivery.endpointId))
+      .limit(1)
+  )[0];
+  const endpoint = found?.endpoint;
+  // Deleted, turned off, or its key revoked since the event was queued.
+  if (!endpoint || endpoint.disabledAt !== null || !addedByLiveKey(found.token, endpoint.createdByTokenId, now)) return;
   const result = await sendWebhook(endpoint, delivery.event, now);
   const attempted = { lastAttemptAt: now, lastStatus: result.status, lastError: result.error };
   if (result.error === null) {

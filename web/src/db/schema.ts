@@ -556,6 +556,8 @@ export const webhookEndpoints = sqliteTable(
     lastError: text('last_error'),
     /** Events in a row that ran out of retries; the endpoint is turned off at WEBHOOK_DISABLE_AFTER. */
     failedEvents: integer('failed_events').notNull().default(0),
+    /** The API key or MCP connection that added it, if not the web app: it sends only while that key works. */
+    createdByTokenId: text('created_by_token_id'),
   },
   (t) => [index('webhook_endpoints_user_idx').on(t.userId)],
 );

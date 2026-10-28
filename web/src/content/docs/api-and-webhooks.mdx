@@ -82,7 +82,9 @@ curl https://mcp.eavesy.com/v1/webhooks \
 
 The answer includes a signing secret (`whsec_…`). It is shown once, so keep it.
 Leave out `events` to get all of them. An account can have up to 10 webhooks,
-and each URL must be `https://` with a public host name.
+and each URL must be `https://` with a public host name. A webhook added with
+an API key sends only while that key works, so revoking the key stops it too.
+One added in settings keeps going until you remove it.
 
 ### Events
 

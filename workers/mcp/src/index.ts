@@ -304,6 +304,7 @@ async function serveApi(request: Request, env: Env, url: URL, segments: string[]
     {
       env,
       userId: token.userId,
+      tokenId: token.id,
       scopes: parseMcpScopes(token.scopesJson),
       call: async (name, args) => {
         const result = await callTool(env, token.userId, name, args, token);

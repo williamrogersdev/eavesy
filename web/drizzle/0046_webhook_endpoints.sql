@@ -14,6 +14,7 @@ CREATE TABLE `webhook_endpoints` (
 	`last_status` integer,
 	`last_error` text,
 	`failed_events` integer DEFAULT 0 NOT NULL,
+	`created_by_token_id` text,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
