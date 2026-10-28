@@ -52,10 +52,30 @@
 .ev-tb-word { font: 700 13.5px/1 var(--ev-font-round); letter-spacing: 0.005em; }
 
 /* ---------- toolbar + history head ---------- */
-.ev-toolbar { flex: none; margin: 0 12px; }
-/* The slot is only where the search mounts; the field lays out in the tab row itself. */
-.ev-search-slot { display: contents; }
-/* Search is an icon in the tab row until used, then a field that takes the row's free width. */
+.ev-toolbar { flex: none; margin: 0 12px; padding-top: 8px; }
+/* "New capture" over the buttons, with where they save on the right. */
+.ev-toolbar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 26px; margin: 0 2px 6px; }
+.ev-section-label { margin: 0; color: var(--ev-ink-2); font: var(--ev-t-group); }
+.ev-toolbar-dest { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--ev-ink-3); font: 500 11.5px/1 var(--ev-font-round); white-space: nowrap; }
+/* What the list shows: type chips, then search, in one row right above the list. */
+.ev-listbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 12px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--ev-line);
+}
+.ev-listbar-types { display: flex; flex: 1; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ev-listbar-types::-webkit-scrollbar { display: none; }
+.ev-listbar .ev-chip { height: 24px; padding: 0 9px; box-shadow: none; font-weight: 550; }
+.ev-listbar .ev-chip[aria-pressed='true'] { color: var(--ev-ink); }
+/* An open search takes the row; only the chosen type stays beside it. */
+.ev-listbar[data-search='true'] .ev-listbar-types { flex: none; }
+.ev-listbar[data-search='true'] .ev-chip[aria-pressed='false'] { display: none; }
+.ev-listbar[data-search='true'] .ev-chip[aria-pressed='true']:first-child { display: none; }
+/* Search is an icon at the row's end until used, then a field that takes the row's free width. */
 .ev-search {
   display: flex;
   flex: none;
@@ -97,25 +117,6 @@
 }
 .ev-search input::placeholder { color: var(--ev-ink-3); }
 .ev-search input::-webkit-search-cancel-button { display: none; }
-/* What to show: a small icon menu at the end of the field, named once it narrows the list. */
-.ev-search-filter {
-  display: none;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--ev-r-pill);
-  background: transparent;
-  color: var(--ev-ink-3);
-  font: 550 12px/1 var(--ev-font-round);
-  cursor: pointer;
-}
-.ev-search[data-open='true'] .ev-search-filter { display: inline-flex; }
-.ev-search-filter:hover { background: var(--ev-hover); color: var(--ev-ink); }
-.ev-search-filter[data-on='true'] { background: var(--ev-coat-soft); color: var(--ev-ink); }
-.ev-search-filter:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 
 .ev-history { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .ev-scroll {
@@ -560,24 +561,34 @@
 .ev-actions .ev-btn[aria-pressed='true'] { background: var(--ev-coat-soft); color: var(--ev-coat); }
 
 /* ---------- Eavesy tab (assistant.md B, C) ---------- */
-.ev-tabs { display: flex; flex: none; align-items: center; gap: 8px; height: 40px; padding: 0 12px; }
-.ev-tabs-list { display: flex; flex: none; gap: 2px; }
-.ev-tabs-end { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
-/* An open search takes the room; the project is one click away again once it closes. */
-.ev-tabs-end:has(.ev-search[data-open='true']) .ev-proj { display: none; }
+.ev-tabs { display: flex; flex: none; align-items: flex-end; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--ev-line); }
+/* Underlined text tabs: where you are, never mistaken for a filter or a button. */
+.ev-tabs-list { display: flex; flex: none; gap: 18px; }
 .ev-tab {
-  height: 26px;
-  padding: 0 11px;
+  position: relative;
+  height: 34px;
+  padding: 0 1px;
   border: 0;
-  border-radius: var(--ev-r-pill);
   background: transparent;
   color: var(--ev-ink-2);
-  font: 550 12.5px/18px var(--ev-font-round);
-  transition: background var(--ev-d-state) var(--ev-ease-out), color var(--ev-d-state) var(--ev-ease-out);
+  font: 600 13px/18px var(--ev-font-round);
+  transition: color var(--ev-d-state) var(--ev-ease-out);
 }
-.ev-tab:hover { background: var(--ev-hover); color: var(--ev-ink); }
-.ev-tab[aria-selected='true'] { background: var(--ev-coat-soft); color: var(--ev-ink); }
-.ev-tab:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-tab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background var(--ev-d-state) var(--ev-ease-out);
+}
+.ev-tab:hover { color: var(--ev-ink); }
+.ev-tab[aria-selected='true'] { color: var(--ev-ink); }
+.ev-tab[aria-selected='true']::after { background: var(--ev-coat); }
+.ev-tab:focus-visible { outline: none; border-radius: 6px; box-shadow: var(--ev-focus); }
 
 .ev-eavesy { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .ev-eavesy-head { display: flex; flex: none; align-items: center; gap: 6px; padding: 6px 12px 4px; }

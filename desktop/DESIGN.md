@@ -259,7 +259,10 @@ slab).
   keycap shows only where it teaches something (onboarding, the empty state,
   a row's Return-to-paste).
 - Search is an icon until used: no well, no keycap, "Search" placeholder; it
-  becomes a field in the well once opened, typed into or filtered.
+  becomes a field in the well once opened or typed into.
+- Each kind of control has one look, so nothing reads as something else:
+  underlined text tabs say where you are, raised tiles start something, and
+  borderless pills narrow the list.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
 for the voice of the product: headings, date groups, buttons, chips, mascot
@@ -314,10 +317,15 @@ robot glyph to stand for Eavesy itself.
 ┌──────────────────────────────────────────────┐
 │ ×              [m] Eavesy                 ⚙  │ 44  title bar, drag region
 ├──────────────────────────────────────────────┤
-│ (Eavesy) (Captures)       (▭ eavesy ▾)   ⌕   │ 40  tabs, project chip, search icon
-│ ┌shelf (well, r12)──────────────────────────┐│
-│ │[Talk fn][Meeting][Screenshot][Video]      ││ 42  capture toolbar, 4 equal segments
-│ └───────────────────────────────────────────┘│
+│  Eavesy   Captures                           │ 34  underlined tabs, hairline below
+│ ═══════                                       │
+│ New capture             Saves to (▭ eavesy ▾) │ 26  section label, project chip
+│ ┌──────┐ ┌───────┐ ┌──────────┐ ┌─────┐       │
+│ │  🎙  │ │  👥   │ │    📷    │ │ 🎬  │       │ 58  four raised capture tiles
+│ │ Talk │ │Meeting│ │Screenshot│ │Video│       │
+│ └──────┘ └───────┘ └──────────┘ └─────┘       │
+│ ───────────────────────────────────────────── │
+│ (All) Voice  Meetings  Screens  Notes      ⌕  │ 34  list bar: type pills, search
 │ Today                                         │
 │ ▏🎙 Voice note · 0:42          9:41  [⧉][⋯]  │ hover actions appear
 │ ▏  "Remind Sam the deck goes out…"           │ clamp 4 lines + fade + "More"
@@ -339,22 +347,19 @@ eavesy.com, **Open ~/Eavesy folder** and Sign out. The side columns share
 the slack, so the name stays centred until the right side outgrows its half.
 While recording, the mascot carries the capture's state; nothing else changes.
 
-**Tab row (40):** the Eavesy and Captures tabs. On Captures, the right end
-holds the project chip (next recording's project, `auto` when it follows the
-app in front) and search as a 28px icon. Clicking it or pressing `/` opens a
-field that takes the row's free width, and the project chip steps aside until
-it closes. Opening the panel focuses search quietly, so typing searches at
-once, but the field stays an icon until something is typed. "What to show"
-is a small filter icon at the field's end that opens a `Menu`; once it
-narrows the list it shows the filter's name on coat-soft. The field closes on
-blur when it holds no query and shows everything.
+**Tab row (34):** the Eavesy and Captures tabs and nothing else: round
+13/600 text, ink-2, the current one in ink with a 2px coat underline sitting
+on a full-width hairline. They are navigation, so they never look like the
+pills that filter the list.
 
-**Capture toolbar:** one row, no sub-row and no source toggle. It sits on a
-well-coloured shelf (r12, 4px padding) split into **four equal, quiet
-segments**: `grid-template-columns: repeat(4, 1fr)`, 34px high, r9. Each
-segment is a 14px icon with its label inline (round 12/600, ink-2, no wrap). Add a
-shortcut hint only where a shortcut exists. Segments are named by purpose,
-never by audio routing:
+**Capture toolbar:** a "New capture" section label (the day-group style)
+with "Saves to" and the project chip (next recording's project, `auto` when
+it follows the app in front) on its right, then **four equal raised tiles**:
+`grid-template-columns: repeat(4, 1fr)`, 6px apart, 58px high, r12, raised
+surface with a 1px line. Each is an 18px icon (ink-2, coat on hover) over its
+label (round 12/600, ink). Talk's `fn` keycap sits in its top-right corner;
+add one only where a shortcut exists. Tiles are named by purpose, never by
+audio routing:
 
 | segment | what it does | hint / tooltip |
 |---|---|---|
@@ -363,22 +368,25 @@ never by audio routing:
 | **Screenshot** | Area capture, saved to history. | (user's shortcut if set) |
 | **Video** | Screen recording with mic. | (user's shortcut if set) |
 
-Every segment is visually equal: no raised lead button and no colour fill.
-Hover uses ink 5% and the focus ring. While a capture runs, the whole shelf
-becomes a single 42px live bar in place: mascot, status, elapsed time, a quiet
+Every tile is visually equal: no lead button and no colour fill. Hover
+darkens the surface a touch and strengthens the line. While a capture runs,
+the label row goes and the tiles become a single 42px live bar in place: mascot, status, elapsed time, a quiet
 one-line ticker of the newest words, and Stop. Starting and writing use the
 same row without Stop. There is no second listening card or expandable text
 box above search. Search and history stay at the same position throughout.
 Meeting means mic + computer audio, and Talk means mic only.
 
 **History:**
-- Search: well field, r9, 32px, leading search icon, trailing `Kbd /`
-  (only while the field is empty and nothing is filtered) and the **Show**
-  filter (All, Voice, Meetings, Screens, Notes) as a borderless pop-up at the
-  field's right end. One row of chrome between the toolbar and the list, not
-  two. Counts appear in the filter's options only while searching or
-  filtering. Matches are highlighted with `--ev-manila-soft` and
-  `--ev-manila-ink`.
+- List bar: one row of chrome between the toolbar and the list, under a
+  hairline. On the left, the type pills (All, Voice, Meetings, Screens, Notes):
+  24px, borderless, ink-2; the chosen one on coat-soft in ink, with its count
+  while searching or filtering. Clicking the chosen pill again goes back to
+  All. On the right, search as a 28px icon. Clicking it or pressing `/` opens a
+  well field (r9) that takes the row; only the chosen pill stays beside it
+  (none for All). Opening the panel focuses search quietly, so typing searches
+  at once, but the field stays an icon until something is typed, and it closes
+  on blur when it holds no query. Matches are highlighted with
+  `--ev-manila-soft` and `--ev-manila-ink`.
 - Day groups: "Today", "Yesterday", weekday, then "Mar 4". A sticky header
   over 92% paper.
 - Rows: no cards, no thread, no discs. The words are the row: they start at

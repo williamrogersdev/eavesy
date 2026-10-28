@@ -6,15 +6,12 @@ import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 import {
   AudioLines,
   Camera,
-  Check,
   Clapperboard,
   Copy,
   ClipboardPaste,
   FolderOpen,
   MessageSquareText,
   Image as ImageIcon,
-  Layers,
-  ListFilter,
   MoreHorizontal,
   MousePointerClick,
   Pause,
@@ -603,7 +600,6 @@ export function focusSearch(input: HTMLInputElement) {
   focusMarked(input, askedFocus);
 }
 const NO_COUNTS: Record<HistoryFilter, number> = { all: 0, voice: 0, meetings: 0, screens: 0, notes: 0 };
-const FILTER_ICONS: Record<HistoryFilter, LucideIcon> = { all: Layers, voice: AudioLines, meetings: Users, screens: Clapperboard, notes: StickyNote };
 
 /**
  * Search, the day-grouped captures and the empty state. Memoized and fed only
@@ -620,7 +616,6 @@ export const CaptureHistory = memo(function CaptureHistory({
   flash,
   runTask,
   searchRef,
-  searchSlot,
   scrollRef,
   prompts = null,
   promptsError = null,
@@ -650,8 +645,6 @@ export const CaptureHistory = memo(function CaptureHistory({
   flash: Flash;
   runTask: RunTask;
   searchRef: RefObject<HTMLInputElement | null>;
-  /** Where the search field goes: the panel's tab row, which belongs to the panel. */
-  searchSlot: HTMLElement | null;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const [query, setQuery] = useState('');
@@ -699,15 +692,13 @@ export const CaptureHistory = memo(function CaptureHistory({
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
 
   const view = historyView(history.page, history.error, hasLive);
-  const searching = query.trim() !== '' || filter !== 'all';
-  // Keeps the search open while its filter menu has focus.
-  const [filterMenu, setFilterMenu] = useState(false);
+  const typed = query.trim() !== '';
+  const searching = typed || filter !== 'all';
   // Opened by a click or "/"; the quiet focus when the panel opens leaves it an icon until you type.
   const [opened, setOpened] = useState(false);
   // Each opening starts as an icon. This runs after the commit, before the panel's quiet focus (next frame).
   useEffect(() => setOpened(false), [openKey]);
-  const expanded = opened || searching || filterMenu;
-  const filterLabel = FILTERS.find((f) => f.value === filter)?.label ?? 'All';
+  const expanded = opened || typed;
 
   return (
     <>
@@ -717,18 +708,30 @@ export const CaptureHistory = memo(function CaptureHistory({
           <button type="button" className="ev-link" onClick={history.retry}>Try again</button>
         </div>
       )}
-      {view !== 'empty' && searchSlot && createPortal(
+      {view !== 'empty' && (
+        <div className="ev-listbar" data-search={expanded}>
+        <div className="ev-listbar-types" role="group" aria-label="Show">
+          {FILTERS.map((f) => (
+            <Chip
+              key={f.value}
+              selected={filter === f.value}
+              count={searching && !onlyPrompts ? counts[f.value] : undefined}
+              onClick={() => setFilter(filter === f.value ? 'all' : f.value)}
+            >
+              {f.label}
+            </Chip>
+          ))}
+        </div>
         <label
           className="ev-search"
           data-open={expanded}
-          data-active={searching}
+          data-active={typed}
           onPointerDown={() => setOpened(true)}
           onFocus={(e) => {
             if (searchFocusOpens({ asked: askedFocus.has(e.target), quiet: quietFocus.has(e.target), fromElement: e.relatedTarget !== null })) setOpened(true);
           }}
           onBlur={(e) => {
-            // Focus moving into the filter menu (a portal outside the field) keeps it open.
-            if (e.currentTarget.contains(e.relatedTarget) || e.relatedTarget?.closest('[role="menu"]')) return;
+            if (e.currentTarget.contains(e.relatedTarget)) return;
             setOpened(false);
           }}
           title={prompts?.length ? 'Search captures (/), or start with / for prompts' : 'Search captures (/)'}
@@ -752,26 +755,8 @@ export const CaptureHistory = memo(function CaptureHistory({
               }
             }}
           />
-          <Menu
-            align="end"
-            open={filterMenu}
-            onOpenChange={setFilterMenu}
-            header={<div className="ev-menu-header-sub">Show</div>}
-            items={FILTERS.map((f) => ({
-              id: f.value,
-              label: searching && !onlyPrompts ? `${f.label} · ${counts[f.value]}` : f.label,
-              icon: f.value === filter ? Check : FILTER_ICONS[f.value],
-              onSelect: () => setFilter(f.value),
-            }))}
-            trigger={
-              <button type="button" className="ev-search-filter" data-on={filter !== 'all'} aria-label={`Show: ${filterLabel}`} title="Show">
-                <ListFilter size={14} strokeWidth={1.75} aria-hidden />
-                {filter !== 'all' && <span>{filterLabel}</span>}
-              </button>
-            }
-          />
-        </label>,
-        searchSlot,
+        </label>
+        </div>
       )}
       {view === 'empty' ? (
         <div className="ev-empty">

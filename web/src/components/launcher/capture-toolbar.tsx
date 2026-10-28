@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AudioLines, Camera, Clapperboard, Square, Users, X } from 'lucide-react';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from './discard';
 import { clock } from './history-model';
@@ -39,14 +39,16 @@ function useElapsed(startedAtMs: number | null): number {
 }
 
 /**
- * Four equal segments named by purpose (DESIGN.md §5). While a capture runs,
- * the whole shelf becomes the live bar: the one place the panel says it is
- * recording, with the newest words, the time, and Stop.
+ * Four capture buttons named by purpose under a "New capture" heading
+ * (DESIGN.md §5), with where they save beside it. While a capture runs, the
+ * buttons become the live bar: the one place the panel says it is recording,
+ * with the newest words, the time, and Stop.
  */
 export function CaptureToolbar({
   live,
   busy,
   dictationHotkey,
+  destination,
   onTalk,
   onMeeting,
   onScreenshot,
@@ -59,6 +61,8 @@ export function CaptureToolbar({
   /** A capture is starting or a screenshot is being taken. */
   busy: boolean;
   dictationHotkey: string;
+  /** Where the next capture is filed (the project chip), when signed in. */
+  destination?: ReactNode;
   onTalk: () => void;
   onMeeting: () => void;
   onScreenshot: () => void;
@@ -69,7 +73,13 @@ export function CaptureToolbar({
 }) {
   const fn = dictationHotkey === FN || dictationHotkey === 'fn';
   return (
-    <div className="ev-toolbar">
+    <section className="ev-toolbar" aria-label={live ? 'Recording' : 'New capture'}>
+      {!live && (
+        <div className="ev-toolbar-head">
+          <h2 className="ev-section-label">New capture</h2>
+          {destination && <span className="ev-toolbar-dest">Saves to {destination}</span>}
+        </div>
+      )}
       {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} onCancel={onCancel} /> : <ToolbarShelf>
         <ToolbarSegment
           icon={AudioLines}
@@ -83,7 +93,7 @@ export function CaptureToolbar({
         <ToolbarSegment icon={Camera} label="Screenshot" hint="Pick an area to save" disabled={busy || !!live} onClick={onScreenshot} />
         <ToolbarSegment icon={Clapperboard} label="Video" hint="Record your screen and mic" disabled={busy || !!live} onClick={onVideo} />
       </ToolbarShelf>}
-    </div>
+    </section>
   );
 }
 

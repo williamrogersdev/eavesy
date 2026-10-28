@@ -12,7 +12,7 @@ export type ToolbarSegmentProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
 };
 
 /**
- * One of the four equal capture segments on the toolbar shelf (DESIGN.md §5).
+ * One of the four capture buttons (DESIGN.md §5): a raised tile, icon over label.
  * While a capture runs the whole shelf becomes the live bar, so a segment never
  * shows Stop itself.
  */
@@ -29,9 +29,9 @@ export const ToolbarSegment = forwardRef<HTMLButtonElement, ToolbarSegmentProps>
       className={cn('ev-seg', className)}
       {...rest}
     >
-      <Icon size={14} strokeWidth={1.75} aria-hidden />
+      <Icon size={18} strokeWidth={1.75} aria-hidden />
       <span className="ev-seg-label">{label}</span>
-      {kbd && <Kbd keys={kbd} />}
+      {kbd && <Kbd keys={kbd} className="ev-seg-kbd" />}
     </button>
   );
 });

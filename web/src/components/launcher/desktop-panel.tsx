@@ -89,7 +89,6 @@ export function DesktopPanel() {
   const composerRef = useRef<ComposerHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Search sits in the tab row, but its state belongs to the history it filters.
-  const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   // Before the history has loaded there is no search yet, so the panel itself takes focus.
@@ -395,12 +394,6 @@ export function DesktopPanel() {
                 </button>
               ))}
             </div>
-            {tab === 'captures' && (
-              <div className="ev-tabs-end">
-                {account && project && <ProjectChip choice={project} runTask={runTask} onManage={manageProjects} />}
-                <div ref={setSearchSlot} className="ev-search-slot" />
-              </div>
-            )}
           </div>
         )}
         {view === 'list' && tab === 'captures' && (
@@ -408,6 +401,7 @@ export function DesktopPanel() {
             live={live}
             busy={capture.starting || capture.shooting}
             dictationHotkey={dictationHotkey}
+            destination={account && project ? <ProjectChip choice={project} runTask={runTask} onManage={manageProjects} /> : null}
             onTalk={() => runTask(() => capture.begin('audio', { source: 'mic', dictation: true }))}
             onMeeting={() => runTask(() => capture.begin('audio', { source: 'mixed' }))}
             onVideo={() => runTask(() => capture.begin('screen', { mic: true }))}
@@ -480,7 +474,6 @@ export function DesktopPanel() {
               flash={flash}
               runTask={runTask}
               searchRef={searchRef}
-              searchSlot={searchSlot}
               scrollRef={historyRef}
             />
             <Composer
