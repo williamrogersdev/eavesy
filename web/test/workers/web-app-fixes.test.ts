@@ -422,6 +422,18 @@ describe('captures', () => {
     });
 
     expect((await upload(1024 * 1024 + 1)).status).toBe(413);
+    for (const contentType of ['constructor', '__proto__', 'tostring']) {
+      const odd = await call(DeviceCapturesRoute, 'POST', '/api/devices/captures', {
+        headers: {
+          authorization: `Bearer ${fromMac}`,
+          'content-type': contentType,
+          'content-length': String(note.byteLength),
+          'x-client-capture-id': crypto.randomUUID(),
+        },
+        body: requestBody(note),
+      });
+      expect(odd.status).toBe(415);
+    }
     const created = await upload(note.byteLength);
     expect(created.status).toBe(201);
     const { id } = (await created.json()) as { id: string };

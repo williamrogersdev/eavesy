@@ -65,7 +65,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
         const clientId = clientIdSchema.safeParse(request.headers.get('x-client-capture-id'));
         if (!clientId.success) return Response.json({ error: 'invalid x-client-capture-id' }, { status: 400 });
         const contentType = (request.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-        const type = TYPES[contentType];
+        // Own keys only: `constructor` or `__proto__` must not pass as a type.
+        const type = Object.hasOwn(TYPES, contentType) ? TYPES[contentType] : undefined;
         if (!type) return Response.json({ error: `unsupported media type: ${contentType || 'unknown'}` }, { status: 415 });
         const bytes = Number(request.headers.get('content-length') ?? '');
         if (!Number.isFinite(bytes) || bytes <= 0) return Response.json({ error: 'empty or unsized upload' }, { status: 411 });

@@ -17,7 +17,7 @@ export const Route = createFileRoute('/api/devices/captures/$id')({
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
         const capture = await capturesRepo.get(getDb(), { captureId: params.id, userId: actor.userId });
-        if (!capture || (capture.kind !== 'image' && capture.kind !== 'note')) return Response.json({ error: 'not found' }, { status: 404 });
+        if (!capture || !capturesRepo.isDeviceShared(capture.kind)) return Response.json({ error: 'not found' }, { status: 404 });
         const object = await getObject(capture.r2Key);
         if (!object) return Response.json({ error: 'not found' }, { status: 404 });
         return new Response(object.body as unknown as ReadableStream, {

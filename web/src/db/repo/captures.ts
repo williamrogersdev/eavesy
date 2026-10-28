@@ -8,6 +8,13 @@ export type CaptureKind = Capture['kind'];
 export type CaptureMode = Capture['captureMode'];
 export type TranscriptStatus = Capture['transcriptStatus'];
 
+/** The kinds a Mac shares with the user's other Macs. */
+export const DEVICE_SHARED_KINDS = ['image', 'note'] as const satisfies readonly CaptureKind[];
+
+export function isDeviceShared(kind: CaptureKind): boolean {
+  return (DEVICE_SHARED_KINDS as readonly CaptureKind[]).includes(kind);
+}
+
 /**
  * A transcript `processing` for longer than this never finished: the request
  * that claimed it was cut off (the tab closed during "Saving…", or the isolate
@@ -109,7 +116,7 @@ export async function listForDevice(
     .where(
       and(
         eq(captures.userId, args.userId),
-        inArray(captures.kind, ['image', 'note']),
+        inArray(captures.kind, [...DEVICE_SHARED_KINDS]),
         isNull(captures.deletedAt),
         args.exceptDeviceId
           ? or(isNull(captures.deviceId), ne(captures.deviceId, args.exceptDeviceId))
