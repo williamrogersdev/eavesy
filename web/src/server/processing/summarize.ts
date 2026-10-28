@@ -21,6 +21,7 @@ import { resolveModelPlan } from '@/lib/providers/router';
 import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { openUserKeys } from '@/server/secret-box';
 import { queueRecap } from '@/server/email/recaps';
+import { emitWebhookEvent, webhookItem, type WebhookEnv } from '@/server/webhooks';
 import {
   type Db,
   type ProcessingEnv,
@@ -145,7 +146,7 @@ export async function handleSummarize(
           ? { status: 'failed', statusError: 'The recording could not be transcribed.', updatedAt: now }
           : { status: 'complete', statusError: null, updatedAt: now })
         .where(eq(meetings.id, meetingId));
-      if (failedSegments === 0) await logMeetingComplete(db, meeting.userId, meetingId, now);
+      if (failedSegments === 0) await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     }
     return;
   }
@@ -161,7 +162,7 @@ export async function handleSummarize(
       .update(meetings)
       .set({ title: quickNoteTitle(segments, meeting.title), status: 'complete', statusError: partial, updatedAt: now })
       .where(eq(meetings.id, meetingId));
-    await logMeetingComplete(db, meeting.userId, meetingId, now);
+    await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     return;
@@ -303,7 +304,7 @@ async function writeSummary(
       )
       .returning({ id: meetings.id });
     if (!completed.length) return;
-    await logMeetingComplete(db, meeting.userId, meetingId, now);
+    await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
     await env.PROCESSING_QUEUE.send({ kind: 'agent-transcript', meetingId });
     await queueRecap(env, userRow, meetingId);
@@ -370,8 +371,9 @@ export function quickNoteTitle(lines: { text: string }[], fallback: string) {
   return words.length > 8 ? `${head}…` : head;
 }
 
-export async function logMeetingComplete(db: Db, userId: string, meetingId: string, now: number) {
-  await db
+/** Records that the meeting finished, and on the first time only, tells the account's webhooks. */
+export async function logMeetingComplete(db: Db, env: WebhookEnv, userId: string, meetingId: string, now: number) {
+  const logged = await db
     .insert(activityLog)
     .values({
       id: `act_complete_${meetingId}`,
@@ -381,7 +383,18 @@ export async function logMeetingComplete(db: Db, userId: string, meetingId: stri
       metadataJson: '{}',
       createdAt: now,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: activityLog.id });
+  if (!logged.length) return;
+  const meeting = (
+    await db
+      .select({ title: meetings.title, startedAt: meetings.startedAt })
+      .from(meetings)
+      .where(eq(meetings.id, meetingId))
+      .limit(1)
+  )[0];
+  if (!meeting) return;
+  await emitWebhookEvent(env, userId, 'recording.completed', webhookItem({ id: meetingId, kind: 'meeting', title: meeting.title, createdAt: meeting.startedAt }), now);
 }
 
 function summaryValues(parsed: Record<string, unknown>) {

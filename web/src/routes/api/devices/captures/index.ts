@@ -9,6 +9,7 @@ import * as capturesRepo from '@/db/repo/captures';
 import { resolveIngestActor } from '@/server/device-auth';
 import { captureKey, deleteObject, putObject } from '@/server/r2';
 import { guardUserQuota, refundUserQuota } from '@/server/rate-limit';
+import { emitWebhookEvent, webhookEnv, webhookItem } from '@/server/webhooks';
 
 const MAX_OFFSET = 100_000;
 
@@ -115,6 +116,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
         }
 
+        const created = (id: string) =>
+          emitWebhookEvent(webhookEnv(), actor.userId, 'capture.created', webhookItem({ id, kind: type.kind, title, createdAt }));
         try {
           const id = await capturesRepo.create(db, {
             id: captureId,
@@ -131,12 +134,16 @@ export const Route = createFileRoute('/api/devices/captures/')({
             createdAt,
             ...(noteText === null ? {} : { transcript: noteText, transcriptStatus: 'complete' as const }),
           });
+          await created(id);
           return Response.json({ id }, { status: 201 });
         } catch (error) {
           // The error may have come after the row was written (a lost
           // reply): then this capture is stored, and stays.
           const winner = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
-          if (winner?.id === captureId) return Response.json({ id: captureId }, { status: 201 });
+          if (winner?.id === captureId) {
+            await created(captureId);
+            return Response.json({ id: captureId }, { status: 201 });
+          }
           // No row points at this object, so don't leave it behind, and this
           // request stored nothing, so it doesn't count.
           await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));

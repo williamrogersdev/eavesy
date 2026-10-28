@@ -51,7 +51,7 @@ Or the Claude Code plugin (adds the server plus a skill for when to use it): `/p
 
 Scopes: `read` (default) and `write`. The user grants write only by ticking "Also let it write" on the approval page (or "Allow writes" for a pasted token). Tools a connection's scopes don't cover are hidden from `tools/list` and refused if called.
 
-Fallback for clients without OAuth: create a connection in the web app under Settings > AI assistants (MCP); the token is shown once. Send it in the Authorization header. Tokens expire 90 days after last use. URL-path tokens (`https://mcp.eavesy.com/<token>`) are deprecated and work only while the server flag `MCP_ALLOW_PATH_TOKENS` is not `false`.
+Fallback for clients without OAuth: create a key in the web app under Settings > AI apps and API keys (New key); the key is shown once. Send it in the Authorization header. Tokens expire 90 days after last use. URL-path tokens (`https://mcp.eavesy.com/<token>`) are deprecated and work only while the server flag `MCP_ALLOW_PATH_TOKENS` is not `false`.
 
 ```json
 {
@@ -93,6 +93,13 @@ Tools that are not read-only:
 No tool deletes anything from the library.
 
 Only what is in the account is available over MCP: recordings, dictations, web captures, and notes, clipboard text, screenshots and images from a Mac that was signed in. Mac screenshots match by title only (no text is read from them), but `get` returns the image. Anything else is on disk under ~/Eavesy/Recordings. Docs: https://eavesy.com/docs/connect-mcp
+
+## REST API and webhooks
+The same tools as a REST API at `https://mcp.eavesy.com/v1`, described by OpenAPI 3.1 at `https://mcp.eavesy.com/v1/openapi.json`. Authenticate with the same key as `Authorization: Bearer nt_…`; read-only unless writes were allowed.
+- `GET /items` and `GET /search?q=` (kinds, project, since, until, limit), `GET /items/{id}`, `GET /items/{id}/file` (a capture's original bytes), `GET /action-items`, `GET /projects`, `GET /me`.
+- With write access: `PATCH /items/{id}` (title, project), `POST /notes` (text, title, project), `PATCH /meetings/{id}/action-items/{index}` (completed, text).
+- Webhooks: `GET`/`POST /webhooks`, `GET`/`PATCH`/`DELETE /webhooks/{id}`, `POST /webhooks/{id}/test`, or Settings > Webhooks. Events: `recording.completed`, `dictation.created`, `capture.created`. Signed as Standard Webhooks (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_…` shown once); retried 7 times over about 27 hours; the payload names the item, fetch the rest with `GET /items/{id}`.
+Docs: https://eavesy.com/docs/api-and-webhooks
 
 ## Copy-paste examples
 Paste into an agent after copying a brief from Eavesy:

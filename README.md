@@ -55,7 +55,9 @@ What ships today:
   in your account (recordings, dictations, notes, screenshots and other
   captures) and fetch summaries, transcripts and action items. With write
   access, agents can also save notes, tick off action items, and rename or
-  file items under projects.
+  file items under projects. The same tools are a REST API at
+  `mcp.eavesy.com/v1` (OpenAPI at `/v1/openapi.json`), and signed webhooks
+  fire when a recording finishes or a dictation, note or capture is saved.
 
 Meeting recording is one capability, not the whole product. Not shipped yet:
 forwarding messages and orders from other apps, live captions, and the
@@ -95,7 +97,7 @@ eavesy/
 ├── web/                 # TanStack Start web app and authenticated APIs
 ├── workers/
 │   ├── processing/      # Queue consumer, finalization, and cleanup cron
-│   └── mcp/             # Token-scoped, read-only hosted MCP server
+│   └── mcp/             # Hosted MCP server and REST API (/v1)
 ├── desktop/
 │   ├── launcher-ui/     # Offline launcher UI bundled with Tauri
 │   ├── src-tauri/       # Rust state, durable uploads, and filesystem mirror
