@@ -53,7 +53,9 @@ What ships today:
   connecting your own OpenRouter account.
 - **Hosted MCP server** (`workers/mcp`): tools to search and read everything
   in your account (recordings, dictations, notes, screenshots and other
-  captures) and fetch summaries, transcripts and action items.
+  captures) and fetch summaries, transcripts and action items. With write
+  access, agents can also save notes, tick off action items, and rename or
+  file items under projects.
 
 Meeting recording is one capability, not the whole product. Not shipped yet:
 forwarding messages and orders from other apps, live captions, and the

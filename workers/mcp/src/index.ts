@@ -10,6 +10,10 @@ import { clock } from '../../../web/src/lib/ai/chapters';
 import { sha256Hex } from '../../../web/src/lib/sha256';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { createTextDrop, DropTooLargeError } from '../../../web/src/server/create-drop';
+import * as capturesRepo from '../../../web/src/db/repo/captures';
+import { pid } from '../../../web/src/db/ids';
+import { captureKey } from '../../../web/src/server/r2';
+import { refreshAgentTranscriptLater } from '../../../web/src/server/agent-transcript-refresh';
 import { MAX_TEXT_BYTES } from '../../../web/src/server/drops';
 import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
@@ -317,7 +321,9 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
         'The prompts are ones the user saved in Eavesy to reuse. ' +
         'send_to_human and ask_human reach the user on their Mac, where Eavesy shows and reads them aloud; use them when ' +
         'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything. ' +
-        'With write access, send_to_my_devices puts text such as a session handoff in the user\'s Drop inbox on their other devices.',
+        'With write access, send_to_my_devices puts text such as a session handoff in the user\'s Drop inbox on their other devices, ' +
+        'save_note keeps Markdown in their library, and update_action_item, set_project and rename change what is there. ' +
+        'Make those changes only when the user asked for them.',
     });
   }
   if (body.method === 'notifications/initialized') {
@@ -469,8 +475,18 @@ const READ_ONLY: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
 /** Reaches the user on their Mac: changes nothing in the library, but isn't a plain read either. */
 const MESSAGES_HUMAN: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
+/**
+ * Changes one value the user can change back the same way: nothing is deleted,
+ * and the same call twice leaves the same result.
+ */
+const UPDATES: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
 /** The longest title send_to_my_devices accepts. */
 const DROP_TITLE_MAX_CHARS = 200;
+/** The longest title save_note and rename accept, as the web app's own rename. */
+const TITLE_MAX_CHARS = 200;
+/** As a note synced from a Mac. */
+const NOTE_MAX_BYTES = 1024 * 1024;
 
 /** Everything search, recent and get reach. "meeting" is any recording, as in the other tools. */
 const ITEM_KINDS = ['meeting', 'dictation', 'note', 'image', 'video', 'audio'] as const;
@@ -714,6 +730,73 @@ const TOOL_DEFS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     scope: 'write',
   },
+  {
+    name: 'save_note',
+    description:
+      "Save Markdown as a note in the user's Eavesy library, such as a plan, a decision log or a summary of this session. " +
+      'It shows up in search, recent and get, and on every Mac where they are signed in. ' +
+      `Up to ${NOTE_MAX_BYTES / 1024 / 1024} MB. Returns the new note's {id, kind, title, project, created_at}.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', minLength: 1, description: 'The note, in Markdown.' },
+        title: { type: 'string', maxLength: TITLE_MAX_CHARS, description: 'Optional. Without one, the first line of the text is used.' },
+        project: { type: 'string', description: 'Optional project to file it under (by name, see list_projects).' },
+      },
+      required: ['text'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    scope: 'write',
+  },
+  {
+    name: 'update_action_item',
+    description:
+      'Mark one action item from a recording done, or open again. Name it by meeting_id and index, as get_action_items returns them ' +
+      '(index is its place in the recording\'s action_items list, from 0). Pass the item\'s text too, so a list that changed since ' +
+      'you read it is refused instead of the wrong item being changed. Returns the item as it is now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: { type: 'string' },
+        index: { type: 'number', minimum: 0 },
+        completed: { type: 'boolean' },
+        text: { type: 'string', description: 'The item\'s text as you read it.' },
+      },
+      required: ['meeting_id', 'index', 'completed'],
+    },
+    annotations: UPDATES,
+    scope: 'write',
+  },
+  {
+    name: 'set_project',
+    description:
+      'File a recording, note or capture under one of the user\'s projects (by name, see list_projects), or pass project null ' +
+      'to take it out of its project. Dictations have no project. Returns {id, kind, project}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'An id from search, recent or get.' },
+        project: { type: ['string', 'null'] },
+      },
+      required: ['id', 'project'],
+    },
+    annotations: UPDATES,
+    scope: 'write',
+  },
+  {
+    name: 'rename',
+    description: 'Give a recording, dictation, note or capture a new title. Returns {id, kind, title}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'An id from search, recent or get.' },
+        title: { type: 'string', minLength: 1, maxLength: TITLE_MAX_CHARS },
+      },
+      required: ['id', 'title'],
+    },
+    annotations: UPDATES,
+    scope: 'write',
+  },
 ];
 
 /** The columns a meeting search result shows. */
@@ -818,6 +901,153 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           throw error;
         }
       });
+    }
+    case 'save_note': {
+      const text = typeof args.text === 'string' ? args.text : '';
+      if (!text.trim()) throw new UserFacingError('text is required');
+      const bytes = new TextEncoder().encode(text);
+      // Checked before the quota, so an oversized call doesn't spend one.
+      if (bytes.byteLength > NOTE_MAX_BYTES) throw new UserFacingError(`text too large: the limit is ${NOTE_MAX_BYTES / 1024 / 1024} MB`);
+      const title = titleArg(args.title) || noteTitle(text);
+      const { project } = await projectArg(db, userId, args.project);
+      return withQuota(env, userId, 'capture', async () => {
+        const id = pid('cap');
+        const r2Key = captureKey({ userId, captureId: id, ext: 'md' });
+        const createdAt = Date.now();
+        await env.AUDIO_BUCKET.put(r2Key, bytes, { httpMetadata: { contentType: 'text/markdown' } });
+        try {
+          // No device and no Mac-side id, so every signed-in Mac pulls it as a note from the web.
+          await capturesRepo.create(db, {
+            id,
+            userId,
+            kind: 'note',
+            captureMode: 'note',
+            source: 'web',
+            title,
+            r2Key,
+            contentType: 'text/markdown',
+            bytes: bytes.byteLength,
+            transcript: text,
+            transcriptStatus: 'complete',
+            folderId: project?.id ?? null,
+            createdAt,
+          });
+        } catch (error) {
+          await env.AUDIO_BUCKET.delete(r2Key).catch(() => undefined);
+          throw error;
+        }
+        return { id, kind: 'note', title, project: project?.name ?? null, created_at: iso(createdAt) };
+      });
+    }
+    case 'update_action_item': {
+      const meetingId = stringArg(args.meeting_id);
+      if (!meetingId) throw new UserFacingError('meeting_id is required');
+      const index = typeof args.index === 'number' ? args.index : Number.NaN;
+      if (!Number.isInteger(index) || index < 0) throw new UserFacingError('index must be a whole number from 0');
+      if (typeof args.completed !== 'boolean') throw new UserFacingError('completed must be true or false');
+      const row = (
+        await db
+          .select({ id: schema.summaries.id, actionItemsJson: schema.summaries.actionItemsJson })
+          .from(schema.summaries)
+          .innerJoin(schema.meetings, eq(schema.meetings.id, schema.summaries.meetingId))
+          .where(
+            and(
+              eq(schema.summaries.meetingId, meetingId),
+              eq(schema.meetings.userId, userId),
+              isNull(schema.meetings.deletedAt),
+              visibleMeeting(),
+            ),
+          )
+          .limit(1)
+      )[0];
+      if (!row) throw new UserFacingError('no recording with a summary has that id');
+      const items = parseJsonArray(row.actionItemsJson);
+      const item = items[index];
+      if (!isRecord(item)) throw new UserFacingError(`that recording has no action item ${index}`);
+      const expected = stringArg(args.text);
+      if (expected && stringArg(item.text) !== expected) {
+        throw new UserFacingError(`action item ${index} reads "${stringArg(item.text)}" now. Read the list again before changing it.`);
+      }
+      const updated = { ...item, completed: args.completed };
+      const [result] = parseActionItems(JSON.stringify([updated]));
+      // Already so: nothing to write, and the brief isn't marked as edited by the user.
+      if ((item.completed === true) === args.completed) return { meeting_id: meetingId, ...result, index };
+      const next = items.map((entry, i) => (i === index ? updated : entry));
+      // Only over the list just read, so an edit made in between is never written over.
+      const written = await db
+        .update(schema.summaries)
+        .set({ actionItemsJson: JSON.stringify(next), userEditedAt: Date.now() })
+        .where(and(eq(schema.summaries.id, row.id), eq(schema.summaries.actionItemsJson, row.actionItemsJson)))
+        .returning({ id: schema.summaries.id });
+      if (!written.length) throw new UserFacingError('the action items changed while updating. Read the list again and retry.');
+      return { meeting_id: meetingId, ...result, index };
+    }
+    case 'set_project': {
+      const id = stringArg(args.id);
+      if (!id) throw new UserFacingError('id is required');
+      if (args.project !== null && !stringArg(args.project)) throw new UserFacingError('project must be a project name, or null to take it out of one');
+      const { project } = args.project === null ? { project: undefined } : await projectArg(db, userId, args.project);
+      const folderId = project?.id ?? null;
+      const now = Date.now();
+      for (const kind of kindsToTry(id)) {
+        if (kind === 'meeting') {
+          const moved = await db
+            .update(schema.meetings)
+            .set({ folderId, updatedAt: now })
+            .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
+            .returning({ id: schema.meetings.id });
+          if (!moved.length) continue;
+          // The cleaned transcript names the project, as after a move in the web app.
+          refreshAgentTranscriptLater(id, userId, { embed: false });
+          return { id, kind: 'meeting', project: project?.name ?? null };
+        }
+        if (kind === 'capture') {
+          const moved = await db
+            .update(schema.captures)
+            .set({ folderId, updatedAt: now })
+            .where(and(eq(schema.captures.id, id), eq(schema.captures.userId, userId), isNull(schema.captures.deletedAt)))
+            .returning({ kind: schema.captures.kind });
+          if (moved[0]) return { id, kind: moved[0].kind, project: project?.name ?? null };
+          continue;
+        }
+        if (await getDictation(env, db, userId, id, args)) throw new UserFacingError('dictations have no project');
+      }
+      throw new UserFacingError('not found');
+    }
+    case 'rename': {
+      const id = stringArg(args.id);
+      if (!id) throw new UserFacingError('id is required');
+      const title = titleArg(args.title);
+      if (!title) throw new UserFacingError('title is required');
+      const now = Date.now();
+      for (const kind of kindsToTry(id)) {
+        if (kind === 'meeting') {
+          const renamed = await db
+            .update(schema.meetings)
+            .set({ title, updatedAt: now })
+            .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
+            .returning({ id: schema.meetings.id });
+          if (!renamed.length) continue;
+          // The cleaned transcript names the title, as after a rename in the web app.
+          refreshAgentTranscriptLater(id, userId, { embed: false });
+          return { id, kind: 'meeting', title };
+        } else if (kind === 'dictation') {
+          const renamed = await db
+            .update(schema.dictations)
+            .set({ title })
+            .where(and(eq(schema.dictations.id, id), eq(schema.dictations.userId, userId), isNull(schema.dictations.deletedAt)))
+            .returning({ id: schema.dictations.id });
+          if (renamed.length) return { id, kind: 'dictation', title };
+        } else {
+          const renamed = await db
+            .update(schema.captures)
+            .set({ title, updatedAt: now })
+            .where(and(eq(schema.captures.id, id), eq(schema.captures.userId, userId), isNull(schema.captures.deletedAt)))
+            .returning({ kind: schema.captures.kind });
+          if (renamed[0]) return { id, kind: renamed[0].kind, title };
+        }
+      }
+      throw new UserFacingError('not found');
     }
     case 'search_library':
     case 'ask_library': {
@@ -1015,6 +1245,7 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           if (status === 'completed' && !a.completed) continue;
           if (owner && a.owner !== owner) continue;
           out.push({
+            index: a.index,
             text: a.text,
             owner: a.owner,
             due: a.due,
@@ -1542,6 +1773,36 @@ async function getCapture(env: Env, db: Db, userId: string, id: string, _args: R
   return new ToolOutput(value, [{ type: 'image', data: base64(new Uint8Array(await image.arrayBuffer())), mimeType: c.contentType }]);
 }
 
+/** Which kinds an id may be, by its prefix. An id without a known prefix may be any. */
+function kindsToTry(id: string): ('meeting' | 'dictation' | 'capture')[] {
+  if (id.startsWith('cap_')) return ['capture'];
+  if (id.startsWith('dict_')) return ['dictation'];
+  return ['meeting', 'dictation', 'capture'];
+}
+
+/** A title with its whitespace folded. One that is too long is refused, not cut. */
+function titleArg(value: unknown): string {
+  const title = stringArg(value).replace(/\s+/g, ' ');
+  if (title.length > TITLE_MAX_CHARS) throw new UserFacingError(`title must be at most ${TITLE_MAX_CHARS} characters`);
+  return title;
+}
+
+/** A note's first line, without Markdown heading marks, as its title. */
+function noteTitle(text: string): string {
+  const line = text.split('\n').map((part) => part.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim()).find(Boolean);
+  if (!line) return 'Note';
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+function parseJsonArray(json: string): unknown[] {
+  try {
+    const value: unknown = JSON.parse(json);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
 function base64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -1549,6 +1810,8 @@ function base64(bytes: Uint8Array): string {
 }
 
 interface ActionItemResult {
+  /** Its place in the recording's list, which update_action_item takes. */
+  index: number;
   text: string;
   owner?: string;
   due?: string;
@@ -1557,7 +1820,7 @@ interface ActionItemResult {
   meeting_title: string;
 }
 
-function parseActionItems(json: string): { text: string; owner?: string; due?: string; completed: boolean }[] {
+function parseActionItems(json: string): { index: number; text: string; owner?: string; due?: string; completed: boolean }[] {
   let value: unknown;
   try {
     value = JSON.parse(json);
@@ -1565,7 +1828,9 @@ function parseActionItems(json: string): { text: string; owner?: string; due?: s
     return [];
   }
   if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map((item) => ({
+  // The index counts every entry, as the stored list does, even one that isn't an item.
+  return value.flatMap((item: unknown, index) => (isRecord(item) ? [{ index, item }] : [])).map(({ index, item }) => ({
+    index,
     text: typeof item.text === 'string' ? item.text : '',
     owner: typeof item.owner === 'string' ? item.owner : undefined,
     due: typeof item.due === 'string' ? item.due : undefined,

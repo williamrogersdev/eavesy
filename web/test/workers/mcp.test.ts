@@ -236,7 +236,13 @@ describe('MCP scopes', () => {
   it('hide and refuse tools outside the connection’s scopes', async () => {
     const { token } = await mint();
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.map((tool) => tool.name)).toEqual(['send_to_my_devices']);
+    expect((await rpc(token, 'tools/list')).result?.tools?.map((tool) => tool.name)).toEqual([
+      'send_to_my_devices',
+      'save_note',
+      'update_action_item',
+      'set_project',
+      'rename',
+    ]);
     const refused = (await rpc(token, 'tools/call', { name: 'recent_meetings', arguments: {} })).result;
     expect(refused?.isError).toBe(true);
     expect(refused?.content?.[0]?.text).toContain('needs read access');
@@ -651,6 +657,187 @@ describe('MCP library items', () => {
     } finally {
       await testEnv.DB.prepare(`DELETE FROM captures WHERE user_id = 'user_other'`).run();
     }
+  });
+});
+
+describe('MCP write tools', () => {
+  const T0 = Date.parse('2026-10-20T12:00:00Z');
+  const ACTION_ITEMS = JSON.stringify([{ text: 'Ship the cask', completed: false }, 'not an item', { text: 'Email Ada', owner: 'Will', completed: false }]);
+  const rpc = async (token: string, name: string, args: Record<string, unknown>) =>
+    (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }),
+      ({ DB: testEnv.DB, AUDIO_BUCKET: testEnv.AUDIO_BUCKET, AI: {}, VECTORIZE: {} }) as unknown as Parameters<typeof mcpWorker.fetch>[1],
+    )).json<{ result?: { isError?: boolean; content?: { text: string }[] }; error?: { code: number; message: string } }>();
+  const call = async (token: string, name: string, args: Record<string, unknown>) =>
+    JSON.parse((await rpc(token, name, args)).result?.content?.[0]?.text ?? 'null');
+  const error = async (token: string, name: string, args: Record<string, unknown>) => (await rpc(token, name, args)).error?.message;
+  const row = (sql: string, ...values: unknown[]) => testEnv.DB.prepare(sql).bind(...values).first();
+  /** The rebuild is queued after the response, so the stale copy goes a moment later. */
+  const staleCopyDropped = async () => {
+    for (let i = 0; i < 50; i++) {
+      if ((await row(`SELECT agent_transcript_md AS md FROM meetings WHERE id = 'meet_one'`))?.md === null) return true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return false;
+  };
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(`INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json) VALUES ('p1', 'user_mcp', 'Eavesy', '', '[]', '[]')`),
+      testEnv.DB.prepare(
+        `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at) VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO meetings (id, user_id, title, started_at, source, status, agent_transcript_md, created_at, updated_at)
+         VALUES ('meet_one', 'user_mcp', 'Standup', ?, 'desktop', 'complete', '<transcript title="Standup">', ?, ?),
+                ('meet_theirs', 'user_other', 'Theirs', ?, 'desktop', 'complete', NULL, ?, ?)`,
+      ).bind(T0, T0, T0, T0, T0, T0),
+      testEnv.DB.prepare(
+        `INSERT INTO summaries (id, meeting_id, tldr, action_items_json, generated_by_model, generated_at)
+         VALUES ('sum_one', 'meet_one', 'Short.', ?, 'test', ?), ('sum_theirs', 'meet_theirs', 'Theirs.', ?, 'test', ?)`,
+      ).bind(ACTION_ITEMS, T0, ACTION_ITEMS, T0),
+      testEnv.DB.prepare(
+        `INSERT INTO dictations (id, user_id, title, transcript, duration_sec, created_at) VALUES ('dict_one', 'user_mcp', 'Dictation', 'ship it', 2, ?)`,
+      ).bind(T0),
+      testEnv.DB.prepare(
+        `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, created_at, updated_at)
+         VALUES ('cap_shot', 'user_mcp', 'image', 'screenshot', 'desktop', 'Screenshot', 'users/user_mcp/captures/cap_shot.png', 'image/png', 3, ?, ?)`,
+      ).bind(T0, T0),
+    ]);
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM summaries'),
+      testEnv.DB.prepare('DELETE FROM captures'),
+      testEnv.DB.prepare('DELETE FROM dictations'),
+      testEnv.DB.prepare('DELETE FROM meetings'),
+      testEnv.DB.prepare('DELETE FROM folders'),
+      testEnv.DB.prepare('DELETE FROM rate_limits'),
+    ]);
+  });
+
+  it('are hidden from and refused to a read-only connection', async () => {
+    const { token } = await mint();
+    for (const name of ['save_note', 'update_action_item', 'set_project', 'rename']) {
+      const refused = (await rpc(token, name, {})).result;
+      expect(refused?.isError).toBe(true);
+      expect(refused?.content?.[0]?.text).toContain('needs write access');
+    }
+    expect(await row(`SELECT title FROM meetings WHERE id = 'meet_one'`)).toEqual({ title: 'Standup' });
+  });
+
+  it('save a note that search, get and the user’s Macs can read', async () => {
+    const { token } = await mint(['write']);
+    const saved = await call(token, 'save_note', { text: '## Launch plan\n\n- Ship Friday', project: 'eavesy' });
+    expect(saved).toEqual({ id: expect.stringMatching(/^cap_/), kind: 'note', title: 'Launch plan', project: 'Eavesy', created_at: expect.any(String) });
+    expect(await row('SELECT kind, source, title, transcript, folder_id, device_id, client_capture_id, r2_key FROM captures WHERE id = ?', saved.id)).toEqual({
+      kind: 'note',
+      source: 'web',
+      title: 'Launch plan',
+      transcript: '## Launch plan\n\n- Ship Friday',
+      folder_id: 'p1',
+      device_id: null,
+      client_capture_id: null,
+      r2_key: `users/user_mcp/captures/${saved.id}.md`,
+    });
+    expect(await (await testEnv.AUDIO_BUCKET.get(`users/user_mcp/captures/${saved.id}.md`))?.text()).toBe('## Launch plan\n\n- Ship Friday');
+    expect(await call(token, 'get', { id: saved.id })).toMatchObject({ kind: 'note', text: '## Launch plan\n\n- Ship Friday' });
+    expect((await call(token, 'search', { query: 'friday', kinds: ['note'] })).items.map((item: { id: string }) => item.id)).toEqual([saved.id]);
+
+    expect((await call(token, 'save_note', { text: 'plain', title: '  My   title ' })).title).toBe('My title');
+    expect((await call(token, 'save_note', { text: '#\n\n' + 'x'.repeat(100) })).title).toBe(`${'x'.repeat(79)}…`);
+    const day = Math.floor(Date.now() / 86_400_000);
+    expect(await row('SELECT count FROM rate_limits WHERE key = ?', `budget:user:capture:user_mcp:${day}`)).toEqual({ count: 3 });
+  });
+
+  it('refuse a note that is empty, too large or for a project that is not there, and store nothing', async () => {
+    const { token } = await mint(['write']);
+    expect(await error(token, 'save_note', { text: '   ' })).toBe('text is required');
+    expect(await error(token, 'save_note', { text: 'x'.repeat(1024 * 1024 + 1) })).toContain('text too large');
+    expect(await error(token, 'save_note', { text: 'hi', project: 'nope' })).toBe('no project named "nope"');
+    expect(await error(token, 'save_note', { text: 'hi', title: 'x'.repeat(201) })).toBe('title must be at most 200 characters');
+    expect(await row(`SELECT count(*) AS n FROM captures WHERE kind = 'note'`)).toEqual({ n: 0 });
+    expect(await row(`SELECT count(*) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture:%'`)).toEqual({ n: 0 });
+
+    const day = Math.floor(Date.now() / 86_400_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 300, ?)')
+      .bind(`budget:user:capture:user_mcp:${day}`, (day + 1) * 86_400_000).run();
+    expect(await error(token, 'save_note', { text: 'one more' })).toContain('today’s limit');
+    expect(await row(`SELECT count(*) AS n FROM captures WHERE kind = 'note'`)).toEqual({ n: 0 });
+  });
+
+  it('mark an action item done by the index get_action_items gives, and refuse a stale one', async () => {
+    const { token } = await mint(['write']);
+    const open = await call(token, 'get_action_items', {});
+    expect(open.map((item: { index: number; text: string }) => [item.index, item.text])).toEqual([[0, 'Ship the cask'], [2, 'Email Ada']]);
+
+    expect(await call(token, 'update_action_item', { meeting_id: 'meet_one', index: 2, completed: true, text: 'Email Ada' })).toEqual({
+      meeting_id: 'meet_one',
+      index: 2,
+      text: 'Email Ada',
+      owner: 'Will',
+      completed: true,
+    });
+    const stored = await row(`SELECT action_items_json, user_edited_at FROM summaries WHERE id = 'sum_one'`) as { action_items_json: string; user_edited_at: number };
+    expect(JSON.parse(stored.action_items_json)).toEqual([
+      { text: 'Ship the cask', completed: false },
+      'not an item',
+      { text: 'Email Ada', owner: 'Will', completed: true },
+    ]);
+    expect(stored.user_edited_at).toBeGreaterThan(0);
+
+    // Already open: nothing is written, so the brief isn't marked as edited.
+    await testEnv.DB.prepare(`UPDATE summaries SET user_edited_at = NULL WHERE id = 'sum_one'`).run();
+    expect((await call(token, 'update_action_item', { meeting_id: 'meet_one', index: 0, completed: false })).completed).toBe(false);
+    expect(await row(`SELECT user_edited_at FROM summaries WHERE id = 'sum_one'`)).toEqual({ user_edited_at: null });
+    await testEnv.DB.prepare(`UPDATE summaries SET user_edited_at = 1 WHERE id = 'sum_one'`).run();
+    expect((await call(token, 'get_action_items', { status: 'completed' })).map((item: { index: number }) => item.index)).toEqual([2]);
+
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 0, completed: true, text: 'Ship the boat' }))
+      .toContain('action item 0 reads "Ship the cask" now');
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 1, completed: true })).toBe('that recording has no action item 1');
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 9, completed: true })).toBe('that recording has no action item 9');
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 1.5, completed: true })).toBe('index must be a whole number from 0');
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 0, completed: 'yes' })).toBe('completed must be true or false');
+    expect(await error(token, 'update_action_item', { meeting_id: 'meet_theirs', index: 0, completed: true })).toBe('no recording with a summary has that id');
+    expect(JSON.parse((await row(`SELECT action_items_json AS j FROM summaries WHERE id = 'sum_theirs'`) as { j: string }).j)[0].completed).toBe(false);
+  });
+
+  it('file a recording or capture under a project and take it out again', async () => {
+    const { token } = await mint(['write']);
+    expect(await call(token, 'set_project', { id: 'meet_one', project: 'eavesy' })).toEqual({ id: 'meet_one', kind: 'meeting', project: 'Eavesy' });
+    expect(await row(`SELECT folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ folder_id: 'p1' });
+    // The cleaned transcript names the project, so it is rebuilt.
+    expect(await staleCopyDropped()).toBe(true);
+    expect(await call(token, 'set_project', { id: 'cap_shot', project: 'Eavesy' })).toEqual({ id: 'cap_shot', kind: 'image', project: 'Eavesy' });
+    expect(await call(token, 'set_project', { id: 'meet_one', project: null })).toEqual({ id: 'meet_one', kind: 'meeting', project: null });
+    expect(await row(`SELECT folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ folder_id: null });
+
+    expect(await error(token, 'set_project', { id: 'dict_one', project: 'Eavesy' })).toBe('dictations have no project');
+    expect(await error(token, 'set_project', { id: 'meet_one', project: 'nope' })).toBe('no project named "nope"');
+    expect(await error(token, 'set_project', { id: 'meet_one', project: '' })).toContain('project must be a project name, or null');
+    expect(await error(token, 'set_project', { id: 'meet_theirs', project: 'Eavesy' })).toBe('not found');
+    expect(await row(`SELECT folder_id FROM meetings WHERE id = 'meet_theirs'`)).toEqual({ folder_id: null });
+  });
+
+  it('rename a recording, dictation or capture, and nothing of anyone else’s', async () => {
+    const { token } = await mint(['write']);
+    expect(await call(token, 'rename', { id: 'meet_one', title: 'Daily  standup' })).toEqual({ id: 'meet_one', kind: 'meeting', title: 'Daily standup' });
+    expect(await staleCopyDropped()).toBe(true);
+    expect(await call(token, 'rename', { id: 'dict_one', title: 'Ship note' })).toEqual({ id: 'dict_one', kind: 'dictation', title: 'Ship note' });
+    expect(await call(token, 'rename', { id: 'cap_shot', title: 'Pricing page' })).toEqual({ id: 'cap_shot', kind: 'image', title: 'Pricing page' });
+    expect(await row(`SELECT title FROM captures WHERE id = 'cap_shot'`)).toEqual({ title: 'Pricing page' });
+
+    expect(await error(token, 'rename', { id: 'meet_one', title: ' ' })).toBe('title is required');
+    expect(await error(token, 'rename', { id: 'meet_one', title: 'x'.repeat(201) })).toBe('title must be at most 200 characters');
+    expect(await error(token, 'rename', { id: 'meet_theirs', title: 'Mine now' })).toBe('not found');
+    expect(await row(`SELECT title FROM meetings WHERE id = 'meet_theirs'`)).toEqual({ title: 'Theirs' });
   });
 });
 

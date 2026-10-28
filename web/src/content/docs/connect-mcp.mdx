@@ -128,6 +128,10 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `get_account_info` | Show which Eavesy account and connection the agent is using, its access, and when it expires. Useful when results look like they come from the wrong account. |
 | `sign_out` | Disconnect this connection. The agent only calls it when you ask; your other connections keep working. |
 | `send_to_my_devices` | Put text, such as a session handoff doc, in your **Drop** inbox on every device where Eavesy is open. Needs write access. |
+| `save_note` | Save Markdown as a note in your library, optionally under a project. It syncs to your signed-in Macs. Needs write access. |
+| `update_action_item` | Mark an action item done or open again, by the recording's ID and the item's `index` from `get_action_items`. Needs write access. |
+| `set_project` | File a recording, note or capture under a project, or take it out of one. Needs write access. |
+| `rename` | Give a recording, dictation, note or capture a new title. Needs write access. |
 
 Library retrieval does not guarantee exhaustive coverage. Inspect quoted passages and retain any warnings about unanswered parts or context limits. Cloud answer availability depends on the deployment and account configuration.
 
@@ -153,6 +157,24 @@ approve the app, or **Allow writes** when you make a token. Then try *"Write a
 handoff doc for this session and send it to my devices."* and open **Drop** on
 your other computer.
 
+### Let an agent change your library
+
+With write access, an agent can also keep what it writes and tidy what is
+there:
+
+- `save_note` keeps Markdown, such as a plan or a decision log, as a note.
+  Without a `title`, the first line is used. Notes are up to 1 MB and count
+  against your daily capture limit.
+- `update_action_item` ticks off an action item. It takes the recording's ID
+  and the item's `index` from `get_action_items`. Pass the item's `text` too:
+  if the list has changed since the agent read it, the call is refused rather
+  than changing the wrong item.
+- `set_project` and `rename` change a project or a title, the same as doing
+  it in the web app.
+
+None of them delete anything. Try *"Save the plan we just agreed as an
+Eavesy note in the eavesy project."*
+
 The other tools only read, and are marked read-only so a client can choose to
 run them without asking each time; whether it asks is up to the client.
 `ask_library` counts against your daily AI answer quota.
@@ -175,7 +197,8 @@ anything from disk](/docs/session-folder-format).
 
 <Callout type="note">
 Requests are rate limited per connection. A read-only connection can't create,
-edit, or delete anything in your library. It can send you messages with
+edit, or delete anything in your library, and no connection can delete
+anything from it. It can send you messages with
 `send_to_human` and `ask_human`, which show only when you've turned them on in
 the Mac app, and it can disconnect itself with `sign_out`.
 </Callout>
