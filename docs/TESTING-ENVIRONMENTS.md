@@ -96,13 +96,18 @@ notarized release candidate, instead of the debug one.
 
 Debug builds read `EAVESY_SAVE_FAULT`, a comma-separated list of points
 where saving an edited transcript stops: `crash-after-file` and
-`crash-before-commit` abort the app, `fail-commit` and
-`fail-history-restore` return an error. Launch with it, edit a HUD preview,
-relaunch without it, and compare History, `transcript.md` and the sync
-outbox. A dictation needs a transcript to edit, so point the debug build at a
-stub inside the guest:
-`open --env EAVESY_API_BASE=http://127.0.0.1:8787 --env EAVESY_DEVICE_TOKEN=test`
-with a server there answering `POST /api/transcribe` with `{"text": "…"}`.
+`crash-before-commit` abort the app, and `fail-commit` returns an error.
+`fail-history-restore` only acts during the rollback, so pair it with
+`fail-commit`. Launch with it, edit a HUD preview, relaunch without it, and
+compare History, `transcript.md` and the sync outbox. A dictation needs a
+transcript to edit, so point the debug build at a stub inside the guest
+answering `POST /api/transcribe` with `{"text": "…"}`:
+
+```bash
+desktop/scripts/vm-test.sh exec open --env EAVESY_API_BASE=http://127.0.0.1:8787 \
+  --env EAVESY_DEVICE_TOKEN=test --env EAVESY_SAVE_FAULT=fail-commit,fail-history-restore \
+  -a /Applications/Eavesy.app
+```
 
 ### What a VM can't cover
 

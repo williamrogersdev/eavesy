@@ -836,7 +836,8 @@ mod tests {
     #[test]
     fn restart_keeps_a_correction_whose_save_was_interrupted_after_the_file_landed() {
         // The process dying after transcript.md was renamed into place, before
-        // or after History took the correction, but always before COMMIT.
+        // or after History took the correction, but always before COMMIT. The
+        // rollback order itself is guarded by the double-fault test below.
         for history_saved in [false, true] {
             let root = std::env::temp_dir().join(format!("eavesy-interrupted-{}", uuid::Uuid::new_v4()));
             let (app, folder) = transcribed(&root);
@@ -875,7 +876,8 @@ mod tests {
         drop(history);
 
         let correction = "Kept although both writes failed.";
-        let error = store::save_preview_transcript(app.handle(), "meeting-1", correction).unwrap_err();
+        crate::live_edit::update("meeting-1", "Original transcript".into(), correction.into(), 1).unwrap();
+        let error = store::save_live_preview_transcript(app.handle(), "meeting-1", correction).unwrap_err();
         assert!(error.contains("stays in transcript.md"), "{error}");
         assert_eq!(std::fs::read_to_string(folder.join("transcript.md")).unwrap(), correction);
         assert_eq!(store::get(app.handle(), "meeting-1").unwrap().unwrap().transcript.as_deref(), Some(correction));
@@ -883,6 +885,9 @@ mod tests {
         sqlite::with_open(app.handle(), |conn| conn.execute_batch(
             "DROP TRIGGER fail_commit; DROP TRIGGER fail_commit_insert; DROP TABLE fault_guard; DROP TABLE fault_parent;"
         )).unwrap().unwrap();
+        // The HUD's Retry resends the same text: the kept file is ours, not a foreign edit.
+        assert!(store::save_live_preview_transcript(app.handle(), "meeting-1", correction).unwrap());
+        assert_eq!(sqlite::next_file_edit(app.handle()).unwrap().unwrap().content_md, correction);
         drop(app);
 
         let restarted = after_restart(&root);
