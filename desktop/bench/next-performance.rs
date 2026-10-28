@@ -54,100 +54,61 @@ fn main() {
     let sources: std::collections::BTreeMap<_, _> = [
         (
             "desktop/src-tauri/src/history.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/src/history.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/src/history.rs"))),
         ),
         (
             "desktop/src-tauri/src/history_search_index.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/src/history_search_index.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/src/history_search_index.rs"))),
         ),
         (
             "desktop/src-tauri/src/work_queue.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/src/work_queue.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/src/work_queue.rs"))),
         ),
         (
             "desktop/bench/next-performance.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("next-performance.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("next-performance.rs"))),
         ),
         (
             "desktop/bench/next-history-baseline.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("next-history-baseline.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("next-history-baseline.rs"))),
         ),
         (
             "desktop/bench/history-legacy.rs",
-            format!("{:x}", Sha256::digest(include_bytes!("history-legacy.rs"))),
+            hex::encode(Sha256::digest(include_bytes!("history-legacy.rs"))),
         ),
         (
             "desktop/src-tauri/Cargo.toml",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/Cargo.toml"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/Cargo.toml"))),
         ),
         (
             "desktop/src-tauri/Cargo.lock",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/Cargo.lock"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/Cargo.lock"))),
         ),
         (
             "desktop/bench/next-runner/Cargo.toml",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("next-runner/Cargo.toml"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("next-runner/Cargo.toml"))),
         ),
         (
             "desktop/bench/next-runner/Cargo.lock",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("next-runner/Cargo.lock"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("next-runner/Cargo.lock"))),
         ),
         (
             "desktop/src-tauri/src/transcribe.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/src/transcribe.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/src/transcribe.rs"))),
         ),
         (
             "desktop/src-tauri/src/history_search.rs",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../src-tauri/src/history_search.rs"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../src-tauri/src/history_search.rs"))),
         ),
         (
             "web/src/lib/launcher/data.ts",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!("../../web/src/lib/launcher/data.ts"))
-            ),
+            hex::encode(Sha256::digest(include_bytes!("../../web/src/lib/launcher/data.ts"))),
         ),
         (
             "web/src/components/launcher/use-history-page.ts",
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!(
+            hex::encode(Sha256::digest(include_bytes!(
                     "../../web/src/components/launcher/use-history-page.ts"
-                ))
-            ),
+                ))),
         ),
     ]
     .into_iter()

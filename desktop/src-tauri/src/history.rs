@@ -170,7 +170,7 @@ impl History {
         }
     }
 
-    pub fn rollback_uncommitted(&self) -> Result<(), String> {
+    pub fn rollback_uncommitted(&mut self) -> Result<(), String> {
         let reset = self.conn.progress_handler(0, None::<fn() -> bool>);
         if !self.conn.is_autocommit() {
             self.conn.execute_batch("ROLLBACK").map_err(error)?;
@@ -204,7 +204,7 @@ impl History {
     }
 
     pub fn page_while(
-        &self,
+        &mut self,
         offset: usize,
         limit: usize,
         query: &str,
@@ -956,7 +956,7 @@ mod tests {
         for i in 0..20 {
             history.put(&row(&i.to_string())).unwrap();
         }
-        let reader = History::read_only(&fixture.root.join("history.sqlite3")).unwrap();
+        let mut reader = History::read_only(&fixture.root.join("history.sqlite3")).unwrap();
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let check = calls.clone();
         let result = reader.page_while(0, 50, "x", "all", move || {
