@@ -1,9 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Link } from '@/components/ui/app-link';
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Loader2, Search } from 'lucide-react';
+import { AudioLines, Check, Copy, Layers, Loader2, Search, Users, type LucideIcon } from 'lucide-react';
+import { Chip } from '@/components/launcher/ui';
 import { AppAlert, AppEmptyState, AppPage, AppPageHeader, appButton } from '@/components/ui/app-page';
 import { isRecord } from '@/lib/json';
+import { narrowByKind, type KindFilter } from '@/lib/search/kind-filter';
 
 export const Route = createFileRoute('/app/search')({
   component: SearchPage,
@@ -17,6 +19,7 @@ function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [kind, setKind] = useState<KindFilter>('all');
 
   const runQuery = useCallback(async (query: string) => {
     const normalized = query.trim();
@@ -27,6 +30,7 @@ function SearchPage() {
     }
     setLoading(true);
     setHasSearched(true);
+    setKind('all');
     setError(null);
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(normalized)}`);
@@ -47,6 +51,8 @@ function SearchPage() {
     }, 0);
     return () => window.clearTimeout(t);
   }, [runQuery]);
+
+  const { counts, mixed, shown } = narrowByKind(items, kind);
 
   const run = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,6 +83,16 @@ function SearchPage() {
         ) : null}
       </form>
 
+      {mixed ? (
+        <div role="group" aria-label="Show" className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          {KIND_FILTERS.map((f) => (
+            <Chip key={f.value} icon={f.icon} selected={kind === f.value} count={counts[f.value]} onClick={() => setKind(f.value)}>
+              {f.label}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
+
       {error ? <AppAlert>{error}</AppAlert> : null}
 
       {!loading && hasSearched && !error && items.length === 0 ? (
@@ -88,7 +104,7 @@ function SearchPage() {
       ) : null}
 
       <ul aria-live="polite" className="flex flex-col divide-y divide-ev-line">
-        {items.map((item, i) => (
+        {shown.map((item, i) => (
           <li key={item.kind === 'meeting' ? item.meeting.id : item.dictation?.id ?? `dictation-${i}`}>
             {item.kind === 'meeting' ? (
               <Link
@@ -114,6 +130,12 @@ function SearchPage() {
     </AppPage>
   );
 }
+
+const KIND_FILTERS: { value: KindFilter; label: string; icon: LucideIcon }[] = [
+  { value: 'all', label: 'All', icon: Layers },
+  { value: 'meeting', label: 'Meetings', icon: Users },
+  { value: 'dictation', label: 'Voice notes', icon: AudioLines },
+];
 
 interface SearchMeeting {
   kind: 'meeting';
