@@ -92,6 +92,18 @@ SIP is off in Cirrus Labs images. It never touches the host.
 `EAVESY_APP=/path/to/Eavesy.app` installs a different build, such as a
 notarized release candidate, instead of the debug one.
 
+### Breaking a transcript save on purpose
+
+Debug builds read `EAVESY_SAVE_FAULT`, a comma-separated list of points
+where saving an edited transcript stops: `crash-after-file` and
+`crash-before-commit` abort the app, `fail-commit` and
+`fail-history-restore` return an error. Launch with it, edit a HUD preview,
+relaunch without it, and compare History, `transcript.md` and the sync
+outbox. A dictation needs a transcript to edit, so point the debug build at a
+stub inside the guest:
+`open --env EAVESY_API_BASE=http://127.0.0.1:8787 --env EAVESY_DEVICE_TOKEN=test`
+with a server there answering `POST /api/transcribe` with `{"text": "…"}`.
+
 ### What a VM can't cover
 
 - **On-device speech.** The VM reports the speech model as unsupported, so

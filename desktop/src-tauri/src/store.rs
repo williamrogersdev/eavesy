@@ -389,11 +389,24 @@ fn save_transcript<R: Runtime>(
             )?;
         }
         crate::fs_writer::atomic_write(&path, content.as_bytes())?;
+        save_fault("crash-after-file")?;
         history.put(&recording)?;
+        save_fault("crash-before-commit")?;
+        save_fault("fail-commit")?;
         tx.commit().map_err(|error| error.to_string())
     })
     .and_then(|result| result);
     if let Err(error) = saved {
+        // History first: if it keeps the correction, so must transcript.md, which
+        // startup then takes as an edit. Restoring only the file would leave
+        // History showing words that neither the folder nor the cloud has.
+        let restore_history =
+            save_fault("fail-history-restore").and_then(|()| history.put(&previous));
+        if let Err(rollback) = restore_history {
+            return Err(format!(
+                "{error}; restore failed, the correction stays in transcript.md: {rollback}"
+            ));
+        }
         let restore = if let Some(bytes) = old_file {
             crate::fs_writer::atomic_write(&path, &bytes)
         } else if path.exists() {
@@ -406,15 +419,27 @@ fn save_transcript<R: Runtime>(
         } else {
             Ok(())
         };
-        let restore_history = history.put(&previous);
         restore
             .and(restore_raw)
-            .and(restore_history)
             .map_err(|rollback| format!("{error}; restore failed: {rollback}"))?;
         return Err(error);
     }
     if live { crate::live_edit::mark_saved(id, content); }
     Ok(true)
+}
+
+/// Debug builds stop a save at each point `EAVESY_SAVE_FAULT` lists (comma
+/// separated), so the installed app's recovery can be tested (`crash-*` aborts the process).
+fn save_fault(point: &str) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    if std::env::var("EAVESY_SAVE_FAULT").is_ok_and(|faults| faults.split(',').any(|fault| fault == point)) {
+        if point.starts_with("crash-") {
+            std::process::abort();
+        }
+        return Err(format!("injected {point}"));
+    }
+    let _ = point;
+    Ok(())
 }
 
 pub fn apply_external_edit<R: Runtime>(
