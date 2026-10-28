@@ -676,6 +676,14 @@ describe('MCP write tools', () => {
     JSON.parse((await rpc(token, name, args)).result?.content?.[0]?.text ?? 'null');
   const error = async (token: string, name: string, args: Record<string, unknown>) => (await rpc(token, name, args)).error?.message;
   const row = (sql: string, ...values: unknown[]) => testEnv.DB.prepare(sql).bind(...values).first();
+  /** The rebuild is queued after the response, so the stale copy goes a moment later. */
+  const staleCopyDropped = async () => {
+    for (let i = 0; i < 50; i++) {
+      if ((await row(`SELECT agent_transcript_md AS md FROM meetings WHERE id = 'meet_one'`))?.md === null) return true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return false;
+  };
 
   beforeEach(async () => {
     const now = Date.now();
@@ -685,9 +693,9 @@ describe('MCP write tools', () => {
         `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at) VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
       ).bind(now, now),
       testEnv.DB.prepare(
-        `INSERT INTO meetings (id, user_id, title, started_at, source, status, created_at, updated_at)
-         VALUES ('meet_one', 'user_mcp', 'Standup', ?, 'desktop', 'complete', ?, ?),
-                ('meet_theirs', 'user_other', 'Theirs', ?, 'desktop', 'complete', ?, ?)`,
+        `INSERT INTO meetings (id, user_id, title, started_at, source, status, agent_transcript_md, created_at, updated_at)
+         VALUES ('meet_one', 'user_mcp', 'Standup', ?, 'desktop', 'complete', '<transcript title="Standup">', ?, ?),
+                ('meet_theirs', 'user_other', 'Theirs', ?, 'desktop', 'complete', NULL, ?, ?)`,
       ).bind(T0, T0, T0, T0, T0, T0),
       testEnv.DB.prepare(
         `INSERT INTO summaries (id, meeting_id, tldr, action_items_json, generated_by_model, generated_at)
@@ -756,6 +764,12 @@ describe('MCP write tools', () => {
     expect(await error(token, 'save_note', { text: 'hi', title: 'x'.repeat(201) })).toBe('title must be at most 200 characters');
     expect(await row(`SELECT count(*) AS n FROM captures WHERE kind = 'note'`)).toEqual({ n: 0 });
     expect(await row(`SELECT count(*) AS n FROM rate_limits WHERE key LIKE 'budget:user:capture:%'`)).toEqual({ n: 0 });
+
+    const day = Math.floor(Date.now() / 86_400_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 300, ?)')
+      .bind(`budget:user:capture:user_mcp:${day}`, (day + 1) * 86_400_000).run();
+    expect(await error(token, 'save_note', { text: 'one more' })).toContain('today’s limit');
+    expect(await row(`SELECT count(*) AS n FROM captures WHERE kind = 'note'`)).toEqual({ n: 0 });
   });
 
   it('mark an action item done by the index get_action_items gives, and refuse a stale one', async () => {
@@ -777,6 +791,12 @@ describe('MCP write tools', () => {
       { text: 'Email Ada', owner: 'Will', completed: true },
     ]);
     expect(stored.user_edited_at).toBeGreaterThan(0);
+
+    // Already open: nothing is written, so the brief isn't marked as edited.
+    await testEnv.DB.prepare(`UPDATE summaries SET user_edited_at = NULL WHERE id = 'sum_one'`).run();
+    expect((await call(token, 'update_action_item', { meeting_id: 'meet_one', index: 0, completed: false })).completed).toBe(false);
+    expect(await row(`SELECT user_edited_at FROM summaries WHERE id = 'sum_one'`)).toEqual({ user_edited_at: null });
+    await testEnv.DB.prepare(`UPDATE summaries SET user_edited_at = 1 WHERE id = 'sum_one'`).run();
     expect((await call(token, 'get_action_items', { status: 'completed' })).map((item: { index: number }) => item.index)).toEqual([2]);
 
     expect(await error(token, 'update_action_item', { meeting_id: 'meet_one', index: 0, completed: true, text: 'Ship the boat' }))
@@ -793,6 +813,8 @@ describe('MCP write tools', () => {
     const { token } = await mint(['write']);
     expect(await call(token, 'set_project', { id: 'meet_one', project: 'eavesy' })).toEqual({ id: 'meet_one', kind: 'meeting', project: 'Eavesy' });
     expect(await row(`SELECT folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ folder_id: 'p1' });
+    // The cleaned transcript names the project, so it is rebuilt.
+    expect(await staleCopyDropped()).toBe(true);
     expect(await call(token, 'set_project', { id: 'cap_shot', project: 'Eavesy' })).toEqual({ id: 'cap_shot', kind: 'image', project: 'Eavesy' });
     expect(await call(token, 'set_project', { id: 'meet_one', project: null })).toEqual({ id: 'meet_one', kind: 'meeting', project: null });
     expect(await row(`SELECT folder_id FROM meetings WHERE id = 'meet_one'`)).toEqual({ folder_id: null });
@@ -807,6 +829,7 @@ describe('MCP write tools', () => {
   it('rename a recording, dictation or capture, and nothing of anyone else’s', async () => {
     const { token } = await mint(['write']);
     expect(await call(token, 'rename', { id: 'meet_one', title: 'Daily  standup' })).toEqual({ id: 'meet_one', kind: 'meeting', title: 'Daily standup' });
+    expect(await staleCopyDropped()).toBe(true);
     expect(await call(token, 'rename', { id: 'dict_one', title: 'Ship note' })).toEqual({ id: 'dict_one', kind: 'dictation', title: 'Ship note' });
     expect(await call(token, 'rename', { id: 'cap_shot', title: 'Pricing page' })).toEqual({ id: 'cap_shot', kind: 'image', title: 'Pricing page' });
     expect(await row(`SELECT title FROM captures WHERE id = 'cap_shot'`)).toEqual({ title: 'Pricing page' });

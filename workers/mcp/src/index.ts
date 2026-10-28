@@ -969,6 +969,9 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         throw new UserFacingError(`action item ${index} reads "${stringArg(item.text)}" now. Read the list again before changing it.`);
       }
       const updated = { ...item, completed: args.completed };
+      const [result] = parseActionItems(JSON.stringify([updated]));
+      // Already so: nothing to write, and the brief isn't marked as edited by the user.
+      if ((item.completed === true) === args.completed) return { meeting_id: meetingId, ...result, index };
       const next = items.map((entry, i) => (i === index ? updated : entry));
       // Only over the list just read, so an edit made in between is never written over.
       const written = await db
@@ -977,7 +980,6 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         .where(and(eq(schema.summaries.id, row.id), eq(schema.summaries.actionItemsJson, row.actionItemsJson)))
         .returning({ id: schema.summaries.id });
       if (!written.length) throw new UserFacingError('the action items changed while updating. Read the list again and retry.');
-      const [result] = parseActionItems(JSON.stringify([updated]));
       return { meeting_id: meetingId, ...result, index };
     }
     case 'set_project': {
@@ -1025,7 +1027,10 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
             .set({ title, updatedAt: now })
             .where(and(eq(schema.meetings.id, id), eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
             .returning({ id: schema.meetings.id });
-          if (renamed.length) return { id, kind: 'meeting', title };
+          if (!renamed.length) continue;
+          // The cleaned transcript names the title, as after a rename in the web app.
+          refreshAgentTranscriptLater(id, userId, { embed: false });
+          return { id, kind: 'meeting', title };
         } else if (kind === 'dictation') {
           const renamed = await db
             .update(schema.dictations)
