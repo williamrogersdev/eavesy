@@ -49,6 +49,10 @@ pub struct HookMessage {
     /// The desktop app's own id for the session, when it runs there.
     #[serde(default)]
     pub host_session_id: Option<String>,
+    /// The app the session runs in (its bundle id, from `__CFBundleIdentifier`
+    /// or `TERM_PROGRAM`), so the card can name it and bring it to the front.
+    #[serde(default)]
+    pub host_app: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
