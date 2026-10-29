@@ -40,8 +40,10 @@ export function useAgentFeedback(enabled: boolean) {
       // Only these come back, onto the list as it is now: other changes meanwhile stay.
       setItems((list) => [...removed.filter((item) => !list.some((other) => other.id === item.id)), ...list].sort((a, b) => b.createdAt - a.createdAt));
       setError(errMsg(e, 'Couldn’t dismiss that.'));
+      // The server has the last word on what is still open.
+      reload();
     }
-  }, [items, drop]);
+  }, [items, drop, reload]);
 
   return { items, error, setError, dismiss, drop, reload };
 }

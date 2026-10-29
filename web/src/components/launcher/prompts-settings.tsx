@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowLeft, ChevronRight, MessageSquarePlus, MessageSquareText, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { STARTER_PROMPTS, type PromptSuggestion } from '@/lib/prompt-starters';
 import { claudeCodeCommand, DETAILS_SLOT, freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
 import { flaggedLabel, ItemFeedbackCard, PromptFeedbackCard } from './prompt-feedback';
@@ -29,12 +29,17 @@ function PromptPage({ prompt, initial, state, feedback, onBack }: {
   const [body, setBody] = useState(prompt?.body ?? initial?.body ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // A saved prompt follows edits landing from elsewhere; a new one keeps what's typed.
+  // A saved prompt follows edits landing from elsewhere (another Mac, an applied
+  // rewrite), but only into a field that still reads what was saved: text being
+  // typed is never replaced. A new one keeps what's typed.
   const savedName = prompt?.name;
   const savedBody = prompt?.body;
+  const lastSaved = useRef({ name: savedName, body: savedBody });
   useEffect(() => {
-    if (savedName !== undefined) setName(savedName);
-    if (savedBody !== undefined) setBody(savedBody);
+    const before = lastSaved.current;
+    lastSaved.current = { name: savedName, body: savedBody };
+    if (savedName !== undefined) setName((typed) => (typed.trim() === (before.name ?? '').trim() ? savedName : typed));
+    if (savedBody !== undefined) setBody((typed) => (typed === before.body ? savedBody : typed));
   }, [prompt?.id, savedName, savedBody]);
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;

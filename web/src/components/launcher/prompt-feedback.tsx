@@ -17,6 +17,11 @@ export function flaggedLabel(items: readonly AgentFeedback[]): string {
   return agents === 1 ? '1 agent flagged this' : `${agents} agents flagged this`;
 }
 
+/** Whether a report was made against an earlier version of the prompt than the one saved now. */
+function olderThan(item: AgentFeedback, prompt: SavedPrompt): boolean {
+  return item.targetVersion !== null && item.targetVersion < prompt.updatedAt;
+}
+
 /** A rewrite shown against the text it was made from, before anything is written. */
 interface Preview { body: string; basedOn: string; ids: string[]; summary: string | null; older: boolean }
 
@@ -33,7 +38,7 @@ function Diff({ before, after }: { before: string; after: string }) {
 
 /** One agent's report: what it is, who sent it, the words and why. Agent text is only ever shown as text. */
 function Report({ item, prompt }: { item: AgentFeedback; prompt?: SavedPrompt }) {
-  const older = prompt && item.targetVersion !== null && item.targetVersion < prompt.updatedAt;
+  const older = prompt && olderThan(item, prompt);
   return (
     <span className="min-w-0 flex-1">
       <span className="ev-set-hint block">
@@ -74,7 +79,8 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
     setError(null);
     try {
       const result = await mergeAgentFeedback(prompt.id, items.map((item) => item.id));
-      setPreview({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null, older: false });
+      const merged = items.filter((item) => result.ids.includes(item.id));
+      setPreview({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null, older: merged.some((item) => olderThan(item, prompt)) });
     } catch (e) { setError(errMsg(e, 'Couldn’t write a rewrite right now.')); }
     setMerging(false);
   };
@@ -138,7 +144,7 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
                 basedOn: prompt.body,
                 ids: [item.id],
                 summary: null,
-                older: item.targetVersion !== null && item.targetVersion < prompt.updatedAt,
+                older: olderThan(item, prompt),
               })}>
                 Preview
               </Button>

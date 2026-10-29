@@ -94,7 +94,11 @@ export async function handleMerge(request: Request, client: () => MergeClient = 
   if (quota) return quota;
   // An unreachable budget counter fails closed: give the quota back and say so, rather than a bare 500.
   const spend = await guardSpend(request, 'prompt-feedback-merge', { perMin: 20, perDay: 2_000 })
-    .catch(() => json({ error: 'Couldn’t merge the suggestions right now.' }, 503));
+    .catch((error: unknown) => {
+      // Metadata only: no prompt or report text.
+      console.error(JSON.stringify({ message: 'prompt feedback merge spend check failed', error: error instanceof Error ? error.message : 'unknown error' }));
+      return json({ error: 'Couldn’t merge the suggestions right now.' }, 503);
+    });
   if (spend) { await refund(); return spend; }
   try {
     const result = await mergeFeedback(client(), prompt.body, items);
