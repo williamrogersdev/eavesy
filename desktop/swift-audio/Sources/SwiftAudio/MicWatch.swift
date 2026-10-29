@@ -28,9 +28,11 @@ enum MicWatch {
         }
         timer.resume()
         // The app closes our stdin when it quits or no longer wants reports.
+        // Reading to the end blocks until then; the exit runs on the main queue,
+        // between reports.
         DispatchQueue.global().async {
-            while FileHandle.standardInput.availableData.count > 0 {}
-            exit(0)
+            _ = FileHandle.standardInput.readDataToEndOfFile()
+            DispatchQueue.main.async { exit(0) }
         }
         RunLoop.main.run()
         exit(0)

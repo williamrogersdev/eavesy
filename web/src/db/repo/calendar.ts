@@ -82,9 +82,10 @@ export async function deleteConnection(db: AppDb, userId: string, id: string): P
 
 /**
  * Makes the stored events between `from` and `to` match `events`: new ones are
- * added and changed ones updated (the update leaves `autoRecord`, the
- * record choice and the recorded meeting alone). With `complete`, ones that went away are dropped
- * unless a recording points at them; a truncated listing deletes nothing.
+ * added and changed ones updated (the update leaves `autoRecord`, the record
+ * choice and the recorded meeting alone). With `complete`, ones that went away
+ * are dropped unless a recording points at them; a truncated listing deletes
+ * nothing.
  */
 export async function replaceEvents(
   db: AppDb,

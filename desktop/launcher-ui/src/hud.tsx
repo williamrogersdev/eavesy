@@ -1351,7 +1351,7 @@ function Hud() {
     top = (
       <>
         {mark}
-        <span className="ctl-say" role="status">{left === null ? 'Record this call?' : `Recording in ${left}s`}</span>
+        <span className="ctl-say" role="status">{left === null ? 'Record this call?' : left === 0 ? 'Recording now' : `Recording in ${left}s`}</span>
         <span className="ctl-fill" />
         <button type="button" className="ctl-btn" onClick={() => answer(false)}>Don’t record</button>
         <button type="button" className="ctl-btn ctl-primary" onClick={() => answer(true)}>{left === null ? 'Record' : 'Record now'}</button>

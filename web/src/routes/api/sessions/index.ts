@@ -6,6 +6,7 @@ import { type AppDb, getDb } from '@/db/client';
 import { devices, meetings, summaries, userNotes } from '@/db/schema';
 import * as calendarRepo from '@/db/repo/calendar';
 import * as meetingsRepo from '@/db/repo/meetings';
+import { reportError } from '@/server/observability';
 import { EARLY_JOIN_MS, eventBrief, eventTitle, matchEvent } from '@/lib/calendar/match';
 import { SYNC_BEHIND_MS } from '@/server/calendar-sync';
 import * as projectsRepo from '@/db/repo/projects';
@@ -162,7 +163,7 @@ export const Route = createFileRoute('/api/sessions/')({
         // Linking is a nicety: a calendar lookup that fails never fails the recording.
         const event = parsed.data.kind === 'meeting'
           ? await calendarEventFor(db, actor.userId, parsed.data.startedAt).catch((error: unknown) => {
-            console.error('[sessions] calendar match', error);
+            reportError('[sessions] calendar match', error, { userId: actor.userId });
             return null;
           })
           : null;
