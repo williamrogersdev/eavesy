@@ -13,6 +13,9 @@ pub struct PendingSession {
     pub archive_path: PathBuf,
     pub title: String,
     pub context_blurb: Option<String>,
+    /// `mixed` (mic and call audio) for a Meeting recording, `mic` for a memo or dictation.
+    pub source: String,
+    pub started_at: i64,
     pub project_id: Option<String>,
     pub status: String,
     pub next_part_number: i64,
@@ -230,7 +233,7 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
         .query_row(
             "SELECT id, remote_meeting_id, archive_path, title, context_blurb,
                     status, next_part_number, next_archive_offset, ended_at, archive_missing, project_id,
-                    discarded
+                    discarded, source, started_at
              FROM recording_sessions
              WHERE (discarded=1 OR status IN ('recording','uploading','finalizing','processing'))
                AND next_attempt_at <= ?1
@@ -264,6 +267,8 @@ pub(super) fn next_session_on(conn: &Connection, now: i64) -> Result<Option<Pend
                     archive_missing: row.get(9)?,
                     project_id: row.get(10)?,
                     discarded: row.get(11)?,
+                    source: row.get(12)?,
+                    started_at: row.get(13)?,
                 })
             },
         )

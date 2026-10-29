@@ -1,6 +1,6 @@
-import { and, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { encode } from '../codec';
+import { decode, encode } from '../codec';
 import { pid } from '../ids';
 import { calendarConnections, calendarEvents } from '../schema';
 import type { CalendarEventInput } from '@/server/google-calendar';
@@ -137,4 +137,49 @@ export async function countUpcoming(db: AppDb, connectionId: string, from: numbe
     .from(calendarEvents)
     .where(and(eq(calendarEvents.connectionId, connectionId), gte(calendarEvents.startsAt, from), lte(calendarEvents.startsAt, to)));
   return rows.length;
+}
+
+export type StoredEvent = {
+  id: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  meetingUrl: string | null;
+  platform: string | null;
+  participants: { email: string; name: string | null }[];
+  recordedMeetingId: string | null;
+};
+
+/** The user's events under way or starting between `from` and `to` (ones begun over a day before `from` are left out). */
+export async function eventsAround(db: AppDb, userId: string, from: number, to: number): Promise<StoredEvent[]> {
+  const rows = await db
+    .select()
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.userId, userId),
+        gte(calendarEvents.startsAt, from - 24 * 60 * 60 * 1000),
+        lte(calendarEvents.startsAt, to),
+        gt(calendarEvents.endsAt, from),
+      ),
+    )
+    .orderBy(asc(calendarEvents.startsAt));
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    meetingUrl: row.meetingUrl,
+    platform: row.platform,
+    participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
+    recordedMeetingId: row.recordedMeetingId,
+  }));
+}
+
+/** Points the event at its recording, unless an earlier recording of it already claimed it. */
+export async function markRecorded(db: AppDb, userId: string, eventId: string, meetingId: string): Promise<void> {
+  await db
+    .update(calendarEvents)
+    .set({ recordedMeetingId: meetingId })
+    .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId), isNull(calendarEvents.recordedMeetingId)));
 }
