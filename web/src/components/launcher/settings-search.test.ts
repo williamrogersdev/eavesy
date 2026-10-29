@@ -11,6 +11,15 @@ describe('settingsMatch', () => {
     expect(settingsMatch('mcp', shortcuts)).toBe(false);
   });
 
+  test('agent notifications have their own page, not Connections', () => {
+    const agents = { id: 'agents' as const, label: 'Agent notifications', hint: 'What your Claude Code sessions and other agents tell you.' };
+    expect(settingsMatch('notifications', agents)).toBe(true);
+    expect(settingsMatch('session finishes', agents)).toBe(true);
+    expect(settingsMatch('send_to_human', agents)).toBe(true);
+    expect(settingsMatch('notifications', connections)).toBe(false);
+    expect(settingsMatch('session finishes', connections)).toBe(false);
+  });
+
   test('matches the start of a word, not the middle', () => {
     expect(settingsMatch('hot', shortcuts)).toBe(true);
     expect(settingsMatch('otkey', shortcuts)).toBe(false);

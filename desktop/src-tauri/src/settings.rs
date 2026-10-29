@@ -115,6 +115,10 @@ pub struct Settings {
     /// unless turned on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_messages: Option<bool>,
+    /// Eavesy also says when a Claude Code session finishes without needing
+    /// you; otherwise it only shows on the card (off unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_speak_finished: Option<bool>,
     /// How Eavesy talks (assistant.md G4). Unset is the default style; a value this
     /// build can't read is too, rather than costing every other setting.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
@@ -172,6 +176,10 @@ impl Settings {
 
     pub fn agent_messages(&self) -> bool {
         self.agent_messages.unwrap_or(false)
+    }
+
+    pub fn agent_speak_finished(&self) -> bool {
+        self.agent_speak_finished.unwrap_or(false)
     }
 
     pub fn agent_hold_secs(&self) -> u32 {
@@ -248,6 +256,7 @@ impl Default for Settings {
             agent_voice: None,
             agent_hold_secs: None,
             agent_messages: None,
+            agent_speak_finished: None,
             assistant_style: None,
             assistant_voice: None,
             assistant_voice_rate: None,
