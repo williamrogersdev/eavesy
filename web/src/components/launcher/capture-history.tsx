@@ -46,10 +46,6 @@ import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-c
 import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
 import type { AskCapture } from './eavesy-model';
-
-/** Attach a capture to the next question (or take it off): `load` reads its whole text. */
-export type AskAbout = (id: string, load: () => Promise<AskCapture>) => void;
-const NO_IDS: ReadonlySet<string> = new Set();
 import {
   askLabel,
   clock,
@@ -66,6 +62,10 @@ import {
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
 import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
+
+/** Attach a capture to the next question (or take it off): `load` reads its whole text. */
+export type AskAbout = (id: string, load: () => Promise<AskCapture>) => void;
+const NO_IDS: ReadonlySet<string> = new Set();
 
 const ICON: Record<Recording['source'], LucideIcon> = {
   mic: AudioLines,

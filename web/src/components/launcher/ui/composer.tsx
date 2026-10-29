@@ -184,13 +184,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!onAsk || !text || askBlocked) return;
     const sentDraft = draft;
     const sentPasted = pasted;
+    const sentPastedIn = pastedIn;
     setDraft('');
     setPasted(null);
     onAsk(text).catch(() => {
-      setDraft((current) => current || sentDraft);
+      // Put the words back ahead of anything typed meanwhile, and keep how Return routes them.
+      setDraft((current) => (current && sentDraft ? `${sentDraft}\n${current}` : current || sentDraft));
       setPasted((current) => current ?? sentPasted);
+      if (sentPastedIn) setPastedIn(true);
     });
-  }, [onAsk, text, askBlocked, draft, pasted]);
+  }, [onAsk, text, askBlocked, draft, pasted, pastedIn]);
 
   const goes = onAsk ? enterGoes({ pastedIn: pastedIn || pasted !== null, askAlways }) : 'save';
   const onEnter = goes === 'ask' ? ask : () => void save();

@@ -144,15 +144,22 @@ export function DesktopPanel() {
 
   const ask = useCallback(async (text: string) => {
     const sending = attachedRef.current;
+    const message = askMessage(text, sending);
+    if (!message.fits) {
+      const reason = sending.length ? 'That question is too long to send with captures. Shorten it, or take one off.' : 'That’s too long to send to Eavesy in one go.';
+      flash(reason, 5000, 'warn');
+      throw new Error(reason);
+    }
     setAttached([]);
     setConversation(true);
     try {
-      await eavesy.send(askMessage(text, sending).text);
+      await eavesy.send(message.text);
     } catch (error) {
-      setAttached((current) => (current.length ? current : sending));
+      // Put them back beside anything attached while it was sending.
+      setAttached((current) => [...sending, ...current.filter((c) => !sending.some((s) => s.id === c.id))].slice(0, ASK_CAPTURES));
       throw error;
     }
-  }, [eavesy]);
+  }, [eavesy, flash]);
 
   const refreshSetup = useCallback(async (chooseView = false) => {
     try {

@@ -101,6 +101,11 @@ export interface AskCapture {
 export const ASK_LIMIT = 3_900;
 /** How many captures one question can carry. */
 export const ASK_CAPTURES = 3;
+/**
+ * Room kept for your question when captures go with it, so the chip's "trimmed"
+ * (worked out before you type) holds for any question up to this long.
+ */
+export const ASK_QUESTION_ROOM = 600;
 /** Where your question ends and the captures you attached begin. */
 const ABOUT_HEAD = '\n\nCaptures I’m asking about:';
 
@@ -113,13 +118,17 @@ function oneBlock(text: string): string {
  * What is sent when you ask with captures attached: your question, then each
  * capture's label and words. Words are cut to fit `limit`, shortest first, so a
  * short note keeps all its words beside a long meeting. `trimmed` lists the ids
- * of the captures that were cut.
+ * of the captures that were cut. `fits` is false when the question itself
+ * leaves no room for them: that message can't be sent.
  */
-export function askMessage(question: string, captures: readonly AskCapture[], limit = ASK_LIMIT): { text: string; trimmed: string[] } {
+export function askMessage(question: string, captures: readonly AskCapture[], limit = ASK_LIMIT): { text: string; trimmed: string[]; fits: boolean } {
   const asked = question.trim();
-  if (!captures.length) return { text: asked, trimmed: [] };
+  if (!captures.length) return { text: asked, trimmed: [], fits: asked.length <= limit };
   const heads = captures.map((capture) => `\n\n[${capture.label.replace(/[[\]\n]/g, ' ')}]\n`);
-  let room = limit - asked.length - ABOUT_HEAD.length - heads.reduce((sum, head) => sum + head.length, 0);
+  const fixed = ABOUT_HEAD.length + heads.reduce((sum, head) => sum + head.length, 0);
+  // Each capture needs at least its '…'.
+  const fits = asked.length + fixed + captures.length <= limit;
+  let room = Math.max(0, limit - fixed - Math.max(asked.length, Math.min(ASK_QUESTION_ROOM, limit - fixed)));
   const words = captures.map((capture) => oneBlock(capture.text));
   const kept: string[] = new Array<string>(captures.length).fill('');
   const trimmed: string[] = [];
@@ -134,7 +143,7 @@ export function askMessage(question: string, captures: readonly AskCapture[], li
     }
     room -= kept[index].length;
   });
-  return { text: asked + ABOUT_HEAD + heads.map((head, i) => head + kept[i]).join(''), trimmed };
+  return { text: asked + ABOUT_HEAD + heads.map((head, i) => head + kept[i]).join(''), trimmed, fits };
 }
 
 /** One of your turns split back into what you asked and the labels of the captures you attached. */

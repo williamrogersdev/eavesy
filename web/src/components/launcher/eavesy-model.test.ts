@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantCard } from '@/lib/desktop/bridge';
-import { ASK_LIMIT, acceptLabel, activityLine, askMessage, modeIsLoud, modeLabel, peekLine, ruleChangeLine, rulesWaitingLine, secondsLeft, sortVoices, splitAsk, toolLabel, waitingLabel } from './eavesy-model';
+import { ASK_LIMIT, ASK_QUESTION_ROOM, acceptLabel, activityLine, askMessage, modeIsLoud, modeLabel, peekLine, ruleChangeLine, rulesWaitingLine, secondsLeft, sortVoices, splitAsk, toolLabel, waitingLabel } from './eavesy-model';
 
 const card = (rows: string[]): AssistantCard => ({
   id: 'c', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees', warning: null, expires_ms: 60_000,
@@ -64,7 +64,7 @@ describe('asking about captures', () => {
   const meeting = { id: 'm', label: 'Meeting · Yesterday 3:10 PM', text: 'We agreed it ships first.\n\n\nSam checks drag and drop.' };
 
   test('a question alone is sent as typed', () => {
-    expect(askMessage('  what did I promise?  ', [])).toEqual({ text: 'what did I promise?', trimmed: [] });
+    expect(askMessage('  what did I promise?  ', [])).toEqual({ text: 'what did I promise?', trimmed: [], fits: true });
   });
 
   test('attached captures follow the question with their labels and words, and split back for the thread', () => {
@@ -89,6 +89,23 @@ describe('asking about captures', () => {
     const many = askMessage('q'.repeat(500), [long, long, long].map((c, i) => ({ ...c, id: `${i}` })));
     expect(many.text.length).toBeLessThanOrEqual(ASK_LIMIT);
     expect(many.trimmed).toHaveLength(3);
+  });
+
+  test('what the chip says is trimmed holds for any question up to the room kept for it', () => {
+    const tight = { id: 't', label: 'Note · 9:41 AM', text: 'x'.repeat(ASK_LIMIT - 400) };
+    const before = askMessage('', [tight]).trimmed;
+    expect(askMessage('q'.repeat(ASK_QUESTION_ROOM), [tight]).trimmed).toEqual(before);
+    expect(askMessage('q'.repeat(ASK_QUESTION_ROOM), [tight]).text.length).toBeLessThanOrEqual(ASK_LIMIT);
+  });
+
+  test('a question too long to carry its captures does not fit, and is never sent cut', () => {
+    const huge = askMessage('q'.repeat(ASK_LIMIT), [note, meeting]);
+    expect(huge.fits).toBe(false);
+    expect(huge.text.startsWith('q'.repeat(ASK_LIMIT))).toBe(true);
+    expect(askMessage('q'.repeat(ASK_LIMIT + 1), []).fits).toBe(false);
+    const nearly = askMessage('q'.repeat(3_500), [note, meeting]);
+    expect(nearly.fits).toBe(true);
+    expect(nearly.text.length).toBeLessThanOrEqual(ASK_LIMIT);
   });
 
   test('the peek shows the last thing Eavesy said and what waits', () => {
