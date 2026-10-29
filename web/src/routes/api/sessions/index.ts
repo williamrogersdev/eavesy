@@ -7,6 +7,7 @@ import { devices, meetings, summaries, userNotes } from '@/db/schema';
 import * as calendarRepo from '@/db/repo/calendar';
 import * as meetingsRepo from '@/db/repo/meetings';
 import { EARLY_JOIN_MS, eventBrief, matchEvent } from '@/lib/calendar/match';
+import { SYNC_BEHIND_MS } from '@/server/calendar-sync';
 import * as projectsRepo from '@/db/repo/projects';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -46,8 +47,13 @@ const createSessionSchema = z.object({
 
 /** The Mac's title for a Meeting recording it has not named, which a calendar event's title replaces. */
 const UNNAMED_MEETING_TITLE = 'Meeting recording';
-/** How far back a client's `startedAt` is believed: further, and the event lookup uses now. */
-const STARTED_AT_TRUST_MS = 2 * 24 * 60 * 60 * 1000;
+/**
+ * How far back a client's `startedAt` is believed. Events are kept from a day
+ * back (SYNC_BEHIND_MS), so an older recording could only meet stale rows.
+ */
+const STARTED_AT_TRUST_MS = SYNC_BEHIND_MS;
+/** The user's brief (up to 4,000 characters) plus the event's. */
+const MAX_BRIEF = 6_000;
 
 export const Route = createFileRoute('/api/sessions/')({
   server: {
@@ -130,7 +136,7 @@ export const Route = createFileRoute('/api/sessions/')({
         const db = getDb();
         const existing = (
           await db
-            .select({ id: meetings.id, status: meetings.status })
+            .select({ id: meetings.id, status: meetings.status, calendarEventId: meetings.calendarEventId })
             .from(meetings)
             .where(
               and(
@@ -141,6 +147,8 @@ export const Route = createFileRoute('/api/sessions/')({
             .limit(1)
         )[0];
         if (existing) {
+          // A retry after the claim below failed: make it now.
+          if (existing.calendarEventId) await calendarRepo.markRecorded(db, actor.userId, existing.calendarEventId, existing.id);
           return Response.json({
             meetingId: existing.id,
             nextSegmentIdx: 0,
@@ -158,9 +166,9 @@ export const Route = createFileRoute('/api/sessions/')({
         const meetingId = await meetingsRepo.start(db, {
           userId: actor.userId,
           source: actor.deviceId ? 'desktop' : 'web',
-          title: event && !named ? event.title : parsed.data.title,
+          title: event && !named ? event.title.slice(0, 200) : parsed.data.title,
           language: parsed.data.language,
-          contextBlurb: event ? [parsed.data.contextBlurb, eventBrief(event)].filter(Boolean).join('\n\n') : parsed.data.contextBlurb,
+          contextBlurb: event ? [parsed.data.contextBlurb, eventBrief(event)].filter(Boolean).join('\n\n').slice(0, MAX_BRIEF) : parsed.data.contextBlurb,
           calendarEventId: event?.id,
           folderId: projectId,
           localFolderSlug: parsed.data.localFolderSlug,
@@ -169,6 +177,8 @@ export const Route = createFileRoute('/api/sessions/')({
           isAnonymous: false,
           audioFormat: parsed.data.archiveFormat,
         });
+        // Every recording in the event's slot is linked to it (a restart, or a
+        // second Meeting recording); the event points at the first one.
         if (event) await calendarRepo.markRecorded(db, actor.userId, event.id, meetingId);
 
         return Response.json(
@@ -180,10 +190,16 @@ export const Route = createFileRoute('/api/sessions/')({
   },
 });
 
-/** The caller's calendar event a Meeting recording begun at `startedAt` (or now) belongs to. */
+/**
+ * The caller's calendar event a Meeting recording begun at `startedAt`
+ * belongs to. Without a believable start there is none: matching on the
+ * upload time could name it after a later call.
+ */
 async function calendarEventFor(db: AppDb, userId: string, startedAt: number | undefined) {
   const now = Date.now();
-  const at = startedAt && startedAt <= now && startedAt > now - STARTED_AT_TRUST_MS ? startedAt : now;
+  // A little ahead of the server clock is a skewed Mac clock, not the future.
+  if (!startedAt || startedAt > now + 5 * 60 * 1000 || startedAt < now - STARTED_AT_TRUST_MS) return null;
+  const at = startedAt;
   const events = await calendarRepo.eventsAround(db, userId, at, at + EARLY_JOIN_MS);
   return matchEvent(events, at);
 }

@@ -632,10 +632,10 @@ async function seedOwner() {
       `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
        VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
     ).bind(CALENDAR, OWNER, now),
-    // Under way now and with a guest, so it is the owner's current meeting.
+    // Under way now with a call link, so it is the owner's current meeting.
     testEnv.DB.prepare(
-      `INSERT INTO calendar_events (id, user_id, connection_id, provider_event_id, title, starts_at, ends_at, participants_json)
-       VALUES (?, ?, ?, 'g_owner', 'Owner event', ?, ?, '[{"email":"guest@example.com","name":null}]')`,
+      `INSERT INTO calendar_events (id, user_id, connection_id, provider_event_id, title, starts_at, ends_at, meeting_url, participants_json)
+       VALUES (?, ?, ?, 'g_owner', 'Owner event', ?, ?, 'https://meet.google.com/abc-defg-hij', '[{"email":"guest@example.com","name":null}]')`,
     ).bind(EVENT, OWNER, CALENDAR, now - 60_000, now + 30 * 60_000),
     // Not yet confirmed by the provider, so cancelling it makes no provider call.
     testEnv.DB.prepare(

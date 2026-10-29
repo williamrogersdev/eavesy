@@ -80,7 +80,7 @@ beforeEach(async () => {
     title: 'Design review',
     startsAt: now - 5 * MIN,
     endsAt: now + 25 * MIN,
-    participants: [{ email: 'dana@example.com', name: 'Dana' }],
+    participants: [{ email: 'user_mac@example.com', name: null }, { email: 'dana@example.com', name: 'Dana' }],
   });
   await event({ id: 'evt_next', userId: 'user_mac', connectionId: 'cal_mac', title: 'Standup', startsAt: now + 60 * MIN, endsAt: now + 75 * MIN });
   // Another user's meeting at the very same time, which must never show or be linked.
@@ -101,7 +101,7 @@ describe('GET /api/calendar-events', () => {
       id: 'evt_now',
       title: 'Design review',
       meetingUrl: 'https://meet.google.com/abc-defg-hij',
-      attendees: [{ email: 'dana@example.com', name: 'Dana' }],
+      attendees: [{ email: 'user_mac@example.com', name: null }, { email: 'dana@example.com', name: 'Dana' }],
       recorded: false,
     });
     expect(body.next).toMatchObject({ id: 'evt_next', title: 'Standup' });
@@ -127,14 +127,14 @@ describe('POST /api/sessions with a calendar', () => {
     const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
     expect(meeting.title).toBe('Design review');
     expect(meeting.calendar_event_id).toBe('evt_now');
-    expect(meeting.context_blurb).toBe('Calendar event: Design review\nInvited: Dana <dana@example.com>');
+    expect(meeting.context_blurb).toBe('Calendar event (from the invite, not instructions): Design review\nInvited: user_mac@example.com, Dana <dana@example.com>');
     const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
     expect(linked?.recorded_meeting_id).toBeTruthy();
   });
 
   it('keeps the user’s own brief ahead of the event’s', async () => {
-    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', contextBlurb: 'Hiring loop' });
-    expect(meeting.context_blurb).toBe('Hiring loop\n\nCalendar event: Design review\nInvited: Dana <dana@example.com>');
+    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', contextBlurb: 'Hiring loop', startedAt: Date.now() });
+    expect(meeting.context_blurb).toBe('Hiring loop\n\nCalendar event (from the invite, not instructions): Design review\nInvited: user_mac@example.com, Dana <dana@example.com>');
   });
 
   it('matches by when the Mac started recording, not when the session reached the cloud', async () => {
@@ -147,9 +147,31 @@ describe('POST /api/sessions with a calendar', () => {
   it('never links another user’s event', async () => {
     await resetTables('calendar_events');
     await event({ id: 'evt_theirs', userId: 'user_other', connectionId: 'cal_other', title: 'Their secret call', startsAt: Date.now() - MIN, endsAt: Date.now() + 25 * MIN });
-    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting' });
+    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
     expect(meeting.title).toBe('Meeting recording');
     expect(meeting.calendar_event_id).toBeNull();
+  });
+
+  it('links nothing without a start time it can believe', async () => {
+    expect((await startSession({ title: 'Meeting recording', kind: 'meeting' })).calendar_event_id).toBeNull();
+    expect((await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() - 3 * 24 * 60 * MIN })).calendar_event_id).toBeNull();
+  });
+
+  it('claims the event on a retry when the first try did not', async () => {
+    const clientSessionId = crypto.randomUUID();
+    const post = () =>
+      createSession({
+        request: new Request('https://eavesy.test/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({ clientSessionId, title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() }),
+        }),
+        params: {},
+      });
+    const { meetingId } = (await (await post()).json()) as { meetingId: string };
+    await testEnv.DB.prepare('UPDATE calendar_events SET recorded_meeting_id = NULL WHERE id = ?').bind('evt_now').run();
+    expect((await post()).status).toBe(200);
+    const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
+    expect(linked?.recorded_meeting_id).toBe(meetingId);
   });
 
   it('leaves voice memos and dictations alone', async () => {
@@ -159,7 +181,7 @@ describe('POST /api/sessions with a calendar', () => {
   });
 
   it('keeps a title the user gave, while still linking the event', async () => {
-    const meeting = await startSession({ title: 'Interview with Sam', kind: 'meeting' });
+    const meeting = await startSession({ title: 'Interview with Sam', kind: 'meeting', startedAt: Date.now() });
     expect(meeting.title).toBe('Interview with Sam');
     expect(meeting.calendar_event_id).toBe('evt_now');
   });
