@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'assistant' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'assistant', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'agents' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'agents', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -285,6 +285,11 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
 }
 
+/** Turns "Record my meetings automatically" on or off: on, a call's prompt counts down and records; off, it only asks. */
+export async function setAutoRecordMeetings(enabled: boolean): Promise<void> {
+  await invoke('set_auto_record_meetings', { enabled });
+}
+
 /** Turns talking with Claude Code sessions on or off; this adds or removes Eavesy's hooks in `~/.claude/settings.json`. */
 export async function setAgentVoice(enabled: boolean): Promise<void> {
   await invoke('set_agent_voice', { enabled });
@@ -293,6 +298,11 @@ export async function setAgentVoice(enabled: boolean): Promise<void> {
 /** Shows and says what agents send through your Eavesy connection (`send_to_human`, `ask_human`). */
 export async function setAgentMessages(enabled: boolean): Promise<void> {
   await invoke('set_agent_messages', { enabled });
+}
+
+/** Whether Eavesy also says sessions that finished without needing you (otherwise they only show on the card). */
+export async function setAgentSpeakFinished(enabled: boolean): Promise<void> {
+  await invoke('set_agent_speak_finished', { enabled });
 }
 
 /** How long a finished session waits for your reply. 0 never waits. */
@@ -918,6 +928,7 @@ export interface Settings {
   add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
+  auto_record_meetings?: boolean;
   /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
@@ -931,6 +942,8 @@ export interface Settings {
   agent_hold_secs?: number;
   /** Messages from agents on your Eavesy connection. Absent means off. */
   agent_messages?: boolean;
+  /** Also say sessions that finished without needing you. Absent means off. */
+  agent_speak_finished?: boolean;
   /** Absent means the default style. */
   assistant_style?: AssistantStyle;
   /** Absent means the System Settings voice. */

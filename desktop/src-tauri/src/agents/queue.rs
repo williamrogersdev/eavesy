@@ -35,6 +35,26 @@ pub struct Item {
     /// You said no to what Eavesy offered, so "send it" sends nothing.
     pub declined: bool,
     pub received_at: u64,
+    /// Where the session runs, so the card can tell 20 sessions apart.
+    pub origin: Origin,
+    /// A finished item is already set to leave the card.
+    #[serde(skip)]
+    pub lingering: bool,
+}
+
+/// Where a session runs: its folder (shortened with `~`), branch and app.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Origin {
+    pub cwd: Option<String>,
+    pub branch: Option<String>,
+    /// The app's name, like "iTerm".
+    pub app: Option<String>,
+    /// Its bundle id, for bringing it to the front; never sent to the card.
+    #[serde(skip)]
+    pub bundle: Option<String>,
+    /// The full folder, for an editor that finds its window by folder.
+    #[serde(skip)]
+    pub full_cwd: Option<String>,
 }
 
 impl Item {
@@ -63,7 +83,7 @@ impl Queue {
         let replaced = self.remove_session(session_id);
         self.next_id += 1;
         let id = self.next_id;
-        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, draft: None, typing: false, declined: false, received_at: now });
+        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, draft: None, typing: false, declined: false, received_at: now, origin: Origin::default(), lingering: false });
         (id, replaced)
     }
 
@@ -82,6 +102,24 @@ impl Queue {
         true
     }
 
+    pub fn set_origin(&mut self, id: u64, origin: Origin) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.origin = origin;
+        }
+    }
+
+    /// Finished items on the card that haven't been set to leave yet. Marks them.
+    pub fn start_lingering(&mut self) -> Vec<u64> {
+        self.items
+            .iter_mut()
+            .filter(|item| item.summary.is_some() && item.kind == Kind::Finished && !item.lingering)
+            .map(|item| {
+                item.lingering = true;
+                item.id
+            })
+            .collect()
+    }
+
     pub fn get(&self, id: u64) -> Option<&Item> {
         self.items.iter().find(|item| item.id == id)
     }
@@ -89,6 +127,13 @@ impl Queue {
     pub fn mark_spoken(&mut self, id: u64) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.spoken = true;
+        }
+    }
+
+    /// Not said after all, so it's said next time.
+    pub fn unmark_spoken(&mut self, id: u64) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.spoken = false;
         }
     }
 
@@ -175,6 +220,17 @@ impl Queue {
     }
 }
 
+/// One line for several sessions that finished at about the same time:
+/// "3 sessions finished: eavesy, docs and repackify."
+pub fn finished_together(names: &[&str]) -> String {
+    let list = match names {
+        [] => return String::new(),
+        [one] => return format!("{one} finished."),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("{} sessions finished: {list}.", names.len())
+}
+
 /// What Eavesy says for the item at the front, with how many others wait.
 pub fn speech(item: &Item, others_waiting: usize) -> String {
     let summary = item.summary.as_deref().unwrap_or_default().trim().trim_end_matches('.');
@@ -183,7 +239,9 @@ pub fn speech(item: &Item, others_waiting: usize) -> String {
         let total = others_waiting + 1;
         out.push_str(&format!("{total} sessions need you. First, "));
     }
-    out.push_str(&format!("{}: {summary}.", item.name));
+    // "asks: Should I open a PR?" keeps its own question mark.
+    let stop = if summary.ends_with(['?', '!']) { "" } else { "." };
+    out.push_str(&format!("{}: {summary}{stop}", item.name));
     if let Some(suggestion) = item.suggestion.as_deref() {
         out.push_str(&format!(" I'd say: {}. Send that?", suggestion.trim().trim_end_matches('.')));
     }
@@ -246,5 +304,12 @@ mod tests {
         let item = queue.get(id).unwrap().clone();
         assert_eq!(speech(&item, 0), "eavesy: eavesy summary. I'd say: yes. Send that?");
         assert!(speech(&item, 2).starts_with("3 sessions need you. First, eavesy:"));
+        assert_eq!(finished_together(&[]), "");
+        assert_eq!(finished_together(&["docs"]), "docs finished.");
+        assert_eq!(finished_together(&["a", "b"]), "2 sessions finished: a and b.");
+        let mut asks = item.clone();
+        asks.summary = Some("asks: Should I open a PR?".into());
+        asks.suggestion = None;
+        assert_eq!(speech(&asks, 0), "eavesy: asks: Should I open a PR?");
     }
 }

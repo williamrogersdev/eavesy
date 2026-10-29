@@ -39,9 +39,10 @@ pub fn maybe_run() -> bool {
     let env = |key: &str| std::env::var(key).ok();
     let attended = env("EAVESY_NO_HOLD").as_deref() != Some("1")
         && protocol::attended(env("CLAUDE_CODE_SESSION_ATTENDED").as_deref(), env("CLAUDE_CODE_ENTRYPOINT").as_deref());
-    let Some(message) = message(event, &input, attended, env("CLAUDE_CODE_HOST_SESSION_ID")) else {
+    let Some(mut message) = message(event, &input, attended, env("CLAUDE_CODE_HOST_SESSION_ID")) else {
         return true;
     };
+    message.host_app = super::host::from_env(env("__CFBundleIdentifier").as_deref(), env("TERM_PROGRAM").as_deref());
     if let Some(reply) = deliver(&socket, &message) {
         println!("{}", protocol::block_output(&reply));
     }
@@ -74,6 +75,7 @@ pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Opti
         notification_type: text("notification_type"),
         attended,
         host_session_id: host_session_id.filter(|id| !id.is_empty()),
+        host_app: None,
     })
 }
 

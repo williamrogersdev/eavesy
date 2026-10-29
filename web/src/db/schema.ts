@@ -499,6 +499,8 @@ export const calendarEvents = sqliteTable(
     platform: text('platform'),
     participantsJson: text('participants_json').notNull().default('[]'),
     autoRecord: integer('auto_record', { mode: 'boolean' }).notNull().default(false),
+    /** The user's choice for this meeting: record it, or skip it; null follows the Mac's "record all" setting. */
+    recordChoice: text('record_choice', { enum: ['record', 'skip'] }),
     recordedMeetingId: text('recorded_meeting_id'),
   },
   (t) => [

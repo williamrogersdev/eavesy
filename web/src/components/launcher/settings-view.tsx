@@ -2,7 +2,7 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Cable, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RotateCcw, Search, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BellRing, BookOpen, Cable, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RotateCcw, Search, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, Card, IconButton, Mascot, Row, Segmented, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
@@ -14,10 +14,12 @@ import {
   isDesktop,
   setLauncherPosition,
   setLiveCaptions,
+  setAutoRecordMeetings,
   setCaptureSounds,
   setAgentHold,
   setAgentVoice,
   setAgentMessages,
+  setAgentSpeakFinished,
   copyText,
   setHudLook,
   checkPermissions,
@@ -347,6 +349,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
     { id: 'connections', label: 'Connections', icon: Cable, hint: 'Your Google Calendar, and the AI apps that use Eavesy.' },
+    ...(isDesktop() ? [{ id: 'agents' as const, label: 'Agent notifications', icon: BellRing, hint: 'What your Claude Code sessions and other agents tell you: on a card at the top right, and out loud when they need you.' }] : []),
     ...(isDesktop() ? [{ id: 'assistant' as const, label: 'Assistant', icon: MessageCircle, hint: 'How Eavesy talks, its voice, how much it does without asking, and what it did.' }] : []),
     ...(isDesktop() ? [{ id: 'machine' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
@@ -388,6 +391,16 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setLocalError('The recording sound preference couldn’t be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
   };
+  const autoRecordOn = settings?.auto_record_meetings ?? true;
+  const [autoRecordBusy, setAutoRecordBusy] = useState(false);
+  const toggleAutoRecord = (next: boolean) => {
+    setAutoRecordBusy(true);
+    setLocalError(null);
+    void setAutoRecordMeetings(next)
+      .then(() => setSettings((current) => current ? { ...current, auto_record_meetings: next } : current))
+      .catch(() => setLocalError('The meeting recording preference couldn’t be saved. Try the switch again.'))
+      .finally(() => setAutoRecordBusy(false));
+  };
   const agentsOn = settings?.agent_voice ?? false;
   const agentHold = String(settings?.agent_hold_secs ?? 300) as AgentHold;
   const [agentsBusy, setAgentsBusy] = useState(false);
@@ -405,6 +418,13 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     void setAgentHold(Number(next))
       .then(() => setSettings((current) => current ? { ...current, agent_hold_secs: Number(next) } : current))
       .catch((error: unknown) => setAgentsError(errMsg(error, 'Couldn’t change how long sessions wait.')));
+  };
+  const speakFinished = settings?.agent_speak_finished ?? false;
+  const toggleSpeakFinished = (next: boolean) => {
+    setAgentsError(null);
+    void setAgentSpeakFinished(next)
+      .then(() => setSettings((current) => current ? { ...current, agent_speak_finished: next } : current))
+      .catch((error: unknown) => setAgentsError(errMsg(error, 'Couldn’t change that setting.')));
   };
   const messagesOn = settings?.agent_messages ?? false;
   const [messagesBusy, setMessagesBusy] = useState(false);
@@ -543,7 +563,6 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
               <h1>{activeSection.label}</h1>
               <p>{activeSection.hint}</p>
             </div>
-            {standalone && <Button variant="primary" className="shrink-0" kbd="esc" onClick={onBack}>Done</Button>}
           </header>
           <div className="ev-settings">
         {loadingLocal && <p role="status" className="ev-set-hint">Loading Mac preferences…</p>}
@@ -577,21 +596,36 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
 
         <div id="settings-connections" hidden={section !== 'connections'}>
-          <ConnectionsSettings signedIn={!!account} active={section === 'connections'}>
+          <ConnectionsSettings signedIn={!!account} active={section === 'connections'} autoRecord={isDesktop() ? autoRecordOn : undefined} />
+        </div>
+
+        <div id="settings-agents" hidden={section !== 'agents'}>
             {isDesktop() && (
-              <Section title="Agent notifications">
+              <>
+              <Section title="Claude Code sessions">
                 <div className="ev-set-row flex-col">
                   <Switch
                     checked={agentsOn}
                     onCheckedChange={toggleAgents}
                     disabled={!settings || agentsBusy}
-                    label="Say when a Claude Code session finishes or needs you"
-                    hint="Reads out what each session needs and suggests a reply. Nothing is sent until you press Send or say “send it”."
+                    label="Tell me when a Claude Code session finishes or needs you"
+                    hint="A card at the top right names the session (its folder, branch and app) and what it needs, and suggests a reply. Nothing is sent until you press Send or say “send it”."
                   />
                   <details className="ev-conn-about">
                     <summary>How it works</summary>
                     <p className="ev-set-hint">Eavesy adds hooks to Claude Code on this Mac. Right after it reads out a question, your next dictation (started while it’s talking or up to 30 seconds after) answers that question instead of typing into your app: say “send it”, “later” or “dismiss”, or say your own reply and Eavesy reads it back before sending. Approvals always need a click. When you’re signed in, each session’s last message and your prompt go to Eavesy’s cloud, where Anthropic’s Claude writes the summary and suggestion.</p>
                   </details>
+                  {agentsOn && (
+                    <div className="mt-3">
+                      <Switch
+                        checked={speakFinished}
+                        onCheckedChange={toggleSpeakFinished}
+                        disabled={!settings}
+                        label="Also say it out loud when a session finishes"
+                        hint="Off: Eavesy only speaks when a session needs you, and finished sessions just show on the card. Several at once are said as one line."
+                      />
+                    </div>
+                  )}
                   {agentsOn && (
                     <div className="mt-3">
                       <Segmented label="How long a finished session waits for your reply" value={agentHold} onChange={pickHold} options={AGENT_HOLDS} size="sm" />
@@ -600,6 +634,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                   )}
                   {agentsError && <p className="ev-set-hint mt-2">{agentsError}</p>}
                 </div>
+              </Section>
+              <Section title="Messages from your agents">
                 <div className="ev-set-row flex-col">
                   <Switch
                     checked={messagesOn}
@@ -621,8 +657,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                   {messagesNote && <p className="ev-set-hint mt-2">{messagesNote}</p>}
                 </div>
               </Section>
+              </>
             )}
-          </ConnectionsSettings>
         </div>
 
         {isDesktop() && (
@@ -646,6 +682,20 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
 
         </div>
         <div id="settings-capture" hidden={section !== 'capture'}>
+        {isDesktop() && (
+          <Section title="Meetings">
+            <Switch
+              checked={autoRecordOn}
+              onCheckedChange={toggleAutoRecord}
+              disabled={!settings || autoRecordBusy}
+              label="Record my meetings automatically"
+              hint={autoRecordOn
+                ? 'When a call starts, Eavesy counts down 10 seconds and records unless you choose Don’t record. It stops when the call ends.'
+                : 'When a call starts, Eavesy asks before recording.'}
+            />
+          </Section>
+        )}
+
         {isDesktop() && (
           <Section title="Sounds">
             <Switch

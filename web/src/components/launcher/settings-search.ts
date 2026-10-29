@@ -5,14 +5,15 @@ import type { SettingsSection } from '@/lib/desktop/bridge';
  * sidebar finds a setting by the words people use for it ("mcp", "hotkey").
  */
 const SECTION_KEYWORDS: Record<SettingsSection, string> = {
-  capture: 'sounds live captions recording appearance live words see-through translucent position pill hud recordings folder screenshots',
+  capture: 'sounds meetings record automatically auto-record calls zoom teams meet live captions recording appearance live words see-through translucent position pill hud recordings folder screenshots',
   dictation: 'tone style format for agents dictate typing paste',
   transcription: 'languages language notes translate',
   dictionary: 'custom words vocabulary spelling replacements swap',
   shortcuts: 'hotkey keyboard keys fn talk push to talk toggle panel',
   prompts: 'snippets templates slash commands saved text',
   projects: 'codebase client topic folder group',
-  connections: 'mcp claude code chatgpt connector integration plugin agents hooks sessions token oauth api send_to_human ask_human apps cursor codex say when a session finishes needs you messages from your agents instructions',
+  connections: 'mcp claude code chatgpt connector integration plugin token oauth api apps cursor codex calendar',
+  agents: 'notifications notify claude code sessions hooks say speak read aloud voice when a session finishes needs you reply card messages send_to_human ask_human instructions finished quiet',
   assistant: 'voice talk to eavesy speak memory rules actions',
   machine: 'worktrees processes cleanup clean up disk leftover',
   permissions: 'microphone screen recording accessibility input monitoring speech privacy',

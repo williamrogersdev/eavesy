@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { ChevronRight, Mic, Square, X } from 'lucide-react';
 import {
   completeSetup,
   errMsg,
@@ -26,18 +27,20 @@ import {
 } from '@/lib/desktop/bridge';
 import { learnedLabel } from '@/lib/desktop/learning';
 import { prettyAccel } from '@/lib/launcher/accel';
-import { CaptureHistory, focusSearch, focusSearchQuietly } from './capture-history';
+import { CaptureHistory, focusSearch, focusSearchQuietly, type AskAbout } from './capture-history';
 import { CaptureToolbar } from './capture-toolbar';
-import { EavesyTab } from './eavesy-tab';
+import { EavesyConversation } from './eavesy-conversation';
+import { ASK_CAPTURES, askMessage, peekLine, waitingLabel, type AskCapture } from './eavesy-model';
 import { LauncherToast } from './launcher-toast';
 import { usesFnKey } from './permission-checklist';
 import { ResizeHandles } from './resize-handles';
 import { SetupView } from './setup-view';
 import { TitleBar } from './title-bar';
 import { ProjectChip } from './project-chip';
-import { Composer, type ComposerHandle } from './ui';
+import { Composer, IconButton, type ComposerHandle } from './ui';
 import { useAccount } from './use-account';
 import { useCaptureSession } from './use-capture-session';
+import { useEavesy } from './use-eavesy';
 import { useProject } from './use-project';
 import { useSavedPrompts } from './use-saved-prompts';
 import { useSetupPermissions } from './use-setup-permissions';
@@ -45,9 +48,6 @@ import { useSignedOut } from './use-signed-out';
 import { useToastTasks } from './use-toast-tasks';
 
 type PanelView = 'setup' | 'list';
-type PanelTab = 'eavesy' | 'captures';
-const PANEL_TABS: [PanelTab, string][] = [['eavesy', 'Eavesy'], ['captures', 'Captures']];
-const TAB_KEY = 'eavesy.panel.tab';
 
 /** A key press meant for a field (or a pop-up list), which the panel's shortcuts leave alone. */
 function isTyping(target: EventTarget | null): boolean {
@@ -59,23 +59,15 @@ function isTyping(target: EventTarget | null): boolean {
 
 /**
  * The macOS capture panel (DESIGN.md §5–6): title bar, capture toolbar, history
- * and composer, or the first-run setup. Settings live in their own window.
+ * and the ask bar, or the first-run setup. Asking Eavesy opens the conversation
+ * in place of the history; the ask bar stays put. Settings live in their own window.
  */
 export function DesktopPanel() {
   const [view, setView] = useState<PanelView>('setup');
-  // The Eavesy tab comes first (assistant.md); the last one you picked is remembered.
-  const [tab, setTab] = useState<PanelTab>(() => {
-    try { return localStorage.getItem(TAB_KEY) === 'eavesy' ? 'eavesy' : 'captures'; }
-    catch { return 'captures'; }
-  });
-  const pickTab = useCallback((next: PanelTab) => {
-    setTab(next);
-    try { localStorage.setItem(TAB_KEY, next); } catch { /* remembered for this session only */ }
-  }, []);
-  useEffect(() => {
-    const off = onAssistantShow(() => pickTab('eavesy'));
-    return () => { void off.then((stop) => stop()); };
-  }, [pickTab]);
+  // The conversation with Eavesy, open in place of the captures. Captures are home.
+  const [conversation, setConversation] = useState(false);
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
   const [setupKnown, setSetupKnown] = useState(false);
   const setupForced = useRef(false);
   const [setupStep, setSetupStep] = useState(0);
@@ -109,6 +101,74 @@ export function DesktopPanel() {
     }).then(stop => { if (cancelled) stop(); else dispose = stop; });
     return () => { cancelled = true; dispose?.(); };
   }, [flash]);
+
+  const eavesy = useEavesy(flash);
+  const openConversation = useCallback((focusBar = true) => {
+    setView((v) => (v === 'setup' ? v : 'list'));
+    setConversation(true);
+    if (focusBar) requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+  const closeConversation = useCallback(() => {
+    setConversation(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+  // A talk turn left a card, or Open on the pill: show the conversation.
+  useEffect(() => {
+    const off = onAssistantShow(() => openConversation());
+    return () => { void off.then((stop) => stop()); };
+  }, [openConversation]);
+
+  // Captures you attached to the next question. Their words go with it, and only then.
+  const [attached, setAttached] = useState<AskCapture[]>([]);
+  const attachedIds = useMemo(() => new Set(attached.map((capture) => capture.id)), [attached]);
+  const attachedRef = useRef(attached);
+  attachedRef.current = attached;
+  const offRecordRef = useRef(false);
+  offRecordRef.current = eavesy.thread.off_record === true;
+  useEffect(() => { if (eavesy.thread.off_record) setAttached([]); }, [eavesy.thread.off_record]);
+  const askAbout = useCallback<AskAbout>((id, load) => {
+    if (attachedRef.current.some((capture) => capture.id === id)) {
+      setAttached((current) => current.filter((capture) => capture.id !== id));
+      return;
+    }
+    // Off the record, Eavesy reads nothing of yours, attached or not.
+    if (offRecordRef.current) {
+      flash('This conversation is off the record, so it can’t read your captures. Clear it to ask about them.', 5000, 'warn');
+      return;
+    }
+    if (attachedRef.current.length >= ASK_CAPTURES) {
+      flash(`Ask about up to ${ASK_CAPTURES} captures at a time`, 4000, 'warn');
+      return;
+    }
+    runTask(async () => {
+      const capture = await load();
+      if (!capture.text.trim()) { flash('There are no words in that one to ask about', 4000, 'warn'); return; }
+      setAttached((current) => (current.some((c) => c.id === id) || current.length >= ASK_CAPTURES ? current : [...current, capture]));
+      composerRef.current?.focus();
+    }, 'Couldn’t read that capture');
+  }, [flash, runTask]);
+  // Cut to fit one message: said on the chip before you send.
+  const trimmed = useMemo(() => new Set(askMessage('', attached).trimmed), [attached]);
+
+  const ask = useCallback(async (text: string) => {
+    // Going off the record after attaching takes them off: nothing of yours is read there.
+    const sending = offRecordRef.current ? [] : attachedRef.current;
+    const message = askMessage(text, sending);
+    if (!message.fits) {
+      const reason = sending.length ? 'That question is too long to send with captures. Shorten it, or take one off.' : 'That’s too long to send to Eavesy in one go.';
+      flash(reason, 5000, 'warn');
+      throw new Error(reason);
+    }
+    setAttached([]);
+    setConversation(true);
+    try {
+      await eavesy.send(message.text);
+    } catch (error) {
+      // Put them back beside anything attached while it was sending.
+      setAttached((current) => [...sending, ...current.filter((c) => !sending.some((s) => s.id === c.id))].slice(0, ASK_CAPTURES));
+      throw error;
+    }
+  }, [eavesy, flash]);
 
   const refreshSetup = useCallback(async (chooseView = false) => {
     try {
@@ -200,7 +260,7 @@ export function DesktopPanel() {
     const unlisteners: (() => void)[] = [];
     runTask(async () => {
       const listeners = await Promise.all([
-        onLauncherRecordings(() => { setView((v) => (v === 'setup' ? v : 'list')); historyRef.current?.scrollTo({ top: 0 }); }),
+        onLauncherRecordings(() => { setView((v) => (v === 'setup' ? v : 'list')); setConversation(false); historyRef.current?.scrollTo({ top: 0 }); }),
         onLauncherSetup(() => { setupForced.current = true; setSetupStep(0); setView('setup'); }),
       ]);
       if (disposed) listeners.forEach((off) => off()); else unlisteners.push(...listeners);
@@ -268,7 +328,8 @@ export function DesktopPanel() {
         clearNotice();
         runTask(() => refreshSetup(true), 'Couldn’t refresh setup status');
         runTask(refreshAccount);
-        requestAnimationFrame(focusPanel);
+        // Back mid-conversation: the ask bar takes the keys. Otherwise search does, quietly.
+        requestAnimationFrame(() => (conversationRef.current ? composerRef.current?.focus() : focusPanel()));
       });
       if (disposed) stopListening();
       else unlisten = stopListening;
@@ -286,9 +347,10 @@ export function DesktopPanel() {
     runTask(() => openSettingsWindow('projects'), 'Couldn’t open settings');
   }, [runTask]);
 
-  // Document-level keys for the history view, so they work wherever focus is
+  // Document-level keys for the list view, so they work wherever focus is
   // (the panel div only gets keys while it has focus): ⌘V pastes, / searches,
-  // N writes a note, Esc closes.
+  // N goes to the ask bar, ⌘J opens or leaves the conversation, Esc steps back
+  // out of the conversation and then closes.
   useEffect(() => {
     if (view !== 'list') return;
     const onKey = (e: KeyboardEvent) => {
@@ -297,6 +359,14 @@ export function DesktopPanel() {
       // A menu handles its own keys, even when focus has left it for the body.
       const inMenu = !!target?.closest('[role="menu"]') || !!document.querySelector('[role="menu"][data-state="open"]');
       if (inMenu || document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const meta = e.metaKey || e.ctrlKey;
+      // Works from the ask bar too, so you can flip between the two while typing.
+      if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        if (conversation) closeConversation();
+        else openConversation();
+        return;
+      }
       if (isTyping(target)) {
         if (e.key === 'Escape' && target === searchRef.current && !searchRef.current?.value) {
           e.preventDefault();
@@ -304,7 +374,6 @@ export function DesktopPanel() {
         }
         return;
       }
-      const meta = e.metaKey || e.ctrlKey;
       if (meta && e.key === ',') {
         e.preventDefault();
         goSettings();
@@ -313,18 +382,21 @@ export function DesktopPanel() {
         pasteFromClipboard();
       } else if (!meta && !e.altKey && e.key === '/') {
         e.preventDefault();
-        if (searchRef.current) focusSearch(searchRef.current);
+        // Search is on the captures, so it brings them back first.
+        setConversation(false);
+        requestAnimationFrame(() => { if (searchRef.current) focusSearch(searchRef.current); });
       } else if (!meta && !e.altKey && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         composerRef.current?.focus();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        runTask(hidePanel, 'Couldn’t close the panel');
+        if (conversation) closeConversation();
+        else runTask(hidePanel, 'Couldn’t close the panel');
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [view, pasteFromClipboard, goSettings, runTask]);
+  }, [view, conversation, openConversation, closeConversation, pasteFromClipboard, goSettings, runTask]);
 
   // Keys while focus is in the panel itself: ⌘, opens Settings, and Esc closes setup.
   const onPanelKeyDown = useCallback((e: ReactKeyboardEvent) => {
@@ -364,6 +436,27 @@ export function DesktopPanel() {
     notice.retry?.();
   }, [clearNotice, notice, openPrivacy]);
 
+  // Inside the ask bar, above the field: the captures going with the next question, or,
+  // on the captures, a line from the conversation that opens it (and what waits for a click).
+  const peek = conversation ? null : peekLine(eavesy.thread, eavesy.waiting);
+  const askBarTop = attached.length ? (
+    <div className="ev-ask-about" role="group" aria-label="Asking about">
+      {attached.map((capture) => (
+        <span key={capture.id} className="ev-ask-chip" title={trimmed.has(capture.id) ? 'Too long to send whole: Eavesy gets the start' : undefined}>
+          <span className="ev-ask-chip-label">{capture.label}{trimmed.has(capture.id) ? ' · trimmed' : ''}</span>
+          <IconButton size={24} label={`Don’t send ${capture.label}`} icon={X} onClick={() => setAttached((current) => current.filter((c) => c.id !== capture.id))} />
+        </span>
+      ))}
+    </div>
+  ) : peek ? (
+    <button type="button" className="ev-ask-peek" title="Open the conversation (⌘J)" onClick={() => openConversation()}>
+      <span className="ev-ask-peek-name">Eavesy</span>
+      <span className="ev-ask-peek-text">{peek.text}</span>
+      {peek.waiting > 0 && <span className="ev-ask-peek-waiting">{waitingLabel(peek.waiting)}</span>}
+      <ChevronRight size={14} strokeWidth={1.75} aria-hidden />
+    </button>
+  ) : null;
+
   return (
     <div className="launcher-scope fixed inset-0 flex items-stretch justify-stretch" data-desktop="true">
       <div
@@ -385,18 +478,7 @@ export function DesktopPanel() {
           runTask={runTask}
           mascot={!live ? 'idle' : live.phase === 'thinking' ? 'thinking' : live.sessionId !== null ? 'listening' : 'idle'}
         />
-        {view === 'list' && (
-          <div className="ev-tabs">
-            <div className="ev-tabs-list" role="tablist" aria-label="Panel">
-              {PANEL_TABS.map(([value, label]) => (
-                <button key={value} type="button" role="tab" className="ev-tab" aria-selected={tab === value} onClick={() => pickTab(value)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {view === 'list' && tab === 'captures' && (
+        {view === 'list' && !conversation && (
           <CaptureToolbar
             live={live}
             busy={capture.starting || capture.shooting}
@@ -455,10 +537,11 @@ export function DesktopPanel() {
               flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
             }, 'Couldn’t finish setup')}
           />
-        ) : tab === 'eavesy' ? (
-          <EavesyTab flash={flash} />
         ) : (
-          <div className="ev-history">
+          <div className="ev-history" data-bar-top={!!askBarTop || undefined}>
+            {conversation && <EavesyConversation eavesy={eavesy} flash={flash} onBack={closeConversation} />}
+            {/* Kept mounted under the conversation, so search, filter and scroll are where you left them. */}
+            <div className="ev-history-captures" hidden={conversation}>
             <CaptureHistory
               refreshRevision={historyRevision}
               openKey={opened}
@@ -475,10 +558,31 @@ export function DesktopPanel() {
               runTask={runTask}
               searchRef={searchRef}
               scrollRef={historyRef}
+              attachedIds={attachedIds}
+              onAskAbout={askAbout}
             />
+            </div>
             <Composer
               ref={composerRef}
               dragActive={dragging}
+              placeholder={conversation ? 'Reply to Eavesy…' : attached.length ? `Ask about ${attached.length === 1 ? 'this capture' : 'these captures'}…` : 'Ask Eavesy, or jot a note…'}
+              onAsk={ask}
+              askAlways={conversation}
+              askBlocked={eavesy.thread.busy ? 'Eavesy is still answering' : eavesy.holding ? 'Finish clearing the conversation first' : undefined}
+              top={askBarTop}
+              tools={(
+                <IconButton
+                  icon={eavesy.listening ? Square : Mic}
+                  filled={eavesy.listening}
+                  label={eavesy.listening
+                    ? 'Stop and send'
+                    : attached.length
+                      ? 'Type your question to send captures with it'
+                      : eavesy.talkKeys ? `Talk to Eavesy (${eavesy.talkKeys})` : 'Talk to Eavesy'}
+                  disabled={!eavesy.listening && (attached.length > 0 || eavesy.thread.busy || eavesy.holding)}
+                  onClick={() => { setConversation(true); eavesy.talk(); }}
+                />
+              )}
               onSaveError={(error) => flash(errMsg(error, 'Couldn’t save that note'), 5000, 'warn')}
               onSaveNote={async (text) => {
                 await saveNote(text);
@@ -486,7 +590,12 @@ export function DesktopPanel() {
               }}
               onFiles={pasteFromClipboard}
               onPick={() => runTask(async () => landed(await pickAndImportFiles()), 'Couldn’t add those files')}
-              onEscapeEmpty={() => runTask(hidePanel)}
+              onEscapeEmpty={() => {
+                // Step back one thing at a time: the attached captures, the conversation, then the panel.
+                if (attachedRef.current.length) { setAttached([]); requestAnimationFrame(() => composerRef.current?.focus()); }
+                else if (conversation) closeConversation();
+                else runTask(hidePanel);
+              }}
             />
           </div>
         )}

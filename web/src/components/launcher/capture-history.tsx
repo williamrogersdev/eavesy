@@ -10,6 +10,7 @@ import {
   Copy,
   ClipboardPaste,
   FolderOpen,
+  MessageCircleQuestion,
   MessageSquareText,
   Image as ImageIcon,
   MoreHorizontal,
@@ -44,7 +45,9 @@ import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dic
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
 import type { Recording } from '@/lib/launcher/types';
+import type { AskCapture } from './eavesy-model';
 import {
+  askLabel,
   clock,
   FILTERS,
   groupByDay,
@@ -59,6 +62,10 @@ import {
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
 import { Bubble, Button, Chip, IconButton, Kbd, Mascot, Menu } from './ui';
+
+/** Attach a capture to the next question (or take it off): `load` reads its whole text. */
+export type AskAbout = (id: string, load: () => Promise<AskCapture>) => void;
+const NO_IDS: ReadonlySet<string> = new Set();
 
 const ICON: Record<Recording['source'], LucideIcon> = {
   mic: AudioLines,
@@ -345,6 +352,8 @@ const CaptureRow = memo(function CaptureRow({
   onSignIn,
   flash,
   runTask,
+  attached = false,
+  onAskAbout,
 }: {
   rec: Recording;
   query: string;
@@ -353,6 +362,9 @@ const CaptureRow = memo(function CaptureRow({
   onSignIn: () => void;
   flash: Flash;
   runTask: RunTask;
+  /** This capture goes with the next question in the ask bar. */
+  attached?: boolean;
+  onAskAbout?: AskAbout;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -461,7 +473,7 @@ const CaptureRow = memo(function CaptureRow({
   else body = <div className="ev-body" data-muted="true">Saved on this Mac.</div>;
 
   return (
-    <article className="ev-row" data-menu={menuOpen || trayOpen} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
+    <article className="ev-row" data-menu={menuOpen || trayOpen || attached} data-attached={attached || undefined} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
       <header className="ev-rh">
         <Icon className="ev-rh-icon" size={13} strokeWidth={1.75} aria-hidden />
         <span className="ev-rh-kind">{kind.label}</span>
@@ -511,6 +523,14 @@ const CaptureRow = memo(function CaptureRow({
       {trayOpen && translation.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{translation.error}</p>}
       <div className="ev-actions">
         {changed && <IconButton label="Paste this version at cursor" icon={ClipboardPaste} disabled={translation.busy || rewrite.busy} onClick={() => runTask(() => pasteToFrontmost(shownText, false), 'Couldn’t paste that')} />}
+        {onAskAbout && text && (
+          <IconButton
+            label={attached ? 'Don’t ask Eavesy about this' : 'Ask Eavesy about this'}
+            icon={MessageCircleQuestion}
+            pressed={attached}
+            onClick={() => onAskAbout(rec.id, async () => ({ id: rec.id, label: askLabel(rec, Date.now()), text: await fullText() }))}
+          />
+        )}
         <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || rewrite.busy || (!image && !video && !text)} onClick={copy} />
         {rewritable && <Button size="sm" variant="ghost" aria-pressed={trayOpen} title="Change the tone, shape it for an AI, or translate" onClick={toggleTray}>Rewrite</Button>}
         <Menu
@@ -621,7 +641,13 @@ export const CaptureHistory = memo(function CaptureHistory({
   promptsError = null,
   onRetryPrompts,
   onPromptUsed,
+  attachedIds = NO_IDS,
+  onAskAbout,
 }: {
+  /** Captures attached to the next question in the ask bar. */
+  attachedIds?: ReadonlySet<string>;
+  /** Shows "Ask Eavesy about this" on captures with words. */
+  onAskAbout?: AskAbout;
   /** Bumped by every native "recordings changed" event. */
   refreshRevision: number;
   /** Bumped each time the panel opens: search and filter start fresh. */
@@ -782,7 +808,7 @@ export const CaptureHistory = memo(function CaptureHistory({
               <h2 className="ev-gh">{group.label}</h2>
               {group.items.map((rec) => (
                 <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
-                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} />
+                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} attached={attachedIds.has(rec.id)} onAskAbout={onAskAbout} />
                 </div>
               ))}
             </section>

@@ -82,6 +82,10 @@ pub struct Settings {
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
+    /// When a call starts, count down and record it unless told not to (on
+    /// unless turned off). Off, Eavesy only asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_record_meetings: Option<bool>,
     /// Lines of live words the control shows while recording: 0, 1, 2 or 4
     /// (off unless chosen: the plain bar is quieter while you talk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +115,10 @@ pub struct Settings {
     /// unless turned on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_messages: Option<bool>,
+    /// Eavesy also says when a Claude Code session finishes without needing
+    /// you; otherwise it only shows on the card (off unless turned on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_speak_finished: Option<bool>,
     /// How Eavesy talks (assistant.md G4). Unset is the default style; a value this
     /// build can't read is too, rather than costing every other setting.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
@@ -170,6 +178,10 @@ impl Settings {
         self.agent_messages.unwrap_or(false)
     }
 
+    pub fn agent_speak_finished(&self) -> bool {
+        self.agent_speak_finished.unwrap_or(false)
+    }
+
     pub fn agent_hold_secs(&self) -> u32 {
         self.agent_hold_secs.unwrap_or(DEFAULT_AGENT_HOLD_SECS).min(MAX_AGENT_HOLD_SECS)
     }
@@ -204,6 +216,10 @@ impl Settings {
     pub fn capture_sounds(&self) -> bool {
         self.capture_sounds.unwrap_or(true)
     }
+
+    pub fn auto_record_meetings(&self) -> bool {
+        self.auto_record_meetings.unwrap_or(true)
+    }
 }
 
 fn default_assistant_hotkey() -> String {
@@ -232,6 +248,7 @@ impl Default for Settings {
             live_captions: None,
             add_screenshots: None,
             capture_sounds: None,
+            auto_record_meetings: None,
             hud_preview_lines: None,
             hud_translucent: None,
             fast_live_words: None,
@@ -239,6 +256,7 @@ impl Default for Settings {
             agent_voice: None,
             agent_hold_secs: None,
             agent_messages: None,
+            agent_speak_finished: None,
             assistant_style: None,
             assistant_voice: None,
             assistant_voice_rate: None,
