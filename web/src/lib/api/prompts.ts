@@ -1,5 +1,6 @@
 import { accountCall, isDesktop } from '@/lib/desktop/bridge';
 import { isRecord } from '@/lib/json';
+import type { PromptSuggestion } from '@/lib/prompt-starters';
 import { parseSavedPrompt, type SavedPrompt } from '@/lib/prompts';
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -49,6 +50,18 @@ export async function updatePrompt(id: string, fields: { name?: string; body?: s
 /** Counts a paste, so the prompts used most come first. */
 export async function markPromptUsed(id: string): Promise<SavedPrompt> {
   return one(await call('PATCH', `/api/prompts/${encodeURIComponent(id)}`, { used: true }));
+}
+
+/**
+ * Prompts suggested from the account's recent dictations: empty when there's
+ * too little to go on. Throws when eavesy.com can't be reached or says no.
+ */
+export async function suggestPrompts(): Promise<PromptSuggestion[]> {
+  const body = await call('GET', '/api/prompts/suggestions');
+  if (!isRecord(body) || !Array.isArray(body.suggestions)) throw new Error('eavesy.com sent an answer Eavesy couldn’t read');
+  return body.suggestions.flatMap((item) => isRecord(item) && typeof item.name === 'string' && typeof item.body === 'string'
+    ? [{ name: item.name, body: item.body, why: typeof item.why === 'string' ? item.why : '' }]
+    : []);
 }
 
 export async function deletePrompt(id: string): Promise<void> {

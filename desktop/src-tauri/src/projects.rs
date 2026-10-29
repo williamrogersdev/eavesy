@@ -47,6 +47,8 @@ fn account_call_allowed(method: &str, path: &str) -> bool {
     match (method, path.strip_prefix("/api/")) {
         ("GET" | "PATCH", Some("me")) => true,
         ("GET" | "POST", Some("projects" | "prompts")) => true,
+        // Prompts written from the account's own dictations, for Settings → Prompts.
+        ("GET", Some("prompts/suggestions")) => true,
         ("GET" | "DELETE", Some("mcp-tokens" | "calendar-connections")) => true,
         ("GET", Some("calendar-events")) => true,
         ("PATCH" | "DELETE", Some(rest)) => rest
@@ -294,6 +296,8 @@ mod tests {
         assert!(!account_call_allowed("PATCH", "/api/projects/../me"));
         assert!(!account_call_allowed("DELETE", "/api/projects/"));
         assert!(account_call_allowed("GET", "/api/prompts"));
+        assert!(account_call_allowed("GET", "/api/prompts/suggestions"));
+        assert!(!account_call_allowed("POST", "/api/prompts/suggestions"));
         assert!(account_call_allowed("GET", "/api/mcp-tokens"));
         assert!(account_call_allowed("DELETE", "/api/mcp-tokens"));
         assert!(!account_call_allowed("POST", "/api/mcp-tokens"));

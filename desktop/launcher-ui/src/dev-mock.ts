@@ -50,12 +50,13 @@ export function installDevMock(): void {
   };
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
   let preferencesSaveFailures = params.has('settings-save-failure') ? 1 : 0;
-  const account = mockAccount(params.has('noprojects'), params.has('manywords'));
-  let dictionary: { id: string; from: string; to: string; origin?: string; seen?: number }[] = [
+  const account = mockAccount(params.has('noprojects'), params.has('manywords'), params.has('noprompts'), params.has('nosuggestions'));
+  // What eavesy.com's GET returns: everyday-word fixes ("Yeah" → "Yes") are filtered out there.
+  let dictionary: { id: string; from: string; to: string; origin?: string; seen?: number; updatedAt?: number }[] = [
     { id: 'word-1', from: 'easey', to: 'Eavesy', origin: 'manual', seen: 1 },
-    { id: 'word-2', from: 'cube cuddle', to: 'kubectl', origin: 'learned', seen: 2 },
-    { id: 'word-3', from: 'SEO', to: 'SEU', origin: 'learned', seen: 1 },
-    { id: 'word-4', from: 'post hog', to: 'PostHog', origin: 'learned', seen: 1 },
+    { id: 'word-2', from: 'cube cuddle', to: 'kubectl', origin: 'learned', seen: 3, updatedAt: Date.now() - 86_400_000 },
+    { id: 'word-3', from: 'cloud code', to: 'Claude Code', origin: 'learned', seen: 1, updatedAt: Date.now() - 3_600_000 },
+    { id: 'word-4', from: 'post hog', to: 'PostHog', origin: 'learned', seen: 1, updatedAt: Date.now() - 86_400_000 * 3 },
   ];
   let calendars = params.has('noconnections') ? [] : [
     { id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false },
@@ -345,7 +346,7 @@ const MACHINE_SIZES: Record<string, number> = {
 };
 
 /** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */
-function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<string, unknown>) => unknown {
+function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false, noSuggestions = false): (args: Record<string, unknown>) => unknown {
   const many = ['Anthropic', 'Cloudflare', 'Durable Objects', 'Vectorize', 'SpeechAnalyzer', 'ScreenCaptureKit', 'TanStack', 'Drizzle', 'Clerk', 'PostHog', 'Homebrew', 'notarytool', 'Sparkle', 'Rolldown', 'Vite', 'Zod', 'Tailwind', 'lucide', 'Bun', 'wrangler', 'Priya Raman', 'Dana Okafor', 'Mateo Silva', 'Kenji Ito', 'Aisha Khan', 'Lukas Weber'];
   const me = {
     spokenLanguages: ['en'],
@@ -360,12 +361,19 @@ function mockAccount(noProjects: boolean, manyWords: boolean): (args: Record<str
     { id: 'p-acme', name: 'Acme redesign', about: null, vocabulary: [], people: null, match: ['acme'], recordingCount: 3 },
   ];
   const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'prompt';
-  let prompts = [
+  let prompts = noPrompts ? [] : [
     { id: 'prm-triage', name: 'Triage support tickets', slug: 'triage-support-tickets', body: 'Search through all the open support tickets, debug each one, and write a plan to fix them.\n\nThen implement the plan, one ticket at a time, with a test for each fix.', useCount: 14, lastUsedAt: Date.now() - 3_600_000, updatedAt: Date.now() },
     { id: 'prm-review', name: 'Review this PR', slug: 'review-this-pr', body: 'Review the current diff for bugs first, then simplifications. Focus on {{details}}.', useCount: 6, lastUsedAt: null, updatedAt: Date.now() },
   ];
   return ({ method, path, body }) => {
     const fields = (body ?? {}) as Record<string, unknown>;
+    // What eavesy.com suggests from recent dictations; ?nosuggestions is an account with too few.
+    if (path === '/api/prompts/suggestions') {
+      return new Promise((resolve) => setTimeout(() => resolve(noSuggestions ? { suggestions: [], source: 'none' } : { source: 'dictations', suggestions: [
+        { name: 'Ship it as a PR', why: 'You asked agents to open a PR and turn on auto-merge in 7 dictations.', body: 'Commit with a conventional message, push, open a pull request ready for review and turn on auto-merge. Watch the checks and fix anything that fails until it merges.\n\n{{details}}' },
+        { name: 'Check it in the browser', why: 'You often asked agents to screenshot the change before calling it done.', body: 'Open the change in the browser preview, click through it, and take a screenshot of each state, including empty and error states. Fix anything that looks off before telling me it’s done.' },
+      ] }), 900));
+    }
     if (String(path).startsWith('/api/prompts')) {
       if (method === 'GET') return { items: prompts };
       if (method === 'POST') {
