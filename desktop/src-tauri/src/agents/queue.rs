@@ -35,6 +35,26 @@ pub struct Item {
     /// You said no to what Eavesy offered, so "send it" sends nothing.
     pub declined: bool,
     pub received_at: u64,
+    /// Where the session runs, so the card can tell 20 sessions apart.
+    pub origin: Origin,
+    /// A finished item is already set to leave the card.
+    #[serde(skip)]
+    pub lingering: bool,
+}
+
+/// Where a session runs: its folder (shortened with `~`), branch and app.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Origin {
+    pub cwd: Option<String>,
+    pub branch: Option<String>,
+    /// The app's name, like "iTerm".
+    pub app: Option<String>,
+    /// Its bundle id, for bringing it to the front; never sent to the card.
+    #[serde(skip)]
+    pub bundle: Option<String>,
+    /// The full folder, for an editor that finds its window by folder.
+    #[serde(skip)]
+    pub full_cwd: Option<String>,
 }
 
 impl Item {
@@ -63,7 +83,7 @@ impl Queue {
         let replaced = self.remove_session(session_id);
         self.next_id += 1;
         let id = self.next_id;
-        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, draft: None, typing: false, declined: false, received_at: now });
+        self.items.push(Item { id, session_id: session_id.to_string(), name, kind, summary: None, suggestion: None, message, held, spoken: false, draft: None, typing: false, declined: false, received_at: now, origin: Origin::default(), lingering: false });
         (id, replaced)
     }
 
@@ -82,6 +102,24 @@ impl Queue {
         true
     }
 
+    pub fn set_origin(&mut self, id: u64, origin: Origin) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.origin = origin;
+        }
+    }
+
+    /// Finished items on the card that haven't been set to leave yet. Marks them.
+    pub fn start_lingering(&mut self) -> Vec<u64> {
+        self.items
+            .iter_mut()
+            .filter(|item| item.summary.is_some() && item.kind == Kind::Finished && !item.lingering)
+            .map(|item| {
+                item.lingering = true;
+                item.id
+            })
+            .collect()
+    }
+
     pub fn get(&self, id: u64) -> Option<&Item> {
         self.items.iter().find(|item| item.id == id)
     }
@@ -89,6 +127,13 @@ impl Queue {
     pub fn mark_spoken(&mut self, id: u64) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.spoken = true;
+        }
+    }
+
+    /// Not said after all, so it's said next time.
+    pub fn unmark_spoken(&mut self, id: u64) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.spoken = false;
         }
     }
 
@@ -173,6 +218,17 @@ impl Queue {
     pub fn prompt(&self, session_id: &str) -> Option<&str> {
         self.prompts.get(session_id).map(String::as_str)
     }
+}
+
+/// One line for several sessions that finished at about the same time:
+/// "3 sessions finished: eavesy, docs and repackify."
+pub fn finished_together(names: &[&str]) -> String {
+    let list = match names {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("{} sessions finished: {list}.", names.len())
 }
 
 /// What Eavesy says for the item at the front, with how many others wait.

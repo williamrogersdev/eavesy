@@ -41,7 +41,7 @@ fn truncate(text: String) -> String {
 }
 
 /// The checked-out branch, following a worktree's `.git` file.
-fn branch(dir: &Path) -> Option<String> {
+pub fn branch(dir: &Path) -> Option<String> {
     let dot_git = dir.join(".git");
     let git_dir = if dot_git.is_file() {
         let pointer = std::fs::read_to_string(&dot_git).ok()?;

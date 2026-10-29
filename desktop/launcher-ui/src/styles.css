@@ -786,7 +786,8 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 .mk-root { touch-action: none; }
 
 /* The reply card for Claude Code sessions (agents.tsx): the HUD's dark coat,
-   manila for the one action that sends. */
+   manila for the one action that sends. Its root carries `launcher-scope ev`,
+   where the tokens live; without them the card is see-through. */
 .ag-card {
   display: flex;
   flex-direction: column;
@@ -807,7 +808,7 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
   background: var(--ev-hud-line);
   font: var(--ev-t-small);
 }
-.ag-kind[data-kind='approval'], .ag-kind[data-kind='question'] { background: var(--ev-manila); color: var(--ev-manila-ink); }
+.ag-kind[data-kind='approval'], .ag-kind[data-kind='question'] { background: var(--ev-manila); color: #2b1d05; }
 .ag-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--ev-t-ui); }
 .ag-more { flex: none; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
 .ag-summary { margin: 0; font: var(--ev-t-head); }
@@ -849,9 +850,62 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 .ag-btn { padding: 5px 9px; box-shadow: inset 0 0 0 1px var(--ev-hud-line); }
 .ag-icon { flex: none; padding: 3px; color: var(--ev-hud-ink-2); }
 .ag-btn:hover, .ag-icon:hover { background: rgb(255 240 220 / 0.08); }
-.ag-btn[data-primary] { background: var(--ev-manila); color: var(--ev-manila-ink); box-shadow: none; }
+.ag-btn[data-primary] { background: var(--ev-manila); color: #2b1d05; box-shadow: none; }
 .ag-btn[data-primary]:hover { background: var(--ev-manila-shade); }
 .ag-btn:disabled { opacity: 0.45; }
+/* Which session this is: folder, branch, and the app it runs in. */
+.ag-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -2px 0 0;
+  color: var(--ev-hud-ink-2);
+  font: var(--ev-t-small);
+}
+.ag-where > svg { flex: none; }
+.ag-where-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.ag-where-branch, .ag-where-app { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-where-branch { padding: 0 6px; border-radius: 6px; background: rgb(255 240 220 / 0.08); color: var(--ev-hud-ink); }
+/* The exact line Eavesy reads aloud. */
+.ag-heard {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(255 240 220 / 0.06);
+  color: var(--ev-hud-ink-2);
+  font: var(--ev-t-small);
+}
+.ag-heard > svg { flex: none; margin-top: 2px; color: var(--ev-manila); }
+.ag-heard[data-pending] > svg { opacity: 0.5; }
+.ag-heard > span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* The other sessions waiting, one row each; a row opens its session. */
+.ag-others { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--ev-hud-line); }
+.ag-others ul { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ag-others-title { margin: 0; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
+.ag-other {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ev-hud-ink);
+  font: var(--ev-t-small);
+  text-align: left;
+  cursor: default;
+}
+.ag-other:not(:disabled):hover { background: rgb(255 240 220 / 0.08); }
+.ag-other-name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.ag-other-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ev-hud-ink-2); }
+.ag-other-app { flex: none; color: var(--ev-hud-ink-2); }
+.ag-dot { flex: none; width: 7px; height: 7px; border-radius: 999px; background: var(--ev-hud-ink-2); }
+.ag-dot[data-kind='approval'], .ag-dot[data-kind='question'] { background: var(--ev-manila); }
 
 /* Eavesy's answer on the pill: the full reply, scrolling when it runs long. */
 .ctl-answer { flex: 1; min-height: 0; overflow-y: auto; user-select: text; }
