@@ -674,6 +674,45 @@ export const agentListeners = sqliteTable(
   (t) => [index('agent_listeners_user_idx').on(t.userId, t.seenAt)],
 );
 
+/**
+ * What an agent said about something it got over MCP: a typo, something that
+ * doesn't make sense, or a saved prompt that could be better. Only a
+ * suggestion: nothing changes until the user applies it.
+ */
+export const agentFeedback = sqliteTable(
+  'agent_feedback',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** The MCP connection that sent it. Not a foreign key: the report outlives a revoked connection. */
+    mcpTokenId: text('mcp_token_id').notNull(),
+    /** The connection's name when it was sent ("Claude Code"). */
+    source: text('source').notNull(),
+    kind: text('kind', { enum: ['typo', 'unclear', 'poor_prompt', 'other'] }).notNull(),
+    targetType: text('target_type', { enum: ['prompt', 'meeting', 'dictation', 'capture'] }).notNull(),
+    /** A saved prompt, recording, dictation or capture id. No foreign key: it can point at any of them. */
+    targetId: text('target_id').notNull(),
+    /** The prompt's or item's name when it was reported, to show without a join. */
+    targetLabel: text('target_label').notNull(),
+    /** The prompt's `updated_at` when it was reported, so a report on an older version can say so. */
+    targetVersion: integer('target_version'),
+    excerpt: text('excerpt'),
+    explanation: text('explanation').notNull(),
+    suggestedRewrite: text('suggested_rewrite'),
+    status: text('status', { enum: ['new', 'applied', 'dismissed'] }).notNull(),
+    /** One report per connection, target version and text: a retried call isn't counted twice. */
+    dedupeKey: text('dedupe_key').notNull(),
+    createdAt: integer('created_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (t) => [
+    uniqueIndex('agent_feedback_user_dedupe_uq').on(t.userId, t.dedupeKey),
+    index('agent_feedback_user_status_idx').on(t.userId, t.status, t.targetType, t.targetId),
+  ],
+);
+
 export const deviceTokens = sqliteTable(
   'device_tokens',
   {

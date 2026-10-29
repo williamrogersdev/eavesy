@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { savedPrompts } from '../schema';
+import { agentFeedback, savedPrompts } from '../schema';
 import { pid } from '../ids';
 import { freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
 
@@ -106,6 +106,10 @@ export async function markUsed(db: AppDb, userId: string, id: string): Promise<S
   return row ? toSavedPrompt(row) : null;
 }
 
+/** Deletes the prompt and what agents said about it. */
 export async function remove(db: AppDb, userId: string, id: string): Promise<void> {
-  await db.delete(savedPrompts).where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId)));
+  await db.batch([
+    db.delete(agentFeedback).where(and(eq(agentFeedback.userId, userId), eq(agentFeedback.targetType, 'prompt'), eq(agentFeedback.targetId, id))),
+    db.delete(savedPrompts).where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId))),
+  ]);
 }

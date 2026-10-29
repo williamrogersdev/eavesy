@@ -14,6 +14,12 @@ use crate::settings;
 
 /// How long the launcher waits for an answer from the account.
 const ACCOUNT_TIMEOUT: Duration = Duration::from_secs(8);
+/// Calls that wait on a model: a merged prompt rewrite can take a while to write.
+const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(45);
+
+fn account_timeout(path: &str) -> Duration {
+    if path == "/api/agent-feedback/merge" { MODEL_CALL_TIMEOUT } else { ACCOUNT_TIMEOUT }
+}
 
 /// The app's shared HTTP client, with the launcher's shorter wait.
 fn client() -> Option<reqwest::Client> {
@@ -50,6 +56,9 @@ fn account_call_allowed(method: &str, path: &str) -> bool {
         ("GET" | "POST", Some("projects" | "prompts")) => true,
         // Prompts written from the account's own dictations, for Settings → Prompts.
         ("GET", Some("prompts/suggestions")) => true,
+        // What agents reported over MCP: listed, dismissed, applied to a prompt or merged into one rewrite.
+        ("GET" | "PATCH", Some("agent-feedback")) => true,
+        ("POST", Some("agent-feedback/apply" | "agent-feedback/merge")) => true,
         ("GET" | "DELETE", Some("mcp-tokens" | "calendar-connections")) => true,
         ("GET", Some("calendar-events")) => true,
         ("PATCH", Some(rest)) if rest.starts_with("calendar-events/") => {
@@ -83,7 +92,7 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     let client = client().ok_or("Could not reach eavesy.com")?;
     let url = crate::base_url::join(&credential.base, &path);
     let verb = reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-    let mut request = client.request(verb, url).bearer_auth(credential.token).timeout(ACCOUNT_TIMEOUT);
+    let mut request = client.request(verb, url).bearer_auth(credential.token).timeout(account_timeout(&path));
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -305,6 +314,15 @@ mod tests {
         assert!(!account_call_allowed("DELETE", "/api/projects/"));
         assert!(account_call_allowed("GET", "/api/prompts"));
         assert!(account_call_allowed("GET", "/api/prompts/suggestions"));
+        assert!(account_call_allowed("GET", "/api/agent-feedback"));
+        assert!(account_call_allowed("PATCH", "/api/agent-feedback"));
+        assert!(account_call_allowed("POST", "/api/agent-feedback/apply"));
+        assert!(account_call_allowed("POST", "/api/agent-feedback/merge"));
+        assert!(!account_call_allowed("DELETE", "/api/agent-feedback"));
+        assert!(!account_call_allowed("POST", "/api/agent-feedback"));
+        assert!(!account_call_allowed("POST", "/api/agent-feedback/../me"));
+        assert_eq!(account_timeout("/api/agent-feedback/merge"), MODEL_CALL_TIMEOUT);
+        assert_eq!(account_timeout("/api/prompts"), ACCOUNT_TIMEOUT);
         assert!(!account_call_allowed("POST", "/api/prompts/suggestions"));
         assert!(account_call_allowed("GET", "/api/mcp-tokens"));
         assert!(account_call_allowed("DELETE", "/api/mcp-tokens"));

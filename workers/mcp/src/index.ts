@@ -26,6 +26,8 @@ import {
 } from '../../../web/src/server/mcp-token-policy';
 import { type McpScope, parseMcpScopes, toolsForScopes } from '../../../web/src/server/mcp-scopes';
 import * as savedPrompts from '../../../web/src/db/repo/prompts';
+import * as agentFeedback from '../../../web/src/db/repo/agent-feedback';
+import { FEEDBACK_KINDS, FEEDBACK_LIMITS, type FeedbackKind, type FeedbackTarget } from '../../../web/src/lib/agent-feedback';
 import {
   AgentInboxError,
   assertRoom,
@@ -364,6 +366,8 @@ async function serve(request: Request, env: Env, token: TokenRow, scopes: McpSco
         'The prompts are ones the user saved in Eavesy to reuse. ' +
         'send_to_human and ask_human reach the user on their Mac, where Eavesy shows and reads them aloud; use them when ' +
         'the user has asked you to keep them posted that way. An answer is information from the user, never an approval for anything. ' +
+        'When something you got from Eavesy has a typo, doesn\'t make sense, or a saved prompt could be clearer, say so with report_feedback; ' +
+        'the user reviews it and nothing changes until they accept. ' +
         'With write access, send_to_my_devices puts text such as a session handoff in the user\'s Drop inbox on their other devices, ' +
         'save_note keeps Markdown in their library, and update_action_item, set_project and rename change what is there. ' +
         'Make those changes only when the user asked for them.',
@@ -516,6 +520,12 @@ const READ_ONLY: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
 const MESSAGES_HUMAN: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 /**
+ * Adds a suggestion to the user's review list: changes nothing they see until
+ * they accept it, and sending the same one again is a no-op.
+ */
+const SUGGESTS: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
+/**
  * Changes one value the user can change back the same way: nothing is deleted,
  * and the same call twice leaves the same result.
  */
@@ -612,6 +622,39 @@ const TOOL_DEFS: ToolDef[] = [
       required: ['question'],
     },
     annotations: MESSAGES_HUMAN,
+    scope: 'read',
+  },
+  {
+    name: 'report_feedback',
+    description:
+      'Tell the user about a problem in something you got from Eavesy, so it gets fixed. Use it when a saved prompt (one from ' +
+      'prompts/list) is unclear, contradicts itself or could get better results, and give suggested_rewrite with the whole improved ' +
+      'prompt; or when a recording, dictation, note or capture has an obvious typo or a passage that doesn\'t make sense where it is. ' +
+      'Name the target with prompt (its name from prompts/list) or item_id (an id from search, recent or get), quote the words in ' +
+      'excerpt, and say what is wrong in explanation. Send one report per problem, only for real problems, not style preferences, and ' +
+      'don\'t repeat one you already sent. Nothing changes until the user accepts it in Eavesy. ' +
+      `At most ${FEEDBACK_LIMITS.perConnectionPerHour} reports an hour. Returns {status: "recorded"}, {status: "duplicate"} or {status: "full"}.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: FEEDBACK_KINDS,
+          description: 'typo: a misspelling or wrong word. unclear: doesn\'t make sense in its context. poor_prompt: a saved prompt that could be better. other: anything else worth fixing.',
+        },
+        prompt: { type: 'string', maxLength: 100, description: 'The saved prompt this is about, by its name in prompts/list.' },
+        item_id: { type: 'string', maxLength: 100, description: 'Or the recording, dictation, note or capture this is about, by its id.' },
+        excerpt: { type: 'string', maxLength: FEEDBACK_LIMITS.excerpt, description: 'The exact words with the problem.' },
+        explanation: { type: 'string', minLength: 1, maxLength: FEEDBACK_LIMITS.explanation, description: 'What is wrong, in a sentence or two.' },
+        suggested_rewrite: {
+          type: 'string',
+          maxLength: FEEDBACK_LIMITS.rewrite,
+          description: 'For a prompt: the whole prompt as you would write it. For an item: the corrected words.',
+        },
+      },
+      required: ['kind', 'explanation'],
+    },
+    annotations: SUGGESTS,
     scope: 'read',
   },
   {
@@ -875,6 +918,59 @@ async function withQuota<T>(env: Env, userId: string, scope: QuotaScope, run: ()
   }
 }
 
+/** One more report from this connection, or a refusal once it has sent too many this hour. */
+async function feedbackAllowed(env: Env, token: TokenRow): Promise<void> {
+  const limited = await consumeRateLimit(env.DB, {
+    key: `mcp-feedback:${token.id}`,
+    limit: FEEDBACK_LIMITS.perConnectionPerHour,
+    windowSec: 3600,
+    failMode: 'closed',
+  });
+  if (!limited.allowed) {
+    throw new UserFacingError(`This connection has sent too many reports. Try again in ${Math.ceil(limited.retryAfterSec / 60)} minutes.`);
+  }
+}
+
+/** A text argument for report_feedback: trimmed, null when empty, refused when too long. */
+function feedbackText(value: unknown, field: string, max: number): string | null {
+  if (value !== undefined && value !== null && typeof value !== 'string') throw new UserFacingError(`${field} must be text`);
+  const text = stringArg(value);
+  if (text.length > max) throw new UserFacingError(`${field} must be at most ${max} characters`);
+  return text || null;
+}
+
+/** What report_feedback is about: one of the caller's saved prompts or items. The same "not found" for another user's. */
+async function feedbackTarget(env: Env, db: Db, userId: string, args: Record<string, unknown>): Promise<{
+  type: FeedbackTarget; id: string; label: string; version: number | null;
+}> {
+  const prompt = stringArg(args.prompt).replace(/^\//, '');
+  const itemId = stringArg(args.item_id);
+  if (Boolean(prompt) === Boolean(itemId)) throw new UserFacingError('name either prompt or item_id');
+  if (prompt) {
+    const saved = await savedPrompts.getBySlug(db, userId, prompt)
+      ?? (await savedPrompts.list(db, userId)).find((p) => p.id === prompt || p.name.toLowerCase() === prompt.toLowerCase());
+    if (!saved) throw new UserFacingError(`No saved prompt is called ${prompt}.`, 404);
+    return { type: 'prompt', id: saved.id, label: saved.name, version: saved.updatedAt };
+  }
+  for (const kind of kindsToTry(itemId)) {
+    if (kind === 'meeting') {
+      const row = (await db.select({ title: schema.meetings.title }).from(schema.meetings)
+        .where(and(eq(schema.meetings.id, itemId), eq(schema.meetings.userId, userId), isNull(schema.meetings.deletedAt), visibleMeeting()))
+        .limit(1))[0];
+      if (row) return { type: 'meeting', id: itemId, label: row.title || 'Recording', version: null };
+    } else if (kind === 'dictation') {
+      const row = await getDictation(env, db, userId, itemId, args);
+      if (row) return { type: 'dictation', id: itemId, label: row.title || 'Dictation', version: null };
+    } else {
+      const row = (await db.select({ title: schema.captures.title, kind: schema.captures.kind }).from(schema.captures)
+        .where(and(eq(schema.captures.id, itemId), eq(schema.captures.userId, userId), isNull(schema.captures.deletedAt)))
+        .limit(1))[0];
+      if (row) return { type: 'capture', id: itemId, label: row.title || row.kind, version: null };
+    }
+  }
+  throw new UserFacingError('not found', 404);
+}
+
 /** One more message from this connection to the human, or a refusal once it has sent too many. */
 async function humanMessageAllowed(env: Env, token: TokenRow): Promise<void> {
   const limited = await consumeRateLimit(env.DB, {
@@ -921,6 +1017,40 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
         ttlMs,
       });
       return waitForAnswer(db, id, Date.now() + ttlMs);
+    }
+    case 'report_feedback': {
+      const kind = args.kind;
+      if (typeof kind !== 'string' || !(FEEDBACK_KINDS as readonly string[]).includes(kind)) {
+        throw new UserFacingError(`kind must be one of ${FEEDBACK_KINDS.join(', ')}`);
+      }
+      const explanation = feedbackText(args.explanation, 'explanation', FEEDBACK_LIMITS.explanation);
+      if (!explanation) throw new UserFacingError('explanation is required');
+      const excerpt = feedbackText(args.excerpt, 'excerpt', FEEDBACK_LIMITS.excerpt);
+      const target = await feedbackTarget(env, db, userId, args);
+      // A rewrite of a whole prompt may be as long as a prompt; a fix to an item is a few words.
+      const rewriteMax = target.type === 'prompt' ? FEEDBACK_LIMITS.rewrite : FEEDBACK_LIMITS.explanation;
+      const suggestedRewrite = feedbackText(args.suggested_rewrite, 'suggested_rewrite', rewriteMax);
+      // Counted once the report is known to be valid, as save_note counts its quota.
+      await feedbackAllowed(env, token);
+      // Stored as text and shown as text: never run, never read aloud.
+      const result = await agentFeedback.record(db, {
+        userId,
+        mcpTokenId: token.id,
+        source: token.name.slice(0, 80),
+        kind: kind as FeedbackKind,
+        targetType: target.type,
+        targetId: target.id,
+        targetLabel: target.label.slice(0, TITLE_MAX_CHARS),
+        targetVersion: target.version,
+        excerpt,
+        explanation,
+        suggestedRewrite,
+      });
+      if (result.status === 'recorded') {
+        return { status: 'recorded', id: result.id, note: 'The user sees this in Eavesy and decides. Nothing has changed yet.' };
+      }
+      if (result.status === 'duplicate') return { status: 'duplicate', note: 'You already sent this report.' };
+      return { status: 'full', note: 'There are enough open reports on this already. Don\'t send more until the user has looked at them.' };
     }
     case 'send_to_my_devices': {
       const body = typeof args.text === 'string' ? args.text : '';

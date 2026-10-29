@@ -84,6 +84,7 @@ export const ACCOUNT_TABLES = [
   'prompt_templates',
   'saved_prompts',
   'agent_messages',
+  'agent_feedback',
   'agent_listeners',
   'personal_dictionary',
   'webhook_endpoints',
