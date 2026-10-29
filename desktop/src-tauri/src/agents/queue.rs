@@ -225,7 +225,7 @@ impl Queue {
 pub fn finished_together(names: &[&str]) -> String {
     let list = match names {
         [] => return String::new(),
-        [one] => (*one).to_string(),
+        [one] => return format!("{one} finished."),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     };
     format!("{} sessions finished: {list}.", names.len())
@@ -304,6 +304,9 @@ mod tests {
         let item = queue.get(id).unwrap().clone();
         assert_eq!(speech(&item, 0), "eavesy: eavesy summary. I'd say: yes. Send that?");
         assert!(speech(&item, 2).starts_with("3 sessions need you. First, eavesy:"));
+        assert_eq!(finished_together(&[]), "");
+        assert_eq!(finished_together(&["docs"]), "docs finished.");
+        assert_eq!(finished_together(&["a", "b"]), "2 sessions finished: a and b.");
         let mut asks = item.clone();
         asks.summary = Some("asks: Should I open a PR?".into());
         asks.suggestion = None;

@@ -100,8 +100,13 @@ function Agents() {
   const { items, saying } = state;
   const head = items[0] ?? null;
 
-  useEffect(() => { void invoke('agents_state').then((next) => { if (next) setState(next as State); }); }, []);
-  useEvent('agents:state', (payload) => setState(payload as State));
+  // Anything that isn't a queue snapshot is ignored rather than drawn.
+  const take = (next: unknown) => {
+    const candidate = next as Partial<State> | null;
+    if (candidate && Array.isArray(candidate.items)) setState({ items: candidate.items, saying: candidate.saying ?? null });
+  };
+  useEffect(() => { void invoke('agents_state').then(take); }, []);
+  useEvent('agents:state', take);
 
   // A new session at the front starts from its own suggestion; a reply you
   // dictated replaces what's in the box.
