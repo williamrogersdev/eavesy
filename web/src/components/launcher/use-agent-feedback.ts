@@ -37,7 +37,8 @@ export function useAgentFeedback(enabled: boolean) {
     try { await dismissAgentFeedback(ids); }
     catch (e) {
       if (!mounted.current) return;
-      setItems((list) => [...removed, ...list.filter((item) => !ids.includes(item.id))].sort((a, b) => b.createdAt - a.createdAt));
+      // Only these come back, onto the list as it is now: other changes meanwhile stay.
+      setItems((list) => [...removed.filter((item) => !list.some((other) => other.id === item.id)), ...list].sort((a, b) => b.createdAt - a.createdAt));
       setError(errMsg(e, 'Couldn’t dismiss that.'));
     }
   }, [items, drop]);

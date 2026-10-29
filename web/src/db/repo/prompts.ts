@@ -30,6 +30,12 @@ export async function getBySlug(db: AppDb, userId: string, slug: string): Promis
   return row ? toSavedPrompt(row) : null;
 }
 
+export async function get(db: AppDb, userId: string, id: string): Promise<SavedPrompt | null> {
+  const row = (await db.select().from(savedPrompts)
+    .where(and(eq(savedPrompts.userId, userId), eq(savedPrompts.id, id))).limit(1))[0];
+  return row ? toSavedPrompt(row) : null;
+}
+
 async function takenSlugs(db: AppDb, userId: string): Promise<Set<string>> {
   const rows = await db.select({ id: savedPrompts.id, slug: savedPrompts.slug }).from(savedPrompts)
     .where(eq(savedPrompts.userId, userId));

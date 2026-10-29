@@ -83,7 +83,7 @@ export async function handleMerge(request: Request, client: () => MergeClient = 
   if (limited) return limited;
   const parsed = mergeSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: 'invalid_request' }, 400);
-  const prompt = (await prompts.list(db, actor.userId)).find((p) => p.id === parsed.data.promptId);
+  const prompt = await prompts.get(db, actor.userId, parsed.data.promptId);
   if (!prompt) return json({ error: 'not_found' }, 404);
   const items = await feedback.openForPrompt(db, actor.userId, prompt.id, parsed.data.ids);
   // Nothing to merge: no model call, and nothing charged.
@@ -92,7 +92,9 @@ export async function handleMerge(request: Request, client: () => MergeClient = 
   const refund = () => refundUserQuota(actor.userId, 'prompt-feedback-merge', chargedAt);
   const quota = await guardUserQuota(actor.userId, 'prompt-feedback-merge', chargedAt);
   if (quota) return quota;
-  const spend = await guardSpend(request, 'prompt-feedback-merge', { perMin: 20, perDay: 2_000 }).catch(async (error: unknown) => { await refund(); throw error; });
+  // An unreachable budget counter fails closed: give the quota back and say so, rather than a bare 500.
+  const spend = await guardSpend(request, 'prompt-feedback-merge', { perMin: 20, perDay: 2_000 })
+    .catch(() => json({ error: 'Couldn’t merge the suggestions right now.' }, 503));
   if (spend) { await refund(); return spend; }
   try {
     const result = await mergeFeedback(client(), prompt.body, items);

@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { FEEDBACK_KIND_LABELS, type AgentFeedback } from '@/lib/agent-feedback';
 import { PROMPT_LIMITS } from '@/lib/prompts';
 import { MODELS } from './client';
-import { fence } from './fence';
+import { fence as fenceTags } from './fence';
+
+/** Ampersands too, so a prompt that already holds `&lt;` comes back as it was. */
+const fence = (text: string) => fenceTags(text.replaceAll('&', '&amp;'));
+const unfence = (text: string) => text.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
 
 /**
  * Agents' reports on one saved prompt, merged by Haiku into one proposed
@@ -66,7 +70,7 @@ export function parseMerged(text: string): MergedPrompt | null {
   catch { return null; }
   const parsed = merged.safeParse(value);
   if (!parsed.success) return null;
-  return { body: parsed.data.body.replaceAll('&lt;', '<').replaceAll('&gt;', '>'), summary: parsed.data.summary };
+  return { body: unfence(parsed.data.body), summary: parsed.data.summary };
 }
 
 /** Throws when the provider call fails or answers with something unusable. */

@@ -18,7 +18,7 @@ export function flaggedLabel(items: readonly AgentFeedback[]): string {
 }
 
 /** A rewrite shown against the text it was made from, before anything is written. */
-interface Preview { body: string; basedOn: string; ids: string[]; summary: string | null }
+interface Preview { body: string; basedOn: string; ids: string[]; summary: string | null; older: boolean }
 
 function Diff({ before, after }: { before: string; after: string }) {
   return (
@@ -51,8 +51,10 @@ function Report({ item, prompt }: { item: AgentFeedback; prompt?: SavedPrompt })
  * through a preview of the new text against the current one, and is written
  * only if the prompt hasn't changed since.
  */
-export function PromptFeedbackCard({ prompt, items, feedback, state }: {
+export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
   prompt: SavedPrompt;
+  /** The prompt's form has unsaved edits, which applying would replace. */
+  dirty: boolean;
   items: AgentFeedback[];
   feedback: AgentFeedbackState;
   state: SavedPromptsState;
@@ -72,7 +74,7 @@ export function PromptFeedbackCard({ prompt, items, feedback, state }: {
     setError(null);
     try {
       const result = await mergeAgentFeedback(prompt.id, items.map((item) => item.id));
-      setPreview({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null });
+      setPreview({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null, older: false });
     } catch (e) { setError(errMsg(e, 'Couldn’t write a rewrite right now.')); }
     setMerging(false);
   };
@@ -103,11 +105,17 @@ export function PromptFeedbackCard({ prompt, items, feedback, state }: {
       <Card title="Preview">
         <div className="ev-set-body flex flex-col gap-2">
           {preview.summary && <p className="ev-set-hint">{preview.summary}</p>}
+          {preview.older && (
+            <p className="ev-set-hint text-[var(--ev-warn-ink)]">
+              This was written for an older version of the prompt, so it may undo changes you made since. Check the struck-through words.
+            </p>
+          )}
           <p className="ev-set-hint">Added words are underlined, removed ones struck through. Nothing changes until you apply it.</p>
           <Diff before={preview.basedOn} after={preview.body} />
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Cancel</Button>
-            <Button variant="primary" size="sm" icon={Check} loading={applying} disabled={applying || unchanged} onClick={() => void apply()}>
+            {dirty && <span className="ev-set-hint">Save or cancel your edits first.</span>}
+            <Button variant="primary" size="sm" icon={Check} loading={applying} disabled={applying || unchanged || dirty} onClick={() => void apply()}>
               {unchanged ? 'No changes' : 'Apply'}
             </Button>
           </div>
@@ -125,7 +133,13 @@ export function PromptFeedbackCard({ prompt, items, feedback, state }: {
           <Report item={item} prompt={prompt} />
           <span className="flex shrink-0 gap-1">
             {item.suggestedRewrite && (
-              <Button variant="outline" size="sm" onClick={() => setPreview({ body: item.suggestedRewrite!, basedOn: prompt.body, ids: [item.id], summary: null })}>
+              <Button variant="outline" size="sm" onClick={() => setPreview({
+                body: item.suggestedRewrite!,
+                basedOn: prompt.body,
+                ids: [item.id],
+                summary: null,
+                older: item.targetVersion !== null && item.targetVersion < prompt.updatedAt,
+              })}>
                 Preview
               </Button>
             )}

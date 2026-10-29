@@ -27,6 +27,9 @@ describe('mergeUserMessage', () => {
 describe('parseMerged', () => {
   it('reads the rewrite, undoing escapes the model kept', () => {
     expect(parseMerged('{"body":"Use &lt;details&gt; here","summary":"Clearer."}')).toEqual({ body: 'Use <details> here', summary: 'Clearer.' });
+    // A prompt that holds an entity itself is fenced with its ampersand escaped, and comes back unchanged.
+    expect(mergeUserMessage('Write &lt; for <', [])).toContain('<prompt>Write &amp;lt; for &lt;</prompt>');
+    expect(parseMerged('{"body":"Write &amp;lt; for &lt;","summary":""}')?.body).toBe('Write &lt; for <');
   });
 
   it('drops an answer that is empty, unreadable or longer than a prompt may be', () => {

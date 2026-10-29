@@ -107,6 +107,7 @@ function PromptPage({ prompt, initial, state, feedback, onBack }: {
       {prompt && (
         <PromptFeedbackCard
           prompt={prompt}
+          dirty={changed}
           items={feedback.items.filter((item) => item.targetType === 'prompt' && item.targetId === prompt.id)}
           feedback={feedback}
           state={state}
