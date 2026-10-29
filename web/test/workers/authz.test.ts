@@ -457,6 +457,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/prompts' }, excludes: [PROMPT] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a prompt owned by the caller' },
   },
+  '/api/prompts/suggestions': {
+    GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'Reads only the authenticated caller’s own dictations and prompt names (filtered by actor.userId) to suggest prompts; stores nothing' },
+  },
   '/api/prompts/$id': {
     PATCH: {
       unauthenticated: SIGNED_IN,
