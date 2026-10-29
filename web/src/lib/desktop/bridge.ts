@@ -452,7 +452,7 @@ export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
 /**
  * Runs `claude plugin marketplace add` and `claude plugin install` for Eavesy,
  * each tried again once after a network-type failure. Usually seconds; a slow
- * first clone can take a few minutes, and the very worst case is about nine.
+ * first clone can take a few minutes, and the very worst case is about fourteen.
  */
 export async function connectClaudeCode(): Promise<ClaudeCodeStatus> {
   return invoke<ClaudeCodeStatus>('connect_claude_code');

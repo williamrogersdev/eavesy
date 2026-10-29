@@ -228,15 +228,19 @@ fn parse_sign_in(out: &str) -> Login {
 /// few seconds, and each check can take up to `CHECK_TIMEOUT`.
 const CHECK_REUSE: Duration = Duration::from_secs(4);
 
+/// The last `claude mcp get` answer: when, for which server, and what it said.
+static LAST_CHECK: Mutex<Option<(Instant, String, Login)>> = Mutex::new(None);
+
 /// Asks Claude Code whether it's signed in, at most one check at a time: while
 /// one runs, or just after, its answer is reused instead of starting another.
+/// That's a deliberate trade: a second caller can wait up to `CHECK_TIMEOUT`
+/// behind a slow check rather than start a second `claude` alongside it.
 fn check_sign_in(cli: &Path, server: &str) -> Login {
-    static LAST: Mutex<Option<(Instant, String, Login)>> = Mutex::new(None);
     let fresh = |last: &Option<(Instant, String, Login)>| {
         last.as_ref().filter(|(at, name, _)| name == server && at.elapsed() < CHECK_REUSE).map(|(_, _, login)| *login)
     };
     // Holding the lock for the check makes a second caller wait for this answer, then reuse it.
-    let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut last = LAST_CHECK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(login) = fresh(&last) {
         return login;
     }
@@ -289,8 +293,11 @@ fn worth_retrying(said: &str) -> bool {
     }
     let said = said.to_lowercase();
     [
-        "timed out", "timeout", "clone", "fetch", "network", "connection", "unable to access", "early eof", "could not resolve",
-        "econn", "etimedout", "enotfound", "not found in marketplace", "out of date",
+        // git and the network
+        "timed out", "unable to access", "could not resolve host", "early eof", "connection reset", "failed to clone",
+        "econnreset", "etimedout", "enotfound", "eai_again",
+        // a stale plugin list (fixed by the refresh before the second try)
+        "not found in marketplace",
     ]
     .iter()
     .any(|sign| said.contains(sign))
@@ -317,7 +324,8 @@ fn run_twice(step: &Step, attempt: impl Fn() -> Result<String, String>, before_r
 }
 
 /// Adds the marketplace (unless a good copy is already there) and installs the plugin.
-/// At worst (two slow clones, then a refresh and two installs) this is about nine minutes.
+/// At worst (a clone that fails late, its retry, then an install, a refresh and
+/// a second install: 2 × 270s + 120s + 60s + 120s) this is about fourteen minutes.
 fn add_plugin(cli: &Path, plugins_dir: Option<&Path>) -> Result<(), String> {
     if !marketplace_on_disk(plugins_dir) {
         run_twice(&STEP_MARKETPLACE, || run(cli, &["plugin", "marketplace", "add", MARKETPLACE], ADD_TIMEOUT), || {})?;
@@ -349,6 +357,8 @@ pub fn connect_claude_code(window: WebviewWindow) -> Result<ClaudeCodeStatus, St
     // Turned on, with its plugin list really on disk, means there's nothing to repair.
     if !(status(false).plugin && marketplace_on_disk(plugins_dir.as_deref())) {
         add_plugin(&cli, plugins_dir.as_deref())?;
+        // A sign-in answer from before the plugin went in is stale now.
+        *LAST_CHECK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
     Ok(status(true))
 }
@@ -533,6 +543,11 @@ mod tests {
             assert!(error.starts_with("Step 2 of 2"));
         }
         assert!(worth_retrying("Plugin \"eavesy\" not found in marketplace \"eavesy\""));
+        assert!(worth_retrying("fatal: unable to access 'https://github.com/williamrogersdev/eavesy.git/': Could not resolve host"));
+        // Definite errors that only mention network-ish words.
+        assert!(!worth_retrying("Error: manifest field \"fetch\" is invalid"));
+        assert!(!worth_retrying("Error: plugin declares connection settings it can't use"));
+        assert!(!worth_retrying("Cloning repository (timeout: 120s)\nError: marketplace.json is not valid JSON"));
     }
 
     #[test]

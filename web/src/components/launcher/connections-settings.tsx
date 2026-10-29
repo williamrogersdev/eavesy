@@ -147,6 +147,8 @@ function syncedLine(upcoming: number): string {
 
 const WAIT_POLL_MS = 3000;
 const WAIT_LIMIT_MS = 5 * 60 * 1000;
+/** Longer than the app's own 10s limit on asking Claude Code. */
+const ASK_LIMIT_MS = 20_000;
 
 /** Google Calendar: connect in one click, then the account, what's used, and Disconnect. */
 function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) {
@@ -307,14 +309,17 @@ function useClaudeCode(active: boolean) {
   // While a button's command runs, its own answer is the one to show.
   const running = useRef(false);
   // One check at a time: the poll and coming back to the window can both ask.
-  const asking = useRef(false);
+  // A check that never answers stops counting after ASK_LIMIT_MS, so it can't block the rest.
+  const asking = useRef<number | null>(null);
   const refresh = useCallback(() => {
-    if (!desktop || running.current || asking.current) return;
-    asking.current = true;
+    if (!desktop || running.current) return;
+    if (asking.current !== null && Date.now() - asking.current < ASK_LIMIT_MS) return;
+    const started = Date.now();
+    asking.current = started;
     void claudeCodeStatus()
       .then((next) => { if (!running.current) setStatus(next); })
       .catch(() => {})
-      .finally(() => { asking.current = false; });
+      .finally(() => { if (asking.current === started) asking.current = null; });
   }, [desktop]);
   useEffect(() => { if (active) refresh(); }, [active, refresh]);
   useOnReturn(desktop && active, refresh);
