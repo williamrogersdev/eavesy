@@ -5,9 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, IconButton } from '@/components/launcher/ui';
 import { dictionaryRequest } from '@/lib/desktop/bridge';
 import { MAX_BULK_REPLACEMENTS, parseReplacements } from '@/lib/dictionary/bulk';
-import { isConfirmed, normalizeTerm } from '@/lib/dictionary/learning';
+import { isConfirmed, learnedReason, normalizeTerm } from '@/lib/dictionary/learning';
 
-type Entry = { id: string; from: string; to: string; origin?: 'manual' | 'learned' | null; seen?: number };
+type Entry = { id: string; from: string; to: string; origin?: 'manual' | 'learned' | null; seen?: number; updatedAt?: number };
 
 /** Learned from one edit and not yet kept: listed for review, never applied. */
 const isSuggestion = (entry: Entry) => !isConfirmed(entry);
@@ -52,7 +52,7 @@ function EntryRow({ entry, busy, onSave, onRemove }: {
       <button type="button" className="ev-dict-pair ev-dict-view" disabled={busy} onClick={start} aria-label={`Edit ${entry.from} → ${entry.to}`}>
         <span className="ev-dict-from">{entry.from}</span>
         <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
-        <span className="ev-dict-to">{entry.to}{entry.origin !== 'manual' && <span className="ev-dict-tag" title="Learned from fixes you made more than once">learned</span>}</span>
+        <span className="ev-dict-to">{entry.to}{entry.origin !== 'manual' && <span className="ev-dict-tag" title={learnedReason(entry)}>learned</span>}</span>
       </button>
       <span className="ev-dict-actions">
         <IconButton label={`Edit ${entry.from}`} icon={Pencil} disabled={busy} onClick={start} />
@@ -65,10 +65,13 @@ function EntryRow({ entry, busy, onSave, onRemove }: {
 function SuggestionRow({ entry, busy, onKeep, onDismiss }: { entry: Entry; busy: boolean; onKeep: () => void; onDismiss: () => void }) {
   return (
     <li className="ev-dict-row">
-      <span className="ev-dict-pair ev-dict-view" data-static>
-        <span className="ev-dict-from">{entry.from}</span>
-        <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
-        <span className="ev-dict-to">{entry.to}</span>
+      <span className="ev-dict-suggestion">
+        <span className="ev-dict-pair ev-dict-view" data-static>
+          <span className="ev-dict-from">{entry.from}</span>
+          <ArrowRight size={14} className="ev-dict-arrow" aria-hidden />
+          <span className="ev-dict-to">{entry.to}</span>
+        </span>
+        <span className="ev-dict-why">{learnedReason(entry)}</span>
       </span>
       <span className="ev-dict-actions" data-shown>
         <Button variant="outline" size="sm" icon={Check} disabled={busy} onClick={onKeep} aria-label={`Keep ${entry.from} → ${entry.to}`}>Keep</Button>
@@ -205,7 +208,7 @@ export function DictionarySettings({ active = false }: { active?: boolean }) {
     <Card title="Replacements">
       <div className="ev-set-body flex flex-col gap-3">
         <p className="ev-set-hint">
-          When Eavesy hears the word on the left, it types the one on the right. When you fix a word in a transcript, Eavesy suggests it below, and uses it once you make the same fix again or keep it.
+          When Eavesy hears the word on the left, it types the one on the right.
         </p>
 
         {bulk === null ? (
@@ -265,10 +268,10 @@ export function DictionarySettings({ active = false }: { active?: boolean }) {
         {suggestions.length > 0 && (
           <section className="ev-dict-suggested" aria-labelledby="dictionary-suggested">
             <div className="ev-dict-bulk-foot">
-              <p id="dictionary-suggested" className="ev-set-label">Suggested from your edits · {suggestions.length}</p>
+              <p id="dictionary-suggested" className="ev-set-label">Suggested from your fixes · {suggestions.length}</p>
               <Button variant="ghost" size="sm" disabled={busy} onClick={dismissAll}>Dismiss all</Button>
             </div>
-            <p className="ev-set-hint">Not used yet. Keep the ones that are right; the rest go away when you dismiss them.</p>
+            <p className="ev-set-hint">Names and terms you corrected after Eavesy typed them. Keep one to use it now; the same fix made again keeps it on its own.</p>
             <ul className="ev-dict-list">
               {suggestions.map((entry) => (
                 <SuggestionRow key={entry.id} entry={entry} busy={busy} onKeep={() => keep(entry)} onDismiss={() => dismiss(entry)} />

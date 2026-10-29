@@ -93,6 +93,10 @@
 .ev-settings-pane .ev-projrow-head:hover { background: var(--ev-hover); }
 .ev-settings-pane .ev-projrow-head:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-settings-pane .ev-card > .ev-projrow + .ev-projrow { border-top: 1px solid var(--evs-divider); }
+.ev-prompt-why { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* A project's dictation style: its own reads as a setting, the default stays quiet. */
+.ev-proj-style { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ev-ink-3); font: var(--ev-t-small); }
+.ev-proj-style[data-own] { padding: 2px 8px; border-radius: 999px; background: var(--ev-manila-soft); color: var(--ev-manila-ink); font-weight: 600; }
 
 .ev-settings-feedback { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); color: var(--ev-warn-ink); font: var(--ev-t-body); }
 .ev-settings-feedback p { flex: 1; min-width: 0; margin: 0; }

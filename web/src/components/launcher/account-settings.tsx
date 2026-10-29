@@ -142,16 +142,59 @@ function ownStyle(project: ProjectSummary): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
-/** Your default dictation style, and the projects that write their own way. */
+/** Where a project is used: its own words to match, or else its name. */
+function usedIn(project: ProjectSummary): string {
+  return `Used in “${(project.match.length ? project.match : [project.name]).join('”, “')}”`;
+}
+
+/** Adds a project by name: a button that becomes a name field. */
+function NewProjectRow({ label, disabled, onCreate }: {
+  label: string;
+  disabled?: boolean;
+  onCreate: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const submit = () => {
+    const name = draft?.trim();
+    if (!name) return;
+    setDraft(null);
+    onCreate(name);
+  };
+  return (
+    <div className="ev-set-row">
+      {draft === null ? (
+        <Button variant="outline" size="sm" icon={Plus} disabled={disabled} onClick={() => setDraft('')}>{label}</Button>
+      ) : (
+        <>
+          <input
+            autoFocus
+            aria-label="Project name"
+            className="ev-field-input flex-1"
+            placeholder="Project name, like the repo or client"
+            value={draft}
+            maxLength={PROJECT_LIMITS.name}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); setDraft(null); } }}
+          />
+          <Button variant="primary" size="sm" disabled={!draft.trim()} onClick={submit}>Create</Button>
+          <IconButton label="Cancel" icon={X} onClick={() => setDraft(null)} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Your default dictation style, and each project's: its own, or yours. */
 export function DictationCard({ account, projects, onOpenProject }: {
   account: AccountPrefsState;
-  projects: ProjectSummary[] | null;
+  projects: ProjectsState;
   onOpenProject: (id: string) => void;
 }) {
   const { prefs, update, error } = account;
   const style = prefs?.style ?? 'natural';
   const forAgents = prefs?.forAgents ?? false;
-  const custom = (projects ?? []).filter((project) => ownStyle(project));
+  const list = projects.projects;
+  const create = (name: string) => { void projects.create(name).then((project) => { if (project) onOpenProject(project.id); }); };
   return (
     <>
       <Card title="Your default style">
@@ -179,25 +222,42 @@ export function DictationCard({ account, projects, onOpenProject }: {
       </Card>
 
       <Card title="Projects">
-        <p className="ev-set-hint">
-          Every dictation uses your default, unless the window you’re in belongs to a project that sets its own style.
-        </p>
-        {projects === null ? null : custom.length ? (
-          <ul className="ev-plain-list">
-            {custom.map((project) => (
-              <li key={project.id}>
-                <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpenProject(project.id)}>
-                  <FolderOpen className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
-                  <span className="ev-set-label min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="ev-set-hint shrink-0">{ownStyle(project)}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="ev-set-hint">{projects.length ? 'None of your projects set their own style, so they all use this one.' : 'You have no projects yet, so this is used everywhere.'}</p>
+        <p className="ev-set-hint">A project can use its own style while you dictate in its windows.</p>
+        {list === null && !projects.loadFailed && <p className="ev-set-hint ev-set-body">Loading your projects…</p>}
+        {list === null && projects.loadFailed && (
+          <div className="ev-set-body">
+            <div role="alert" className="ev-settings-feedback">
+              <p>{projects.error ?? 'Couldn’t load your projects.'}</p>
+              <Button variant="outline" size="sm" onClick={projects.reload}>Try again</Button>
+            </div>
+          </div>
         )}
+        {list?.length === 0 && (
+          <div className="ev-set-body">
+            <p className="ev-set-label">No projects yet</p>
+            <p className="ev-set-hint">Add one for a repo, client or team. Dictations in its windows can then be written differently, like as a prompt for your coding agent.</p>
+          </div>
+        )}
+        {list?.map((project) => {
+          const own = ownStyle(project);
+          return (
+            <div key={project.id} className="ev-projrow">
+              <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpenProject(project.id)}>
+                <FolderOpen className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="ev-set-label block truncate">{project.name}</span>
+                  <span className="ev-set-hint block truncate">{usedIn(project)}</span>
+                </span>
+                <span className="ev-proj-style" data-own={own ? '' : undefined}>{own ?? 'Your default'}</span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
+              </button>
+            </div>
+          );
+        })}
+        {!(list === null && projects.loadFailed) && (
+          <NewProjectRow label="Add a project" disabled={list === null} onCreate={create} />
+        )}
+        {list !== null && <Status error={projects.error} />}
       </Card>
     </>
   );
@@ -494,15 +554,8 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
   onOpen: (id: string | null) => void;
   onOpenDictation: () => void;
 }) {
-  const { projects, error, loadFailed, reload, change, create, remove } = state;
-  const [draft, setDraft] = useState<string | null>(null);
-
-  const submit = () => {
-    const name = draft?.trim();
-    if (!name) return;
-    setDraft(null);
-    void create(name).then((project) => { if (project) onOpen(project.id); });
-  };
+  const { projects, error, loadFailed, reload, change, remove } = state;
+  const create = (name: string) => { void state.create(name).then((project) => { if (project) onOpen(project.id); }); };
 
   const current = projects?.find((p) => p.id === open);
   if (current) {
@@ -540,7 +593,7 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
                 <span className="ev-set-label block truncate">{project.name}</span>
                 <span className="ev-set-hint block truncate">
                   {[
-                    `Used in “${(project.match.length ? project.match : [project.name]).join('”, “')}”`,
+                    usedIn(project),
                     project.vocabulary.length === 1 ? '1 word' : project.vocabulary.length ? `${project.vocabulary.length} words` : null,
                     ownStyle(project) ?? 'default dictation style',
                   ].filter(Boolean).join(' · ')}
@@ -556,26 +609,7 @@ export function ProjectsSettings({ account, state, open, onOpen, onOpenDictation
             <Button variant="outline" size="sm" onClick={reload}>Try again</Button>
           </div>
         )}
-        <div className="ev-set-row">
-          {draft === null ? (
-            <Button variant="outline" size="sm" icon={Plus} disabled={projects === null} onClick={() => setDraft('')}>New project</Button>
-          ) : (
-            <>
-              <input
-                autoFocus
-                aria-label="Project name"
-                className="ev-field-input flex-1"
-                placeholder="Project name, like the repo"
-                value={draft}
-                maxLength={PROJECT_LIMITS.name}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); setDraft(null); } }}
-              />
-              <Button variant="primary" size="sm" disabled={!draft.trim()} onClick={submit}>Create</Button>
-              <IconButton label="Cancel" icon={X} onClick={() => setDraft(null)} />
-            </>
-          )}
-        </div>
+        <NewProjectRow label="New project" disabled={projects === null} onCreate={create} />
         {!(projects === null && loadFailed) && <Status error={error} />}
       </Card>
     </>
