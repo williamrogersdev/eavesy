@@ -163,7 +163,7 @@ export const Route = createFileRoute('/api/sessions/')({
         // Linking is a nicety: a calendar lookup that fails never fails the recording.
         const event = parsed.data.kind === 'meeting'
           ? await calendarEventFor(db, actor.userId, parsed.data.startedAt).catch((error: unknown) => {
-            reportError('[sessions] calendar match', error, { userId: actor.userId });
+            reportError('[sessions] calendar match', error, { userId: actor.userId, clientSessionId: parsed.data.clientSessionId, startedAt: parsed.data.startedAt });
             return null;
           })
           : null;
