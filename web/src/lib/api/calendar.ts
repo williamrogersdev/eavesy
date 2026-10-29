@@ -87,8 +87,8 @@ export function parseUpcoming(value: unknown): UpcomingMeeting[] | null {
   return value.upcoming.flatMap(parseMeeting);
 }
 
-/** The meetings in the next day, as this Mac (device token) or the signed-in browser. */
-export async function getUpcomingMeetings(): Promise<UpcomingMeeting[]> {
+/** The meetings in the next day, as this Mac (device token) or the signed-in browser; null with no calendar connected. */
+export async function getUpcomingMeetings(): Promise<UpcomingMeeting[] | null> {
   const answer = isDesktop()
     ? await accountCall('GET', '/api/calendar-events')
     : await fetch('/api/calendar-events').then((response) => {
@@ -97,7 +97,7 @@ export async function getUpcomingMeetings(): Promise<UpcomingMeeting[]> {
     });
   const meetings = parseUpcoming(answer);
   if (!meetings) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
-  return meetings;
+  return isRecord(answer) && answer.connected === false ? null : meetings;
 }
 
 /** Records whether to record one meeting; null goes back to the "record all" setting. */

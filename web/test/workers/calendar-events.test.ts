@@ -58,8 +58,8 @@ async function startSession(body: Record<string, unknown>) {
   });
   expect(response.status).toBe(201);
   const { meetingId } = (await response.json()) as { meetingId: string };
-  return (await row<{ title: string; context_blurb: string | null; calendar_event_id: string | null }>(
-    'SELECT title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
+  return (await row<{ id: string; title: string; context_blurb: string | null; calendar_event_id: string | null }>(
+    'SELECT id, title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
     meetingId,
   ))!;
 }
@@ -177,6 +177,15 @@ describe('POST /api/sessions with a calendar', () => {
     expect((await post()).status).toBe(200);
     const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
     expect(linked?.recorded_meeting_id).toBe(meetingId);
+  });
+
+  it('links a second recording of the same call, while the event keeps the first', async () => {
+    const first = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    const second = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    expect(second.calendar_event_id).toBe('evt_now');
+    expect(second.title).toBe('Design review');
+    const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
+    expect(linked?.recorded_meeting_id).toBe(first.id);
   });
 
   it('leaves voice memos and dictations alone', async () => {

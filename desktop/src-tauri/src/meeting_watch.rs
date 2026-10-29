@@ -60,7 +60,15 @@ const BROWSERS: &[&str] = &[
     "com.brave.Browser",
     "com.operasoftware.Opera",
     "com.vivaldi.Vivaldi",
+    // Safari's calls take the mic in WebKit's GPU process.
+    "com.apple.WebKit.GPU",
 ];
+
+/// `id` is `app` or one of its helpers (`com.google.Chrome.helper`): Chromium
+/// and Electron apps take the mic in a helper process.
+fn is_or_helper_of(id: &str, app: &str) -> bool {
+    id == app || id.strip_prefix(app).is_some_and(|rest| rest.starts_with('.'))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
@@ -80,15 +88,15 @@ impl Signal {
 /// `precise` reports name the apps taking input; otherwise `apps` is every
 /// app running while the mic is in use by someone.
 pub fn signal_in(apps: &[String]) -> Option<Signal> {
-    if let Some(id) = apps.iter().find(|id| MEETING_APPS.iter().any(|(app, _)| app == id)) {
+    if let Some(id) = apps.iter().find(|id| MEETING_APPS.iter().any(|(app, _)| is_or_helper_of(id, app))) {
         return Some(Signal::App(id.clone()));
     }
-    apps.iter().find(|id| BROWSERS.contains(&id.as_str())).map(|id| Signal::Browser(id.clone()))
+    apps.iter().find(|id| BROWSERS.iter().any(|app| is_or_helper_of(id, app))).map(|id| Signal::Browser(id.clone()))
 }
 
 fn app_name(signal: &Signal) -> &'static str {
     match signal {
-        Signal::App(id) => MEETING_APPS.iter().find(|(app, _)| app == id).map(|(_, name)| *name).unwrap_or("A call"),
+        Signal::App(id) => MEETING_APPS.iter().find(|(app, _)| is_or_helper_of(id, app)).map(|(_, name)| *name).unwrap_or("A call"),
         Signal::Browser(_) => "A call in your browser",
     }
 }
@@ -130,6 +138,10 @@ pub struct Moment<'a> {
     pub busy: bool,
     /// "Record my meetings automatically".
     pub auto_record: bool,
+    /// The mic report names the apps taking input. Before macOS 14.2 it only
+    /// lists what's running while someone uses the mic: Zoom open in the
+    /// background during a voice memo looks like a call.
+    pub precise: bool,
     /// The call holding the mic, and since when.
     pub call: Option<(&'a Signal, i64)>,
     pub event: Option<&'a Event>,
@@ -157,14 +169,19 @@ pub fn decide(moment: &Moment) -> Option<Prompt> {
     if choice == Some("skip") {
         return None;
     }
-    // A browser counts as a call only alongside a calendar meeting with a link.
-    let sure = match signal {
-        Signal::App(_) => true,
-        Signal::Browser(_) => moment.event.is_some_and(|event| event.meeting_url.is_some()),
-    };
+    // Sure it's a call: a meeting app taking the mic, or anything else
+    // alongside a calendar meeting with a link. Otherwise it only asks.
+    let linked = moment.event.is_some_and(|event| event.meeting_url.is_some());
+    let sure = linked || (moment.precise && matches!(signal, Signal::App(_)));
     let countdown = sure && (choice == Some("record") || moment.auto_record);
     let title = moment.event.map(|event| event.title.clone()).unwrap_or_else(|| app_name(signal).to_string());
     Some(Prompt { key, title, countdown })
+}
+
+/// Whether the prompt `session` is what the capture control shows, on screen:
+/// the countdown only records when the user could see it counting.
+pub fn prompt_on_screen(shown: &HudState, session: &str, window_visible: bool) -> bool {
+    window_visible && shown.phase == Phase::Prompt && shown.session_id.as_deref() == Some(session)
 }
 
 /// A recording the prompt started, and what started it.
@@ -303,7 +320,7 @@ fn tick(app: &AppHandle) {
     let auto_record = settings::load(app).auto_record_meetings();
     let capturing = app.state::<Captures>().is_busy();
     enum Act {
-        Show(Prompt, Option<i64>),
+        Offer(Prompt, i64),
         Record(Prompt),
         Clear(String),
         Stop(String),
@@ -351,22 +368,35 @@ fn tick(app: &AppHandle) {
             now,
             busy: capturing,
             auto_record,
+            precise: watch.precise,
             call: watch.call.as_ref().map(|(signal, since)| (signal, *since)),
             event,
             dismissed: &watch.dismissed,
         };
         if let Some(prompt) = decide(&moment) {
             let until = now + if prompt.countdown { COUNTDOWN_MS } else { ASK_FOR_MS };
-            watch.prompt = Some((prompt.clone(), until));
-            acts.push(Act::Show(prompt.clone(), prompt.countdown.then_some(until)));
+            acts.push(Act::Offer(prompt, until));
         }
         acts
     });
     for act in acts {
         match act {
-            Act::Show(prompt, deadline) => show_prompt(app, &prompt, deadline),
+            // Armed only once it is on screen; otherwise the next tick tries again.
+            Act::Offer(prompt, until) => {
+                if show_prompt(app, &prompt, prompt.countdown.then_some(until)) {
+                    with_watch(|watch| watch.prompt = Some((prompt, until)));
+                }
+            }
             Act::Clear(key) => clear_prompt(app, &key),
-            Act::Record(prompt) => record(app, &prompt),
+            Act::Record(prompt) => {
+                let visible = app.get_webview_window("hud").is_some_and(|window| window.is_visible().unwrap_or(false));
+                if prompt_on_screen(&hud::current(), &prompt_session(&prompt.key), visible) {
+                    record(app, &prompt);
+                } else {
+                    // Replaced or hidden before it finished counting: never record unseen.
+                    clear_prompt(app, &prompt.key);
+                }
+            }
             Act::Stop(session_id) => stop(app, session_id),
         }
     }
@@ -376,8 +406,14 @@ fn prompt_session(key: &str) -> String {
     format!("meeting-prompt:{key}")
 }
 
-fn show_prompt(app: &AppHandle, prompt: &Prompt, deadline: Option<i64>) {
-    hud::set_state(
+/// Puts the prompt in the capture control, only over the resting pill (never
+/// over a dictation's result or a recording) and not while the launcher panel
+/// hides the control. Whether it did.
+fn show_prompt(app: &AppHandle, prompt: &Prompt, deadline: Option<i64>) -> bool {
+    if crate::panel::is_visible(app) {
+        return false;
+    }
+    hud::set_state_if(
         app,
         HudState {
             phase: Phase::Prompt,
@@ -387,7 +423,8 @@ fn show_prompt(app: &AppHandle, prompt: &Prompt, deadline: Option<i64>) {
             message: Some(prompt.title.clone()),
             notice: None,
         },
-    );
+        |now| now.phase == Phase::Idle,
+    )
 }
 
 fn clear_prompt(app: &AppHandle, key: &str) {
@@ -397,19 +434,23 @@ fn clear_prompt(app: &AppHandle, key: &str) {
 
 /// Starts the Meeting recording the prompt was for. It goes through the
 /// `mixed` source, so the cloud links it to the calendar event and names it.
+/// On its own thread: the engine can take a while to start.
 fn record(app: &AppHandle, prompt: &Prompt) {
     clear_prompt(app, &prompt.key);
-    let started = crate::audio::start_audio_capture(app, &app.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-    match started {
-        Ok(session) => with_watch(|watch| {
-            let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
-            let event_ends_at = event_at(&watch.events, now_ms()).map(|event| event.ends_at);
-            watch.auto = Some(AutoRecording { session_id: session.session_id, bundle, precise: watch.precise, event_ends_at });
-            watch.gone_since = None;
-        }),
-        // The capture start already shows why (a permission, say); the prompt won't repeat.
-        Err(error) => tracing::warn!("meeting watch: could not start recording: {error}"),
-    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
+        match started {
+            Ok(session) => with_watch(|watch| {
+                let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
+                let event_ends_at = event_at(&watch.events, now_ms()).map(|event| event.ends_at);
+                watch.auto = Some(AutoRecording { session_id: session.session_id, bundle, precise: watch.precise, event_ends_at });
+                watch.gone_since = None;
+            }),
+            // The capture start already shows why (a permission, say); the prompt won't repeat.
+            Err(error) => tracing::warn!("meeting watch: could not start recording: {error}"),
+        }
+    });
 }
 
 fn stop(app: &AppHandle, session_id: String) {
@@ -470,7 +511,7 @@ mod tests {
     }
 
     fn moment<'a>(call: Option<(&'a Signal, i64)>, event: Option<&'a Event>, dismissed: &'a HashSet<String>) -> Moment<'a> {
-        Moment { now: T, busy: false, auto_record: true, call, event, dismissed }
+        Moment { now: T, busy: false, auto_record: true, precise: true, call, event, dismissed }
     }
 
     fn zoom() -> Signal {
@@ -495,6 +536,42 @@ mod tests {
         assert!(prompt.countdown);
         assert_eq!(prompt.title, "Zoom");
         assert_eq!(prompt.key, format!("app:us.zoom.xos:{}", T - CALL_DWELL_MS));
+    }
+
+    #[test]
+    fn helpers_count_as_their_app() {
+        let apps = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        assert_eq!(signal_in(&apps(&["com.google.Chrome.helper"])), Some(Signal::Browser("com.google.Chrome.helper".into())));
+        assert_eq!(signal_in(&apps(&["com.tinyspeck.slackmacgap.helper"])), Some(Signal::App("com.tinyspeck.slackmacgap.helper".into())));
+        assert_eq!(signal_in(&apps(&["com.apple.WebKit.GPU"])), Some(Signal::Browser("com.apple.WebKit.GPU".into())));
+        // A prefix that isn't a helper is another app.
+        assert_eq!(signal_in(&apps(&["us.zoom.xosmeter"])), None);
+        assert_eq!(app_name(&Signal::App("com.microsoft.teams2.helper".into())), "Teams");
+    }
+
+    #[test]
+    fn without_precise_reports_a_running_meeting_app_only_asks() {
+        let none = HashSet::new();
+        let zoom = zoom();
+        let mut vague = moment(Some((&zoom, T - 60_000)), None, &none);
+        vague.precise = false;
+        assert!(!decide(&vague).unwrap().countdown);
+        // A calendar meeting with a link at that time makes it a call.
+        let review = event("review", 0, 30, None);
+        let mut vague = moment(Some((&zoom, T - 60_000)), Some(&review), &none);
+        vague.precise = false;
+        assert!(decide(&vague).unwrap().countdown);
+    }
+
+    #[test]
+    fn the_countdown_records_only_while_its_prompt_is_on_screen() {
+        let shown = |phase: Phase, session: &str| HudState { phase, session_id: Some(session.into()), mode: None, started_at_ms: None, message: None, notice: None };
+        let ours = prompt_session("event:review");
+        assert!(prompt_on_screen(&shown(Phase::Prompt, &ours), &ours, true));
+        assert!(!prompt_on_screen(&shown(Phase::Prompt, &ours), &ours, false));
+        assert!(!prompt_on_screen(&shown(Phase::Prompt, &prompt_session("event:other")), &ours, true));
+        assert!(!prompt_on_screen(&shown(Phase::Done, &ours), &ours, true));
+        assert!(!prompt_on_screen(&HudState::idle(), &ours, true));
     }
 
     #[test]

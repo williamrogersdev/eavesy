@@ -290,7 +290,8 @@ function meetingTime(meeting: UpcomingMeeting, now: number): string {
  * changing that setting moves every meeting you didn't choose for.
  */
 function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active: boolean }) {
-  const [meetings, setMeetings] = useState<UpcomingMeeting[] | null>(null);
+  // undefined while loading, null when no calendar is connected.
+  const [meetings, setMeetings] = useState<UpcomingMeeting[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
@@ -300,7 +301,8 @@ function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active:
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your meetings.')));
   }, [active]);
   if (error) return <p role="alert" className="ev-set-hint">{error}</p>;
-  if (!meetings) return null;
+  if (meetings === undefined) return null;
+  if (meetings === null) return <p className="ev-set-hint">Connect a calendar above to choose meeting by meeting.</p>;
   if (meetings.length === 0) return <p className="ev-set-hint">No meetings in the next day.</p>;
   const now = Date.now();
   const choose = (meeting: UpcomingMeeting, record: boolean) => {
