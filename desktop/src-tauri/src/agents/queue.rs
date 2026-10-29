@@ -224,7 +224,7 @@ impl Queue {
 /// "3 sessions finished: eavesy, docs and repackify."
 pub fn finished_together(names: &[&str]) -> String {
     let list = match names {
-        [] => String::new(),
+        [] => return String::new(),
         [one] => (*one).to_string(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     };

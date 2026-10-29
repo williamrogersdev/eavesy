@@ -61,8 +61,8 @@ pub fn open_args(bundle: &str, cwd: Option<&str>) -> Option<Vec<String>> {
         return None;
     }
     let mut args = vec!["-b".to_string(), bundle.to_string()];
-    if let Some(cwd) = cwd.filter(|cwd| OPENS_FOLDERS.contains(&bundle) && Path::new(cwd).is_absolute() && Path::new(cwd).is_dir()) {
-        args.push("--".to_string());
+    // An absolute path starts with `/`, so `open` can't read it as a flag.
+    if let Some(cwd) = cwd.filter(|cwd| OPENS_FOLDERS.contains(&bundle) && cwd.starts_with('/') && Path::new(cwd).is_dir()) {
         args.push(cwd.to_string());
     }
     Some(args)
@@ -123,7 +123,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let dir = dir.to_str().unwrap();
         assert_eq!(open_args("com.apple.Terminal", Some(dir)).unwrap(), ["-b", "com.apple.Terminal"]);
-        assert_eq!(open_args("com.microsoft.VSCode", Some(dir)).unwrap(), ["-b", "com.microsoft.VSCode", "--", dir]);
+        assert_eq!(open_args("com.microsoft.VSCode", Some(dir)).unwrap(), ["-b", "com.microsoft.VSCode", dir]);
         assert_eq!(open_args("com.microsoft.VSCode", Some("relative/path")).unwrap(), ["-b", "com.microsoft.VSCode"]);
     }
 }

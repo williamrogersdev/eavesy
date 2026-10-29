@@ -787,7 +787,9 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 
 /* The reply card for Claude Code sessions (agents.tsx): the HUD's dark coat,
    manila for the one action that sends. Its root carries `launcher-scope ev`,
-   where the tokens live; without them the card is see-through. */
+   where the tokens live; without them the card is see-through. Ink on manila
+   is a fixed dark brown, like the HUD's: the HUD coat is dark in both modes,
+   and --ev-manila-ink turns light in dark mode. */
 .ag-card {
   display: flex;
   flex-direction: column;
@@ -810,7 +812,6 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 }
 .ag-kind[data-kind='approval'], .ag-kind[data-kind='question'] { background: var(--ev-manila); color: #2b1d05; }
 .ag-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--ev-t-ui); }
-.ag-more { flex: none; color: var(--ev-hud-ink-2); font: var(--ev-t-small); }
 .ag-summary { margin: 0; font: var(--ev-t-head); }
 .ag-message {
   margin: 0;

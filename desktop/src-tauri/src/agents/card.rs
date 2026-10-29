@@ -14,13 +14,25 @@ const WIDTH: f64 = 380.0;
 const HEIGHT: f64 = 260.0;
 const MIN_HEIGHT: f64 = 96.0;
 const MAX_HEIGHT: f64 = 560.0;
+/// From the edges of the work area (already below the menu bar).
 const MARGIN: f64 = 16.0;
-/// Below the menu bar.
-const TOP: f64 = 24.0;
 
-/// The height the card asked for, kept within reason.
-pub fn clamp_height(height: f64) -> f64 {
-    if height.is_finite() { height.clamp(MIN_HEIGHT, MAX_HEIGHT) } else { HEIGHT }
+/// The height the card asked for, kept within reason and within the
+/// `room` left below its top edge on its screen.
+pub fn clamp_height(height: f64, room: Option<f64>) -> f64 {
+    let max = room.map_or(MAX_HEIGHT, |room| room.min(MAX_HEIGHT)).max(MIN_HEIGHT);
+    if height.is_finite() { height.clamp(MIN_HEIGHT, max) } else { HEIGHT.min(max) }
+}
+
+/// Room below the card's top edge on the screen it's on.
+#[cfg(target_os = "macos")]
+fn room_below(window: &tauri::WebviewWindow) -> Option<f64> {
+    let monitor = window.current_monitor().ok().flatten()?;
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let bottom = area.position.to_logical::<f64>(scale).y + area.size.to_logical::<f64>(scale).height;
+    let top = window.outer_position().ok()?.to_logical::<f64>(scale).y;
+    Some(bottom - top - MARGIN)
 }
 
 /// Top right of the screen with the pointer, where you're looking, rather
@@ -37,7 +49,7 @@ fn place(app: &AppHandle, window: &tauri::WebviewWindow) {
     let area = monitor.work_area();
     let size = area.size.to_logical::<f64>(scale);
     let origin = area.position.to_logical::<f64>(scale);
-    let _ = window.set_position(tauri::LogicalPosition::new(origin.x + size.width - WIDTH - MARGIN, origin.y + MARGIN.min(TOP)));
+    let _ = window.set_position(tauri::LogicalPosition::new(origin.x + size.width - WIDTH - MARGIN, origin.y + MARGIN));
 }
 
 // tauri-nspanel's collection-behaviour type is marked deprecated; the HUD and
@@ -110,7 +122,7 @@ pub fn fit(app: &AppHandle, height: f64) {
     let _ = app.run_on_main_thread(move || {
         use tauri::Manager;
         if let Some(window) = handle.get_webview_window(LABEL) {
-            let _ = window.set_size(tauri::LogicalSize::new(WIDTH, clamp_height(height)));
+            let _ = window.set_size(tauri::LogicalSize::new(WIDTH, clamp_height(height, room_below(&window))));
         }
     });
 }
@@ -151,9 +163,13 @@ pub fn take_keys(_app: &AppHandle) {}
 mod tests {
     #[test]
     fn heights_stay_on_screen() {
-        assert_eq!(super::clamp_height(10.0), 96.0);
-        assert_eq!(super::clamp_height(300.0), 300.0);
-        assert_eq!(super::clamp_height(5000.0), 560.0);
-        assert_eq!(super::clamp_height(f64::NAN), 260.0);
+        assert_eq!(super::clamp_height(10.0, None), 96.0);
+        assert_eq!(super::clamp_height(300.0, None), 300.0);
+        assert_eq!(super::clamp_height(5000.0, None), 560.0);
+        assert_eq!(super::clamp_height(f64::NAN, None), 260.0);
+        // A short screen keeps the card's bottom edge on it.
+        assert_eq!(super::clamp_height(500.0, Some(400.0)), 400.0);
+        assert_eq!(super::clamp_height(f64::NAN, Some(200.0)), 200.0);
+        assert_eq!(super::clamp_height(500.0, Some(20.0)), 96.0);
     }
 }
