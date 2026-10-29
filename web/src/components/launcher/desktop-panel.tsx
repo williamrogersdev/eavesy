@@ -123,9 +123,17 @@ export function DesktopPanel() {
   const attachedIds = useMemo(() => new Set(attached.map((capture) => capture.id)), [attached]);
   const attachedRef = useRef(attached);
   attachedRef.current = attached;
+  const offRecordRef = useRef(false);
+  offRecordRef.current = eavesy.thread.off_record === true;
+  useEffect(() => { if (eavesy.thread.off_record) setAttached([]); }, [eavesy.thread.off_record]);
   const askAbout = useCallback<AskAbout>((id, load) => {
     if (attachedRef.current.some((capture) => capture.id === id)) {
       setAttached((current) => current.filter((capture) => capture.id !== id));
+      return;
+    }
+    // Off the record, Eavesy reads nothing of yours, attached or not.
+    if (offRecordRef.current) {
+      flash('This conversation is off the record, so it can’t read your captures. Clear it to ask about them.', 5000, 'warn');
       return;
     }
     if (attachedRef.current.length >= ASK_CAPTURES) {
@@ -143,7 +151,8 @@ export function DesktopPanel() {
   const trimmed = useMemo(() => new Set(askMessage('', attached).trimmed), [attached]);
 
   const ask = useCallback(async (text: string) => {
-    const sending = attachedRef.current;
+    // Going off the record after attaching takes them off: nothing of yours is read there.
+    const sending = offRecordRef.current ? [] : attachedRef.current;
     const message = askMessage(text, sending);
     if (!message.fits) {
       const reason = sending.length ? 'That question is too long to send with captures. Shorten it, or take one off.' : 'That’s too long to send to Eavesy in one go.';

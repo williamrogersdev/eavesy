@@ -386,7 +386,8 @@ looking at, and the words are the whole transcript, cut to fit one message
 the question with a 📎 line naming what went with it. The mic shows only
 while the field is empty, and is off while captures are attached (a spoken
 turn can't carry them), while Eavesy is answering, and while a Clear waits. Esc with an empty
-field takes the attachments off first.
+field takes the attachments off first. Off the record, nothing can be
+attached (Eavesy reads nothing of yours there), and Clear ends that.
 
 **Capture toolbar:** a "New capture" section label (the day-group style)
 with "Saves to" and the project chip (next recording's project, `auto` when
