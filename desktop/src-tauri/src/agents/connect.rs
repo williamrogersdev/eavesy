@@ -27,6 +27,8 @@ const PLUGIN: &str = "eavesy@eavesy";
 /// found the half-made copy and finished it) got through.
 const ADD_TIMEOUT: Duration = Duration::from_secs(270);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Refreshing a plugin list already on disk is a small fetch.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// `claude mcp get` checks the server over the network; a slow answer counts as "don't know".
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const SHELL_RETRY: Duration = Duration::from_secs(60);
@@ -37,7 +39,9 @@ const SHELL_RETRY: Duration = Duration::from_secs(60);
 pub enum Login {
     Connected,
     NeedsSignIn,
-    /// It didn't say, or couldn't reach the server.
+    /// Claude Code asked the server and it failed ("✘ Failed to connect").
+    Failed,
+    /// Couldn't ask: no answer in time, or one we don't recognise.
     Unknown,
 }
 
@@ -138,7 +142,7 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
                 unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("Claude Code took too long to answer. Check your connection and try again.".into());
+                return Err(TOO_LONG.into());
             }
         }
     };
@@ -150,6 +154,8 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
     let said = if said.trim().is_empty() { out } else { said };
     Err(failure(&said))
 }
+
+const TOO_LONG: &str = "Claude Code took too long to answer. Check your connection and try again.";
 
 /// Eavesy starts from Finder with only the system folders on PATH, which can't
 /// find `git` from Homebrew, or `node` for a `claude` installed with npm. So the
@@ -200,18 +206,47 @@ fn marketplace_ready(known: &Value) -> bool {
 }
 
 /// Reads the `Status:` line of `claude mcp get`: "✔ Connected", "! Needs authentication", "✘ Failed to connect".
+/// Only those phrases count; anything else is `Unknown`.
 fn parse_sign_in(out: &str) -> Login {
-    let Some(line) = out.lines().map(str::trim).find(|line| line.starts_with("Status:")) else {
+    let Some(line) = out.lines().map(str::trim).find_map(|line| line.strip_prefix("Status:")) else {
         return Login::Unknown;
     };
-    let line = line.to_lowercase();
-    if line.contains("auth") {
+    // Drop the leading mark (✔, !, ✘) and compare the words.
+    let words = line.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_lowercase();
+    if words.starts_with("fail") {
+        Login::Failed
+    } else if words.starts_with("needs auth") {
         Login::NeedsSignIn
-    } else if line.contains("connected") && !line.contains("fail") && !line.contains("not connected") {
+    } else if words == "connected" {
         Login::Connected
     } else {
         Login::Unknown
     }
+}
+
+/// How long one `claude mcp get` answer is reused. The sign-in poll asks every
+/// few seconds, and each check can take up to `CHECK_TIMEOUT`.
+const CHECK_REUSE: Duration = Duration::from_secs(4);
+
+/// The last `claude mcp get` answer: when, for which server, and what it said.
+static LAST_CHECK: Mutex<Option<(Instant, String, Login)>> = Mutex::new(None);
+
+/// Asks Claude Code whether it's signed in, at most one check at a time: while
+/// one runs, or just after, its answer is reused instead of starting another.
+/// That's a deliberate trade: a second caller can wait up to `CHECK_TIMEOUT`
+/// behind a slow check rather than start a second `claude` alongside it.
+fn check_sign_in(cli: &Path, server: &str) -> Login {
+    let fresh = |last: &Option<(Instant, String, Login)>| {
+        last.as_ref().filter(|(at, name, _)| name == server && at.elapsed() < CHECK_REUSE).map(|(_, _, login)| *login)
+    };
+    // Holding the lock for the check makes a second caller wait for this answer, then reuse it.
+    let mut last = LAST_CHECK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(login) = fresh(&last) {
+        return login;
+    }
+    let login = run(cli, &["mcp", "get", server], CHECK_TIMEOUT).map_or(Login::Unknown, |out| parse_sign_in(&out));
+    *last = Some((Instant::now(), server.to_string(), login));
+    login
 }
 
 /// What's set up now. `check` also asks Claude Code whether it's signed in, which takes a moment.
@@ -224,11 +259,8 @@ fn status(check: bool) -> ClaudeCodeStatus {
         sign_in: None,
     };
     if check && (status.plugin || status.server) {
-        let checked = status.cli.as_deref().map(|cli| run(Path::new(cli), &["mcp", "get", server_name(&status)], CHECK_TIMEOUT));
-        status.sign_in = Some(match checked {
-            Some(Ok(out)) => parse_sign_in(&out),
-            _ => Login::Unknown,
-        });
+        let server = server_name(&status);
+        status.sign_in = Some(status.cli.as_deref().map_or(Login::Unknown, |cli| check_sign_in(Path::new(cli), server)));
     }
     status
 }
@@ -252,34 +284,81 @@ fn step_failed(step: &Step, said: &str) -> String {
     format!("Step {} of 2 ({}) didn't work. {said}", step.number, step.what)
 }
 
-/// Runs a step, and once more if it fails: a dropped connection, or a copy left
-/// half-made by an earlier try, usually goes through the second time.
-fn run_twice(step: &Step, attempt: impl Fn() -> Result<String, String>) -> Result<(), String> {
-    attempt().or_else(|_| attempt()).map(|_| ()).map_err(|said| step_failed(step, &said))
+/// A failure worth one more try: the network dropped, a clone broke off, or the
+/// plugin list on disk is stale. Our own time limit isn't: the command hung
+/// past Claude Code's own limits, and a second wait wouldn't help.
+fn worth_retrying(said: &str) -> bool {
+    if said == TOO_LONG {
+        return false;
+    }
+    let said = said.to_lowercase();
+    [
+        // git and the network
+        "timed out", "unable to access", "could not resolve host", "early eof", "connection reset", "failed to clone",
+        "econnreset", "etimedout", "enotfound", "eai_again",
+        // a stale plugin list (fixed by the refresh before the second try)
+        "not found in marketplace",
+    ]
+    .iter()
+    .any(|sign| said.contains(sign))
+}
+
+/// The pause before a second try, so a dropped connection has a moment to come back.
+#[cfg(not(test))]
+const RETRY_PAUSE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const RETRY_PAUSE: Duration = Duration::from_millis(1);
+
+/// Runs a step, and once more (after `before_retry`) if it failed in a way a
+/// second try fixes. A definite error is reported straight away.
+fn run_twice(step: &Step, attempt: impl Fn() -> Result<String, String>, before_retry: impl Fn()) -> Result<(), String> {
+    let result = match attempt() {
+        Err(said) if worth_retrying(&said) => {
+            std::thread::sleep(RETRY_PAUSE);
+            before_retry();
+            attempt()
+        }
+        other => other,
+    };
+    result.map(|_| ()).map_err(|said| step_failed(step, &said))
 }
 
 /// Adds the marketplace (unless a good copy is already there) and installs the plugin.
+/// At worst (a clone that fails late, its retry, then an install, a refresh and
+/// a second install: 2 × 270s + 120s + 60s + 120s) this is about fourteen minutes.
 fn add_plugin(cli: &Path, plugins_dir: Option<&Path>) -> Result<(), String> {
-    let ready = || plugins_dir.is_some_and(|dir| marketplace_ready(&read_json(&dir.join("known_marketplaces.json"))));
-    if !ready() {
-        run_twice(&STEP_MARKETPLACE, || run(cli, &["plugin", "marketplace", "add", MARKETPLACE], ADD_TIMEOUT))?;
+    if !marketplace_on_disk(plugins_dir) {
+        run_twice(&STEP_MARKETPLACE, || run(cli, &["plugin", "marketplace", "add", MARKETPLACE], ADD_TIMEOUT), || {})?;
     }
-    run_twice(&STEP_INSTALL, || {
-        run(cli, &["plugin", "install", PLUGIN, "--scope", "user"], INSTALL_TIMEOUT).inspect_err(|_| {
-            // An old copy of the plugin list may not have the plugin yet ("not found in
-            // marketplace"): refresh it so the second try sees it.
-            let _ = run(cli, &["plugin", "marketplace", "update", MARKETPLACE_NAME], ADD_TIMEOUT);
-        })
-    })
+    run_twice(
+        &STEP_INSTALL,
+        || run(cli, &["plugin", "install", PLUGIN, "--scope", "user"], INSTALL_TIMEOUT),
+        // An old copy of the plugin list may not have the plugin yet ("not found in
+        // marketplace"): refresh it so the second try sees it.
+        || {
+            let _ = run(cli, &["plugin", "marketplace", "update", MARKETPLACE_NAME], UPDATE_TIMEOUT);
+        },
+    )
+}
+
+fn marketplace_on_disk(plugins_dir: Option<&Path>) -> bool {
+    plugins_dir.is_some_and(|dir| marketplace_ready(&read_json(&dir.join("known_marketplaces.json"))))
+}
+
+fn plugins_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".claude").join("plugins"))
 }
 
 #[tauri::command(async)]
 pub fn connect_claude_code(window: WebviewWindow) -> Result<ClaudeCodeStatus, String> {
     crate::assistant::from_ui(&window)?;
     let cli = cli_path().ok_or("Eavesy couldn't find Claude Code on this Mac. Install Claude Code, then try again.")?;
-    if !status(false).plugin {
-        let plugins_dir = dirs::home_dir().map(|home| home.join(".claude").join("plugins"));
+    let plugins_dir = plugins_dir();
+    // Turned on, with its plugin list really on disk, means there's nothing to repair.
+    if !(status(false).plugin && marketplace_on_disk(plugins_dir.as_deref())) {
         add_plugin(&cli, plugins_dir.as_deref())?;
+        // A sign-in answer from before the plugin went in is stale now.
+        *LAST_CHECK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
     Ok(status(true))
 }
@@ -370,8 +449,12 @@ mod tests {
         let get = |status: &str| format!("plugin:eavesy:eavesy:\n  Scope: User\n  Status: {status}\n  Type: http\n  URL: https://mcp.eavesy.com\n");
         assert_eq!(parse_sign_in(&get("✔ Connected")), Login::Connected);
         assert_eq!(parse_sign_in(&get("! Needs authentication")), Login::NeedsSignIn);
-        assert_eq!(parse_sign_in(&get("✘ Failed to connect")), Login::Unknown);
+        assert_eq!(parse_sign_in(&get("✘ Failed to connect")), Login::Failed);
+        assert_eq!(parse_sign_in(&get("✘ Failed to authenticate")), Login::Failed);
+        assert_eq!(parse_sign_in(&get("✘ Disconnected")), Login::Unknown);
+        assert_eq!(parse_sign_in(&get("✔ Connected (needs re-authentication soon)")), Login::Unknown);
         assert_eq!(parse_sign_in("No MCP server named \"eavesy\"."), Login::Unknown);
+        assert_eq!(serde_json::to_value(Login::Failed).unwrap(), json!("failed"));
         assert_eq!(serde_json::to_value(Login::NeedsSignIn).unwrap(), json!("needsSignIn"));
     }
 
@@ -442,9 +525,29 @@ mod tests {
 
     #[test]
     fn a_step_that_keeps_failing_is_named() {
-        let error = run_twice(&STEP_MARKETPLACE, || Err("fatal: unable to access GitHub".into())).unwrap_err();
+        let tries = std::cell::Cell::new(0);
+        let error = run_twice(&STEP_MARKETPLACE, || { tries.set(tries.get() + 1); Err("fatal: unable to access GitHub".into()) }, || {}).unwrap_err();
+        assert_eq!(tries.get(), 2, "a network failure gets a second try");
         assert!(error.starts_with("Step 1 of 2 (downloading Eavesy's plugin list from GitHub) didn't work."), "{error}");
         assert!(error.ends_with("fatal: unable to access GitHub"));
+    }
+
+    #[test]
+    fn a_definite_error_or_a_hang_is_not_tried_again() {
+        for said in ["Error: Plugin manifest is invalid", TOO_LONG] {
+            let tries = std::cell::Cell::new(0);
+            let refreshed = std::cell::Cell::new(false);
+            let error = run_twice(&STEP_INSTALL, || { tries.set(tries.get() + 1); Err(said.into()) }, || refreshed.set(true)).unwrap_err();
+            assert_eq!(tries.get(), 1, "{said}");
+            assert!(!refreshed.get());
+            assert!(error.starts_with("Step 2 of 2"));
+        }
+        assert!(worth_retrying("Plugin \"eavesy\" not found in marketplace \"eavesy\""));
+        assert!(worth_retrying("fatal: unable to access 'https://github.com/williamrogersdev/eavesy.git/': Could not resolve host"));
+        // Definite errors that only mention network-ish words.
+        assert!(!worth_retrying("Error: manifest field \"fetch\" is invalid"));
+        assert!(!worth_retrying("Error: plugin declares connection settings it can't use"));
+        assert!(!worth_retrying("Cloning repository (timeout: 120s)\nError: marketplace.json is not valid JSON"));
     }
 
     #[test]
@@ -455,6 +558,20 @@ mod tests {
         assert!(dirs.contains(&"/opt/homebrew/bin") && dirs.contains(&"/usr/bin"));
         let unique: std::collections::HashSet<&str> = dirs.iter().copied().collect();
         assert_eq!(unique.len(), dirs.len());
+    }
+
+    #[test]
+    fn a_command_finds_tools_next_to_it() {
+        // Like an npm `claude` whose `#!/usr/bin/env node` needs `node` from its own folder.
+        let dir = temp_dir("path");
+        let helper = dir.join("eavesy-helper-only-here");
+        std::fs::write(&helper, "#!/bin/sh\necho found\n").unwrap();
+        std::fs::set_permissions(&helper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let cli = dir.join("claude");
+        std::fs::write(&cli, "#!/bin/sh\neavesy-helper-only-here\n").unwrap();
+        std::fs::set_permissions(&cli, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert_eq!(run(&cli, &[], Duration::from_secs(5)).unwrap().trim(), "found");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

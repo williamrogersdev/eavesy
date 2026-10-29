@@ -20,6 +20,7 @@ export const CLAUDE_CODE_AGENT_PROMPT = [
   '   If either says it is already added or installed, that is fine. Carry on.',
   `3. Run: ${CLAUDE_CODE_CHECK}`,
   '   It should list the server with Status: Needs authentication.',
+  '   If I already added a server named eavesy myself, Claude Code uses that one instead: then use `eavesy` in place of `plugin:eavesy:eavesy` in steps 3 to 5 (`claude mcp list` shows which is there).',
   `4. Signing in needs my browser, so don't do it yourself. Tell me to run \`${CLAUDE_CODE_SIGN_IN}\` in a terminal and approve Claude Code in the browser window it opens.`,
   `5. When I say I've approved it, run \`${CLAUDE_CODE_CHECK}\` again and tell me whether it says Connected. The Eavesy tools appear after Claude Code restarts.`,
 ].join('\n');
