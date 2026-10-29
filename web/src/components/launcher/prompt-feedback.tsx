@@ -69,6 +69,9 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState(false);
+  // A rewrite written for an older version is applied only once the user says they checked what it removes.
+  const [checked, setChecked] = useState(false);
+  const show = (next: Preview | null) => { setChecked(false); setPreview(next); };
 
   if (!items.length && !preview) {
     return applied ? <p role="status" className="ev-set-hint mt-4">Applied. Agents get the new text from now on.</p> : null;
@@ -80,7 +83,7 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
     try {
       const result = await mergeAgentFeedback(prompt.id, items.map((item) => item.id));
       const merged = items.filter((item) => result.ids.includes(item.id));
-      setPreview({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null, older: merged.some((item) => olderThan(item, prompt)) });
+      show({ body: result.body, basedOn: result.basedOn, ids: result.ids, summary: result.summary || null, older: merged.some((item) => olderThan(item, prompt)) });
     } catch (e) { setError(errMsg(e, 'Couldn’t write a rewrite right now.')); }
     setMerging(false);
   };
@@ -93,12 +96,12 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
       const saved = await applyAgentFeedback({ promptId: prompt.id, expectedBody: preview.basedOn, body: preview.body, ids: preview.ids });
       state.replace(saved);
       feedback.drop(preview.ids);
-      setPreview(null);
+      show(null);
       setApplied(true);
     } catch (e) {
       if (e instanceof PromptChanged) {
         if (e.prompt) state.replace(e.prompt); else state.reload();
-        setPreview(null);
+        show(null);
       }
       setError(errMsg(e, 'Couldn’t apply it.'));
     }
@@ -112,16 +115,17 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
         <div className="ev-set-body flex flex-col gap-2">
           {preview.summary && <p className="ev-set-hint">{preview.summary}</p>}
           {preview.older && (
-            <p className="ev-set-hint text-[var(--ev-warn-ink)]">
-              This was written for an older version of the prompt, so it may undo changes you made since. Check the struck-through words.
-            </p>
+            <label className="ev-set-hint flex items-start gap-2 text-[var(--ev-warn-ink)]">
+              <input type="checkbox" className="mt-0.5" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+              <span>This was written for an older version of the prompt, so it may undo changes you made since. I’ve checked the struck-through words.</span>
+            </label>
           )}
           <p className="ev-set-hint">Added words are underlined, removed ones struck through. Nothing changes until you apply it.</p>
           <Diff before={preview.basedOn} after={preview.body} />
           <div className="flex items-center justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Cancel</Button>
+            <Button variant="ghost" size="sm" onClick={() => show(null)}>Cancel</Button>
             {dirty && <span className="ev-set-hint">Save or cancel your edits first.</span>}
-            <Button variant="primary" size="sm" icon={Check} loading={applying} disabled={applying || unchanged || dirty} onClick={() => void apply()}>
+            <Button variant="primary" size="sm" icon={Check} loading={applying} disabled={applying || unchanged || dirty || (preview.older && !checked)} onClick={() => void apply()}>
               {unchanged ? 'No changes' : 'Apply'}
             </Button>
           </div>
@@ -139,7 +143,7 @@ export function PromptFeedbackCard({ prompt, dirty, items, feedback, state }: {
           <Report item={item} prompt={prompt} />
           <span className="flex shrink-0 gap-1">
             {item.suggestedRewrite && (
-              <Button variant="outline" size="sm" onClick={() => setPreview({
+              <Button variant="outline" size="sm" onClick={() => show({
                 body: item.suggestedRewrite!,
                 basedOn: prompt.body,
                 ids: [item.id],
