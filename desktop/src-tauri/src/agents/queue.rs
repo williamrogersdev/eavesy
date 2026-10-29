@@ -239,7 +239,9 @@ pub fn speech(item: &Item, others_waiting: usize) -> String {
         let total = others_waiting + 1;
         out.push_str(&format!("{total} sessions need you. First, "));
     }
-    out.push_str(&format!("{}: {summary}.", item.name));
+    // "asks: Should I open a PR?" keeps its own question mark.
+    let stop = if summary.ends_with(['?', '!']) { "" } else { "." };
+    out.push_str(&format!("{}: {summary}{stop}", item.name));
     if let Some(suggestion) = item.suggestion.as_deref() {
         out.push_str(&format!(" I'd say: {}. Send that?", suggestion.trim().trim_end_matches('.')));
     }
@@ -302,5 +304,9 @@ mod tests {
         let item = queue.get(id).unwrap().clone();
         assert_eq!(speech(&item, 0), "eavesy: eavesy summary. I'd say: yes. Send that?");
         assert!(speech(&item, 2).starts_with("3 sessions need you. First, eavesy:"));
+        let mut asks = item.clone();
+        asks.summary = Some("asks: Should I open a PR?".into());
+        asks.suggestion = None;
+        assert_eq!(speech(&asks, 0), "eavesy: asks: Should I open a PR?");
     }
 }
