@@ -20,6 +20,15 @@ export async function listForTranscription(db: AppDb, userId: string) {
   return (await list(db, userId)).filter(e => e.origin === 'manual' || (isConfirmed(e) && isLearnableSpelling(e.from, e.to)));
 }
 
+/**
+ * What the dictionary page lists: everything typed by hand, and learned fixes
+ * that still look like a name or term. Rows learned before the stricter test
+ * ("Yeah" → "Yes") stay stored but are never shown or used.
+ */
+export async function listForReview(db: AppDb, userId: string) {
+  return (await list(db, userId)).filter(e => e.origin === 'manual' || isLearnableSpelling(e.from, e.to));
+}
+
 export type DictionaryOrigin = 'manual' | 'learned';
 
 export async function remember(db: AppDb, userId: string, corrections: LearnedCorrection[], origin: DictionaryOrigin) {

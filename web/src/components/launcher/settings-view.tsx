@@ -564,7 +564,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
         <div id="settings-dictation" hidden={section !== 'dictation'}>
           {account
-            ? <DictationCard account={accountPrefs} projects={projects.projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
+            ? <DictationCard account={accountPrefs} projects={projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
             : signInFirst('choose how dictation is written')}
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
@@ -575,7 +575,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
         <div id="settings-prompts" hidden={section !== 'prompts'}>
           {account
-            ? <PromptsSettings state={prompts} open={openPrompt} onOpen={setOpenPrompt} onOpenConnections={() => go('connections')} />
+            ? <PromptsSettings state={prompts} open={openPrompt} onOpen={setOpenPrompt} onOpenConnections={() => go('connections')} active={section === 'prompts'} />
             : signInFirst('save prompts')}
         </div>
         <div id="settings-projects" hidden={section !== 'projects'}>

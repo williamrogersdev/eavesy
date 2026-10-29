@@ -25,6 +25,9 @@
 .ev-dict-view[data-static]:hover { background: transparent; }
 .ev-dict-row .ev-dict-actions[data-shown] { opacity: 1; }
 .ev-dict-suggested { display: flex; flex-direction: column; gap: 6px; }
+.ev-dict-suggestion { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.ev-dict-why { padding: 0 8px 6px; color: var(--ev-ink-3); font: 400 11.5px/16px var(--ev-font-text); }
+.ev-dict-suggestion > .ev-dict-view { padding-bottom: 2px; }
 .ev-dict-tag { margin-left: 6px; color: var(--ev-ink-3); font: 400 11px/18px var(--ev-font-text); }
 @media (max-width: 600px) {
   .ev-dict-pair { grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); }

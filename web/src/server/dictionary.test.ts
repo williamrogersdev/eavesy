@@ -180,3 +180,17 @@ test('casing and spacing updates are real writes, not incorrectly labeled unchan
   }
   expect(await (await t.request('PUT', { from: ' pool ', to: 'pull' })).json()).toMatchObject({ learned: 0, status: 'unchanged' });
 });
+
+test('the dictionary page hides everyday-word fixes learned before the stricter test, but keeps hand-made ones', async () => {
+  const t = setup();
+  t.sqlite.run(`INSERT INTO personal_dictionary (id, user_id, source_key, from_text, to_text, origin, seen, created_at, updated_at) VALUES
+    ('w1', 'u1', 'yeah', 'Yeah', 'Yes', 'learned', 1, 1, 1), ('w2', 'u1', 'friday', 'Friday', 'Monday', 'learned', 3, 1, 1),
+    ('w3', 'u1', 'eavsy', 'Eavsy', 'Eavesy', 'learned', 1, 1, 1), ('w4', 'u1', 'okay', 'Okay', 'OK', 'manual', 1, 1, 1)`);
+  const { entries } = await (await t.request('GET', null)).json() as { entries: { from: string }[] };
+  expect(entries.map(e => e.from).sort()).toEqual(['Eavsy', 'Okay']);
+  expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.from).sort()).toEqual(['Okay']);
+  // Adding a hidden row's "heard as" by hand replaces it, and it shows again as the user's own.
+  expect(await (await t.request('PUT', { from: 'Friday', to: 'Fri' })).json()).toMatchObject({ learned: 1, status: 'saved' });
+  const after = (await (await t.request('GET', null)).json() as { entries: { from: string; to: string; origin: string }[] }).entries;
+  expect(after.find(e => e.from === 'Friday')).toMatchObject({ to: 'Fri', origin: 'manual' });
+});
