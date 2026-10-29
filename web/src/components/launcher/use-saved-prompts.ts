@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPrompt, deletePrompt, listPrompts, markPromptUsed, updatePrompt } from '@/lib/api/prompts';
+import { createPrompt, deletePrompt, listPrompts, markPromptUsed, suggestPrompts, updatePrompt } from '@/lib/api/prompts';
 import { errMsg } from '@/lib/desktop/bridge';
+import type { PromptSuggestion } from '@/lib/prompt-starters';
 import type { SavedPrompt } from '@/lib/prompts';
 
 /**
@@ -68,3 +69,25 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
 }
 
 export type SavedPromptsState = ReturnType<typeof useSavedPrompts>;
+
+/**
+ * Prompts suggested from the account's dictations, asked for once, the first
+ * time `active` is true (the Prompts page is on screen), so opening Settings
+ * never costs a model call by itself. `personal` is null until it answers, and
+ * empty when there's nothing to suggest or it couldn't be reached.
+ */
+export function usePromptSuggestions(active: boolean) {
+  const [personal, setPersonal] = useState<PromptSuggestion[] | null>(null);
+  const asked = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (!active || asked.current) return;
+    asked.current = true;
+    // Kept even if the page is left meanwhile: it's shown the next time.
+    void suggestPrompts()
+      .then((items) => { if (mounted.current) setPersonal(items); })
+      .catch(() => { if (mounted.current) setPersonal([]); });
+  }, [active]);
+  return { personal, loading: active && personal === null };
+}
