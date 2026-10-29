@@ -64,16 +64,26 @@ export function installDevMock(): void {
     { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
     { id: 'mcp-2', name: 'ChatGPT', createdAt: Date.now() - 86_400_000 * 20, lastUsedAt: null, expiresAt: Date.now() + 86_400_000 * 70, scopes: ['read', 'write'], usesLegacyUrl: false },
   ];
-  const claudeCode = { cli: params.has('noclaude') ? null : '/Users/you/.local/bin/claude', plugin: false, server: params.has('mcpserver') };
+  // ?claude=added|connected|failure|slow previews each Claude Code state; signing in from "added" connects 4s later.
+  const claudeMode = params.get('claude');
+  const claudeCode = {
+    cli: params.has('noclaude') ? null : '/Users/you/.local/bin/claude',
+    plugin: claudeMode === 'added' || claudeMode === 'connected',
+    server: params.has('mcpserver'),
+    signIn: null as null | 'connected' | 'needsSignIn',
+  };
+  const claudeStatus = () => ({ ...claudeCode, signIn: claudeCode.plugin || claudeCode.server ? (claudeCode.signIn ?? 'needsSignIn') : null });
+  if (claudeMode === 'connected') claudeCode.signIn = 'connected';
   const results: Record<string, unknown> = {
     get_setup_status: { paired: true, completed: true },
-    claude_code_status: () => ({ ...claudeCode }),
+    claude_code_status: claudeStatus,
     connect_claude_code: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await new Promise((resolve) => setTimeout(resolve, claudeMode === 'slow' ? 600_000 : 1200));
+      if (claudeMode === 'failure') throw new Error('Step 1 of 2 (downloading Eavesy\'s plugin list from GitHub) didn\'t work. Claude Code took too long to answer. Check your connection and try again.');
       claudeCode.plugin = true;
-      return { ...claudeCode };
+      return claudeStatus();
     },
-    sign_in_claude_code: () => null,
+    sign_in_claude_code: () => { setTimeout(() => { claudeCode.signIn = 'connected'; }, 4000); return null; },
     account_info: params.has('signedout') ? null : { name: 'Robin Avery', email: 'robin@example.com' },
     get_settings: settings,
     list_recordings: ({ offset = 0, limit = 50, query = '', filter = 'all' }: Record<string, unknown>) => {

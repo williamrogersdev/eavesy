@@ -1,8 +1,8 @@
 //! Settings → Connections → Claude Code: adds Eavesy's plugin (the MCP server
 //! plus its skill) to Claude Code on this Mac in one click, by running the same
 //! `claude plugin` commands you'd type yourself. Both are safe to run again.
-//! Signing in still happens in Claude Code (`/mcp`), since that's where the
-//! OAuth token lives.
+//! Signing in still happens in Claude Code (`claude mcp login`), since that's
+//! where the OAuth token lives; `claude mcp get` tells us when it's done.
 
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -19,10 +19,27 @@ use tauri::WebviewWindow;
 use super::install;
 
 const MARKETPLACE: &str = "williamrogersdev/eavesy";
+const MARKETPLACE_NAME: &str = "eavesy";
 const PLUGIN: &str = "eavesy@eavesy";
-/// Adding the marketplace clones a GitHub repo, which can be slow on a bad network.
-const TIMEOUT: Duration = Duration::from_secs(120);
+/// Adding the marketplace clones a GitHub repo. Claude Code gives its own cache
+/// refresh and its clone 120s each, so this outlasts both. A 120s limit here
+/// killed the clone halfway on a slow first run, and only a second click (which
+/// found the half-made copy and finished it) got through.
+const ADD_TIMEOUT: Duration = Duration::from_secs(270);
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// `claude mcp get` checks the server over the network; a slow answer counts as "don't know".
+const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const SHELL_RETRY: Duration = Duration::from_secs(60);
+
+/// Whether Claude Code on this Mac is signed in to Eavesy, as `claude mcp get` reports it.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Login {
+    Connected,
+    NeedsSignIn,
+    /// It didn't say, or couldn't reach the server.
+    Unknown,
+}
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +50,8 @@ pub struct ClaudeCodeStatus {
     pub plugin: bool,
     /// The bare MCP server was added for every folder (`claude mcp add --scope user`).
     pub server: bool,
+    /// Only checked once Eavesy is added; `None` before that.
+    pub sign_in: Option<Login>,
 }
 
 /// Eavesy starts from Finder with a short PATH, so look where Claude Code's
@@ -81,6 +100,9 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
     let mut child = Command::new(program)
         .args(args)
         .env("NO_COLOR", "1")
+        .env("PATH", child_path(program))
+        // From your home folder, so one project's `.mcp.json` doesn't change the answer.
+        .current_dir(dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -129,6 +151,21 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
     Err(failure(&said))
 }
 
+/// Eavesy starts from Finder with only the system folders on PATH, which can't
+/// find `git` from Homebrew, or `node` for a `claude` installed with npm. So the
+/// folder `claude` is in and the usual install folders go first.
+fn child_path(program: &Path) -> String {
+    let home = dirs::home_dir().map(|home| home.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut dirs: Vec<String> = program.parent().map(|dir| dir.to_string_lossy().into_owned()).into_iter().collect();
+    dirs.extend(["/opt/homebrew/bin".to_string(), "/usr/local/bin".to_string()]);
+    dirs.extend([".local/bin", ".bun/bin", ".npm-global/bin"].map(|rel| format!("{home}/{rel}")));
+    dirs.extend(std::env::var("PATH").unwrap_or_default().split(':').map(str::to_string));
+    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(str::to_string));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|dir| !dir.is_empty() && seen.insert(dir.clone()));
+    dirs.join(":")
+}
+
 /// The last few lines of what a failed command said: enough to see why, short enough to read.
 fn failure(said: &str) -> String {
     let lines: Vec<&str> = said.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
@@ -153,28 +190,98 @@ fn server_added(config: &Value) -> bool {
     config.pointer("/mcpServers/eavesy").is_some()
 }
 
-fn status() -> ClaudeCodeStatus {
+/// `~/.claude/plugins/known_marketplaces.json` lists Eavesy's marketplace and its
+/// copy is really on disk. A clone stopped halfway leaves neither, so it's added again.
+fn marketplace_ready(known: &Value) -> bool {
+    known
+        .pointer(&format!("/{MARKETPLACE_NAME}/installLocation"))
+        .and_then(Value::as_str)
+        .is_some_and(|dir| Path::new(dir).join(".claude-plugin").join("marketplace.json").is_file())
+}
+
+/// Reads the `Status:` line of `claude mcp get`: "✔ Connected", "! Needs authentication", "✘ Failed to connect".
+fn parse_sign_in(out: &str) -> Login {
+    let Some(line) = out.lines().map(str::trim).find(|line| line.starts_with("Status:")) else {
+        return Login::Unknown;
+    };
+    let line = line.to_lowercase();
+    if line.contains("auth") {
+        Login::NeedsSignIn
+    } else if line.contains("connected") && !line.contains("fail") && !line.contains("not connected") {
+        Login::Connected
+    } else {
+        Login::Unknown
+    }
+}
+
+/// What's set up now. `check` also asks Claude Code whether it's signed in, which takes a moment.
+fn status(check: bool) -> ClaudeCodeStatus {
     let home = dirs::home_dir();
-    ClaudeCodeStatus {
+    let mut status = ClaudeCodeStatus {
         cli: cli_path().map(|path| path.to_string_lossy().into_owned()),
         plugin: install::settings_file().is_some_and(|file| plugin_enabled(&read_json(&file))),
         server: home.is_some_and(|home| server_added(&read_json(&home.join(".claude.json")))),
+        sign_in: None,
+    };
+    if check && (status.plugin || status.server) {
+        let checked = status.cli.as_deref().map(|cli| run(Path::new(cli), &["mcp", "get", server_name(&status)], CHECK_TIMEOUT));
+        status.sign_in = Some(match checked {
+            Some(Ok(out)) => parse_sign_in(&out),
+            _ => Login::Unknown,
+        });
     }
+    status
 }
 
 #[tauri::command(async)]
 pub fn claude_code_status(window: WebviewWindow) -> Result<ClaudeCodeStatus, String> {
     crate::assistant::from_ui(&window)?;
-    Ok(status())
+    Ok(status(true))
+}
+
+/// One step of adding Eavesy, named so a failure says which one broke.
+struct Step {
+    number: u8,
+    what: &'static str,
+}
+
+const STEP_MARKETPLACE: Step = Step { number: 1, what: "downloading Eavesy's plugin list from GitHub" };
+const STEP_INSTALL: Step = Step { number: 2, what: "installing the Eavesy plugin" };
+
+fn step_failed(step: &Step, said: &str) -> String {
+    format!("Step {} of 2 ({}) didn't work. {said}", step.number, step.what)
+}
+
+/// Runs a step, and once more if it fails: a dropped connection, or a copy left
+/// half-made by an earlier try, usually goes through the second time.
+fn run_twice(step: &Step, attempt: impl Fn() -> Result<String, String>) -> Result<(), String> {
+    attempt().or_else(|_| attempt()).map(|_| ()).map_err(|said| step_failed(step, &said))
+}
+
+/// Adds the marketplace (unless a good copy is already there) and installs the plugin.
+fn add_plugin(cli: &Path, plugins_dir: Option<&Path>) -> Result<(), String> {
+    let ready = || plugins_dir.is_some_and(|dir| marketplace_ready(&read_json(&dir.join("known_marketplaces.json"))));
+    if !ready() {
+        run_twice(&STEP_MARKETPLACE, || run(cli, &["plugin", "marketplace", "add", MARKETPLACE], ADD_TIMEOUT))?;
+    }
+    run_twice(&STEP_INSTALL, || {
+        run(cli, &["plugin", "install", PLUGIN, "--scope", "user"], INSTALL_TIMEOUT).inspect_err(|_| {
+            // An old copy of the plugin list may not have the plugin yet ("not found in
+            // marketplace"): refresh it so the second try sees it.
+            let _ = run(cli, &["plugin", "marketplace", "update", MARKETPLACE_NAME], ADD_TIMEOUT);
+        })
+    })
 }
 
 #[tauri::command(async)]
 pub fn connect_claude_code(window: WebviewWindow) -> Result<ClaudeCodeStatus, String> {
     crate::assistant::from_ui(&window)?;
-    let cli = cli_path().ok_or("Eavesy couldn't find Claude Code on this Mac. Install it, or run the commands below yourself.")?;
-    run(&cli, &["plugin", "marketplace", "add", MARKETPLACE], TIMEOUT)?;
-    run(&cli, &["plugin", "install", PLUGIN, "--scope", "user"], TIMEOUT)?;
-    Ok(status())
+    let cli = cli_path().ok_or("Eavesy couldn't find Claude Code on this Mac. Install Claude Code, then try again.")?;
+    if !status(false).plugin {
+        let plugins_dir = dirs::home_dir().map(|home| home.join(".claude").join("plugins"));
+        add_plugin(&cli, plugins_dir.as_deref())?;
+    }
+    Ok(status(true))
 }
 
 /// The name Claude Code knows Eavesy by. With both added it keeps your own
@@ -197,7 +304,7 @@ fn sign_in_script(cli: &str, server: &str) -> String {
 #[tauri::command(async)]
 pub fn sign_in_claude_code(window: WebviewWindow) -> Result<(), String> {
     crate::assistant::from_ui(&window)?;
-    let status = status();
+    let status = status(false);
     let cli = status.cli.clone().ok_or("Eavesy couldn't find Claude Code on this Mac.")?;
     if !status.plugin && !status.server {
         return Err("Add Eavesy to Claude Code first.".into());
@@ -251,11 +358,103 @@ mod tests {
 
     #[test]
     fn sign_in_uses_your_own_server_when_you_have_one() {
-        let both = ClaudeCodeStatus { cli: None, plugin: true, server: true };
-        let plugin = ClaudeCodeStatus { cli: None, plugin: true, server: false };
+        let both = ClaudeCodeStatus { cli: None, plugin: true, server: true, sign_in: None };
+        let plugin = ClaudeCodeStatus { cli: None, plugin: true, server: false, sign_in: None };
         assert_eq!(server_name(&both), "eavesy");
         assert_eq!(server_name(&plugin), "plugin:eavesy:eavesy");
         assert!(sign_in_script("/Users/o'neil/.local/bin/claude", "eavesy").contains(r"'/Users/o'\''neil/.local/bin/claude' mcp login 'eavesy'"));
+    }
+
+    #[test]
+    fn sign_in_is_read_from_claude_mcp_get() {
+        let get = |status: &str| format!("plugin:eavesy:eavesy:\n  Scope: User\n  Status: {status}\n  Type: http\n  URL: https://mcp.eavesy.com\n");
+        assert_eq!(parse_sign_in(&get("✔ Connected")), Login::Connected);
+        assert_eq!(parse_sign_in(&get("! Needs authentication")), Login::NeedsSignIn);
+        assert_eq!(parse_sign_in(&get("✘ Failed to connect")), Login::Unknown);
+        assert_eq!(parse_sign_in("No MCP server named \"eavesy\"."), Login::Unknown);
+        assert_eq!(serde_json::to_value(Login::NeedsSignIn).unwrap(), json!("needsSignIn"));
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("eavesy-connect-test-{name}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_half_cloned_marketplace_is_added_again() {
+        let dir = temp_dir("ready");
+        let known = json!({ "eavesy": { "installLocation": dir.to_string_lossy() } });
+        assert!(!marketplace_ready(&known), "listed, but the clone never finished");
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(dir.join(".claude-plugin/marketplace.json"), "{}").unwrap();
+        assert!(marketplace_ready(&known));
+        assert!(!marketplace_ready(&json!({ "other": { "installLocation": dir.to_string_lossy() } })));
+        assert!(!marketplace_ready(&Value::Null));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A stand-in `claude` that logs each call and fails the first try of `fail_first`.
+    fn fake_cli(dir: &Path, fail_first: &str) -> PathBuf {
+        let cli = dir.join("claude");
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> '{log}'\ncase \"$*\" in\n  '{fail_first}'*)\n    if [ ! -f '{seen}' ]; then touch '{seen}'; echo 'fatal: early EOF' >&2; exit 1; fi;;\nesac\nexit 0\n",
+            log = dir.join("log").display(),
+            seen = dir.join("seen").display(),
+        );
+        std::fs::write(&cli, script).unwrap();
+        std::fs::set_permissions(&cli, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        cli
+    }
+
+    #[test]
+    fn a_dropped_clone_is_tried_again_and_then_installs() {
+        let dir = temp_dir("retry");
+        let cli = fake_cli(&dir, "plugin marketplace add");
+        add_plugin(&cli, Some(&dir)).unwrap();
+        let log = std::fs::read_to_string(dir.join("log")).unwrap();
+        assert_eq!(log.lines().collect::<Vec<_>>(), [
+            "plugin marketplace add williamrogersdev/eavesy",
+            "plugin marketplace add williamrogersdev/eavesy",
+            "plugin install eavesy@eavesy --scope user",
+        ]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_marketplace_already_there_is_not_added_again() {
+        let dir = temp_dir("skip");
+        let copy = dir.join("copy");
+        std::fs::create_dir_all(copy.join(".claude-plugin")).unwrap();
+        std::fs::write(copy.join(".claude-plugin/marketplace.json"), "{}").unwrap();
+        std::fs::write(dir.join("known_marketplaces.json"), json!({ "eavesy": { "installLocation": copy.to_string_lossy() } }).to_string()).unwrap();
+        // A stale plugin list: the first install fails, so the list is refreshed and install runs again.
+        let cli = fake_cli(&dir, "plugin install");
+        add_plugin(&cli, Some(&dir)).unwrap();
+        let log = std::fs::read_to_string(dir.join("log")).unwrap();
+        assert_eq!(log.lines().collect::<Vec<_>>(), [
+            "plugin install eavesy@eavesy --scope user",
+            "plugin marketplace update eavesy",
+            "plugin install eavesy@eavesy --scope user",
+        ]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_step_that_keeps_failing_is_named() {
+        let error = run_twice(&STEP_MARKETPLACE, || Err("fatal: unable to access GitHub".into())).unwrap_err();
+        assert!(error.starts_with("Step 1 of 2 (downloading Eavesy's plugin list from GitHub) didn't work."), "{error}");
+        assert!(error.ends_with("fatal: unable to access GitHub"));
+    }
+
+    #[test]
+    fn commands_can_find_tools_outside_the_finder_path() {
+        let path = child_path(Path::new("/Users/you/.npm-global/bin/claude"));
+        let dirs: Vec<&str> = path.split(':').collect();
+        assert_eq!(dirs[0], "/Users/you/.npm-global/bin");
+        assert!(dirs.contains(&"/opt/homebrew/bin") && dirs.contains(&"/usr/bin"));
+        let unique: std::collections::HashSet<&str> = dirs.iter().copied().collect();
+        assert_eq!(unique.len(), dirs.len());
     }
 
     #[test]

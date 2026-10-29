@@ -66,6 +66,7 @@ const TEMPLATE = 'tpl_owner';
 const PROJECT = 'proj_owner';
 const MCP_TOKEN = 'mcp_owner';
 const CALENDAR = 'cal_owner';
+const EVENT = 'evt_owner';
 const DICTATION = 'dict_owner';
 const DROP = 'drp_owner';
 const BOT = 'bot_owner';
@@ -192,6 +193,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
         unchanged: () => row('SELECT id FROM calendar_connections WHERE id = ?', CALENDAR),
       },
     },
+  },
+  '/api/calendar-events': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/calendar-events' }, excludes: [EVENT] } },
   },
   '/api/connections/google': {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts Google OAuth for the caller' },
@@ -628,6 +632,11 @@ async function seedOwner() {
       `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
        VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
     ).bind(CALENDAR, OWNER, now),
+    // Under way now with a call link, so it is the owner's current meeting.
+    testEnv.DB.prepare(
+      `INSERT INTO calendar_events (id, user_id, connection_id, provider_event_id, title, starts_at, ends_at, meeting_url, participants_json)
+       VALUES (?, ?, ?, 'g_owner', 'Owner event', ?, ?, 'https://meet.google.com/abc-defg-hij', '[{"email":"guest@example.com","name":null}]')`,
+    ).bind(EVENT, OWNER, CALENDAR, now - 60_000, now + 30 * 60_000),
     // Not yet confirmed by the provider, so cancelling it makes no provider call.
     testEnv.DB.prepare(
       `INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, created_at, updated_at)
