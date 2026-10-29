@@ -45,6 +45,9 @@ describe('human correction learning', () => {
       .toEqual([{ from: 'cloud', to: 'Claude' }, { from: 'eavsy', to: 'Eavesy' }]);
     for (const to of ['Claude', 'Next.js', 'C++', 'Gaylord Boxes', 'PostHog', 'John', 'D1']) expect({ to, plain: isPlainWords(to) }).toEqual({ to, plain: false });
     for (const to of ['Yes', 'Monday', 'OK', 'Thank you', '10am', 'I']) expect({ to, plain: isPlainWords(to) }).toEqual({ to, plain: true });
+    // Plurals and possessives: only of everyday words, never of a name that ends in s.
+    for (const to of ['Notes', "Team's", 'Fixes']) expect({ to, plain: isPlainWords(to) }).toEqual({ to, plain: true });
+    for (const to of ['Kubes', 'Atlas', 'Claude Code', 'VS Code', 'Repackify’s']) expect({ to, plain: isPlainWords(to) }).toEqual({ to, plain: false });
   });
   test('a learned entry says what the user changed and how often', () => {
     const now = new Date(2026, 9, 29, 12).getTime();

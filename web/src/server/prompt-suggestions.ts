@@ -89,7 +89,9 @@ function fence(text: string): string {
 }
 
 export function suggestionsUserMessage(samples: DictationSample[]): string {
-  const items = samples.map((sample) => `<dictation${sample.app ? ` app="${fence(sample.app).replaceAll('"', '')}"` : ''}>${fence(sample.text)}</dictation>`);
+  // An app name is an attribute: no quotes, backslashes or control characters to break out of it.
+  const attr = (text: string) => fence(text).replace(/["\\\p{Cc}]/gu, '').trim();
+  const items = samples.map((sample) => `<dictation${sample.app && attr(sample.app) ? ` app="${attr(sample.app)}"` : ''}>${fence(sample.text)}</dictation>`);
   return `<dictations>\n${items.join('\n')}\n</dictations>`;
 }
 

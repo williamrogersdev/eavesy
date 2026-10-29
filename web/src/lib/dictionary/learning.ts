@@ -28,11 +28,6 @@ function editDistance(a: string, b: string): number {
   return prev[b.length];
 }
 
-/**
- * Automatic learning keeps only fixes that look like a mis-heard name or term.
- * Capitalisation tweaks, lowercase words, grammar edits (keep -> kept) and
- * rewrites (Is -> Seems) are prose editing, not vocabulary.
- */
 /** Units and suffixes a number takes when someone tidies it ("10" → "10am"). */
 const NUMBER_SUFFIX = /^(?:am|pm|s|k|m|x|th|st|nd|rd|ish)?$/;
 
@@ -53,6 +48,12 @@ export function isPlainWords(text: string): boolean {
   });
 }
 
+/**
+ * Automatic learning keeps only fixes that look like a mis-heard name or term.
+ * Capitalisation tweaks, lowercase words, grammar edits (keep -> kept),
+ * rewrites (Is -> Seems) and everyday words (Yeah -> Yes) are prose editing,
+ * not vocabulary. Anything can still be added by hand.
+ */
 export function isLearnableSpelling(from: string, to: string): boolean {
   if (normalizeTerm(from) === normalizeTerm(to)) return false;
   if (!/[\p{Lu}\p{N}.+#@&]/u.test(to)) return false;
@@ -118,7 +119,8 @@ export function learnedReason(entry: { from: string; to: string; seen?: number; 
 }
 
 function dayLabel(at: number, now: number): string {
-  const day = (t: number) => Math.floor((t - new Date(t).getTimezoneOffset() * 60_000) / 86_400_000);
+  // Calendar days in local time, counted from UTC midnights so a DST change can't skew them.
+  const day = (t: number) => { const d = new Date(t); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000; };
   const ago = day(now) - day(at);
   if (ago <= 0) return 'today';
   if (ago === 1) return 'yesterday';

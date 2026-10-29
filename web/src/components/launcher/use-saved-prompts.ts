@@ -70,6 +70,9 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
 
 export type SavedPromptsState = ReturnType<typeof useSavedPrompts>;
 
+/** The model call usually takes a few seconds; past this, starters are enough. */
+const SUGGEST_TIMEOUT_MS = 25_000;
+
 /**
  * Prompts suggested from the account's dictations, asked for once, the first
  * time `active` is true (the Prompts page is on screen), so opening Settings
@@ -85,7 +88,9 @@ export function usePromptSuggestions(active: boolean) {
     if (!active || asked.current) return;
     asked.current = true;
     // Kept even if the page is left meanwhile: it's shown the next time.
-    void suggestPrompts()
+    // A request that hangs settles as "nothing to suggest", so the page never waits forever.
+    const timeout = new Promise<PromptSuggestion[]>((resolve) => { window.setTimeout(() => resolve([]), SUGGEST_TIMEOUT_MS); });
+    void Promise.race([suggestPrompts(), timeout])
       .then((items) => { if (mounted.current) setPersonal(items); })
       .catch(() => { if (mounted.current) setPersonal([]); });
   }, [active]);

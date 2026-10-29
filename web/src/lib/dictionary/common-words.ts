@@ -3,9 +3,12 @@
  * editing ("Yeah" → "Yes", "Friday" → "Monday", "Where" → "Were"), not a name
  * or term the transcriber got wrong, so it never becomes a dictionary entry.
  *
- * Deliberately left out: first names ("John"), brands and tech words that are
- * also ordinary nouns ("Rust", "Swift", "Slack", "Notion"), because those are
- * exactly what people teach the dictionary.
+ * Deliberately left out: first names ("John") and brand names that are also
+ * ordinary nouns ("Rust", "Swift", "Slack", "Notion"), because those are
+ * exactly what people teach the dictionary. Work nouns that are just as common
+ * in plain prose ("code", "file", "post", "cloud") are in: "Code" alone after an
+ * edit is almost always a sentence start. Names built from them still learn
+ * ("Claude Code", "VS Code"), and anything can be added by hand.
  */
 const WORDS = `
 a about above across act actually add after again against ago agree ahead all almost alone along already also

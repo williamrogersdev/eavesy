@@ -189,4 +189,8 @@ test('the dictionary page hides everyday-word fixes learned before the stricter 
   const { entries } = await (await t.request('GET', null)).json() as { entries: { from: string }[] };
   expect(entries.map(e => e.from).sort()).toEqual(['Eavsy', 'Okay']);
   expect((await dictionary.listForTranscription(t.db, 'u1')).map(e => e.from).sort()).toEqual(['Okay']);
+  // Adding a hidden row's "heard as" by hand replaces it, and it shows again as the user's own.
+  expect(await (await t.request('PUT', { from: 'Friday', to: 'Fri' })).json()).toMatchObject({ learned: 1, status: 'saved' });
+  const after = (await (await t.request('GET', null)).json() as { entries: { from: string; to: string; origin: string }[] }).entries;
+  expect(after.find(e => e.from === 'Friday')).toMatchObject({ to: 'Fri', origin: 'manual' });
 });
