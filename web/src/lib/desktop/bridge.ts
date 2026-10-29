@@ -451,7 +451,7 @@ export interface ClaudeCodeStatus {
   /** The bare MCP server was added for every folder. */
   server: boolean;
   /** What `claude mcp get` says about signing in, once Eavesy is added (`null` before). */
-  signIn?: 'connected' | 'needsSignIn' | 'unknown' | null;
+  signIn?: 'connected' | 'needsSignIn' | 'failed' | 'unknown' | null;
 }
 
 export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
@@ -461,7 +461,8 @@ export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
 
 /**
  * Runs `claude plugin marketplace add` and `claude plugin install` for Eavesy,
- * each tried twice. Can take a minute the first time: it clones the plugin.
+ * each tried again once after a network-type failure. Usually seconds; a slow
+ * first clone can take a few minutes, and the very worst case is about fourteen.
  */
 export async function connectClaudeCode(): Promise<ClaudeCodeStatus> {
   return invoke<ClaudeCodeStatus>('connect_claude_code');

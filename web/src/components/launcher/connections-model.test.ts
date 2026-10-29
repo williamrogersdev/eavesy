@@ -24,6 +24,8 @@ describe('claudeCodeStage', () => {
     expect(claudeCodeStage(true, status({ plugin: true, signIn: 'unknown' }), tokens, NOW)).toBe('connected');
     // Another Mac's sign-in doesn't make this one connected.
     expect(claudeCodeStage(true, status({ plugin: true, signIn: 'needsSignIn' }), tokens, NOW)).toBe('needs-sign-in');
+    // A check that ran and failed is about this Mac too.
+    expect(claudeCodeStage(true, status({ plugin: true, signIn: 'failed' }), tokens, NOW)).toBe('needs-sign-in');
     expect(claudeCodeStage(true, status(), tokens, NOW)).toBe('not-added');
     const expired = [token('Claude Code', { expiresAt: NOW - 1 })];
     expect(claudeCodeStage(true, status({ plugin: true, signIn: 'unknown' }), expired, NOW)).toBe('needs-sign-in');
