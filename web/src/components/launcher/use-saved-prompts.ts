@@ -65,7 +65,7 @@ export function useSavedPrompts(enabled: boolean, reloadKey: unknown = null) {
     void markPromptUsed(id).then(put, () => undefined);
   }, [put]);
 
-  return { prompts, error, create, update, remove, used, reload };
+  return { prompts, error, create, update, remove, used, reload, replace: put };
 }
 
 export type SavedPromptsState = ReturnType<typeof useSavedPrompts>;

@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { savedPrompts } from '../schema';
+import { agentFeedback, savedPrompts } from '../schema';
 import { pid } from '../ids';
 import { freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
 
@@ -27,6 +27,12 @@ export async function list(db: AppDb, userId: string): Promise<SavedPrompt[]> {
 export async function getBySlug(db: AppDb, userId: string, slug: string): Promise<SavedPrompt | null> {
   const row = (await db.select().from(savedPrompts)
     .where(and(eq(savedPrompts.userId, userId), eq(savedPrompts.slug, slug))).limit(1))[0];
+  return row ? toSavedPrompt(row) : null;
+}
+
+export async function get(db: AppDb, userId: string, id: string): Promise<SavedPrompt | null> {
+  const row = (await db.select().from(savedPrompts)
+    .where(and(eq(savedPrompts.userId, userId), eq(savedPrompts.id, id))).limit(1))[0];
   return row ? toSavedPrompt(row) : null;
 }
 
@@ -106,6 +112,10 @@ export async function markUsed(db: AppDb, userId: string, id: string): Promise<S
   return row ? toSavedPrompt(row) : null;
 }
 
+/** Deletes the prompt and what agents said about it. */
 export async function remove(db: AppDb, userId: string, id: string): Promise<void> {
-  await db.delete(savedPrompts).where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId)));
+  await db.batch([
+    db.delete(agentFeedback).where(and(eq(agentFeedback.userId, userId), eq(agentFeedback.targetType, 'prompt'), eq(agentFeedback.targetId, id))),
+    db.delete(savedPrompts).where(and(eq(savedPrompts.id, id), eq(savedPrompts.userId, userId))),
+  ]);
 }

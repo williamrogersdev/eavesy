@@ -39,6 +39,7 @@ vi.mock('../../src/lib/ai/translate', () => ({
   translateLines: async ({ lines }: { lines: { id: string; text: string }[] }) => new Map(lines.map(line => [line.id, `Translated: ${line.text}`])),
 }));
 vi.mock('../../src/lib/ai/chat-meeting', () => ({ chatWithMeeting: async () => 'Stub reply' }));
+vi.mock('../../src/lib/ai/merge-prompt-feedback', () => ({ mergeFeedback: async () => ({ body: 'Stub rewrite', summary: 'Stub' }) }));
 vi.mock('../../src/lib/ai/summarize', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   summarizeMeeting: async () => ({
@@ -72,6 +73,7 @@ const DROP = 'drp_owner';
 const BOT = 'bot_owner';
 const PROMPT = 'prm_owner';
 const WEBHOOK = 'whk_owner';
+const FEEDBACK = 'afb_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -466,6 +468,34 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/prompts' }, excludes: [PROMPT] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a prompt owned by the caller' },
   },
+  '/api/agent-feedback/': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/agent-feedback' }, excludes: [FEEDBACK] } },
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/agent-feedback', body: json({ ids: [FEEDBACK], status: 'dismissed' }) },
+        unchanged: () => row('SELECT status, resolved_at FROM agent_feedback WHERE id = ?', FEEDBACK),
+      },
+    },
+  },
+  '/api/agent-feedback/apply': {
+    POST: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/agent-feedback/apply', body: json({ promptId: PROMPT, expectedBody: 'Owner prompt body', body: 'Mine now', ids: [FEEDBACK] }) },
+        unchanged: async () => [
+          await row('SELECT name, body, updated_at FROM saved_prompts WHERE id = ?', PROMPT),
+          await row('SELECT status FROM agent_feedback WHERE id = ?', FEEDBACK),
+        ],
+      },
+    },
+  },
+  '/api/agent-feedback/merge': {
+    POST: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: '/api/agent-feedback/merge', body: json({ promptId: PROMPT }) }, status: 404 },
+    },
+  },
   '/api/prompts/suggestions': {
     GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'Reads only the authenticated caller’s own dictations and prompt names (filtered by actor.userId) to suggest prompts; stores nothing' },
   },
@@ -580,6 +610,7 @@ beforeEach(async () => {
     'drops',
     'dictations',
     'prompt_templates',
+    'agent_feedback',
     'saved_prompts',
     'folders',
     'mcp_tokens',
@@ -626,6 +657,10 @@ async function seedOwner() {
       `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at)
        VALUES (?, ?, 'Owner prompt', 'owner-prompt', 'Owner prompt body', ?, ?)`,
     ).bind(PROMPT, OWNER, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO agent_feedback (id, user_id, mcp_token_id, source, kind, target_type, target_id, target_label, explanation, suggested_rewrite, status, dedupe_key, created_at)
+       VALUES (?, ?, ?, 'Owner', 'poor_prompt', 'prompt', ?, 'Owner prompt', 'Owner explanation', 'Owner rewrite', 'new', 'owner_key', ?)`,
+    ).bind(FEEDBACK, OWNER, MCP_TOKEN, PROMPT, now),
     testEnv.DB.prepare(
       `INSERT INTO folders (id, user_id, name, vocabulary_json, match_json) VALUES (?, ?, 'Owner project', '[]', '[]')`,
     ).bind(PROJECT, OWNER),

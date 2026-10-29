@@ -365,6 +365,12 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
     { id: 'prm-triage', name: 'Triage support tickets', slug: 'triage-support-tickets', body: 'Search through all the open support tickets, debug each one, and write a plan to fix them.\n\nThen implement the plan, one ticket at a time, with a test for each fix.', useCount: 14, lastUsedAt: Date.now() - 3_600_000, updatedAt: Date.now() },
     { id: 'prm-review', name: 'Review this PR', slug: 'review-this-pr', body: 'Review the current diff for bugs first, then simplifications. Focus on {{details}}.', useCount: 6, lastUsedAt: null, updatedAt: Date.now() },
   ];
+  const triage = prompts.find((p) => p.id === 'prm-triage');
+  let feedback = !triage ? [] : [
+    { id: 'afb-1', source: 'Claude Code', mcpTokenId: 'mcp-1', kind: 'unclear', targetType: 'prompt', targetId: triage.id, targetLabel: triage.name, targetVersion: triage.updatedAt, excerpt: 'debug each one', explanation: 'It doesn’t say what to do with tickets that are already fixed, so I reopened two of them.', suggestedRewrite: triage.body.replace('debug each one', 'debug each one that is still open'), createdAt: Date.now() - 2 * 3_600_000 },
+    { id: 'afb-2', source: 'Codex', mcpTokenId: 'mcp-2', kind: 'poor_prompt', targetType: 'prompt', targetId: triage.id, targetLabel: triage.name, targetVersion: triage.updatedAt, excerpt: null, explanation: 'Asking for “a test for each fix” led to tests that only checked the happy path. Ask for a regression test that fails before the fix.', suggestedRewrite: null, createdAt: Date.now() - 26 * 3_600_000 },
+    { id: 'afb-3', source: 'Claude Code', mcpTokenId: 'mcp-1', kind: 'typo', targetType: 'meeting', targetId: 'meet-1', targetLabel: 'Pricing sync with Priya', targetVersion: null, excerpt: 'the Cloudfare bill', explanation: 'Cloudflare is misspelt.', suggestedRewrite: 'the Cloudflare bill', createdAt: Date.now() - 3_600_000 },
+  ];
   return ({ method, path, body }) => {
     const fields = (body ?? {}) as Record<string, unknown>;
     // What eavesy.com suggests from recent dictations; ?nosuggestions is an account with too few.
@@ -373,6 +379,26 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
         { name: 'Ship it as a PR', why: 'You asked agents to open a PR and turn on auto-merge in 7 dictations.', body: 'Commit with a conventional message, push, open a pull request ready for review and turn on auto-merge. Watch the checks and fix anything that fails until it merges.\n\n{{details}}' },
         { name: 'Check it in the browser', why: 'You often asked agents to screenshot the change before calling it done.', body: 'Open the change in the browser preview, click through it, and take a screenshot of each state, including empty and error states. Fix anything that looks off before telling me it’s done.' },
       ] }), 900));
+    }
+    // What agents reported over MCP: two on the triage prompt, a typo in a recording.
+    if (path === '/api/agent-feedback') {
+      if (method === 'PATCH') { const gone = new Set((fields.ids as string[]) ?? []); feedback = feedback.filter((f) => !gone.has(f.id)); return { dismissed: gone.size }; }
+      return { items: feedback };
+    }
+    if (path === '/api/agent-feedback/merge') {
+      const prompt = prompts.find((p) => p.id === fields.promptId)!;
+      return new Promise((resolve) => setTimeout(() => resolve({
+        body: 'Search all open support tickets. For each one, find the cause and write a plan to fix it.\n\nThen implement the plan one ticket at a time, with a regression test for each fix. Skip tickets that are already fixed and say which.',
+        summary: 'Says what to do with tickets that are already fixed, and asks for regression tests.',
+        basedOn: prompt.body,
+        ids: feedback.filter((f) => f.targetId === prompt.id).map((f) => f.id),
+      }), 900));
+    }
+    if (path === '/api/agent-feedback/apply') {
+      const done = new Set(fields.ids as string[]);
+      feedback = feedback.filter((f) => !done.has(f.id));
+      prompts = prompts.map((p) => (p.id === fields.promptId ? { ...p, body: String(fields.body), updatedAt: Date.now() } : p));
+      return { prompt: prompts.find((p) => p.id === fields.promptId) };
     }
     if (String(path).startsWith('/api/prompts')) {
       if (method === 'GET') return { items: prompts };

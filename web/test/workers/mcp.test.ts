@@ -216,6 +216,7 @@ describe('MCP scopes', () => {
     expect(tools.map((tool) => tool.name)).toEqual([
       'send_to_human',
       'ask_human',
+      'report_feedback',
       'search',
       'recent',
       'get',
@@ -251,7 +252,7 @@ describe('MCP scopes', () => {
   it('treat an unreadable scopes value as read-only', async () => {
     const { token } = await mint(['write']);
     await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = 'oops'`).run();
-    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(15);
+    expect((await rpc(token, 'tools/list')).result?.tools?.length).toBe(16);
   });
 });
 
@@ -280,6 +281,8 @@ describe('MCP account tools', () => {
     expect(hints.send_to_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(hints.ask_human).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(hints.sign_out).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    // A suggestion for the user to review: not a plain read, but it changes nothing they see.
+    expect(hints.report_feedback).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
     expect(tools.every((tool) => tool.annotations !== undefined)).toBe(true);
   });
 
@@ -306,7 +309,7 @@ describe('MCP account tools', () => {
     expect((await callJson(first.token, 'sign_out')).status).toBe('signed_out');
     const after = await call('https://mcp.eavesy.com/', { authorization: `Bearer ${first.token}` });
     expect(after.status).toBe(401);
-    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(15);
+    expect((await rpc(second.token, 'tools/list')).result?.tools?.length).toBe(16);
   });
 });
 
@@ -983,5 +986,127 @@ describe('MCP messages to the human', () => {
     expect(id).toBeDefined();
     expect(await resolveForDevice(db(), 'user_mcp', 'mac-a', id!, { status: 'answered', text: 'no flag' })).toBe(true);
     expect(await asking).toEqual({ status: 'answered', text: 'no flag' });
+  });
+});
+
+describe('MCP feedback from agents', () => {
+  const call = async (token: string, args: Record<string, unknown>) => {
+    const body = await (await mcpWorker.fetch(
+      new Request('https://mcp.eavesy.com/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_feedback', arguments: args } }),
+      }),
+      mcpEnv(),
+    )).json<{ result?: { content?: { text: string }[]; isError?: boolean }; error?: { message: string } }>();
+    if (body.error) return { error: body.error.message };
+    if (body.result?.isError) return { refused: body.result.content?.[0]?.text ?? '' };
+    return JSON.parse(body.result?.content?.[0]?.text ?? 'null') as Record<string, unknown>;
+  };
+  const stored = () => testEnv.DB.prepare('SELECT * FROM agent_feedback ORDER BY created_at').all<Record<string, unknown>>().then((r) => r.results);
+  const report = { kind: 'poor_prompt', prompt: 'triage', explanation: 'It never says what to do with tickets already fixed.', suggested_rewrite: 'Search every open ticket.' };
+
+  beforeEach(async () => {
+    const now = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at) VALUES ('user_other', 'whisper', 'en', 0, ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO saved_prompts (id, user_id, name, slug, body, created_at, updated_at) VALUES
+         ('prm_mine', 'user_mcp', 'Triage', 'triage', 'Search every ticket.', 1, 5),
+         ('prm_theirs', 'user_other', 'Theirs', 'theirs', 'Secret', 1, 1)`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, created_at, updated_at)
+         VALUES ('cap_note', 'user_mcp', 'note', 'note', 'web', 'Pricing notes', 'users/user_mcp/captures/cap_note.md', 'text/markdown', 3, ?, ?),
+                ('cap_theirs', 'user_other', 'note', 'note', 'web', 'Theirs', 'users/user_other/captures/cap_theirs.md', 'text/markdown', 3, ?, ?)`,
+      ).bind(now, now, now, now),
+    ]);
+  });
+
+  afterEach(async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare('DELETE FROM agent_feedback'),
+      testEnv.DB.prepare('DELETE FROM saved_prompts'),
+      testEnv.DB.prepare('DELETE FROM captures'),
+      testEnv.DB.prepare('DELETE FROM rate_limits'),
+    ]);
+  });
+
+  it('keep a report on a saved prompt from a read-only connection, under its name, without changing the prompt', async () => {
+    const { id, token } = await mint();
+    const result = await call(token, report);
+    expect(result).toMatchObject({ status: 'recorded', id: expect.stringMatching(/^afb_/) });
+    expect(await stored()).toEqual([expect.objectContaining({
+      user_id: 'user_mcp', mcp_token_id: id, source: 'Claude', kind: 'poor_prompt', target_type: 'prompt', target_id: 'prm_mine',
+      target_label: 'Triage', target_version: 5, suggested_rewrite: 'Search every open ticket.', status: 'new',
+    })]);
+    expect(await testEnv.DB.prepare(`SELECT body FROM saved_prompts WHERE id = 'prm_mine'`).first('body')).toBe('Search every ticket.');
+    // Never turned into a message the Mac reads aloud.
+    expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM agent_messages').first('n')).toBe(0);
+  });
+
+  it('count the same report sent again once, whatever its case or spacing', async () => {
+    const { token } = await mint();
+    expect((await call(token, report)).status).toBe('recorded');
+    expect((await call(token, { ...report, prompt: '/triage', explanation: `  ${report.explanation.toUpperCase()} ` })).status).toBe('duplicate');
+    expect(await stored()).toHaveLength(1);
+  });
+
+  it('keep a typo in a capture, named by its id', async () => {
+    const { token } = await mint();
+    const result = await call(token, { kind: 'typo', item_id: 'cap_note', excerpt: 'Cloudfare', explanation: 'Misspelt.', suggested_rewrite: 'Cloudflare' });
+    expect(result.status).toBe('recorded');
+    expect(await stored()).toEqual([expect.objectContaining({ target_type: 'capture', target_id: 'cap_note', target_label: 'Pricing notes', target_version: null, excerpt: 'Cloudfare' })]);
+  });
+
+  it('never reach another user’s prompt or item, and say not found either way', async () => {
+    const { token } = await mint();
+    expect((await call(token, { ...report, prompt: 'theirs' })).error).toContain('No saved prompt is called theirs');
+    expect((await call(token, { ...report, prompt: 'prm_theirs' })).error).toContain('No saved prompt');
+    expect((await call(token, { kind: 'typo', item_id: 'cap_theirs', explanation: 'x' })).error).toBe('not found');
+    expect((await call(token, { kind: 'typo', item_id: 'cap_nothing', explanation: 'x' })).error).toBe('not found');
+    expect(await stored()).toEqual([]);
+  });
+
+  it('refuse a malformed report before counting it', async () => {
+    const { token } = await mint();
+    expect((await call(token, { ...report, kind: 'rant' })).error).toContain('kind must be one of');
+    expect((await call(token, { ...report, explanation: ' ' })).error).toContain('explanation is required');
+    expect((await call(token, { ...report, explanation: 'x'.repeat(1_001) })).error).toContain('at most 1000');
+    expect((await call(token, { ...report, item_id: 'cap_note' })).error).toContain('either prompt or item_id');
+    expect((await call(token, { kind: 'typo', explanation: 'x' })).error).toContain('either prompt or item_id');
+    expect((await call(token, { kind: 'typo', item_id: 'cap_note', explanation: 'x', suggested_rewrite: 'y'.repeat(1_001) })).error).toContain('at most 1000');
+    expect(await stored()).toEqual([]);
+    expect(await testEnv.DB.prepare(`SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'mcp-feedback:%'`).first('n')).toBe(0);
+  });
+
+  it('are refused to a connection without read access', async () => {
+    const { token } = await mint();
+    await testEnv.DB.prepare(`UPDATE mcp_tokens SET scopes_json = '["write"]'`).run();
+    expect((await call(token, report)).refused).toContain('needs read access');
+    expect(await stored()).toEqual([]);
+  });
+
+  it('stop a connection that sends too many in an hour', async () => {
+    const { id, token } = await mint();
+    const hour = Math.floor(Date.now() / 3_600_000);
+    await testEnv.DB.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 20, ?)')
+      .bind(`mcp-feedback:${id}:${hour}`, (hour + 1) * 3_600_000).run();
+    expect((await call(token, report)).error).toContain('too many reports');
+    expect(await stored()).toEqual([]);
+  });
+
+  it('say there are enough once a prompt has many open reports, and take more once they are dealt with', async () => {
+    const { token } = await mint();
+    const now = Date.now();
+    await testEnv.DB.batch(Array.from({ length: 20 }, (_, i) => testEnv.DB.prepare(
+      `INSERT INTO agent_feedback (id, user_id, mcp_token_id, source, kind, target_type, target_id, target_label, explanation, status, dedupe_key, created_at)
+       VALUES (?, 'user_mcp', 'other', 'Other', 'typo', 'prompt', 'prm_mine', 'Triage', 'x', 'new', ?, ?)`,
+    ).bind(`afb_old_${i}`, `key_${i}`, now)));
+    expect((await call(token, report)).status).toBe('full');
+    await testEnv.DB.prepare(`UPDATE agent_feedback SET status = 'dismissed' WHERE id = 'afb_old_0'`).run();
+    expect((await call(token, report)).status).toBe('recorded');
   });
 });

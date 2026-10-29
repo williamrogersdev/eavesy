@@ -94,6 +94,15 @@
 .ev-settings-pane .ev-projrow-head:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-settings-pane .ev-card > .ev-projrow + .ev-projrow { border-top: 1px solid var(--evs-divider); }
 .ev-prompt-why { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* What agents reported over MCP: a count on the prompt's row, each report, and a rewrite's preview. */
+.ev-flag-count { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--ev-manila-soft); color: var(--ev-manila-ink); font: var(--ev-t-small); font-weight: 600; white-space: nowrap; }
+.ev-flag { color: var(--ev-ink-2); font-weight: 600; }
+.ev-feedback-row { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+.ev-feedback-quote { margin-top: 2px; font-style: italic; overflow-wrap: anywhere; }
+.ev-feedback-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ev-diff { max-height: 320px; overflow: auto; padding: 10px 12px; border-radius: var(--ev-r-ctl); background: var(--ev-paper); box-shadow: inset 0 0 0 1px var(--ev-line); font: var(--ev-t-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ev-diff ins { background: var(--ev-leaf-soft); color: var(--ev-ink); text-decoration: underline; text-decoration-color: var(--ev-leaf); }
+.ev-diff del { background: var(--ev-warn-soft); color: var(--ev-ink-2); text-decoration: line-through; }
 /* A project's dictation style: its own reads as a setting, the default stays quiet. */
 .ev-proj-style { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ev-ink-3); font: var(--ev-t-small); }
 .ev-proj-style[data-own] { padding: 2px 8px; border-radius: 999px; background: var(--ev-manila-soft); color: var(--ev-manila-ink); font-weight: 600; }

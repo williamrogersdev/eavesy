@@ -292,7 +292,7 @@ describe('MCP OAuth tokens', () => {
     expect(issued.refresh_token).toMatch(/^rt_/);
     const response = await toolsList(issued.access_token);
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { result: { tools: unknown[] } }).result.tools).toHaveLength(15);
+    expect(((await response.json()) as { result: { tools: unknown[] } }).result.tools).toHaveLength(16);
 
     const listed = await (await handler(McpTokensRoute, 'GET')({ request: new Request('https://eavesy.com/api/mcp-tokens'), params: {} })).json();
     expect(listed).toEqual([

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AppDb } from '@/db/client';
 import { dictations } from '@/db/schema';
 import { MODELS } from '@/lib/ai/client';
+import { fence } from '@/lib/ai/fence';
 import type { PromptSuggestion } from '@/lib/prompt-starters';
 import { PROMPT_LIMITS } from '@/lib/prompts';
 import { keepStart } from './agent-reply';
@@ -82,11 +83,6 @@ const modelSuggestion = z.object({
   body: z.string().trim().min(20).transform((text) => keepStart(text, 2_000)),
   why: z.string().trim().transform((text) => keepStart(text, 140)),
 });
-
-/** Escapes angle brackets so data can't open or close the tags it's wrapped in. */
-function fence(text: string): string {
-  return text.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
 
 export function suggestionsUserMessage(samples: DictationSample[]): string {
   // An app name is an attribute: no quotes, backslashes or control characters to break out of it.

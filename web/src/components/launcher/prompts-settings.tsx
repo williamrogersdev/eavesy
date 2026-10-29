@@ -1,10 +1,12 @@
 'use client';
 
 import { ArrowLeft, ChevronRight, MessageSquarePlus, MessageSquareText, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { STARTER_PROMPTS, type PromptSuggestion } from '@/lib/prompt-starters';
 import { claudeCodeCommand, DETAILS_SLOT, freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
+import { flaggedLabel, ItemFeedbackCard, PromptFeedbackCard } from './prompt-feedback';
 import { Button, Card } from './ui';
+import { useAgentFeedback, type AgentFeedbackState } from './use-agent-feedback';
 import { usePromptSuggestions, type SavedPromptsState } from './use-saved-prompts';
 
 function Status({ error }: { error: string | null }) {
@@ -16,22 +18,28 @@ function usedLabel(prompt: SavedPrompt): string {
 }
 
 /** One prompt's page; `prompt` is null for a new one, which can start from `initial`. */
-function PromptPage({ prompt, initial, state, onBack }: {
+function PromptPage({ prompt, initial, state, feedback, onBack }: {
   prompt: SavedPrompt | null;
   initial?: PromptSuggestion | null;
   state: SavedPromptsState;
+  feedback: AgentFeedbackState;
   onBack: () => void;
 }) {
   const [name, setName] = useState(prompt?.name ?? initial?.name ?? '');
   const [body, setBody] = useState(prompt?.body ?? initial?.body ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // A saved prompt follows edits landing from elsewhere; a new one keeps what's typed.
+  // A saved prompt follows edits landing from elsewhere (another Mac, an applied
+  // rewrite), but only into a field that still reads what was saved: text being
+  // typed is never replaced. A new one keeps what's typed.
   const savedName = prompt?.name;
   const savedBody = prompt?.body;
+  const lastSaved = useRef({ name: savedName, body: savedBody });
   useEffect(() => {
-    if (savedName !== undefined) setName(savedName);
-    if (savedBody !== undefined) setBody(savedBody);
+    const before = lastSaved.current;
+    lastSaved.current = { name: savedName, body: savedBody };
+    if (savedName !== undefined) setName((typed) => (typed.trim() === (before.name ?? '').trim() ? savedName : typed));
+    if (savedBody !== undefined) setBody((typed) => (typed === before.body ? savedBody : typed));
   }, [prompt?.id, savedName, savedBody]);
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;
@@ -100,6 +108,16 @@ function PromptPage({ prompt, initial, state, onBack }: {
         </form>
         <Status error={state.error} />
       </Card>
+
+      {prompt && (
+        <PromptFeedbackCard
+          prompt={prompt}
+          dirty={changed}
+          items={feedback.items.filter((item) => item.targetType === 'prompt' && item.targetId === prompt.id)}
+          feedback={feedback}
+          state={state}
+        />
+      )}
 
       {prompt && (
         <div className="mt-4 flex items-center justify-end gap-2">
@@ -178,6 +196,7 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections, active
 }) {
   const { prompts, error } = state;
   const suggestions = usePromptSuggestions(active && prompts !== null);
+  const feedback = useAgentFeedback(active && prompts !== null);
   // A suggestion opened to edit before it's saved.
   const [draft, setDraft] = useState<PromptSuggestion | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
@@ -186,7 +205,7 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections, active
 
   const current = open === 'new' ? null : prompts?.find((p) => p.id === open);
   if (open === 'new' || current) {
-    return <PromptPage key={open} prompt={current ?? null} initial={draft} state={state} onBack={() => onOpen(null)} />;
+    return <PromptPage key={open} prompt={current ?? null} initial={draft} state={state} feedback={feedback} onBack={() => onOpen(null)} />;
   }
 
   const full = (prompts?.length ?? 0) >= PROMPT_LIMITS.count;
@@ -223,7 +242,9 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections, active
             <p className="ev-set-hint">Add one of the prompts below in one click, or write your own.</p>
           </div>
         )}
-        {prompts?.map((prompt) => (
+        {prompts?.map((prompt) => {
+          const flagged = feedback.items.filter((item) => item.targetType === 'prompt' && item.targetId === prompt.id);
+          return (
           <div key={prompt.id} className="ev-projrow">
             <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpen(prompt.id)}>
               <MessageSquareText className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
@@ -231,10 +252,12 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections, active
                 <span className="ev-set-label block truncate">{prompt.name}</span>
                 <span className="ev-set-hint block truncate">/{prompt.slug} · {usedLabel(prompt)}</span>
               </span>
+              {flagged.length > 0 && <span className="ev-flag-count">{flaggedLabel(flagged)}</span>}
               <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
             </button>
           </div>
-        ))}
+          );
+        })}
         <div className="ev-set-row">
           <Button variant="outline" size="sm" icon={Plus} disabled={prompts === null || full} onClick={() => { setDraft(null); onOpen('new'); }}>New prompt</Button>
           {full && <span className="ev-set-hint">That’s the limit of {PROMPT_LIMITS.count}. Delete one to add another.</span>}
@@ -252,6 +275,7 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections, active
         </Card>
       )}
       {starters.length > 0 && <Card title="Starter prompts">{rows(starters)}</Card>}
+      <ItemFeedbackCard items={feedback.items.filter((item) => item.targetType !== 'prompt')} feedback={feedback} />
     </>
   );
 }

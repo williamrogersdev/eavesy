@@ -127,6 +127,7 @@ be turned off on self-hosted deployments with `MCP_ALLOW_PATH_TOKENS=false`.
 | `get_action_items` | List action items, filterable by status (`open`, `completed`, `all`) and owner. |
 | `send_to_human` | Show a message on your Mac and read a one-sentence version aloud. Needs *Claude chat and ChatGPT* turned on in the Mac app. |
 | `ask_human` | Ask you a question on your Mac and wait (2 minutes by default) for the answer you type. Returns `mac_offline` at once when no Mac is listening. |
+| `report_feedback` | Tell you about a typo or a confusing passage in something it got from Eavesy, or suggest a better version of one of your saved prompts. Nothing changes until you apply it in Settings → Prompts. |
 | `get_account_info` | Show which Eavesy account and connection the agent is using, its access, and when it expires. Useful when results look like they come from the wrong account. |
 | `sign_out` | Disconnect this connection. The agent only calls it when you ask; your other connections keep working. |
 | `send_to_my_devices` | Put text, such as a session handoff doc, in your **Drop** inbox on every device where Eavesy is open. Needs write access. |
@@ -145,6 +146,27 @@ agents* into a Claude project or ChatGPT's custom instructions.
 
 `sign_out` ends the connection it's called from, the same as removing it in
 Settings.
+
+### Feedback from agents
+
+When an agent finds an obvious typo in a recording, dictation, note or
+capture, a passage that doesn't make sense where it is, or a saved prompt
+that could be clearer, it can say so with `report_feedback`. It names the
+prompt or item, quotes the words, says what is wrong, and can suggest a
+rewrite.
+
+Reports show in the Mac app's **Settings → Prompts**: a prompt agents flagged
+says *N agents flagged this*, and its page lists each report. **Preview**
+shows an agent's rewrite against your current text, word by word, and
+**Combine into one rewrite** asks Eavesy to fold several reports into one
+version (this counts against a small daily limit). Only **Apply** changes the
+prompt, and only if it hasn't changed since the preview. **Dismiss** drops a
+report. Reports on your library are listed under *Reports on your library*.
+
+Any connection that can read your prompts can send reports, since a report
+changes nothing by itself. Each connection can send 20 an hour, a report it
+already sent is counted once, and a prompt or item takes at most 20 open
+reports. Agents' text is shown as text and never read aloud.
 
 ### Send a handoff to your other computers
 
@@ -202,7 +224,8 @@ Requests are rate limited per connection. A read-only connection can't create,
 edit, or delete anything in your library, and no connection can delete
 anything from it. It can send you messages with
 `send_to_human` and `ask_human`, which show only when you've turned them on in
-the Mac app, and it can disconnect itself with `sign_out`.
+the Mac app, suggest fixes with `report_feedback`, which change nothing until
+you apply them, and disconnect itself with `sign_out`.
 </Callout>
 
 ## Local media and client checks
