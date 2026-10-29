@@ -1,6 +1,7 @@
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route as calendarEventsRoute } from '../../src/routes/api/calendar-events';
+import { Route as calendarEventRoute } from '../../src/routes/api/calendar-events/$id';
 import { Route as sessionsRoute } from '../../src/routes/api/sessions/index';
 import { handler, insertUser, resetTables, row, testEnv } from './support';
 
@@ -14,6 +15,7 @@ vi.mock('../../src/server/device-auth', () => ({
 
 const getEvents = handler(calendarEventsRoute, 'GET');
 const createSession = handler(sessionsRoute, 'POST');
+const patchEvent = handler(calendarEventRoute, 'PATCH');
 const MIN = 60_000;
 
 async function connection(id: string, userId: string) {
@@ -41,11 +43,12 @@ interface EventView {
   meetingUrl: string | null;
   attendees: { email: string; name: string | null }[];
   recorded: boolean;
+  recordChoice: 'record' | 'skip' | null;
 }
 
 async function events() {
   const response = await getEvents({ request: new Request('https://eavesy.test/api/calendar-events'), params: {} });
-  return { status: response.status, body: (await response.json()) as { connected: boolean; current: EventView | null; next: EventView | null } };
+  return { status: response.status, body: (await response.json()) as { connected: boolean; current: EventView | null; next: EventView | null; upcoming: EventView[] } };
 }
 
 async function startSession(body: Record<string, unknown>) {
@@ -55,8 +58,8 @@ async function startSession(body: Record<string, unknown>) {
   });
   expect(response.status).toBe(201);
   const { meetingId } = (await response.json()) as { meetingId: string };
-  return (await row<{ title: string; context_blurb: string | null; calendar_event_id: string | null }>(
-    'SELECT title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
+  return (await row<{ id: string; title: string; context_blurb: string | null; calendar_event_id: string | null }>(
+    'SELECT id, title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
     meetingId,
   ))!;
 }
@@ -105,6 +108,8 @@ describe('GET /api/calendar-events', () => {
       recorded: false,
     });
     expect(body.next).toMatchObject({ id: 'evt_next', title: 'Standup' });
+    expect(body.upcoming.map((event) => event.id)).toEqual(['evt_now', 'evt_next']);
+    expect(body.upcoming[0].recordChoice).toBeNull();
   });
 
   it('never shows another user’s events', async () => {
@@ -118,7 +123,7 @@ describe('GET /api/calendar-events', () => {
   it('says when no calendar is connected', async () => {
     await insertUser('user_new');
     actor.userId = 'user_new';
-    expect((await events()).body).toEqual({ connected: false, current: null, next: null });
+    expect((await events()).body).toEqual({ connected: false, current: null, next: null, upcoming: [] });
   });
 });
 
@@ -174,6 +179,15 @@ describe('POST /api/sessions with a calendar', () => {
     expect(linked?.recorded_meeting_id).toBe(meetingId);
   });
 
+  it('links a second recording of the same call, while the event keeps the first', async () => {
+    const first = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    const second = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    expect(second.calendar_event_id).toBe('evt_now');
+    expect(second.title).toBe('Design review');
+    const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
+    expect(linked?.recorded_meeting_id).toBe(first.id);
+  });
+
   it('leaves voice memos and dictations alone', async () => {
     const memo = await startSession({ title: 'Voice memo', startedAt: Date.now() });
     expect(memo.title).toBe('Voice memo');
@@ -184,5 +198,52 @@ describe('POST /api/sessions with a calendar', () => {
     const meeting = await startSession({ title: 'Interview with Sam', kind: 'meeting', startedAt: Date.now() });
     expect(meeting.title).toBe('Interview with Sam');
     expect(meeting.calendar_event_id).toBe('evt_now');
+  });
+});
+
+async function choose(id: string, body: unknown) {
+  const response = await patchEvent({
+    request: new Request(`https://eavesy.test/api/calendar-events/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    params: { id },
+  });
+  return response.status;
+}
+
+describe('PATCH /api/calendar-events/$id', () => {
+  it('saves whether to record a meeting, and clears it', async () => {
+    expect(await choose('evt_next', { recordChoice: 'skip' })).toBe(200);
+    expect((await events()).body.upcoming.find((event) => event.id === 'evt_next')?.recordChoice).toBe('skip');
+    expect(await choose('evt_next', { recordChoice: null })).toBe(200);
+    expect((await events()).body.upcoming.find((event) => event.id === 'evt_next')?.recordChoice).toBeNull();
+  });
+
+  it('answers 401 without a sign-in and 400 for a bad choice', async () => {
+    expect(await choose('evt_next', { recordChoice: 'always' })).toBe(400);
+    actor.userId = null;
+    expect(await choose('evt_next', { recordChoice: 'skip' })).toBe(401);
+  });
+
+  it('cannot change another user’s meeting', async () => {
+    expect(await choose('evt_theirs', { recordChoice: 'skip' })).toBe(404);
+    const theirs = await row<{ record_choice: string | null }>('SELECT record_choice FROM calendar_events WHERE id = ?', 'evt_theirs');
+    expect(theirs?.record_choice).toBeNull();
+  });
+
+  it('keeps the choice when the calendar syncs again', async () => {
+    await choose('evt_next', { recordChoice: 'skip' });
+    const { replaceEvents } = await import('../../src/db/repo/calendar');
+    const { getDb } = await import('../../src/db/client');
+    const now = Date.now();
+    await replaceEvents(getDb(), {
+      userId: 'user_mac',
+      connectionId: 'cal_mac',
+      from: now - 60 * MIN,
+      to: now + 24 * 60 * MIN,
+      complete: false,
+      now,
+      events: [{ providerEventId: 'g_evt_next', title: 'Standup (moved)', startsAt: now + 90 * MIN, endsAt: now + 100 * MIN, meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet', participants: [] }],
+    });
+    const synced = await row<{ title: string; record_choice: string | null }>('SELECT title, record_choice FROM calendar_events WHERE id = ?', 'evt_next');
+    expect(synced).toEqual({ title: 'Standup (moved)', record_choice: 'skip' });
   });
 });

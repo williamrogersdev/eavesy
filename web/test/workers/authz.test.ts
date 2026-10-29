@@ -197,6 +197,15 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/calendar-events': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/calendar-events' }, excludes: [EVENT] } },
   },
+  '/api/calendar-events/$id': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: `/api/calendar-events/${EVENT}`, params: { id: EVENT }, body: json({ recordChoice: 'skip' }) },
+        unchanged: () => row('SELECT record_choice FROM calendar_events WHERE id = ?', EVENT),
+      },
+    },
+  },
   '/api/connections/google': {
     GET: { unauthenticated: { status: 302 }, scopedToCaller: 'starts Google OAuth for the caller' },
   },

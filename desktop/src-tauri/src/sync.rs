@@ -199,7 +199,7 @@ fn signed_out_may_replace(now: &crate::hud::HudState) -> bool {
     // Every phase named, so a new one has to decide.
     match now.phase {
         Phase::Idle => true,
-        Phase::Saved | Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Failed => false,
+        Phase::Saved | Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Failed | Phase::Prompt => false,
     }
 }
 

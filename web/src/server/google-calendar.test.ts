@@ -163,6 +163,17 @@ describe('Google events', () => {
     });
   });
 
+  test('leaves rooms and other resources off the guest list', () => {
+    const event = parseGoogleEvent({
+      id: 'e2',
+      summary: 'Focus',
+      start: { dateTime: '2026-10-27T10:00:00Z' },
+      end: { dateTime: '2026-10-27T11:00:00Z' },
+      attendees: [{ email: 'me@example.com' }, { email: 'room-4@resource.calendar.google.com', displayName: 'Room 4', resource: true }],
+    });
+    expect(event?.participants).toEqual([{ email: 'me@example.com', name: null }]);
+  });
+
   test('drops cancelled and undated events', () => {
     expect(parseGoogleEvent({ id: 'x', status: 'cancelled', start: { date: '2026-10-27' }, end: { date: '2026-10-28' } })).toBeNull();
     expect(parseGoogleEvent({ id: 'y', start: {}, end: {} })).toBeNull();

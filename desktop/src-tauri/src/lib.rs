@@ -33,6 +33,7 @@ mod cloud_pull;
 mod dictate;
 mod dictation;
 mod machine;
+mod meeting_watch;
 mod make_room;
 mod moments;
 mod panel;
@@ -164,6 +165,8 @@ pub fn run() {
             assistant::voice::assistant_talk,
             assistant::thread::assistant_clear,
             commands::set_capture_sounds,
+            meeting_watch::set_auto_record_meetings,
+            meeting_watch::answer_meeting_prompt,
             commands::set_hud_look,
             commands::set_dictation_in_panel,
             commands::ack_dictation_text,
@@ -366,6 +369,7 @@ pub fn run() {
             agents::start(&handle);
 
             tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
+            meeting_watch::start(&handle);
             let sync_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sync::run(sync_handle).await {

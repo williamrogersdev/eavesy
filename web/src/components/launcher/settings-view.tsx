@@ -14,6 +14,7 @@ import {
   isDesktop,
   setLauncherPosition,
   setLiveCaptions,
+  setAutoRecordMeetings,
   setCaptureSounds,
   setAgentHold,
   setAgentVoice,
@@ -390,6 +391,16 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setLocalError('The recording sound preference couldn’t be saved. Try the switch again.'))
       .finally(() => setSoundsBusy(false));
   };
+  const autoRecordOn = settings?.auto_record_meetings ?? true;
+  const [autoRecordBusy, setAutoRecordBusy] = useState(false);
+  const toggleAutoRecord = (next: boolean) => {
+    setAutoRecordBusy(true);
+    setLocalError(null);
+    void setAutoRecordMeetings(next)
+      .then(() => setSettings((current) => current ? { ...current, auto_record_meetings: next } : current))
+      .catch(() => setLocalError('The meeting recording preference couldn’t be saved. Try the switch again.'))
+      .finally(() => setAutoRecordBusy(false));
+  };
   const agentsOn = settings?.agent_voice ?? false;
   const agentHold = String(settings?.agent_hold_secs ?? 300) as AgentHold;
   const [agentsBusy, setAgentsBusy] = useState(false);
@@ -585,7 +596,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
 
         <div id="settings-connections" hidden={section !== 'connections'}>
-          <ConnectionsSettings signedIn={!!account} active={section === 'connections'} />
+          <ConnectionsSettings signedIn={!!account} active={section === 'connections'} autoRecord={isDesktop() ? autoRecordOn : undefined} />
         </div>
 
         <div id="settings-agents" hidden={section !== 'agents'}>
@@ -671,6 +682,20 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
 
         </div>
         <div id="settings-capture" hidden={section !== 'capture'}>
+        {isDesktop() && (
+          <Section title="Meetings">
+            <Switch
+              checked={autoRecordOn}
+              onCheckedChange={toggleAutoRecord}
+              disabled={!settings || autoRecordBusy}
+              label="Record my meetings automatically"
+              hint={autoRecordOn
+                ? 'When a call starts, Eavesy counts down 10 seconds and records unless you choose Don’t record. It stops when the call ends.'
+                : 'When a call starts, Eavesy asks before recording.'}
+            />
+          </Section>
+        )}
+
         {isDesktop() && (
           <Section title="Sounds">
             <Switch
