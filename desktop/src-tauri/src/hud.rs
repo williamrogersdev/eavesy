@@ -16,6 +16,9 @@ pub enum Phase {
     Transcribing,
     Done,
     Failed,
+    /// A call started: the control offers to record it (`meeting_watch`).
+    /// `started_at_ms` is when its countdown ends, or none when it only asks.
+    Prompt,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -199,7 +202,7 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
         Phase::Transcribing if video => DEFAULT_SIZE,
         Phase::Recording | Phase::Transcribing if eavesy => live_size(lines.max(1)),
         Phase::Recording | Phase::Transcribing => live_size(lines),
-        Phase::Failed => WIDE,
+        Phase::Failed | Phase::Prompt => WIDE,
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
             _ if eavesy => RESULT,
@@ -388,7 +391,8 @@ pub fn hidden_by_user(app: &AppHandle) -> bool {
 /// Shown even when the user closed the pill: a capture running, and what it
 /// just produced, stay on screen until the result is dismissed.
 fn is_active(phase: &Phase) -> bool {
-    matches!(phase, Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Saved | Phase::Failed)
+    // A meeting prompt is how you hear Eavesy is about to record: always on screen.
+    matches!(phase, Phase::Recording | Phase::Transcribing | Phase::Done | Phase::Saved | Phase::Failed | Phase::Prompt)
 }
 
 #[derive(Clone, Copy)]

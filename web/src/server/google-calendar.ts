@@ -192,7 +192,8 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
   const link = meetingLinkOf(event);
   const participants = Array.isArray(event.attendees)
     ? event.attendees.flatMap((a) =>
-        isRecord(a) && typeof a.email === 'string' ? [{ email: a.email, name: typeof a.displayName === 'string' ? a.displayName : null }] : [],
+        // A room or other resource isn't a person: it would make a solo block look like a meeting.
+        isRecord(a) && typeof a.email === 'string' && a.resource !== true ? [{ email: a.email, name: typeof a.displayName === 'string' ? a.displayName : null }] : [],
       )
     : [];
   return {

@@ -42,7 +42,8 @@ pub async fn list_projects(app: AppHandle) -> Option<Vec<Value>> {
 /// the settings it shares with eavesy.com (languages, custom words), projects,
 /// saved prompts, the AI apps connected over MCP and the linked calendars
 /// (list and disconnect only: connections are made by signing in through the
-/// browser, never from this Mac), and the calendar's current and next meeting.
+/// browser, never from this Mac), the calendar's meetings, and whether to
+/// record each one.
 fn account_call_allowed(method: &str, path: &str) -> bool {
     match (method, path.strip_prefix("/api/")) {
         ("GET" | "PATCH", Some("me")) => true,
@@ -51,6 +52,9 @@ fn account_call_allowed(method: &str, path: &str) -> bool {
         ("GET", Some("prompts/suggestions")) => true,
         ("GET" | "DELETE", Some("mcp-tokens" | "calendar-connections")) => true,
         ("GET", Some("calendar-events")) => true,
+        ("PATCH", Some(rest)) if rest.starts_with("calendar-events/") => {
+            rest.strip_prefix("calendar-events/").is_some_and(is_plain_id)
+        }
         ("PATCH" | "DELETE", Some(rest)) => rest
             .strip_prefix("projects/")
             .or_else(|| rest.strip_prefix("prompts/"))
@@ -287,6 +291,10 @@ mod tests {
         assert!(account_call_allowed("GET", "/api/calendar-events"));
         assert!(!account_call_allowed("DELETE", "/api/calendar-events"));
         assert!(!account_call_allowed("GET", "/api/calendar-events/evt_1"));
+        assert!(account_call_allowed("PATCH", "/api/calendar-events/evt_01ABC"));
+        assert!(!account_call_allowed("DELETE", "/api/calendar-events/evt_01ABC"));
+        assert!(!account_call_allowed("PATCH", "/api/calendar-events/../me"));
+        assert!(!account_call_allowed("PATCH", "/api/calendar-events"));
         assert!(reloads_hud("PATCH", "/api/me"));
         assert!(reloads_hud("PATCH", "/api/projects/proj_1"));
         assert!(!reloads_hud("GET", "/api/me"));

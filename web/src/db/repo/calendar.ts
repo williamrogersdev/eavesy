@@ -82,9 +82,10 @@ export async function deleteConnection(db: AppDb, userId: string, id: string): P
 
 /**
  * Makes the stored events between `from` and `to` match `events`: new ones are
- * added and changed ones updated (the update leaves `autoRecord` and the
- * recorded meeting alone). With `complete`, ones that went away are dropped
- * unless a recording points at them; a truncated listing deletes nothing.
+ * added and changed ones updated (the update leaves `autoRecord`, the record
+ * choice and the recorded meeting alone). With `complete`, ones that went away
+ * are dropped unless a recording points at them; a truncated listing deletes
+ * nothing.
  */
 export async function replaceEvents(
   db: AppDb,
@@ -147,6 +148,7 @@ export type StoredEvent = {
   meetingUrl: string | null;
   platform: string | null;
   participants: { email: string; name: string | null }[];
+  recordChoice: 'record' | 'skip' | null;
   recordedMeetingId: string | null;
 };
 
@@ -172,6 +174,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     meetingUrl: row.meetingUrl,
     platform: row.platform,
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
+    recordChoice: row.recordChoice,
     recordedMeetingId: row.recordedMeetingId,
   }));
 }
@@ -182,4 +185,14 @@ export async function markRecorded(db: AppDb, userId: string, eventId: string, m
     .update(calendarEvents)
     .set({ recordedMeetingId: meetingId })
     .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId), isNull(calendarEvents.recordedMeetingId)));
+}
+
+/** Records whether to record this meeting; null goes back to the Mac's setting. False when the event isn't the user's. */
+export async function setRecordChoice(db: AppDb, userId: string, eventId: string, choice: 'record' | 'skip' | null): Promise<boolean> {
+  const updated = await db
+    .update(calendarEvents)
+    .set({ recordChoice: choice })
+    .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId)))
+    .returning({ id: calendarEvents.id });
+  return updated.length > 0;
 }
