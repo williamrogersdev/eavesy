@@ -306,9 +306,15 @@ function useClaudeCode(active: boolean) {
   const [status, setStatus] = useState<ClaudeCodeStatus | null>(null);
   // While a button's command runs, its own answer is the one to show.
   const running = useRef(false);
+  // One check at a time: the poll and coming back to the window can both ask.
+  const asking = useRef(false);
   const refresh = useCallback(() => {
-    if (!desktop || running.current) return;
-    void claudeCodeStatus().then((next) => { if (!running.current) setStatus(next); }).catch(() => {});
+    if (!desktop || running.current || asking.current) return;
+    asking.current = true;
+    void claudeCodeStatus()
+      .then((next) => { if (!running.current) setStatus(next); })
+      .catch(() => {})
+      .finally(() => { asking.current = false; });
   }, [desktop]);
   useEffect(() => { if (active) refresh(); }, [active, refresh]);
   useOnReturn(desktop && active, refresh);
