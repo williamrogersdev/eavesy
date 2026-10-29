@@ -16,7 +16,7 @@ const feedback = z.object({
 /** Shared by browser and paired desktop; account always comes from authentication. */
 export async function dictionaryRequest(request: Request, db: AppDb, actor: ResolvedIngestActor): Promise<Response> {
   const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } });
-  if (request.method === 'GET') return json({ entries: await dictionary.list(db, actor.userId) });
+  if (request.method === 'GET') return json({ entries: await dictionary.listForReview(db, actor.userId) });
   let body: unknown;
   try {
     const reader = request.body?.getReader();

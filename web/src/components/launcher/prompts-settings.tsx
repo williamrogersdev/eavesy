@@ -1,10 +1,11 @@
 'use client';
 
-import { ArrowLeft, ChevronRight, MessageSquareText, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, MessageSquarePlus, MessageSquareText, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { STARTER_PROMPTS, type PromptSuggestion } from '@/lib/prompt-starters';
 import { claudeCodeCommand, DETAILS_SLOT, freeSlug, PROMPT_LIMITS, promptSlug, type SavedPrompt } from '@/lib/prompts';
 import { Button, Card } from './ui';
-import type { SavedPromptsState } from './use-saved-prompts';
+import { usePromptSuggestions, type SavedPromptsState } from './use-saved-prompts';
 
 function Status({ error }: { error: string | null }) {
   return error ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{error}</p> : null;
@@ -14,17 +15,24 @@ function usedLabel(prompt: SavedPrompt): string {
   return prompt.useCount === 0 ? 'not used yet' : prompt.useCount === 1 ? 'used once' : `used ${prompt.useCount} times`;
 }
 
-/** One prompt's page; `prompt` is null for a new one. */
-function PromptPage({ prompt, state, onBack }: {
+/** One prompt's page; `prompt` is null for a new one, which can start from `initial`. */
+function PromptPage({ prompt, initial, state, onBack }: {
   prompt: SavedPrompt | null;
+  initial?: PromptSuggestion | null;
   state: SavedPromptsState;
   onBack: () => void;
 }) {
-  const [name, setName] = useState(prompt?.name ?? '');
-  const [body, setBody] = useState(prompt?.body ?? '');
+  const [name, setName] = useState(prompt?.name ?? initial?.name ?? '');
+  const [body, setBody] = useState(prompt?.body ?? initial?.body ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  useEffect(() => { setName(prompt?.name ?? ''); setBody(prompt?.body ?? ''); }, [prompt?.id, prompt?.name, prompt?.body]);
+  // A saved prompt follows edits landing from elsewhere; a new one keeps what's typed.
+  const savedName = prompt?.name;
+  const savedBody = prompt?.body;
+  useEffect(() => {
+    if (savedName !== undefined) setName(savedName);
+    if (savedBody !== undefined) setBody(savedBody);
+  }, [prompt?.id, savedName, savedBody]);
 
   const changed = !prompt || name.trim() !== prompt.name || body !== prompt.body;
   const ready = name.trim() !== '' && body.trim() !== '' && changed;
@@ -110,32 +118,111 @@ function PromptPage({ prompt, state, onBack }: {
   );
 }
 
-/** Saved prompts: a list, and a page for each. `open` is the prompt whose page shows, or 'new'. */
-export function PromptsSettings({ state, open, onOpen, onOpenConnections }: {
+/** Starters stop being offered once someone has a handful of their own. */
+const STARTERS_UNTIL = 5;
+const MAX_SHOWN = 6;
+
+export type ShownSuggestion = PromptSuggestion & { personal: boolean };
+
+/** What to offer: suggestions from their dictations first, then starters, none already saved by that name. */
+export function shownSuggestions(saved: SavedPrompt[], personal: PromptSuggestion[] | null): ShownSuggestion[] {
+  const taken = new Set(saved.map((p) => p.name.trim().toLowerCase()));
+  const pool: ShownSuggestion[] = [
+    ...(personal ?? []).map((s) => ({ ...s, personal: true })),
+    ...(saved.length < STARTERS_UNTIL ? STARTER_PROMPTS.map((s) => ({ ...s, personal: false })) : []),
+  ];
+  const out: ShownSuggestion[] = [];
+  for (const item of pool) {
+    const key = item.name.trim().toLowerCase();
+    if (taken.has(key)) continue;
+    taken.add(key);
+    out.push(item);
+  }
+  return out.slice(0, MAX_SHOWN);
+}
+
+function SuggestionRow({ suggestion, busy, disabled, onAdd, onEdit }: {
+  suggestion: ShownSuggestion;
+  busy: boolean;
+  disabled: boolean;
+  onAdd: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="ev-projrow">
+      <div className="ev-set-row ev-prompt-suggestion">
+        <MessageSquarePlus className="h-4 w-4 shrink-0 text-[var(--ev-ink-3)]" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="ev-set-label block truncate">{suggestion.name}</span>
+          <span className="ev-set-hint ev-prompt-why">{suggestion.why || suggestion.body}</span>
+        </span>
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={onEdit}>Edit first</Button>
+        <Button variant="outline" size="sm" icon={Plus} loading={busy} disabled={disabled} onClick={onAdd} aria-label={`Add “${suggestion.name}”`}>Add</Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Saved prompts: a list, and a page for each. `open` is the prompt whose page
+ * shows, or 'new'. `active`: the page is on screen, so suggestions from the
+ * user's dictations may be asked for.
+ */
+export function PromptsSettings({ state, open, onOpen, onOpenConnections, active = false }: {
   state: SavedPromptsState;
   open: string | null;
   onOpen: (id: string | null) => void;
   /** Goes to Settings → Connections, where Claude Code is connected. */
   onOpenConnections?: () => void;
+  active?: boolean;
 }) {
   const { prompts, error } = state;
+  const suggestions = usePromptSuggestions(active && prompts !== null);
+  // A suggestion opened to edit before it's saved.
+  const [draft, setDraft] = useState<PromptSuggestion | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
+  useEffect(() => { if (open !== 'new') setDraft(null); }, [open]);
+
   const current = open === 'new' ? null : prompts?.find((p) => p.id === open);
   if (open === 'new' || current) {
-    return <PromptPage key={open} prompt={current ?? null} state={state} onBack={() => onOpen(null)} />;
+    return <PromptPage key={open} prompt={current ?? null} initial={draft} state={state} onBack={() => onOpen(null)} />;
   }
 
   const full = (prompts?.length ?? 0) >= PROMPT_LIMITS.count;
+  const offered = prompts && !full ? shownSuggestions(prompts, suggestions.personal) : [];
+  const personal = offered.filter((s) => s.personal);
+  const starters = offered.filter((s) => !s.personal);
+  const rows = (list: ShownSuggestion[]) => list.map((suggestion) => (
+    <SuggestionRow
+      key={suggestion.name}
+      suggestion={suggestion}
+      busy={adding === suggestion.name}
+      disabled={adding !== null}
+      onAdd={() => void add(suggestion)}
+      onEdit={() => { setDraft(suggestion); onOpen('new'); }}
+    />
+  ));
+  const add = async (suggestion: PromptSuggestion) => {
+    setAdding(suggestion.name);
+    setAdded(null);
+    const saved = await state.create({ name: suggestion.name, body: suggestion.body });
+    setAdding(null);
+    if (saved) setAdded(saved.name);
+  };
+  const connected = onOpenConnections ? <button type="button" className="ev-link" onClick={onOpenConnections}>connected</button> : 'connected';
+
   return (
     <>
-      <Card title="How prompts work">
-        <ol className="ev-howto">
-          <li><span><b>Write it once.</b> The instructions you give an agent again and again, worded the way that gets the best result.</span></li>
-          <li><span><b>Drop it in anywhere.</b> Open the panel, type <code>/</code> and part of its name, and press Return. It’s pasted where your cursor was.</span></li>
-          <li><span><b>Run it from Claude Code.</b> Once Eavesy is {onOpenConnections ? <button type="button" className="ev-link" onClick={onOpenConnections}>connected</button> : 'connected'}, each prompt is also a slash command, like <code>{claudeCodeCommand('triage')}</code>.</span></li>
-        </ol>
-      </Card>
       <Card title="Your prompts">
-        {prompts?.length === 0 && <p className="ev-set-hint">No prompts yet.</p>}
+        <p className="ev-set-hint">Type <code>/</code> in the panel to paste one, or run it as a slash command in Claude Code once Eavesy is {connected}.</p>
+        {prompts === null && !error && <p className="ev-set-hint ev-set-body">Loading your prompts…</p>}
+        {prompts?.length === 0 && (
+          <div className="ev-set-body">
+            <p className="ev-set-label">No prompts yet</p>
+            <p className="ev-set-hint">Add one of the prompts below in one click, or write your own.</p>
+          </div>
+        )}
         {prompts?.map((prompt) => (
           <div key={prompt.id} className="ev-projrow">
             <button type="button" className="ev-set-row ev-projrow-head" onClick={() => onOpen(prompt.id)}>
@@ -149,11 +236,22 @@ export function PromptsSettings({ state, open, onOpen, onOpenConnections }: {
           </div>
         ))}
         <div className="ev-set-row">
-          <Button variant="outline" size="sm" icon={Plus} disabled={prompts === null || full} onClick={() => onOpen('new')}>New prompt</Button>
+          <Button variant="outline" size="sm" icon={Plus} disabled={prompts === null || full} onClick={() => { setDraft(null); onOpen('new'); }}>New prompt</Button>
           {full && <span className="ev-set-hint">That’s the limit of {PROMPT_LIMITS.count}. Delete one to add another.</span>}
+          {added && !full && <span role="status" className="ev-set-hint">Added “{added}”. Type <code>/</code> in the panel to use it.</span>}
         </div>
         <Status error={error} />
       </Card>
+
+      {(personal.length > 0 || (suggestions.loading && !full)) && (
+        <Card title="From your dictations">
+          {suggestions.loading
+            ? <p className="ev-set-hint">Looking through your recent dictations for things you ask for often…</p>
+            : <p className="ev-set-hint">Things you’ve asked for more than once, written up as prompts.</p>}
+          {rows(personal)}
+        </Card>
+      )}
+      {starters.length > 0 && <Card title="Starter prompts">{rows(starters)}</Card>}
     </>
   );
 }

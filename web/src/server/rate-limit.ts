@@ -67,6 +67,7 @@ const SPEND_SCOPES = {
   process: 'transcription',
   translation: 'transcription',
   'agent-reply': 'reply suggestion',
+  'prompt-suggestions': 'prompt suggestion',
   assistant: 'assistant',
 } as const;
 
