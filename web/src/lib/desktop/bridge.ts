@@ -445,6 +445,8 @@ export interface ClaudeCodeStatus {
   plugin: boolean;
   /** The bare MCP server was added for every folder. */
   server: boolean;
+  /** What `claude mcp get` says about signing in, once Eavesy is added (`null` before). */
+  signIn?: 'connected' | 'needsSignIn' | 'unknown' | null;
 }
 
 export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
@@ -452,7 +454,10 @@ export async function claudeCodeStatus(): Promise<ClaudeCodeStatus | null> {
   return invoke<ClaudeCodeStatus>('claude_code_status');
 }
 
-/** Runs `claude plugin marketplace add` and `claude plugin install` for Eavesy. Can take a while: it clones the plugin. */
+/**
+ * Runs `claude plugin marketplace add` and `claude plugin install` for Eavesy,
+ * each tried twice. Can take a minute the first time: it clones the plugin.
+ */
 export async function connectClaudeCode(): Promise<ClaudeCodeStatus> {
   return invoke<ClaudeCodeStatus>('connect_claude_code');
 }

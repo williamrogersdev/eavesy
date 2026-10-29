@@ -172,12 +172,26 @@
 .ev-conn-warn { display: block; color: var(--ev-warn-ink); }
 .ev-conn-more { margin: 10px 0 0 42px; }
 .ev-conn-more code, .ev-conn-copy code { font-family: ui-monospace, monospace; font-size: 0.92em; }
-.ev-conn-copy { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ev-conn-copy { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .ev-conn-copy code { flex: 1; min-width: 0; padding: 7px 10px; border-radius: var(--ev-r-ctl); background: color-mix(in srgb, var(--ev-ink) 5%, transparent); color: var(--ev-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A whole prompt: scrolls inside its box, with Copy on top so it's never pushed out of sight. */
+.ev-conn-copy[data-block] { flex-direction: column-reverse; align-items: stretch; }
+.ev-conn-copy[data-block] .ev-btn { align-self: flex-start; }
+.ev-conn-copy[data-block] code { max-height: 132px; overflow-y: auto; line-height: 1.45; }
 .ev-conn-about { margin-top: 8px; }
 .ev-conn-about summary { cursor: pointer; width: fit-content; color: var(--ev-ink-2); font: var(--ev-t-small); border-radius: 4px; }
 .ev-conn-about summary:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-conn-about p { margin: 6px 0 0; }
 .ev-conn-then { margin-top: 6px; }
-.ev-conn-toggle { display: block; margin-top: 2px; font-size: 0.92em; }
-.ev-conn-more > .ev-conn-toggle + * { margin-top: 8px; }
+/* Set up: how to do it (the one-click way, an agent, or Terminal), then numbered steps. */
+.ev-conn-methods { margin-bottom: 12px; }
+.ev-conn-steps { counter-reset: ev-step; display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.ev-conn-steps > li { counter-increment: ev-step; position: relative; min-width: 0; padding-left: 28px; }
+.ev-conn-steps > li::before { content: counter(ev-step); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 10px; background: var(--ev-paper); box-shadow: inset 0 0 0 1px var(--ev-line-strong); color: var(--ev-ink-2); font: var(--ev-t-small); font-weight: 600; }
+.ev-conn-steps > li[data-done]::before { content: '✓'; background: var(--ev-leaf-soft); box-shadow: none; color: var(--ev-leaf); }
+.ev-conn-step-title { margin: 0; padding-top: 1px; color: var(--ev-ink); font: var(--ev-t-ui); font-weight: 600; }
+.ev-conn-steps > li > .ev-set-hint { margin: 2px 0 0; }
+.ev-conn-step-action { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ev-conn-error { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px; padding: 10px 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); }
+.ev-conn-error .ev-set-hint { margin: 0; white-space: pre-line; }
+.ev-conn-error .ev-btn { margin-top: 4px; }
