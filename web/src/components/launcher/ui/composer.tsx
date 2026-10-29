@@ -8,8 +8,9 @@ import {
   useState,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
-import { Paperclip, Plus, X } from 'lucide-react';
+import { MessageCircleQuestion, Paperclip, Plus, StickyNote, X } from 'lucide-react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
 import { Mascot } from './mascot';
@@ -36,7 +37,27 @@ export type ComposerProps = {
   dragActive?: boolean;
   /** Called when Esc is pressed on an empty composer (the panel decides what that means). */
   onEscapeEmpty?: () => void;
+  /**
+   * Makes this the ask bar: what's written can also go to Eavesy. Return goes
+   * where `enterGoes` says and ⌘Return the other way; both buttons name where.
+   * Rejects when the message wasn't taken (the draft comes back).
+   */
+  onAsk?: (text: string) => Promise<void>;
+  /** In the conversation: Return always asks (⌘Return still saves a note). */
+  askAlways?: boolean;
+  /** Eavesy can't take a message right now; the reason is the Ask button's tooltip. */
+  askBlocked?: string;
+  /** A row inside the bar above the field: attached captures, or the peek at the conversation. */
+  top?: ReactNode;
+  /** Extra controls at the end while the field is empty (the mic); typed words get the send buttons instead. */
+  tools?: ReactNode;
 };
+
+/** Where Return sends what's in the ask bar. Pasted text saves (it may be anything on your clipboard); typed text asks. */
+export function enterGoes({ pastedIn, askAlways }: { pastedIn: boolean; askAlways: boolean }): 'ask' | 'save' {
+  if (askAlways) return 'ask';
+  return pastedIn ? 'save' : 'ask';
+}
 
 const LINE = 20;
 /** Pasted text longer than this is shown as a collapsed block instead of raw lines. */
@@ -68,11 +89,30 @@ export function draftAfterSave(current: string, saved: string): string {
  * list and never reflows it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSaveNote, onSaveError, onFiles, onPick, placeholder = 'Paste, drop a file, or jot a note…', maxLines = 4, dragActive = false, onEscapeEmpty },
+  {
+    onSaveNote,
+    onSaveError,
+    onFiles,
+    onPick,
+    placeholder = 'Paste, drop a file, or jot a note…',
+    maxLines = 4,
+    dragActive = false,
+    onEscapeEmpty,
+    onAsk,
+    askAlways = false,
+    askBlocked,
+    top,
+    tools,
+  },
   ref,
 ) {
   const [draft, setDraft] = useState('');
   const [pasted, setPasted] = useState<string | null>(null);
+  // Some of the draft came from the clipboard: Return saves it rather than sending it to Eavesy.
+  const [pastedIn, setPastedIn] = useState(false);
+  useEffect(() => {
+    if (!draft && pasted === null) setPastedIn(false);
+  }, [draft, pasted]);
   const [saved, setSaved] = useState(false);
   const [hoverAdd, setHoverAdd] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -87,6 +127,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => () => window.clearTimeout(savedTimer.current), []);
 
   const insertText = useCallback((text: string) => {
+    setPastedIn(true);
     if (shouldCollapse(text)) {
       setPasted((prev) => (prev ? `${prev}\n\n${text}` : text));
     } else {
@@ -138,9 +179,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     confirm();
   }, [text, draft, pasted, onSaveNote, onSaveError, confirm]);
 
+  // Sending clears the bar at once (the answer takes a while); a refusal puts the words back.
+  const ask = useCallback(() => {
+    if (!onAsk || !text || askBlocked) return;
+    const sentDraft = draft;
+    const sentPasted = pasted;
+    setDraft('');
+    setPasted(null);
+    onAsk(text).catch(() => {
+      setDraft((current) => current || sentDraft);
+      setPasted((current) => current ?? sentPasted);
+    });
+  }, [onAsk, text, askBlocked, draft, pasted]);
+
+  const goes = onAsk ? enterGoes({ pastedIn: pastedIn || pasted !== null, askAlways }) : 'save';
+  const onEnter = goes === 'ask' ? ask : () => void save();
+  const onOther = goes === 'ask' ? () => void save() : ask;
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (onAsk && e.key === 'Enter' && !e.shiftKey) {
+      // The ask bar: Return goes where the main button says, ⌘Return the other way.
+      e.preventDefault();
+      if (e.metaKey || e.ctrlKey) onOther();
+      else onEnter();
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       void save();
     } else if (e.key === 'Enter' && !e.shiftKey && !multiline) {
@@ -157,8 +220,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         onEscapeEmpty?.();
       }
     }
-    // Keep panel-level shortcuts (/, N, arrows) from firing while typing.
-    if (e.key !== 'Escape') e.stopPropagation();
+    // Keep panel-level shortcuts (/, N, arrows) from firing while typing; ⌘ chords (⌘J, ⌘,) still reach the panel.
+    if (e.key !== 'Escape' && !e.metaKey && !e.ctrlKey) e.stopPropagation();
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -169,6 +232,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     const pastedText = e.clipboardData.getData('text/plain');
+    if (pastedText) setPastedIn(true);
     if (pastedText && shouldCollapse(pastedText)) {
       e.preventDefault();
       insertText(pastedText);
@@ -181,6 +245,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     <>
       <div className="ev-composer-fade" aria-hidden />
       <div className="ev-composer" data-drag={dragActive} data-multiline={multiline}>
+        {top && <div className="ev-composer-top">{top}</div>}
         {saved ? (
           <span className="ev-ib" aria-hidden><Mascot state="happy" size={20} /></span>
         ) : (
@@ -230,15 +295,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            placeholder={saved ? 'Saved' : pasted ? 'Add a line, or press ⌘↩ to save' : placeholder}
-            aria-label="New note, or paste or drop a file"
+            placeholder={saved ? 'Saved' : pasted ? (onAsk ? 'Add a line, or ask about it' : 'Add a line, or press ⌘↩ to save') : placeholder}
+            aria-label={onAsk ? 'Ask Eavesy or write a note; paste or drop a file to save it' : 'New note, or paste or drop a file'}
             aria-multiline="true"
             className="ev-composer-field"
             spellCheck
           />
         </div>
         <div className="ev-composer-end">
-          {text ? (
+          {!text && tools}
+          {text && onAsk ? (
+            <>
+              <Button
+                size="sm"
+                variant="quiet"
+                className="ev-composer-alt"
+                icon={goes === 'ask' ? StickyNote : MessageCircleQuestion}
+                aria-label={goes === 'ask' ? 'Save note' : 'Ask'}
+                disabled={goes === 'save' && !!askBlocked}
+                title={goes === 'ask' ? 'Save as a note (⌘↩)' : askBlocked ?? 'Ask Eavesy about it (⌘↩)'}
+                onClick={onOther}
+              >
+                <span className="ev-composer-alt-label">{goes === 'ask' ? 'Save note' : 'Ask'}</span>
+              </Button>
+              <Button size="sm" variant="primary" disabled={goes === 'ask' && !!askBlocked} title={goes === 'ask' ? askBlocked ?? 'Ask Eavesy (↩)' : 'Save as a note (↩)'} onClick={onEnter}>
+                {goes === 'ask' ? 'Ask' : 'Save note'}
+              </Button>
+            </>
+          ) : text ? (
             <Button size="sm" variant="quiet" onClick={() => void save()} title={multiline ? 'Save (⌘↩)' : 'Save (↩)'}>
               Save
             </Button>

@@ -121,6 +121,12 @@ export function timeOfDay(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+/** A capture attached to a question, as its chip and Eavesy name it: "Voice note · 9:41 AM", or "Meeting · Yesterday 3:10 PM". */
+export function askLabel(rec: Recording, now: number): string {
+  const day = dayLabel(rec.startedAt, now);
+  return `${kindLabel(rec)} · ${day === 'Today' ? '' : `${day} `}${timeOfDay(rec.startedAt)}`;
+}
+
 /**
  * What the history area shows. Until the first page arrives it is loading (search
  * and an empty list, never the empty mascot), and a failed load is never "empty".

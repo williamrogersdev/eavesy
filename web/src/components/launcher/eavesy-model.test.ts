@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantCard } from '@/lib/desktop/bridge';
-import { acceptLabel, activityLine, modeIsLoud, modeLabel, ruleChangeLine, rulesWaitingLine, secondsLeft, sortVoices, toolLabel } from './eavesy-model';
+import { ASK_LIMIT, acceptLabel, activityLine, askMessage, modeIsLoud, modeLabel, peekLine, ruleChangeLine, rulesWaitingLine, secondsLeft, sortVoices, splitAsk, toolLabel, waitingLabel } from './eavesy-model';
 
 const card = (rows: string[]): AssistantCard => ({
   id: 'c', requester: 'You', tool: 'machine.clean', title: 'Remove 2 worktrees', warning: null, expires_ms: 60_000,
@@ -56,5 +56,48 @@ describe('assistant settings', () => {
     expect(rulesWaitingLine(0)).toBeNull();
     expect(rulesWaitingLine(1)).toBe('A rule change is waiting for you');
     expect(rulesWaitingLine(3)).toBe('3 rule changes are waiting for you');
+  });
+});
+
+describe('asking about captures', () => {
+  const note = { id: 'n', label: 'Note · 9:41 AM', text: 'Send Priya the deck.' };
+  const meeting = { id: 'm', label: 'Meeting · Yesterday 3:10 PM', text: 'We agreed it ships first.\n\n\nSam checks drag and drop.' };
+
+  test('a question alone is sent as typed', () => {
+    expect(askMessage('  what did I promise?  ', [])).toEqual({ text: 'what did I promise?', trimmed: [] });
+  });
+
+  test('attached captures follow the question with their labels and words, and split back for the thread', () => {
+    const { text, trimmed } = askMessage('What do I owe people?', [note, meeting]);
+    expect(trimmed).toEqual([]);
+    expect(text).toContain('[Note · 9:41 AM]\nSend Priya the deck.');
+    // A capture's blank lines are closed up, so a blank line only ever starts the next capture.
+    expect(text).toContain('[Meeting · Yesterday 3:10 PM]\nWe agreed it ships first.\nSam checks drag and drop.');
+    expect(splitAsk(text)).toEqual({ question: 'What do I owe people?', about: ['Note · 9:41 AM', 'Meeting · Yesterday 3:10 PM'] });
+    expect(splitAsk('Just a question')).toEqual({ question: 'Just a question', about: [] });
+  });
+
+  test('long words are cut to fit one message, shortest kept whole', () => {
+    const long = { id: 'l', label: 'Meeting · 10:00 AM', text: 'word '.repeat(2_000) };
+    const { text, trimmed } = askMessage('Summarize', [long, note]);
+    expect(text.length).toBeLessThanOrEqual(ASK_LIMIT);
+    expect(trimmed).toEqual(['l']);
+    expect(text).toContain('Send Priya the deck.');
+    expect(text).toContain('word…\n\n[Note · 9:41 AM]');
+    expect(splitAsk(text).about).toEqual(['Meeting · 10:00 AM', 'Note · 9:41 AM']);
+    // Whatever the mix, the message stays under the limit.
+    const many = askMessage('q'.repeat(500), [long, long, long].map((c, i) => ({ ...c, id: `${i}` })));
+    expect(many.text.length).toBeLessThanOrEqual(ASK_LIMIT);
+    expect(many.trimmed).toHaveLength(3);
+  });
+
+  test('the peek shows the last thing Eavesy said and what waits', () => {
+    const turn = (who: 'you' | 'eavesy', text: string) => ({ id: 1, who, spoken: false, at_ms: 0, text, steps: [] });
+    expect(peekLine({ busy: false, turns: [] }, 0)).toBeNull();
+    expect(peekLine({ busy: false, turns: [] }, 2)).toEqual({ text: 'Waiting for your click', waiting: 2 });
+    expect(peekLine({ busy: true, turns: [] }, 0)).toEqual({ text: 'Eavesy is answering…', waiting: 0 });
+    expect(peekLine({ busy: false, turns: [turn('eavesy', 'Two left.\nMore here'), turn('you', 'ok')] }, 1)).toEqual({ text: 'Two left.', waiting: 1 });
+    expect(waitingLabel(0)).toBe('');
+    expect(waitingLabel(3)).toBe('3 waiting');
   });
 });

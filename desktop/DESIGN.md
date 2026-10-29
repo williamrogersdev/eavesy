@@ -70,7 +70,7 @@ Rules:
 | Where | Before | After |
 |---|---|---|
 | Empty history (bubble) | Record a voice note, take a screenshot, or press ⌘V to keep text or an image here. | **"It's quiet up here. Hold `fn` and talk, or drop something in below."** The bubble tail points at the composer. |
-| Composer placeholder | (none) | Paste, drop a file, or jot a note… |
+| Ask bar placeholder | Paste, drop a file, or jot a note… | Ask Eavesy, or jot a note… |
 | Meeting tooltip | Also record computer audio, for calls and meetings | Records both sides of a call |
 | Empty search | (none) | No captures match "invoice". |
 | Mic permission hint | Needed for voice notes and dictation. | Lets Eavesy hear you while you hold `fn`. It only listens while its ears are up. |
@@ -261,8 +261,10 @@ slab).
 - Search is an icon until used: no well, no keycap, "Search" placeholder; it
   becomes a field in the well once opened or typed into.
 - Each kind of control has one look, so nothing reads as something else:
-  underlined text tabs say where you are, raised tiles start something, and
-  borderless pills narrow the list.
+  raised tiles start something, borderless pills narrow the list, and the
+  ask bar at the bottom is where you write. There are no peer tabs: the
+  captures are home, and the conversation with Eavesy opens in their place
+  with a "‹ Captures" way back.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
 for the voice of the product: headings, date groups, buttons, chips, mascot
@@ -317,8 +319,6 @@ robot glyph to stand for Eavesy itself.
 ┌──────────────────────────────────────────────┐
 │ ×              [m] Eavesy                 ⚙  │ 44  title bar, drag region
 ├──────────────────────────────────────────────┤
-│  Eavesy   Captures                           │ 34  underlined tabs, hairline below
-│  ═══════                                     │
 │ New capture            Saves to (▭ eavesy ▾) │ 26  section label, project chip
 │ ┌──────┐ ┌───────┐ ┌──────────┐ ┌───────┐    │
 │ │ Talk │ │Meeting│ │Screenshot│ │ Video │    │ 58  four raised capture tiles
@@ -331,10 +331,28 @@ robot glyph to stand for Eavesy itself.
 │ ▏📷 Screenshot                  9:12          │
 │ ▏  [ thumbnail 16:10, r8, e-2 ]              │
 │ Yesterday …                                   │
-│ ┌composer (well, r12)───────────────────────┐│
-│ │ +  Paste, drop a file, or jot a note…  ⌘V ││ 40  composer, pinned (replaces footer)
+│ ┌ask bar (well, r12)────────────────────────┐│
+│ │ Eavesy  Two servers outlived… [1 waiting]›││ 24  peek: opens the conversation
+│ │ +  Ask Eavesy, or jot a note…          🎙 ││ 40  ask bar, pinned (replaces footer)
 │ └───────────────────────────────────────────┘│
 └──────────────────────────────────────────────┘
+```
+
+The conversation opens in place of everything between the title bar and the
+ask bar (the tiles, list bar and history stay mounted underneath, so search,
+filter and scroll are kept):
+
+```
+│ ×              [m] Eavesy                 ⚙  │ 44  title bar
+├──────────────────────────────────────────────┤
+│ ‹ Captures          (Ask) ◌ Off the record  Clear │ 34  head: way back, mode, record, clear
+│                       What did I promise Priya? │ your turn, right
+│                         📎 Voice note · 9:41 AM │ captures that went with it
+│ Eavesy                                        │
+│ Checked your agent sessions · 3 sessions     │ tool steps, ink-3
+│ You said you'd send Priya the deck by…       │ its answer
+│ ┌card────────────────────────────────────────┐│ cards wait here for a click
+│ │ +  Reply to Eavesy…                    🎙 ││ 40  the same ask bar
 ```
 
 **Title bar (44):** three columns. Left: close (18px circle, `--ev-ink-3`,
@@ -346,10 +364,28 @@ eavesy.com, **Open ~/Eavesy folder** and Sign out. The side columns share
 the slack, so the name stays centred until the right side outgrows its half.
 While recording, the mascot carries the capture's state; nothing else changes.
 
-**Tab row (34):** the Eavesy and Captures tabs and nothing else: round
-13/600 text, ink-2, the current one in ink with a 2px coat underline sitting
-on a full-width hairline. They are navigation, so they never look like the
-pills that filter the list.
+**One surface, not two tabs.** Captures are the panel's home. Eavesy is
+reached from the ask bar at the bottom, which is always there: type and press
+Return, press the mic, click the peek line, or press `⌘J`. The conversation
+then takes the space between the title bar and the ask bar. Its head row (34,
+hairline below) has a ghost "‹ Captures" button on the left (Esc does the
+same), then the permission mode chip, Off the record and Clear on the right.
+Leaving it never clears it: the peek line in the ask bar shows what Eavesy
+said last and, in a manila pill, how many cards wait for a click, so a card
+that arrives while you're on the captures is never missed. Opening the panel
+keeps whichever you were on; the tray's Recordings item and `/` go back to
+the captures.
+
+**Asking about captures.** Each capture with words has an "Ask Eavesy about
+this" action (`MessageCircleQuestion`) in its hover strip. It attaches the
+capture to the next question: the row turns manila-soft and a manila chip
+("Voice note · 9:41 AM ×") sits in the ask bar above the field. Up to three
+go with one question. Only what you attach is sent, never the list you're
+looking at, and the words are the whole transcript, cut to fit one message
+(the chip says "trimmed" when they will be). Your turn in the thread shows
+the question with a 📎 line naming what went with it. The mic is off while
+captures are attached (a spoken turn can't carry them). Esc with an empty
+field takes the attachments off first.
 
 **Capture toolbar:** a "New capture" section label (the day-group style)
 with "Saves to" and the project chip (next recording's project, `auto` when
@@ -429,23 +465,36 @@ a scrollable text area, Cancel, and Save changes (⌘Enter). Escape closes an
 unchanged draft; unsaved changes require an explicit Discard. Failed saves keep
 the draft open. Saved text updates in history immediately. Audio is unchanged.
 
-**Composer (pinned bottom, replaces the footer).** This is the one obvious
-place to put things in.
+**Ask bar (the Composer with `onAsk`; pinned bottom, replaces the footer).**
+This is the one obvious place to put things in, and to ask Eavesy.
 - Shape: a well field, r12, 40px fixed resting height, 10px from the panel
   edges. Contents: a leading 28px IconButton `+` (Paperclip on hover, opens a
-  file picker), placeholder "Paste, drop a file, or jot a note…" (round 13,
-  ink-3), and a trailing `Kbd ⌘V` that becomes a coat "Save" quiet button
-  once there's text.
-- Accepts typed notes, paste (text, images, files) and drag-drop. Enter saves
-  a single-line note as a **Note** row. Shift+Enter adds a line, and ⌘Enter
-  saves a multi-line note. Esc clears the draft (a second Esc closes the
-  panel). After saving, the field empties, the new row changes in at the top
-  of Today, and a quiet "Saved" appears in the placeholder for 1.2s.
+  file picker), placeholder "Ask Eavesy, or jot a note…" (round 13, ink-3;
+  "Reply to Eavesy…" in the conversation, "Ask about this capture…" with one
+  attached), and a trailing mic (Talk to Eavesy, its shortcut in the tooltip).
+  Once there's text the mic gives way to two buttons that name where the words
+  go: the one Return presses in coat (primary), the other quiet (⌘Return). In a
+  panel under 340px the quiet one keeps only its icon.
+- Above the field, one optional row spans the bar: the attached capture chips,
+  or (on the captures) the peek line from the conversation.
+- **Where Return sends it** (`enterGoes`): typed words ask Eavesy, and
+  ⌘Return saves them as a **Note** row instead. Words that came from the
+  clipboard (⌘V routed in, or pasted into the field) save as a note on
+  Return, and ⌘Return asks: the clipboard can hold anything, so it never goes
+  to the model on Return alone. In the conversation Return always asks, since
+  you're replying. Shift+Return adds a line. Esc clears the draft; on an empty
+  field it takes attached captures off, then leaves the conversation, then
+  closes the panel. After a note saves, the field empties, the new row
+  changes in at the top of Today, and a quiet "Saved" appears in the
+  placeholder for 1.2s. Asking empties the field at once and opens the
+  conversation; if Eavesy can't take it (still answering), the words and the
+  attached captures come back.
 - **Routing:** ⌘V anywhere in the panel (outside search or another text
-  field) goes to the composer. Files and images save immediately. Text lands
-  in the field as a draft so you can edit it before Enter. Typing a printable
-  key with nothing focused doesn't steal into the composer (that would
-  surprise people). `/` focuses search and `N` focuses the composer.
+  field) goes to the ask bar. Files and images save immediately. Text lands
+  in the field as a draft so you can edit it first. Typing a printable key
+  with nothing focused doesn't steal into the bar (that would surprise
+  people). `/` goes to the captures and opens search, `N` focuses the bar, and
+  `⌘J` opens or leaves the conversation (from the bar too).
 - **Height stability:** the list's scroll area has `padding-bottom: 64px`
   (40 + gaps) so the last row is never hidden, and the composer floats over a
   12px paper fade. When a draft grows past one line, the composer **grows
@@ -461,7 +510,7 @@ place to put things in.
 - Focus: `--ev-focus-field` on the raised well. The placeholder dims and the `+`
   icon turns coat.
 - Accessibility: `role="textbox" aria-multiline="true"`,
-  `aria-label="New note, or paste or drop a file"`, and the drop state is
+  `aria-label="Ask Eavesy or write a note; paste or drop a file to save it"`, and the drop state is
   announced via `aria-live="polite"` ("Drop to save").
 
 **Shortcut row (Settings + onboarding):** label (13 ui) and hint (11.5 ink-2)
@@ -700,7 +749,7 @@ now" as a ghost button on the left.
 | `Button` | `variant: 'primary' \| 'ghost' \| 'quiet' \| 'danger-rec'`, `size: 'sm' (26) \| 'md' (32)`, `icon?: LucideIcon`, `kbd?: string`, `loading?: boolean`, plus native button props. Press = scale .97 over 90ms. |
 | `IconButton` | `label: string` (required, used as aria-label and tooltip), `icon`, `size: 24 \| 28`, `tone?: 'default' \| 'rec'`, `pressed?: boolean` |
 | `Switch` | `checked`, `onCheckedChange`, `label`, `hint?`. 30×18 track; off is line-strong, on is coat; thumb is raised. Thumb travel 160ms with a spring ease. |
-| `Composer` | `onSaveNote(text)`, `onFiles(files)`, `placeholder?`, `maxLines?: number` (4), `dragActive: boolean` (set by a panel-level drag listener). Fixed 40px resting height, grows upward and overlays. |
+| `Composer` | `onSaveNote(text)`, `onFiles(files)`, `placeholder?`, `maxLines?: number` (4), `dragActive: boolean` (set by a panel-level drag listener); for the ask bar also `onAsk(text)`, `askAlways?`, `askBlocked?: string`, `top?` (a row above the field) and `tools?` (the mic). Fixed 40px resting height, grows upward and overlays. |
 | `ToolbarSegment` | `icon`, `label`, `hint?: string` (tooltip), `kbd?: string`, `active?: boolean` (renders Stop + elapsed), `dimmed?: boolean` |
 | `Select<T>` (settings rows) | `value: T`, `onChange`, `options: {value: T, label: string}[]`, `label`. A 26px native pop-up with an up-down chevron. |
 | `Segmented<T>` | `value: T`, `onChange`, `options: {value: T, label: string, icon?}[]`, `size: 'sm' \| 'md'`. Well track, raised thumb that slides (240ms). |

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { splitKeys } from './kbd';
-import { draftAfterSave, noteText, shouldCollapse } from './composer';
+import { draftAfterSave, enterGoes, noteText, shouldCollapse } from './composer';
 
 describe('splitKeys', () => {
   test('splits modifier glyphs from the key name', () => {
@@ -24,6 +24,14 @@ describe('composer text', () => {
     expect(noteText('  intro ', 'pasted body\n')).toBe('intro\n\npasted body');
     expect(noteText('', null)).toBe('');
     expect(noteText('just typed', null)).toBe('just typed');
+  });
+
+  test('in the ask bar, Return asks about typed words but saves pasted ones', () => {
+    expect(enterGoes({ pastedIn: false, askAlways: false })).toBe('ask');
+    // The clipboard may hold anything: it is never sent to Eavesy by Return alone.
+    expect(enterGoes({ pastedIn: true, askAlways: false })).toBe('save');
+    // In the conversation you are replying, so Return asks either way.
+    expect(enterGoes({ pastedIn: true, askAlways: true })).toBe('ask');
   });
 
   test('keeps only what changed while a save was in flight', () => {
