@@ -648,7 +648,12 @@ fn session_body(session: &sqlite::PendingSession) -> serde_json::Value {
         "clientSessionId": session.id,
         "title": session.title,
         "contextBlurb": session.context_blurb.as_deref().unwrap_or(""),
+        "startedAt": session.started_at,
     });
+    // A Meeting recording is linked to the calendar event it falls in, and named after it.
+    if session.source == "mixed" {
+        body["kind"] = serde_json::Value::from("meeting");
+    }
     if let Some(project_id) = session.project_id.as_deref().filter(|id| !id.is_empty()) {
         body["projectId"] = serde_json::Value::from(project_id);
     }
@@ -1246,6 +1251,8 @@ mod tests {
             archive_path: std::path::PathBuf::from("/tmp/a.m4a"),
             title: "Memo".into(),
             context_blurb: None,
+            source: "mic".into(),
+            started_at: 1_700_000_000_000,
             project_id: Some("proj_1".into()),
             status: "recording".into(),
             next_part_number: 1,
@@ -1256,10 +1263,12 @@ mod tests {
         };
         assert_eq!(
             super::session_body(&session),
-            serde_json::json!({ "clientSessionId": "local", "title": "Memo", "contextBlurb": "", "projectId": "proj_1" })
+            serde_json::json!({ "clientSessionId": "local", "title": "Memo", "contextBlurb": "", "startedAt": 1_700_000_000_000_i64, "projectId": "proj_1" })
         );
         session.project_id = None;
         assert!(super::session_body(&session).get("projectId").is_none());
+        session.source = "mixed".into();
+        assert_eq!(super::session_body(&session)["kind"], "meeting");
     }
 
     #[test]
