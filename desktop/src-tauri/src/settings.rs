@@ -82,6 +82,10 @@ pub struct Settings {
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
+    /// When a call starts, count down and record it unless told not to (on
+    /// unless turned off). Off, Eavesy only asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_record_meetings: Option<bool>,
     /// Lines of live words the control shows while recording: 0, 1, 2 or 4
     /// (off unless chosen: the plain bar is quieter while you talk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -204,6 +208,10 @@ impl Settings {
     pub fn capture_sounds(&self) -> bool {
         self.capture_sounds.unwrap_or(true)
     }
+
+    pub fn auto_record_meetings(&self) -> bool {
+        self.auto_record_meetings.unwrap_or(true)
+    }
 }
 
 fn default_assistant_hotkey() -> String {
@@ -232,6 +240,7 @@ impl Default for Settings {
             live_captions: None,
             add_screenshots: None,
             capture_sounds: None,
+            auto_record_meetings: None,
             hud_preview_lines: None,
             hud_translucent: None,
             fast_live_words: None,

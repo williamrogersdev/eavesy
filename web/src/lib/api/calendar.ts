@@ -64,6 +64,53 @@ export async function disconnectCalendar(id: string, force = false): Promise<boo
   return !(isRecord(answer) && answer.ok === false);
 }
 
+/** A meeting ahead on the calendar, and whether to record it (null: as the Mac's setting says). */
+export interface UpcomingMeeting {
+  id: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  meetingUrl: string | null;
+  recordChoice: 'record' | 'skip' | null;
+}
+
+function parseMeeting(item: unknown): UpcomingMeeting[] {
+  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return [];
+  if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return [];
+  const choice = item.recordChoice === 'record' || item.recordChoice === 'skip' ? item.recordChoice : null;
+  return [{ id: item.id, title: item.title, startsAt: item.startsAt, endsAt: item.endsAt, meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null, recordChoice: choice }];
+}
+
+/** `/api/calendar-events`' upcoming meetings, or null when it isn't that answer. */
+export function parseUpcoming(value: unknown): UpcomingMeeting[] | null {
+  if (!isRecord(value) || !Array.isArray(value.upcoming)) return null;
+  return value.upcoming.flatMap(parseMeeting);
+}
+
+/** The meetings in the next day, as this Mac (device token) or the signed-in browser. */
+export async function getUpcomingMeetings(): Promise<UpcomingMeeting[]> {
+  const answer = isDesktop()
+    ? await accountCall('GET', '/api/calendar-events')
+    : await fetch('/api/calendar-events').then((response) => {
+      if (!response.ok) throw new Error('Couldn’t reach eavesy.com. Try again.');
+      return response.json();
+    });
+  const meetings = parseUpcoming(answer);
+  if (!meetings) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
+  return meetings;
+}
+
+/** Records whether to record one meeting; null goes back to the "record all" setting. */
+export async function setRecordChoice(id: string, recordChoice: 'record' | 'skip' | null): Promise<void> {
+  const path = `/api/calendar-events/${encodeURIComponent(id)}`;
+  if (isDesktop()) {
+    await accountCall('PATCH', path, { recordChoice });
+    return;
+  }
+  const response = await fetch(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recordChoice }) });
+  if (!response.ok) throw new Error('Couldn’t save that. Try again.');
+}
+
 /** Google's consent screen runs in the browser; the Mac app opens it there and checks again when you come back. */
 export async function connectGoogle(): Promise<void> {
   if (isDesktop()) await openWebApp('/connect-google#mac');

@@ -285,6 +285,11 @@ export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
 }
 
+/** Turns "Record my meetings automatically" on or off: on, a call's prompt counts down and records; off, it only asks. */
+export async function setAutoRecordMeetings(enabled: boolean): Promise<void> {
+  await invoke('set_auto_record_meetings', { enabled });
+}
+
 /** Turns talking with Claude Code sessions on or off; this adds or removes Eavesy's hooks in `~/.claude/settings.json`. */
 export async function setAgentVoice(enabled: boolean): Promise<void> {
   await invoke('set_agent_voice', { enabled });
@@ -917,6 +922,7 @@ export interface Settings {
   add_screenshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
+  auto_record_meetings?: boolean;
   /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;

@@ -11,6 +11,10 @@ if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 <
     Screenshot.run(outPath: CommandLine.arguments[index + 1])
 }
 
+if CommandLine.arguments.contains("--watch-mic") {
+    MicWatch.run()
+}
+
 if CommandLine.arguments.contains("--prepare-speech") {
     SpeechModelSetup.run(arguments: CommandLine.arguments)
 }

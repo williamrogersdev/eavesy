@@ -1,0 +1,1 @@
+ALTER TABLE `calendar_events` ADD `record_choice` text;

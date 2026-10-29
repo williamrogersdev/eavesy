@@ -2,8 +2,17 @@
 
 import { Asterisk, Check, ChevronDown, ChevronUp, Copy, MessageCircle, Plug, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Button, Card, Menu, Segmented } from '@/components/launcher/ui';
-import { connectGoogle, disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
+import { Button, Card, Menu, Segmented, Switch } from '@/components/launcher/ui';
+import {
+  connectGoogle,
+  disconnectCalendar,
+  getCalendarStatus,
+  getUpcomingMeetings,
+  NOT_REVOKED,
+  setRecordChoice,
+  type CalendarStatus,
+  type UpcomingMeeting,
+} from '@/lib/api/calendar';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
 import {
   claudeCodeStatus,
@@ -264,6 +273,57 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
           <Button variant="outline" size="sm" onClick={load}>Try again</Button>
         </div>
       )}
+    </>
+  );
+}
+
+function meetingTime(meeting: UpcomingMeeting, now: number): string {
+  const start = new Date(meeting.startsAt);
+  const time = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (meeting.startsAt <= now) return `Now, until ${new Date(meeting.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return start.toDateString() === new Date(now).toDateString() ? `Today ${time}` : `Tomorrow ${time}`;
+}
+
+/**
+ * The next day's meetings, each with whether Eavesy records it when its call
+ * starts. A switch left as the "record all" setting says stores nothing, so
+ * changing that setting moves every meeting you didn't choose for.
+ */
+function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active: boolean }) {
+  const [meetings, setMeetings] = useState<UpcomingMeeting[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    void getUpcomingMeetings()
+      .then((next) => { setMeetings(next); setError(null); })
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your meetings.')));
+  }, [active]);
+  if (error) return <p role="alert" className="ev-set-hint">{error}</p>;
+  if (!meetings) return null;
+  if (meetings.length === 0) return <p className="ev-set-hint">No meetings in the next day.</p>;
+  const now = Date.now();
+  const choose = (meeting: UpcomingMeeting, record: boolean) => {
+    const choice = record === autoRecord ? null : record ? 'record' : 'skip';
+    setBusy(meeting.id);
+    setError(null);
+    void setRecordChoice(meeting.id, choice)
+      .then(() => setMeetings((current) => current?.map((m) => m.id === meeting.id ? { ...m, recordChoice: choice } : m) ?? current))
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that. Try again.')))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <>
+      {meetings.map((meeting) => (
+        <Switch
+          key={meeting.id}
+          checked={meeting.recordChoice === null ? autoRecord : meeting.recordChoice === 'record'}
+          onCheckedChange={(record) => choose(meeting, record)}
+          disabled={busy === meeting.id}
+          label={meeting.title}
+          hint={meetingTime(meeting, now)}
+        />
+      ))}
     </>
   );
 }
@@ -697,9 +757,10 @@ function AvailableApps({ open, setOpen, claude, stage, showClaudeCode, elsewhere
  * Settings → Connections, laid out like a list of apps: the accounts Eavesy
  * reads (Google Calendar), the AI apps connected over MCP and the ones you can
  * add, then (`children`) what Eavesy does with your agents. Claude Code is in
- * one list or the other, never both.
+ * one list or the other, never both. On the Mac (`autoRecord` given), the
+ * day's meetings and whether to record each.
  */
-export function ConnectionsSettings({ signedIn, active, children }: { signedIn: boolean; active: boolean; children?: ReactNode }) {
+export function ConnectionsSettings({ signedIn, active, autoRecord, children }: { signedIn: boolean; active: boolean; autoRecord?: boolean; children?: ReactNode }) {
   const mcp = useMcpTokens(signedIn, active);
   const claude = useClaudeCode(active);
   const [open, setOpen] = useState<AppId | null>(null);
@@ -712,6 +773,11 @@ export function ConnectionsSettings({ signedIn, active, children }: { signedIn: 
       <Card title="Accounts">
         <Accounts signedIn={signedIn} active={active} />
       </Card>
+      {signedIn && autoRecord !== undefined && (
+        <Card title="Record these meetings">
+          <UpcomingMeetings autoRecord={autoRecord} active={active} />
+        </Card>
+      )}
       <Card title="Connected AI apps">
         <ConnectedApps signedIn={signedIn} mcp={mcp} claudeLocal={stage === 'connected'} onClaudeSetup={() => setOpen('claude-code')} />
       </Card>

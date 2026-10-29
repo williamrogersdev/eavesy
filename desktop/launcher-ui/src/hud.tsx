@@ -20,7 +20,7 @@ import { findLanguages, loadRecentLanguages, rememberLanguage, saveRecentLanguag
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-type Phase = 'idle' | 'saved' | 'recording' | 'transcribing' | 'done' | 'failed';
+type Phase = 'idle' | 'saved' | 'recording' | 'transcribing' | 'done' | 'failed' | 'prompt';
 
 interface HudState {
   phase: Phase;
@@ -158,6 +158,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
     case 'transcribing':
       return video ? 'pill' : lines === 0 ? 'bar' : 'wide';
     case 'failed':
+    case 'prompt':
       return 'wide';
     case 'done':
       if (state.mode === 'image') return 'shot';
@@ -185,13 +186,15 @@ function browserPreviewState(): HudState | null {
     // The server's word on the tone (`?style=concise&forai`; `?plain` when the model didn't apply it, `?untold` when it didn't say).
     written: phase === 'done' && mode === 'audio' && !params.has('untold') ? { ...browserPreviewWriting() ?? PLAIN, projectId: params.get('project'), applied: !params.has('plain') } : null,
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
-    startedAtMs: Date.now() - 78_000,
+    // A meeting prompt counts down to its deadline (`?ask` only asks).
+    startedAtMs: phase === 'prompt' ? (params.has('ask') ? null : Date.now() + 9_000) : Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
       ? params.has('long')
         ? Array.from({ length: Number(params.get('long')) || 12 }, (_, i) => `Point ${i + 1}: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.`).join(' ')
         : 'Ideas for the onboarding email: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.'
       : phase === 'done' && mode === EAVESY_MODE ? 'Six dev servers are running. Two are from sessions that ended: vite on 5173 (eavesy, archived at 2:40) and bun test (repackify, ended at 3:05). Want me to stop those two?'
-      : phase === 'failed' ? 'No speech was heard' : null,
+      : phase === 'failed' ? 'No speech was heard'
+      : phase === 'prompt' ? 'Design review' : null,
   };
 }
 
@@ -507,7 +510,7 @@ function Hud() {
   }, [live]);
 
   useEffect(() => {
-    if (state?.phase !== 'recording') return;
+    if (state?.phase !== 'recording' && state?.phase !== 'prompt') return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [state?.phase]);
@@ -1339,6 +1342,23 @@ function Hud() {
     top = <>{mark}{learnedStamp}<span className="ctl-fill" /></>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
     top = <>{mark}{errorSay ?? <Stamp tone="manila">Saved</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
+  } else if (state.phase === 'prompt') {
+    // A call started (Rust's `meeting_watch`). With a deadline it records when
+    // the countdown ends unless told not to; without one it only asks. Not red:
+    // nothing is listening until it records.
+    const left = state.startedAtMs ? Math.max(0, Math.ceil((state.startedAtMs - now) / 1000)) : null;
+    const answer = (record: boolean) => { if (state.sessionId) void act('answer_meeting_prompt', { sessionId: state.sessionId, record }); };
+    top = (
+      <>
+        {mark}
+        <span className="ctl-say" role="status">{left === null ? 'Record this call?' : `Recording in ${left}s`}</span>
+        <span className="ctl-fill" />
+        <button type="button" className="ctl-btn" onClick={() => answer(false)}>Don’t record</button>
+        <button type="button" className="ctl-btn ctl-primary" onClick={() => answer(true)}>{left === null ? 'Record' : 'Record now'}</button>
+      </>
+    );
+    const about = `${state.message ?? 'A call'} started. Let people know you’re recording.`;
+    below = <p className="ctl-line ctl-quiet" title={about}>{about}</p>;
   } else if (state.phase === 'failed') {
     // A raw error isn't proof nothing was saved (the words may already be pasted): stay neutral.
     const why = state.message ? hudError(state.message, 'Something went wrong. Try again?') : 'Nothing was saved. Try again?';
