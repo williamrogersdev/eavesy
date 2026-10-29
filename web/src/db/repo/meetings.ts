@@ -26,6 +26,7 @@ export async function start(
     clientSessionId?: string;
     contextBlurb?: string;
     folderId?: string;
+    calendarEventId?: string;
     isAnonymous: boolean;
     audioFormat?: 'm4a' | 'webm' | 'opus';
   },
@@ -46,6 +47,7 @@ export async function start(
     clientSessionId: args.clientSessionId,
     contextBlurb: args.contextBlurb,
     folderId: args.folderId,
+    calendarEventId: args.calendarEventId,
     audioFormat: args.audioFormat,
     expiresAt: args.isAnonymous ? now + 24 * 60 * 60 * 1000 : null,
     createdAt: now,

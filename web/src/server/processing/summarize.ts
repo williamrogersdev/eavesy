@@ -160,7 +160,7 @@ export async function handleSummarize(
     const now = Date.now();
     await db
       .update(meetings)
-      .set({ title: quickNoteTitle(segments, meeting.title), status: 'complete', statusError: partial, updatedAt: now })
+      .set({ title: meeting.calendarEventId ? meeting.title : quickNoteTitle(segments, meeting.title), status: 'complete', statusError: partial, updatedAt: now })
       .where(eq(meetings.id, meetingId));
     await logMeetingComplete(db, env, meeting.userId, meetingId, now);
     await env.PROCESSING_QUEUE.send({ kind: 'embed', meetingId });
@@ -287,7 +287,8 @@ async function writeSummary(
     if (!result.meta.changes) return;
   } else await write;
 
-  const title = stringValue(parsed.title, meeting.title);
+  // A recording linked to a calendar event keeps the event's name (or the one the user gave it).
+  const title = current.calendarEventId ? current.title : stringValue(parsed.title, meeting.title);
   const description = stringValue(parsed.description, meeting.description);
   if (mode.final) {
     const completed = await db
