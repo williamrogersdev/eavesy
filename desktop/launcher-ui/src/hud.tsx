@@ -1353,8 +1353,13 @@ function Hud() {
         {mark}
         <span className="ctl-say" role="status">{left === null ? 'Record this call?' : left === 0 ? 'Starting…' : `Recording in ${left}s`}</span>
         <span className="ctl-fill" />
-        <button type="button" className="ctl-btn" onClick={() => answer(false)}>Don’t record</button>
-        {left !== 0 && <button type="button" className="ctl-btn ctl-primary" onClick={() => answer(true)}>{left === null ? 'Record' : 'Record now'}</button>}
+        {/* At zero the app is already starting the recording: there is nothing left to answer. */}
+        {left !== 0 && (
+          <>
+            <button type="button" className="ctl-btn" onClick={() => answer(false)}>Don’t record</button>
+            <button type="button" className="ctl-btn ctl-primary" onClick={() => answer(true)}>{left === null ? 'Record' : 'Record now'}</button>
+          </>
+        )}
       </>
     );
     const about = `${state.message ?? 'A call'} started. Let people know you’re recording.`;
