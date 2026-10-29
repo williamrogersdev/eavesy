@@ -119,6 +119,8 @@
 .ev-search input::-webkit-search-cancel-button { display: none; }
 
 .ev-history { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
+/* The captures stay mounted under the conversation; shown, their parts sit in the history's column. */
+.ev-history-captures:not([hidden]) { display: contents; }
 .ev-scroll {
   flex: 1;
   min-height: 0;
@@ -127,6 +129,8 @@
   padding: 0 10px 64px;
   transition: opacity var(--ev-d-enter) var(--ev-ease-out);
 }
+/* The ask bar is a line taller while it shows the peek or attached captures. */
+.ev-history[data-bar-top] .ev-scroll { padding-bottom: 92px; }
 .ev-scroll::-webkit-scrollbar { width: 8px; }
 .ev-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ev-ink) 16%, transparent); border-radius: 999px; }
 .ev-panel[data-dragging='true'] .ev-scroll,
@@ -167,6 +171,8 @@
 }
 .ev-row:hover,
 .ev-row:focus-within { background: color-mix(in srgb, var(--ev-ink) 4.5%, transparent); }
+/* Going with the next question: a manila highlight, like a tab stuck to the page. */
+.ev-row[data-attached] { background: var(--ev-manila-soft); }
 .ev-rh {
   display: flex;
   align-items: center;
@@ -560,39 +566,61 @@
 @keyframes ev-fade { from { opacity: 0; } }
 .ev-actions .ev-btn[aria-pressed='true'] { background: var(--ev-coat-soft); color: var(--ev-coat); }
 
-/* ---------- Eavesy tab (assistant.md B, C) ---------- */
-.ev-tabs { display: flex; flex: none; align-items: flex-end; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--ev-line); }
-/* Underlined text tabs: where you are, never mistaken for a filter or a button. */
-.ev-tabs-list { display: flex; flex: none; gap: 18px; }
-.ev-tab {
-  position: relative;
-  height: 34px;
-  padding: 0 1px;
+/* ---------- the ask bar's extras (the Composer, with onAsk) ---------- */
+.ev-composer-end { gap: 4px; }
+/* A line from the conversation, on the captures: click to open it. */
+.ev-ask-peek {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  padding: 0 6px 0 8px;
   border: 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--ev-ink-2);
-  font: 600 13px/18px var(--ev-font-round);
-  transition: color var(--ev-d-state) var(--ev-ease-out);
-}
-.ev-tab::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: transparent;
+  font: var(--ev-t-small);
+  text-align: left;
   transition: background var(--ev-d-state) var(--ev-ease-out);
 }
-.ev-tab:hover { color: var(--ev-ink); }
-.ev-tab[aria-selected='true'] { color: var(--ev-ink); }
-.ev-tab[aria-selected='true']::after { background: var(--ev-coat); }
-.ev-tab:focus-visible { outline: none; border-radius: 6px; box-shadow: var(--ev-focus); }
+.ev-ask-peek:hover { background: var(--ev-hover); color: var(--ev-ink); }
+.ev-ask-peek:focus-visible { outline: none; box-shadow: var(--ev-focus); }
+.ev-ask-peek > svg { flex: none; color: var(--ev-ink-3); }
+.ev-ask-peek-name { flex: none; color: var(--ev-manila-ink); font-weight: 650; }
+.ev-ask-peek-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-ask-peek-waiting {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--ev-r-pill);
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
+  font-weight: 650;
+}
+/* The captures going with the next question. */
+.ev-ask-about { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
+.ev-ask-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  padding-left: 9px;
+  border-radius: 7px;
+  background: var(--ev-manila-soft);
+  color: var(--ev-manila-ink);
+  font: 600 12px/1 var(--ev-font-round);
+}
+.ev-ask-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-ask-chip .ev-ib { color: var(--ev-manila-ink); }
 
+/* ---------- the conversation (assistant.md B, C), open in place of the captures ---------- */
 .ev-eavesy { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.ev-eavesy-head { display: flex; flex: none; align-items: center; gap: 6px; padding: 6px 12px 4px; }
+.ev-eavesy-head { display: flex; flex: none; align-items: center; gap: 6px; padding: 6px 12px 4px 8px; border-bottom: 1px solid var(--ev-line); }
 .ev-eavesy-spacer { flex: 1; }
+.ev-eavesy-back { padding-left: 4px; }
 .ev-mode {
   display: inline-flex;
   align-items: center;
@@ -613,7 +641,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 14px 12px;
+  /* Room for the ask bar floating over the bottom. */
+  padding: 10px 14px 92px;
   /* Turns fade out under the header instead of being cut against it. */
   mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
 }
@@ -633,6 +662,9 @@
 .ev-turn-step { font: var(--ev-t-small); color: var(--ev-ink-3); }
 .ev-turn-step[data-ok='false'] { color: var(--ev-warn-ink); }
 .ev-rules-waiting { margin: 4px 0 8px; }
+/* The captures that went with your question, under it. */
+.ev-turn-about { display: inline-flex; align-items: center; gap: 4px; max-width: 85%; color: var(--ev-manila-ink); font: var(--ev-t-small); text-align: right; }
+.ev-turn-about > svg { flex: none; }
 .ev-turn-meta { display: flex; gap: 8px; font: var(--ev-t-small); color: var(--ev-ink-3); }
 .ev-turn-meta:empty { display: none; }
 .ev-turn-meta .ev-link { display: inline-flex; align-items: center; gap: 3px; color: var(--ev-ink-3); font-weight: 500; }
@@ -661,30 +693,3 @@
 .ev-action-row { display: flex; gap: 8px; align-items: flex-start; font: var(--ev-t-small); color: var(--ev-ink); overflow-wrap: anywhere; }
 .ev-action-row input { flex: none; margin-top: 2px; accent-color: var(--ev-coat); }
 .ev-action-buttons { display: flex; justify-content: flex-end; gap: 6px; }
-
-.ev-eavesy-compose {
-  display: flex;
-  flex: none;
-  align-items: flex-end;
-  gap: 6px;
-  margin: 0 10px 10px;
-  padding: 6px 6px 6px 12px;
-  border-radius: var(--ev-r-pop);
-  background: var(--ev-raised);
-  box-shadow: 0 0 0 1px var(--ev-line);
-}
-.ev-eavesy-compose:focus-within { box-shadow: var(--ev-focus-field); }
-.ev-eavesy-compose textarea {
-  flex: 1;
-  min-height: 28px;
-  max-height: 120px;
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--ev-ink);
-  font: var(--ev-t-body);
-  resize: none;
-  field-sizing: content;
-}
-.ev-eavesy-compose textarea:focus { outline: none; }
-.ev-eavesy-compose textarea::placeholder { color: var(--ev-ink-3); }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Recording } from '@/lib/launcher/types';
-import { clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, visibleRecordings } from './history-model';
+import { askLabel, clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, timeOfDay, visibleRecordings } from './history-model';
 
 const NOW = new Date(2026, 9, 17, 15, 0).getTime();
 const at = (daysAgo: number, hour = 10) => new Date(2026, 9, 17 - daysAgo, hour).getTime();
@@ -108,6 +108,13 @@ describe('kinds', () => {
     expect(filterOf(rec('a', 'image', 0))).toBe('screens');
     expect(filterOf({ ...rec('a', 'upload', 0), hasVideo: true })).toBe('screens');
     expect(filterOf(rec('a', 'upload', 0))).toBe('voice');
+  });
+
+  test('an attached capture is named by kind and time, with the day unless it is today', () => {
+    const today = rec('a', 'dictation', at(0, 9));
+    expect(askLabel(today, NOW)).toBe(`Voice note · ${timeOfDay(today.startedAt)}`);
+    const yesterday = rec('b', 'system', at(1, 9));
+    expect(askLabel(yesterday, NOW)).toBe(`Meeting · Yesterday ${timeOfDay(yesterday.startedAt)}`);
   });
 });
 

@@ -324,6 +324,15 @@
     background var(--ev-d-state) var(--ev-ease-out);
 }
 .ev-composer[data-multiline='true'] { box-shadow: var(--ev-e-2); }
+/* The `top` row (attached captures, the conversation peek) spans the bar above the field. */
+.ev-composer:has(> .ev-composer-top) { flex-wrap: wrap; row-gap: 2px; }
+.ev-composer-top { flex: 0 0 100%; min-width: 0; }
+/* In a narrow panel the second send button keeps its icon and gives its words to the field. */
+.ev-composer { container-type: inline-size; }
+@container (max-width: 340px) {
+  .ev-composer-alt-label { display: none; }
+  .ev-composer-alt { padding-inline: 6px; }
+}
 .ev-composer:focus-within { background: var(--ev-raised); box-shadow: var(--ev-focus-field), var(--ev-e-2); }
 .ev-composer:focus-within .ev-composer-add { color: var(--ev-coat); }
 .ev-composer-field {

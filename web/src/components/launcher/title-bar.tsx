@@ -44,7 +44,7 @@ export type TitleMascot = 'idle' | 'listening' | 'thinking';
  * "Sign in" when signed out and one Settings menu that also holds the account.
  * The mascot is the panel's only one, so it carries the live capture's state;
  * the live card below has the words and Stop. The project chip lives in the
- * tab row, next to the captures it applies to.
+ * capture toolbar, next to the buttons it applies to.
  */
 export function TitleBar({
   setup,
