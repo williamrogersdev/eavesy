@@ -24,6 +24,8 @@ export const MODELS = {
   translate: 'claude-haiku-5-5',
   /** Spoken summary and suggested reply when a Claude Code session stops: short, latency-sensitive. */
   agentReply: 'claude-haiku-5-5',
+  /** Saved prompts suggested from the user's recent dictations, on request in Settings. */
+  promptSuggestions: 'claude-haiku-5-5',
   /** Eavesy's conversation: tool use, short replies. */
   assistant: 'claude-sonnet-5-5',
   /** The second-model check on each tier 2 or 3 action (assistant.md C7). */
