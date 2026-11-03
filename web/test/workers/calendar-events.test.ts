@@ -51,12 +51,12 @@ async function events() {
   return { status: response.status, body: (await response.json()) as { connected: boolean; current: EventView | null; next: EventView | null; upcoming: EventView[] } };
 }
 
-async function startSession(body: Record<string, unknown>) {
+async function startSession(body: Record<string, unknown>, status = 201) {
   const response = await createSession({
     request: new Request('https://eavesy.test/api/sessions', { method: 'POST', body: JSON.stringify({ clientSessionId: crypto.randomUUID(), ...body }) }),
     params: {},
   });
-  expect(response.status).toBe(201);
+  expect(response.status).toBe(status);
   const { meetingId } = (await response.json()) as { meetingId: string };
   return (await row<{ id: string; title: string; context_blurb: string | null; calendar_event_id: string | null }>(
     'SELECT id, title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
@@ -148,6 +148,16 @@ describe('POST /api/sessions with a calendar', () => {
       [meeting.id]: { source: 'desktop', kind: 'meeting' },
       [memo.id]: { source: 'desktop', kind: 'recording' },
     });
+  });
+
+  it('logs the start on a retry once, if the first try saved the meeting but not the log', async () => {
+    const clientSessionId = crypto.randomUUID();
+    const first = await startSession({ clientSessionId, title: 'Voice memo' });
+    await testEnv.DB.prepare('DELETE FROM activity_log').run();
+    await startSession({ clientSessionId, title: 'Voice memo' }, 200);
+    await startSession({ clientSessionId, title: 'Voice memo' }, 200);
+    const logged = await testEnv.DB.prepare("SELECT meeting_id FROM activity_log WHERE event_type = 'meeting.start'").all<{ meeting_id: string }>();
+    expect(logged.results.map((r) => r.meeting_id)).toEqual([first.id]);
   });
 
   it('keeps the user’s own brief ahead of the event’s', async () => {

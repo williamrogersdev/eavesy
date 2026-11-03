@@ -49,7 +49,7 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `user_signed_up` | Web Worker, when a Clerk user first gets an Eavesy account | none |
 | `mac_paired` | Web Worker (activity log) | `platform` |
 | `capture_created` | Web Worker (activity log) | `kind`, `captureMode` |
-| `dictation_created`, `meeting_started`, `onboarding_completed` | Web Worker (activity log); `meeting_started` also fires for every recording session started through `/api/sessions` (the Mac's, with `source: desktop`) | `source` where known; `kind` (`meeting`, `recording`) for sessions |
+| `dictation_created`, `meeting_started`, `onboarding_completed` | Web Worker (activity log); `meeting_started` also fires for every session started through `/api/sessions`, with `source: desktop` for the Mac and `web` otherwise | `source` where known; `kind` (`meeting`, `recording`) for sessions |
 | `$pageview`, `$pageleave` | Browser | path, referrer origin and path |
 | `dictation_started` | Mac app | none |
 | `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `pasted_unverified` — pasted into a focus that did not report taking text, `in_eavesy`, `no_accessibility`, `no_text_box`), `delivery_ms` |

@@ -3,7 +3,7 @@ import { clampLimit } from '@/lib/http/clamp-limit';
 import { z } from 'zod';
 import { and, asc, desc, eq, gt, isNull, ne, or, sql } from 'drizzle-orm';
 import { type AppDb, getDb } from '@/db/client';
-import { devices, meetings, summaries, userNotes } from '@/db/schema';
+import { activityLog, devices, meetings, summaries, userNotes } from '@/db/schema';
 import * as calendarRepo from '@/db/repo/calendar';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as activityRepo from '@/db/repo/activity';
@@ -147,6 +147,8 @@ export const Route = createFileRoute('/api/sessions/')({
             .limit(1)
         )[0];
         if (existing) {
+          // A retry after the start was saved but the request failed: log the start if it isn't yet.
+          await logStart(db, actor, existing.id, parsed.data.kind, { once: true });
           // A retry after the claim below failed: make it now.
           if (existing.calendarEventId) await calendarRepo.markRecorded(db, actor.userId, existing.calendarEventId, existing.id);
           return Response.json({
@@ -184,14 +186,7 @@ export const Route = createFileRoute('/api/sessions/')({
           isAnonymous: false,
           audioFormat: parsed.data.archiveFormat,
         });
-        // The activity row (and its meeting_started product event) never fails the recording; written
-        // before anything else can throw, since a retry takes the early return above.
-        await activityRepo.log(db, {
-          userId: actor.userId,
-          eventType: 'meeting.start',
-          meetingId,
-          metadata: { source: actor.deviceId ? 'desktop' : 'web', kind: parsed.data.kind ?? 'recording' },
-        }).catch((error: unknown) => reportError('[sessions] activity log', error, { userId: actor.userId, meetingId }));
+        await logStart(db, actor, meetingId, parsed.data.kind);
         // Every recording in the event's slot is linked to it (a restart, or a
         // second Meeting recording); the event points at the first one.
         if (event) await calendarRepo.markRecorded(db, actor.userId, event.id, meetingId);
@@ -204,6 +199,37 @@ export const Route = createFileRoute('/api/sessions/')({
     },
   },
 });
+
+/**
+ * The session's meeting.start activity row and its meeting_started product event.
+ * Never fails the recording; with `once`, skipped when the row is already there.
+ */
+async function logStart(
+  db: AppDb,
+  actor: { userId: string; deviceId?: string | null },
+  meetingId: string,
+  kind: 'meeting' | undefined,
+  opts: { once?: boolean } = {},
+) {
+  try {
+    if (opts.once) {
+      const logged = await db
+        .select({ id: activityLog.id })
+        .from(activityLog)
+        .where(and(eq(activityLog.meetingId, meetingId), eq(activityLog.eventType, 'meeting.start')))
+        .limit(1);
+      if (logged.length) return;
+    }
+    await activityRepo.log(db, {
+      userId: actor.userId,
+      eventType: 'meeting.start',
+      meetingId,
+      metadata: { source: actor.deviceId ? 'desktop' : 'web', kind: kind ?? 'recording' },
+    });
+  } catch (error) {
+    reportError('[sessions] activity log', error, { userId: actor.userId, meetingId });
+  }
+}
 
 /**
  * The caller's calendar event a Meeting recording begun at `startedAt`
