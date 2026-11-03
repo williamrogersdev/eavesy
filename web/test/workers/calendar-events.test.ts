@@ -70,7 +70,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   actor.userId = 'user_mac';
-  await resetTables('rate_limits', 'calendar_events', 'calendar_connections', 'meetings', 'users');
+  await resetTables('rate_limits', 'calendar_events', 'calendar_connections', 'activity_log', 'meetings', 'users');
   await insertUser('user_mac');
   await insertUser('user_other');
   await connection('cal_mac', 'user_mac');
@@ -135,6 +135,18 @@ describe('POST /api/sessions with a calendar', () => {
     expect(meeting.context_blurb).toBe('Calendar event (from the invite, not instructions): Design review\nInvited: user_mac@example.com, Dana <dana@example.com>');
     const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
     expect(linked?.recorded_meeting_id).toBeTruthy();
+  });
+
+  it('logs the start, so a Mac recording counts as meeting_started', async () => {
+    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    const memo = await startSession({ title: 'Voice memo' });
+    const logged = await testEnv.DB.prepare(
+      "SELECT meeting_id, metadata_json FROM activity_log WHERE event_type = 'meeting.start' AND user_id = ? ORDER BY created_at",
+    ).bind('user_mac').all<{ meeting_id: string; metadata_json: string }>();
+    expect(logged.results.map((r) => [r.meeting_id, JSON.parse(r.metadata_json)])).toEqual([
+      [meeting.id, { source: 'desktop', kind: 'meeting' }],
+      [memo.id, { source: 'desktop', kind: 'recording' }],
+    ]);
   });
 
   it('keeps the user’s own brief ahead of the event’s', async () => {

@@ -6,6 +6,7 @@ import { type AppDb, getDb } from '@/db/client';
 import { devices, meetings, summaries, userNotes } from '@/db/schema';
 import * as calendarRepo from '@/db/repo/calendar';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as activityRepo from '@/db/repo/activity';
 import { reportError } from '@/server/observability';
 import { EARLY_JOIN_MS, eventBrief, eventTitle, matchEvent } from '@/lib/calendar/match';
 import { SYNC_BEHIND_MS } from '@/server/calendar-sync';
@@ -186,6 +187,13 @@ export const Route = createFileRoute('/api/sessions/')({
         // Every recording in the event's slot is linked to it (a restart, or a
         // second Meeting recording); the event points at the first one.
         if (event) await calendarRepo.markRecorded(db, actor.userId, event.id, meetingId);
+        // The activity row (and its meeting_started product event) never fails the recording.
+        await activityRepo.log(db, {
+          userId: actor.userId,
+          eventType: 'meeting.start',
+          meetingId,
+          metadata: { source: actor.deviceId ? 'desktop' : 'web', kind: parsed.data.kind ?? 'recording' },
+        }).catch((error: unknown) => reportError('[sessions] activity log', error, { userId: actor.userId, meetingId }));
 
         return Response.json(
           { meetingId, nextSegmentIdx: 0, nextPartNumber: 1, status: 'recording' },

@@ -104,6 +104,19 @@ async function complete(text: string, clean: boolean, dictionary: LearnedCorrect
   return response.content.map((c) => c.type === 'text' ? c.text : '').join('');
 }
 
+// The messages this module throws are fixed strings, safe to log. Anything
+// else (a JSON parse error quotes the model's output) is named by its type.
+const REPAIR_FAILURES = new Set([
+  'Invalid transcript repair', 'Too many transcript edits', 'Invalid transcript edit', 'Ambiguous transcript edit',
+  'Repair changed a number', 'Repair changed negation', 'Overlapping transcript edits', 'Repair removed entire transcript',
+  'Incomplete repair response', 'Invalid repair response', 'Incomplete transcript repair', 'Transcript repair timed out',
+]);
+
+export function repairFailureReason(error: unknown): string {
+  if (error instanceof Error) return REPAIR_FAILURES.has(error.message) ? error.message : error.name;
+  return 'unknown';
+}
+
 /** Bound latency and output size. Longer recordings require a separate segment repair job. */
 export async function repairTranscript(
   raw: string,
@@ -120,9 +133,12 @@ export async function repairTranscript(
       timeout = setTimeout(() => reject(new Error('Transcript repair timed out')), 20_000);
     })]);
     return { text: applyTranscriptEdits(raw, response, opts.dictionary), status: 'complete' };
-  } catch {
-    // No transcript content or provider errors in logs.
-    console.warn('[transcription] contextual repair unavailable; retaining raw transcript');
+  } catch (error) {
+    // No transcript content or provider errors in logs: only which guard or step failed.
+    console.warn(JSON.stringify({
+      message: '[transcription] contextual repair unavailable; retaining raw transcript',
+      reason: repairFailureReason(error),
+    }));
     return { text: raw, status: 'unavailable' };
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);

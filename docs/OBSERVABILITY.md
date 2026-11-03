@@ -49,10 +49,10 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `user_signed_up` | Web Worker, when a Clerk user first gets an Eavesy account | none |
 | `mac_paired` | Web Worker (activity log) | `platform` |
 | `capture_created` | Web Worker (activity log) | `kind`, `captureMode` |
-| `dictation_created`, `meeting_started`, `onboarding_completed` | Web Worker (activity log) | `source` where known |
+| `dictation_created`, `meeting_started`, `onboarding_completed` | Web Worker (activity log); `meeting_started` also fires for every Mac recording session (`/api/sessions`) | `source` where known; `kind` (`meeting`, `recording`) for sessions |
 | `$pageview`, `$pageleave` | Browser | path, referrer origin and path |
 | `dictation_started` | Mac app | none |
-| `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `in_eavesy`, `no_accessibility`, `no_text_box`) |
+| `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `pasted_unverified` — pasted into a focus that did not report taking text, `in_eavesy`, `no_accessibility`, `no_text_box`), `delivery_ms` |
 | `recording_saved` | Mac app | `kind` (`audio`, `screen`, `dictation`), `duration_sec` |
 | `recording_started` | Mac app, when the capture engine is launched (an attempt; a later engine failure is reported as an error) | `kind` (`audio`, `screen`, `dictation`) |
 | `app_launched` | Mac app | `install_location` (`applications`, `user_applications`, `translocated`, `other_volume`, `build_folder`, `other`, `unbundled`, `unknown`), `previous_version` (what this install location ran last), `setup_completed`, `paired` |

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyTranscriptEdits, repairTranscript, repairTranscriptSegments } from './repair-transcript';
+import { applyTranscriptEdits, repairFailureReason, repairTranscript, repairTranscriptSegments } from './repair-transcript';
 
 const edits = (from: string, to: string) => JSON.stringify({ edits: [{ from, to }] });
 
@@ -33,6 +33,14 @@ describe('contextual transcript repair', () => {
   test('provider failures retain raw speech with fallback status', async () => {
     expect(await repairTranscript('A full sentence.', { complete: async () => { throw new Error('timeout'); } }))
       .toEqual({ text: 'A full sentence.', status: 'unavailable' });
+  });
+  test('failure reasons name the guard, never the model output', () => {
+    expect(repairFailureReason(new Error('Repair changed a number'))).toBe('Repair changed a number');
+    expect(repairFailureReason(new Error('Transcript repair timed out'))).toBe('Transcript repair timed out');
+    let parseError: unknown;
+    try { JSON.parse('Here is your secret text'); } catch (error) { parseError = error; }
+    expect(repairFailureReason(parseError)).toBe('SyntaxError');
+    expect(repairFailureReason('boom')).toBe('unknown');
   });
   test('blank and large inputs make no model request', async () => {
     const complete = async () => { throw new Error('must not call'); };
