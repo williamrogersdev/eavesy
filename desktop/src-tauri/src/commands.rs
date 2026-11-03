@@ -465,8 +465,11 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn complete_setup(app: AppHandle) -> Result<(), String> {
-    let again = settings::load(&app).setup_completed;
-    settings::update(&app, |config| config.setup_completed = true)?;
+    let mut again = false;
+    settings::update(&app, |config| {
+        again = config.setup_completed;
+        config.setup_completed = true;
+    })?;
     crate::telemetry::track("setup_completed", serde_json::json!({ "again": again }));
     Ok(())
 }
@@ -1026,9 +1029,9 @@ mod tests {
 
     #[test]
     fn setup_steps_are_named_in_the_launchers_order() {
-        assert_eq!(setup_step_name(0), Some("sign_in"));
-        assert_eq!(setup_step_name(3), Some("try_it"));
-        assert_eq!(setup_step_name(4), None);
+        // The launcher's setupStep numbering (STEPS in setup-view.tsx) must match.
+        let names: Vec<_> = (0..5).map(setup_step_name).collect();
+        assert_eq!(names, [Some("sign_in"), Some("permissions"), Some("shortcuts"), Some("try_it"), None]);
     }
 
     #[test]

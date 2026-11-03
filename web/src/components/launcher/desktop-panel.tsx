@@ -18,11 +18,11 @@ import {
   onRecordingsUpdated,
   openSettingsWindow,
   pasteToComposer,
-  setupStepShown,
   pickAndImportFiles,
   relaunchApp,
   saveNote,
   setPanelPinned,
+  setupStepShown,
   type ImportResult,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
@@ -91,10 +91,11 @@ export function DesktopPanel() {
     searchRef.current?.select();
   }, []);
 
-  // Each setup step shown, for analytics: an install that never finishes shows where it stopped.
+  // Each time setup shows a step (a new step, a return from Settings, or the panel reopened
+  // on it), for analytics: an install that never finishes shows where it stopped.
   useEffect(() => {
     if (setupKnown && view === 'setup') void setupStepShown(setupStep);
-  }, [setupKnown, view, setupStep]);
+  }, [setupKnown, view, setupStep, opened]);
 
   const { toast, flash, runTask } = useToastTasks();
   useEffect(() => {
