@@ -18,6 +18,7 @@ import {
   onRecordingsUpdated,
   openSettingsWindow,
   pasteToComposer,
+  setupStepShown,
   pickAndImportFiles,
   relaunchApp,
   saveNote,
@@ -89,6 +90,11 @@ export function DesktopPanel() {
     else panelRef.current?.focus({ preventScroll: true });
     searchRef.current?.select();
   }, []);
+
+  // Each setup step shown, for analytics: an install that never finishes shows where it stopped.
+  useEffect(() => {
+    if (setupKnown && view === 'setup') void setupStepShown(setupStep);
+  }, [setupKnown, view, setupStep]);
 
   const { toast, flash, runTask } = useToastTasks();
   useEffect(() => {
