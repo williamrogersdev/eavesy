@@ -137,16 +137,17 @@ describe('POST /api/sessions with a calendar', () => {
     expect(linked?.recorded_meeting_id).toBeTruthy();
   });
 
-  it('logs the start, so a Mac recording counts as meeting_started', async () => {
+  it('logs every session start as meeting_started, with its source', async () => {
     const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
     const memo = await startSession({ title: 'Voice memo' });
     const logged = await testEnv.DB.prepare(
-      "SELECT meeting_id, metadata_json FROM activity_log WHERE event_type = 'meeting.start' AND user_id = ? ORDER BY created_at",
+      "SELECT meeting_id, metadata_json FROM activity_log WHERE event_type = 'meeting.start' AND user_id = ?",
     ).bind('user_mac').all<{ meeting_id: string; metadata_json: string }>();
-    expect(logged.results.map((r) => [r.meeting_id, JSON.parse(r.metadata_json)])).toEqual([
-      [meeting.id, { source: 'desktop', kind: 'meeting' }],
-      [memo.id, { source: 'desktop', kind: 'recording' }],
-    ]);
+    const byMeeting = Object.fromEntries(logged.results.map((r) => [r.meeting_id, JSON.parse(r.metadata_json)]));
+    expect(byMeeting).toEqual({
+      [meeting.id]: { source: 'desktop', kind: 'meeting' },
+      [memo.id]: { source: 'desktop', kind: 'recording' },
+    });
   });
 
   it('keeps the user’s own brief ahead of the event’s', async () => {

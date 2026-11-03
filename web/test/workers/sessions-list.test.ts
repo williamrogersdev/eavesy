@@ -34,7 +34,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   actor.userId = 'user_mac';
   actor.deviceId = 'dev_this';
-  await resetTables('meetings', 'users');
+  await resetTables('activity_log', 'meetings', 'users');
   await insertUser('user_mac');
   await meeting('m_other', { deviceId: 'dev_other', startedAt: 5 });
   await meeting('m_web', { startedAt: 4 });
