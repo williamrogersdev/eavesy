@@ -18,8 +18,12 @@ export function ItemFlagsPanel({ itemId }: { itemId: string }) {
     () => feedback.items.filter((item) => item.targetType !== 'prompt' && item.targetId === itemId),
     [feedback.items, itemId],
   );
-  if (!items.length && !feedback.error) return null;
+  // A failed Dismiss or Mark fixed puts the report back: say so where it can be seen, not inside the closed list.
+  const error = feedback.error ? <p role="alert" className="text-xs text-ev-warn-ink">{feedback.error}</p> : null;
+  if (!items.length) return error;
   return (
+    <>
+    {error}
     <details className="group rounded-[var(--ev-r-pop)] bg-ev-well px-3.5 py-2 text-sm text-ev-ink-2">
       <summary className="flex cursor-default list-none items-center gap-1.5 text-xs hover:text-ev-ink [&::-webkit-details-marker]:hidden">
         <Flag className="h-3 w-3" aria-hidden />
@@ -47,7 +51,7 @@ export function ItemFlagsPanel({ itemId }: { itemId: string }) {
           </li>
         ))}
       </ul>
-      {feedback.error ? <p role="alert" className="mt-2 text-xs text-ev-warn-ink">{feedback.error}</p> : null}
     </details>
+    </>
   );
 }
