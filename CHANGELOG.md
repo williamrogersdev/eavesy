@@ -6,6 +6,23 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-03 - desktop
+
+### Added
+
+- Mac app: show what agents flagged on the item it's about ([#318](https://github.com/williamrogersdev/eavesy/pull/318))
+- Mac app: let agents report typos, unclear text and better prompts ([#317](https://github.com/williamrogersdev/eavesy/pull/317))
+- Mac app: one surface with an ask bar instead of Eavesy and Captures tabs ([#314](https://github.com/williamrogersdev/eavesy/pull/314))
+- Mac app: offer to record a call when it starts, on by default ([#316](https://github.com/williamrogersdev/eavesy/pull/316))
+- Mac app: useful Prompts, precise dictionary suggestions, real Dictation projects ([#312](https://github.com/williamrogersdev/eavesy/pull/312))
+- Mac app: link Meeting recordings to the calendar event they fall in ([#310](https://github.com/williamrogersdev/eavesy/pull/310))
+
+### Fixed
+
+- Mac app: answer the review on Connect to Claude Code ([#315](https://github.com/williamrogersdev/eavesy/pull/315))
+- Mac app: show the agent card before speaking, and say which session ([#311](https://github.com/williamrogersdev/eavesy/pull/311))
+- Mac app: make Connect to Claude Code finish and show Connected ([#313](https://github.com/williamrogersdev/eavesy/pull/313))
+
 ## [0.9.4] - 2026-10-28 - desktop
 
 ### Added
