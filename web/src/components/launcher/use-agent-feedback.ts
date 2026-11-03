@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { listAgentFeedback, dismissAgentFeedback } from '@/lib/api/agent-feedback';
+import { listAgentFeedback, dismissAgentFeedback, markAgentFeedbackFixed } from '@/lib/api/agent-feedback';
 import type { AgentFeedback } from '@/lib/agent-feedback';
 import { errMsg } from '@/lib/desktop/bridge';
 
@@ -30,22 +30,27 @@ export function useAgentFeedback(enabled: boolean) {
     setItems((list) => list.filter((item) => !gone.has(item.id)));
   }, []);
 
-  const dismiss = useCallback(async (ids: string[]) => {
+  // Takes the reports off the list straight away, and puts them back if eavesy.com says no.
+  const close = useCallback(async (ids: string[], send: (ids: string[]) => Promise<void>, failure: string) => {
     setError(null);
     const removed = items.filter((item) => ids.includes(item.id));
     drop(ids);
-    try { await dismissAgentFeedback(ids); }
+    try { await send(ids); }
     catch (e) {
       if (!mounted.current) return;
       // Only these come back, onto the list as it is now: other changes meanwhile stay.
       setItems((list) => [...removed.filter((item) => !list.some((other) => other.id === item.id)), ...list].sort((a, b) => b.createdAt - a.createdAt));
-      setError(errMsg(e, 'Couldn’t dismiss that.'));
+      setError(errMsg(e, failure));
       // The server has the last word on what is still open.
       reload();
     }
   }, [items, drop, reload]);
 
-  return { items, error, setError, dismiss, drop, reload };
+  const dismiss = useCallback((ids: string[]) => close(ids, dismissAgentFeedback, 'Couldn’t dismiss that.'), [close]);
+  /** For reports on recordings, dictations and captures: the user fixed it. */
+  const markFixed = useCallback((ids: string[]) => close(ids, markAgentFeedbackFixed, 'Couldn’t mark that fixed.'), [close]);
+
+  return { items, error, setError, dismiss, markFixed, drop, reload };
 }
 
 export type AgentFeedbackState = ReturnType<typeof useAgentFeedback>;

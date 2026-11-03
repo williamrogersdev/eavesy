@@ -369,7 +369,7 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
   let feedback = !triage ? [] : [
     { id: 'afb-1', source: 'Claude Code', mcpTokenId: 'mcp-1', kind: 'unclear', targetType: 'prompt', targetId: triage.id, targetLabel: triage.name, targetVersion: triage.updatedAt, excerpt: 'debug each one', explanation: 'It doesn’t say what to do with tickets that are already fixed, so I reopened two of them.', suggestedRewrite: triage.body.replace('debug each one', 'debug each one that is still open'), createdAt: Date.now() - 2 * 3_600_000 },
     { id: 'afb-2', source: 'Codex', mcpTokenId: 'mcp-2', kind: 'poor_prompt', targetType: 'prompt', targetId: triage.id, targetLabel: triage.name, targetVersion: triage.updatedAt, excerpt: null, explanation: 'Asking for “a test for each fix” led to tests that only checked the happy path. Ask for a regression test that fails before the fix.', suggestedRewrite: null, createdAt: Date.now() - 26 * 3_600_000 },
-    { id: 'afb-3', source: 'Claude Code', mcpTokenId: 'mcp-1', kind: 'typo', targetType: 'meeting', targetId: 'meet-1', targetLabel: 'Pricing sync with Priya', targetVersion: null, excerpt: 'the Cloudfare bill', explanation: 'Cloudflare is misspelt.', suggestedRewrite: 'the Cloudflare bill', createdAt: Date.now() - 3_600_000 },
+    { id: 'afb-3', source: 'Claude Code', mcpTokenId: 'mcp-1', kind: 'typo', targetType: 'meeting', targetId: 'meet-1', targetClientId: 'r3', targetLabel: 'Weekly design sync', targetVersion: null, excerpt: 'the tray icon', explanation: 'Tray is misheard: the rest of the sentence is about the menu bar icon.', suggestedRewrite: 'the menu bar icon', createdAt: Date.now() - 3_600_000 },
   ];
   return ({ method, path, body }) => {
     const fields = (body ?? {}) as Record<string, unknown>;
@@ -380,9 +380,9 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
         { name: 'Check it in the browser', why: 'You often asked agents to screenshot the change before calling it done.', body: 'Open the change in the browser preview, click through it, and take a screenshot of each state, including empty and error states. Fix anything that looks off before telling me it’s done.' },
       ] }), 900));
     }
-    // What agents reported over MCP: two on the triage prompt, a typo in a recording.
+    // What agents reported over MCP: two on the triage prompt, one on the design sync recording (r3).
     if (path === '/api/agent-feedback') {
-      if (method === 'PATCH') { const gone = new Set((fields.ids as string[]) ?? []); feedback = feedback.filter((f) => !gone.has(f.id)); return { dismissed: gone.size }; }
+      if (method === 'PATCH') { const gone = new Set((fields.ids as string[]) ?? []); feedback = feedback.filter((f) => !gone.has(f.id)); return fields.status === 'applied' ? { applied: gone.size } : { dismissed: gone.size }; }
       return { items: feedback };
     }
     if (path === '/api/agent-feedback/merge') {

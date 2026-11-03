@@ -264,6 +264,17 @@
 
 .ev-sub { margin-top: 3px; color: var(--ev-ink-3); font: var(--ev-t-small); }
 
+/* What agents flagged in a capture: one quiet line, opened on click. Never coral. */
+.ev-item-flags { margin-top: 4px; }
+.ev-item-flags > summary { display: inline-flex; align-items: center; gap: 4px; margin-top: 0; cursor: default; list-style: none; }
+.ev-item-flags > summary::-webkit-details-marker { display: none; }
+.ev-item-flags > summary:hover, .ev-item-flags[open] > summary { color: var(--ev-ink-2); }
+.ev-item-flag { margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--ev-line-strong); }
+.ev-item-flag-kind { color: var(--ev-ink-2); font-weight: 600; }
+.ev-item-flag-quote { display: block; margin-top: 2px; font-style: italic; }
+.ev-item-flag-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ev-item-flag-actions { display: flex; gap: 4px; margin-top: 4px; }
+
 .ev-actions {
   position: absolute;
   right: 6px;

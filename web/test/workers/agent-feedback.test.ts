@@ -50,7 +50,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.prepare('DELETE FROM rate_limits').run().catch(() => undefined);
-  await resetTables('agent_feedback', 'saved_prompts', 'users');
+  await resetTables('agent_feedback', 'saved_prompts', 'meetings', 'captures', 'users');
   await insertUser(USER);
   await insertUser(OTHER);
   await testEnv.DB.prepare(
@@ -77,6 +77,41 @@ describe('/api/agent-feedback', () => {
     expect(await status('afb_1')).toBe('dismissed');
     expect(await status('afb_2')).toBe('new');
     expect((await send(FeedbackRoute, 'PATCH', '/api/agent-feedback', { ids: [], status: 'dismissed' })).status).toBe(400);
+  });
+
+  it('marks reports on items fixed, but never a prompt’s', async () => {
+    await insertFeedback('afb_1');
+    await insertFeedback('afb_2', { targetType: 'meeting', targetId: 'meet_1', rewrite: null });
+    await insertFeedback('afb_3', { targetType: 'capture', targetId: 'cap_1', userId: OTHER, rewrite: null });
+    const done = await send(FeedbackRoute, 'PATCH', '/api/agent-feedback', { ids: ['afb_1', 'afb_2', 'afb_3'], status: 'applied' });
+    expect(done.body).toEqual({ applied: 1 });
+    expect(await status('afb_1')).toBe('new');
+    expect(await status('afb_2')).toBe('applied');
+    expect(await status('afb_3')).toBe('new');
+    expect((await send(FeedbackRoute, 'PATCH', '/api/agent-feedback', { ids: ['afb_1'], status: 'new' })).status).toBe(400);
+  });
+
+  it('gives a recording or capture made on a Mac the id that Mac lists it by, only for the caller’s own', async () => {
+    const t = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO meetings (id, user_id, title, started_at, source, status, client_session_id, created_at, updated_at)
+         VALUES ('meet_1', ?, 'Standup', ?, 'desktop', 'complete', 'local-session-1', ?, ?),
+                ('meet_2', ?, 'Theirs', ?, 'desktop', 'complete', 'their-session', ?, ?)`,
+      ).bind(USER, t, t, t, OTHER, t, t, t),
+      testEnv.DB.prepare(
+        `INSERT INTO captures (id, user_id, kind, capture_mode, source, title, r2_key, content_type, bytes, client_capture_id, created_at, updated_at)
+         VALUES ('cap_1', ?, 'image', 'screenshot', 'desktop', 'Screenshot', 'k', 'image/png', 3, 'local-capture-1', ?, ?)`,
+      ).bind(USER, t, t),
+    ]);
+    await insertFeedback('afb_1', { targetType: 'meeting', targetId: 'meet_1', rewrite: null });
+    await insertFeedback('afb_2', { targetType: 'capture', targetId: 'cap_1', rewrite: null });
+    // Pointing at another user's recording: no id of theirs comes back.
+    await insertFeedback('afb_3', { targetType: 'meeting', targetId: 'meet_2', rewrite: null });
+    await insertFeedback('afb_4', { targetType: 'dictation', targetId: 'dict_1', rewrite: null });
+    const listed = await send(FeedbackRoute, 'GET', '/api/agent-feedback');
+    const byId = Object.fromEntries((listed.body.items as AgentFeedback[]).map((item) => [item.id, item.targetClientId]));
+    expect(byId).toEqual({ afb_1: 'local-session-1', afb_2: 'local-capture-1', afb_3: null, afb_4: null });
   });
 
   it('applies a rewrite only over the text it was previewed against', async () => {

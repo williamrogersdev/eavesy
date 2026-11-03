@@ -44,6 +44,9 @@ import { fillPrompt, matchPrompts, promptsOnly, type SavedPrompt } from '@/lib/p
 import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
+import { ItemFlags } from './item-flags';
+import { useAgentFeedback } from './use-agent-feedback';
+import { feedbackTargetIds, type AgentFeedback } from '@/lib/agent-feedback';
 import type { Recording } from '@/lib/launcher/types';
 import type { AskCapture } from './eavesy-model';
 import {
@@ -341,6 +344,9 @@ function useRewrite(id: string, loadText: () => Promise<string>, resetKey: strin
   return { version: pending ?? shown, text, busy: pending !== null, error, select, clearError };
 }
 
+const NO_FLAGS: readonly AgentFeedback[] = [];
+type ResolveFlags = (ids: string[], how: 'dismissed' | 'fixed') => void;
+
 /**
  * One capture in the history. Memoized: a row re-renders only when its own data
  * (kept as the same object across refreshes when unchanged) or the query changes.
@@ -354,6 +360,8 @@ const CaptureRow = memo(function CaptureRow({
   runTask,
   attached = false,
   onAskAbout,
+  flags = NO_FLAGS,
+  onResolveFlags,
 }: {
   rec: Recording;
   query: string;
@@ -365,6 +373,9 @@ const CaptureRow = memo(function CaptureRow({
   /** This capture goes with the next question in the ask bar. */
   attached?: boolean;
   onAskAbout?: AskAbout;
+  /** What agents flagged in it over MCP and the user hasn't dealt with. */
+  flags?: readonly AgentFeedback[];
+  onResolveFlags?: ResolveFlags;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -482,6 +493,7 @@ const CaptureRow = memo(function CaptureRow({
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
       {body}
+      {onResolveFlags && <ItemFlags items={flags} onDismiss={(ids) => onResolveFlags(ids, 'dismissed')} onFixed={(ids) => onResolveFlags(ids, 'fixed')} />}
       {trayOpen && (
         <div className="ev-tones" role="group" aria-label="Rewrite">
           {tones && <>
@@ -677,6 +689,25 @@ export const CaptureHistory = memo(function CaptureHistory({
   const [filter, setFilter] = useState<HistoryFilter>('all');
   const [now, setNow] = useState(() => Date.now());
   const [mountedAt] = useState(() => Date.now());
+  // What agents flagged in captures, read again each time the panel opens.
+  const feedback = useAgentFeedback(signedIn === true);
+  const reloadFeedback = feedback.reload;
+  useEffect(() => { reloadFeedback(); }, [openKey, reloadFeedback]);
+  const flagsById = useMemo(() => {
+    const byId = new Map<string, AgentFeedback[]>();
+    for (const item of feedback.items) {
+      if (item.targetType === 'prompt') continue;
+      for (const id of feedbackTargetIds(item)) byId.set(id, [...(byId.get(id) ?? []), item]);
+    }
+    return byId;
+  }, [feedback.items]);
+  // One callback for every row, so a row re-renders only when its own reports change.
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const resolveFlags = useCallback<ResolveFlags>((ids, how) => {
+    void (how === 'fixed' ? feedbackRef.current.markFixed(ids) : feedbackRef.current.dismiss(ids));
+  }, []);
+  useEffect(() => { if (feedback.error) flash(feedback.error, 5000, 'warn'); }, [feedback.error, flash]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -808,7 +839,7 @@ export const CaptureHistory = memo(function CaptureHistory({
               <h2 className="ev-gh">{group.label}</h2>
               {group.items.map((rec) => (
                 <div key={rec.id} className={rec.startedAt >= mountedAt ? 'ev-grow' : undefined}>
-                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} attached={attachedIds.has(rec.id)} onAskAbout={onAskAbout} />
+                  <CaptureRow rec={rec} query={query} signedIn={signedIn} onSignIn={onSignIn} flash={flash} runTask={runTask} attached={attachedIds.has(rec.id)} onAskAbout={onAskAbout} flags={flagsById.get(rec.id)} onResolveFlags={resolveFlags} />
                 </div>
               ))}
             </section>

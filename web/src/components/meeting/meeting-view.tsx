@@ -11,6 +11,7 @@ import { Link } from '@/components/ui/app-link';
 import { Mascot } from '@/components/launcher/ui';
 import { KindIcon, kindOf } from '@/components/library/kind';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
+import { ItemFlagsPanel } from '@/components/agent-feedback/item-flags-panel';
 import { TranscriptPlayer } from './transcript-player';
 import { ProjectPicker } from './project-picker';
 import { type MeetingData, type Segment } from './types';
@@ -197,6 +198,8 @@ function Loaded({
       ) : meeting.statusError && meeting.status !== 'failed' ? (
         <AppAlert tone="info">{meeting.statusError}</AppAlert>
       ) : null}
+
+      <ItemFlagsPanel itemId={meetingId} />
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-5">

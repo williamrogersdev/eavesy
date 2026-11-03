@@ -19,7 +19,8 @@ export type { MergeClient };
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } });
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(200);
-const dismissSchema = z.object({ ids: ids.min(1), status: z.literal('dismissed') }).strict();
+// `applied` is "Mark fixed" on a recording, dictation or capture; a prompt is applied through handleApply.
+const resolveSchema = z.object({ ids: ids.min(1), status: z.enum(['dismissed', 'applied']) }).strict();
 const applySchema = z.object({
   promptId: id,
   expectedBody: z.string().max(PROMPT_LIMITS.body),
@@ -38,7 +39,7 @@ async function writesAllowed(actor: ResolvedIngestActor): Promise<Response | nul
   return limit.allowed ? null : Response.json({ error: 'Too many changes. Try again shortly.' }, { status: 429, headers: { 'retry-after': String(limit.retryAfterSec) } });
 }
 
-/** GET lists open reports; PATCH dismisses some. Always the caller's own. */
+/** GET lists open reports; PATCH dismisses some, or marks item reports fixed. Always the caller's own. */
 export async function handleFeedback(request: Request, db: AppDb = getDb()): Promise<Response> {
   const actor = await actorOr401(request);
   if (actor instanceof Response) return actor;
@@ -46,9 +47,10 @@ export async function handleFeedback(request: Request, db: AppDb = getDb()): Pro
   if (request.method !== 'PATCH') return json({ error: 'method_not_allowed' }, 405);
   const limited = await writesAllowed(actor);
   if (limited) return limited;
-  const parsed = dismissSchema.safeParse(await request.json().catch(() => null));
+  const parsed = resolveSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: 'invalid_request' }, 400);
-  return json({ dismissed: await feedback.dismiss(db, actor.userId, parsed.data.ids) });
+  const changed = await feedback.resolve(db, actor.userId, parsed.data.ids, parsed.data.status);
+  return json(parsed.data.status === 'dismissed' ? { dismissed: changed } : { applied: changed });
 }
 
 /**

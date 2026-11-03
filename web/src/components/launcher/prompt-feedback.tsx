@@ -181,7 +181,10 @@ export function ItemFeedbackCard({ items, feedback }: { items: AgentFeedback[]; 
             <Report item={item} />
             {item.suggestedRewrite && <span className="ev-set-hint block">Suggested: <span className="ev-feedback-text">{item.suggestedRewrite}</span></span>}
           </span>
-          <Button variant="ghost" size="sm" icon={X} onClick={() => void feedback.dismiss([item.id])} aria-label={`Dismiss the report on ${item.targetLabel}`}>Dismiss</Button>
+          <span className="flex shrink-0 gap-1">
+            <Button variant="ghost" size="sm" icon={Check} onClick={() => void feedback.markFixed([item.id])} aria-label={`Mark the report on ${item.targetLabel} fixed`}>Mark fixed</Button>
+            <Button variant="ghost" size="sm" icon={X} onClick={() => void feedback.dismiss([item.id])} aria-label={`Dismiss the report on ${item.targetLabel}`}>Dismiss</Button>
+          </span>
         </div>
       ))}
       {feedback.error && <p role="alert" className="ev-set-hint ev-set-body text-[var(--ev-warn-ink)]">{feedback.error}</p>}
