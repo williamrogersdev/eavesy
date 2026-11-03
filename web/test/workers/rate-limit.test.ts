@@ -23,6 +23,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await testEnv.DB.batch([
     testEnv.DB.prepare('DELETE FROM rate_limits'),
+    testEnv.DB.prepare('DELETE FROM activity_log'),
     testEnv.DB.prepare('DELETE FROM meetings'),
     testEnv.DB.prepare('DELETE FROM device_tokens'),
     testEnv.DB.prepare('DELETE FROM devices'),

@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { applyTranscriptEdits, repairTranscript, repairTranscriptSegments } from './repair-transcript';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { applyTranscriptEdits, repairFailureReason, repairTranscript, repairTranscriptSegments } from './repair-transcript';
 
 const edits = (from: string, to: string) => JSON.stringify({ edits: [{ from, to }] });
 
@@ -33,6 +33,19 @@ describe('contextual transcript repair', () => {
   test('provider failures retain raw speech with fallback status', async () => {
     expect(await repairTranscript('A full sentence.', { complete: async () => { throw new Error('timeout'); } }))
       .toEqual({ text: 'A full sentence.', status: 'unavailable' });
+  });
+  test('the warning names the failed guard, never the model output', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await repairTranscript('Hello', { complete: async () => 'Here is your secret text' });
+      await repairTranscript('We have 3 cats.', { complete: async () => edits('3 cats', '4 cats') });
+      const logged = warn.mock.calls.map(([line]) => String(line));
+      expect(logged.map((line) => JSON.parse(line).reason)).toEqual(['SyntaxError', 'Repair changed a number']);
+      expect(logged.join('\n')).not.toContain('secret');
+    } finally {
+      warn.mockRestore();
+    }
+    expect(repairFailureReason('boom')).toBe('unknown');
   });
   test('blank and large inputs make no model request', async () => {
     const complete = async () => { throw new Error('must not call'); };
