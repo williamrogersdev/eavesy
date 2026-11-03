@@ -15,6 +15,7 @@ ignore = [
   "RUSTSEC-2026-0367",
   "RUSTSEC-2026-0368",
   "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
 ]
 # Unmaintained, unsound and yanked notices are reported but don't fail the build.
 informational_warnings = ["unmaintained", "unsound", "yanked"]
