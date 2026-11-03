@@ -11,7 +11,8 @@ ignore = [
   "RUSTSEC-2026-0194",
   "RUSTSEC-2026-0195",
   # zip 4.6 is tauri-plugin-updater's Windows-only dependency (it unpacks .zip
-  # updates there). The Mac updater uses .tar.gz and never links zip.
+  # updates there). The Mac updater uses .tar.gz and never links zip. 0429
+  # (symlink entry aborts extract) is the same crate, rechecked 2026-11-03.
   "RUSTSEC-2026-0367",
   "RUSTSEC-2026-0368",
   "RUSTSEC-2026-0369",
