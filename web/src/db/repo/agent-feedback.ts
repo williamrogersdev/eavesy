@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
-import { agentFeedback, savedPrompts } from '../schema';
+import { agentFeedback, captures, meetings, savedPrompts } from '../schema';
 import { pid } from '../ids';
 import { FEEDBACK_LIMITS, normalizeForDedupe, type AgentFeedback, type FeedbackKind, type FeedbackTarget } from '@/lib/agent-feedback';
 import type { SavedPrompt } from '@/lib/prompts';
@@ -9,7 +9,7 @@ import { toSavedPrompt } from './prompts';
 
 type Row = typeof agentFeedback.$inferSelect;
 
-export function toAgentFeedback(row: Row): AgentFeedback {
+export function toAgentFeedback(row: Row, targetClientId: string | null = null): AgentFeedback {
   return {
     id: row.id,
     source: row.source,
@@ -22,6 +22,7 @@ export function toAgentFeedback(row: Row): AgentFeedback {
     excerpt: row.excerpt,
     explanation: row.explanation,
     suggestedRewrite: row.suggestedRewrite,
+    targetClientId,
     createdAt: row.createdAt,
   };
 }
@@ -80,20 +81,40 @@ export async function record(db: AppDb, input: NewFeedback, now = Date.now()): P
   return existing[0] ? { status: 'duplicate' } : { status: 'full' };
 }
 
-/** Reports waiting for the user, newest first. */
+/**
+ * Reports waiting for the user, newest first. A recording or capture made on
+ * a Mac also carries the id that Mac gave it, so the launcher can find it.
+ */
 export async function listOpen(db: AppDb, userId: string): Promise<AgentFeedback[]> {
-  const rows = await db.select().from(agentFeedback)
+  const rows = await db.select({ row: agentFeedback, meetingClientId: meetings.clientSessionId, captureClientId: captures.clientCaptureId })
+    .from(agentFeedback)
+    .leftJoin(meetings, and(eq(agentFeedback.targetType, 'meeting'), eq(meetings.id, agentFeedback.targetId), eq(meetings.userId, userId)))
+    .leftJoin(captures, and(eq(agentFeedback.targetType, 'capture'), eq(captures.id, agentFeedback.targetId), eq(captures.userId, userId)))
     .where(and(eq(agentFeedback.userId, userId), eq(agentFeedback.status, 'new')))
     .orderBy(desc(agentFeedback.createdAt))
     .limit(FEEDBACK_LIMITS.openPerUser);
-  return rows.map(toAgentFeedback);
+  return rows.map(({ row, meetingClientId, captureClientId }) => toAgentFeedback(row, meetingClientId ?? captureClientId ?? null));
 }
 
 /** Marks the caller's own open reports dismissed. Returns how many changed. */
-export async function dismiss(db: AppDb, userId: string, ids: string[], now = Date.now()): Promise<number> {
+export function dismiss(db: AppDb, userId: string, ids: string[], now = Date.now()): Promise<number> {
+  return resolve(db, userId, ids, 'dismissed', now);
+}
+
+/**
+ * Closes the caller's own open reports: dismissed, or applied ("Mark fixed").
+ * Reports on a prompt are applied only through `applyToPrompt`, which writes
+ * the text, so marking those applied here changes nothing.
+ */
+export async function resolve(db: AppDb, userId: string, ids: string[], status: 'dismissed' | 'applied', now = Date.now()): Promise<number> {
   if (!ids.length) return 0;
-  const rows = await db.update(agentFeedback).set({ status: 'dismissed', resolvedAt: now })
-    .where(and(eq(agentFeedback.userId, userId), inArray(agentFeedback.id, ids), eq(agentFeedback.status, 'new')))
+  const rows = await db.update(agentFeedback).set({ status, resolvedAt: now })
+    .where(and(
+      eq(agentFeedback.userId, userId),
+      inArray(agentFeedback.id, ids),
+      eq(agentFeedback.status, 'new'),
+      ...(status === 'applied' ? [ne(agentFeedback.targetType, 'prompt')] : []),
+    ))
     .returning({ id: agentFeedback.id });
   return rows.length;
 }
@@ -145,5 +166,5 @@ export async function openForPrompt(db: AppDb, userId: string, promptId: string,
     ))
     .orderBy(desc(agentFeedback.createdAt))
     .limit(FEEDBACK_LIMITS.openPerTarget);
-  return rows.map(toAgentFeedback);
+  return rows.map((row) => toAgentFeedback(row));
 }

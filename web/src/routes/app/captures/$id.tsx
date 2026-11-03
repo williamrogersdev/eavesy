@@ -8,6 +8,7 @@ import { useCapture } from '@/lib/api/use-captures';
 import { cn, formatBytes, formatDuration } from '@/lib/utils';
 import { AppAlert, AppPage, appButton } from '@/components/ui/app-page';
 import { refreshLibrary } from '@/lib/api/use-library';
+import { ItemFlagsPanel } from '@/components/agent-feedback/item-flags-panel';
 
 export const Route = createFileRoute('/app/captures/$id')({
   component: CaptureDetailPage,
@@ -101,6 +102,8 @@ function CaptureDetailPage() {
           ) : null}
 
           {deleteError ? <AppAlert>{deleteError}</AppAlert> : null}
+
+          <ItemFlagsPanel itemId={id} />
 
           <div className="flex items-center justify-center overflow-hidden rounded-[var(--ev-r-media)] bg-black/90">
             {data.kind === 'image' ? (

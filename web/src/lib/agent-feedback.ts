@@ -37,6 +37,8 @@ export interface AgentFeedback {
   excerpt: string | null;
   explanation: string;
   suggestedRewrite: string | null;
+  /** The id the Mac that made a recording or capture gave it, which its launcher lists it by. */
+  targetClientId: string | null;
   createdAt: number;
 }
 
@@ -61,8 +63,14 @@ export function parseAgentFeedback(value: unknown): AgentFeedback | null {
     excerpt: str(v.excerpt),
     explanation: v.explanation,
     suggestedRewrite: str(v.suggestedRewrite),
+    targetClientId: str(v.targetClientId),
     createdAt: typeof v.createdAt === 'number' ? v.createdAt : 0,
   };
+}
+
+/** Every id an item's report may be found by: its cloud id and the Mac's own. */
+export function feedbackTargetIds(item: AgentFeedback): string[] {
+  return item.targetClientId ? [item.targetId, item.targetClientId] : [item.targetId];
 }
 
 /** How many different connections sent these: "N agents flagged this". */

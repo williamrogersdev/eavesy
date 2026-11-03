@@ -41,6 +41,11 @@ export async function dismissAgentFeedback(ids: string[]): Promise<void> {
   await call('PATCH', '/api/agent-feedback', { ids, status: 'dismissed' });
 }
 
+/** "Mark fixed": the user fixed what agents reported on a recording, dictation or capture. Not for prompts. */
+export async function markAgentFeedbackFixed(ids: string[]): Promise<void> {
+  await call('PATCH', '/api/agent-feedback', { ids, status: 'applied' });
+}
+
 /** Writes `body` into the prompt if it still reads `expectedBody`, and marks `ids` applied. Throws PromptChanged otherwise. */
 export async function applyAgentFeedback(fields: { promptId: string; expectedBody: string; body: string; ids: string[] }): Promise<SavedPrompt> {
   const body = await call('POST', '/api/agent-feedback/apply', fields);
