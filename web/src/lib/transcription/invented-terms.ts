@@ -16,7 +16,7 @@ const OTHER_START_LIKENESS = 0.8;
 /**
  * Word pairs the alignment may compare, after the shared start and end are
  * set aside: about 1,400 words each way, or nine minutes of speech. Past it
- * the check counts terms over the whole text instead of place by place.
+ * a rewrite that adds a term is not used: where the term stands can't be checked.
  */
 const MAX_ALIGN_CELLS = 2_000_000;
 
@@ -134,6 +134,7 @@ export function inventedTerms(
   corrections: readonly LearnedCorrection[] = [],
 ): string[] {
   const heard = wordsOf(said), written = wordsOf(candidate);
+  // Aligned once, on the first term the rewrite added; null when too long to align.
   let changed: Change[] | null | undefined;
   const seen = new Set<string>();
   const invented: string[] = [];
@@ -152,10 +153,10 @@ export function inventedTerms(
       soundAlikes(words, key, length).length
       + fixes.reduce((sum, from) => sum + runs(words, from.length, (run) => run.length === from.length && run.every((word, k) => word === from[k])).length, 0);
 
-    changed ??= changes(heard, written);
+    if (changed === undefined) changed = changes(heard, written);
     if (!changed) {
-      // Too long to place: the whole text must have said it as often.
-      if (placed.length > funded(heard)) invented.push(term);
+      // Too long to place, so it can't be shown to stand where it was said.
+      invented.push(term);
       continue;
     }
     // Each change can hold as many of the term as its heard words sound like it.

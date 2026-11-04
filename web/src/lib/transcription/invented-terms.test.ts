@@ -41,9 +41,22 @@ test('a term must stand where its sound-alike or fix was, not elsewhere', () => 
   expect(inventedTerms('so the repack of thing and also check orders', 'The Repackify thing. Also check orders.', terms)).toEqual([]);
 });
 
+test('a long dictation that gains a term it can\'t place is not used', () => {
+  const long = 'we checked the orders and the boxes came in late again today '.repeat(130);
+  // Different at both ends, so the shared middle can't be set aside before aligning.
+  const said = `um so ${long} repack of support yeah`;
+  expect(inventedTerms(said, `${long} Repackify support.`, terms)).toEqual(['Repackify']);
+  expect(inventedTerms(said, `${long} repack of support.`, terms)).toEqual([]);
+});
+
+test('terms of under two letters or digits are left alone', () => {
+  expect(inventedTerms('i wrote it in sharp', 'I wrote it in C#.', ['C#'])).toEqual([]);
+});
+
 test('number forms of a term count as the term', () => {
   expect(inventedTerms('store it somewhere', 'Store it in One DB.', terms)).toEqual(['1db']);
   expect(inventedTerms('store it in one db', 'Store it in One DB.', terms)).toEqual([]);
+  expect(inventedTerms('store it in 1db', 'Store it in one DB.', terms)).toEqual([]);
 });
 
 test('one sound-alike allows one term, not two', () => {
