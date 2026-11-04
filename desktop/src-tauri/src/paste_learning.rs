@@ -204,11 +204,15 @@ mod mac {
         }
     }
     /// Types `text` at the caret as key presses: no clipboard involved.
-    /// Stops between key presses once `stop` is set.
-    fn type_text(text: &str, stop: &AtomicBool) -> Result<(), String> {
+    /// Before every press it checks that `stop` isn't set and `field` still
+    /// has the keyboard, and stops otherwise.
+    fn type_text(text: &str, stop: &AtomicBool, field: &Target) -> Result<(), String> {
         for chunk in super::utf16_chunks(text, UNITS_PER_EVENT) {
             if stop.load(Ordering::SeqCst) {
                 return Err("typing was stopped".into());
+            }
+            if focus(field) != Some(true) {
+                return Err("the field lost the keyboard while typing".into());
             }
             press(0, Some(&chunk))?;
         }
@@ -232,6 +236,9 @@ mod mac {
         prefix: String,
         suffix: String,
         typed: String,
+        /// The field's text couldn't be read after keys went in: the typed
+        /// words aren't known any more.
+        lost: bool,
     }
     impl LiveField {
         /// The focused field, when it is text Eavesy can read back: words go
@@ -244,11 +251,13 @@ mod mac {
             let (prefix, rest) = super::split_utf16(&value, start)?;
             let (_, suffix) = super::split_utf16(rest, length)?;
             let (prefix, suffix) = (prefix.to_string(), suffix.to_string());
-            Some(LiveField { field: target, prefix, suffix, typed: String::new() })
+            Some(LiveField { field: target, prefix, suffix, typed: String::new(), lost: false })
         }
 
-        pub fn typed(&self) -> &str {
-            &self.typed
+        /// Whether any words went in, counting ones that may have but
+        /// can't be read back.
+        pub fn has_typed(&self) -> bool {
+            self.lost || !self.typed.is_empty()
         }
 
         /// Ok(false) while another element has the keyboard; an error once
@@ -320,34 +329,46 @@ mod mac {
                 }
                 return Ok(false);
             }
-            match &text[keep..] {
+            let posted = match &text[keep..] {
                 // The selection is exactly the words to drop: one delete removes them all.
-                "" => press(KEY_DELETE, None)?,
-                insert => type_text(insert, stop)?,
-            }
-            let landing = std::time::Instant::now() + TYPED_LANDING;
+                "" => press(KEY_DELETE, None),
+                insert => type_text(insert, stop, &self.field),
+            };
+            // From here keys may have landed, all, some or none, whether the
+            // posting finished or stopped part way: whatever happens next,
+            // the typed words follow what is in the field, so the end can
+            // still replace them.
+            let landing = std::time::Instant::now() + if posted.is_ok() { TYPED_LANDING } else { Duration::from_millis(150) };
+            let mut found = None;
             loop {
                 std::thread::sleep(Duration::from_millis(30));
-                let value = unsafe { field_text(field) };
-                if value.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)).as_deref() == Some(text.as_str()) {
-                    self.typed = text;
-                    return Ok(true);
+                if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)) {
+                    if posted.is_ok() && now == text {
+                        self.typed = text;
+                        return Ok(true);
+                    }
+                    found = Some(now);
                 }
                 if std::time::Instant::now() >= landing {
-                    // Some of it may have landed: follow what is there, so the
-                    // end can still replace it.
-                    if let Some(found) = unsafe { field_text(field) }.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)) {
-                        self.typed = found;
-                    }
-                    return Err("the app didn't take the typed words".into());
+                    break;
                 }
             }
+            match found {
+                Some(found) => self.typed = found,
+                // Unreadable now: what's there isn't known, so the end must
+                // not replace anything (`finish` copies instead).
+                None => self.lost = true,
+            }
+            Err(posted.err().unwrap_or_else(|| "the app didn't take the typed words".into()))
         }
 
         /// Swaps the typed words for the finished `text` in one paste, so the
         /// result is a paste like any dictation's: a tone change can replace
         /// it and fixes to it are learned. Nothing changes when it can't.
         pub fn finish(self, app: &AppHandle, text: &str) -> Result<(), String> {
+            if self.lost {
+                return Err("the typed words couldn't be read back".into());
+            }
             if self.typed.is_empty() {
                 return Err("nothing was typed".into());
             }

@@ -31,8 +31,8 @@ impl LiveField {
     fn focused() -> Option<LiveField> {
         None
     }
-    pub fn typed(&self) -> &str {
-        ""
+    pub fn has_typed(&self) -> bool {
+        false
     }
     fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
@@ -53,9 +53,11 @@ enum Msg {
 const QUEUE: usize = 64;
 /// How long a stopping dictation waits for typing under way to finish.
 const FINISH_WAIT: Duration = Duration::from_secs(2);
-/// A typist with no words or stop this long gives up: no dictation is
-/// delivered later than this (`dictation::DELIVER_WINDOW`).
-const IDLE: Duration = Duration::from_secs(15 * 60);
+/// A typist with no words or stop this long gives up. Far past any
+/// dictation (they are short, and are delivered within
+/// `dictation::DELIVER_WINDOW` of stopping), so in practice only one whose
+/// recording failed without a disarm idles out.
+const IDLE: Duration = Duration::from_secs(3 * 60 * 60);
 /// Typists kept at once that haven't typed anything. A dictation still being
 /// delivered keeps its field while the next one starts; past this the oldest
 /// that typed nothing is let go. One that typed words is only let go by its
@@ -151,8 +153,11 @@ pub fn finish(session_id: &str) -> Typed {
         // The typist idled out.
         return unknown();
     }
+    // A sync under way when the wait runs out posts no further key (each
+    // press checks `stop` first), but a press already posted may still
+    // land: hence copy, never paste, in that case.
     match answer.recv_timeout(FINISH_WAIT) {
-        Ok(Some(field)) if !field.typed().is_empty() => Typed::Field(field),
+        Ok(Some(field)) if field.has_typed() => Typed::Field(field),
         Ok(_) => Typed::Nothing,
         Err(_) => unknown(),
     }
