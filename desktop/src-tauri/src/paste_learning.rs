@@ -282,19 +282,36 @@ mod mac {
             let keep = super::shared_prefix(&self.typed, &text);
             if keep < self.typed.len() {
                 let from = start + super::units(&self.typed[..keep]);
-                unsafe { select(field, from, super::units(&self.typed[keep..]))? };
+                let length = super::units(&self.typed[keep..]);
+                unsafe { select(field, from, length)? };
+                // Both the range and its text: the key press below replaces
+                // exactly what is selected, and nothing else may go with it.
+                let range = unsafe { selection(field) };
                 let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
-                if selected.as_deref() != Some(&self.typed[keep..]) {
+                if range != Some((from, length)) || selected.as_deref() != Some(&self.typed[keep..]) {
                     // Never leave words selected: the user's next key would replace them.
                     let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
                     return Err("the app didn't select the words to retype".into());
                 }
             }
             if self.typed.is_empty() {
-                // Fixes to the last paste are learned from before new words land beside it.
+                // The previous dictation's paste, which paste learning may
+                // still be watching in this field, is as the user left it:
+                // end that watch now, so its last reading can't take in the
+                // words about to be typed beside it (as `paste_text` does
+                // before its ⌘V).
                 superseded();
             }
+            // Key presses go to whatever has the keyboard: make sure it is
+            // still this field right before they are posted.
+            if focus(&self.field) != Some(true) {
+                if keep < self.typed.len() {
+                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                }
+                return Ok(false);
+            }
             match &text[keep..] {
+                // The selection is exactly the words to drop: one delete removes them all.
                 "" => press(KEY_DELETE, None)?,
                 insert => type_text(insert)?,
             }

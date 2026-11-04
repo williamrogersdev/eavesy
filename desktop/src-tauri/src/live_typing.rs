@@ -52,6 +52,9 @@ enum Msg {
 const QUEUE: usize = 64;
 /// How long a stopping dictation waits for typing under way to finish.
 const FINISH_WAIT: Duration = Duration::from_secs(2);
+/// A typist with no words or stop this long gives up: no dictation is
+/// delivered later than this (`dictation::DELIVER_WINDOW`).
+const IDLE: Duration = Duration::from_secs(15 * 60);
 /// Dictations whose typists are kept at once. A dictation still being
 /// delivered keeps its field while the next one starts; past this the oldest
 /// is let go (one that failed before it was delivered or disarmed).
@@ -95,14 +98,36 @@ pub fn caption(caption: &Caption) {
     }
 }
 
-/// Stops typing this dictation and hands back the field its words went
-/// into, once whatever typing was under way has landed. None when nothing
-/// was typed for it.
-pub fn finish(session_id: &str) -> Option<LiveField> {
-    let tx = take(session_id)?;
+/// What a stopping dictation finds typed for it.
+pub enum Typed {
+    /// No words were typed: deliver as usual.
+    Nothing,
+    /// Words were typed into this field: replace them.
+    Field(LiveField),
+    /// The typist didn't answer in time, so what is in the field isn't
+    /// known: pasting could double the words. Copy them instead.
+    Unknown,
+}
+
+/// Stops typing this dictation and says what was typed for it, once
+/// whatever typing was under way has landed.
+pub fn finish(session_id: &str) -> Typed {
+    let Some(tx) = take(session_id) else { return Typed::Nothing };
     let (reply, answer) = sync_channel(1);
-    tx.send(Msg::Finish(reply)).ok()?;
-    answer.recv_timeout(FINISH_WAIT).ok().flatten().filter(|field| !field.typed().is_empty())
+    if tx.send(Msg::Finish(reply)).is_err() {
+        // The typist is gone (it gave up idling): it typed nothing more.
+        return Typed::Unknown;
+    }
+    // Typing stops either way: a typist that answers late finds the reply
+    // dropped and exits without typing again.
+    match answer.recv_timeout(FINISH_WAIT) {
+        Ok(Some(field)) if !field.typed().is_empty() => Typed::Field(field),
+        Ok(_) => Typed::Nothing,
+        Err(_) => {
+            tracing::warn!(session_id, "live typing didn't finish in time; copying instead of pasting");
+            Typed::Unknown
+        }
+    }
 }
 
 /// This dictation's words go nowhere near a field: stop typing them.
@@ -131,9 +156,10 @@ fn typist(session_id: &str, rx: Receiver<Msg>) {
     let mut heard = Heard::default();
     let mut field = Field::Unknown;
     loop {
-        let msg = match rx.recv_timeout(Duration::from_secs(600)) {
+        let msg = match rx.recv_timeout(IDLE) {
             Ok(msg) => msg,
-            Err(RecvTimeoutError::Timeout) => continue,
+            // A dictation this quiet was never delivered: let its field go.
+            Err(RecvTimeoutError::Timeout) => return,
             // Replaced or cancelled: whatever was typed stays as it is.
             Err(RecvTimeoutError::Disconnected) => return,
         };

@@ -301,12 +301,17 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
             Delivery::InEavesy => {}
             Delivery::Pasted => {
-                let typed_live = live.is_some();
+                use crate::live_typing::Typed;
+                let typed_live = !matches!(live, Typed::Nothing);
+                // A replace that fails changes nothing in the field (the
+                // typed words stay), and a failed ⌘V leaves the words only on
+                // the clipboard: either way the copy below is the one delivery.
                 let delivered = match live {
-                    Some(live) => live.finish(&app, &text).inspect_err(|why| {
+                    Typed::Field(live) => live.finish(&app, &text).inspect_err(|why| {
                         tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}");
                     }),
-                    None => crate::commands::paste_text(&app, &text),
+                    Typed::Unknown => Err("live typing didn't finish".to_string()),
+                    Typed::Nothing => crate::commands::paste_text(&app, &text),
                 };
                 if typed_live {
                     crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
