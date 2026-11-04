@@ -14,6 +14,7 @@ import {
   isDesktop,
   setLauncherPosition,
   setLiveCaptions,
+  setTypeAsYouTalk,
   setAutoRecordMeetings,
   setCaptureSounds,
   setAgentHold,
@@ -475,6 +476,18 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .finally(() => setShotsBusy(false));
   };
 
+  const typeLive = settings?.type_as_you_talk ?? false;
+  const [typeLiveBusy, setTypeLiveBusy] = useState(false);
+  const [typeLiveError, setTypeLiveError] = useState<string | null>(null);
+  const toggleTypeLive = (next: boolean) => {
+    setTypeLiveBusy(true);
+    setTypeLiveError(null);
+    void setTypeAsYouTalk(next)
+      .then(() => setSettings((current) => current ? { ...current, type_as_you_talk: next } : current))
+      .catch((error: unknown) => setTypeLiveError(errMsg(error, 'Couldn’t change that setting.')))
+      .finally(() => setTypeLiveBusy(false));
+  };
+
   const toggleCaptions = (next: boolean) => {
     setCaptionsBusy(true);
     setLocalError(null);
@@ -577,6 +590,18 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           {account
             ? <DictationCard account={accountPrefs} projects={projects} onOpenProject={(id) => { setOpenProject(id); setSection('projects'); }} />
             : signInFirst('choose how dictation is written')}
+          {isDesktop() && (
+            <Section title="While you talk">
+              <Switch
+                checked={typeLive}
+                onCheckedChange={toggleTypeLive}
+                disabled={!settings || typeLiveBusy}
+                label="Type as I talk"
+                hint="Your words appear where your cursor is as you say them, then tidy up when you stop. Apps Eavesy can’t read back still get the words at the end."
+              />
+              {typeLiveError && <p role="alert" className="ev-set-hint">{typeLiveError}</p>}
+            </Section>
+          )}
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
           {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}

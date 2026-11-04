@@ -161,6 +161,178 @@ mod mac {
         }
         crate::commands::paste_text(app, text)
     }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceCreate(state: i32) -> Ref;
+        fn CGEventCreateKeyboardEvent(source: Ref, key: u16, down: bool) -> Ref;
+        fn CGEventSetFlags(event: Ref, flags: u64);
+        fn CGEventKeyboardSetUnicodeString(event: Ref, length: usize, string: *const u16);
+        fn CGEventPost(tap: u32, event: Ref);
+    }
+    /// kVK_Delete: backspace, which deletes the selection.
+    const KEY_DELETE: u16 = 51;
+    /// The most UTF-16 units one key event carries.
+    const UNITS_PER_EVENT: usize = 20;
+    /// How long typed words get to show up in the field before typing gives up.
+    const TYPED_LANDING: Duration = Duration::from_millis(800);
+
+    /// Presses `key` once, with no modifiers (a held `fn` must not ride
+    /// along), carrying `units` as the characters it types when given.
+    fn press(key: u16, units: Option<&[u16]>) -> Result<(), String> {
+        unsafe {
+            let source = CGEventSourceCreate(1);
+            let result = (|| {
+                for down in [true, false] {
+                    let event = CGEventCreateKeyboardEvent(source, key, down);
+                    if event.is_null() {
+                        return Err("could not create the key press".to_string());
+                    }
+                    CGEventSetFlags(event, 0);
+                    if let Some(units) = units {
+                        CGEventKeyboardSetUnicodeString(event, units.len(), units.as_ptr());
+                    }
+                    CGEventPost(0, event);
+                    CFRelease(event);
+                }
+                Ok(())
+            })();
+            if !source.is_null() {
+                CFRelease(source);
+            }
+            result
+        }
+    }
+    /// Types `text` at the caret as key presses: no clipboard involved.
+    fn type_text(text: &str) -> Result<(), String> {
+        for chunk in super::utf16_chunks(text, UNITS_PER_EVENT) {
+            press(0, Some(&chunk))?;
+        }
+        Ok(())
+    }
+    /// The selection as (start, length) in UTF-16 units.
+    unsafe fn selection(element: Ref) -> Option<(usize, usize)> {
+        let value = attribute(element, "AXSelectedTextRange")?;
+        let mut range = CFRange { location: 0, length: 0 };
+        let ok = AXValueGetValue(value, AX_VALUE_CF_RANGE, (&mut range as *mut CFRange).cast());
+        CFRelease(value);
+        (ok && range.location >= 0 && range.length >= 0).then(|| (range.location as usize, range.length as usize))
+    }
+
+    /// The words a dictation has typed into one field while it runs ("Type as
+    /// I talk"): the field, the text around them, and the words as they read
+    /// there. Typing only goes on while they are still exactly that, the field
+    /// has the keyboard and the caret sits right after them.
+    pub struct LiveField {
+        field: Target,
+        prefix: String,
+        suffix: String,
+        typed: String,
+    }
+    impl LiveField {
+        /// The focused field, when it is text Eavesy can read back: words go
+        /// in where its caret is, over whatever is selected, as a paste would.
+        pub fn focused() -> Option<LiveField> {
+            let target = capture()?;
+            let field = target.0 as Ref;
+            let value = unsafe { field_text(field) }?;
+            let (start, length) = unsafe { selection(field) }?;
+            let (prefix, rest) = super::split_utf16(&value, start)?;
+            let (_, suffix) = super::split_utf16(rest, length)?;
+            let (prefix, suffix) = (prefix.to_string(), suffix.to_string());
+            Some(LiveField { field: target, prefix, suffix, typed: String::new() })
+        }
+
+        pub fn typed(&self) -> &str {
+            &self.typed
+        }
+
+        /// Ok(false) while another element has the keyboard; an error once
+        /// the typed words were changed or the caret was moved off them.
+        fn check(&self) -> Result<bool, String> {
+            if focus(&self.field) != Some(true) {
+                return Ok(false);
+            }
+            let field = self.field.0 as Ref;
+            let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
+            if super::passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
+                return Err("the typed words were changed".into());
+            }
+            let end = super::units(&self.prefix) + super::units(&self.typed);
+            if unsafe { selection(field) } != Some((end, 0)) {
+                return Err("the caret moved".into());
+            }
+            Ok(true)
+        }
+
+        /// Makes the typed words read `text`: types what's new after them, and
+        /// retypes only from where a revised word differs. Ok(false) when the
+        /// field doesn't have the keyboard right now (try again later); an
+        /// error means stop typing into it.
+        pub fn sync(&mut self, text: &str) -> Result<bool, String> {
+            let text = super::typeable(text);
+            if text == self.typed {
+                return Ok(true);
+            }
+            if !self.check()? {
+                return Ok(false);
+            }
+            let field = self.field.0 as Ref;
+            let start = super::units(&self.prefix);
+            let keep = super::shared_prefix(&self.typed, &text);
+            if keep < self.typed.len() {
+                let from = start + super::units(&self.typed[..keep]);
+                unsafe { select(field, from, super::units(&self.typed[keep..]))? };
+                let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
+                if selected.as_deref() != Some(&self.typed[keep..]) {
+                    // Never leave words selected: the user's next key would replace them.
+                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                    return Err("the app didn't select the words to retype".into());
+                }
+            }
+            if self.typed.is_empty() {
+                // Fixes to the last paste are learned from before new words land beside it.
+                superseded();
+            }
+            match &text[keep..] {
+                "" => press(KEY_DELETE, None)?,
+                insert => type_text(insert)?,
+            }
+            let landing = std::time::Instant::now() + TYPED_LANDING;
+            loop {
+                std::thread::sleep(Duration::from_millis(30));
+                let value = unsafe { field_text(field) };
+                if value.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)).as_deref() == Some(text.as_str()) {
+                    self.typed = text;
+                    return Ok(true);
+                }
+                if std::time::Instant::now() >= landing {
+                    return Err("the app didn't take the typed words".into());
+                }
+            }
+        }
+
+        /// Swaps the typed words for the finished `text` in one paste, so the
+        /// result is a paste like any dictation's: a tone change can replace
+        /// it and fixes to it are learned. Nothing changes when it can't.
+        pub fn finish(self, app: &AppHandle, text: &str) -> Result<(), String> {
+            if self.typed.is_empty() {
+                return Err("nothing was typed".into());
+            }
+            if !self.check()? {
+                return Err("the field no longer has the keyboard".into());
+            }
+            let field = self.field.0 as Ref;
+            let start = super::units(&self.prefix);
+            let length = super::units(&self.typed);
+            unsafe { select(field, start, length)? };
+            if unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s)).as_deref() != Some(self.typed.as_str()) {
+                let _ = unsafe { select(field, start + length, 0) };
+                return Err("the app didn't select the typed words".into());
+            }
+            crate::commands::paste_text(app, text)
+        }
+    }
     impl Drop for Target {
         fn drop(&mut self) {
             unsafe { CFRelease(self.0 as Ref) }
@@ -486,8 +658,60 @@ pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
     let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
     Some(middle.into())
 }
+/// Text as live typing puts it in a field: as fields hand it back
+/// (`normalize`), on one line. A typed newline is a Return key press, which
+/// sends a chat message.
+pub fn typeable(text: &str) -> String {
+    normalize(text).chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+}
+
+/// Bytes `a` and `b` share from the start, ending on a character boundary.
+pub fn shared_prefix(a: &str, b: &str) -> usize {
+    a.char_indices()
+        .zip(b.chars())
+        .take_while(|((_, x), y)| x == y)
+        .last()
+        .map_or(0, |((at, c), _)| at + c.len_utf8())
+}
+
+/// Length in UTF-16 units, the way fields count their text.
+pub fn units(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+/// `value` split `at` UTF-16 units in, or None when that falls inside a
+/// character or past the end.
+pub fn split_utf16(value: &str, at: usize) -> Option<(&str, &str)> {
+    let mut seen = 0;
+    for (index, c) in value.char_indices() {
+        if seen == at {
+            return Some(value.split_at(index));
+        }
+        if seen > at {
+            return None;
+        }
+        seen += c.len_utf16();
+    }
+    (seen == at).then_some((value, ""))
+}
+
+/// `text` as UTF-16, in pieces of at most `max` units that never split a
+/// surrogate pair.
+pub fn utf16_chunks(text: &str, max: usize) -> Vec<Vec<u16>> {
+    let mut chunks: Vec<Vec<u16>> = Vec::new();
+    let mut buffer = [0u16; 2];
+    for c in text.chars() {
+        let encoded = c.encode_utf16(&mut buffer);
+        match chunks.last_mut() {
+            Some(chunk) if chunk.len() + encoded.len() <= max => chunk.extend_from_slice(encoded),
+            _ => chunks.push(encoded.to_vec()),
+        }
+    }
+    chunks
+}
+
 #[cfg(target_os = "macos")]
-pub use mac::{capture, observe, replace, superseded};
+pub use mac::{capture, observe, replace, superseded, LiveField};
 #[cfg(not(target_os = "macos"))]
 pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<(), String> {
     Err("replacing pasted words is only supported on macOS".into())
@@ -544,5 +768,35 @@ mod tests {
         let mut watch = Watch::start("Hello there. Bye", "there.", None).unwrap();
         assert!(!watch.follow("Something else entirely", None));
         assert_eq!(watch.last, "there.");
+    }
+
+    #[test]
+    fn live_typing_text_stays_on_one_line() {
+        assert_eq!(typeable("It\u{2019}s fine\nsend it"), "It's fine send it");
+    }
+
+    #[test]
+    fn retyping_starts_where_the_words_differ() {
+        assert_eq!(shared_prefix("ship the deck", "ship the desk today"), 11);
+        assert_eq!(shared_prefix("", "hi"), 0);
+        assert_eq!(shared_prefix("café au", "café ok"), 6);
+        assert_eq!(shared_prefix("same", "same"), 4);
+    }
+
+    #[test]
+    fn utf16_offsets_split_on_characters_only() {
+        assert_eq!(split_utf16("a😀b", 1), Some(("a", "😀b")));
+        assert_eq!(split_utf16("a😀b", 3), Some(("a😀", "b")));
+        assert_eq!(split_utf16("a😀b", 2), None);
+        assert_eq!(split_utf16("ab", 2), Some(("ab", "")));
+        assert_eq!(split_utf16("ab", 3), None);
+        assert_eq!(units("a😀"), 3);
+    }
+
+    #[test]
+    fn key_events_never_split_a_surrogate_pair() {
+        let chunks = utf16_chunks("abc😀d", 4);
+        assert_eq!(chunks.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 3]);
+        assert_eq!(String::from_utf16(&chunks.concat()).unwrap(), "abc😀d");
     }
 }

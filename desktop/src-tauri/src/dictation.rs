@@ -118,6 +118,33 @@ fn take_pending(session_id: &str) -> Option<Target> {
 /// that arrives later does not paste either.
 pub fn disarm(session_id: &str) {
     take_pending(session_id);
+    crate::live_typing::cancel(session_id);
+}
+
+/// Whether "Type as I talk" may type this dictation's words now: Ok(true)
+/// when the app it pastes into is in front, Ok(false) while it isn't (ask
+/// again later), and an error when its words never go into an app at all.
+pub fn live_typing_target(session_id: &str) -> Result<bool, String> {
+    if crate::assistant::voice::is_for(session_id) {
+        return Err("the words are for Eavesy".into());
+    }
+    if crate::agents::is_answer(session_id) {
+        return Err("the words answer a Claude Code card".into());
+    }
+    if PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Eavesy's own box takes these words".into());
+    }
+    if !accessibility_trusted() {
+        return Err("Accessibility permission is off".into());
+    }
+    let target = PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(id, _, _)| id == session_id)
+        .map(|(_, _, target)| *target)
+        .ok_or("no app to type into")?;
+    Ok(front_app() == Some(target))
 }
 
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
@@ -220,16 +247,20 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let session_id = session_id.to_string();
     // Talk to Eavesy: the words are a message to it, as said, never pasted.
     if for_eavesy {
+        crate::live_typing::cancel(&session_id);
         std::thread::spawn(move || crate::assistant::voice::deliver(&app, &session_id, &text));
         return;
     }
     // An answer to the Claude Code reply card goes there, never into an app.
     if let Some(claim) = answering {
+        crate::live_typing::cancel(&session_id);
         std::thread::spawn(move || crate::agents::answer(&app, &session_id, claim, &text));
         return;
     }
     std::thread::spawn(move || {
         let started = Instant::now();
+        // Words typed as they were heard are replaced with the finished ones.
+        let live = crate::live_typing::finish(&session_id);
         let project = project_for(&session_id);
         // Should the transcript box still have the keyboard, the paste (and
         // the focus check before it) must see the user's app, not Eavesy.
@@ -270,7 +301,17 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
             Delivery::InEavesy => {}
             Delivery::Pasted => {
-                if crate::commands::paste_text(&app, &text).is_ok() {
+                let typed_live = live.is_some();
+                let delivered = match live {
+                    Some(live) => live.finish(&app, &text).inspect_err(|why| {
+                        tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}");
+                    }),
+                    None => crate::commands::paste_text(&app, &text),
+                };
+                if typed_live {
+                    crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
+                }
+                if delivered.is_ok() {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
                     // Say what actually stopped it: the permission, or anything else.

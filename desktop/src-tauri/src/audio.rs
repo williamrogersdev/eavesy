@@ -683,6 +683,9 @@ fn spawn_capture(
     if mode == "audio" && source == "mic" {
         crate::dictation::arm(&id);
     }
+    if dictation {
+        crate::live_typing::start(app, &id);
+    }
 
     crate::hud::set_state(
         app,
@@ -957,6 +960,7 @@ fn stream_events(
                         {
                             eprintln!("live captions: storing is behind; dropping finals until it catches up");
                         }
+                        crate::live_typing::caption(&caption);
                         let _ = app.emit("recording:caption", &caption);
                         continue;
                     }

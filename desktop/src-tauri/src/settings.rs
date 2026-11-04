@@ -102,6 +102,11 @@ pub struct Settings {
     /// instead of only a Pasted stamp (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_result_preview: Option<bool>,
+    /// "Type as I talk": a dictation's settled words are typed where the
+    /// cursor is while you talk, then swapped for the finished words when
+    /// you stop (off unless turned on). Read as each dictation starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_as_you_talk: Option<bool>,
     /// Eavesy says when a Claude Code session finishes or needs you, and sends
     /// the reply you approve back into it (off unless turned on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -205,6 +210,10 @@ impl Settings {
         self.hud_result_preview.unwrap_or(true)
     }
 
+    pub fn type_as_you_talk(&self) -> bool {
+        self.type_as_you_talk.unwrap_or(false)
+    }
+
     pub fn fast_live_words(&self) -> bool {
         self.fast_live_words.unwrap_or(true)
     }
@@ -253,6 +262,7 @@ impl Default for Settings {
             hud_translucent: None,
             fast_live_words: None,
             hud_result_preview: None,
+            type_as_you_talk: None,
             agent_voice: None,
             agent_hold_secs: None,
             agent_messages: None,
@@ -759,6 +769,18 @@ mod tests {
         assert!(settings.hud_result_preview());
         settings.hud_result_preview = Some(false);
         assert!(!settings.hud_result_preview());
+    }
+
+    #[test]
+    fn typing_as_you_talk_is_off_unless_turned_on() {
+        let mut settings = Settings::default();
+        assert!(!settings.type_as_you_talk());
+        assert!(!serde_json::to_string(&settings).unwrap().contains("type_as_you_talk"));
+        settings.type_as_you_talk = Some(true);
+        assert!(settings.type_as_you_talk());
+        let saved: Settings =
+            serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","type_as_you_talk":true}"#).unwrap();
+        assert!(saved.type_as_you_talk());
     }
 
     #[test]
