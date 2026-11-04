@@ -281,6 +281,11 @@ export async function setLiveCaptions(enabled: boolean): Promise<void> {
   await invoke('set_live_captions', { enabled });
 }
 
+/** "Type as I talk": applies from the next dictation. */
+export async function setTypeAsYouTalk(enabled: boolean): Promise<void> {
+  await invoke('set_type_as_you_talk', { enabled });
+}
+
 export async function setCaptureSounds(enabled: boolean): Promise<void> {
   await invoke('set_capture_sounds', { enabled });
 }
@@ -936,6 +941,8 @@ export interface Settings {
   hud_result_preview?: boolean;
   /** Live words about a second sooner from a fast recognizer. Absent means on. */
   fast_live_words?: boolean;
+  /** Dictation types settled words at the cursor while you talk. Absent means off. */
+  type_as_you_talk?: boolean;
   /** Talk with Claude Code sessions. Absent means off. */
   agent_voice?: boolean;
   /** Seconds a finished session waits for your reply. Absent means 300. */

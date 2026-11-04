@@ -10,6 +10,7 @@ mod captions;
 mod capture_sync;
 mod live_transcript;
 mod live_edit;
+mod live_typing;
 mod visual;
 mod commands;
 mod diagnostics;
@@ -109,6 +110,7 @@ pub fn run() {
             audio::start_capture,
             live_transcript::live_transcript,
             commands::set_live_captions,
+            commands::set_type_as_you_talk,
             agents::agents_state,
             agents::connect::claude_code_status,
             agents::connect::connect_claude_code,

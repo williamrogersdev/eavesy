@@ -536,7 +536,13 @@ Shortcuts, Projects, Permissions and Account. Every change saves as it is made
 closes the window; there is no Save button.
 - **Dictation:** your default tone and "Write it as a prompt for AI agents",
   with a worked example (one sentence said aloud, and what is typed). Below,
-  the projects that set their own style, each linking to its page.
+  the projects that set their own style, each linking to its page. On the
+  Mac, **While you talk** holds **Type as I talk** (off by default): settled
+  words are typed at the cursor as they're heard (never the fast preview's
+  guesses), and when you stop the finished words replace them in one paste.
+  Typing stops for good once you type in that spot or move the caret, and
+  pauses while another field has the keyboard. A field Eavesy can't read back
+  gets the words at the end, as usual.
 - **Transcription:** the languages you speak.
 - **Dictionary:** Words (vocabulary chips: type, paste a list, × to remove) and
   Replacements ("heard as → type instead": add one, **Add many** to paste a

@@ -29,7 +29,7 @@ static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None
 static WRITTEN: Mutex<Option<(String, crate::transcribe::Written)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
-const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
+pub(crate) const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 pub fn note_shortcut_press() {
     let target = front_app();
@@ -118,6 +118,41 @@ fn take_pending(session_id: &str) -> Option<Target> {
 /// that arrives later does not paste either.
 pub fn disarm(session_id: &str) {
     take_pending(session_id);
+    crate::live_typing::cancel(session_id);
+}
+
+/// Why this dictation's words never go into the app in front, if they
+/// don't: cheap enough to ask before every live-typed update.
+pub fn words_go_elsewhere(session_id: &str) -> Option<&'static str> {
+    if crate::assistant::voice::is_for(session_id) {
+        Some("the words are for Eavesy")
+    } else if crate::agents::is_answer(session_id) {
+        Some("the words answer a Claude Code card")
+    } else if PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
+        Some("Eavesy's own box takes these words")
+    } else {
+        None
+    }
+}
+
+/// Whether "Type as I talk" may type this dictation's words now: Ok(true)
+/// when the app it pastes into is in front, Ok(false) while it isn't (ask
+/// again later), and an error when its words never go into an app at all.
+pub fn live_typing_target(session_id: &str) -> Result<bool, String> {
+    if let Some(why) = words_go_elsewhere(session_id) {
+        return Err(why.into());
+    }
+    if !accessibility_trusted() {
+        return Err("Accessibility permission is off".into());
+    }
+    let target = PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(id, _, _)| id == session_id)
+        .map(|(_, _, target)| *target)
+        .ok_or("no app to type into")?;
+    Ok(front_app() == Some(target))
 }
 
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
@@ -220,16 +255,20 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let session_id = session_id.to_string();
     // Talk to Eavesy: the words are a message to it, as said, never pasted.
     if for_eavesy {
+        crate::live_typing::cancel(&session_id);
         std::thread::spawn(move || crate::assistant::voice::deliver(&app, &session_id, &text));
         return;
     }
     // An answer to the Claude Code reply card goes there, never into an app.
     if let Some(claim) = answering {
+        crate::live_typing::cancel(&session_id);
         std::thread::spawn(move || crate::agents::answer(&app, &session_id, claim, &text));
         return;
     }
     std::thread::spawn(move || {
         let started = Instant::now();
+        // Words typed as they were heard are replaced with the finished ones.
+        let live = crate::live_typing::finish(&session_id);
         let project = project_for(&session_id);
         // Should the transcript box still have the keyboard, the paste (and
         // the focus check before it) must see the user's app, not Eavesy.
@@ -252,6 +291,10 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
+            // The "um"s typed live go too, while they are still as typed.
+            if let crate::live_typing::Typed::Field(live) = live {
+                let _ = live.take_back();
+            }
             crate::audio::paste_nothing(&app, &session_id, "only fillers were heard");
             return;
         }
@@ -270,7 +313,24 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             }
             Delivery::InEavesy => {}
             Delivery::Pasted => {
-                if crate::commands::paste_text(&app, &text).is_ok() {
+                use crate::live_typing::Typed;
+                let typed_live = !matches!(live, Typed::Nothing);
+                // Typed words are selected, then pasted over exactly as any
+                // dictation pastes. A selection that fails changes nothing in
+                // the field (the typed words stay), so the copy below is the
+                // one delivery, as it is for a failed paste.
+                let delivered = match live {
+                    Typed::Field(live) => live
+                        .select_typed()
+                        .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
+                        .and_then(|()| crate::commands::paste_text(&app, &text)),
+                    Typed::Unknown => Err("live typing didn't finish".to_string()),
+                    Typed::Nothing => crate::commands::paste_text(&app, &text),
+                };
+                if typed_live {
+                    crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
+                }
+                if delivered.is_ok() {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
                     // Say what actually stopped it: the permission, or anything else.
