@@ -16,7 +16,8 @@ const OTHER_START_LIKENESS = 0.8;
 /**
  * Word pairs the alignment may compare, after the shared start and end are
  * set aside: about 1,400 words each way, or nine minutes of speech. Past it
- * the check counts terms over the whole text instead of place by place.
+ * a term the rewrite added is reported as invented, since where it stands
+ * can't be checked, and the caller doesn't use the rewrite.
  */
 const MAX_ALIGN_CELLS = 2_000_000;
 
@@ -134,6 +135,8 @@ export function inventedTerms(
   corrections: readonly LearnedCorrection[] = [],
 ): string[] {
   const heard = wordsOf(said), written = wordsOf(candidate);
+  // Aligned lazily, at most once per call, the first time a term needs placing;
+  // null when too long to align.
   let changed: Change[] | null | undefined;
   const seen = new Set<string>();
   const invented: string[] = [];
@@ -152,16 +155,17 @@ export function inventedTerms(
       soundAlikes(words, key, length).length
       + fixes.reduce((sum, from) => sum + runs(words, from.length, (run) => run.length === from.length && run.every((word, k) => word === from[k])).length, 0);
 
-    changed ??= changes(heard, written);
-    if (!changed) {
-      // Too long to place: the whole text must have said it as often.
-      if (placed.length > funded(heard)) invented.push(term);
+    if (changed === undefined) changed = changes(heard, written);
+    const aligned = changed;
+    if (!aligned) {
+      // Too long to place, so it can't be shown to stand where it was said.
+      invented.push(term);
       continue;
     }
     // Each change can hold as many of the term as its heard words sound like it.
     const used = new Map<Change, number>();
     const inChange = (span: Span) =>
-      changed!.find((change) => span[0] < change.written[1] && span[1] > change.written[0]);
+      aligned.find((change) => span[0] < change.written[1] && span[1] > change.written[0]);
     for (const span of placed) {
       const change = inChange(span);
       if (!change) continue; // Kept word for word from what was heard.

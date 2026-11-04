@@ -41,9 +41,27 @@ test('a term must stand where its sound-alike or fix was, not elsewhere', () => 
   expect(inventedTerms('so the repack of thing and also check orders', 'The Repackify thing. Also check orders.', terms)).toEqual([]);
 });
 
+test('a long dictation that gains a term is not used, even over a real sound-alike', () => {
+  // Fails closed: past the alignment limit, where the term stands can't be checked,
+  // so even "repack of" → "Repackify" is reported. The cost is a plain cleanup
+  // for the rare dictation over nine minutes that gains a term.
+  const long = 'we checked the orders and the boxes came in late again today '.repeat(130);
+  // Different at both ends, so the shared middle can't be set aside before aligning.
+  const said = `um so ${long} repack of support yeah`;
+  expect(inventedTerms(said, `${long} Repackify support.`, terms)).toEqual(['Repackify']);
+  expect(inventedTerms(said, `${long} Repackify support.`, terms, [{ from: 'repack of', to: 'Repackify' }])).toEqual(['Repackify']);
+});
+
+test('terms of under two letters or digits are left alone', () => {
+  expect(inventedTerms('i wrote it in sharp', 'I wrote it in C#.', ['C#'])).toEqual([]);
+});
+
 test('number forms of a term count as the term', () => {
   expect(inventedTerms('store it somewhere', 'Store it in One DB.', terms)).toEqual(['1db']);
   expect(inventedTerms('store it in one db', 'Store it in One DB.', terms)).toEqual([]);
+  expect(inventedTerms('store it in 1db', 'Store it in one DB.', terms)).toEqual([]);
+  expect(inventedTerms('store it somewhere', 'Store it in 1db.', terms)).toEqual(['1db']);
+  expect(inventedTerms('store it in one db', 'Store it in 1db.', terms)).toEqual([]);
 });
 
 test('one sound-alike allows one term, not two', () => {
