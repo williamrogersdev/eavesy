@@ -5,7 +5,7 @@ import { getDb } from '@/db/client';
 import * as usersRepo from '@/db/repo/users';
 import { polishDictation } from '@/lib/ai/agent-transcript';
 import { anthropic, anthropicForUser } from '@/lib/ai/client';
-import { combinedContext } from '@/lib/projects';
+import { combinedContext, projectTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
@@ -67,9 +67,10 @@ export const Route = createFileRoute('/api/dictations/polish')({
           style: tone.style,
           forAgents: tone.forAgents,
           asked: parsed.data.style !== undefined || parsed.data.forAgents !== undefined,
-          hasCorrections: entries.length > 0,
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
+          // Checked against the polished words: a term there must have been said.
+          terms: [...projectTerms(project), ...parseVocabulary(user?.customVocabularyJson)],
           context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
         // Told back with the words, for the Mac app's tone row: the tone in
