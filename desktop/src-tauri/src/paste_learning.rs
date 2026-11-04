@@ -362,10 +362,10 @@ mod mac {
             Err(posted.err().unwrap_or_else(|| "the app didn't take the typed words".into()))
         }
 
-        /// Swaps the typed words for the finished `text` in one paste, so the
-        /// result is a paste like any dictation's: a tone change can replace
-        /// it and fixes to it are learned. Nothing changes when it can't.
-        pub fn finish(self, app: &AppHandle, text: &str) -> Result<(), String> {
+        /// Selects the typed words, so the next paste or delete replaces
+        /// exactly them. It only selects: when it fails, nothing in the field
+        /// changed (whatever it did select is put back to a caret).
+        pub fn select_typed(&self) -> Result<(), String> {
             if self.lost {
                 return Err("the typed words couldn't be read back".into());
             }
@@ -379,11 +379,19 @@ mod mac {
             let start = super::units(&self.prefix);
             let length = super::units(&self.typed);
             unsafe { select(field, start, length)? };
-            if unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s)).as_deref() != Some(self.typed.as_str()) {
+            let range = unsafe { selection(field) };
+            let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
+            if range != Some((start, length)) || selected.as_deref() != Some(self.typed.as_str()) {
                 let _ = unsafe { select(field, start + length, 0) };
                 return Err("the app didn't select the typed words".into());
             }
-            crate::commands::paste_text(app, text)
+            Ok(())
+        }
+
+        /// Deletes the typed words, while they are still exactly as typed.
+        pub fn take_back(self) -> Result<(), String> {
+            self.select_typed()?;
+            press(KEY_DELETE, None)
         }
     }
     impl Drop for Target {

@@ -37,7 +37,10 @@ impl LiveField {
     fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
     }
-    pub fn finish(self, _app: &AppHandle, _text: &str) -> Result<(), String> {
+    pub fn select_typed(&self) -> Result<(), String> {
+        Err("live typing is only supported on macOS".into())
+    }
+    pub fn take_back(self) -> Result<(), String> {
         Err("live typing is only supported on macOS".into())
     }
 }
@@ -46,6 +49,8 @@ enum Msg {
     Caption(Caption),
     /// The dictation stopped: hand back the field and what is in it.
     Finish(SyncSender<Option<LiveField>>),
+    /// The words go nowhere: take back what was typed, if untouched.
+    Cancel,
 }
 
 /// Captions waiting for the typist; past this they are dropped (the next
@@ -163,11 +168,15 @@ pub fn finish(session_id: &str) -> Typed {
     }
 }
 
-/// This dictation's words go nowhere near a field (or it failed): stop
-/// typing them. Words already typed stay: they are what the user said.
+/// This dictation's words won't be delivered into the field (they were for
+/// Eavesy, it heard only silence or fillers, or it failed): stop typing them,
+/// and take back what was typed while it is still exactly as typed. Words
+/// the user has since changed stay. The recording keeps every word.
 pub fn cancel(session_id: &str) {
     if let Some(entry) = take(session_id) {
         entry.shared.stop.store(true, Ordering::SeqCst);
+        // Never blocks; with a full queue the typist is busy and the words stay.
+        let _ = entry.tx.try_send(Msg::Cancel);
     }
 }
 
@@ -201,24 +210,34 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
             // Replaced or cancelled: whatever was typed stays as it is.
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut finishing = None;
+        let mut ending = None;
         match msg {
             Msg::Caption(caption) => heard.add(caption),
-            Msg::Finish(reply) => finishing = Some(reply),
+            end => ending = Some(end),
         }
         // Everything already queued is typed in one go.
-        while finishing.is_none() {
+        while ending.is_none() {
             match rx.try_recv() {
                 Ok(Msg::Caption(caption)) => heard.add(caption),
-                Ok(Msg::Finish(reply)) => finishing = Some(reply),
+                Ok(end) => ending = Some(end),
                 Err(_) => break,
             }
         }
-        if let Some(reply) = finishing {
-            let _ = reply.send(match field {
-                Field::Typing(field) | Field::Stopped(Some(field)) => Some(field),
+        if let Some(end) = ending {
+            let live = match field {
+                Field::Typing(live) | Field::Stopped(Some(live)) => Some(live),
                 _ => None,
-            });
+            };
+            match end {
+                Msg::Finish(reply) => {
+                    let _ = reply.send(live);
+                }
+                _ => {
+                    if let Some(Err(why)) = live.filter(LiveField::has_typed).map(LiveField::take_back) {
+                        tracing::info!(session_id, "live-typed words left in place: {why}");
+                    }
+                }
+            }
             return;
         }
         field = type_into(session_id, field, &heard.text(), shared);

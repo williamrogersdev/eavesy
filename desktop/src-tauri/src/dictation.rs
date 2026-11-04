@@ -291,6 +291,10 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
+            // The "um"s typed live go too, while they are still as typed.
+            if let crate::live_typing::Typed::Field(live) = live {
+                let _ = live.take_back();
+            }
             crate::audio::paste_nothing(&app, &session_id, "only fillers were heard");
             return;
         }
@@ -311,13 +315,15 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Delivery::Pasted => {
                 use crate::live_typing::Typed;
                 let typed_live = !matches!(live, Typed::Nothing);
-                // A replace that fails changes nothing in the field (the
-                // typed words stay), and a failed ⌘V leaves the words only on
-                // the clipboard: either way the copy below is the one delivery.
+                // Typed words are selected, then pasted over exactly as any
+                // dictation pastes. A selection that fails changes nothing in
+                // the field (the typed words stay), so the copy below is the
+                // one delivery, as it is for a failed paste.
                 let delivered = match live {
-                    Typed::Field(live) => live.finish(&app, &text).inspect_err(|why| {
-                        tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}");
-                    }),
+                    Typed::Field(live) => live
+                        .select_typed()
+                        .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
+                        .and_then(|()| crate::commands::paste_text(&app, &text)),
                     Typed::Unknown => Err("live typing didn't finish".to_string()),
                     Typed::Nothing => crate::commands::paste_text(&app, &text),
                 };
