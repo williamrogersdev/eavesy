@@ -7,7 +7,7 @@ mod mac {
         ffi::{c_char, c_void},
         ptr,
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Mutex,
         },
         time::Duration,
@@ -204,8 +204,12 @@ mod mac {
         }
     }
     /// Types `text` at the caret as key presses: no clipboard involved.
-    fn type_text(text: &str) -> Result<(), String> {
+    /// Stops between key presses once `stop` is set.
+    fn type_text(text: &str, stop: &AtomicBool) -> Result<(), String> {
         for chunk in super::utf16_chunks(text, UNITS_PER_EVENT) {
+            if stop.load(Ordering::SeqCst) {
+                return Err("typing was stopped".into());
+            }
             press(0, Some(&chunk))?;
         }
         Ok(())
@@ -268,8 +272,14 @@ mod mac {
         /// Makes the typed words read `text`: types what's new after them, and
         /// retypes only from where a revised word differs. Ok(false) when the
         /// field doesn't have the keyboard right now (try again later); an
-        /// error means stop typing into it.
-        pub fn sync(&mut self, text: &str) -> Result<bool, String> {
+        /// error means stop typing into it. No key is posted once `stop` is
+        /// set.
+        ///
+        /// Focus is checked right before the keys are posted, but macOS has
+        /// no way to post a key press to one element only: should focus move
+        /// in the instant between, the keys follow it. The next sync then
+        /// finds the words changed and stops for good.
+        pub fn sync(&mut self, text: &str, stop: &AtomicBool) -> Result<bool, String> {
             let text = super::typeable(text);
             if text == self.typed {
                 return Ok(true);
@@ -304,7 +314,7 @@ mod mac {
             }
             // Key presses go to whatever has the keyboard: make sure it is
             // still this field right before they are posted.
-            if focus(&self.field) != Some(true) {
+            if stop.load(Ordering::SeqCst) || focus(&self.field) != Some(true) {
                 if keep < self.typed.len() {
                     let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
                 }
@@ -313,7 +323,7 @@ mod mac {
             match &text[keep..] {
                 // The selection is exactly the words to drop: one delete removes them all.
                 "" => press(KEY_DELETE, None)?,
-                insert => type_text(insert)?,
+                insert => type_text(insert, stop)?,
             }
             let landing = std::time::Instant::now() + TYPED_LANDING;
             loop {
@@ -324,6 +334,11 @@ mod mac {
                     return Ok(true);
                 }
                 if std::time::Instant::now() >= landing {
+                    // Some of it may have landed: follow what is there, so the
+                    // end can still replace it.
+                    if let Some(found) = unsafe { field_text(field) }.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)) {
+                        self.typed = found;
+                    }
                     return Err("the app didn't take the typed words".into());
                 }
             }

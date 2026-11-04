@@ -12,7 +12,8 @@
 //! at the end as before.
 
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::AppHandle;
@@ -33,7 +34,7 @@ impl LiveField {
     pub fn typed(&self) -> &str {
         ""
     }
-    fn sync(&mut self, _text: &str) -> Result<bool, String> {
+    fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
     }
     pub fn finish(self, _app: &AppHandle, _text: &str) -> Result<(), String> {
@@ -55,15 +56,31 @@ const FINISH_WAIT: Duration = Duration::from_secs(2);
 /// A typist with no words or stop this long gives up: no dictation is
 /// delivered later than this (`dictation::DELIVER_WINDOW`).
 const IDLE: Duration = Duration::from_secs(15 * 60);
-/// Dictations whose typists are kept at once. A dictation still being
+/// Typists kept at once that haven't typed anything. A dictation still being
 /// delivered keeps its field while the next one starts; past this the oldest
-/// is let go (one that failed before it was delivered or disarmed).
+/// that typed nothing is let go. One that typed words is only let go by its
+/// own finish or cancel, or by idling out.
 const KEEP: usize = 4;
 
-/// Dictations being typed, oldest first: id and the typist's queue.
-static TYPISTS: Mutex<Vec<(String, SyncSender<Msg>)>> = Mutex::new(Vec::new());
+/// What a typist and the dictation it types share.
+#[derive(Default)]
+struct Shared {
+    /// Set at stop: no key is posted after this.
+    stop: AtomicBool,
+    /// Some words went into the field (and may still be there).
+    typed: AtomicBool,
+}
 
-fn typists() -> std::sync::MutexGuard<'static, Vec<(String, SyncSender<Msg>)>> {
+struct Entry {
+    id: String,
+    tx: SyncSender<Msg>,
+    shared: Arc<Shared>,
+}
+
+/// Dictations being typed, oldest first.
+static TYPISTS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+
+fn typists() -> std::sync::MutexGuard<'static, Vec<Entry>> {
     TYPISTS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -73,16 +90,20 @@ pub fn start(app: &AppHandle, session_id: &str) {
         return;
     }
     let (tx, rx) = sync_channel(QUEUE);
-    {
-        let mut typists = typists();
-        typists.retain(|(id, _)| id != session_id);
-        while typists.len() >= KEEP {
-            typists.remove(0);
-        }
-        typists.push((session_id.to_string(), tx));
-    }
+    let shared = Arc::new(Shared::default());
+    register(Entry { id: session_id.to_string(), tx, shared: shared.clone() });
     let session_id = session_id.to_string();
-    std::thread::spawn(move || typist(&session_id, rx));
+    std::thread::spawn(move || typist(&session_id, rx, &shared));
+}
+
+fn register(entry: Entry) {
+    let mut typists = typists();
+    typists.retain(|other| other.id != entry.id);
+    while typists.iter().filter(|other| !other.shared.typed.load(Ordering::SeqCst)).count() >= KEEP {
+        let Some(oldest) = typists.iter().position(|other| !other.shared.typed.load(Ordering::SeqCst)) else { break };
+        typists.remove(oldest);
+    }
+    typists.push(entry);
 }
 
 /// A caption from the capture engine. Never blocks: the engine's reader
@@ -92,8 +113,8 @@ pub fn caption(caption: &Caption) {
         return;
     }
     let typists = typists();
-    let Some((_, tx)) = typists.iter().find(|(id, _)| *id == caption.session_id) else { return };
-    if let Err(TrySendError::Full(_)) = tx.try_send(Msg::Caption(caption.clone())) {
+    let Some(entry) = typists.iter().find(|entry| entry.id == caption.session_id) else { return };
+    if let Err(TrySendError::Full(_)) = entry.tx.try_send(Msg::Caption(caption.clone())) {
         tracing::debug!("live typing is behind; a caption waits for the next");
     }
 }
@@ -104,41 +125,51 @@ pub enum Typed {
     Nothing,
     /// Words were typed into this field: replace them.
     Field(LiveField),
-    /// The typist didn't answer in time, so what is in the field isn't
-    /// known: pasting could double the words. Copy them instead.
+    /// Words went in but can't be replaced (the typist didn't answer in
+    /// time, or gave up idling), so what is in the field isn't known:
+    /// pasting could double the words. Copy them instead.
     Unknown,
 }
 
 /// Stops typing this dictation and says what was typed for it, once
 /// whatever typing was under way has landed.
 pub fn finish(session_id: &str) -> Typed {
-    let Some(tx) = take(session_id) else { return Typed::Nothing };
+    let Some(entry) = take(session_id) else { return Typed::Nothing };
+    // Before anything else: from here no key is posted, even by a sync
+    // already under way, so whatever is decided below holds.
+    entry.shared.stop.store(true, Ordering::SeqCst);
+    let unknown = || {
+        if entry.shared.typed.load(Ordering::SeqCst) {
+            tracing::warn!(session_id, "live-typed words can't be replaced; copying instead of pasting");
+            Typed::Unknown
+        } else {
+            Typed::Nothing
+        }
+    };
     let (reply, answer) = sync_channel(1);
-    if tx.send(Msg::Finish(reply)).is_err() {
-        // The typist is gone (it gave up idling): it typed nothing more.
-        return Typed::Unknown;
+    if entry.tx.send(Msg::Finish(reply)).is_err() {
+        // The typist idled out.
+        return unknown();
     }
-    // Typing stops either way: a typist that answers late finds the reply
-    // dropped and exits without typing again.
     match answer.recv_timeout(FINISH_WAIT) {
         Ok(Some(field)) if !field.typed().is_empty() => Typed::Field(field),
         Ok(_) => Typed::Nothing,
-        Err(_) => {
-            tracing::warn!(session_id, "live typing didn't finish in time; copying instead of pasting");
-            Typed::Unknown
-        }
+        Err(_) => unknown(),
     }
 }
 
-/// This dictation's words go nowhere near a field: stop typing them.
+/// This dictation's words go nowhere near a field (or it failed): stop
+/// typing them. Words already typed stay: they are what the user said.
 pub fn cancel(session_id: &str) {
-    take(session_id);
+    if let Some(entry) = take(session_id) {
+        entry.shared.stop.store(true, Ordering::SeqCst);
+    }
 }
 
-fn take(session_id: &str) -> Option<SyncSender<Msg>> {
+fn take(session_id: &str) -> Option<Entry> {
     let mut typists = typists();
-    let at = typists.iter().position(|(id, _)| id == session_id)?;
-    Some(typists.remove(at).1)
+    let at = typists.iter().position(|entry| entry.id == session_id)?;
+    Some(typists.remove(at))
 }
 
 /// Where the typist is with its field.
@@ -152,13 +183,15 @@ enum Field {
     Stopped(Option<LiveField>),
 }
 
-fn typist(session_id: &str, rx: Receiver<Msg>) {
+fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
     let mut heard = Heard::default();
     let mut field = Field::Unknown;
     loop {
         let msg = match rx.recv_timeout(IDLE) {
             Ok(msg) => msg,
-            // A dictation this quiet was never delivered: let its field go.
+            // A dictation this quiet can no longer be delivered (IDLE is
+            // past `dictation::DELIVER_WINDOW`): let its field go. Its
+            // words stay in it, and `finish` copies rather than pastes.
             Err(RecvTimeoutError::Timeout) => return,
             // Replaced or cancelled: whatever was typed stays as it is.
             Err(RecvTimeoutError::Disconnected) => return,
@@ -183,17 +216,29 @@ fn typist(session_id: &str, rx: Receiver<Msg>) {
             });
             return;
         }
-        field = type_into(session_id, field, &heard.text());
+        field = type_into(session_id, field, &heard.text(), shared);
     }
 }
 
-fn type_into(session_id: &str, field: Field, text: &str) -> Field {
+fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Field {
+    if matches!(field, Field::Stopped(_)) {
+        return field;
+    }
+    // Claimed for Eavesy or a Claude Code answer since the last words: those
+    // never go into an app, so stop (what was typed stays, as said).
+    if let Some(why) = crate::dictation::words_go_elsewhere(session_id) {
+        tracing::info!(session_id, "live typing off for this dictation: {why}");
+        return match field {
+            Field::Typing(live) => Field::Stopped(Some(live)),
+            _ => Field::Stopped(None),
+        };
+    }
     let mut live = match field {
-        Field::Stopped(_) => return field,
+        Field::Stopped(_) => unreachable!("returned above"),
         Field::Typing(live) => live,
         Field::Unknown => {
             match crate::dictation::live_typing_target(session_id) {
-                // Not in front yet (or for Eavesy itself): look again at the next words.
+                // Not in front yet: look again at the next words.
                 Ok(false) => return Field::Unknown,
                 Err(why) => {
                     tracing::info!(session_id, "live typing off for this dictation: {why}");
@@ -210,7 +255,10 @@ fn type_into(session_id: &str, field: Field, text: &str) -> Field {
             }
         }
     };
-    match live.sync(text) {
+    // Before any key can be posted: a finish that times out must know the
+    // field may hold words.
+    shared.typed.store(true, Ordering::SeqCst);
+    match live.sync(text, &shared.stop) {
         Ok(_) => Field::Typing(live),
         Err(why) => {
             tracing::info!(session_id, "live typing stopped: {why}");
@@ -274,7 +322,10 @@ mod tests {
     #[test]
     fn only_settled_mic_words_for_the_current_dictation_are_queued() {
         let (tx, rx) = sync_channel(QUEUE);
-        typists().push(("s".into(), tx));
+        // Marked typed so another test's registering can't evict it.
+        let shared = Arc::new(Shared::default());
+        shared.typed.store(true, Ordering::SeqCst);
+        typists().push(Entry { id: "s".into(), tx, shared });
         let mut preview = final_(0, 500, "hi");
         preview.preview = true;
         caption(&preview);
@@ -288,8 +339,55 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Msg::Caption(c)) if c.text == "hello"));
         assert!(rx.try_recv().is_err());
         cancel("someone else");
-        assert!(typists().iter().any(|(id, _)| id == "s"), "another dictation's cancel leaves this one");
+        assert!(typists().iter().any(|entry| entry.id == "s"), "another dictation's cancel leaves this one");
         cancel("s");
-        assert!(!typists().iter().any(|(id, _)| id == "s"));
+        assert!(!typists().iter().any(|entry| entry.id == "s"));
+    }
+
+    fn entry(id: &str, typed: bool) -> (Entry, Receiver<Msg>) {
+        let (tx, rx) = sync_channel(1);
+        let shared = Arc::new(Shared::default());
+        shared.typed.store(typed, Ordering::SeqCst);
+        (Entry { id: id.into(), tx, shared }, rx)
+    }
+
+    #[test]
+    fn a_typist_that_typed_is_never_evicted_and_never_reads_as_nothing() {
+        let mut keep = Vec::new();
+        let (typed, rx) = entry("evict-typed", true);
+        keep.push(rx);
+        register(typed);
+        for n in 0..KEEP + 2 {
+            let (quiet, rx) = entry(&format!("evict-quiet-{n}"), false);
+            keep.push(rx);
+            register(quiet);
+        }
+        assert!(typists().iter().any(|entry| entry.id == "evict-typed"));
+        assert!(!typists().iter().any(|entry| entry.id == "evict-quiet-0"), "the oldest quiet one goes");
+        // Its typist is gone (it idled out): the words may be in the field.
+        drop(keep.remove(0));
+        assert!(matches!(finish("evict-typed"), Typed::Unknown));
+        // One that typed nothing and is gone delivers as usual.
+        let last = format!("evict-quiet-{}", KEEP + 1);
+        drop(keep.pop());
+        assert!(matches!(finish(&last), Typed::Nothing));
+        for n in 0..KEEP + 2 {
+            cancel(&format!("evict-quiet-{n}"));
+        }
+    }
+
+    #[test]
+    fn finish_stops_typing_before_it_decides() {
+        let (typed, _rx) = entry("stop-first", true);
+        let shared = typed.shared.clone();
+        register(typed);
+        // Nobody answers: the typist is mid-sync. It must post no more keys.
+        assert!(matches!(finish("stop-first"), Typed::Unknown));
+        assert!(shared.stop.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_typist_idles_out_only_after_dictations_can_no_longer_be_delivered() {
+        assert!(IDLE >= crate::dictation::DELIVER_WINDOW);
     }
 }

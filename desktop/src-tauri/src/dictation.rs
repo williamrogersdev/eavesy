@@ -29,7 +29,7 @@ static PASTED: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None
 static WRITTEN: Mutex<Option<(String, crate::transcribe::Written)>> = Mutex::new(None);
 
 const PRESS_WINDOW: Duration = Duration::from_secs(5);
-const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
+pub(crate) const DELIVER_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 pub fn note_shortcut_press() {
     let target = front_app();
@@ -121,18 +121,26 @@ pub fn disarm(session_id: &str) {
     crate::live_typing::cancel(session_id);
 }
 
+/// Why this dictation's words never go into the app in front, if they
+/// don't: cheap enough to ask before every live-typed update.
+pub fn words_go_elsewhere(session_id: &str) -> Option<&'static str> {
+    if crate::assistant::voice::is_for(session_id) {
+        Some("the words are for Eavesy")
+    } else if crate::agents::is_answer(session_id) {
+        Some("the words answer a Claude Code card")
+    } else if PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
+        Some("Eavesy's own box takes these words")
+    } else {
+        None
+    }
+}
+
 /// Whether "Type as I talk" may type this dictation's words now: Ok(true)
 /// when the app it pastes into is in front, Ok(false) while it isn't (ask
 /// again later), and an error when its words never go into an app at all.
 pub fn live_typing_target(session_id: &str) -> Result<bool, String> {
-    if crate::assistant::voice::is_for(session_id) {
-        return Err("the words are for Eavesy".into());
-    }
-    if crate::agents::is_answer(session_id) {
-        return Err("the words answer a Claude Code card".into());
-    }
-    if PANEL_WANTS_DICTATION.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Eavesy's own box takes these words".into());
+    if let Some(why) = words_go_elsewhere(session_id) {
+        return Err(why.into());
     }
     if !accessibility_trusted() {
         return Err("Accessibility permission is off".into());
