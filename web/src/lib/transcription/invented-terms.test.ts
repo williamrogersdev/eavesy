@@ -21,6 +21,19 @@ test('a term already said, or said as a confirmed fix, may stay', () => {
   expect(inventedTerms('open the wrap app', 'Open the Repackify.', terms, [{ from: 'wrap app', to: 'Repackify' }])).toEqual([]);
 });
 
+test('a fix or sound-alike left as heard allows no term elsewhere', () => {
+  const fix = [{ from: 'wrap app', to: 'Repackify' }];
+  expect(inventedTerms('open the wrap app and check orders', 'Open the wrap app and check Repackify orders.', terms, fix)).toEqual(['Repackify']);
+  expect(inventedTerms('repack of support and the orders', 'Repack of support and the Repackify orders.', terms)).toEqual(['Repackify']);
+});
+
+test('terms count as whole words in any case, symbols and all', () => {
+  expect(inventedTerms('the repackify dashboard', 'The REPACKIFY dashboard.', terms)).toEqual([]);
+  expect(inventedTerms('repackifying it', 'Repackifying it.', terms)).toEqual([]);
+  expect(inventedTerms('i used it today', 'I used C++ today.', ['C++'])).toEqual(['C++']);
+  expect(inventedTerms('i used c plus plus today', 'I used C++ today.', ['C++'], [{ from: 'c plus plus', to: 'C++' }])).toEqual([]);
+});
+
 test('one sound-alike allows one term, not two', () => {
   expect(inventedTerms('repack of support and the orders', 'Repackify support and the Repackify orders.', terms)).toEqual(['Repackify']);
 });

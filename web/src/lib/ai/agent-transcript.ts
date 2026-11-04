@@ -1,7 +1,7 @@
 import type { LearnedCorrection } from '@/lib/dictionary/learning';
 import { DEFAULT_DICTATION_STYLE, withoutSwearing, type DictationStyle } from '@/lib/transcription/dictation-style';
 import type Anthropic from '@anthropic-ai/sdk';
-import { inventedTerms } from '@/lib/transcription/invented-terms';
+import { count, inventedTerms } from '@/lib/transcription/invented-terms';
 import { MODELS } from './client';
 import {
   chunkTurns,
@@ -196,7 +196,7 @@ export async function polishDictation(
   const restyle = style !== 'natural' || !!args.forAgents;
   const said = args.text.trim();
   const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
-  const known = (args.corrections ?? []).filter(entry => said.toLowerCase().includes(entry.from.toLowerCase())).map(entry => entry.to).join(' ');
+  const known = (args.corrections ?? []).filter(entry => count(said, entry.from) > 0).map(entry => entry.to).join(' ');
   // A tone someone asked for is worth a call however short the words are, and
   // so is a confirmed fix whose words were heard. A dictionary alone is not:
   // a short "sounds good" has nothing to spell.

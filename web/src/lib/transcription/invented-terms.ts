@@ -39,10 +39,18 @@ export function likeness(a: string, b: string): number {
   return (2 * previous[b.length]) / (a.length + b.length);
 }
 
-function count(text: string, term: string): number {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-  return text.match(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu'))?.length ?? 0;
+function wholePhrase(phrase: string): RegExp {
+  const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu');
 }
+
+/** How many times `phrase` stands as whole words in `text`, any case: "pool" is not in "carpool". */
+export function count(text: string, phrase: string): number {
+  return phrase.trim() ? (text.match(wholePhrase(phrase))?.length ?? 0) : 0;
+}
+
+/** Sound-alikes of `term` in `text` that aren't the term itself. */
+const othersLike = (text: string, term: string) => soundAlikes(wordsOf(text.replace(wholePhrase(term), ' ')), term);
 
 /** Runs of heard words that sound like `term`, none sharing a word: how many times it may have been said. */
 function soundAlikes(heard: readonly string[], term: string): number {
@@ -77,7 +85,6 @@ export function inventedTerms(
   terms: readonly string[],
   corrections: readonly LearnedCorrection[] = [],
 ): string[] {
-  const heard = wordsOf(said);
   const seen = new Set<string>();
   const invented: string[] = [];
   for (const raw of terms) {
@@ -87,11 +94,14 @@ export function inventedTerms(
     seen.add(key);
     const extra = count(candidate, term) - count(said, term);
     if (extra <= 0) continue;
+    // Each extra term must replace something: a confirmed fix's words or a
+    // sound-alike that the rewrite no longer has. One left as heard while the
+    // term lands elsewhere allows nothing.
     const fixed = corrections
       .filter((fix) => fix.to.trim().toLocaleLowerCase('en') === key && wordsOf(fix.from).length > 0)
-      .reduce((sum, fix) => sum + count(said, fix.from), 0);
-    // Heard as itself counts among the sound-alikes, and was already in `said`'s own count.
-    if (extra > fixed + Math.max(0, soundAlikes(heard, term) - count(said, term))) invented.push(term);
+      .reduce((sum, fix) => sum + Math.max(0, count(said, fix.from) - count(candidate, fix.from)), 0);
+    const replaced = Math.max(0, othersLike(said, term) - othersLike(candidate, term));
+    if (extra > fixed + replaced) invented.push(term);
   }
   return invented;
 }
