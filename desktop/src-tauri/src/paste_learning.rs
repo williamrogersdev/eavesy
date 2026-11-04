@@ -224,7 +224,7 @@ mod mac {
         let mut range = CFRange { location: 0, length: 0 };
         let ok = AXValueGetValue(value, AX_VALUE_CF_RANGE, (&mut range as *mut CFRange).cast());
         CFRelease(value);
-        (ok && range.location >= 0 && range.length >= 0).then(|| (range.location as usize, range.length as usize))
+        (ok && range.location >= 0 && range.length >= 0).then_some((range.location as usize, range.length as usize))
     }
 
     /// The words a dictation has typed into one field while it runs ("Type as
