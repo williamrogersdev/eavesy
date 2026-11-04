@@ -30,8 +30,20 @@ test('a fix or sound-alike left as heard allows no term elsewhere', () => {
 test('terms count as whole words in any case, symbols and all', () => {
   expect(inventedTerms('the repackify dashboard', 'The REPACKIFY dashboard.', terms)).toEqual([]);
   expect(inventedTerms('repackifying it', 'Repackifying it.', terms)).toEqual([]);
-  expect(inventedTerms('i used it today', 'I used C++ today.', ['C++'])).toEqual(['C++']);
-  expect(inventedTerms('i used c plus plus today', 'I used C++ today.', ['C++'], [{ from: 'c plus plus', to: 'C++' }])).toEqual([]);
+  expect(inventedTerms('we use next js', 'We use Next.js.', ['Next.js'])).toEqual([]);
+  expect(inventedTerms('we use it', 'We use Next.js.', ['Next.js'])).toEqual(['Next.js']);
+});
+
+test('a term must stand where its sound-alike or fix was, not elsewhere', () => {
+  expect(inventedTerms('trust me on this', 'Believe me on this, use Rust.', terms)).toEqual(['Rust']);
+  const fix = [{ from: 'wrap app', to: 'Repackify' }];
+  expect(inventedTerms('open the wrap app and check orders', 'Open the app and check Repackify orders.', terms, fix)).toEqual(['Repackify']);
+  expect(inventedTerms('so the repack of thing and also check orders', 'The Repackify thing. Also check orders.', terms)).toEqual([]);
+});
+
+test('number forms of a term count as the term', () => {
+  expect(inventedTerms('store it somewhere', 'Store it in One DB.', terms)).toEqual(['1db']);
+  expect(inventedTerms('store it in one db', 'Store it in One DB.', terms)).toEqual([]);
 });
 
 test('one sound-alike allows one term, not two', () => {
