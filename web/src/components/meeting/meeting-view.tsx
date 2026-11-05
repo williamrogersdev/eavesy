@@ -25,6 +25,7 @@ import { ProcessingProgress } from './processing-progress';
 import { MeetingChat } from './meeting-chat';
 import { Centered, Section, SubHeading } from './layout';
 import { audioUrl } from './format';
+import { AttachmentsSection } from './attachments';
 
 export function MeetingView({ meetingId, firstRun = false }: { meetingId: string; firstRun?: boolean }) {
   // Polling is the fallback for when the live stream can't be opened.
@@ -288,9 +289,12 @@ function Loaded({
               chapters={summary?.chapters ?? []}
               speakerNamesJson={meeting.speakerNamesJson ?? null}
               agentTranscript={meeting.agentTranscriptMd}
+              attachments={data.attachments}
               onChanged={onSaved}
             />
-          ) : null}
+          ) : (
+            <AttachmentsSection attachments={data.attachments ?? []} />
+          )}
 
           <TranscriptSection
             segments={meeting.transcriptOverrideMd ? segments : []}

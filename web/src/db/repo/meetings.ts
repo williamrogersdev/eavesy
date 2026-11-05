@@ -3,6 +3,7 @@ import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { devices, meetingSegments, meetings, transcriptSegments, summaries, userNotes } from '../schema';
 import { transcriptionLanguage } from './users';
+import * as attachmentsRepo from './attachments';
 import {
   decode,
   type ActionItem,
@@ -182,7 +183,7 @@ export async function listSummariesForUser(
 }
 
 export async function getFull(db: AppDb, args: { meetingId: string; userId: string }) {
-  const [meetingRows, summaryRow, notesRow, segments, segmentStamp] = await db.batch([
+  const [meetingRows, summaryRow, notesRow, segments, segmentStamp, attachmentRows] = await db.batch([
     db
       .select({ ...getTableColumns(meetings), deviceName: devices.name })
       .from(meetings)
@@ -214,6 +215,7 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
       .select({ at: max(meetingSegments.transcribedAt) })
       .from(meetingSegments)
       .where(eq(meetingSegments.meetingId, args.meetingId)),
+    attachmentsRepo.listForMeetingQuery(db, args.meetingId),
   ]);
   const meeting = meetingRows[0];
   if (!meeting) return null;
@@ -225,6 +227,8 @@ export async function getFull(db: AppDb, args: { meetingId: string; userId: stri
     segments,
     // Where a live transcript stream should resume from after this read.
     transcriptCursor: segmentStamp[0]?.at ?? 0,
+    /** Snapshots of shared screens and screenshots, at their offsets. */
+    attachments: attachmentRows.map(attachmentsRepo.toView),
   };
 }
 

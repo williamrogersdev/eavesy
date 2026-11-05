@@ -64,6 +64,8 @@ pub struct Session {
     events: mpsc::Receiver<CaptureEvent>,
     out_path: PathBuf,
     started_at_ms: i64,
+    /// When the engine said its first audio arrived: offset zero for Snapshots and screenshots.
+    live_at_ms: i64,
     mode: String,
     source: String,
     /// Settled on-device captions, when the engine was asked for them.
@@ -543,6 +545,11 @@ fn spawn_capture(
         // The words on disk, not a fetch: a capture never waits on the network.
         // The refresh below lands for the next one, so the first capture after
         // pairing, or after the words change on the web, runs without them.
+        // Meetings keep Snapshots of the shared screen in their own folder. The
+        // engine checks Screen Recording itself and does nothing without it.
+        if let Some(folder) = snapshots_folder(source, dictation, &out_path, &crate::settings::load(app)) {
+            args.extend(["--snapshots-dir".into(), folder.into()]);
+        }
         if let Some(words) = crate::vocabulary::sidecar_arg(&crate::vocabulary::cached(app)) {
             args.extend(["--vocabulary".into(), words.into()]);
         }
@@ -671,6 +678,7 @@ fn spawn_capture(
             events,
             out_path,
             started_at_ms,
+            live_at_ms: now_ms(),
             mode: mode.to_string(),
             source: source.to_string(),
             captions,
@@ -709,6 +717,32 @@ fn spawn_capture(
         started_at_ms,
         mode: mode.to_string(),
         source: source.to_string(),
+    })
+}
+
+/// Where a capture's Snapshots go: only Meeting recordings (the `mixed`
+/// source) take them, and only with the setting on.
+fn snapshots_folder(
+    source: &str,
+    dictation: bool,
+    out_path: &std::path::Path,
+    settings: &crate::settings::Settings,
+) -> Option<PathBuf> {
+    (source == "mixed" && !dictation && settings.snapshots())
+        .then(|| out_path.parent().map(|folder| folder.join(crate::meeting_attachments::SNAPSHOTS_DIR)))
+        .flatten()
+}
+
+/// The Meeting recording running now, which screenshots are added to.
+pub fn meeting_in_progress(app: &AppHandle) -> Option<crate::meeting_attachments::Recording> {
+    let captures = app.state::<Captures>();
+    let running = captures.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    running.iter().find(|(_, session)| session.mode == "audio" && session.source == "mixed").and_then(|(id, session)| {
+        Some(crate::meeting_attachments::Recording {
+            session_id: id.clone(),
+            folder: session.out_path.parent()?.to_path_buf(),
+            live_at_ms: session.live_at_ms,
+        })
     })
 }
 
@@ -1366,6 +1400,7 @@ fn stop_capture_inner(
         events,
         out_path,
         started_at_ms,
+        live_at_ms: _,
         mode,
         source,
         captions,
@@ -2053,6 +2088,20 @@ mod tests {
             has_video,
             folder_path: Some(folder.to_string_lossy().into_owned()),
         }
+    }
+
+    #[test]
+    fn only_meetings_with_the_setting_on_take_snapshots() {
+        let out = std::path::Path::new("/r/2026-11-05 Weekly sync/audio.m4a");
+        let mut settings = crate::settings::Settings::default();
+        assert_eq!(
+            super::snapshots_folder("mixed", false, out, &settings),
+            Some(PathBuf::from("/r/2026-11-05 Weekly sync/snapshots"))
+        );
+        assert_eq!(super::snapshots_folder("mic", false, out, &settings), None, "voice notes");
+        assert_eq!(super::snapshots_folder("mixed", true, out, &settings), None, "dictation");
+        settings.snapshots = Some(false);
+        assert_eq!(super::snapshots_folder("mixed", false, out, &settings), None, "turned off");
     }
 
     #[test]

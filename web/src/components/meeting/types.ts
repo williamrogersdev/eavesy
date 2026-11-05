@@ -38,6 +38,19 @@ export interface MeetingData {
   summary: Summary | null;
   segments: Segment[];
   notes: { contentMd: string } | null;
+  /** Snapshots of shared screens and screenshots; absent from older servers. */
+  attachments?: MeetingAttachment[];
   /** Where the live transcript stream resumes from; absent from older servers. */
   transcriptCursor?: number;
+}
+
+export interface MeetingAttachment {
+  id: string;
+  kind: 'snapshot' | 'screenshot';
+  /** From the start of the recording, like a transcript line's `startMs`. */
+  offsetMs: number;
+  url: string;
+  width: number | null;
+  height: number | null;
+  caption: string | null;
 }

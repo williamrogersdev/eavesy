@@ -48,6 +48,16 @@ export function meetingSegmentKey(
   return `users/${userId}/meetings/${meetingId}/segments/${idx.toString().padStart(6, '0')}${suffix}.m4a`;
 }
 
+/** A Snapshot or screenshot of a meeting, under the meeting's prefix so deleting it removes this too. */
+export function meetingAttachmentKey(
+  userId: string,
+  meetingId: string,
+  clientName: string,
+  contentType: 'image/jpeg' | 'image/png',
+): string {
+  return `users/${userId}/meetings/${meetingId}/attachments/${clientName}.${contentType === 'image/png' ? 'png' : 'jpg'}`;
+}
+
 export function dictationAudioKey(opts: {
   isAnonymous: boolean;
   userId: string;

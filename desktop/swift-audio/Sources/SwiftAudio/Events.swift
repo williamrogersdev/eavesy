@@ -25,6 +25,9 @@ enum EventEmitter {
     /// asked for (see `StartClock`); its audio begins `audioFromMs` after.
     static func ready(firstBufferMs: Int64? = nil, audioFromMs: Int64? = nil) {
         captureIsLive = true
+        liveAtLock.lock()
+        if liveAt == nil { liveAt = Date() }
+        liveAtLock.unlock()
         var event: [String: Any] = ["event": "ready"]
         if let firstBufferMs { event["firstBufferMs"] = firstBufferMs }
         if let audioFromMs { event["audioFromMs"] = audioFromMs }
@@ -92,6 +95,15 @@ enum EventEmitter {
 }
 
 var captureIsLive = false
+private let liveAtLock = NSLock()
+private var liveAt: Date?
+/// When the first audio arrived: the zero Snapshots count their offsets from.
+/// Set on the audio thread, read on the snapshot queue.
+var captureLiveAt: Date? {
+    liveAtLock.lock()
+    defer { liveAtLock.unlock() }
+    return liveAt
+}
 var salvageAndExit: (() -> Void)?
 
 func fail(_ message: String) -> Never {

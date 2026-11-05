@@ -158,6 +158,18 @@ fn run(app: AppHandle, receiver: mpsc::Receiver<PathBuf>) {
                 Verdict::Drop => false,
                 Verdict::Import => {
                     seen.insert(item.path.clone());
+                    // During a meeting it joins the meeting instead of the history;
+                    // if that fails it goes to the history as usual.
+                    if let Some(recording) = crate::audio::meeting_in_progress(&app) {
+                        match crate::meeting_attachments::attach_copy(&recording, &item.path, taken_at_ms(&item.path)) {
+                            Ok(_) => {
+                                let _ = app.emit("meeting:attachment", serde_json::json!({ "sessionId": recording.session_id, "kind": "screenshot" }));
+                                crate::telemetry::track("meeting_screenshot", serde_json::json!({ "from": "macos" }));
+                                return false;
+                            }
+                            Err(error) => crate::telemetry::capture("screenshots.attach", &error),
+                        }
+                    }
                     match crate::imports::import_path(&app, &item.path, true) {
                         Ok(_) => added = true,
                         Err(error) => crate::telemetry::capture("screenshots.import", &error),
@@ -170,6 +182,15 @@ fn run(app: AppHandle, receiver: mpsc::Receiver<PathBuf>) {
             let _ = app.emit("recordings:updated", ());
         }
     }
+}
+
+/// When macOS took the screenshot: the file's creation time, else now.
+fn taken_at_ms(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.created())
+        .ok()
+        .and_then(|created| created.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or_else(|| chrono::Utc::now().timestamp_millis(), |since| since.as_millis() as i64)
 }
 
 pub fn start(app: &AppHandle) {

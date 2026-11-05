@@ -88,6 +88,8 @@ export const USER_DAILY_QUOTAS = {
   capture: { limit: 300, failMode: 'closed' },
   // Mac screenshots synced to the user's other Macs: storage only, no AI.
   'capture-sync': { limit: 2_000, failMode: 'closed' },
+  // Snapshots and screenshots during meetings: at most one every 8 s, storage only.
+  'meeting-attachment': { limit: 3_000, failMode: 'open' },
   drop: { limit: 500, failMode: 'closed' },
   chat: { limit: 300, failMode: 'closed' },
   regenerate: { limit: 60, failMode: 'closed' },

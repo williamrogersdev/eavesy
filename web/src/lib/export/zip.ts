@@ -64,7 +64,8 @@ export function meetingFolderFiles(
   return files;
 }
 
-type FullMeeting = Omit<NonNullable<Awaited<ReturnType<typeof getFull>>>, 'notes'> & {
+// Meeting pictures (Snapshots, screenshots) aren't in the export yet.
+type FullMeeting = Omit<NonNullable<Awaited<ReturnType<typeof getFull>>>, 'notes' | 'attachments'> & {
   // A meeting may have no notes row (getFull's row type doesn't say so).
   notes: NonNullable<Awaited<ReturnType<typeof getFull>>>['notes'] | null;
 };

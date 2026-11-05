@@ -9,6 +9,10 @@ use crate::{audio, fs_writer, hud, store};
 
 #[tauri::command]
 pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
+    // During a meeting the screenshot joins the meeting, at the moment it was taken.
+    if let Some(recording) = audio::meeting_in_progress(&app) {
+        return attach_to_meeting(&app, &recording).await;
+    }
     if app.state::<audio::Captures>().is_busy() { return Err("Stop the current recording before taking a screenshot.".into()); }
     let id = uuid::Uuid::new_v4().to_string();
     let folder = fs_writer::recordings_root(&app)?.join(format!("Screenshot-{id}"));
@@ -30,6 +34,24 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
         crate::commands::show_launcher(app.clone());
     }
     Ok(id)
+}
+
+/// Takes a screenshot into the meeting being recorded. Returns the meeting's id.
+/// The control and the panel stay as they are: capture never interrupts.
+async fn attach_to_meeting(app: &AppHandle, recording: &crate::meeting_attachments::Recording) -> Result<String, String> {
+    let taken_at = chrono::Utc::now().timestamp_millis();
+    // Written under a hidden name, so sync never sends half a file. A meeting
+    // that stops meanwhile still gets it: sync sends pictures while the
+    // transcript is written.
+    let partial = crate::meeting_attachments::partial_screenshot(&recording.folder, "png")?;
+    if let Err(error) = take_screenshot(app, &partial).await {
+        let _ = std::fs::remove_file(&partial);
+        return Err(error);
+    }
+    crate::meeting_attachments::commit_screenshot(&partial, &recording.folder, recording.offset_of(taken_at), "png")?;
+    let _ = app.emit("meeting:attachment", serde_json::json!({ "sessionId": recording.session_id, "kind": "screenshot" }));
+    crate::telemetry::track("meeting_screenshot", serde_json::json!({ "from": "button" }));
+    Ok(recording.session_id.clone())
 }
 
 async fn take_screenshot(app: &AppHandle, path: &std::path::Path) -> Result<(), String> {
