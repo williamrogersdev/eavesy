@@ -120,6 +120,25 @@ mod mac {
         CFRelease(value);
         if result == 0 { Ok(()) } else { Err(format!("the app refused the selection ({result})")) }
     }
+    /// Selects `length` units from `start` and waits for the app to report
+    /// exactly that range holding `expected`: Chrome applies a selection a
+    /// moment after accepting it, so an immediate read returns the old one.
+    unsafe fn select_exactly(field: Ref, start: usize, length: usize, expected: &str) -> Result<bool, String> {
+        select(field, start, length)?;
+        let give_up = std::time::Instant::now() + SELECTION_SETTLES;
+        loop {
+            let range = selection(field);
+            let selected = string(field, "AXSelectedText").map(|s| super::normalize(&s));
+            if range == Some((start, length)) && selected.as_deref() == Some(expected) {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= give_up {
+                return Ok(false);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    const SELECTION_SETTLES: Duration = Duration::from_millis(400);
     /// Swaps the passage Eavesy pasted last for `text`, when it is still in its
     /// field exactly as `previous`, that field still has the keyboard, and the
     /// app selects exactly that passage. Otherwise nothing in the app changes.
@@ -149,11 +168,14 @@ mod mac {
         GENERATION.fetch_add(1, Ordering::SeqCst);
         let start = paste.prefix.encode_utf16().count();
         let length = previous.encode_utf16().count();
-        if let Err(why) = unsafe { select(paste.field.0 as Ref, start, length) } {
-            last().get_or_insert(paste);
-            return Err(why);
-        }
-        if unsafe { string(paste.field.0 as Ref, "AXSelectedText") }.map(|selected| super::normalize(&selected)) != Some(paste.pasted.clone()) {
+        let selected = match unsafe { select_exactly(paste.field.0 as Ref, start, length, &paste.pasted) } {
+            Ok(selected) => selected,
+            Err(why) => {
+                last().get_or_insert(paste);
+                return Err(why);
+            }
+        };
+        if !selected {
             // Whatever the app did select must not stay selected: the user's
             // next keystroke would type over it. Put the caret back after
             // the pasted words, and keep them for a later try.
@@ -317,12 +339,9 @@ mod mac {
             if keep < self.typed.len() {
                 let from = start + super::units(&self.typed[..keep]);
                 let length = super::units(&self.typed[keep..]);
-                unsafe { select(field, from, length)? };
                 // Both the range and its text: the key press below replaces
                 // exactly what is selected, and nothing else may go with it.
-                let range = unsafe { selection(field) };
-                let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
-                if range != Some((from, length)) || selected.as_deref() != Some(&self.typed[keep..]) {
+                if !unsafe { select_exactly(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
                     let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
                     return Err("the app didn't select the words to retype".into());
@@ -393,10 +412,7 @@ mod mac {
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
             let length = super::units(&self.typed);
-            unsafe { select(field, start, length)? };
-            let range = unsafe { selection(field) };
-            let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
-            if range != Some((start, length)) || selected.as_deref() != Some(self.typed.as_str()) {
+            if !unsafe { select_exactly(field, start, length, &self.typed)? } {
                 let _ = unsafe { select(field, start + length, 0) };
                 return Err("the app didn't select the typed words".into());
             }
@@ -594,6 +610,24 @@ mod mac {
                 }
             }
         }))
+    }
+
+    /// Run explicitly with an empty text box focused (a ProseMirror editor in
+    /// Chrome reproduces Claude's message box), from a binary with
+    /// Accessibility: live typing types, revises, and selects its words.
+    #[cfg(test)]
+    #[test]
+    #[ignore = "requires a focused empty text field and Accessibility"]
+    fn live_typing_e2e() {
+        assert!(unsafe { AXIsProcessTrusted() }, "needs Accessibility");
+        let stop = AtomicBool::new(false);
+        let mut live = LiveField::focused().expect("a readable focused field");
+        for text in ["Hello", "Hello there friend", "Hello their friends, how", "Hello there friends, how are you?"] {
+            assert_eq!(live.sync(text, &stop), Ok(true), "typing {text:?}");
+            assert_eq!(live.typed, text);
+        }
+        live.select_typed().expect("selects the typed words");
+        press(KEY_DELETE, None).unwrap();
     }
 
     /// Run explicitly with a disposable focused TextEdit document and the local test API.
