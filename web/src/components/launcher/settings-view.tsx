@@ -621,7 +621,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
 
         <div id="settings-connections" hidden={section !== 'connections'}>
-          <ConnectionsSettings signedIn={!!account} active={section === 'connections'} autoRecord={isDesktop() ? autoRecordOn : undefined} />
+          <ConnectionsSettings signedIn={!!account} active={section === 'connections'} />
         </div>
 
         <div id="settings-agents" hidden={section !== 'agents'}>

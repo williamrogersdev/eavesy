@@ -1,6 +1,8 @@
 import type { AppDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { openSecret } from '@/server/secret-box';
+import { reconcileCalendarBots } from '@/server/meeting-bots/calendar-plan';
+import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
 import {
   CALENDAR_LIST_SCOPE,
   type CalendarEventInput,
@@ -40,6 +42,8 @@ export async function syncConnection(
   const result = await attempt(db, connection, creds, now, accessToken, signal);
   // A success already stamped the row along with its events.
   if (result !== 'ok') await calendarRepo.markAttempt(db, connection.id, result, now).catch(() => undefined);
+  // Fresh events can change which meetings the Notetaker goes to.
+  else await planAfterSync(db, connection.userId, now);
   return result;
 }
 
@@ -120,6 +124,25 @@ async function attempt(
     if (error instanceof GoogleAccessRevoked) return 'reconnect';
     console.error('[calendar-sync]', error);
     return 'failed';
+  }
+}
+
+/** Sends or withdraws Notetaker bots for the account's meetings; a failure never fails the sync. */
+async function planAfterSync(db: AppDb, userId: string, now: number): Promise<void> {
+  const env = await botEnv();
+  if (!env) return;
+  await reconcileCalendarBots(db, env, userId, now).catch((error: unknown) => console.error('[calendar-sync] notetaker plan', error));
+}
+
+/** The meeting-bot service binding where this Worker has one (the web Worker does). */
+async function botEnv(): Promise<MeetingBotsEnv | null> {
+  try {
+    // Loaded here, not at the top: outside a Worker (unit tests) there is no `cloudflare:workers`.
+    const { getCloudflareContext } = await import('@/server/cloudflare-context');
+    const env = getCloudflareContext<Partial<MeetingBotsEnv>>().env;
+    return env?.MEETING_BOTS ? { MEETING_BOTS: env.MEETING_BOTS } : null;
+  } catch {
+    return null;
   }
 }
 

@@ -5,13 +5,16 @@ import * as calendarRepo from '@/db/repo/calendar';
 import { currentAndNext, isMeetingLike } from '@/lib/calendar/match';
 import { isDue, syncDue } from '@/server/calendar-sync';
 import { resolveIngestActor } from '@/server/device-auth';
+import { eq } from 'drizzle-orm';
+import { users } from '@/db/schema';
+import { type CaptureDefault, effectiveMode, legacyRecordChoice } from '@/lib/meetings/capture-plan';
 
 /** How far ahead `next` and `upcoming` look. */
 const NEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The most meetings `upcoming` lists. */
 const UPCOMING_LIMIT = 20;
 
-function view(event: calendarRepo.StoredEvent | null) {
+function view(event: calendarRepo.StoredEvent | null, accountDefault: CaptureDefault) {
   if (!event) return null;
   return {
     id: event.id,
@@ -22,7 +25,12 @@ function view(event: calendarRepo.StoredEvent | null) {
     platform: event.platform,
     attendees: event.participants,
     recorded: event.recordedMeetingId !== null,
-    recordChoice: event.recordChoice,
+    // What Mac apps from before capture modes read: never record a Notetaker-only meeting.
+    recordChoice: legacyRecordChoice(event.captureMode, accountDefault),
+    // This meeting's own choice (null: the account default), and the plan it ends up with.
+    captureMode: event.captureMode,
+    mode: effectiveMode(event.captureMode, accountDefault),
+    notetakerCanJoin: event.platform === 'meet' || event.platform === 'teams',
   };
 }
 
@@ -48,7 +56,15 @@ export const Route = createFileRoute('/api/calendar-events')({
         const events = connections.length ? await calendarRepo.eventsAround(db, actor.userId, now, now + NEXT_WINDOW_MS) : [];
         const { current, next } = currentAndNext(events, now);
         const upcoming = events.filter((event) => isMeetingLike(event) && event.endsAt > now).slice(0, UPCOMING_LIMIT);
-        return Response.json({ connected: connections.length > 0, current: view(current), next: view(next), upcoming: upcoming.map(view) });
+        const accountDefault = (await db.select({ mode: users.meetingCaptureDefault }).from(users).where(eq(users.id, actor.userId)).limit(1))[0]?.mode ?? 'mac';
+        const show = (event: calendarRepo.StoredEvent | null) => view(event, accountDefault);
+        return Response.json({
+          connected: connections.length > 0,
+          captureDefault: accountDefault,
+          current: show(current),
+          next: show(next),
+          upcoming: upcoming.map(show),
+        });
       },
     },
   },

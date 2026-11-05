@@ -1,5 +1,6 @@
 import { isRecord } from '@/lib/json';
 import { accountCall, isDesktop, openWebApp } from '@/lib/desktop/bridge';
+import type { CaptureMode } from '@/lib/meetings/capture-plan';
 
 export interface CalendarConnection {
   id: string;
@@ -101,13 +102,35 @@ export interface UpcomingMeeting {
   endsAt: number;
   meetingUrl: string | null;
   recordChoice: 'record' | 'skip' | null;
+  /** This meeting's own capture choice; null follows the account default. */
+  captureMode: CaptureMode | null;
+  /** What happens: its own choice, else the default. */
+  mode: CaptureMode;
+  /** A Meet or Teams call the Notetaker can join. */
+  notetakerCanJoin: boolean;
 }
+
+const MODES: readonly CaptureMode[] = ['mac', 'notetaker', 'both', 'skip'];
+const asMode = (value: unknown): CaptureMode | null => (MODES.includes(value as CaptureMode) ? (value as CaptureMode) : null);
 
 function parseMeeting(item: unknown): UpcomingMeeting[] {
   if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return [];
   if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return [];
   const choice = item.recordChoice === 'record' || item.recordChoice === 'skip' ? item.recordChoice : null;
-  return [{ id: item.id, title: item.title, startsAt: item.startsAt, endsAt: item.endsAt, meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null, recordChoice: choice }];
+  const captureMode = asMode(item.captureMode);
+  // An older server sends only recordChoice.
+  const mode = asMode(item.mode) ?? (choice === 'skip' ? 'skip' : 'mac');
+  return [{
+    id: item.id,
+    title: item.title,
+    startsAt: item.startsAt,
+    endsAt: item.endsAt,
+    meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null,
+    recordChoice: choice,
+    captureMode,
+    mode,
+    notetakerCanJoin: item.notetakerCanJoin === true,
+  }];
 }
 
 /** `/api/calendar-events`' upcoming meetings, or null when it isn't that answer. */
@@ -138,6 +161,60 @@ export async function setRecordChoice(id: string, recordChoice: 'record' | 'skip
   }
   const response = await fetch(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recordChoice }) });
   if (!response.ok) throw new Error('Couldn’t save that. Try again.');
+}
+
+/** Sets how one meeting is captured; null goes back to the account default. */
+export async function setCaptureMode(id: string, captureMode: CaptureMode | null): Promise<void> {
+  const path = `/api/calendar-events/${encodeURIComponent(id)}`;
+  if (isDesktop()) {
+    await accountCall('PATCH', path, { captureMode });
+    return;
+  }
+  const response = await fetch(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureMode }) });
+  if (!response.ok) throw new Error('Couldn’t save that. Try again.');
+}
+
+/** The account's meeting capture settings, from `/api/me`. */
+export interface MeetingCapturePrefs {
+  captureDefault: Exclude<CaptureMode, 'skip'>;
+  /** The name typed in Settings; null when none was. */
+  notetakerName: string | null;
+  /** The name the Notetaker joins under now. */
+  joinsAs: string;
+  /** Whether this Eavesy server can send the Notetaker at all. */
+  notetakerAvailable: boolean;
+}
+
+async function meCall(method: 'GET' | 'PATCH', body?: unknown): Promise<unknown> {
+  if (isDesktop()) return await accountCall(method, '/api/me', body);
+  const response = await fetch('/api/me', {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) throw new Error(method === 'GET' ? 'Couldn’t load your settings.' : 'Couldn’t save that. Try again.');
+  return await response.json().catch(() => null);
+}
+
+export function parseMeetingCapture(me: unknown): MeetingCapturePrefs | null {
+  if (!isRecord(me)) return null;
+  const captureDefault = me.meetingCaptureDefault === 'notetaker' || me.meetingCaptureDefault === 'both' ? me.meetingCaptureDefault : 'mac';
+  return {
+    captureDefault,
+    notetakerName: typeof me.notetakerName === 'string' ? me.notetakerName : null,
+    joinsAs: typeof me.notetakerJoinsAs === 'string' ? me.notetakerJoinsAs : 'Eavesy Notetaker',
+    notetakerAvailable: me.notetakerAvailable === true,
+  };
+}
+
+export async function getMeetingCapture(): Promise<MeetingCapturePrefs> {
+  const prefs = parseMeetingCapture(await meCall('GET'));
+  if (!prefs) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
+  return prefs;
+}
+
+export async function saveMeetingCapture(change: { meetingCaptureDefault?: MeetingCapturePrefs['captureDefault']; notetakerName?: string | null }): Promise<void> {
+  await meCall('PATCH', change);
 }
 
 /** Google's consent screen runs in the browser; the Mac app opens it there and checks again when you come back. */
