@@ -111,7 +111,7 @@ pub struct Event {
     pub meeting_url: Option<String>,
     #[serde(default)]
     pub record_choice: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_attendees")]
     pub attendees: Vec<Attendee>,
 }
 
@@ -120,6 +120,13 @@ pub struct Attendee {
     pub email: String,
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// The attendees that read as one; anything else is left out rather than
+/// failing the whole calendar.
+fn lenient_attendees<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Attendee>, D::Error> {
+    let serde_json::Value::Array(items) = serde_json::Value::deserialize(deserializer)? else { return Ok(Vec::new()) };
+    Ok(items.into_iter().filter_map(|item| serde_json::from_value(item).ok()).collect())
 }
 
 /// The meeting under way at `now` (or starting within EARLY_JOIN_MS), nearest start first.
@@ -230,6 +237,8 @@ struct Watch {
 static WATCH: Mutex<Option<Watch>> = Mutex::new(None);
 /// Set when something changed a meeting (its record choice): fetch the calendar on the next tick.
 static CALENDAR_STALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Bumped by every change: a fetch that began before one is out of date and dropped.
+static CALENDAR_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The calendar's meetings as last fetched.
 pub fn events() -> Vec<Event> {
@@ -238,6 +247,15 @@ pub fn events() -> Vec<Event> {
 
 /// Fetches the calendar again on the next tick rather than within the minute.
 pub fn calendar_changed() {
+    CALENDAR_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    CALENDAR_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The account was disconnected: forget its meetings now.
+pub fn signed_out() {
+    CALENDAR_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    with_watch(|watch| watch.events.clear());
+    // Signing in again fetches on the next tick, not within the minute.
     CALENDAR_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -261,8 +279,12 @@ pub fn start(app: &AppHandle) {
             let stale = CALENDAR_STALE.swap(false, std::sync::atomic::Ordering::SeqCst);
             if stale || calendar_at.is_none_or(|at| at.elapsed() >= CALENDAR_EVERY) {
                 calendar_at = Some(Instant::now());
+                let generation = CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
                 if let Some(events) = fetch_events(&ticker).await {
-                    with_watch(|watch| watch.events = events);
+                    // Dropped if a change landed while it was in flight; that change asked for a fresh fetch.
+                    if CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation {
+                        with_watch(|watch| watch.events = events);
+                    }
                 }
             }
             tick(&ticker);
@@ -321,10 +343,11 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
     #[derive(Deserialize)]
     struct Answer {
         #[serde(default)]
-        upcoming: Vec<Event>,
+        upcoming: Vec<serde_json::Value>,
     }
-    // Signed out: no calendar, so nothing to announce.
-    let Some(credential) = settings::device_credential(app) else { return Some(Vec::new()) };
+    // No credential may be a keychain hiccup: keep what was fetched. Signing
+    // out (`signed_out`) and a token the server no longer takes clear it.
+    let credential = settings::device_credential(app)?;
     let client = crate::sync::http_client().ok()?;
     let response = client
         .get(crate::base_url::join(&credential.base, "/api/calendar-events"))
@@ -333,10 +356,18 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
         .send()
         .await
         .ok()?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Some(Vec::new());
+    }
     if !response.status().is_success() {
         return None;
     }
-    Some(response.json::<Answer>().await.ok()?.upcoming)
+    Some(parse_upcoming(response.json::<Answer>().await.ok()?.upcoming))
+}
+
+/// The meetings that read as one; a malformed one is left out rather than dropping the calendar.
+fn parse_upcoming(items: Vec<serde_json::Value>) -> Vec<Event> {
+    items.into_iter().filter_map(|item| serde_json::from_value(item).ok()).collect()
 }
 
 fn tick(app: &AppHandle) {
@@ -541,6 +572,34 @@ mod tests {
 
     fn zoom() -> Signal {
         Signal::App("us.zoom.xos".into())
+    }
+
+    #[test]
+    fn an_attendee_without_an_email_doesnt_drop_the_calendar() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "id": "e", "title": "t", "startsAt": 1, "endsAt": 2, "meetingUrl": null,
+            "attendees": [{ "email": "ben@numeral.com", "name": "Ben" }, { "name": "No email" }, "junk"],
+        }))
+        .unwrap();
+        assert_eq!(event.attendees, vec![Attendee { email: "ben@numeral.com".into(), name: Some("Ben".into()) }]);
+        let none: Event = serde_json::from_value(serde_json::json!({ "id": "e", "title": "t", "startsAt": 1, "endsAt": 2, "attendees": null })).unwrap();
+        assert!(none.attendees.is_empty());
+        // A malformed meeting is left out; the rest still read.
+        let events = parse_upcoming(vec![
+            serde_json::json!({ "id": "bad", "title": "t", "startsAt": null, "endsAt": 2 }),
+            serde_json::json!({ "id": "good", "title": "t", "startsAt": 1, "endsAt": 2, "attendees": "not a list" }),
+        ]);
+        assert_eq!(events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["good"]);
+    }
+
+    #[test]
+    fn signing_out_forgets_the_meetings_and_drops_fetches_in_flight() {
+        with_watch(|watch| watch.events = vec![event("standup", 0, 15, None)]);
+        let before = CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+        signed_out();
+        assert!(events().is_empty());
+        assert_ne!(CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst), before);
+        assert!(CALENDAR_STALE.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

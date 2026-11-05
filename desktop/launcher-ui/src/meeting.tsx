@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MeetingDetails } from '@/components/launcher/meeting-details';
 import { parseUpcomingMeeting, type UpcomingMeeting } from '@/lib/api/calendar';
-import { getSettings, openSettingsWindow } from '@/lib/desktop/bridge';
+import { errMsg, getSettings, openSettingsWindow } from '@/lib/desktop/bridge';
 import { invoke, useEvent } from './marking';
 import './styles.css';
 
@@ -21,11 +21,13 @@ function MeetingCard() {
   const [meeting, setMeeting] = useState<UpcomingMeeting | null>(PREVIEW);
   const [autoRecord, setAutoRecord] = useState(true);
   const [now, setNow] = useState(() => Date.now());
+  const [joinError, setJoinError] = useState<string | null>(null);
   const card = useRef<HTMLDivElement>(null);
 
   const load = () => {
     void invoke('menu_bar_meeting').then((value) => setMeeting(parseUpcomingMeeting(value))).catch(() => {});
-    void getSettings().then((settings) => setAutoRecord(settings?.auto_record_meetings ?? true));
+    // Unreadable settings: keep the switch as it was rather than guess.
+    void getSettings().then((settings) => setAutoRecord(settings?.auto_record_meetings ?? true)).catch(() => {});
     setNow(Date.now());
   };
   useEffect(() => {
@@ -37,7 +39,7 @@ function MeetingCard() {
     window.addEventListener('keydown', escape);
     return () => { window.removeEventListener('focus', load); window.removeEventListener('keydown', escape); clearInterval(timer); };
   }, []);
-  useEvent('meeting:updated', (payload) => { setMeeting(parseUpcomingMeeting(payload)); setNow(Date.now()); });
+  useEvent('meeting:updated', (payload) => { setMeeting(parseUpcomingMeeting(payload)); setJoinError(null); setNow(Date.now()); });
 
   // The window fits the card as it grows or shrinks.
   useEffect(() => {
@@ -57,12 +59,16 @@ function MeetingCard() {
           meeting={meeting}
           autoRecord={autoRecord}
           now={now}
-          onJoin={() => void invoke('open_meeting_link')}
+          onJoin={() => {
+            setJoinError(null);
+            void invoke('open_meeting_link', { id: meeting.id }).catch((e: unknown) => setJoinError(errMsg(e, 'Couldn’t open the link.')));
+          }}
           onChanged={(choice) => setMeeting((current) => current && current.id === meeting.id ? { ...current, recordChoice: choice } : current)}
         />
       ) : (
         <p className="ev-set-hint">No meeting coming up.</p>
       )}
+      {joinError && <p role="alert" className="ev-set-hint">{joinError}</p>}
       <button
         type="button"
         className="ev-meeting-all"
