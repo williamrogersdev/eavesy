@@ -22,6 +22,7 @@ import {
   relaunchApp,
   saveNote,
   setPanelPinned,
+  setupStepShown,
   type ImportResult,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
@@ -89,6 +90,12 @@ export function DesktopPanel() {
     else panelRef.current?.focus({ preventScroll: true });
     searchRef.current?.select();
   }, []);
+
+  // Each time setup shows a step (a new step, a return from Settings, or the panel reopened
+  // on it), for analytics: an install that never finishes shows where it stopped.
+  useEffect(() => {
+    if (setupKnown && view === 'setup') void setupStepShown(setupStep);
+  }, [setupKnown, view, setupStep, opened]);
 
   const { toast, flash, runTask } = useToastTasks();
   useEffect(() => {
@@ -534,7 +541,7 @@ export function DesktopPanel() {
             onFinish={() => runTask(async () => {
               // The toast is about Talk, so it looks at the dictation shortcut alone.
               if (!(await finishSetup())) return;
-              flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
+              flash(!dictationHotkey ? 'You’re set. Give Talk a shortcut in Settings to dictate anywhere.' : usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey} anywhere to talk.`, 5000);
             }, 'Couldn’t finish setup')}
           />
         ) : (

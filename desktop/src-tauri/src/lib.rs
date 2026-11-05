@@ -214,6 +214,7 @@ pub fn run() {
             commands::set_launcher_position,
             commands::get_setup_status,
             commands::complete_setup,
+            commands::setup_step_shown,
             commands::set_hotkey,
             commands::check_hotkey,
             commands::check_all_hotkeys,
