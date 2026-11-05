@@ -195,6 +195,13 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
         unchanged: () => row('SELECT id FROM calendar_connections WHERE id = ?', CALENDAR),
       },
     },
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/calendar-connections', body: json({ id: CALENDAR, calendars: [{ id: 'team@group.calendar.google.com', selected: true }] }) },
+        unchanged: () => row('SELECT calendars_json, last_attempt_at FROM calendar_connections WHERE id = ?', CALENDAR),
+      },
+    },
   },
   '/api/calendar-events': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/calendar-events' }, excludes: [EVENT] } },
@@ -691,9 +698,18 @@ async function seedOwner() {
        VALUES (?, ?, 'https://owner.example.com/hook', 'whsec_b3duZXI=', '["capture.created"]', ?, ?)`,
     ).bind(WEBHOOK, OWNER, now, now),
     testEnv.DB.prepare(
-      `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at)
-       VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?)`,
-    ).bind(CALENDAR, OWNER, now),
+      `INSERT INTO calendar_connections (id, user_id, provider, account_email, refresh_token_encrypted, last_sync_at, last_attempt_at, calendars_json)
+       VALUES (?, ?, 'google', 'owner@example.com', 'sealed', ?, ?, ?)`,
+    ).bind(
+      CALENDAR,
+      OWNER,
+      now,
+      now,
+      JSON.stringify([
+        { id: 'owner@example.com', name: 'Owner', primary: true, selected: true },
+        { id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: false },
+      ]),
+    ),
     // Under way now with a call link, so it is the owner's current meeting.
     testEnv.DB.prepare(
       `INSERT INTO calendar_events (id, user_id, connection_id, provider_event_id, title, starts_at, ends_at, meeting_url, participants_json)

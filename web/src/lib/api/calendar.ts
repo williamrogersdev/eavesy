@@ -8,6 +8,25 @@ export interface CalendarConnection {
   lastSyncAt: number | null;
   upcoming: number;
   needsReconnect: boolean;
+  /** The account's calendars and which are synced; null when the grant can't list them. */
+  calendars: CalendarChoice[] | null;
+  /** Connecting again would let Eavesy sync this account's other calendars too. */
+  canAddCalendars: boolean;
+}
+export interface CalendarChoice {
+  id: string;
+  name: string;
+  primary: boolean;
+  selected: boolean;
+}
+
+function parseCalendars(value: unknown): CalendarChoice[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((item) =>
+    isRecord(item) && typeof item.id === 'string' && typeof item.name === 'string'
+      ? [{ id: item.id, name: item.name, primary: item.primary === true, selected: item.selected === true }]
+      : [],
+  );
 }
 export interface CalendarStatus {
   available: { google: boolean; outlook: boolean };
@@ -24,6 +43,8 @@ function parseConnection(item: unknown): CalendarConnection[] {
     lastSyncAt: typeof item.lastSyncAt === 'number' ? item.lastSyncAt : null,
     upcoming: typeof item.upcoming === 'number' ? item.upcoming : 0,
     needsReconnect: item.needsReconnect === true,
+    calendars: parseCalendars(item.calendars),
+    canAddCalendars: item.canAddCalendars === true,
   }];
 }
 
@@ -37,7 +58,7 @@ export function parseCalendarStatus(value: unknown): CalendarStatus | null {
 }
 
 /** Calls `/api/calendar-connections` as this Mac when in the app, or as the signed-in browser. */
-async function call(method: 'GET' | 'DELETE', body?: unknown): Promise<unknown> {
+async function call(method: 'GET' | 'DELETE' | 'PATCH', body?: unknown): Promise<unknown> {
   if (isDesktop()) return await accountCall(method, '/api/calendar-connections', body);
   const response = await fetch('/api/calendar-connections', {
     method,
@@ -52,6 +73,14 @@ export async function getCalendarStatus(): Promise<CalendarStatus> {
   const status = parseCalendarStatus(await call('GET'));
   if (!status) throw new Error('eavesy.com sent an answer Eavesy couldn’t read.');
   return status;
+}
+
+/** Ticks or unticks calendars on one connected account; the answer is its calendars as saved. */
+export async function setSyncedCalendars(id: string, calendars: { id: string; selected: boolean }[]): Promise<CalendarChoice[]> {
+  const answer = await call('PATCH', { id, calendars });
+  const saved = isRecord(answer) && answer.ok === true ? parseCalendars(answer.calendars) : null;
+  if (!saved) throw new Error('Couldn’t save that. Try again.');
+  return saved;
 }
 
 /** Why Disconnect stopped short: Google wasn't told, so the connection was kept. */

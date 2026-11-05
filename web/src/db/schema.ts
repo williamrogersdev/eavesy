@@ -518,6 +518,10 @@ export const calendarConnections = sqliteTable(
     lastAttemptAt: integer('last_attempt_at'),
     /** How that attempt went: `reconnect` means Google refused the grant. */
     lastSyncStatus: text('last_sync_status', { enum: ['ok', 'reconnect', 'failed'] }),
+    /** The scopes Google granted, space-separated; null on rows from before they were kept. */
+    scopes: text('scopes'),
+    /** The account's calendars and which are synced (`StoredCalendar[]`); null until the list was read. */
+    calendarsJson: text('calendars_json'),
   },
   (t) => [index('connections_user_idx').on(t.userId)],
 );
@@ -539,6 +543,10 @@ export const calendarEvents = sqliteTable(
     meetingUrl: text('meeting_url'),
     platform: text('platform'),
     participantsJson: text('participants_json').notNull().default('[]'),
+    /** The invite's text as plain text (agenda, notes), capped; context for transcripts and notes. */
+    description: text('description'),
+    /** The Google calendar it came from; null on rows synced before several calendars were. */
+    calendarId: text('calendar_id'),
     autoRecord: integer('auto_record', { mode: 'boolean' }).notNull().default(false),
     /** The user's choice for this meeting: record it, or skip it; null follows the Mac's "record all" setting. */
     recordChoice: text('record_choice', { enum: ['record', 'skip'] }),

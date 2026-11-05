@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { deriveCodeChallenge, generateCodeVerifier } from '@/lib/providers/openrouter';
 import { resolveActor } from '@/server/auth';
-import { buildGoogleAuthorizeUrl, googleCredentials } from '@/server/google-calendar';
+import { buildGoogleAuthorizeUrl, googleCredentials, googleScopes } from '@/server/google-calendar';
 import { googleRedirectUri, settingsRedirect, stateCookie, userTag } from '@/server/google-oauth-flow';
 
 // Starts "Connect Google": state and PKCE verifier ride in a short-lived
@@ -30,6 +30,7 @@ export const Route = createFileRoute('/api/connections/google')({
           redirectUri: googleRedirectUri(origin),
           state,
           codeChallenge: await deriveCodeChallenge(verifier),
+          scopes: googleScopes(),
         });
         return new Response(null, {
           status: 302,
