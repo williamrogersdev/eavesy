@@ -32,6 +32,7 @@ function upload(name: string, body: Uint8Array<ArrayBuffer>, headers: Record<str
         'content-type': 'image/jpeg',
         'x-attachment-kind': name.split('-')[0],
         'x-attachment-offset-ms': '65432',
+        'content-length': String(body.byteLength),
         ...headers,
       },
     }),
@@ -85,6 +86,8 @@ describe('PUT /api/sessions/:id/attachments/:name', () => {
     expect((await upload('snapshot-1x', png())).status).toBe(400);
     expect((await upload('snapshot-000000001', png(), { 'x-attachment-kind': 'screenshot' })).status).toBe(400);
     expect((await upload('snapshot-000000001', png(), { 'x-attachment-offset-ms': '-1' })).status).toBe(400);
+    expect((await upload('snapshot-000000001', png(), { 'content-length': 'lots' })).status).toBe(411);
+    expect((await upload('snapshot-000000001', png(), { 'content-length': String(21 * 1024 * 1024) })).status).toBe(413);
     expect(await attachmentsRepo.listForMeeting(getDb(), 'm_live')).toHaveLength(0);
   });
 

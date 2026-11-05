@@ -30,6 +30,8 @@ export interface Chapter {
   title: string;
 }
 
+const NO_ATTACHMENTS: MeetingAttachment[] = [];
+
 export function TranscriptPlayer({
   meetingId,
   audioUrl,
@@ -37,7 +39,7 @@ export function TranscriptPlayer({
   chapters,
   speakerNamesJson,
   agentTranscript,
-  attachments = [],
+  attachments = NO_ATTACHMENTS,
   onChanged,
 }: {
   meetingId: string;
@@ -174,7 +176,7 @@ export function TranscriptPlayer({
     })
     .join('\n');
 
-  const placed = placeAttachments(shown, attachments);
+  const placed = useMemo(() => placeAttachments(shown, attachments), [shown, attachments]);
   const pictures = (at: number) =>
     placed.get(at)?.map((attachment) => (
       <AttachmentFigure

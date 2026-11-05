@@ -40,17 +40,15 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
 /// The control and the panel stay as they are: capture never interrupts.
 async fn attach_to_meeting(app: &AppHandle, recording: &crate::meeting_attachments::Recording) -> Result<String, String> {
     let taken_at = chrono::Utc::now().timestamp_millis();
-    let path = crate::meeting_attachments::screenshot_path(&recording.folder, recording.offset_of(taken_at), "png");
-    let folder = path.parent().ok_or("screenshot has no folder")?;
-    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
-    let name = path.file_name().and_then(|name| name.to_str()).ok_or("bad screenshot name")?;
-    // Written beside it under a hidden name, so sync never sends half a file.
-    let partial = folder.join(format!(".{name}.partial.png"));
+    // Written under a hidden name, so sync never sends half a file. A meeting
+    // that stops meanwhile still gets it: sync sends pictures while the
+    // transcript is written.
+    let partial = crate::meeting_attachments::partial_screenshot(&recording.folder, "png")?;
     if let Err(error) = take_screenshot(app, &partial).await {
         let _ = std::fs::remove_file(&partial);
         return Err(error);
     }
-    std::fs::rename(&partial, &path).map_err(|error| error.to_string())?;
+    crate::meeting_attachments::commit_screenshot(&partial, &recording.folder, recording.offset_of(taken_at), "png")?;
     let _ = app.emit("meeting:attachment", serde_json::json!({ "sessionId": recording.session_id, "kind": "screenshot" }));
     crate::telemetry::track("meeting_screenshot", serde_json::json!({ "from": "button" }));
     Ok(recording.session_id.clone())

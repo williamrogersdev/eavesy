@@ -30,8 +30,8 @@ function useScreenshotAdded(sessionId: string | null): boolean {
     let timer = 0;
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    void onMeetingAttachment((id) => {
-      if (id !== sessionId) return;
+    void onMeetingAttachment((id, kind) => {
+      if (id !== sessionId || kind !== 'screenshot') return;
       setAdded(true);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setAdded(false), 2_000);

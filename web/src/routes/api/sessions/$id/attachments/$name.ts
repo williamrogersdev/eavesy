@@ -37,7 +37,11 @@ export const Route = createFileRoute('/api/sessions/$id/attachments/$name')({
         if (!kind || offsetMs === null || !NAME.test(params.name) || !params.name.startsWith(kind)) {
           return Response.json({ error: 'invalid_attachment_metadata' }, { status: 400 });
         }
-        if (Number(request.headers.get('content-length') ?? '0') > MAX_ATTACHMENT_BYTES) {
+        // The size is known before the body is read; an upload that won't say is refused.
+        const length = request.headers.get('content-length');
+        const declared = length ? boundedInteger(length, { min: 0, max: Number.MAX_SAFE_INTEGER }) : null;
+        if (declared === null) return Response.json({ error: 'length_required' }, { status: 411 });
+        if (declared > MAX_ATTACHMENT_BYTES) {
           return Response.json({ error: 'attachment_too_large' }, { status: 413 });
         }
 
@@ -52,6 +56,10 @@ export const Route = createFileRoute('/api/sessions/$id/attachments/$name')({
           .limit(1);
         if (existing[0]) return Response.json({ ok: true, idempotent: true, id: existing[0].id });
 
+        // Counted before the body is read, so a flood is cut off cheaply.
+        const overQuota = await guardUserQuota(actor.userId, 'meeting-attachment');
+        if (overQuota) return overQuota;
+
         const bytes = new Uint8Array(await request.arrayBuffer());
         if (bytes.byteLength === 0) return Response.json({ error: 'empty_attachment' }, { status: 400 });
         if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
@@ -60,9 +68,6 @@ export const Route = createFileRoute('/api/sessions/$id/attachments/$name')({
         // The stored type is what the bytes are, never what the upload says.
         const contentType = sniffImageType(bytes);
         if (!contentType) return Response.json({ error: 'unsupported_image' }, { status: 415 });
-
-        const overQuota = await guardUserQuota(actor.userId, 'meeting-attachment');
-        if (overQuota) return overQuota;
 
         const r2Key = meetingAttachmentKey(actor.userId, meeting.id, params.name, contentType);
         await putObject(r2Key, bytes, contentType);

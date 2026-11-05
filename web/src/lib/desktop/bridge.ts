@@ -138,10 +138,14 @@ export async function onRecordingsUpdated(cb: () => void): Promise<UnlistenFn> {
 }
 
 /** A screenshot joined the meeting being recorded (the button, or ⌘⇧3/4/5). */
-export async function onMeetingAttachment(cb: (sessionId: string) => void): Promise<UnlistenFn> {
+export async function onMeetingAttachment(
+  cb: (sessionId: string, kind: 'snapshot' | 'screenshot') => void,
+): Promise<UnlistenFn> {
   const t = tauri();
   if (!t) return () => {};
-  return t.event.listen<{ sessionId: string }>('meeting:attachment', (event) => cb(event.payload.sessionId));
+  return t.event.listen<{ sessionId: string; kind?: 'snapshot' | 'screenshot' }>('meeting:attachment', (event) =>
+    cb(event.payload.sessionId, event.payload.kind ?? 'screenshot'),
+  );
 }
 
 /** On-device captions while recording; partials replace each other, finals settle. */

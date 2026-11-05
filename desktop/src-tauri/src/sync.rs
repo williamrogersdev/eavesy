@@ -702,6 +702,11 @@ async fn sync_session<R: Runtime>(
                 "the transcript was not ready a day after the recording ended".to_string()
             )));
         }
+        // A picture taken just before the stop, or one that failed earlier, goes
+        // while the transcript is written.
+        if upload_attachment(app, api, token, &remote_id, &session).await? {
+            return Ok(Step::Progressed);
+        }
         poll_result(app, api, token, &remote_id, &session).await?;
         return Ok(Step::Waiting);
     }
@@ -727,10 +732,8 @@ async fn sync_session<R: Runtime>(
 
     // Snapshots and screenshots go once the transcript's audio is up, one per
     // pass, while the meeting records and before it is finished.
-    if let Some(folder) = session.archive_path.parent() {
-        if crate::meeting_attachments::upload_next(app, api, token, &remote_id, &session.id, folder).await? {
-            return Ok(Step::Progressed);
-        }
+    if upload_attachment(app, api, token, &remote_id, &session).await? {
+        return Ok(Step::Progressed);
     }
 
     if session.status == "recording" {
@@ -755,6 +758,27 @@ async fn sync_session<R: Runtime>(
         upload_archive(app, api, token, &remote_id, &session).await?;
     }
     Ok(Step::Progressed)
+}
+
+/// Uploads one waiting picture of the meeting. A failure other than being
+/// signed out never holds up the transcript: the picture is tried again on a
+/// later pass, while the meeting records or is being written up.
+async fn upload_attachment<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
+    token: &str,
+    remote_id: &str,
+    session: &sqlite::PendingSession,
+) -> Result<bool> {
+    let Some(folder) = session.archive_path.parent() else { return Ok(false) };
+    match crate::meeting_attachments::upload_next(app, api, token, remote_id, &session.id, folder).await {
+        Ok(sent) => Ok(sent),
+        Err(error) if is_unauthorized(&error) => Err(error),
+        Err(error) => {
+            tracing::warn!(id = %session.id, "desktop ingest: meeting picture not sent this pass: {error:#}");
+            Ok(false)
+        }
+    }
 }
 
 /// How long a cancelled recording whose cloud copy the server refused to

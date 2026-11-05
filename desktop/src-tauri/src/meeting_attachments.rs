@@ -100,17 +100,38 @@ pub fn list(folder: &Path) -> Vec<Attachment> {
     found
 }
 
-/// Where a screenshot taken `offset_ms` into the recording goes: a name no other file has.
-pub fn screenshot_path(folder: &Path, offset_ms: i64, ext: &str) -> PathBuf {
+/// A hidden file in the meeting's screenshots folder to write a screenshot
+/// into before `commit_screenshot` names it.
+pub fn partial_screenshot(folder: &Path, ext: &str) -> Result<PathBuf, String> {
+    let dir = folder.join(SCREENSHOTS_DIR);
+    std::fs::create_dir_all(&dir).map_err(|error| format!("Couldn't create {}: {error}", dir.display()))?;
+    Ok(dir.join(format!(".{}.partial.{ext}", uuid::Uuid::new_v4())))
+}
+
+/// Gives a finished screenshot its name, `offset_ms` into the recording.
+/// The name is claimed with a hard link, which fails rather than replace a
+/// file, so two screenshots in the same millisecond both keep theirs. The
+/// partial file is gone afterwards, whether or not this worked.
+pub fn commit_screenshot(partial: &Path, folder: &Path, offset_ms: i64, ext: &str) -> Result<PathBuf, String> {
     let dir = folder.join(SCREENSHOTS_DIR);
     let base = format!("screenshot-{:09}", offset_ms.max(0));
-    let mut path = dir.join(format!("{base}.{ext}"));
-    let mut n = 2;
-    while path.exists() {
-        path = dir.join(format!("{base}-{n}.{ext}"));
-        n += 1;
+    let mut result = Err("Couldn't name the screenshot.".to_string());
+    for n in 1..1000 {
+        let path = dir.join(if n == 1 { format!("{base}.{ext}") } else { format!("{base}-{n}.{ext}") });
+        match std::fs::hard_link(partial, &path) {
+            Ok(()) => {
+                result = Ok(path);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                result = Err(format!("Couldn't save the screenshot: {error}"));
+                break;
+            }
+        }
     }
-    path
+    let _ = std::fs::remove_file(partial);
+    result
 }
 
 /// The meeting being recorded right now, if one is.
@@ -136,17 +157,12 @@ pub fn attach_copy(recording: &Recording, source: &Path, taken_at_ms: i64) -> Re
         .map(str::to_ascii_lowercase)
         .filter(|ext| matches!(ext.as_str(), "png" | "jpg" | "jpeg"))
         .ok_or("Only PNG and JPEG screenshots can be added to a meeting.")?;
-    let destination = screenshot_path(&recording.folder, recording.offset_of(taken_at_ms), &ext);
-    let dir = destination.parent().ok_or("screenshot has no folder")?;
-    std::fs::create_dir_all(dir).map_err(|error| format!("Couldn't create {}: {error}", dir.display()))?;
-    let name = destination.file_name().and_then(|name| name.to_str()).ok_or("bad screenshot name")?;
-    let partial = dir.join(format!(".{name}.partial"));
-    std::fs::copy(source, &partial).map_err(|error| format!("Couldn't copy the screenshot: {error}"))?;
-    std::fs::rename(&partial, &destination).map_err(|error| {
+    let partial = partial_screenshot(&recording.folder, &ext)?;
+    if let Err(error) = std::fs::copy(source, &partial) {
         let _ = std::fs::remove_file(&partial);
-        format!("Couldn't save the screenshot: {error}")
-    })?;
-    Ok(destination)
+        return Err(format!("Couldn't copy the screenshot: {error}"));
+    }
+    commit_screenshot(&partial, &recording.folder, recording.offset_of(taken_at_ms), &ext)
 }
 
 fn uploaded(conn: &Connection, session_id: &str) -> rusqlite::Result<std::collections::HashSet<String>> {
@@ -193,6 +209,10 @@ pub(crate) async fn upload_next<R: Runtime>(
             .map_err(|error| anyhow!("record attachment: {error}"))?;
         Ok(true)
     };
+    // Too large is known from the size, before the file is read.
+    if tokio::fs::metadata(&attachment.path).await.is_ok_and(|meta| meta.len() > MAX_BYTES) {
+        return give_up("the file is too large");
+    }
     let bytes = match tokio::fs::read(&attachment.path).await {
         Ok(bytes) if bytes.is_empty() => return give_up("the file is empty"),
         Ok(bytes) if bytes.len() as u64 > MAX_BYTES => return give_up("the file is too large"),
@@ -293,6 +313,8 @@ mod tests {
         assert_eq!(recording.offset_of(10), 0);
         let listed = list(&folder);
         assert_eq!(listed.len(), 2);
+        let files = std::fs::read_dir(folder.join("screenshots")).unwrap().count();
+        assert_eq!(files, 2, "no partial file is left behind");
         assert!(listed.iter().all(|a| a.kind == Kind::Screenshot && a.offset_ms == 65_432));
 
         let text = root.path().join("notes.txt");

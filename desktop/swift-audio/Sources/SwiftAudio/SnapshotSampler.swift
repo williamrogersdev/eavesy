@@ -194,7 +194,10 @@ final class SnapshotSampler {
     private let queue = DispatchQueue(label: "com.eavesy.swiftaudio.snapshots")
     private var timer: DispatchSourceTimer?
     private var detector = SnapshotDetector()
-    private var busy = false
+    /// When the capture in flight began; nil when none is. One that never
+    /// calls back is given up on after `giveUpAfter`, so sampling goes on.
+    private var busySince: Date?
+    static let giveUpAfter: TimeInterval = 20
     private var stopped = false
     private var kept = 0
 
@@ -229,19 +232,29 @@ final class SnapshotSampler {
 
     private func tick() {
         // Offsets count from the first audio, as the transcript's do.
-        guard !busy, !stopped, let liveAt = captureLiveAt else { return }
+        if let since = busySince {
+            guard Date().timeIntervalSince(since) > Self.giveUpAfter else { return }
+            log("a capture never finished; sampling again")
+        }
+        guard !stopped, let liveAt = captureLiveAt else { return }
         guard #available(macOS 14.0, *) else { return }
-        busy = true
+        let started = Date()
+        busySince = started
+        // Only the capture that is current clears the flag, not a late one.
+        let done = { [weak self] in
+            guard let self else { return }
+            if self.busySince == started { self.busySince = nil }
+        }
         let at = Date().timeIntervalSince(liveAt)
         SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { [weak self] content, error in
             guard let self else { return }
             guard let content, error == nil else {
-                self.queue.async { self.busy = false }
+                self.queue.async(execute: done)
                 return
             }
             let (filter, source) = self.filter(content)
             guard let filter else {
-                self.queue.async { self.busy = false }
+                self.queue.async(execute: done)
                 return
             }
             let config = SCStreamConfiguration()
@@ -254,8 +267,8 @@ final class SnapshotSampler {
             config.showsCursor = false
             SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, _ in
                 self.queue.async {
-                    defer { self.busy = false }
-                    guard let image, !self.stopped else { return }
+                    defer { done() }
+                    guard let image, !self.stopped, self.busySince == started else { return }
                     self.consider(image, at: at, source: source)
                 }
             }

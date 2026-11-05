@@ -158,16 +158,17 @@ fn run(app: AppHandle, receiver: mpsc::Receiver<PathBuf>) {
                 Verdict::Drop => false,
                 Verdict::Import => {
                     seen.insert(item.path.clone());
-                    // During a meeting it joins the meeting instead of the history.
+                    // During a meeting it joins the meeting instead of the history;
+                    // if that fails it goes to the history as usual.
                     if let Some(recording) = crate::audio::meeting_in_progress(&app) {
                         match crate::meeting_attachments::attach_copy(&recording, &item.path, taken_at_ms(&item.path)) {
                             Ok(_) => {
                                 let _ = app.emit("meeting:attachment", serde_json::json!({ "sessionId": recording.session_id, "kind": "screenshot" }));
                                 crate::telemetry::track("meeting_screenshot", serde_json::json!({ "from": "macos" }));
+                                return false;
                             }
                             Err(error) => crate::telemetry::capture("screenshots.attach", &error),
                         }
-                        return false;
                     }
                     match crate::imports::import_path(&app, &item.path, true) {
                         Ok(_) => added = true,
