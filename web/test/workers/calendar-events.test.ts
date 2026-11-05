@@ -144,7 +144,7 @@ describe('GET /api/calendar-events', () => {
   it('says when no calendar is connected', async () => {
     await insertUser('user_new');
     actor.userId = 'user_new';
-    expect((await events()).body).toEqual({ connected: false, current: null, next: null, upcoming: [] });
+    expect((await events()).body).toEqual({ connected: false, captureDefault: 'mac', current: null, next: null, upcoming: [] });
   });
 });
 
@@ -289,5 +289,34 @@ describe('PATCH /api/calendar-events/$id', () => {
     });
     const synced = await row<{ title: string; record_choice: string | null }>('SELECT title, record_choice FROM calendar_events WHERE id = ?', 'evt_next');
     expect(synced).toEqual({ title: 'Standup (moved)', record_choice: 'skip' });
+  });
+});
+
+describe('capture modes over the API', () => {
+  it('shows each meeting’s plan, keeps older Mac apps out of Notetaker meetings, and takes a mode', async () => {
+    actor.userId = 'user_plan';
+    await insertUser('user_plan');
+    await connection('cal_plan', 'user_plan');
+    const now = Date.now();
+    await event({ id: 'evt_plan', userId: 'user_plan', connectionId: 'cal_plan', title: 'Numeral intro', startsAt: now + 30 * MIN, endsAt: now + 60 * MIN });
+    const before = (await events()).body.upcoming[0] as unknown as { mode: string; captureMode: string | null; recordChoice: string | null; notetakerCanJoin: boolean };
+    expect(before).toMatchObject({ mode: 'mac', captureMode: null, recordChoice: null, notetakerCanJoin: true });
+
+    const response = await patchEvent({
+      request: new Request('https://eavesy.test/api/calendar-events/evt_plan', { method: 'PATCH', body: JSON.stringify({ captureMode: 'notetaker' }) }),
+      params: { id: 'evt_plan' },
+    });
+    expect(response.status).toBe(200);
+    const after = (await events()).body.upcoming[0] as unknown as { mode: string; captureMode: string | null; recordChoice: string | null };
+    // An older Mac reads recordChoice: the Notetaker covers this one, so it stays out.
+    expect(after).toMatchObject({ mode: 'notetaker', captureMode: 'notetaker', recordChoice: 'skip' });
+    expect(await row('SELECT record_choice FROM calendar_events WHERE id = ?', 'evt_plan')).toEqual({ record_choice: 'skip' });
+
+    // An older Mac's record/skip still lands as a capture mode; "record" on a Notetaker meeting adds the Mac.
+    await patchEvent({
+      request: new Request('https://eavesy.test/api/calendar-events/evt_plan', { method: 'PATCH', body: JSON.stringify({ recordChoice: 'record' }) }),
+      params: { id: 'evt_plan' },
+    });
+    expect(await row('SELECT capture_mode FROM calendar_events WHERE id = ?', 'evt_plan')).toEqual({ capture_mode: 'both' });
   });
 });
