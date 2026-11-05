@@ -130,6 +130,12 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/meeting-bots/$id': {
     DELETE: { unauthenticated: SIGNED_IN, crossUser: { call: { path: `/api/meeting-bots/${BOT}`, params: { id: BOT } }, status: 404 } },
   },
+  '/api/share/$slug': { GET: { public: 'Read-only notes behind an unguessable share link the owner chose to send; expires with share_expires_at and exposes no transcript' } },
+  '/api/email/recaps-off': { POST: { public: 'One-click recap opt-out from an email link; authenticated by the account’s secret off token and can only turn that account’s recaps off' } },
+  '/api/meetings/$id/share-notes': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: meetingCall('/share-notes'), status: 404 } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Emails only the caller’s own meeting notes (needs email configured, which this fixture lacks); share-notes tests cover another user’s meeting answering 404' },
+  },
   '/api/webhooks/resend': { POST: { public: 'Resend email delivery webhook, authenticated by its Svix signature rather than a session; it only moves delivery rows forward' } },
   '/api/library/ask': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Retrieval and post-inference hydration check current owner and deletion; library-memory tests cover cross-owner evidence' } },
   '/api/library/reindex': { POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Only the authenticated owner completed meetings can be queued' } },

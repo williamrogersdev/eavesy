@@ -365,6 +365,13 @@
       "when": 1793921596798,
       "tag": "0051_meeting_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1793922231811,
+      "tag": "0052_meeting_notes_share",
+      "breakpoints": true
     }
   ]
 }

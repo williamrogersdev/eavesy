@@ -160,6 +160,10 @@ export const BURST_LIMITS = {
   'device-pair-check': { limit: 30, windowSec: 60, failMode: 'closed' },
   'meeting-export': { limit: 10, windowSec: 60, failMode: 'closed' },
   'meeting-bot': { limit: 10, windowSec: 60, failMode: 'closed' },
+  // "Send to everyone": each send emails people outside the account.
+  'share-notes': { limit: 5, windowSec: 60, failMode: 'closed' },
+  // One-click "turn off recaps" links, guessed per IP.
+  'recaps-off': { limit: 10, windowSec: 60, failMode: 'closed' },
   // Live transcript polls and stream (re)connects: a web tab streaming plus a
   // Mac polling every 5 s is about 15 a minute, so this allows a few of each.
   'live-transcript': { limit: 60, windowSec: 60, failMode: 'open' },

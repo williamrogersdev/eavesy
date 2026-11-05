@@ -19,6 +19,7 @@ import { openUserKeys } from '@/server/secret-box';
 import { resolveIngestActor } from '@/server/device-auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import { type EmailEnv, emailConfigured } from '@/server/email/resend';
+import { companyDomain } from '@/server/email/meeting-notes';
 import { waitUntil } from 'cloudflare:workers';
 import { cleanNotetakerName, MAX_NOTETAKER_NAME, notetakerName } from '@/lib/meetings/capture-plan';
 import { reconcileCalendarBots } from '@/server/meeting-bots/calendar-plan';
@@ -42,6 +43,9 @@ const updateSchema = z.object({
   dictationForAgents: z.boolean().optional(),
   emailRecaps: z.boolean().optional(),
   emailRecapTranscript: z.boolean().optional(),
+  shareNotesOffer: z.boolean().optional(),
+  shareNotesScope: z.enum(['everyone', 'domain']).optional(),
+  shareNotesAuto: z.boolean().optional(),
   meetingCaptureDefault: z.enum(['mac', 'notetaker', 'both']).optional(),
   /** Empty or null goes back to "<name>'s Notetaker". */
   notetakerName: z.string().max(MAX_NOTETAKER_NAME * 2).nullable().optional(),
@@ -88,6 +92,10 @@ export const Route = createFileRoute('/api/me')({
           dictationForAgents: u.dictationForAgents,
           emailRecaps: u.emailRecaps,
           emailRecapTranscript: u.emailRecapTranscript,
+          shareNotesOffer: u.shareNotesOffer,
+          shareNotesScope: u.shareNotesScope,
+          shareNotesAuto: u.shareNotesAuto,
+          companyDomain: companyDomain(u.email),
           emailRecapsAvailable: emailConfigured(getCloudflareContext<EmailEnv>().env),
           meetingCaptureDefault: u.meetingCaptureDefault,
           // The name typed in Settings (null: none), and the one the Notetaker joins under.
@@ -144,8 +152,15 @@ export const Route = createFileRoute('/api/me')({
             return Response.json({ error: 'Add an email address to your account to get recaps.' }, { status: 400 });
           }
           patch.emailRecaps = body.emailRecaps;
+          // The owner's own choice: remembered so no later default switches it back.
+          patch.emailRecapsSetAt = Date.now();
+          patch.emailRecapsOffReason = body.emailRecaps ? null : 'user';
+          patch.emailRecapsNoticePending = false;
         }
         if (body.emailRecapTranscript !== undefined) patch.emailRecapTranscript = body.emailRecapTranscript;
+        if (body.shareNotesOffer !== undefined) patch.shareNotesOffer = body.shareNotesOffer;
+        if (body.shareNotesScope !== undefined) patch.shareNotesScope = body.shareNotesScope;
+        if (body.shareNotesAuto !== undefined) patch.shareNotesAuto = body.shareNotesAuto;
         if (body.meetingCaptureDefault) patch.meetingCaptureDefault = body.meetingCaptureDefault;
         if (body.notetakerName !== undefined) patch.notetakerName = cleanNotetakerName(body.notetakerName);
         if (body.customVocabulary) {

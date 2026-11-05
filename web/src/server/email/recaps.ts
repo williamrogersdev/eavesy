@@ -7,7 +7,7 @@ import { clock } from '@/lib/ai/chapters';
 import { parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import type { QueueMessage } from '@/server/queue';
 import { verifySvixWebhook } from '@/server/svix';
-import { type EmailEnv, EmailError, appUrl, emailConfigured, sendEmail } from './resend';
+import { type EmailEnv, EmailError, type OutgoingEmail, type SendingEmailEnv, appUrl, emailConfigured, sendEmail } from './resend';
 
 export type EmailDelivery = typeof emailDeliveries.$inferSelect;
 export type DeliveryStatus = EmailDelivery['status'];
@@ -57,6 +57,8 @@ interface RecapUser {
   email: string | null;
   emailRecaps: boolean;
 }
+type User = typeof users.$inferSelect;
+type Meeting = typeof meetings.$inferSelect;
 
 /** Whether a finished meeting of this account gets a recap. Recipients are the owner only. */
 export function wantsRecap(env: EmailEnv, user: RecapUser | null | undefined): boolean {
@@ -69,7 +71,7 @@ export async function queueRecap(env: RecapEnv, user: RecapUser | null | undefin
   await env.PROCESSING_QUEUE.send({ kind: 'send-recap', meetingId });
 }
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
@@ -92,7 +94,14 @@ export interface RecapContent {
   actionItems: ActionItem[];
   link: string;
   attachmentNote?: string | null;
+  /** The "Send to everyone" button: a page in the app that asks before sending anything. */
+  shareLink?: string | null;
+  /** Set when Eavesy switched recaps on for this account: the one-click page that turns them off. */
+  autoEnabledOffLink?: string | null;
 }
+
+/** The notice an account switched on by the default-on migration gets in its next recap. */
+export const AUTO_ENABLED_NOTICE = 'We now email you notes after every meeting. Don’t want them?';
 
 export function renderRecap(content: RecapContent) {
   const subject = `Recap: ${content.title}`.slice(0, 200);
@@ -116,6 +125,8 @@ export function renderRecap(content: RecapContent) {
     '',
     `Transcript: ${content.link}`,
     ...(content.attachmentNote ? [content.attachmentNote] : []),
+    ...(content.shareLink ? ['', `Send these notes to everyone in the meeting (you'll review the list first): ${content.shareLink}`] : []),
+    ...(content.autoEnabledOffLink ? ['', `${AUTO_ENABLED_NOTICE} Turn them off: ${content.autoEnabledOffLink}`] : []),
     '',
     'You get this because email recaps are on in your Eavesy settings.',
   ].filter((line) => line !== null).join('\n');
@@ -132,25 +143,45 @@ ${section('Decisions', decisions.map(escapeHtml))}
 ${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#78716c">(${escapeHtml(a.meta)})</span>` : ''}`))}
 <p style="margin:24px 0 0"><a href="${escapeHtml(content.link)}" style="color:#1c1917">Open the transcript</a></p>
 ${content.attachmentNote ? `<p style="color:#78716c;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
+${content.shareLink ? `<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="display:inline-block;background:#1c1917;color:#fafaf9;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Send to everyone</a></p>
+<p style="color:#78716c;font-size:13px;margin:6px 0 0">You'll see who gets it before anything is sent.</p>` : ''}
+${content.autoEnabledOffLink ? `<p style="color:#78716c;font-size:13px;margin-top:24px">${escapeHtml(AUTO_ENABLED_NOTICE)} <a href="${escapeHtml(content.autoEnabledOffLink)}" style="color:#78716c">Turn them off</a>.</p>` : ''}
 <p style="color:#a8a29e;font-size:12px;margin-top:32px">You get this because email recaps are on in your Eavesy settings.</p>
 </body></html>`;
   return { subject, html, text };
 }
 
-function toBase64(text: string) {
+export function toBase64(text: string) {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
 }
 
-/** Whether this address has bounced for good or complained before; such addresses get nothing more. */
-async function suppressed(db: AppDb, recipient: string) {
-  const rows = await db.select({ status: emailDeliveries.status, detail: emailDeliveries.statusDetail }).from(emailDeliveries)
-    .where(and(eq(emailDeliveries.recipient, recipient), inArray(emailDeliveries.status, ['bounced', 'complained', 'failed'])));
-  return rows.some((row) => row.status === 'complained'
+/**
+ * Which of these addresses get nothing more: a complaint, a permanent bounce
+ * or a provider suppression. With `fromUserId`, only that account's own email
+ * history counts, so one account's outcomes never block or show up for
+ * another; Resend still refuses addresses on its own suppression list, which
+ * protects the shared sending domain.
+ */
+export async function suppressedAmong(db: AppDb, recipients: string[], fromUserId?: string) {
+  if (!recipients.length) return new Set<string>();
+  const rows = await db.select({ recipient: emailDeliveries.recipient, status: emailDeliveries.status, detail: emailDeliveries.statusDetail })
+    .from(emailDeliveries)
+    .where(and(
+      inArray(emailDeliveries.recipient, recipients),
+      inArray(emailDeliveries.status, ['bounced', 'complained', 'failed']),
+      ...(fromUserId ? [eq(emailDeliveries.userId, fromUserId)] : []),
+    ));
+  return new Set(rows.filter((row) => row.status === 'complained'
     || (row.status === 'bounced' && row.detail === 'permanent')
-    || (row.status === 'failed' && row.detail === 'provider_suppressed'));
+    || (row.status === 'failed' && row.detail === 'provider_suppressed')).map((row) => row.recipient));
+}
+
+/** Whether this address has bounced for good or complained before; such addresses get nothing more. */
+export async function suppressed(db: AppDb, recipient: string, fromUserId?: string) {
+  return (await suppressedAmong(db, [recipient], fromUserId)).has(recipient);
 }
 
 async function setStatus(db: AppDb, id: string, from: DeliveryStatus, values: Partial<EmailDelivery>) {
@@ -162,15 +193,16 @@ async function setStatus(db: AppDb, id: string, from: DeliveryStatus, values: Pa
 /**
  * Queue job: emails the owner the recap of a completed meeting. Safe to run
  * again: the delivery row is keyed per meeting and recipient, and only a row
- * still `queued` is ever sent. The row is claimed as `unknown` before the
- * provider call, so a crash or timeout mid-send never leads to a second email.
+ * still `queued` is ever sent (see `deliver`). Answers `recapped` only once
+ * the provider accepted the owner's recap, which is when notes may go on to
+ * attendees automatically: never while the owner's own copy failed.
  */
-export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now = Date.now()) {
-  if (!emailConfigured(env)) return;
+export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now = Date.now()): Promise<'recapped' | 'not_sent'> {
+  if (!emailConfigured(env)) return 'not_sent';
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
-  if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return;
+  if (!meeting || meeting.deletedAt || meeting.status !== 'complete') return 'not_sent';
   const user = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
-  if (!wantsRecap(env, user)) return;
+  if (!wantsRecap(env, user)) return 'not_sent';
   const recipient = recipientAddress(user.email)!;
 
   const idempotencyKey = recapIdempotencyKey(meetingId, recipient);
@@ -187,54 +219,108 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
     updatedAt: now,
   }).onConflictDoNothing({ target: emailDeliveries.idempotencyKey });
   const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.idempotencyKey, idempotencyKey)).limit(1))[0];
+  if (!delivery) return 'not_sent';
   // Sent, settled, or attempted without an answer: never send it again.
-  if (!delivery || delivery.status !== 'queued') return;
+  if (delivery.status !== 'queued') return delivery.status === 'sent' || delivery.status === 'delivered' ? 'recapped' : 'not_sent';
 
-  if (await suppressed(db, recipient)) {
+  if (await suppressed(db, recipient, user.id)) {
     await setStatus(db, delivery.id, 'queued', { status: 'failed', statusDetail: 'suppressed_recipient' });
-    return;
+    return 'not_sent';
   }
 
   const summary = (await db.select().from(summaries).where(eq(summaries.meetingId, meetingId)).limit(1))[0];
-  let attachments: { filename: string; content: string; contentType: string }[] = [];
-  let attachmentNote: string | null = null;
-  if (user.emailRecapTranscript) {
-    const lines = await db.select().from(transcriptSegments).where(eq(transcriptSegments.meetingId, meetingId)).orderBy(transcriptSegments.startMs);
-    const text = transcriptAttachment(lines, meeting.speakerNamesJson);
-    if (new TextEncoder().encode(text).length > MAX_TRANSCRIPT_ATTACHMENT_BYTES) {
-      attachmentNote = 'The transcript is too long to attach; open it with the link above.';
-    } else if (text) {
-      attachments = [{ filename: 'transcript.txt', content: toBase64(text), contentType: 'text/plain; charset=utf-8' }];
-    }
-  }
+  const { attachments, attachmentNote } = user.emailRecapTranscript
+    ? await transcriptFiles(db, meeting)
+    : { attachments: [], attachmentNote: null };
+  const app = appUrl(env);
   const rendered = renderRecap({
     title: meeting.title,
     startedAt: meeting.startedAt,
     tldr: summary?.tldr ?? '',
     decisions: decode<Decision[]>(summary?.decisionsJson, []),
     actionItems: decode<ActionItem[]>(summary?.actionItemsJson, []),
-    link: `${appUrl(env)}/app/meetings/${encodeURIComponent(meetingId)}`,
+    link: `${app}/app/meetings/${encodeURIComponent(meetingId)}`,
     attachmentNote,
+    shareLink: user.shareNotesOffer ? `${app}/app/meetings/${encodeURIComponent(meetingId)}/share-notes` : null,
+    autoEnabledOffLink: user.emailRecapsNoticePending ? `${app}/recaps/off/${await recapsOffToken(db, user)}` : null,
   });
 
+  const outcome = await deliver(db, env, delivery, { to: recipient, ...rendered, attachments });
+  if (outcome === 'sent' && user.emailRecapsNoticePending) {
+    // Said once is enough. A rejected or unconfirmed send keeps it for the next recap.
+    await db.update(users).set({ emailRecapsNoticePending: false }).where(eq(users.id, user.id));
+  }
+  return outcome === 'sent' ? 'recapped' : 'not_sent';
+}
+
+/** The transcript as a text attachment, or a note saying why it isn't attached. */
+export async function transcriptFiles(db: AppDb, meeting: Pick<Meeting, 'id' | 'speakerNamesJson'>) {
+  const lines = await db.select().from(transcriptSegments).where(eq(transcriptSegments.meetingId, meeting.id)).orderBy(transcriptSegments.startMs);
+  const text = transcriptAttachment(lines, meeting.speakerNamesJson);
+  if (new TextEncoder().encode(text).length > MAX_TRANSCRIPT_ATTACHMENT_BYTES) {
+    return { attachments: [] as EmailAttachment[], attachmentNote: 'The transcript is too long to attach; open it with the link above.' as string | null };
+  }
+  const attachments: EmailAttachment[] = text
+    ? [{ filename: 'transcript.txt', content: toBase64(text), contentType: 'text/plain; charset=utf-8' }]
+    : [];
+  return { attachments, attachmentNote: null as string | null };
+}
+
+export type EmailAttachment = { filename: string; content: string; contentType: string };
+
+/** The secret in this account's one-click "turn off recaps" link, made the first time it's needed. */
+export async function recapsOffToken(db: AppDb, user: Pick<User, 'id' | 'emailRecapsOffToken'>) {
+  if (user.emailRecapsOffToken) return user.emailRecapsOffToken;
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  await db.update(users).set({ emailRecapsOffToken: token }).where(and(eq(users.id, user.id), isNull(users.emailRecapsOffToken)));
+  const row = (await db.select({ token: users.emailRecapsOffToken }).from(users).where(eq(users.id, user.id)).limit(1))[0];
+  return row?.token ?? token;
+}
+
+/** Turns recaps off for the account a one-click link belongs to. Returns whether the token matched an account. */
+export async function turnOffRecapsByToken(db: AppDb, token: string, now = Date.now()) {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return false;
+  const changed = await db.update(users)
+    // The link works once: a forwarded old recap can't turn them off again later.
+    .set({ emailRecaps: false, emailRecapsOffReason: 'user', emailRecapsSetAt: now, emailRecapsNoticePending: false, emailRecapsOffToken: null, updatedAt: now })
+    .where(eq(users.emailRecapsOffToken, token))
+    .returning({ id: users.id });
+  return changed.length > 0;
+}
+
+/**
+ * Claims a `queued` delivery and sends it. The row is claimed as `unknown`
+ * before the provider call, so a crash or timeout mid-send never leads to a
+ * second email. A rate-limited send goes back to `queued` and throws, for the
+ * queue to retry.
+ */
+export async function deliver(
+  db: AppDb,
+  env: SendingEmailEnv,
+  delivery: EmailDelivery,
+  email: Pick<OutgoingEmail, 'to' | 'subject' | 'html' | 'text' | 'attachments'>,
+): Promise<'sent' | 'unconfirmed' | 'rejected' | 'not_sent'> {
   const claimed = await db.update(emailDeliveries)
     .set({ status: 'unknown', statusDetail: 'sending', attempts: delivery.attempts + 1, updatedAt: Date.now() })
     .where(and(eq(emailDeliveries.id, delivery.id), eq(emailDeliveries.status, 'queued')))
     .returning({ id: emailDeliveries.id });
-  if (!claimed.length) return; // another run claimed it first
+  if (!claimed.length) return 'not_sent'; // another run claimed it first
+  const meetingId = delivery.meetingId;
 
   try {
     const sent = await sendEmail(env, {
-      to: recipient,
-      ...rendered,
-      attachments,
-      tags: { [DELIVERY_TAG]: delivery.id, kind: 'meeting_recap' },
-      idempotencyKey: delivery.id,
+      ...email,
+      tags: { [DELIVERY_TAG]: delivery.id, kind: delivery.kind },
+      // A later attempt only happens after one that certainly didn't send
+      // (rate limited, rejected, or a resend of failed notes), so it gets its own key.
+      idempotencyKey: delivery.attempts ? `${delivery.id}:${delivery.attempts + 1}` : delivery.id,
     });
     await db.update(emailDeliveries).set({ providerMessageId: sent.id })
       .where(and(eq(emailDeliveries.id, delivery.id), isNull(emailDeliveries.providerMessageId)));
     // A webhook may already have moved it past `sent`.
     await setStatus(db, delivery.id, 'unknown', { status: 'sent', statusDetail: null, sentAt: Date.now() });
+    return 'sent';
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (error instanceof EmailError && error.retryable) {
@@ -244,20 +330,21 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
     }
     if (!(error instanceof EmailError) || error.uncertain) {
       // It may have gone out. Leave it `unknown`; a webhook can still settle it.
-      console.error(JSON.stringify({ message: 'recap send unconfirmed', deliveryId: delivery.id, meetingId, error: reason }));
+      console.error(JSON.stringify({ message: 'email send unconfirmed', kind: delivery.kind, deliveryId: delivery.id, meetingId, error: reason }));
       await setStatus(db, delivery.id, 'unknown', { statusDetail: 'send_unconfirmed' });
-      return;
+      return 'unconfirmed';
     }
-    console.error(JSON.stringify({ message: 'recap send rejected', deliveryId: delivery.id, meetingId, status: error.status, error: reason }));
+    console.error(JSON.stringify({ message: 'email send rejected', kind: delivery.kind, deliveryId: delivery.id, meetingId, status: error.status, error: reason }));
     await setStatus(db, delivery.id, 'unknown', { status: 'failed', statusDetail: `provider_rejected_${error.status ?? 'unknown'}` });
+    return 'rejected';
   }
 }
 
 /** Called when the send job runs out of queue retries: a recap never claimed is given up on. */
-export async function failRecap(db: AppDb, meetingId: string, reason: string) {
+export async function failRecap(db: AppDb, meetingId: string, reason: string, kind: EmailDelivery['kind'] = 'meeting_recap') {
   await db.update(emailDeliveries)
     .set({ status: 'failed', statusDetail: `retries_exhausted: ${reason.slice(0, 200)}`, updatedAt: Date.now() })
-    .where(and(eq(emailDeliveries.meetingId, meetingId), eq(emailDeliveries.status, 'queued')));
+    .where(and(eq(emailDeliveries.meetingId, meetingId), eq(emailDeliveries.kind, kind), eq(emailDeliveries.status, 'queued')));
 }
 
 interface ResendEvent {
@@ -331,9 +418,14 @@ export async function applyEmailEvent(db: AppDb, delivery: EmailDelivery, event:
     ...(delivery.sentAt ? {} : { sentAt: event.at }),
   });
   if (!changed.length) return delivery.status; // another delivery moved it first
-  if (next.status === 'complained') {
-    // Marking a recap as spam is a clear no: stop sending them.
-    await db.update(users).set({ emailRecaps: false, updatedAt: Date.now() }).where(eq(users.id, delivery.userId));
+  if (next.status === 'complained' && delivery.kind === 'meeting_recap') {
+    // The owner marking a recap as spam is a clear no: stop sending them, and
+    // remember why, so nothing switches them back on. An attendee's complaint
+    // only suppresses that attendee's address.
+    const now = Date.now();
+    await db.update(users)
+      .set({ emailRecaps: false, emailRecapsOffReason: 'complaint', emailRecapsSetAt: now, emailRecapsNoticePending: false, updatedAt: now })
+      .where(eq(users.id, delivery.userId));
   }
   return next.status;
 }
@@ -386,10 +478,16 @@ export async function reconcileRecaps(db: AppDb, env: RecapEnv, now = Date.now()
     ))
     .orderBy(emailDeliveries.updatedAt)
     .limit(50);
+  const requeued = new Set<string>();
   for (const delivery of lost) {
     if (!delivery.meetingId) continue;
     await db.update(emailDeliveries).set({ updatedAt: now }).where(eq(emailDeliveries.id, delivery.id));
-    await env.PROCESSING_QUEUE.send({ kind: 'send-recap', meetingId: delivery.meetingId });
+    const job = `${delivery.kind}:${delivery.meetingId}`;
+    if (requeued.has(job)) continue; // one notes job sends every queued attendee of its meeting
+    requeued.add(job);
+    await env.PROCESSING_QUEUE.send(delivery.kind === 'meeting_notes'
+      ? { kind: 'send-meeting-notes', meetingId: delivery.meetingId }
+      : { kind: 'send-recap', meetingId: delivery.meetingId });
   }
 }
 
