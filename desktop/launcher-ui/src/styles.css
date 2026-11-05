@@ -947,3 +947,5 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 }
 .ev-meeting-all:hover { color: var(--ev-ink); text-decoration: underline; }
 .ev-meeting-all:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
+/* The window is exactly the card's size (fit_meeting_card): never a scrollbar. */
+html:has(.ev-meeting-card), html:has(.ev-meeting-card) body { overflow: hidden; }

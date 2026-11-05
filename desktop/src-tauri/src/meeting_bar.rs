@@ -254,6 +254,7 @@ fn build_card(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
         .visible(false)
         .accept_first_mouse(true)
         .build()?;
+    above_capture_control(&window);
     let handle = app.clone();
     window.on_window_event(move |event| {
         // Like a menu: clicking anywhere else closes it.
@@ -263,6 +264,23 @@ fn build_card(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     });
     Ok(window)
 }
+
+/// One level above the capture control and the launcher (25, hud.rs and
+/// panel.rs), so the pill never covers the card. Main thread only.
+#[cfg(target_os = "macos")]
+fn above_capture_control(window: &tauri::WebviewWindow) {
+    const CARD_LEVEL: isize = 26;
+    if let Ok(ns_window) = window.ns_window() {
+        // SAFETY: an NSWindow Tauri just made, on the main thread (the tray's click handler).
+        unsafe {
+            let ns_window = &*ns_window.cast::<objc2::runtime::AnyObject>();
+            let _: () = objc2::msg_send![ns_window, setLevel: CARD_LEVEL];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn above_capture_control(_window: &tauri::WebviewWindow) {}
 
 /// Under the item, its left edge with the item's, kept on the item's screen.
 fn place_card(app: &AppHandle, window: &tauri::WebviewWindow, click: tauri::PhysicalPosition<f64>, item: tauri::Rect) {
