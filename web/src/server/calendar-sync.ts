@@ -63,6 +63,7 @@ const BACKGROUND_CONCURRENCY = 6;
  * syncing is skipped (`claimAttempt`).
  */
 export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced: number }> {
+  // `synced` counts syncs that succeeded, not attempts.
   const due = await calendarRepo.listDueConnections(db, now, BACKGROUND_STALE_MS, BACKGROUND_BATCH);
   const signal = AbortSignal.timeout(BACKGROUND_BUDGET_MS);
   let next = 0;
@@ -71,8 +72,12 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
     while (next < due.length && !signal.aborted) {
       const connection = due[next++];
       if (!(await calendarRepo.claimAttempt(db, connection.id, now, BACKGROUND_STALE_MS))) continue;
-      await syncConnection(db, connection, now, undefined, signal);
-      synced++;
+      // Out of budget after the claim: give the claim back, so the next run takes it.
+      if (signal.aborted) {
+        await calendarRepo.releaseAttempt(db, connection.id, now).catch(() => undefined);
+        break;
+      }
+      if ((await syncConnection(db, connection, now, undefined, signal)) === 'ok') synced++;
     }
   };
   await Promise.all(Array.from({ length: Math.min(BACKGROUND_CONCURRENCY, due.length) }, worker));
@@ -145,16 +150,26 @@ async function calendarsToSync(
     const known = calendarRepo.storedCalendars(connection).filter((c) => c.selected);
     return known.length ? known.map((c) => (c.primary ? 'primary' : c.id)) : ['primary'];
   }
-  const before = new Map(calendarRepo.storedCalendars(connection).map((c) => [c.id, c.selected]));
-  const calendars = listed.map((calendar) => ({
-    id: calendar.id,
-    name: calendar.name,
-    primary: calendar.primary,
-    selected: calendar.primary || (before.get(calendar.id) ?? selectedByDefault(calendar)),
-  }));
-  await calendarRepo.saveCalendarList(db, connection.id, calendars);
-  const ids = calendars.filter((c) => c.selected).map((c) => (c.primary ? 'primary' : c.id));
-  return ids.length ? ids : ['primary'];
+  // Merged against the stored list and saved only if it's unchanged since; a
+  // tick saved meanwhile means reading it again, so the sync never undoes it.
+  let stored = connection.calendarsJson;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = new Map(calendarRepo.storedCalendars({ calendarsJson: stored }).map((c) => [c.id, c.selected]));
+    const calendars = listed.map((calendar) => ({
+      id: calendar.id,
+      name: calendar.name,
+      primary: calendar.primary,
+      selected: calendar.primary || (before.get(calendar.id) ?? selectedByDefault(calendar)),
+    }));
+    if (await calendarRepo.saveCalendarList(db, connection.id, calendars, stored)) {
+      const ids = calendars.filter((c) => c.selected).map((c) => (c.primary ? 'primary' : c.id));
+      return ids.length ? ids : ['primary'];
+    }
+    stored = (await calendarRepo.getConnection(db, connection.userId, connection.id))?.calendarsJson ?? null;
+  }
+  // Still changing: read what's stored as it stands, and pick up the rest next sync.
+  const known = calendarRepo.storedCalendars({ calendarsJson: stored }).filter((c) => c.selected);
+  return known.length ? known.map((c) => (c.primary ? 'primary' : c.id)) : ['primary'];
 }
 
 /**

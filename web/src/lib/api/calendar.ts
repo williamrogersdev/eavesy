@@ -78,7 +78,7 @@ export async function getCalendarStatus(): Promise<CalendarStatus> {
 /** Ticks or unticks calendars on one connected account; the answer is its calendars as saved. */
 export async function setSyncedCalendars(id: string, calendars: { id: string; selected: boolean }[]): Promise<CalendarChoice[]> {
   const answer = await call('PATCH', { id, calendars });
-  const saved = isRecord(answer) ? parseCalendars(answer.calendars) : null;
+  const saved = isRecord(answer) && answer.ok === true ? parseCalendars(answer.calendars) : null;
   if (!saved) throw new Error('Couldn’t save that. Try again.');
   return saved;
 }

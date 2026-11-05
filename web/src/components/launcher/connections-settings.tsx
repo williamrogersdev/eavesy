@@ -205,6 +205,9 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   const [stuck, setStuck] = useState<string | null>(null);
   /** The connection whose calendar list is open. */
   const [picking, setPicking] = useState<string | null>(null);
+  /** The look-again after a calendar choice, so a newer one (or leaving) cancels it. */
+  const recheck = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (recheck.current) clearTimeout(recheck.current); }, []);
   const load = useCallback(() => {
     void getCalendarStatus()
       .then((next) => { setStatus(next); setError(null); })
@@ -296,7 +299,8 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
             onSaved={(next) => {
               setStatus((current) => current && { ...current, connections: current.connections.map((c) => (c.id === connection.id ? { ...c, calendars: next } : c)) });
               // The sync runs after the save; look again shortly for the new meeting count.
-              setTimeout(load, 4_000);
+              if (recheck.current) clearTimeout(recheck.current);
+              recheck.current = setTimeout(load, 4_000);
             }}
           />
         )}

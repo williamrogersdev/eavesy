@@ -30,13 +30,16 @@ function googleEvent(id: string, title: string, extra: Record<string, unknown> =
 }
 
 /** Google, as far as a sync sees it: the token endpoint, the calendar list and each calendar's events. */
-function fakeGoogle(byCalendar: Record<string, unknown[]>) {
+function fakeGoogle(byCalendar: Record<string, unknown[]>, onCalendarList?: () => Promise<void>) {
   const calls: string[] = [];
   vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     calls.push(url.pathname);
     if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'at' });
-    if (url.pathname.endsWith('/users/me/calendarList')) return Response.json({ items: CALENDARS });
+    if (url.pathname.endsWith('/users/me/calendarList')) {
+      await onCalendarList?.();
+      return Response.json({ items: CALENDARS });
+    }
     const calendar = decodeURIComponent(url.pathname.split('/calendars/')[1]!.replace(/\/events$/, ''));
     if (!(calendar in byCalendar)) return new Response(null, { status: 404 });
     return Response.json({ items: byCalendar[calendar] });
@@ -121,6 +124,22 @@ describe('calendar sync across an account’s calendars', () => {
     expect(await storedTitles()).toEqual(['Numeral intro@primary', 'Side thing@side@group.calendar.google.com']);
     // Someone else's connection can't be changed.
     expect(await calendarRepo.setSelectedCalendars(db(), 'user_b', 'cal_a', [])).toBe('not_found');
+  });
+
+  it('a tick saved while a sync is reading Google is kept, and that sync already uses it', async () => {
+    const byCalendar = { primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [googleEvent('b', 'Team sync')], 'side@group.calendar.google.com': [googleEvent('c', 'Side thing')] };
+    fakeGoogle(byCalendar);
+    await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
+    await syncConnection(db(), (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!, NOW);
+    // The sync below starts from this snapshot; the person ticks "Side project" while it waits on Google.
+    const snapshot = (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!;
+    fakeGoogle(byCalendar, async () => {
+      expect(await calendarRepo.setSelectedCalendars(db(), 'user_a', 'cal_a', [{ id: 'side@group.calendar.google.com', selected: true }])).toBe('ok');
+    });
+    await syncConnection(db(), snapshot, NOW + 1000);
+    const saved = calendarRepo.storedCalendars((await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!);
+    expect(saved.find((c) => c.name === 'Side project')?.selected).toBe(true);
+    expect(await storedTitles()).toContain('Side thing@side@group.calendar.google.com');
   });
 
   it('a calendar that can no longer be read deletes nothing', async () => {

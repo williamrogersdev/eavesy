@@ -30,37 +30,57 @@ export async function listDueConnections(db: AppDb, now: number, staleMs: number
     .limit(limit);
 }
 
-/** Keeps the calendar list read from Google, with each calendar's sync choice. */
-export async function saveCalendarList(db: AppDb, connectionId: string, calendars: StoredCalendar[]): Promise<void> {
-  await db.update(calendarConnections).set({ calendarsJson: encode(calendars) }).where(eq(calendarConnections.id, connectionId));
+/** `calendars_json` still holding `previous` (null-safe): the guard that keeps a write from undoing one made since it was read. */
+function unchangedSince(previous: string | null) {
+  return previous === null ? isNull(calendarConnections.calendarsJson) : eq(calendarConnections.calendarsJson, previous);
+}
+
+/**
+ * Keeps the calendar list read from Google, with each calendar's sync choice,
+ * but only if nobody changed the list since `previous` was read. False when
+ * someone did: the caller reads it again rather than undoing their tick.
+ */
+export async function saveCalendarList(db: AppDb, connectionId: string, calendars: StoredCalendar[], previous: string | null): Promise<boolean> {
+  const saved = await db
+    .update(calendarConnections)
+    .set({ calendarsJson: encode(calendars) })
+    .where(and(eq(calendarConnections.id, connectionId), unchangedSince(previous)))
+    .returning({ id: calendarConnections.id });
+  return saved.length > 0;
 }
 
 /**
  * Applies the person's ticks to a connection's calendars (ids it doesn't
  * know are ignored; the primary calendar can't be unticked) and marks it due,
- * so the next sync adds or drops those calendars' events. `not_found` when
- * the connection isn't theirs; `not_listed` when its calendars haven't been
- * read from Google yet (nothing to choose from).
+ * so the next sync adds or drops those calendars' events. Each try writes only
+ * if the list is unchanged since it was read, so two saves at once (the Mac
+ * and a browser) both land. `not_found` when the connection isn't theirs;
+ * `not_listed` when its calendars haven't been read from Google yet;
+ * `conflict` when the list kept changing under it.
  */
 export async function setSelectedCalendars(
   db: AppDb,
   userId: string,
   connectionId: string,
   choices: { id: string; selected: boolean }[],
-): Promise<'ok' | 'not_found' | 'not_listed'> {
-  const connection = await getConnection(db, userId, connectionId);
-  if (!connection) return 'not_found';
-  if (!connection.calendarsJson) return 'not_listed';
+): Promise<'ok' | 'not_found' | 'not_listed' | 'conflict'> {
   const wanted = new Map(choices.map((choice) => [choice.id, choice.selected]));
-  const calendars = storedCalendars(connection).map((calendar) => ({
-    ...calendar,
-    selected: calendar.primary || (wanted.get(calendar.id) ?? calendar.selected),
-  }));
-  await db
-    .update(calendarConnections)
-    .set({ calendarsJson: encode(calendars), lastAttemptAt: null })
-    .where(and(eq(calendarConnections.id, connectionId), eq(calendarConnections.userId, userId)));
-  return 'ok';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const connection = await getConnection(db, userId, connectionId);
+    if (!connection) return 'not_found';
+    if (!connection.calendarsJson) return 'not_listed';
+    const calendars = storedCalendars(connection).map((calendar) => ({
+      ...calendar,
+      selected: calendar.primary || (wanted.get(calendar.id) ?? calendar.selected),
+    }));
+    const saved = await db
+      .update(calendarConnections)
+      .set({ calendarsJson: encode(calendars), lastAttemptAt: null })
+      .where(and(eq(calendarConnections.id, connectionId), eq(calendarConnections.userId, userId), unchangedSince(connection.calendarsJson)))
+      .returning({ id: calendarConnections.id });
+    if (saved.length) return 'ok';
+  }
+  return 'conflict';
 }
 
 export async function listConnections(db: AppDb, userId: string): Promise<CalendarConnection[]> {
@@ -122,6 +142,14 @@ export async function claimAttempt(db: AppDb, id: string, now: number, staleMs: 
     )
     .returning({ id: calendarConnections.id });
   return claimed.length > 0;
+}
+
+/** Undoes a claim made at `claimedAt` that never got to sync, so the connection is due again. */
+export async function releaseAttempt(db: AppDb, id: string, claimedAt: number): Promise<void> {
+  await db
+    .update(calendarConnections)
+    .set({ lastAttemptAt: null })
+    .where(and(eq(calendarConnections.id, id), eq(calendarConnections.lastAttemptAt, claimedAt)));
 }
 
 /** Records how a sync attempt went, so a broken grant shows Reconnect without asking Google again. */

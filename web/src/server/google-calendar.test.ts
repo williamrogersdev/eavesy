@@ -225,6 +225,7 @@ describe('Google events', () => {
 describe('invite text and calendar choices', () => {
   test('HTML invite text becomes plain text with its line breaks, capped', () => {
     expect(plainDescription('<b>Agenda</b><br>1. Pricing &amp; plans<br/>2. Next&nbsp;steps')).toBe('Agenda\n1. Pricing & plans\n2. Next steps');
+    expect(plainDescription('Ben&#8217;s deck &#x2014; v2 &#55296;')).toBe('Ben’s deck — v2');
     expect(plainDescription('   ')).toBeNull();
     expect(plainDescription(undefined)).toBeNull();
     expect(plainDescription('x'.repeat(5_000))!.length).toBe(4_000);

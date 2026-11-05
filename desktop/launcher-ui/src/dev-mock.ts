@@ -130,10 +130,12 @@ export function installDevMock(): void {
       if (args.path === '/api/calendar-connections') {
         if (args.method === 'DELETE') { calendars = calendars.filter((c) => c.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
         if (args.method === 'PATCH') {
-          const body = args.body as { id: string; calendars: { id: string; selected: boolean }[] };
+          const body = args.body as { id?: string; calendars?: { id: string; selected: boolean }[] } | null;
+          if (!body?.id || !Array.isArray(body.calendars)) return { error: 'invalid_request' };
+          const choices = body.calendars;
           const connection = calendars.find((c) => c.id === body.id);
           if (!connection) return { error: 'not_found' };
-          connection.calendars = connection.calendars.map((cal) => ({ ...cal, selected: cal.primary || (body.calendars.find((x) => x.id === cal.id)?.selected ?? cal.selected) }));
+          connection.calendars = connection.calendars.map((cal) => ({ ...cal, selected: cal.primary || (choices.find((x) => x.id === cal.id)?.selected ?? cal.selected) }));
           return { ok: true, calendars: connection.calendars };
         }
         return { available: { google: true, outlook: false }, connections: calendars };

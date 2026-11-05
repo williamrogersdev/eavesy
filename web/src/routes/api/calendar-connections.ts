@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { resolveIngestActor } from '@/server/device-auth';
-import { canListCalendars, isDue, SYNC_AHEAD_MS, syncDue, syncConnection } from '@/server/calendar-sync';
+import { canListCalendars, isDue, SYNC_AHEAD_MS, SYNC_STALE_MS, syncDue, syncConnection } from '@/server/calendar-sync';
 import { calendarListEnabled, googleCredentials, revokeGoogleToken } from '@/server/google-calendar';
 import { openSecret } from '@/server/secret-box';
 
@@ -64,9 +64,12 @@ export const Route = createFileRoute('/api/calendar-connections')({
         const result = await calendarRepo.setSelectedCalendars(db, actor.userId, parsed.data.id, parsed.data.calendars);
         if (result === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
         // Nothing listed yet: the next sync reads the calendars, and the choice can be made then.
-        if (result === 'not_listed') return Response.json({ ok: false, error: 'calendars_not_listed', calendars: [] });
+        if (result === 'not_listed') return Response.json({ ok: false, error: 'calendars_not_listed' }, { status: 409 });
+        if (result === 'conflict') return Response.json({ ok: false, error: 'conflict' }, { status: 409 });
         const row = await calendarRepo.getConnection(db, actor.userId, parsed.data.id);
-        if (row) waitUntil(syncConnection(db, row));
+        // Synced now unless another sync of it is already running (it then reads the new choice next time).
+        const now = Date.now();
+        if (row && (await calendarRepo.claimAttempt(db, row.id, now, SYNC_STALE_MS))) waitUntil(syncConnection(db, row, now));
         return Response.json({ ok: true, calendars: row ? calendarRepo.storedCalendars(row) : [] });
       },
 

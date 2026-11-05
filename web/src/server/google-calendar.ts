@@ -14,7 +14,7 @@ const CALENDAR_LIST_URL = 'https://www.googleapis.com/calendar/v3/users/me/calen
 /**
  * Whether "Connect Google" asks for the calendar list too. Off until the
  * scope is on the deployment's Google OAuth consent screen
- * (`GOOGLE_CALENDAR_LIST=on`, docs/DEPLOY.md): asking for a scope the screen
+ * (`GOOGLE_CALENDAR_LIST=on`, docs/SELF_HOSTING.md): asking for a scope the screen
  * doesn't list shows people Google's "unverified app" warning.
  */
 export function calendarListEnabled(): boolean {
@@ -166,6 +166,13 @@ export const MAX_DESCRIPTION = 4_000;
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
 
+/** A numeric entity's character (`#8217`, `#x2019`), or nothing for one that isn't a real character. */
+function codePoint(code: string): string {
+  const value = code[0] === 'x' || code[0] === 'X' ? parseInt(code.slice(1), 16) : parseInt(code, 10);
+  if (!Number.isInteger(value) || value <= 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return '';
+  return String.fromCodePoint(value);
+}
+
 /** Google sends invite text as HTML when it was written in Calendar's editor; keep the words and line breaks. */
 export function plainDescription(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
@@ -173,6 +180,7 @@ export function plainDescription(raw: unknown): string | null {
     .replace(/<(br|\/p|\/div|\/li)\s*\/?>/gi, '\n')
     .replace(/<li[^>]*>/gi, '- ')
     .replace(/<[^>]+>/g, '')
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code: string) => codePoint(code))
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name: string) => ENTITIES[name] ?? '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
