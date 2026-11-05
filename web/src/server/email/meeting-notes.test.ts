@@ -352,7 +352,7 @@ describe('review fixes', () => {
     expect((await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] }))[0].outcome).toBe('already_sent');
   });
 
-  test("another account's spam complaint doesn't block this owner's notes; a permanent bounce does", async () => {
+  test("another account's complaint or bounce doesn't block this owner's notes", async () => {
     const t = setup();
     t.sqlite.run(`INSERT INTO users (id, email, created_at, updated_at) VALUES ('u2', 'someone@else.com', 1, 1)`);
     t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
@@ -360,7 +360,7 @@ describe('review fixes', () => {
                          ('b', 'u2', 'meeting_notes', 'cy@partner.io', 'b', 'resend', 'bounced', 1, 1)`);
     t.sqlite.run(`UPDATE email_deliveries SET status_detail = 'permanent' WHERE id = 'b'`);
     const results = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'cy@partner.io'] });
-    expect(results.map((r) => r.outcome)).toEqual(['queued', 'suppressed']);
+    expect(results.map((r) => r.outcome)).toEqual(['queued', 'queued']);
   });
 
   test("no automatic sending while the owner's own recap failed", async () => {

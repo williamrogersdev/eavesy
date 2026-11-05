@@ -159,17 +159,22 @@ export function toBase64(text: string) {
 }
 
 /**
- * Which of these addresses get nothing more: a permanent bounce or provider
- * suppression is a fact about the address, so it counts whoever sent; a spam
- * complaint is about one sender, so with `fromUserId` it counts only when it
- * was about that account's email.
+ * Which of these addresses get nothing more: a complaint, a permanent bounce
+ * or a provider suppression. With `fromUserId`, only that account's own email
+ * history counts, so one account's outcomes never block or show up for
+ * another; Resend still refuses addresses on its own suppression list, which
+ * protects the shared sending domain.
  */
 export async function suppressedAmong(db: AppDb, recipients: string[], fromUserId?: string) {
   if (!recipients.length) return new Set<string>();
-  const rows = await db.select({ recipient: emailDeliveries.recipient, userId: emailDeliveries.userId, status: emailDeliveries.status, detail: emailDeliveries.statusDetail })
+  const rows = await db.select({ recipient: emailDeliveries.recipient, status: emailDeliveries.status, detail: emailDeliveries.statusDetail })
     .from(emailDeliveries)
-    .where(and(inArray(emailDeliveries.recipient, recipients), inArray(emailDeliveries.status, ['bounced', 'complained', 'failed'])));
-  return new Set(rows.filter((row) => (row.status === 'complained' && (!fromUserId || row.userId === fromUserId))
+    .where(and(
+      inArray(emailDeliveries.recipient, recipients),
+      inArray(emailDeliveries.status, ['bounced', 'complained', 'failed']),
+      ...(fromUserId ? [eq(emailDeliveries.userId, fromUserId)] : []),
+    ));
+  return new Set(rows.filter((row) => row.status === 'complained'
     || (row.status === 'bounced' && row.detail === 'permanent')
     || (row.status === 'failed' && row.detail === 'provider_suppressed')).map((row) => row.recipient));
 }
