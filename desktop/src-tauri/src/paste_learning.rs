@@ -140,7 +140,12 @@ mod mac {
     /// Puts the caret at `at`, waiting for the app to apply it, so a selection
     /// that landed late can't stay for the user's next key to type over.
     unsafe fn put_caret(field: Ref, at: usize) {
-        let _ = select_exactly(field, at, 0, "");
+        for _ in 0..2 {
+            if select_exactly(field, at, 0, "") == Ok(true) {
+                return;
+            }
+        }
+        tracing::warn!("the app didn't put the caret back after the words");
     }
     /// How long a selection gets to apply: each read is bounded by the 0.25 s
     /// messaging timeout, so the wait can run that much over.
@@ -311,7 +316,7 @@ mod mac {
             }
             let field = self.field.0 as Ref;
             let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
-            if super::passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
+            if super::typed_passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
                 return Err("the typed words were changed".into());
             }
             let end = super::units(&self.prefix) + super::units(&self.typed);
@@ -382,7 +387,7 @@ mod mac {
             let mut found = None;
             loop {
                 std::thread::sleep(Duration::from_millis(30));
-                if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)) {
+                if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::typed_passage(&value, &self.prefix, &self.suffix)) {
                     if posted.is_ok() && now == text {
                         self.typed = text;
                         return Ok(true);
@@ -783,11 +788,16 @@ fn anchors(value: &str, pasted: &str, near: impl Fn(usize, usize) -> bool) -> Op
     Some((value[..start].into(), value[start + pasted.len()..].into()))
 }
 
-/// The text between `prefix` and `suffix` in `value`. Rich text editors
-/// (ProseMirror, as in Claude's message box) read back an empty paragraph as
-/// a lone newline and drop it once there is text, or add one back when the
-/// text goes: a field's last newline may come and go.
 pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    Some(middle.into())
+}
+
+/// `passage` for live-typed words, whose caret is checked as well. Rich text
+/// editors (ProseMirror, as in Claude's message box) read back an empty
+/// paragraph as a lone newline and drop it once there is text, or add one
+/// back when the text goes: the field's last newline may come and go.
+pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
     let rest = value.strip_prefix(prefix)?;
     let middle = rest
         .strip_suffix(suffix)
@@ -859,14 +869,14 @@ pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<
 mod tests {
     use super::*;
     #[test]
-    fn a_field_s_last_newline_may_come_and_go() {
+    fn a_typed_field_s_last_newline_may_come_and_go() {
         // An empty ProseMirror field reads "\n"; typed into, it drops it.
-        assert_eq!(passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello\u{a0}"));
-        assert_eq!(passage("Hello\n", "", "\n").as_deref(), Some("Hello"));
-        assert_eq!(passage("Say Hello there", "Say ", "").as_deref(), Some("Hello there"));
+        assert_eq!(typed_passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello\u{a0}"));
+        assert_eq!(typed_passage("Hello\n", "", "\n").as_deref(), Some("Hello"));
+        assert_eq!(typed_passage("Say Hello there", "Say ", "").as_deref(), Some("Hello there"));
         // Only a last newline is forgiven.
-        assert_eq!(passage("Hello", "", "\nmore"), None);
-        assert_eq!(passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+        assert_eq!(typed_passage("Hello", "", "\nmore"), None);
+        assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
     }
 
     #[test]
