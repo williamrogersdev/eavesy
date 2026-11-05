@@ -125,19 +125,25 @@ mod mac {
     /// moment after accepting it, so an immediate read returns the old one.
     unsafe fn select_exactly(field: Ref, start: usize, length: usize, expected: &str) -> Result<bool, String> {
         select(field, start, length)?;
+        let expected = super::normalize(expected);
         let give_up = std::time::Instant::now() + SELECTION_SETTLES;
-        loop {
-            let range = selection(field);
-            let selected = string(field, "AXSelectedText").map(|s| super::normalize(&s));
-            if range == Some((start, length)) && selected.as_deref() == Some(expected) {
+        while std::time::Instant::now() < give_up {
+            std::thread::sleep(Duration::from_millis(20));
+            if selection(field) == Some((start, length))
+                && string(field, "AXSelectedText").map(|s| super::normalize(&s)).as_deref() == Some(expected.as_str())
+            {
                 return Ok(true);
             }
-            if std::time::Instant::now() >= give_up {
-                return Ok(false);
-            }
-            std::thread::sleep(Duration::from_millis(20));
         }
+        Ok(false)
     }
+    /// Puts the caret at `at`, waiting for the app to apply it, so a selection
+    /// that landed late can't stay for the user's next key to type over.
+    unsafe fn put_caret(field: Ref, at: usize) {
+        let _ = select_exactly(field, at, 0, "");
+    }
+    /// How long a selection gets to apply: each read is bounded by the 0.25 s
+    /// messaging timeout, so the wait can run that much over.
     const SELECTION_SETTLES: Duration = Duration::from_millis(400);
     /// Swaps the passage Eavesy pasted last for `text`, when it is still in its
     /// field exactly as `previous`, that field still has the keyboard, and the
@@ -179,7 +185,7 @@ mod mac {
             // Whatever the app did select must not stay selected: the user's
             // next keystroke would type over it. Put the caret back after
             // the pasted words, and keep them for a later try.
-            let _ = unsafe { select(paste.field.0 as Ref, start + length, 0) };
+            unsafe { put_caret(paste.field.0 as Ref, start + length) };
             last().get_or_insert(paste);
             return Err("the app didn't select the pasted words".into());
         }
@@ -343,7 +349,7 @@ mod mac {
                 // exactly what is selected, and nothing else may go with it.
                 if !unsafe { select_exactly(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
-                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                    unsafe { put_caret(field, start + super::units(&self.typed)) };
                     return Err("the app didn't select the words to retype".into());
                 }
             }
@@ -359,7 +365,7 @@ mod mac {
             // still this field right before they are posted.
             if stop.load(Ordering::SeqCst) || focus(&self.field) != Some(true) {
                 if keep < self.typed.len() {
-                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                    unsafe { put_caret(field, start + super::units(&self.typed)) };
                 }
                 return Ok(false);
             }
@@ -413,7 +419,7 @@ mod mac {
             let start = super::units(&self.prefix);
             let length = super::units(&self.typed);
             if !unsafe { select_exactly(field, start, length, &self.typed)? } {
-                let _ = unsafe { select(field, start + length, 0) };
+                unsafe { put_caret(field, start + length) };
                 return Err("the app didn't select the typed words".into());
             }
             Ok(())
@@ -776,6 +782,7 @@ fn anchors(value: &str, pasted: &str, near: impl Fn(usize, usize) -> bool) -> Op
     };
     Some((value[..start].into(), value[start + pasted.len()..].into()))
 }
+
 /// The text between `prefix` and `suffix` in `value`. Rich text editors
 /// (ProseMirror, as in Claude's message box) read back an empty paragraph as
 /// a lone newline and drop it once there is text, or add one back when the
@@ -788,6 +795,7 @@ pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
         .or_else(|| rest.strip_suffix('\n')?.strip_suffix(suffix))?;
     Some(middle.into())
 }
+
 /// Text as live typing puts it in a field: as fields hand it back
 /// (`normalize`), on one line. A typed newline is a Return key press, which
 /// sends a chat message.
