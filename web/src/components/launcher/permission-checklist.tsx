@@ -36,7 +36,11 @@ export function usesFnKey(...accelerators: string[]): boolean {
   return accelerators.some((accel) => accel.trim().toLowerCase() === 'fn');
 }
 
-export function permissionSpecs(fnInUse: boolean): PermissionSpec[] {
+/**
+ * `speechRequired`: signed out, the Mac's own recognizer is the only way dictation gets typed
+ * (the cloud fallback needs an account), so setup can't call Speech Recognition optional.
+ */
+export function permissionSpecs(fnInUse: boolean, speechRequired = false): PermissionSpec[] {
   return [
     {
       kind: 'mic',
@@ -49,10 +53,12 @@ export function permissionSpecs(fnInUse: boolean): PermissionSpec[] {
     {
       kind: 'speech',
       label: 'Speech Recognition',
-      hint: 'Shows live captions and pastes the moment you stop talking.',
+      hint: speechRequired
+        ? 'Turns your words into text on this Mac, so dictation works without an account.'
+        : 'Shows live captions and pastes the moment you stop talking.',
       settingsHint: 'Turn on Eavesy under Speech Recognition in System Settings.',
       pane: 'speech',
-      need: 'recommended',
+      need: speechRequired ? 'required' : 'recommended',
     },
     {
       kind: 'accessibility',
@@ -89,6 +95,14 @@ export function permissionSpecs(fnInUse: boolean): PermissionSpec[] {
       relaunch: true,
     },
   ];
+}
+
+/**
+ * Whether setup can move on to trying dictation: the microphone, plus Speech Recognition when
+ * signed out, since without either one nothing would be typed.
+ */
+export function setupPermissionsReady(permissions: Permissions | null, paired: boolean): boolean {
+  return permissions?.mic === true && (paired || permissions.speech === true);
 }
 
 export function isGranted(permissions: Permissions | null, kind: SetupPermissionKind): boolean | undefined {
@@ -252,6 +266,7 @@ export function PermissionChecklist({
   permissions,
   checking,
   fnInUse,
+  speechRequired = false,
   only,
   onRequest,
   onOpenSettings,
@@ -260,13 +275,15 @@ export function PermissionChecklist({
   permissions: Permissions | null;
   checking: SetupPermissionKind | null;
   fnInUse: boolean;
+  /** Setup while signed out: see `permissionSpecs`. */
+  speechRequired?: boolean;
   /** Limit to these kinds, in this order. */
   only?: SetupPermissionKind[];
   onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenSettings: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
 }) {
-  const specs = permissionSpecs(fnInUse);
+  const specs = permissionSpecs(fnInUse, speechRequired);
   const rows = only ? only.flatMap((kind) => specs.filter((spec) => spec.kind === kind)) : specs;
   return (
     <>

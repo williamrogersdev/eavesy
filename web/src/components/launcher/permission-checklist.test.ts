@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PermissionStatus, Permissions } from '@/lib/desktop/bridge';
-import { answered, needsPermissionPoll, permissionRowState, permissionSpecs, samePermissions, usesFnKey } from './permission-checklist';
+import { answered, needsPermissionPoll, permissionRowState, permissionSpecs, samePermissions, setupPermissionsReady, usesFnKey } from './permission-checklist';
 
 function perms(over: Partial<Permissions> = {}, status: Partial<Record<keyof NonNullable<Permissions['status']>, PermissionStatus>> = {}): Permissions {
   return {
@@ -41,6 +41,24 @@ describe('permissionSpecs', () => {
   test('Input Monitoring is not needed unless fn is a shortcut', () => {
     expect(permissionSpecs(false).find((s) => s.kind === 'inputMonitoring')?.need).toBe('not-needed');
     expect(permissionSpecs(true).find((s) => s.kind === 'inputMonitoring')?.need).toBe('recommended');
+  });
+  test('Speech Recognition is required only when setup says so (signed out)', () => {
+    expect(permissionSpecs(false).find((s) => s.kind === 'speech')?.need).toBe('recommended');
+    expect(permissionSpecs(false, true).find((s) => s.kind === 'speech')?.need).toBe('required');
+  });
+});
+
+describe('setupPermissionsReady', () => {
+  test('signed in, the microphone is enough', () => {
+    expect(setupPermissionsReady(perms({ mic: true }), true)).toBe(true);
+    expect(setupPermissionsReady(perms(), true)).toBe(false);
+  });
+  test('signed out, Speech Recognition is needed too, since nothing else can type the words', () => {
+    expect(setupPermissionsReady(perms({ mic: true }), false)).toBe(false);
+    expect(setupPermissionsReady(perms({ mic: true, speech: true }), false)).toBe(true);
+  });
+  test('nothing is ready before macOS has answered', () => {
+    expect(setupPermissionsReady(null, true)).toBe(false);
   });
 });
 

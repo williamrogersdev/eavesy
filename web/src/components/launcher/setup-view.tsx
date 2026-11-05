@@ -4,12 +4,19 @@ import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
-import { PermissionChecklist, usesFnKey, useOnGrant } from './permission-checklist';
+import { PermissionChecklist, setupPermissionsReady, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { useLiveLines } from './use-live-lines';
 
-const STEPS = ['Sign in', 'Permissions', 'Shortcuts', 'Try it'] as const;
+/**
+ * The first win comes before any account: allow the mic, talk once, then decide about signing in.
+ * The order is also the analytics order (`SETUP_STEPS` in desktop/src-tauri/src/commands.rs).
+ */
+const STEPS = ['Permissions', 'Try it', 'Sign in'] as const;
+const PERMISSIONS = 0;
+const TRY_IT = 1;
+const SIGN_IN = 2;
 
 export function SetupView({
   step,
@@ -50,7 +57,7 @@ export function SetupView({
   onRequest: (kind: SetupPermissionKind) => Promise<boolean>;
   onOpenPrivacy: (pane: PrivacyPane) => void;
   onRelaunch: () => void;
-  /** A shortcut was changed on the Shortcuts step. */
+  /** A shortcut was changed on the Try it step. */
   onShortcutsChanged: () => void;
   onFinish: () => void;
 }) {
@@ -65,10 +72,11 @@ export function SetupView({
   const talk = dictationHotkey || '⌘⇧D';
   const shortcuts = useShortcuts(onShortcutsChanged);
   const tryBox = useRef<HTMLTextAreaElement>(null);
-  const hearing = useLiveLines(step === 3 && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
+  const ready = setupPermissionsReady(permissions, paired);
+  const hearing = useLiveLines(step === TRY_IT && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
   // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
   useEffect(() => {
-    if (step !== 3) return;
+    if (step !== TRY_IT) return;
     let disposed = false;
     let off: (() => void) | undefined;
     void setDictationInPanel(true).catch(() => {});
@@ -93,14 +101,6 @@ export function SetupView({
     };
   }, [step]);
 
-  // Signing in finishes in the browser; when it does, move on by ourselves.
-  // (The step lives in the launcher, so this runs as an effect, not during render.)
-  const wasPaired = useRef(paired);
-  useEffect(() => {
-    if (paired && !wasPaired.current && step === 0) onStep(1);
-    wasPaired.current = paired;
-  }, [paired, step, onStep]);
-
   // One small lift each time macOS turns something on.
   useOnGrant(permissions, () => setCheer(true));
   useEffect(() => {
@@ -112,35 +112,36 @@ export function SetupView({
   const heard = pasted && tried.trim().length > 0;
   const mascot: MascotState = listening
     ? 'listening'
-    : cheer || (step === 3 && heard)
+    : cheer || (step === TRY_IT && heard) || (step === SIGN_IN && paired)
       ? 'happy'
-      : step === 0 && connecting
+      : step === SIGN_IN && connecting
         ? 'thinking'
-        : step === 1 && micOn
+        : step === PERMISSIONS && micOn
           ? 'listening'
           : 'idle';
 
   const bubble: ReactNode = [
-    paired
-      ? 'Nice to meet you properly. Your captures will sync to your account.'
-      : connecting
-        ? "I'll wait here while you finish in the browser."
-        : "Hi, I'm Eavesy. I live up here and write things down for you.",
     !micOn
-      ? "I'll need to borrow your ears. Only while you're talking to me, promise."
+      ? "Hi, I'm Eavesy. I type what you say, anywhere. I'll need to borrow your ears, only while you're talking to me."
       : permissions?.speech === false
-        ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
+        ? paired
+          ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
+          : 'Thank you. Allow Speech Recognition too, so I can understand you right here on this Mac.'
         : !pasteOn
           ? 'One more and I can type for you, right where your cursor is.'
           : fnInUse && permissions?.inputMonitoring === false
             ? 'One more so I can hear a tap of fn.'
             : 'Lovely. That’s everything I need.',
-    'Two keys are all you need. You can change them any time.',
     heard
-      ? "Heard you. That's it, I'll be in the menu bar, under the hat icon."
+      ? 'Heard you. That works in any app, wherever your cursor is.'
       : listening
         ? "I'm listening. Tap again when you're done."
         : "Go on, say something. I'll show you what I heard.",
+    paired
+      ? "Nice to meet you properly. I'll be in the menu bar, under the hat icon."
+      : connecting
+        ? "I'll wait here while you finish in the browser."
+        : 'Last thing, and it’s up to you.',
   ][step];
 
   const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
@@ -152,32 +153,7 @@ export function SetupView({
 
   let body: ReactNode;
   let footer: ReactNode;
-  if (step === 0) {
-    body = (
-      <>
-        <h2 className="ev-onb-title">{paired ? "You're signed in" : 'Sign in, or stay local'}</h2>
-        <p className="ev-onb-lead">
-          {paired
-            ? `${account?.email ?? account?.name ?? 'This Mac'} is connected. Transcripts and summaries sync to your account.`
-            : 'Recordings stay in ~/Eavesy on this Mac either way. Signing in adds transcripts, summaries and sync across your devices.'}
-        </p>
-        {connecting && <p className="ev-onb-note">Click “Approve this Mac” on the page that opened. This updates on its own.</p>}
-      </>
-    );
-    footer = paired ? (
-      <>{back}{next()}</>
-    ) : connecting ? (
-      <>
-        <Button variant="ghost" size="md" onClick={onCancelConnect}>Cancel</Button>
-        <Button variant="primary" size="md" loading disabled>Waiting for you in the browser…</Button>
-      </>
-    ) : (
-      <>
-        <Button variant="ghost" size="md" onClick={() => setStep(1)}>Stay local for now</Button>
-        <Button variant="primary" size="md" onClick={onConnect}>Sign in at eavesy.com</Button>
-      </>
-    );
-  } else if (step === 1) {
+  if (step === PERMISSIONS) {
     body = (
       <>
         <h2 className="ev-onb-title">Let Eavesy hear you</h2>
@@ -187,30 +163,23 @@ export function SetupView({
             permissions={permissions}
             checking={checking}
             fnInUse={fnInUse}
+            speechRequired={!paired}
             only={['mic', 'speech', 'accessibility', 'inputMonitoring']}
             onRequest={onRequest}
             onOpenSettings={onOpenPrivacy}
             onRelaunch={onRelaunch}
           />
         </div>
-        {!micOn && <p className="ev-onb-note">Allow the microphone to continue. Screenshots, video and notifications can wait for Settings.</p>}
+        {!ready && (
+          <p className="ev-onb-note">
+            {micOn ? 'Allow Speech Recognition to continue.' : 'Allow the microphone to continue.'} Screenshots, video and notifications can wait for Settings.
+          </p>
+        )}
       </>
     );
-    footer = <>{back}{next('Continue', !micOn, micOn ? undefined : 'Allow the microphone first')}</>;
-  } else if (step === 2) {
-    body = (
-      <>
-        <h2 className="ev-onb-title">Your shortcuts</h2>
-        <p className="ev-onb-lead">They work from any app, even when this panel is closed.</p>
-        {/* Click a shortcut to change it; fn setup steps show under the row that uses it. */}
-        <div className="ev-card">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
-          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
-        </div>
-      </>
-    );
-    footer = <>{back}{next()}</>;
-  } else {
+    const why = ready ? undefined : micOn ? 'Allow Speech Recognition first' : 'Allow the microphone first';
+    footer = <>{back}{next('Continue', !ready, why)}</>;
+  } else if (step === TRY_IT) {
     body = (
       <>
         <h2 className="ev-onb-title">Try it once</h2>
@@ -246,12 +215,42 @@ export function SetupView({
             <>Accessibility is off, so I’ll copy instead of paste. Press <Kbd keys="⌘V" /> here.</>
           )}
         </p>
+        {/* The one shortcut this step needs, so a clash with another app is fixed right here. */}
+        <div className="ev-card">
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+        </div>
       </>
     );
-    footer = (
+    footer = <>{back}{next(heard ? 'Continue' : 'Skip for now')}</>;
+  } else {
+    body = (
+      <>
+        <h2 className="ev-onb-title">{paired ? "You're signed in" : 'Sign in, or stay local'}</h2>
+        <p className="ev-onb-lead">
+          {paired
+            ? `${account?.email ?? account?.name ?? 'This Mac'} is connected. Transcripts and summaries sync to your account.`
+            : 'Everything stays in ~/Eavesy on this Mac either way. Signing in adds sharper transcripts, summaries, sync across your Macs, and lets Claude, Cursor and other agents read your captures.'}
+        </p>
+        {connecting && <p className="ev-onb-note">Click “Approve this Mac” on the page that opened. This updates on its own.</p>}
+      </>
+    );
+    const start = (variant: 'primary' | 'ghost', label: string) => (
+      <Button variant={variant} size="md" onClick={onFinish}>{label}</Button>
+    );
+    footer = paired ? (
+      <>{back}{start('primary', 'Start using Eavesy')}</>
+    ) : connecting ? (
+      <>
+        <Button variant="ghost" size="md" onClick={onCancelConnect}>Cancel</Button>
+        <Button variant="primary" size="md" loading disabled>Waiting for you in the browser…</Button>
+      </>
+    ) : (
       <>
         {back}
-        <Button variant="primary" size="md" onClick={onFinish}>Start using Eavesy</Button>
+        <div className="flex gap-2">
+          {start('ghost', 'Stay local')}
+          <Button variant="primary" size="md" onClick={onConnect}>Sign in at eavesy.com</Button>
+        </div>
       </>
     );
   }
