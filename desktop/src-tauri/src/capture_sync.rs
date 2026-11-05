@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
@@ -51,6 +52,26 @@ const REFUSED_RECHECK_MS: i64 = DAY_MS;
 
 static STATE: StateFile = StateFile::new("capture_sync.json");
 static FAILED: RetryGate = RetryGate::new(FAILED_RETRY);
+/// Set when a capture was just saved here or the launcher opened: the next
+/// pass runs now instead of after the usual pause between passes.
+static NUDGED: AtomicBool = AtomicBool::new(false);
+
+/// Asks for a pass now: a note or image saved on this Mac goes up at once, and
+/// opening the launcher brings in what the user's other Macs just saved.
+pub fn nudge() {
+    NUDGED.store(true, Ordering::SeqCst);
+    crate::sync::wake();
+}
+
+/// Whether a pass was asked for since the last one started.
+pub(crate) fn nudged() -> bool {
+    NUDGED.load(Ordering::SeqCst)
+}
+
+/// Clears the request, as a pass is starting.
+pub(crate) fn take_nudge() {
+    NUDGED.store(false, Ordering::SeqCst);
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct SyncState {

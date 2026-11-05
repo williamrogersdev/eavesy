@@ -325,6 +325,9 @@ pub(crate) fn report_recovery_wait<R:Runtime>(app:&AppHandle<R>,error:&str) {
 const HEALTHY_RUN: Duration = Duration::from_secs(10 * 60);
 /// The longest one screenshot and image sync may run in the background.
 const CAPTURE_SYNC_LIMIT: Duration = Duration::from_secs(30 * 60);
+/// The shortest gap between capture passes asked for by `capture_sync::nudge`,
+/// so opening and closing the launcher quickly does not hammer the server.
+const CAPTURE_NUDGE_GAP: Duration = Duration::from_secs(3);
 
 /// Runs the sync loop for the life of the app. A loop that fails or panics
 /// is started again after a pause, so uploads never stop until a relaunch.
@@ -369,6 +372,7 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 struct CaptureTask {
     running: Option<(String, tokio::task::JoinHandle<Result<usize>>)>,
     next: Option<(String, Instant)>,
+    finished: Option<Instant>,
 }
 
 /// A loop that stopped takes its capture pass with it, so a restarted loop
@@ -400,15 +404,26 @@ impl CaptureTask {
             Err(error) => tracing::error!("capture sync stopped: {error}"),
         }
         self.next = Some((token, Instant::now() + wait));
+        self.finished = Some(Instant::now());
         rejected
     }
 
+    /// Whether a pass was asked for and the last one ended long enough ago.
+    fn nudge_due(&self) -> bool {
+        crate::capture_sync::nudged() && self.finished.is_none_or(|at| at.elapsed() >= CAPTURE_NUDGE_GAP)
+    }
+
     fn start_if_due(&mut self, app: &AppHandle, api: &Api, token: &str) {
+        // A nudge that arrives mid-pass stays set, so another pass follows this one.
         if self.running.is_some() {
             return;
         }
-        if self.next.as_ref().is_some_and(|(last, at)| last == token && Instant::now() < *at) {
+        let nudged = self.nudge_due();
+        if !nudged && self.next.as_ref().is_some_and(|(last, at)| last == token && Instant::now() < *at) {
             return;
+        }
+        if nudged {
+            crate::capture_sync::take_nudge();
         }
         let root = match crate::fs_writer::recordings_root(app) {
             Ok(root) => root,
@@ -514,6 +529,11 @@ async fn run_loop(app: AppHandle) -> Result<std::convert::Infallible> {
                     }
                     idle(idle_pause()).await;
                 } else {
+                    // A note or image just saved, or the launcher just opened,
+                    // should not wait for a long meeting upload to finish.
+                    if rejected.is_none() && capture.nudge_due() {
+                        capture.start_if_due(&app, &api, &token);
+                    }
                     sleep(Duration::from_millis(250)).await;
                 }
             }
