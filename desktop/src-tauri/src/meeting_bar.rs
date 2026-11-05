@@ -116,14 +116,16 @@ struct Shown {
     meeting: MeetingView,
 }
 
-/// What the item shows now (None: hidden), and when the card last closed.
+/// What the item shows now (None: hidden), and when the card last closed by losing focus.
 struct Bar {
     shown: Option<Shown>,
     applied: bool,
-    card_closed_at: Option<Instant>,
+    /// An `apply` is queued on the main thread: don't queue another.
+    queued: bool,
+    lost_focus_at: Option<Instant>,
 }
 
-static BAR: Mutex<Bar> = Mutex::new(Bar { shown: None, applied: true, card_closed_at: None });
+static BAR: Mutex<Bar> = Mutex::new(Bar { shown: None, applied: true, queued: false, lost_focus_at: None });
 
 fn with_bar<T>(f: impl FnOnce(&mut Bar) -> T) -> T {
     let mut guard = BAR.lock().unwrap_or_else(|error| error.into_inner());
@@ -145,20 +147,24 @@ pub fn refresh(app: &AppHandle) {
         tooltip: event.title.clone(),
         meeting: MeetingView::from(event),
     });
-    let changed = with_bar(|bar| {
-        if bar.shown == next && bar.applied {
-            return false;
+    // Not yet applied (a change, or an earlier failure): apply it, which also tells the card.
+    let pending = with_bar(|bar| {
+        let changed = bar.shown != next;
+        if changed {
+            bar.shown = next.clone();
+            bar.applied = false;
         }
-        bar.shown = next.clone();
-        bar.applied = false;
-        true
+        let pending = !bar.applied && !bar.queued;
+        bar.queued |= pending;
+        pending
     });
-    if !changed {
+    if !pending {
         return;
     }
-    let _ = app.emit_to(LABEL, "meeting:updated", next.as_ref().map(|shown| &shown.meeting));
     let handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || apply(&handle)) {
+        // `applied` stays false, so the next refresh (2s) schedules it again.
+        with_bar(|bar| bar.queued = false);
         tracing::warn!("meeting bar: couldn't schedule an update: {error}");
     }
 }
@@ -166,7 +172,10 @@ pub fn refresh(app: &AppHandle) {
 /// Main thread only. Makes the item on first use and hides it rather than
 /// removing it, so it keeps its place in the menu bar.
 fn apply(app: &AppHandle) {
-    let shown = with_bar(|bar| bar.shown.clone());
+    let shown = with_bar(|bar| {
+        bar.queued = false;
+        bar.shown.clone()
+    });
     let tray = match (app.tray_by_id(TRAY_ID), &shown) {
         (Some(tray), _) => tray,
         (None, None) => {
@@ -192,12 +201,16 @@ fn apply(app: &AppHandle) {
         }
     };
     match result {
-        Ok(()) => with_bar(|bar| {
-            // Applied unless it changed again meanwhile; the next refresh covers that.
-            if bar.shown == shown {
-                bar.applied = true;
-            }
-        }),
+        Ok(()) => {
+            // The card hears of it only once the item shows it, so the two agree.
+            let _ = app.emit_to(LABEL, "meeting:updated", shown.as_ref().map(|shown| &shown.meeting));
+            with_bar(|bar| {
+                // Applied unless it changed again meanwhile; the next refresh covers that.
+                if bar.shown == shown {
+                    bar.applied = true;
+                }
+            });
+        }
         Err(error) => tracing::warn!("meeting bar: couldn't update the menu bar item: {error}"),
     }
 }
@@ -221,7 +234,7 @@ fn toggle_card(app: &AppHandle, click: tauri::PhysicalPosition<f64>, item: tauri
         }
     }
     // This click took focus from the card and so already closed it.
-    if with_bar(|bar| bar.card_closed_at.take().is_some_and(|at| at.elapsed().as_millis() < REOPEN_AFTER_MS)) {
+    if with_bar(|bar| bar.lost_focus_at.take().is_some_and(|at| at.elapsed().as_millis() < REOPEN_AFTER_MS)) {
         return;
     }
     let window = match app.get_webview_window(LABEL) {
@@ -234,6 +247,7 @@ fn toggle_card(app: &AppHandle, click: tauri::PhysicalPosition<f64>, item: tauri
             }
         },
     };
+    with_bar(|bar| bar.lost_focus_at = None);
     place_card(app, &window, click, item);
     let _ = window.emit("meeting:updated", with_bar(|bar| bar.shown.as_ref().map(|shown| shown.meeting.clone())));
     let _ = window.show();
@@ -257,9 +271,13 @@ fn build_card(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     above_capture_control(&window);
     let handle = app.clone();
     window.on_window_event(move |event| {
-        // Like a menu: clicking anywhere else closes it.
+        // Like a menu: clicking anywhere else closes it. macOS sends the focus loss
+        // before the click that caused it reaches the item, so `toggle_card` can tell
+        // a click on the item itself apart (`lost_focus_at`).
         if let tauri::WindowEvent::Focused(false) = event {
-            hide_card(&handle);
+            if hide_card(&handle) {
+                with_bar(|bar| bar.lost_focus_at = Some(Instant::now()));
+            }
         }
     });
     Ok(window)
@@ -303,13 +321,14 @@ pub fn card_origin(item: (f64, f64, f64), screen: (f64, f64, f64)) -> (f64, f64)
     (x.min(max_x).max(left + 8.0), y + height + 6.0)
 }
 
-fn hide_card(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(LABEL) {
-        if window.is_visible().unwrap_or(false) {
-            with_bar(|bar| bar.card_closed_at = Some(Instant::now()));
-            let _ = window.hide();
-        }
+/// Whether it was open.
+fn hide_card(app: &AppHandle) -> bool {
+    let Some(window) = app.get_webview_window(LABEL) else { return false };
+    if !window.is_visible().unwrap_or(false) {
+        return false;
     }
+    let _ = window.hide();
+    true
 }
 
 /// The meeting the menu bar names, for the details card.
@@ -318,10 +337,12 @@ pub fn menu_bar_meeting() -> Option<MeetingView> {
     with_bar(|bar| bar.shown.as_ref().map(|shown| shown.meeting.clone()))
 }
 
-/// Opens the named meeting's join link in the browser. Only that link, and only an https one.
+/// Opens the join link of meeting `id`, which must be the one the menu bar
+/// names (what the card shows). Only that link, and only an https one.
 #[tauri::command(async)]
-pub fn open_meeting_link(app: AppHandle) -> Result<(), String> {
-    let url = menu_bar_meeting().and_then(|meeting| meeting.meeting_url).ok_or("This meeting has no link.")?;
+pub fn open_meeting_link(app: AppHandle, id: String) -> Result<(), String> {
+    let meeting = menu_bar_meeting().filter(|meeting| meeting.id == id).ok_or("That meeting isn't the next one any more.")?;
+    let url = meeting.meeting_url.ok_or("This meeting has no link.")?;
     if !url.starts_with("https://") {
         return Err("That link isn't one Eavesy opens.".into());
     }
@@ -404,7 +425,7 @@ mod tests {
         assert_eq!(short_title("William & Ben | Numeral Intro and roadmap", 32), "William & Ben | Numeral Intro…");
         assert_eq!(short_title("Supercalifragilisticexpialidocious-sync", 20), "Supercalifragilisti…");
         assert_eq!(short_title("  spaced   out  ", 32), "spaced out");
-        assert!(short_title("Café résumé review über alles zusammen", 20).chars().count() <= 20);
+        assert_eq!(short_title("Café résumé review über alles zusammen", 20), "Café résumé review…");
         let mut untitled = event("x", 0, 15);
         untitled.title = "  ".into();
         assert_eq!(label(&untitled, T, false), "Meeting • now");
