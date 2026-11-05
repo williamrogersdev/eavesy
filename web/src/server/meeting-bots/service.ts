@@ -234,12 +234,16 @@ export async function placeBot(
   const id = pid('bot', now);
   const { url, platform, title, folderId, joinAt, calendarEventId, botName } = placement;
   const at = joinAt ?? now;
-  // The calendar's plan leaves room for "Send the Notetaker" by hand.
-  const limit = calendarEventId ? ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE : ACTIVE_BOT_LIMIT;
+  const active = sql`${meetingBots.userId} = ${userId} AND ${meetingBots.status} NOT IN ('done', 'failed', 'cancelled')`;
+  // The calendar's plan leaves room for "Send the Notetaker" by hand: its own
+  // bots stop at the plan's share, and every bot counts toward the account's limit.
+  const planLimit = ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE;
+  const planRoom = calendarEventId
+    ? sql`AND (SELECT count(*) FROM ${meetingBots} WHERE ${active} AND ${meetingBots.calendarEventId} IS NOT NULL) < ${planLimit}`
+    : sql``;
   // One statement, so two clicks at once can't both get past the checks: a
   // bot for the same link around the same time is the one already on its way,
   // and an account has at most ACTIVE_BOT_LIMIT out at once.
-  const active = sql`${meetingBots.userId} = ${userId} AND ${meetingBots.status} NOT IN ('done', 'failed', 'cancelled')`;
   const inserted = await db.run(sql`
     INSERT INTO ${meetingBots} (id, user_id, provider, provider_bot_id, meeting_url, platform, title, folder_id, join_at, calendar_event_id, bot_name, status, created_at, updated_at)
     SELECT ${id}, ${userId}, 'eavesy', ${id}, ${url}, ${platform}, ${title}, ${folderId}, ${joinAt}, ${calendarEventId}, ${botName}, 'scheduling', ${now}, ${now}
@@ -247,14 +251,16 @@ export async function placeBot(
       SELECT 1 FROM ${meetingBots} WHERE ${active} AND ${meetingBots.meetingUrl} = ${url}
         AND abs(coalesce(${meetingBots.joinAt}, ${meetingBots.createdAt}) - ${at}) < ${DUPLICATE_WINDOW_MS}
     )
-    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${limit}`);
+    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${ACTIVE_BOT_LIMIT}
+    ${planRoom}`);
   if (!inserted.meta.changes) {
     const others = await db.select().from(meetingBots)
       .where(and(eq(meetingBots.userId, userId), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)));
     // A second click, or the same invite pasted twice, gets the bot already on its way.
     const same = others.find((bot) => bot.meetingUrl === url && Math.abs((bot.joinAt ?? bot.createdAt) - at) < DUPLICATE_WINDOW_MS);
     if (same) return { bot: same, duplicate: true };
-    if (others.length >= limit) {
+    const planned = others.filter((bot) => bot.calendarEventId !== null).length;
+    if (others.length >= ACTIVE_BOT_LIMIT || (calendarEventId && planned >= planLimit)) {
       return { error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.`, status: 429 };
     }
     // The bot in the way finished between the insert and the look.

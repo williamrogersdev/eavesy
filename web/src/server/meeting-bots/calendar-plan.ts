@@ -15,6 +15,7 @@ export const JOIN_EARLY_MS = 60 * 1000;
 const MOVED_MS = 2 * 60 * 1000;
 /** The status detail of a bot the plan itself withdrew; only those are sent again. */
 const WITHDRAWN_PREFIX = 'calendar_';
+const ID_CHUNK = 50;
 
 export type PlanResult = { scheduled: number; withdrawn: number; skipped: string[] };
 
@@ -61,12 +62,16 @@ export async function reconcileCalendarBots(db: AppDb, env: MeetingBotsEnv, user
   // A meeting whose bot failed, finished or was cancelled by the person isn't
   // sent another: a withdrawn plan bot (`calendar_*`) is the only one replaced.
   if (wanted.size) {
-    const ended = await db
-      .select({ calendarEventId: meetingBots.calendarEventId, statusDetail: meetingBots.statusDetail })
-      .from(meetingBots)
-      .where(and(eq(meetingBots.userId, userId), inArray(meetingBots.calendarEventId, [...wanted.keys()]), inArray(meetingBots.status, ['done', 'failed', 'cancelled'])));
-    for (const bot of ended) {
-      if (!bot.statusDetail?.startsWith(WITHDRAWN_PREFIX)) covered.add(bot.calendarEventId!);
+    const ids = [...wanted.keys()];
+    // In chunks: D1 caps the parameters one statement can bind.
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      const ended = await db
+        .select({ calendarEventId: meetingBots.calendarEventId, statusDetail: meetingBots.statusDetail })
+        .from(meetingBots)
+        .where(and(eq(meetingBots.userId, userId), inArray(meetingBots.calendarEventId, ids.slice(i, i + ID_CHUNK)), inArray(meetingBots.status, ['done', 'failed', 'cancelled'])));
+      for (const bot of ended) {
+        if (!bot.statusDetail?.startsWith(WITHDRAWN_PREFIX)) covered.add(bot.calendarEventId!);
+      }
     }
   }
   for (const bot of planned) {

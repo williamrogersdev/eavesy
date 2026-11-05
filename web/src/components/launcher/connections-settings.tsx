@@ -367,17 +367,25 @@ function MeetingCapture({ prefs, onChange }: { prefs: MeetingCapturePrefs; onCha
   // Each save shows its change at once, then what the server holds; only the
   // latest save's answer is shown, so a slow earlier one can't undo a later one.
   const latest = useRef(0);
+  // What the server last confirmed: a failed save goes back to it.
+  const confirmed = useRef(prefs);
   const save = (change: Parameters<typeof saveMeetingCapture>[0], next: MeetingCapturePrefs) => {
     const mine = ++latest.current;
     setError(null);
     onChange(next);
-    const settle = () => getMeetingCapture().then((fresh) => { if (mine === latest.current) onChange(fresh); });
+    const settle = () => getMeetingCapture().then((fresh) => {
+      confirmed.current = fresh;
+      if (mine === latest.current) onChange(fresh);
+    });
     void saveMeetingCapture(change)
       .then(settle, (e: unknown) => {
-        if (mine === latest.current) setError(errMsg(e, 'Couldn’t save that. Try again.'));
+        if (mine === latest.current) {
+          onChange(confirmed.current);
+          setError(errMsg(e, 'Couldn’t save that. Try again.'));
+        }
         return settle();
       })
-      .catch(() => undefined);
+      .catch((e: unknown) => { if (mine === latest.current) setError(errMsg(e, 'Couldn’t check what was saved. Reopen Settings to see it.')); });
   };
   const saveName = () => {
     const typed = name.trim();

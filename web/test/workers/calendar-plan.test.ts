@@ -209,7 +209,14 @@ describe('the Notetaker follows the calendar', () => {
     const { env } = fakeBots();
     await reconcileCalendarBots(db(), env, 'user_a', NOW);
     expect(await activeBots()).toHaveLength(ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE);
-    const byHand = await placeBot(db(), env, 'user_a', { url: 'https://meet.google.com/zzz-zzzz-zzz', platform: 'meet', title: null, folderId: null, joinAt: null, calendarEventId: null, botName: 'x' }, NOW);
-    expect('bot' in byHand).toBe(true);
+    for (const code of ['zzz-zzzz-zza', 'zzz-zzzz-zzb', 'zzz-zzzz-zzc']) {
+      const byHand = await placeBot(db(), env, 'user_a', { url: `https://meet.google.com/${code}`, platform: 'meet', title: null, folderId: null, joinAt: null, calendarEventId: null, botName: 'x' }, NOW);
+      expect('bot' in byHand).toBe(true);
+    }
+    expect(await activeBots()).toHaveLength(ACTIVE_BOT_LIMIT);
+    // At the limit, a planned meeting that moves (still the first one) gets its bot back.
+    await db().update(schema.calendarEvents).set({ startsAt: NOW + HOUR + 10 * 60_000 }).where(eq(schema.calendarEvents.id, 'evt_0'));
+    expect(await reconcileCalendarBots(db(), env, 'user_a', NOW + 1000)).toMatchObject({ scheduled: 1, withdrawn: 1 });
+    expect((await activeBots()).find((bot) => bot.calendarEventId === 'evt_0')!.joinAt).toBe(NOW + HOUR + 10 * 60_000 - JOIN_EARLY_MS);
   });
 });
