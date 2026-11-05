@@ -52,6 +52,13 @@ describe('mergeShared', () => {
     expect(mergeShared([stored({ id: 'a', title: '(No title)', participants: sam }), stored({ id: 'b', connectionId: 'cal_b', title: '(No title)', participants: sam })])).toHaveLength(2);
   });
 
+  test('the user’s own address is not a shared attendee', () => {
+    const me = [{ email: 'Me@home.com', name: null }];
+    const pair = [stored({ id: 'a', title: 'Standup', participants: me }), stored({ id: 'b', connectionId: 'cal_b', title: 'Standup', participants: me })];
+    expect(mergeShared(pair, ['me@home.com'])).toHaveLength(2);
+    expect(mergeShared(pair)).toHaveLength(1);
+  });
+
   test('a copy on another calendar never pulls two of one calendar’s blocks together', () => {
     const sam = [{ email: 'sam@work.com', name: null }];
     const merged = mergeShared([
@@ -82,5 +89,12 @@ describe('mergeShared', () => {
     expect(mergeShared([stored({ id: 'a', providerEventId: 'x' }), stored({ id: 'b', providerEventId: 'x', recordChoice: 'skip' })])[0]!.id).toBe('b');
     const recorded = mergeShared([stored({ id: 'a', providerEventId: 'x', recordChoice: 'skip' }), stored({ id: 'b', providerEventId: 'x', recordedMeetingId: 'm1' })])[0]!;
     expect(recorded).toMatchObject({ id: 'b', recordChoice: 'skip' });
+  });
+
+  test('when copies disagree, the kept copy’s choice and recording win', () => {
+    const chosen = mergeShared([stored({ id: 'a', providerEventId: 'x', recordChoice: 'skip' }), stored({ id: 'b', providerEventId: 'x', recordChoice: 'record' })])[0]!;
+    expect(chosen).toMatchObject({ id: 'a', recordChoice: 'skip' });
+    const recorded = mergeShared([stored({ id: 'a', providerEventId: 'x', recordedMeetingId: 'm1' }), stored({ id: 'b', providerEventId: 'x', recordedMeetingId: 'm2' })])[0]!;
+    expect(recorded).toMatchObject({ id: 'a', recordedMeetingId: 'm1' });
   });
 });

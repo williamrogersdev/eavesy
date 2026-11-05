@@ -173,6 +173,9 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
       ),
     )
     .orderBy(asc(calendarEvents.startsAt), asc(calendarEvents.id));
+  // The user's own addresses are on every copy, so they never show two copies are one meeting.
+  const own = (await db.select({ email: calendarConnections.accountEmail }).from(calendarConnections).where(eq(calendarConnections.userId, userId)))
+    .map((row) => row.email);
   return mergeShared(rows.map((row) => ({
     id: row.id,
     connectionId: row.connectionId,
@@ -185,7 +188,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
     recordChoice: row.recordChoice,
     recordedMeetingId: row.recordedMeetingId,
-  })));
+  })), own);
 }
 
 /** A call link without its query or fragment, so one meeting's link matches across invites. */
@@ -221,17 +224,23 @@ function rank(event: StoredEvent): number {
  * order. Copies sharing a Google id or call link chain together: one sharing
  * an id with a second and a link with a third joins all three. Without either,
  * copies merge on the same title and times only when they come from different
- * calendars, the title is a real one and they have an attendee in common, so
- * two "Focus time" blocks, or two blocks on one calendar, stay apart. The copy
- * kept is stable (recorded, else one with a record choice, else the first), so
- * a choice or recording set on it stays on it; if it has no choice it takes
- * another copy's. Its attendees are everyone's, and it takes a call link if it
- * lacked one.
+ * calendars, the title is a real one and they have an attendee in common
+ * other than the user (`ownEmails`), so two "Focus time" blocks, or two blocks
+ * on one calendar, stay apart.
+ *
+ * One copy stands for the meeting, chosen the same way every time: a recorded
+ * one, else one with a record choice, else the first. Its id is what Settings
+ * and the Mac show and edit, so its record choice wins when copies disagree;
+ * it takes another copy's only when it has none. Likewise only its recording
+ * shows: copies recorded separately before they were merged keep their own
+ * links in the database, but the merged entry names the kept copy's. Its
+ * attendees are everyone's, and it takes a call link if it lacked one.
  */
-export function mergeShared(events: StoredEvent[]): StoredEvent[] {
+export function mergeShared(events: StoredEvent[], ownEmails: readonly string[] = []): StoredEvent[] {
+  const own = new Set(ownEmails.map((email) => email.toLowerCase()));
   const parent = events.map((_, i) => i);
   const connections = events.map((event) => new Set([event.connectionId]));
-  const emails = events.map((event) => new Set(event.participants.map((p) => p.email.toLowerCase())));
+  const emails = events.map((event) => new Set(event.participants.map((p) => p.email.toLowerCase()).filter((email) => !own.has(email))));
   const find = (i: number): number => {
     while (parent[i] !== i) {
       parent[i] = parent[parent[i]];
