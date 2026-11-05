@@ -191,8 +191,13 @@ export const Route = createFileRoute('/api/devices/captures/')({
         const overQuota = await guardUserQuota(actor.userId, 'capture-sync', chargedAt);
         if (overQuota) return overQuota;
 
-        // Null when the body runs past content-length; shorter, or cut off, stores nothing either.
-        const body = await readCappedBody(request.body, bytes).catch(() => null);
+        // Null when the body runs past content-length. The only other failure is
+        // the request stream itself breaking off (the Mac went away): logged, and
+        // like a short body it stores nothing.
+        const body = await readCappedBody(request.body, bytes).catch((cause: unknown) => {
+          console.warn('[device-captures] note edit body broke off', cause);
+          return null;
+        });
         if (!body || body.byteLength !== bytes) {
           await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
