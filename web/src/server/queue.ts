@@ -31,6 +31,8 @@ export type QueueMessage =
   | { kind: 'check-canary'; botId: string; platform?: BotPlatform; check?: number }
   /** Email the owner the recap of a completed meeting, if they turned recaps on. */
   | { kind: 'send-recap'; meetingId: string }
+  /** Email the owner's notes to every attendee queued for this meeting (email/meeting-notes.ts). */
+  | { kind: 'send-meeting-notes'; meetingId: string }
   /** One attempt to POST an event to one of the account's webhook endpoints (server/webhooks.ts). */
   | WebhookDelivery;
 

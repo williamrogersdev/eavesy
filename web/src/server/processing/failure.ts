@@ -61,6 +61,9 @@ export async function handleTerminalFailure(message: ProcessingMessage, env: Pro
     case 'send-recap':
       await failRecap(db, message.meetingId, reason);
       return;
+    case 'send-meeting-notes':
+      await failRecap(db, message.meetingId, reason, 'meeting_notes');
+      return;
     case 'check-canary':
       await failCanaryCheck(db, env, message.botId, message.platform, reason);
       return;

@@ -42,6 +42,8 @@ export async function ensureClerkUser(
     phoneNumber: args.phoneNumber,
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: AUTO_LANGUAGE,
+    // Recaps are on for new accounts; the column's SQL default is false (see schema.ts).
+    emailRecaps: true,
     isAnonymous: false,
     createdAt: now,
     updatedAt: now,
