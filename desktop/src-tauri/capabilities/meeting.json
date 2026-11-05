@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "meeting",
+  "description": "The next-meeting card under the menu bar item uses native app commands; it only needs event subscriptions.",
+  "windows": ["meeting"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

@@ -15,6 +15,11 @@ static WANT_RECORDING: AtomicBool = AtomicBool::new(false);
 /// Whether the tray actually shows the recording glyph (red porch light).
 static SHOWING_RECORDING: AtomicBool = AtomicBool::new(false);
 
+/// Whether the menu bar glyph shows (or is about to show) its recording dot.
+pub fn is_recording() -> bool {
+    WANT_RECORDING.load(Ordering::SeqCst)
+}
+
 /// No accelerator for fn or an unbound ("") shortcut.
 fn menu_accel(accelerator: &str) -> Option<String> {
     (accelerator != crate::hotkeys::FN && crate::hotkeys::parse_accelerator(accelerator).is_ok()).then(|| accelerator.to_string())
@@ -93,6 +98,8 @@ pub fn refresh(app: &AppHandle) {
 /// Callable from any thread: the swap itself runs on the main thread.
 pub fn set_recording(app: &AppHandle, recording: bool) {
     WANT_RECORDING.store(recording, Ordering::SeqCst);
+    // The meeting item says "recording" in the same breath as the glyph.
+    crate::meeting_bar::refresh(app);
     let handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
         eprintln!("tray: couldn't schedule the recording glyph: {error}");

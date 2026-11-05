@@ -2,14 +2,13 @@
 
 import { Asterisk, Check, ChevronDown, ChevronUp, Copy, MessageCircle, Plug, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Button, Card, Menu, Segmented, Switch } from '@/components/launcher/ui';
+import { Button, Card, Menu, Segmented } from '@/components/launcher/ui';
 import {
   connectGoogle,
   disconnectCalendar,
   getCalendarStatus,
   getUpcomingMeetings,
   NOT_REVOKED,
-  setRecordChoice,
   type CalendarStatus,
   type UpcomingMeeting,
 } from '@/lib/api/calendar';
@@ -35,6 +34,8 @@ import {
   type McpToken,
 } from '@/lib/mcp-tokens';
 import { claudeCodeConnected, claudeCodeStage, type ClaudeCodeStage } from './connections-model';
+import { MeetingRecordSwitch } from './meeting-details';
+import { meetingTime } from './meeting-model';
 
 /** Text to copy (a URL, a command or a whole prompt), with a Copy button that says when it worked. */
 function CopyField({ label, text, block = false }: { label: string; text: string; block?: boolean }) {
@@ -279,13 +280,6 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   );
 }
 
-function meetingTime(meeting: UpcomingMeeting, now: number): string {
-  const start = new Date(meeting.startsAt);
-  const time = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (meeting.startsAt <= now) return `Now, until ${new Date(meeting.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-  return start.toDateString() === new Date(now).toDateString() ? `Today ${time}` : `Tomorrow ${time}`;
-}
-
 /**
  * The next day's meetings, each with whether Eavesy records it when its call
  * starts. A switch left as the "record all" setting says stores nothing, so
@@ -295,7 +289,6 @@ function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active:
   // undefined while loading, null when no calendar is connected.
   const [meetings, setMeetings] = useState<UpcomingMeeting[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     if (!active) return;
     void getUpcomingMeetings()
@@ -307,25 +300,16 @@ function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active:
   if (meetings === null) return <p className="ev-set-hint">Connect a calendar above to choose meeting by meeting.</p>;
   if (meetings.length === 0) return <p className="ev-set-hint">No meetings in the next day.</p>;
   const now = Date.now();
-  const choose = (meeting: UpcomingMeeting, record: boolean) => {
-    const choice = record === autoRecord ? null : record ? 'record' : 'skip';
-    setBusy(meeting.id);
-    setError(null);
-    void setRecordChoice(meeting.id, choice)
-      .then(() => setMeetings((current) => current?.map((m) => m.id === meeting.id ? { ...m, recordChoice: choice } : m) ?? current))
-      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that. Try again.')))
-      .finally(() => setBusy(null));
-  };
   return (
     <>
       {meetings.map((meeting) => (
-        <Switch
+        <MeetingRecordSwitch
           key={meeting.id}
-          checked={meeting.recordChoice === null ? autoRecord : meeting.recordChoice === 'record'}
-          onCheckedChange={(record) => choose(meeting, record)}
-          disabled={busy === meeting.id}
-          label={meeting.title}
+          meeting={meeting}
+          autoRecord={autoRecord}
           hint={meetingTime(meeting, now)}
+          onChanged={(choice) => { setError(null); setMeetings((current) => current?.map((m) => m.id === meeting.id ? { ...m, recordChoice: choice } : m) ?? current); }}
+          onError={setError}
         />
       ))}
     </>
