@@ -39,7 +39,8 @@ from the first audio (the transcript's clock):
 
 Files being written are hidden (`.name.partial`) and renamed when complete.
 Sync (`desktop/src-tauri/src/meeting_attachments.rs`) uploads each file once,
-after the transcript's audio segments, and records it in the local
+after the transcript's audio segments (and while the transcript is written, for
+one taken just before the stop), and records it in the local
 `recording_attachments` table. One the server refuses for good (4xx) is
 recorded as given up and not retried.
 
@@ -53,6 +54,7 @@ recorded as given up and not retried.
 | `x-attachment-kind` | `snapshot` or `screenshot` (must match the name) |
 | `x-attachment-offset-ms` | offset from the start of the recording |
 | body | the PNG or JPEG, at most 20 MB; the type is read from the bytes |
+| `content-length` | required (411 without it); over 20 MB is refused (413) before the body is read |
 
 201 on a new picture, 200 `{ idempotent: true }` for one already stored.
 Quota: `meeting-attachment`, 3,000 a day.
