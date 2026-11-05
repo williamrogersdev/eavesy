@@ -125,7 +125,7 @@ pub struct Attendee {
 /// The attendees that read as one; anything else is left out rather than
 /// failing the whole calendar.
 fn lenient_attendees<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Attendee>, D::Error> {
-    let items = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.unwrap_or_default();
+    let serde_json::Value::Array(items) = serde_json::Value::deserialize(deserializer)? else { return Ok(Vec::new()) };
     Ok(items.into_iter().filter_map(|item| serde_json::from_value(item).ok()).collect())
 }
 
@@ -255,6 +255,8 @@ pub fn calendar_changed() {
 pub fn signed_out() {
     CALENDAR_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     with_watch(|watch| watch.events.clear());
+    // Signing in again fetches on the next tick, not within the minute.
+    CALENDAR_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn with_watch<T>(f: impl FnOnce(&mut Watch) -> T) -> T {
@@ -341,9 +343,10 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
     #[derive(Deserialize)]
     struct Answer {
         #[serde(default)]
-        upcoming: Vec<Event>,
+        upcoming: Vec<serde_json::Value>,
     }
-    // No credential may be a keychain hiccup: keep what was fetched (sign-out clears it, `signed_out`).
+    // No credential may be a keychain hiccup: keep what was fetched. Signing
+    // out (`signed_out`) and a token the server no longer takes clear it.
     let credential = settings::device_credential(app)?;
     let client = crate::sync::http_client().ok()?;
     let response = client
@@ -353,10 +356,18 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
         .send()
         .await
         .ok()?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Some(Vec::new());
+    }
     if !response.status().is_success() {
         return None;
     }
-    Some(response.json::<Answer>().await.ok()?.upcoming)
+    Some(parse_upcoming(response.json::<Answer>().await.ok()?.upcoming))
+}
+
+/// The meetings that read as one; a malformed one is left out rather than dropping the calendar.
+fn parse_upcoming(items: Vec<serde_json::Value>) -> Vec<Event> {
+    items.into_iter().filter_map(|item| serde_json::from_value(item).ok()).collect()
 }
 
 fn tick(app: &AppHandle) {
@@ -573,6 +584,22 @@ mod tests {
         assert_eq!(event.attendees, vec![Attendee { email: "ben@numeral.com".into(), name: Some("Ben".into()) }]);
         let none: Event = serde_json::from_value(serde_json::json!({ "id": "e", "title": "t", "startsAt": 1, "endsAt": 2, "attendees": null })).unwrap();
         assert!(none.attendees.is_empty());
+        // A malformed meeting is left out; the rest still read.
+        let events = parse_upcoming(vec![
+            serde_json::json!({ "id": "bad", "title": "t", "startsAt": null, "endsAt": 2 }),
+            serde_json::json!({ "id": "good", "title": "t", "startsAt": 1, "endsAt": 2, "attendees": "not a list" }),
+        ]);
+        assert_eq!(events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["good"]);
+    }
+
+    #[test]
+    fn signing_out_forgets_the_meetings_and_drops_fetches_in_flight() {
+        with_watch(|watch| watch.events = vec![event("standup", 0, 15, None)]);
+        let before = CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+        signed_out();
+        assert!(events().is_empty());
+        assert_ne!(CALENDAR_GENERATION.load(std::sync::atomic::Ordering::SeqCst), before);
+        assert!(CALENDAR_STALE.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

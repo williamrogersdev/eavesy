@@ -466,11 +466,11 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
                 .await;
         }
     }
-    settings::delete_device_token(&app)?;
-    // Signed out: no calendar, so the menu bar stops naming meetings.
+    // The server has let this Mac go: forget its meetings even if the local delete fails.
+    let deleted = settings::delete_device_token(&app);
     crate::meeting_watch::signed_out();
     crate::meeting_bar::refresh(&app);
-    Ok(())
+    deleted
 }
 
 #[tauri::command(async)]

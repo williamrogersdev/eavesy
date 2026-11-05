@@ -704,11 +704,12 @@ the synced calendars (every connected account, merged by
   placeholder (ambient first).
 - **What it says:** the title, then `in 11m` (whole minutes, rounded up),
   then `now` from the start. While Eavesy's glyph shows its recording dot it
-  says `recording`; both change in the same refresh, so they never disagree.
+  says `recording`; both change in the same refresh (the open card too), so
+  they don't drift apart.
   The text is always system ink. Coral stays on the recording glyph alone.
-- **Titles** over 32 characters are cut at a word and end in "…". A title
-  whose first words run past half that (one long word, say) is cut mid-word
-  instead. The tooltip and the card carry the whole title.
+- **Titles** over 32 characters are cut at a word and end in "…". When
+  cutting at the last space would keep fewer than half of those characters
+  (one long word, say), it's cut mid-word instead. The tooltip and the card carry the whole title.
 - **Click:** a paper card (not the HUD's dark glass) opens under the item,
   like a calendar popover: title, time, up to five people ("and 3 more"),
   the join link's host with **Join**, and the meeting's record switch,

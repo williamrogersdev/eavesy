@@ -120,10 +120,12 @@ struct Shown {
 struct Bar {
     shown: Option<Shown>,
     applied: bool,
+    /// An `apply` is queued on the main thread: don't queue another.
+    queued: bool,
     lost_focus_at: Option<Instant>,
 }
 
-static BAR: Mutex<Bar> = Mutex::new(Bar { shown: None, applied: true, lost_focus_at: None });
+static BAR: Mutex<Bar> = Mutex::new(Bar { shown: None, applied: true, queued: false, lost_focus_at: None });
 
 fn with_bar<T>(f: impl FnOnce(&mut Bar) -> T) -> T {
     let mut guard = BAR.lock().unwrap_or_else(|error| error.into_inner());
@@ -152,7 +154,9 @@ pub fn refresh(app: &AppHandle) {
             bar.shown = next.clone();
             bar.applied = false;
         }
-        (changed, !bar.applied)
+        let pending = !bar.applied && !bar.queued;
+        bar.queued |= pending;
+        (changed, pending)
     });
     if changed {
         let _ = app.emit_to(LABEL, "meeting:updated", next.as_ref().map(|shown| &shown.meeting));
@@ -163,6 +167,7 @@ pub fn refresh(app: &AppHandle) {
     let handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || apply(&handle)) {
         // `applied` stays false, so the next refresh (2s) schedules it again.
+        with_bar(|bar| bar.queued = false);
         tracing::warn!("meeting bar: couldn't schedule an update: {error}");
     }
 }
@@ -170,7 +175,10 @@ pub fn refresh(app: &AppHandle) {
 /// Main thread only. Makes the item on first use and hides it rather than
 /// removing it, so it keeps its place in the menu bar.
 fn apply(app: &AppHandle) {
-    let shown = with_bar(|bar| bar.shown.clone());
+    let shown = with_bar(|bar| {
+        bar.queued = false;
+        bar.shown.clone()
+    });
     let tray = match (app.tray_by_id(TRAY_ID), &shown) {
         (Some(tray), _) => tray,
         (None, None) => {
