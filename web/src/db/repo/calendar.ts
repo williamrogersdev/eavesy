@@ -142,6 +142,7 @@ export async function countUpcoming(db: AppDb, connectionId: string, from: numbe
 
 export type StoredEvent = {
   id: string;
+  providerEventId: string;
   title: string;
   startsAt: number;
   endsAt: number;
@@ -152,7 +153,11 @@ export type StoredEvent = {
   recordedMeetingId: string | null;
 };
 
-/** The user's events under way or starting between `from` and `to` (ones begun over a day before `from` are left out). */
+/**
+ * The user's events under way or starting between `from` and `to` (ones begun
+ * over a day before `from` are left out), with one entry per meeting even when
+ * several connected calendars carry it.
+ */
 export async function eventsAround(db: AppDb, userId: string, from: number, to: number): Promise<StoredEvent[]> {
   const rows = await db
     .select()
@@ -165,9 +170,10 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
         gt(calendarEvents.endsAt, from),
       ),
     )
-    .orderBy(asc(calendarEvents.startsAt));
-  return rows.map((row) => ({
+    .orderBy(asc(calendarEvents.startsAt), asc(calendarEvents.id));
+  return mergeShared(rows.map((row) => ({
     id: row.id,
+    providerEventId: row.providerEventId,
     title: row.title,
     startsAt: row.startsAt,
     endsAt: row.endsAt,
@@ -176,7 +182,63 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
     recordChoice: row.recordChoice,
     recordedMeetingId: row.recordedMeetingId,
-  }));
+  })));
+}
+
+/** A call link without its query or fragment, so one meeting's link matches across invites. */
+function linkKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return url;
+  }
+}
+
+/** Ways two stored events can be the same meeting: same Google event, same call link, or same title and times. */
+function sameMeetingKeys(event: StoredEvent): string[] {
+  const keys = [`id:${event.providerEventId}@${event.startsAt}`, `at:${event.title}@${event.startsAt}-${event.endsAt}`];
+  if (event.meetingUrl) keys.push(`url:${linkKey(event.meetingUrl)}@${event.startsAt}`);
+  return keys;
+}
+
+/** Which copy stands for the meeting: the recorded one, else one with a record choice, else the first. */
+function rank(event: StoredEvent): number {
+  return event.recordedMeetingId ? 2 : event.recordChoice ? 1 : 0;
+}
+
+/**
+ * Collapses copies of one meeting that arrive from more than one connected
+ * calendar (an invite between two of your own accounts, say) into one, keeping
+ * order. The copy kept is stable, so a record choice or recording set on it
+ * stays on it; its attendees are everyone's, and it takes a call link if it
+ * lacked one.
+ */
+export function mergeShared(events: StoredEvent[]): StoredEvent[] {
+  const groups: StoredEvent[][] = [];
+  const byKey = new Map<string, StoredEvent[]>();
+  for (const event of events) {
+    const keys = sameMeetingKeys(event);
+    const group = keys.map((key) => byKey.get(key)).find((found) => found !== undefined);
+    if (group) group.push(event);
+    else groups.push([event]);
+    const target = group ?? groups[groups.length - 1];
+    for (const key of keys) if (!byKey.has(key)) byKey.set(key, target);
+  }
+  return groups.map((copies) => {
+    if (copies.length === 1) return copies[0];
+    const kept = copies.reduce((best, event) => (rank(event) > rank(best) ? event : best));
+    const participants = new Map<string, { email: string; name: string | null }>();
+    for (const copy of copies) {
+      for (const person of copy.participants) {
+        const email = person.email.toLowerCase();
+        const seen = participants.get(email);
+        if (!seen || (!seen.name && person.name)) participants.set(email, person);
+      }
+    }
+    const linked = kept.meetingUrl ? kept : copies.find((copy) => copy.meetingUrl) ?? kept;
+    return { ...kept, meetingUrl: linked.meetingUrl, platform: linked.platform, participants: [...participants.values()] };
+  });
 }
 
 /** Points the event at its recording, unless an earlier recording of it already claimed it. */

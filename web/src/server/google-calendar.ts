@@ -3,7 +3,7 @@ import { isRecord } from '@/lib/json';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
-const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+const CALENDARS_URL = 'https://www.googleapis.com/calendar/v3/calendars';
 
 /** Read-only access to calendar events, plus the account's email to show it. */
 export const GOOGLE_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events.readonly'];
@@ -33,8 +33,10 @@ export function buildGoogleAuthorizeUrl(opts: {
     response_type: 'code',
     scope: GOOGLE_SCOPES.join(' '),
     access_type: 'offline',
-    // Always ask, so Google sends a refresh token even on a reconnect.
-    prompt: 'consent',
+    // Always ask, so Google sends a refresh token even on a reconnect, and
+    // always show the account picker, so "Add another Google account" can
+    // pick one other than the one signed in to the browser.
+    prompt: 'consent select_account',
     include_granted_scopes: 'true',
     state: opts.state,
     code_challenge: opts.codeChallenge,
@@ -211,16 +213,19 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
 const MAX_PAGES = 10;
 
 /**
- * Events on the primary calendar between `from` and `to`, recurring ones
- * expanded. `complete` is false when the listing stopped at the page cap, so
- * the caller must not treat a missing event as deleted.
+ * Events on one calendar (the account's primary one unless `calendarId` says
+ * otherwise) between `from` and `to`, recurring ones expanded. `complete` is
+ * false when the listing stopped at the page cap, so the caller must not treat
+ * a missing event as deleted.
  */
 export async function listGoogleEvents(
   accessToken: string,
   from: number,
   to: number,
   signal?: AbortSignal,
+  calendarId = 'primary',
 ): Promise<{ events: CalendarEventInput[]; complete: boolean }> {
+  const eventsUrl = `${CALENDARS_URL}/${encodeURIComponent(calendarId)}/events`;
   const out: CalendarEventInput[] = [];
   let pageToken: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -232,7 +237,7 @@ export async function listGoogleEvents(
       maxResults: '250',
     });
     if (pageToken) params.set('pageToken', pageToken);
-    const res = await fetch(`${EVENTS_URL}?${params.toString()}`, { headers: { authorization: `Bearer ${accessToken}` }, signal });
+    const res = await fetch(`${eventsUrl}?${params.toString()}`, { headers: { authorization: `Bearer ${accessToken}` }, signal });
     if (res.status === 401) throw new GoogleAccessRevoked('unauthorized');
     if (!res.ok) throw new Error(`google_events_http_${res.status}`);
     const json: unknown = await res.json();
