@@ -49,7 +49,7 @@ describe('Google OAuth', () => {
   test('asks for offline, read-only calendar access with PKCE', () => {
     const url = new URL(buildGoogleAuthorizeUrl({ clientId: 'cid', redirectUri: 'https://eavesy.com/cb', state: 's1', codeChallenge: 'c1' }));
     expect(url.searchParams.get('access_type')).toBe('offline');
-    expect(url.searchParams.get('prompt')).toBe('consent');
+    expect(url.searchParams.get('prompt')).toBe('consent select_account');
     expect(url.searchParams.get('scope')).toContain('calendar.events.readonly');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('state')).toBe('s1');
@@ -189,6 +189,14 @@ describe('Google events', () => {
     expect((await listGoogleEvents('at', 0, 1)).complete).toBe(true);
     mockFetch(() => new Response(null, { status: 401 }));
     await expect(listGoogleEvents('at', 0, 1)).rejects.toBeInstanceOf(GoogleAccessRevoked);
+  });
+
+  test('reads the primary calendar unless told which one', async () => {
+    const calls = mockFetch(() => Response.json({ items: [] }));
+    await listGoogleEvents('at', 0, 1);
+    await listGoogleEvents('at', 0, 1, undefined, 'team@group.calendar.google.com');
+    expect(new URL(calls[0]!.url).pathname).toBe('/calendar/v3/calendars/primary/events');
+    expect(new URL(calls[1]!.url).pathname).toBe('/calendar/v3/calendars/team%40group.calendar.google.com/events');
   });
 
   test('prefers the event’s own conference link and ignores look-alike hosts', () => {
