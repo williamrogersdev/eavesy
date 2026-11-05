@@ -139,4 +139,15 @@ describe('note edits shared between Macs', () => {
     const changes = await listNoteChanges(t.db, { userId: 'u1', since: future, afterId: ahead, limit: 10 });
     expect(changes.map((row) => [row.id, row.updatedAt])).toEqual([[edited, future + 2]]);
   });
+
+  test('an edit that lost a race to another moves nothing, so each replaced object has one owner', async () => {
+    const t = await notes();
+    const id = await t.note('u1', '00000000-0000-4000-8000-00000000000a');
+    const first = await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'one', bytes: 3, r2Key: 'cap/v1', ifR2Key: 'cap/00000000-0000-4000-8000-00000000000a' });
+    expect(first).not.toBeNull();
+    const late = await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'two', bytes: 3, r2Key: 'cap/v2', ifR2Key: 'cap/00000000-0000-4000-8000-00000000000a' });
+    expect(late).toBeNull();
+    expect((await get(t.db, { captureId: id, userId: 'u1' }))!.r2Key).toBe('cap/v1');
+    expect(await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'two', bytes: 3, r2Key: 'cap/v2', ifR2Key: 'cap/v1' })).not.toBeNull();
+  });
 });

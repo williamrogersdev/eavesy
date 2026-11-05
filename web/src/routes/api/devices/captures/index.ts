@@ -206,27 +206,41 @@ export const Route = createFileRoute('/api/devices/captures/')({
           await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
           await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
         };
-        let updatedAt: number | null;
+        // The row moves only from the object it pointed at when read, so of two
+        // edits racing, each removes exactly the object it replaced and none is
+        // left unreferenced. One that lost the race reads the row again and retries.
+        let current: { r2Key: string } = existing;
         try {
           await putObject(r2Key, body, contentType);
-          updatedAt = await capturesRepo.replaceNote(db, {
-            captureId: existing.id,
-            userId: actor.userId,
-            text,
-            bytes,
-            r2Key,
-            title: headerText(request.headers.get('x-title')),
-          });
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const updatedAt = await capturesRepo.replaceNote(db, {
+              captureId: existing.id,
+              userId: actor.userId,
+              text,
+              bytes,
+              r2Key,
+              ifR2Key: current.r2Key,
+              title: headerText(request.headers.get('x-title')),
+            });
+            if (updatedAt !== null) {
+              const replaced = current.r2Key;
+              await deleteObject(replaced).catch((cause: unknown) => console.error('[device-captures] replaced note object left behind', replaced, cause));
+              return Response.json({ id: existing.id, updatedAt });
+            }
+            const now = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
+            if (!now || now.deletedAt !== null || now.kind !== 'note') {
+              await discard();
+              return Response.json({ error: 'not found' }, { status: 404 });
+            }
+            current = now;
+          }
         } catch (error) {
           await discard();
           throw error;
         }
-        if (updatedAt === null) {
-          await discard();
-          return Response.json({ error: 'not found' }, { status: 404 });
-        }
-        await deleteObject(existing.r2Key).catch((cause: unknown) => console.warn('[device-captures] old note cleanup failed', existing.r2Key, cause));
-        return Response.json({ id: existing.id, updatedAt });
+        // Edited elsewhere at every try: the Mac sends it again later.
+        await discard();
+        return Response.json({ error: 'note is being edited elsewhere' }, { status: 409 });
       },
     },
   },

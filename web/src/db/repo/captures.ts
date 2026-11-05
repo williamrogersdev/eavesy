@@ -173,7 +173,16 @@ export async function listNoteChanges(
  */
 export async function replaceNote(
   db: AppDb,
-  args: { captureId: string; userId: string; text: string; bytes: number; r2Key: string; title?: string | null },
+  args: {
+    captureId: string;
+    userId: string;
+    text: string;
+    bytes: number;
+    r2Key: string;
+    /** Only while the row still points at this object: null when another edit moved it first. */
+    ifR2Key?: string;
+    title?: string | null;
+  },
 ): Promise<number | null> {
   const newest = sql`(SELECT COALESCE(MAX(c.updated_at), 0) + 1 FROM captures AS c WHERE c.user_id = ${args.userId} AND c.kind = 'note')`;
   const rows = await db
@@ -193,6 +202,7 @@ export async function replaceNote(
         eq(captures.userId, args.userId),
         eq(captures.kind, 'note'),
         isNull(captures.deletedAt),
+        args.ifR2Key === undefined ? undefined : eq(captures.r2Key, args.ifR2Key),
       ),
     )
     .returning({ updatedAt: captures.updatedAt });
