@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AudioLines, Camera, Clapperboard, Square, Users, X } from 'lucide-react';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from './discard';
 import { clock } from './history-model';
+import { onMeetingAttachment } from '@/lib/desktop/bridge';
 import { talkHint, FN } from './shortcut-keys';
 import { ToolbarSegment, ToolbarShelf } from './ui';
 import { useLiveLines } from './use-live-lines';
@@ -19,6 +20,25 @@ export interface LiveCapture {
   phase: 'listening' | 'thinking';
   /** When it started; the live bar counts from here on its own clock. */
   startedAtMs: number | null;
+}
+
+/** True for a moment after a screenshot joins this meeting. */
+function useScreenshotAdded(sessionId: string | null): boolean {
+  const [added, setAdded] = useState(false);
+  useEffect(() => {
+    if (!sessionId) return;
+    let timer = 0;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void onMeetingAttachment((id) => {
+      if (id !== sessionId) return;
+      setAdded(true);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setAdded(false), 2_000);
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; });
+    return () => { disposed = true; window.clearTimeout(timer); unlisten?.(); };
+  }, [sessionId]);
+  return added;
 }
 
 /** Seconds since `startedAtMs`, ticking once a second only inside the live bar. */
@@ -80,7 +100,7 @@ export function CaptureToolbar({
           {destination && <span className="ev-toolbar-dest">Saves to {destination}</span>}
         </div>
       )}
-      {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} onCancel={onCancel} /> : <ToolbarShelf>
+      {live ? <LiveBar live={live} stopKey={live.kind === 'talk' ? (fn ? 'fn' : dictationHotkey) : ''} onStop={onStop} onCancel={onCancel} onScreenshot={busy ? undefined : onScreenshot} /> : <ToolbarShelf>
         <ToolbarSegment
           icon={AudioLines}
           label="Talk"
@@ -107,8 +127,9 @@ export const LIVE_CARD_LINES = 4;
  * newest lines, in place of the capture shelf. The title bar's mascot is the
  * only mascot while it runs.
  */
-function LiveBar({ live, stopKey, onStop, onCancel }: { live: LiveCapture; stopKey: string; onStop: () => void; onCancel: () => void }) {
+function LiveBar({ live, stopKey, onStop, onCancel, onScreenshot }: { live: LiveCapture; stopKey: string; onStop: () => void; onCancel: () => void; onScreenshot?: () => void }) {
   const lines = useLiveLines(live.sessionId, LIVE_CARD_LINES);
+  const added = useScreenshotAdded(live.kind === 'meeting' ? live.sessionId : null);
   const elapsed = useElapsed(live.sessionId !== null ? live.startedAtMs : null);
   // Past a short note, Cancel asks first: the × turns into Discard for a moment.
   const [confirming, setConfirming] = useState(false);
@@ -124,7 +145,7 @@ function LiveBar({ live, stopKey, onStop, onCancel }: { live: LiveCapture; stopK
   };
   const thinking = live.phase === 'thinking';
   const started = live.sessionId !== null;
-  const label = thinking ? 'Writing it down…' : started ? LIVE_LABEL[live.kind] : 'Starting…';
+  const label = thinking ? 'Writing it down…' : !started ? 'Starting…' : added ? 'Screenshot added' : LIVE_LABEL[live.kind];
   const stopTitle = `Stop and save${stopKey ? ` (${stopKey})` : ''}`;
   return (
     <div className="ev-livebar" data-phase={live.phase}>
@@ -133,6 +154,11 @@ function LiveBar({ live, stopKey, onStop, onCancel }: { live: LiveCapture; stopK
         <span className="ev-livebar-label" role="status">{label}</span>
         {started && !thinking && <span className="ev-livebar-time">{clock(elapsed)}</span>}
         <span className="ev-livebar-spacer" />
+        {!thinking && started && live.kind === 'meeting' && (
+          <button type="button" className="ev-livebar-shot" onClick={onScreenshot} disabled={!onScreenshot} title="Add a screenshot to this meeting" aria-label="Add a screenshot to this meeting">
+            <Camera size={14} aria-hidden />
+          </button>
+        )}
         {!thinking && started && (confirming
           ? <button type="button" className="ev-livebar-discard" onClick={cancel} title="Click again to throw this recording away">Discard</button>
           : <button type="button" className="ev-livebar-cancel" onClick={cancel} title="Cancel: throw this recording away without saving" aria-label="Cancel recording">

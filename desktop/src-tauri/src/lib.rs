@@ -34,6 +34,7 @@ mod cloud_pull;
 mod dictate;
 mod dictation;
 mod machine;
+mod meeting_attachments;
 mod meeting_watch;
 mod make_room;
 mod moments;
@@ -110,6 +111,7 @@ pub fn run() {
             audio::start_capture,
             live_transcript::live_transcript,
             commands::set_live_captions,
+            commands::set_snapshots,
             commands::set_type_as_you_talk,
             agents::agents_state,
             agents::connect::claude_code_status,

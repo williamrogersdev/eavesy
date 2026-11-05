@@ -438,6 +438,20 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
+  '/api/sessions/$id/attachments/$name': {
+    PUT: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: {
+          path: `/api/sessions/${RECORDING}/attachments/snapshot-000001000`,
+          params: { id: RECORDING, name: 'snapshot-000001000' },
+          body: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
+          headers: { 'x-attachment-kind': 'snapshot', 'x-attachment-offset-ms': '1000', 'content-type': 'image/jpeg' },
+        },
+        status: 404,
+      },
+    },
+  },
   '/api/projects/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/projects' }, excludes: [PROJECT] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a project owned by the caller' },
@@ -604,6 +618,7 @@ beforeEach(async () => {
     'personal_dictionary',
     'transcript_segments',
     'meeting_segments',
+    'meeting_attachments',
     'summaries',
     'user_notes',
     'captures',

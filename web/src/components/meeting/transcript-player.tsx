@@ -8,6 +8,9 @@ import { useMe } from '@/lib/api/use-me';
 import { languageName } from '@/lib/transcription/language';
 import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
+import { placeAttachments } from './attachment-placement';
+import { AttachmentFigure, AttachmentViewer } from './attachments';
+import { type MeetingAttachment } from './types';
 import { mergeTranslations, requestTranslations, spokenLanguages, translationFor, type Translations } from './transcript-translation';
 
 export interface TranscriptLine {
@@ -34,6 +37,7 @@ export function TranscriptPlayer({
   chapters,
   speakerNamesJson,
   agentTranscript,
+  attachments = [],
   onChanged,
 }: {
   meetingId: string;
@@ -42,6 +46,8 @@ export function TranscriptPlayer({
   chapters: Chapter[];
   speakerNamesJson: string | null;
   agentTranscript?: string | null;
+  /** Snapshots and screenshots, shown after the line being spoken when each was taken. */
+  attachments?: MeetingAttachment[];
   onChanged: () => void;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -49,6 +55,7 @@ export function TranscriptPlayer({
   const [nowMs, setNowMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [followPlayback, setFollowPlayback] = useState(true);
+  const [viewing, setViewing] = useState<MeetingAttachment | null>(null);
 
   const [pending, setPending] = useState<Record<string, Partial<TranscriptLine> | 'deleted'>>({});
   const [undo, setUndo] = useState<TranscriptLine | null>(null);
@@ -167,7 +174,18 @@ export function TranscriptPlayer({
     })
     .join('\n');
 
-  if (shown.length === 0 && !audioUrl) return null;
+  const placed = placeAttachments(shown, attachments);
+  const pictures = (at: number) =>
+    placed.get(at)?.map((attachment) => (
+      <AttachmentFigure
+        key={attachment.id}
+        attachment={attachment}
+        onPlay={audioUrl ? () => void seek(attachment.offsetMs) : undefined}
+        onOpen={() => setViewing(attachment)}
+      />
+    ));
+
+  if (shown.length === 0 && !audioUrl && attachments.length === 0) return null;
 
   return (
     <section className="flex flex-col gap-4 rounded-[var(--ev-r-panel)] bg-ev-raised p-4 shadow-[0_0_0_1px_var(--ev-line),var(--ev-e-2)] sm:p-5">
@@ -292,6 +310,7 @@ export function TranscriptPlayer({
           {translation.error ? (
             <p className="px-2 pb-1 text-xs text-ev-warn-ink">{translation.error}</p>
           ) : null}
+          {pictures(-1)}
           {shown.map((line, i) => {
             const who = nameOf(line.speakerId);
             const sameSpeaker = i > 0 && nameOf(shown[i - 1].speakerId) === who;
@@ -325,11 +344,14 @@ export function TranscriptPlayer({
                   }}
                   onDelete={() => void remove(line)}
                 />
+                {pictures(i)}
               </div>
             );
           })}
         </div>
       </div>
+
+      <AttachmentViewer attachment={viewing} onClose={() => setViewing(null)} />
 
       {undo ? (
         <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ev-raised px-4 py-2 text-sm text-ev-ink shadow-[var(--ev-e-3)]">

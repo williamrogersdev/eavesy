@@ -377,6 +377,12 @@ pub fn set_type_as_you_talk(app: AppHandle, enabled: bool) -> Result<(), String>
     settings::update(&app, |config| config.type_as_you_talk = Some(enabled)).map(drop)
 }
 
+/// Turns Snapshots of shared screens on or off, from the next meeting.
+#[tauri::command]
+pub fn set_snapshots(app: AppHandle, enabled: bool) -> Result<(), String> {
+    settings::update(&app, |config| config.snapshots = Some(enabled)).map(drop)
+}
+
 /// Turns live captions on or off. Speech Recognition permission is asked for
 /// by the launcher when they are turned on, never by a recording.
 #[tauri::command(async)]

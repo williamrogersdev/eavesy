@@ -25,6 +25,7 @@ enum EventEmitter {
     /// asked for (see `StartClock`); its audio begins `audioFromMs` after.
     static func ready(firstBufferMs: Int64? = nil, audioFromMs: Int64? = nil) {
         captureIsLive = true
+        if captureLiveAt == nil { captureLiveAt = Date() }
         var event: [String: Any] = ["event": "ready"]
         if let firstBufferMs { event["firstBufferMs"] = firstBufferMs }
         if let audioFromMs { event["audioFromMs"] = audioFromMs }
@@ -92,6 +93,8 @@ enum EventEmitter {
 }
 
 var captureIsLive = false
+/// When the first audio arrived: the zero Snapshots count their offsets from.
+var captureLiveAt: Date?
 var salvageAndExit: (() -> Void)?
 
 func fail(_ message: String) -> Never {

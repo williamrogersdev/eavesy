@@ -79,6 +79,9 @@ pub struct Settings {
     /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_screenshots: Option<bool>,
+    /// Snapshots of the shared screen while a meeting records (on unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshots: Option<bool>,
     /// A short sound as a recording starts and stops (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_sounds: Option<bool>,
@@ -222,6 +225,10 @@ impl Settings {
         self.add_screenshots.unwrap_or(true)
     }
 
+    pub fn snapshots(&self) -> bool {
+        self.snapshots.unwrap_or(true)
+    }
+
     pub fn capture_sounds(&self) -> bool {
         self.capture_sounds.unwrap_or(true)
     }
@@ -256,6 +263,7 @@ impl Default for Settings {
             segment_sec: None,
             live_captions: None,
             add_screenshots: None,
+            snapshots: None,
             capture_sounds: None,
             auto_record_meetings: None,
             hud_preview_lines: None,
@@ -793,6 +801,16 @@ mod tests {
         let saved: Settings =
             serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","fast_live_words":false}"#).unwrap();
         assert!(!saved.fast_live_words());
+    }
+
+    #[test]
+    fn snapshots_are_on_unless_turned_off() {
+        let mut settings = Settings::default();
+        assert!(settings.snapshots());
+        settings.snapshots = Some(false);
+        assert!(!settings.snapshots());
+        let saved: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
+        assert!(saved.snapshots(), "settings saved before this existed");
     }
 
     #[test]

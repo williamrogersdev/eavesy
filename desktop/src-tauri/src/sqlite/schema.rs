@@ -71,6 +71,8 @@ pub(super) fn retry_context_rejections(conn: &Connection) -> Result<(), String> 
 pub(super) fn migrate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(MIGRATIONS_SQL)
         .map_err(|e| format!("initialize local database: {e}"))?;
+    conn.execute_batch(crate::meeting_attachments::DDL)
+        .map_err(|e| format!("initialize meeting attachments: {e}"))?;
     add_column_if_missing(conn, "recording_sessions", "segment_dir", "TEXT")?;
     add_column_if_missing(conn, "recording_sessions", "next_attempt_at", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "recording_sessions", "archive_missing", "INTEGER NOT NULL DEFAULT 0")?;
