@@ -911,3 +911,41 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 /* Eavesy's answer on the pill: the full reply, scrolling when it runs long. */
 .ctl-answer { flex: 1; min-height: 0; overflow-y: auto; user-select: text; }
 .ctl-reply-hint { flex: none; margin: 4px 0 0; color: var(--ev-ink-3); font: var(--ev-t-small); }
+
+/* The card under the menu bar's meeting item (meeting.tsx, meeting_bar.rs). Paper, not
+   the HUD's dark glass: it's a place to read, like a calendar popover. No coral here. */
+.ev-meeting-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px;
+  padding: 14px 14px 10px;
+  border-radius: var(--ev-r-pop);
+  background: var(--ev-paper);
+  box-shadow: inset 0 0 0 1px var(--ev-line);
+  color: var(--ev-ink);
+  font: var(--ev-t-body);
+}
+.ev-meeting { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ev-meeting-title { font: var(--ev-t-head); margin: 0; overflow-wrap: anywhere; }
+.ev-meeting-detail { display: flex; align-items: flex-start; gap: 8px; color: var(--ev-ink-2); }
+.ev-meeting-detail > svg { flex: none; margin-top: 3px; color: var(--ev-ink-3); }
+.ev-meeting-people { margin: 0; padding: 0; list-style: none; }
+.ev-meeting-people li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-meeting-more { color: var(--ev-ink-3); }
+.ev-meeting-join { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ev-meeting-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-meeting-record { border-top: 1px solid var(--ev-line); padding-top: 4px; }
+.ev-meeting-all {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ev-ink-2);
+  font: var(--ev-t-small);
+  cursor: pointer;
+}
+.ev-meeting-all:hover { color: var(--ev-ink); text-decoration: underline; }
+.ev-meeting-all:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
+/* The window is exactly the card's size (fit_meeting_card): never a scrollbar. */
+html:has(.ev-meeting-card), html:has(.ev-meeting-card) body { margin: 0; overflow: hidden; }
