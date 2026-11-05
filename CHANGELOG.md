@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-11-05 - desktop
+
+### Added
+
+- Mac app: try dictation before signing in, and require Speech when local ([#331](https://github.com/williamrogersdev/eavesy/pull/331))
+- Mac app: report which setup step an install reaches ([#321](https://github.com/williamrogersdev/eavesy/pull/321))
+
+### Fixed
+
+- Mac app: make live typing work in Claude's message box ([#330](https://github.com/williamrogersdev/eavesy/pull/330))
+
 ## [0.9.7] - 2026-11-05 - desktop
 
 ### Fixed
