@@ -298,7 +298,8 @@ mod mac {
             let (start, length) = unsafe { selection(field) }?;
             let (prefix, rest) = super::split_utf16(&value, start)?;
             let (_, suffix) = super::split_utf16(rest, length)?;
-            let (prefix, suffix) = (prefix.to_string(), suffix.to_string());
+            // As `typed_passage` reads the field back.
+            let (prefix, suffix) = (super::normalize(prefix), super::normalize(suffix));
             Some(LiveField { field: target, prefix, suffix, typed: String::new(), lost: false })
         }
 
@@ -317,7 +318,8 @@ mod mac {
             let field = self.field.0 as Ref;
             let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
             if super::typed_passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
-                return Err("the typed words were changed".into());
+                let expected = format!("{}{}{}", self.prefix, self.typed, self.suffix);
+                return Err(format!("the typed words were changed ({})", super::where_it_differs(&value, &expected)));
             }
             let end = super::units(&self.prefix) + super::units(&self.typed);
             if unsafe { selection(field) } != Some((end, 0)) {
@@ -797,13 +799,42 @@ pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
 /// editors (ProseMirror, as in Claude's message box) read back an empty
 /// paragraph as a lone newline and drop it once there is text, or add one
 /// back when the text goes: the field's last newline may come and go.
+///
+/// It reads the field as `normalize` does: Chrome hands spaces back as
+/// non-breaking ones and some fields curl quotes, and words typed as plain
+/// ones are still the typed words. `prefix` and `suffix` are normalized too.
 pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let value = normalize(value);
     let rest = value.strip_prefix(prefix)?;
     let middle = rest
         .strip_suffix(suffix)
         .or_else(|| rest.strip_suffix(suffix.strip_suffix('\n')?))
         .or_else(|| rest.strip_suffix('\n')?.strip_suffix(suffix))?;
     Some(middle.into())
+}
+
+/// Where a field's text first parts from what was expected, for the log:
+/// UTF-16 offsets and the kind of character on each side there, never the
+/// text itself.
+pub fn where_it_differs(value: &str, expected: &str) -> String {
+    let value = normalize(value);
+    let at = shared_prefix(&value, expected);
+    let kind = |text: &str| match text[at..].chars().next() {
+        None => "the end",
+        Some('\n') => "a newline",
+        Some(c) if c.is_whitespace() => "a space",
+        Some(c) if c.is_alphanumeric() => "a letter",
+        Some(c) if c.is_control() => "a control character",
+        Some(_) => "punctuation",
+    };
+    format!(
+        "at {} units, of {} in the field and {} expected: the field has {}, expected {}",
+        units(&value[..at]),
+        units(&value),
+        units(expected),
+        kind(&value),
+        kind(expected)
+    )
 }
 
 /// Text as live typing puts it in a field: as fields hand it back
@@ -871,12 +902,32 @@ mod tests {
     #[test]
     fn a_typed_field_s_last_newline_may_come_and_go() {
         // An empty ProseMirror field reads "\n"; typed into, it drops it.
-        assert_eq!(typed_passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello\u{a0}"));
+        assert_eq!(typed_passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello "));
         assert_eq!(typed_passage("Hello\n", "", "\n").as_deref(), Some("Hello"));
         assert_eq!(typed_passage("Say Hello there", "Say ", "").as_deref(), Some("Hello there"));
         // Only a last newline is forgiven.
         assert_eq!(typed_passage("Hello", "", "\nmore"), None);
         assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
+    #[test]
+    fn typed_words_read_back_as_they_were_typed() {
+        // Chrome turns the space before the caret into a non-breaking one,
+        // and back once more is typed after it.
+        assert_eq!(typed_passage("Hi\u{a0}Hello there", "Hi ", "").as_deref(), Some("Hello there"));
+        assert_eq!(typed_passage("I\u{2019}m in", "", "").as_deref(), Some("I'm in"));
+        assert_eq!(
+            where_it_differs("Hi Hello\n", "Hi Hello."),
+            "at 8 units, of 9 in the field and 9 expected: the field has a newline, expected punctuation"
+        );
+        assert_eq!(
+            where_it_differs("Hi", "Hi there"),
+            "at 2 units, of 2 in the field and 8 expected: the field has the end, expected a space"
+        );
+        // Offsets into the field hold after normalizing: one unit for one.
+        for c in ['\u{a0}', '\u{202f}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}'] {
+            assert_eq!(units(&normalize(&c.to_string())), units(&c.to_string()));
+        }
     }
 
     #[test]
