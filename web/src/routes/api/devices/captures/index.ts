@@ -15,7 +15,7 @@ const MAX_OFFSET = 100_000;
 
 const IMAGE = { kind: 'image', captureMode: 'screenshot', maxBytes: 50 * 1024 * 1024, title: 'Screenshot' } as const;
 // The Mac's own limit for a note.
-const NOTE = { kind: 'note', captureMode: 'note', maxBytes: 1024 * 1024, title: 'Note' } as const;
+const NOTE = { kind: 'note', captureMode: 'note', maxBytes: 1024 * 1024, title: 'Note', ext: 'md' } as const;
 
 const TYPES: Record<string, { ext: string } & (typeof IMAGE | typeof NOTE)> = {
   'image/png': { ext: 'png', ...IMAGE },
@@ -23,7 +23,7 @@ const TYPES: Record<string, { ext: string } & (typeof IMAGE | typeof NOTE)> = {
   'image/webp': { ext: 'webp', ...IMAGE },
   'image/gif': { ext: 'gif', ...IMAGE },
   'image/heic': { ext: 'heic', ...IMAGE },
-  'text/markdown': { ext: 'md', ...NOTE },
+  'text/markdown': NOTE,
 };
 
 const clientIdSchema = z.string().uuid();
@@ -197,16 +197,34 @@ export const Route = createFileRoute('/api/devices/captures/')({
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
         }
         const text = new TextDecoder().decode(body);
-        // The object first: a reader who sees the new change time then gets the new text.
-        await putObject(existing.r2Key, body, contentType);
-        const updatedAt = await capturesRepo.replaceNote(db, {
-          captureId: existing.id,
-          userId: actor.userId,
-          text,
-          bytes,
-          title: headerText(request.headers.get('x-title')),
-        });
-        if (updatedAt === null) return Response.json({ error: 'not found' }, { status: 404 });
+        // The new text goes to an object of its own, and the row moves to it in
+        // one write: the row and its object always agree, and a note deleted
+        // meanwhile keeps the text it had.
+        const r2Key = captureKey({ userId: actor.userId, captureId: `${existing.id}-${pid('v')}`, ext: NOTE.ext });
+        const discard = async () => {
+          await deleteObject(r2Key).catch((cause: unknown) => console.warn('[device-captures] orphan cleanup failed', r2Key, cause));
+          await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
+        };
+        let updatedAt: number | null;
+        try {
+          await putObject(r2Key, body, contentType);
+          updatedAt = await capturesRepo.replaceNote(db, {
+            captureId: existing.id,
+            userId: actor.userId,
+            text,
+            bytes,
+            r2Key,
+            title: headerText(request.headers.get('x-title')),
+          });
+        } catch (error) {
+          await discard();
+          throw error;
+        }
+        if (updatedAt === null) {
+          await discard();
+          return Response.json({ error: 'not found' }, { status: 404 });
+        }
+        await deleteObject(existing.r2Key).catch((cause: unknown) => console.warn('[device-captures] old note cleanup failed', existing.r2Key, cause));
         return Response.json({ id: existing.id, updatedAt });
       },
     },

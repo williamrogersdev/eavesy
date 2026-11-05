@@ -327,7 +327,10 @@ const HEALTHY_RUN: Duration = Duration::from_secs(10 * 60);
 const CAPTURE_SYNC_LIMIT: Duration = Duration::from_secs(30 * 60);
 /// The shortest gap between a capture pass and one asked for by
 /// `capture_sync::nudge`: however often the launcher opens or captures are
-/// saved, nudges add at most one pass per gap.
+/// saved, nudges add at most one pass per gap. So at most six passes a minute,
+/// and only while the user is saving captures or opening the launcher. Each is
+/// one small list request each way when nothing is new; uploads still keep the
+/// server's 429 pause, and after a failed pass nudges wait for the usual retry.
 const CAPTURE_NUDGE_GAP: Duration = Duration::from_secs(10);
 
 /// Runs the sync loop for the life of the app. A loop that fails or panics
@@ -549,7 +552,8 @@ async fn run_loop(app: AppHandle) -> Result<std::convert::Infallible> {
                 } else {
                     // A note or image just saved, or the launcher just opened,
                     // should not wait for a long meeting upload to finish.
-                    if rejected.is_none() && capture.nudge_due(&app) {
+                    // start_if_due decides when: now for a nudge, or at `next` after a failure.
+                    if rejected.is_none() && crate::capture_sync::nudged() {
                         capture.start_if_due(&app, &api, &token);
                     }
                     sleep(Duration::from_millis(250)).await;

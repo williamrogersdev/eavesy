@@ -112,17 +112,31 @@ describe('note edits shared between Macs', () => {
     const t = await notes();
     const id = await t.note('u1', '00000000-0000-4000-8000-00000000000a');
     t.at(id, 1_000);
-    expect(await replaceNote(t.db, { captureId: id, userId: 'u2', text: 'stolen', bytes: 6 })).toBeNull();
+    expect(await replaceNote(t.db, { captureId: id, userId: 'u2', text: 'stolen', bytes: 6, r2Key: 'cap/x' })).toBeNull();
 
-    const updatedAt = await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'second', bytes: 6, title: 'Renamed' });
+    const updatedAt = await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'second', bytes: 6, r2Key: 'cap/v2', title: 'Renamed' });
     expect(updatedAt).toBeGreaterThan(1_000);
     const row = (await get(t.db, { captureId: id, userId: 'u1' }))!;
-    expect([row.transcript, row.bytes, row.title, row.updatedAt]).toEqual(['second', 6, 'Renamed', updatedAt!]);
+    expect([row.transcript, row.bytes, row.title, row.r2Key, row.updatedAt]).toEqual(['second', 6, 'Renamed', 'cap/v2', updatedAt!]);
     const [change] = await listNoteChanges(t.db, { userId: 'u1', since: 1_000, afterId: '', limit: 10 });
     expect(change.updatedAt).toBe(updatedAt!);
 
     t.fake.sqlite.run(`UPDATE captures SET deleted_at = ? WHERE id = ?`, [Date.now(), id]);
-    expect(await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'third', bytes: 5 })).toBeNull();
+    expect(await replaceNote(t.db, { captureId: id, userId: 'u1', text: 'third', bytes: 5, r2Key: 'cap/v3' })).toBeNull();
     expect(await listNoteChanges(t.db, { userId: 'u1', since: 0, afterId: '', limit: 10 })).toEqual([]);
+  });
+
+  test('an edit is always stamped after every other note, so the feed cursor never passes it by', async () => {
+    const t = await notes();
+    const ahead = await t.note('u1', '00000000-0000-4000-8000-00000000000a');
+    const edited = await t.note('u1', '00000000-0000-4000-8000-00000000000b');
+    const future = Date.now() + 60_000;
+    t.at(ahead, future);
+    const updatedAt = await replaceNote(t.db, { captureId: edited, userId: 'u1', text: 'second', bytes: 6, r2Key: 'cap/v2' });
+    expect(updatedAt).toBe(future + 1);
+    const again = await replaceNote(t.db, { captureId: edited, userId: 'u1', text: 'third', bytes: 5, r2Key: 'cap/v3' });
+    expect(again).toBe(future + 2);
+    const changes = await listNoteChanges(t.db, { userId: 'u1', since: future, afterId: ahead, limit: 10 });
+    expect(changes.map((row) => [row.id, row.updatedAt])).toEqual([[edited, future + 2]]);
   });
 });

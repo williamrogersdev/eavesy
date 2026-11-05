@@ -164,12 +164,18 @@ export async function listNoteChanges(
     .limit(args.limit);
 }
 
-/** Replaces a note's text (and title, when given) after an edit on one of the user's Macs. */
+/**
+ * Points a note at its new text (and title, when given) after an edit on one
+ * of the user's Macs. Returns the change time, or null when there is no such
+ * live note. The change time is past every other note of the user's, so the
+ * change feed's cursor never skips an edit: not one made in the same
+ * millisecond, nor one stamped by a server whose clock runs behind.
+ */
 export async function replaceNote(
   db: AppDb,
-  args: { captureId: string; userId: string; text: string; bytes: number; title?: string | null },
+  args: { captureId: string; userId: string; text: string; bytes: number; r2Key: string; title?: string | null },
 ): Promise<number | null> {
-  const updatedAt = Date.now();
+  const newest = sql`(SELECT COALESCE(MAX(c.updated_at), 0) + 1 FROM captures AS c WHERE c.user_id = ${args.userId} AND c.kind = 'note')`;
   const rows = await db
     .update(captures)
     .set({
@@ -177,8 +183,9 @@ export async function replaceNote(
       transcriptStatus: 'complete',
       transcriptError: null,
       bytes: args.bytes,
+      r2Key: args.r2Key,
       ...(args.title ? { title: args.title } : {}),
-      updatedAt,
+      updatedAt: sql`MAX(${Date.now()}, ${newest})`,
     })
     .where(
       and(
@@ -188,8 +195,8 @@ export async function replaceNote(
         isNull(captures.deletedAt),
       ),
     )
-    .returning({ id: captures.id });
-  return rows.length > 0 ? updatedAt : null;
+    .returning({ updatedAt: captures.updatedAt });
+  return rows[0]?.updatedAt ?? null;
 }
 
 /** Returns false when `ifStatus` was given and the row had moved on. */
