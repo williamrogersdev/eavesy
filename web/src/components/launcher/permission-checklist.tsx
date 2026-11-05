@@ -98,11 +98,19 @@ export function permissionSpecs(fnInUse: boolean, speechRequired = false): Permi
 }
 
 /**
- * Whether setup can move on to trying dictation: the microphone, plus Speech Recognition when
- * signed out, since without either one nothing would be typed.
+ * Whether setup can move on to trying dictation: the microphone, plus, when signed out, an answer
+ * about Speech Recognition, since it's the only way the words get typed without an account. A
+ * refusal (or a Mac that restricts it) still moves on, so nobody is stuck here; see
+ * `setupSpeechRefused`.
  */
 export function setupPermissionsReady(permissions: Permissions | null, paired: boolean): boolean {
-  return permissions?.mic === true && (paired || permissions.speech === true);
+  if (permissions?.mic !== true) return false;
+  return paired || permissions.speech === true || answered(permissions, 'speech');
+}
+
+/** Signed out, and macOS won't give Eavesy Speech Recognition: dictation is typed only after signing in. */
+export function setupSpeechRefused(permissions: Permissions | null, paired: boolean): boolean {
+  return !paired && permissions?.speech !== true && answered(permissions, 'speech');
 }
 
 export function isGranted(permissions: Permissions | null, kind: SetupPermissionKind): boolean | undefined {

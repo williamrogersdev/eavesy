@@ -4,7 +4,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
-import { PermissionChecklist, setupPermissionsReady, usesFnKey, useOnGrant } from './permission-checklist';
+import { PermissionChecklist, setupPermissionsReady, setupSpeechRefused, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { useLiveLines } from './use-live-lines';
@@ -13,7 +13,7 @@ import { useLiveLines } from './use-live-lines';
  * The first win comes before any account: allow the mic, talk once, then decide about signing in.
  * The order is also the analytics order (`SETUP_STEPS` in desktop/src-tauri/src/commands.rs).
  */
-const STEPS = ['Permissions', 'Try it', 'Sign in'] as const;
+export const STEPS = ['Permissions', 'Try it', 'Sign in'] as const;
 const PERMISSIONS = 0;
 const TRY_IT = 1;
 const SIGN_IN = 2;
@@ -69,10 +69,11 @@ export function SetupView({
   const fnInUse = usesFnKey(dictationHotkey, toggleHotkey);
   const micOn = permissions?.mic === true;
   const pasteOn = permissions?.accessibility === true;
-  const talk = dictationHotkey || '⌘⇧D';
+  const talk = dictationHotkey;
   const shortcuts = useShortcuts(onShortcutsChanged);
   const tryBox = useRef<HTMLTextAreaElement>(null);
   const ready = setupPermissionsReady(permissions, paired);
+  const speechRefused = setupSpeechRefused(permissions, paired);
   const hearing = useLiveLines(step === TRY_IT && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
   // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
   useEffect(() => {
@@ -170,10 +171,12 @@ export function SetupView({
             onRelaunch={onRelaunch}
           />
         </div>
-        {!ready && (
+        {!ready ? (
           <p className="ev-onb-note">
             {micOn ? 'Allow Speech Recognition to continue.' : 'Allow the microphone to continue.'} Screenshots, video and notifications can wait for Settings.
           </p>
+        ) : speechRefused && (
+          <p className="ev-onb-note">Without Speech Recognition, Eavesy can type your words only once you sign in, on the last step.</p>
         )}
       </>
     );
@@ -184,7 +187,9 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Try it once</h2>
         <p className="ev-onb-lead">
-          {usesFnKey(talk)
+          {!talk
+            ? 'Talk has no shortcut yet. Pick one below, then say something. Your words land in the box.'
+            : usesFnKey(talk)
             ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
             : <>Hold <Kbd keys={talk} />, say something, then let go. Your words land in the box.</>}
         </p>
@@ -219,6 +224,10 @@ export function SetupView({
         <div className="ev-card">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
         </div>
+        <p className="ev-onb-note">
+          {toggleHotkey ? <>Open this panel any time with <Kbd keys={toggleHotkey} />. </> : null}
+          Every shortcut can be changed later in Settings.
+        </p>
       </>
     );
     footer = <>{back}{next(heard ? 'Continue' : 'Skip for now')}</>;

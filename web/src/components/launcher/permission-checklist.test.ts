@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PermissionStatus, Permissions } from '@/lib/desktop/bridge';
-import { answered, needsPermissionPoll, permissionRowState, permissionSpecs, samePermissions, setupPermissionsReady, usesFnKey } from './permission-checklist';
+import { answered, needsPermissionPoll, permissionRowState, permissionSpecs, samePermissions, setupPermissionsReady, setupSpeechRefused, usesFnKey } from './permission-checklist';
 
 function perms(over: Partial<Permissions> = {}, status: Partial<Record<keyof NonNullable<Permissions['status']>, PermissionStatus>> = {}): Permissions {
   return {
@@ -59,6 +59,20 @@ describe('setupPermissionsReady', () => {
   });
   test('nothing is ready before macOS has answered', () => {
     expect(setupPermissionsReady(null, true)).toBe(false);
+  });
+  test('signed out, a refused or restricted Speech Recognition still moves on, so nobody is stuck', () => {
+    expect(setupPermissionsReady(perms({ mic: true }, { speech: 'denied' }), false)).toBe(true);
+    expect(setupPermissionsReady(perms({ mic: true }, { speech: 'restricted' }), false)).toBe(true);
+    expect(setupPermissionsReady(perms({}, { speech: 'denied' }), false)).toBe(false);
+  });
+});
+
+describe('setupSpeechRefused', () => {
+  test('only signed out, and only once macOS has said no', () => {
+    expect(setupSpeechRefused(perms({}, { speech: 'denied' }), false)).toBe(true);
+    expect(setupSpeechRefused(perms({}, { speech: 'denied' }), true)).toBe(false);
+    expect(setupSpeechRefused(perms(), false)).toBe(false);
+    expect(setupSpeechRefused(perms({ speech: true }, { speech: 'granted' }), false)).toBe(false);
   });
 });
 
