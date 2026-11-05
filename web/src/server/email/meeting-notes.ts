@@ -23,6 +23,8 @@ export const MAX_NOTE_RECIPIENTS = 50;
 /** Most people one account emails notes to in 24 hours, however many sends that takes. */
 export const MAX_NOTE_RECIPIENTS_PER_DAY = 200;
 const DAY_MS = 24 * 60 * 60 * 1_000;
+/** Most addresses from outside the meeting one send may add. */
+export const MAX_ADDED_RECIPIENTS = 10;
 export const MAX_NOTE_LENGTH = 2_000;
 /** How long a share link made for emailed notes stays open. */
 export const SHARE_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -110,7 +112,9 @@ export async function ensureShareLink(db: AppDb, meeting: Pick<Meeting, 'id' | '
   return row?.slug ?? slug;
 }
 
-export type QueueOutcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit';
+export type QueueOutcome =
+  | 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit'
+  | 'needs_confirmation' | 'too_many_added';
 
 /** Statuses that mean an address has (or may have) this meeting's notes, so it is never sent again. */
 export const HAS_NOTES: readonly EmailDelivery['status'][] = ['queued', 'unknown', 'sent', 'delivered'];
@@ -120,13 +124,22 @@ type EmailDelivery = typeof emailDeliveries.$inferSelect;
  * Records one delivery per allowed recipient and queues the job that sends
  * them. An address that has, or may have, this meeting's notes is left alone,
  * so nothing goes out twice; one whose earlier send certainly failed (refused
- * by the provider, blocked by a since-changed setting) can be sent again.
+ * by the provider, blocked by a since-changed setting, a soft bounce) can be
+ * sent again. People who weren't in the meeting need `confirmAdded`.
  * Each account emails at most `MAX_NOTE_RECIPIENTS_PER_DAY` people a day.
  */
 export async function queueMeetingNotes(
   db: AppDb,
   env: RecapEnv,
-  args: { user: User; meeting: Meeting; recipients: string[]; note?: string | null; now?: number },
+  args: {
+    user: User;
+    meeting: Meeting;
+    recipients: string[];
+    note?: string | null;
+    /** The owner confirmed sending to addresses that weren't in the meeting (added by hand). */
+    confirmAdded?: boolean;
+    now?: number;
+  },
 ): Promise<{ email: string; outcome: QueueOutcome }[]> {
   const now = args.now ?? Date.now();
   const owner = recipientAddress(args.user.email);
@@ -147,6 +160,17 @@ export async function queueMeetingNotes(
     else candidates.push(email);
   }
 
+  // Addresses that weren't in the meeting go out only once the owner confirmed them, and only a few per send.
+  const invited = new Set((await meetingAttendees(db, args.meeting, args.user.email)).flatMap((a) => (a.email ? [a.email] : [])));
+  let added = 0;
+  for (const email of [...candidates]) {
+    if (invited.has(email)) continue;
+    if (!args.confirmAdded || ++added > MAX_ADDED_RECIPIENTS) {
+      candidates.splice(candidates.indexOf(email), 1);
+      results.push({ email, outcome: args.confirmAdded ? 'too_many_added' : 'needs_confirmation' });
+    }
+  }
+
   const [blocked, existing, [{ today }]] = await Promise.all([
     suppressedAmong(db, candidates, args.user.id),
     candidates.length
@@ -155,7 +179,7 @@ export async function queueMeetingNotes(
     db.select({ today: count() }).from(emailDeliveries).where(and(
       eq(emailDeliveries.userId, args.user.id),
       eq(emailDeliveries.kind, 'meeting_notes'),
-      gte(emailDeliveries.updatedAt, now - DAY_MS),
+      gte(emailDeliveries.createdAt, now - DAY_MS),
       inArray(emailDeliveries.status, HAS_NOTES),
     )),
   ]);
@@ -165,14 +189,15 @@ export async function queueMeetingNotes(
   for (const email of candidates) {
     const before = existingBy.get(email);
     if (before && HAS_NOTES.includes(before.status)) results.push({ email, outcome: 'already_sent' });
-    else if (blocked.has(email)) results.push({ email, outcome: 'suppressed' });
+    else if (blocked.has(email) || before?.status === 'complained') results.push({ email, outcome: 'suppressed' });
     else if (budget <= 0) results.push({ email, outcome: 'daily_limit' });
     else {
       // A certainly-failed earlier send is queued again on the same row (its own provider key per attempt).
       const changed = before
         ? await db.update(emailDeliveries)
-          .set({ status: 'queued', statusDetail: 'resend', note, kind: 'meeting_notes', updatedAt: now })
-          .where(and(eq(emailDeliveries.id, before.id), eq(emailDeliveries.status, 'failed'), eq(emailDeliveries.kind, 'meeting_notes')))
+          // A fresh start: counted in today's cap, not expired by the hourly reconcile, and matched to the new email's webhooks.
+          .set({ status: 'queued', statusDetail: 'resend', statusAt: null, providerMessageId: null, note, createdAt: now, updatedAt: now })
+          .where(and(eq(emailDeliveries.id, before.id), inArray(emailDeliveries.status, ['failed', 'bounced']), eq(emailDeliveries.kind, 'meeting_notes')))
           .returning({ id: emailDeliveries.id })
         : await db.insert(emailDeliveries).values({
           id: pid('eml', now),

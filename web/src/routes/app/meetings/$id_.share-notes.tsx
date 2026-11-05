@@ -35,15 +35,17 @@ interface Overview {
   attendees: Person[];
 }
 
-type Outcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit';
+type Outcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit' | 'needs_confirmation' | 'too_many_added';
 const OUTCOME_LABEL: Record<Outcome, string> = {
   queued: 'Sending',
   already_sent: 'Already had it',
-  suppressed: 'Skipped: this address bounced or reported spam before',
+  suppressed: 'Skipped: this address can’t be reached',
   not_allowed: 'Skipped: outside your company’s domain',
   invalid: 'Skipped: not an email address',
   owner: 'Skipped: that’s you',
   daily_limit: 'Skipped: you’ve reached today’s limit of people to email',
+  needs_confirmation: 'Skipped: not in the meeting, and not confirmed',
+  too_many_added: 'Skipped: at most 10 people from outside the meeting per send',
 };
 
 /** A delivery in one of these states has, or may have, reached them: never sent again. */
@@ -143,13 +145,17 @@ function ShareNotesPage() {
   };
 
   const send = async () => {
+    // People who weren't on the invite are confirmed once more before anything goes to them.
+    const invited = new Set(data?.attendees.filter((a) => a.source === 'calendar').map((a) => a.email));
+    const outside = recipients.filter((email) => !invited.has(email));
+    if (outside.length && !window.confirm(`${outside.length === 1 ? `${outside[0]} wasn’t` : `${outside.length} people weren’t`} on the meeting invite. Send them the notes too?`)) return;
     setSending(true);
     setError(null);
     try {
       const response = await fetch(`/api/meetings/${encodeURIComponent(id)}/share-notes`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ recipients, note: note.trim() || null }),
+        body: JSON.stringify({ recipients, note: note.trim() || null, confirmAdded: outside.length > 0 }),
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {
@@ -252,7 +258,7 @@ function ShareNotesPage() {
                   {row.address && row.external ? <Tag tone="warn">External</Tag> : null}
                   {done ? <Tag>{row.status === 'queued' ? 'Sending' : 'Already sent'}</Tag> : null}
                   {failedBefore && !blocked ? <Tag>Didn’t go through before</Tag> : null}
-                  {!done && row.suppressed ? <Tag>Bounced before</Tag> : null}
+                  {!done && row.suppressed ? <Tag>Can’t be reached</Tag> : null}
                   {!done && !row.suppressed && !row.allowed ? <Tag>Not allowed</Tag> : null}
                 </span>
               </li>

@@ -19,10 +19,14 @@ UPDATE `users` SET `email_recaps_off_reason` = 'user'
   WHERE `email_recaps` = 0 AND `email_recaps_off_reason` IS NULL
     AND `id` IN (SELECT `user_id` FROM `email_deliveries` WHERE `kind` = 'meeting_recap');--> statement-breakpoint
 -- Every other signed-in account with an address gets them on once, and its next
--- recap says so with a link to turn them off. Nothing is deleted.
+-- recap says so with a link to turn them off. Nothing is deleted. An account
+-- that saved any setting since recaps shipped (0038, 2026-10-21) may have
+-- turned them off before getting one, which left no other trace: it is left
+-- as it is.
 UPDATE `users` SET
     `email_recaps` = 1,
     `email_recaps_auto_enabled_at` = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
     `email_recaps_notice_pending` = 1
   WHERE `email_recaps` = 0 AND `email_recaps_off_reason` IS NULL
-    AND `is_anonymous` = 0 AND `email` IS NOT NULL AND trim(`email`) <> '';
+    AND `is_anonymous` = 0 AND `email` IS NOT NULL AND trim(`email`) <> ''
+    AND `id` NOT IN (SELECT `user_id` FROM `activity_log` WHERE `event_type` = 'settings.update' AND `created_at` >= 1792637733902);

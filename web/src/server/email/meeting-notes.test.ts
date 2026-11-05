@@ -21,6 +21,7 @@ const {
   sendMeetingNotes,
   shareOverview,
   MAX_NOTE_RECIPIENTS_PER_DAY,
+  MAX_ADDED_RECIPIENTS,
 } = await import('./meeting-notes');
 
 const MIGRATIONS = join(import.meta.dir, '../../../drizzle');
@@ -123,6 +124,11 @@ describe('default-on recaps migration', () => {
       sent('d_complained', 'complained');
       user('e_anonymous', 0, null, 1);
       user('f_no_email', 0, null);
+      // Saved a setting after recaps shipped: may have turned them off before getting one.
+      user('g_saved_settings', 0);
+      db.run(`INSERT INTO activity_log (id, user_id, event_type, created_at) VALUES ('act_g', 'g_saved_settings', 'settings.update', 1792637733902)`);
+      user('h_saved_long_ago', 0);
+      db.run(`INSERT INTO activity_log (id, user_id, event_type, created_at) VALUES ('act_h', 'h_saved_long_ago', 'settings.update', 1792637733901)`);
     });
     const by = Object.fromEntries(users.map((u) => [u.id, u]));
     expect(by.a_never).toMatchObject({ email_recaps: 1, email_recaps_off_reason: null, email_recaps_notice_pending: 1 });
@@ -132,6 +138,8 @@ describe('default-on recaps migration', () => {
     expect(by.d_complained).toMatchObject({ email_recaps: 0, email_recaps_off_reason: 'complaint', email_recaps_notice_pending: 0 });
     expect(by.e_anonymous).toMatchObject({ email_recaps: 0, email_recaps_notice_pending: 0 });
     expect(by.f_no_email).toMatchObject({ email_recaps: 0, email_recaps_notice_pending: 0 });
+    expect(by.g_saved_settings).toMatchObject({ email_recaps: 0, email_recaps_notice_pending: 0 });
+    expect(by.h_saved_long_ago).toMatchObject({ email_recaps: 1, email_recaps_notice_pending: 1 });
   });
 
   test('new accounts start with recaps on and the other email settings at their defaults', async () => {
@@ -395,5 +403,54 @@ describe('review fixes', () => {
     await sendMeetingNotes(t.db, t.env, 'm1');
     expect(calls).toHaveLength(0);
     expect(t.rows().map((r) => r.status)).toEqual(['failed']);
+  });
+});
+
+describe('review round 2', () => {
+  test('a soft bounce can be sent again; a complaint about this owner cannot', async () => {
+    const t = setup();
+    const calls = mockResend();
+    await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'cy@partner.io'] });
+    await sendMeetingNotes(t.db, t.env, 'm1');
+    t.sqlite.run(`UPDATE email_deliveries SET status = 'bounced', status_detail = 'transient', created_at = 1 WHERE recipient = 'bea@acme.com'`);
+    t.sqlite.run(`UPDATE email_deliveries SET status = 'complained' WHERE recipient = 'cy@partner.io'`);
+    const again = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'cy@partner.io'] });
+    expect(again).toEqual([{ email: 'bea@acme.com', outcome: 'queued' }, { email: 'cy@partner.io', outcome: 'suppressed' }]);
+    const bea = t.rows().find((r) => r.recipient === 'bea@acme.com')!;
+    expect(bea).toMatchObject({ status: 'queued', provider_message_id: null });
+    expect(Number(bea.created_at)).toBeGreaterThan(Date.now() - 60_000);
+    await sendMeetingNotes(t.db, t.env, 'm1');
+    expect(calls.map((c) => c.to[0])).toEqual(['bea@acme.com', 'cy@partner.io', 'bea@acme.com']);
+  });
+
+  test("another account's complaint about the owner's address doesn't stop the owner's recap", async () => {
+    const t = setup();
+    const calls = mockResend();
+    t.sqlite.run(`INSERT INTO users (id, email, created_at, updated_at) VALUES ('u2', 'someone@else.com', 1, 1)`);
+    t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+                  VALUES ('c', 'u2', 'meeting_notes', 'owner@acme.com', 'c', 'resend', 'complained', 1, 1)`);
+    expect(await sendRecap(t.db, t.env, 'm1')).toBe('recapped');
+    expect(calls).toHaveLength(1);
+  });
+
+  test("the daily cap counts sends made in the last day, not old ones updated today", async () => {
+    const t = setup();
+    const now = Date.now();
+    for (let i = 0; i < MAX_NOTE_RECIPIENTS_PER_DAY; i++) {
+      t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+                    VALUES (?, 'u1', 'meeting_notes', ?, ?, 'resend', 'delivered', ?, ?)`, [`d${i}`, `p${i}@x.com`, `k${i}`, now - 2 * 86_400_000, now]);
+    }
+    const results = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] });
+    expect(results[0].outcome).toBe('queued');
+  });
+
+  test('people who were not in the meeting need the owner to confirm them, and only a few per send', async () => {
+    const t = setup();
+    const extra = Array.from({ length: MAX_ADDED_RECIPIENTS + 1 }, (_, i) => `x${i}@else.com`);
+    const unconfirmed = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'x0@else.com'] });
+    expect(unconfirmed).toEqual([{ email: 'bea@acme.com', outcome: 'queued' }, { email: 'x0@else.com', outcome: 'needs_confirmation' }]);
+    const confirmed = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: extra, confirmAdded: true });
+    expect(confirmed.filter((r) => r.outcome === 'queued')).toHaveLength(MAX_ADDED_RECIPIENTS);
+    expect(confirmed.at(-1)).toEqual({ email: `x${MAX_ADDED_RECIPIENTS}@else.com`, outcome: 'too_many_added' });
   });
 });

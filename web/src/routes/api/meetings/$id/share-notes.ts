@@ -14,6 +14,7 @@ import { MAX_NOTE_LENGTH, MAX_NOTE_RECIPIENTS, queueMeetingNotes, shareOverview 
 const sendSchema = z.object({
   recipients: z.array(z.string().max(320)).min(1).max(MAX_NOTE_RECIPIENTS),
   note: z.string().max(MAX_NOTE_LENGTH).nullable().optional(),
+  confirmAdded: z.boolean().optional(),
 });
 
 /**
@@ -78,6 +79,7 @@ export const Route = createFileRoute('/api/meetings/$id/share-notes')({
           meeting,
           recipients: parsed.data.recipients,
           note: parsed.data.note ?? null,
+          confirmAdded: parsed.data.confirmAdded === true,
         });
         const queued = results.filter((r) => r.outcome === 'queued').length;
         await activityRepo.log(db, {

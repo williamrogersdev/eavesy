@@ -218,7 +218,7 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
   // Sent, settled, or attempted without an answer: never send it again.
   if (delivery.status !== 'queued') return delivery.status === 'sent' || delivery.status === 'delivered' ? 'recapped' : 'not_sent';
 
-  if (await suppressed(db, recipient)) {
+  if (await suppressed(db, recipient, user.id)) {
     await setStatus(db, delivery.id, 'queued', { status: 'failed', statusDetail: 'suppressed_recipient' });
     return 'not_sent';
   }
