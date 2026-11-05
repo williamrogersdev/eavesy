@@ -116,9 +116,16 @@ async function attempt(
     }
     const from = now - SYNC_BEHIND_MS;
     const to = now + SYNC_AHEAD_MS;
-    const calendarIds = await calendarsToSync(db, connection, token, signal);
-    const { events, complete } = await eventsFrom(token, calendarIds, from, to, signal);
-    await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, complete, now });
+    let calendarIds = await calendarsToSync(db, connection, token, signal);
+    // A tick saved while this sync read Google changes what it should have
+    // read: read again with the saved choice, so the last write always matches it.
+    for (let pass = 0; pass < 2; pass++) {
+      const { events, complete } = await eventsFrom(token, calendarIds, from, to, signal);
+      await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, complete, now });
+      const latest = await savedChoice(db, connection);
+      if (!latest || sameSet(latest, calendarIds)) break;
+      calendarIds = latest;
+    }
     return 'ok';
   } catch (error) {
     if (error instanceof GoogleAccessRevoked) return 'reconnect';
@@ -144,6 +151,18 @@ async function botEnv(): Promise<MeetingBotsEnv | null> {
   } catch {
     return null;
   }
+}
+
+/** The ticked calendars as saved now, or null when this grant reads the primary calendar only. */
+async function savedChoice(db: AppDb, connection: calendarRepo.CalendarConnection): Promise<string[] | null> {
+  if (!canListCalendars(connection)) return null;
+  const latest = await calendarRepo.getConnection(db, connection.userId, connection.id);
+  const ticked = latest ? calendarRepo.storedCalendars(latest).filter((c) => c.selected) : [];
+  return ticked.length ? ticked.map((c) => (c.primary ? 'primary' : c.id)) : null;
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
 }
 
 /** Whether this connection's grant lets Eavesy list its calendars. */

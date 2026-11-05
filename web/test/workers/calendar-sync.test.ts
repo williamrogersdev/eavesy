@@ -142,6 +142,32 @@ describe('calendar sync across an account’s calendars', () => {
     expect(await storedTitles()).toContain('Side thing@side@group.calendar.google.com');
   });
 
+  it('a tick saved while a sync reads events is read before that sync finishes, and keeps its claim', async () => {
+    const byCalendar = { primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [googleEvent('b', 'Team sync')], 'side@group.calendar.google.com': [googleEvent('c', 'Side thing')] };
+    fakeGoogle(byCalendar);
+    await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
+    await syncConnection(db(), (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!, NOW);
+    // A sync is under way (claimed) and has already read the list; the person ticks "Side project".
+    expect(await calendarRepo.claimAttempt(db(), 'cal_a', NOW + 1000, 0)).toBe(true);
+    const snapshot = (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!;
+    let ticked = false;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'at' });
+      if (url.pathname.endsWith('/users/me/calendarList')) return Response.json({ items: CALENDARS });
+      if (!ticked) {
+        ticked = true;
+        expect(await calendarRepo.setSelectedCalendars(db(), 'user_a', 'cal_a', [{ id: 'side@group.calendar.google.com', selected: true }], NOW + 1500)).toBe('ok');
+        // The live claim stays, so the save starts no second sync beside this one.
+        expect((await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!.lastAttemptAt).toBe(NOW + 1000);
+      }
+      const calendar = decodeURIComponent(url.pathname.split('/calendars/')[1]!.replace(/\/events$/, ''));
+      return Response.json({ items: byCalendar[calendar as keyof typeof byCalendar] ?? [] });
+    });
+    await syncConnection(db(), snapshot, NOW + 1000);
+    expect(await storedTitles()).toContain('Side thing@side@group.calendar.google.com');
+  });
+
   it('a calendar that can no longer be read deletes nothing', async () => {
     fakeGoogle({ primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [googleEvent('b', 'Team sync')] });
     await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
