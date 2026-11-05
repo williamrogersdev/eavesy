@@ -742,8 +742,16 @@ fn anchors(value: &str, pasted: &str, near: impl Fn(usize, usize) -> bool) -> Op
     };
     Some((value[..start].into(), value[start + pasted.len()..].into()))
 }
+/// The text between `prefix` and `suffix` in `value`. Rich text editors
+/// (ProseMirror, as in Claude's message box) read back an empty paragraph as
+/// a lone newline and drop it once there is text, or add one back when the
+/// text goes: a field's last newline may come and go.
 pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
-    let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    let rest = value.strip_prefix(prefix)?;
+    let middle = rest
+        .strip_suffix(suffix)
+        .or_else(|| rest.strip_suffix(suffix.strip_suffix('\n')?))
+        .or_else(|| rest.strip_suffix('\n')?.strip_suffix(suffix))?;
     Some(middle.into())
 }
 /// Text as live typing puts it in a field: as fields hand it back
@@ -808,6 +816,17 @@ pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_field_s_last_newline_may_come_and_go() {
+        // An empty ProseMirror field reads "\n"; typed into, it drops it.
+        assert_eq!(passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello\u{a0}"));
+        assert_eq!(passage("Hello\n", "", "\n").as_deref(), Some("Hello"));
+        assert_eq!(passage("Say Hello there", "Say ", "").as_deref(), Some("Hello there"));
+        // Only a last newline is forgiven.
+        assert_eq!(passage("Hello", "", "\nmore"), None);
+        assert_eq!(passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
     #[test]
     fn isolates_only_the_pasted_passage() {
         let mut watch = Watch::start("Existing. pool request. After.", "pool request.", None).unwrap();
