@@ -368,11 +368,20 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 
 /// Screenshot and image sync, run beside the loop so a large upload never
 /// holds up meetings or dictation.
+/// Whether a nudged capture pass may start now, ahead of the usual schedule:
+/// never right after a failed pass (that waits out its retry pause), and never
+/// within `CAPTURE_NUDGE_GAP` of the last pass.
+fn nudge_due(nudged: bool, failed: bool, finished: Option<Instant>, now: Instant) -> bool {
+    nudged && !failed && finished.is_none_or(|at| now.saturating_duration_since(at) >= CAPTURE_NUDGE_GAP)
+}
+
 #[derive(Default)]
 struct CaptureTask {
     running: Option<(String, tokio::task::JoinHandle<Result<usize>>)>,
     next: Option<(String, Instant)>,
     finished: Option<Instant>,
+    /// The last pass failed: nudges wait for `next` like any other pass.
+    failed: bool,
 }
 
 /// A loop that stopped takes its capture pass with it, so a restarted loop
@@ -395,22 +404,24 @@ impl CaptureTask {
         let (token, handle) = self.running.take()?;
         let mut wait = CLOUD_PULL_INTERVAL;
         let mut rejected = None;
+        let mut failed = true;
         match handle.await {
             // More may be waiting: come back sooner.
-            Ok(Ok(moved)) if moved > 0 => wait = Duration::from_secs(2),
-            Ok(Ok(_)) => {}
+            Ok(Ok(moved)) if moved > 0 => (wait, failed) = (Duration::from_secs(2), false),
+            Ok(Ok(_)) => failed = false,
             Ok(Err(error)) if is_unauthorized(&error) => rejected = Some(token.clone()),
             Ok(Err(error)) => tracing::warn!("capture sync: {error:#}"),
             Err(error) => tracing::error!("capture sync stopped: {error}"),
         }
         self.next = Some((token, Instant::now() + wait));
         self.finished = Some(Instant::now());
+        self.failed = failed;
         rejected
     }
 
-    /// Whether a pass was asked for and the last one ended long enough ago.
+    /// Whether a pass was asked for and may start before `next`.
     fn nudge_due(&self) -> bool {
-        crate::capture_sync::nudged() && self.finished.is_none_or(|at| at.elapsed() >= CAPTURE_NUDGE_GAP)
+        nudge_due(crate::capture_sync::nudged(), self.failed, self.finished, Instant::now())
     }
 
     fn start_if_due(&mut self, app: &AppHandle, api: &Api, token: &str) {
@@ -422,17 +433,20 @@ impl CaptureTask {
         if !nudged && self.next.as_ref().is_some_and(|(last, at)| last == token && Instant::now() < *at) {
             return;
         }
-        if nudged {
-            crate::capture_sync::take_nudge();
-        }
         let root = match crate::fs_writer::recordings_root(app) {
             Ok(root) => root,
             Err(error) => {
                 tracing::warn!("capture sync: {error}");
                 self.next = Some((token.to_string(), Instant::now() + CLOUD_PULL_INTERVAL));
+                // The nudge stays set for the next try, which waits for `next`.
+                self.failed = true;
                 return;
             }
         };
+        // Cleared only once a pass really starts: a nudge is never lost.
+        if nudged {
+            crate::capture_sync::take_nudge();
+        }
         let (app, api, task_token) = (app.clone(), api.clone(), token.to_string());
         let handle = tokio::spawn(async move {
             match tokio::time::timeout(CAPTURE_SYNC_LIMIT, crate::capture_sync::run(&app, &api, &task_token, &root)).await {
@@ -1345,6 +1359,20 @@ mod tests {
             rendered,
             "# Sync\n\n## Transcript\n\n**[00:00:01] You:** Morning. I can present first.\n\n**[00:01:05] Them:** Go ahead.\n\n"
         );
+    }
+
+    #[test]
+    fn a_nudge_starts_a_pass_only_after_the_gap_and_never_after_a_failure() {
+        let now = Instant::now();
+        let recent = now.checked_sub(Duration::from_secs(1)).unwrap();
+        let old = now.checked_sub(super::CAPTURE_NUDGE_GAP + Duration::from_secs(1)).unwrap();
+        assert!(super::nudge_due(true, false, None, now));
+        assert!(super::nudge_due(true, false, Some(old), now));
+        assert!(super::nudge_due(true, false, Some(now.checked_sub(super::CAPTURE_NUDGE_GAP).unwrap()), now));
+        assert!(!super::nudge_due(true, false, Some(recent), now));
+        assert!(!super::nudge_due(false, false, Some(old), now));
+        assert!(!super::nudge_due(true, true, Some(old), now));
+        assert!(!super::nudge_due(true, true, None, now));
     }
 
     #[tokio::test]
