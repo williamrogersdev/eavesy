@@ -3,6 +3,7 @@ import type { AppDb } from '../client';
 import { decode, encode } from '../codec';
 import { pid } from '../ids';
 import { calendarConnections, calendarEvents } from '../schema';
+import { UNTITLED_EVENT } from '@/lib/calendar/match';
 import type { CalendarEventInput } from '@/server/google-calendar';
 
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
@@ -197,17 +198,16 @@ function linkKey(url: string): string {
   }
 }
 
-/**
- * Ways two stored events can be the same meeting: the same Google event, the
- * same call link, or (only across different calendars) the same title and times.
- */
-function sameMeetingKeys(event: StoredEvent): { key: string; acrossOnly: boolean }[] {
-  const keys = [
-    { key: `id:${event.providerEventId}@${event.startsAt}`, acrossOnly: false },
-    { key: `at:${event.title}@${event.startsAt}-${event.endsAt}`, acrossOnly: true },
-  ];
-  if (event.meetingUrl) keys.push({ key: `url:${linkKey(event.meetingUrl)}@${event.startsAt}`, acrossOnly: false });
+/** Strong signs two stored events are the same meeting: the same Google event, or the same call link, at the same start. */
+function sameMeetingKeys(event: StoredEvent): string[] {
+  const keys = [`id:${event.providerEventId}@${event.startsAt}`];
+  if (event.meetingUrl) keys.push(`url:${linkKey(event.meetingUrl)}@${event.startsAt}`);
   return keys;
+}
+
+/** A weaker sign, used only between different calendars: the same real title and times. */
+function titleTimeKey(event: StoredEvent): string | null {
+  return event.title === UNTITLED_EVENT ? null : `at:${event.title}@${event.startsAt}-${event.endsAt}`;
 }
 
 /** Which copy stands for the meeting: the recorded one, else one with a record choice, else the first. */
@@ -218,15 +218,20 @@ function rank(event: StoredEvent): number {
 /**
  * Collapses copies of one meeting that arrive from more than one connected
  * calendar (an invite between two of your own accounts, say) into one, keeping
- * order. Copies chain: one sharing a Google id with a second and a call link
- * with a third joins all three. Two blocks on one calendar that only share a
- * title and times stay apart. The copy kept is stable (recorded, else one with
- * a record choice, else the first), so a choice or recording set on it stays
- * on it; if it has no choice it takes another copy's. Its attendees are
- * everyone's, and it takes a call link if it lacked one.
+ * order. Copies sharing a Google id or call link chain together: one sharing
+ * an id with a second and a link with a third joins all three. Without either,
+ * copies merge on the same title and times only when they come from different
+ * calendars, the title is a real one and they have an attendee in common, so
+ * two "Focus time" blocks, or two blocks on one calendar, stay apart. The copy
+ * kept is stable (recorded, else one with a record choice, else the first), so
+ * a choice or recording set on it stays on it; if it has no choice it takes
+ * another copy's. Its attendees are everyone's, and it takes a call link if it
+ * lacked one.
  */
 export function mergeShared(events: StoredEvent[]): StoredEvent[] {
   const parent = events.map((_, i) => i);
+  const connections = events.map((event) => new Set([event.connectionId]));
+  const emails = events.map((event) => new Set(event.participants.map((p) => p.email.toLowerCase())));
   const find = (i: number): number => {
     while (parent[i] !== i) {
       parent[i] = parent[parent[i]];
@@ -234,20 +239,42 @@ export function mergeShared(events: StoredEvent[]): StoredEvent[] {
     }
     return i;
   };
-  const seen = new Map<string, number[]>();
+  const union = (i: number, j: number) => {
+    const a = find(i);
+    const b = find(j);
+    if (a === b) return;
+    const [root, child] = a < b ? [a, b] : [b, a];
+    parent[child] = root;
+    for (const c of connections[child]) connections[root].add(c);
+    for (const e of emails[child]) emails[root].add(e);
+  };
+  const firstWith = new Map<string, number>();
   events.forEach((event, i) => {
-    for (const { key, acrossOnly } of sameMeetingKeys(event)) {
-      const earlier = seen.get(key) ?? [];
-      for (const j of earlier) {
-        if (acrossOnly && events[j].connectionId === event.connectionId) continue;
-        const a = find(i);
-        const b = find(j);
-        if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
-      }
-      earlier.push(i);
-      seen.set(key, earlier);
+    for (const key of sameMeetingKeys(event)) {
+      const j = firstWith.get(key);
+      if (j === undefined) firstWith.set(key, i);
+      else union(i, j);
     }
   });
+  // Title and time only join whole groups that share no calendar, so a copy
+  // elsewhere can never pull two of one calendar's blocks together.
+  const byTitleTime = new Map<string, number[]>();
+  events.forEach((event, i) => {
+    const key = titleTimeKey(event);
+    if (key) byTitleTime.set(key, [...(byTitleTime.get(key) ?? []), i]);
+  });
+  for (const members of byTitleTime.values()) {
+    for (let x = 0; x < members.length; x++) {
+      for (let y = x + 1; y < members.length; y++) {
+        const a = find(members[x]);
+        const b = find(members[y]);
+        if (a === b) continue;
+        if ([...connections[a]].some((c) => connections[b].has(c))) continue;
+        if (![...emails[a]].some((e) => emails[b].has(e))) continue;
+        union(a, b);
+      }
+    }
+  }
   const groups = new Map<number, StoredEvent[]>();
   events.forEach((event, i) => {
     const root = find(i);

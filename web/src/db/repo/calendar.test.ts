@@ -36,15 +36,30 @@ describe('mergeShared', () => {
     expect(merged[0]!.participants).toEqual([{ email: 'sam@work.com', name: 'Sam' }, { email: 'dana@x.com', name: 'Dana' }]);
   });
 
-  test('matches by Google event id, or by title and time across calendars, when there is no link', () => {
+  test('matches by Google event id, or by title, time and a shared attendee across calendars', () => {
     expect(mergeShared([stored({ id: 'a', providerEventId: 'same' }), stored({ id: 'b', connectionId: 'cal_b', providerEventId: 'same', title: 'Renamed' })])).toHaveLength(1);
-    const merged = mergeShared([stored({ id: 'a' }), stored({ id: 'b', connectionId: 'cal_b', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' })]);
+    const sam = [{ email: 'sam@work.com', name: null }];
+    const merged = mergeShared([stored({ id: 'a', participants: sam }), stored({ id: 'b', connectionId: 'cal_b', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet', participants: sam })]);
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ id: 'a', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' });
   });
 
-  test('two same-title blocks on one calendar stay apart', () => {
-    expect(mergeShared([stored({ id: 'a', title: '(No title)' }), stored({ id: 'b', title: '(No title)' })]).map((e) => e.id)).toEqual(['a', 'b']);
+  test('same title and time alone is not enough', () => {
+    const sam = [{ email: 'sam@work.com', name: null }];
+    // One calendar, no attendee in common, or no real title: all stay apart.
+    expect(mergeShared([stored({ id: 'a', participants: sam }), stored({ id: 'b', participants: sam })])).toHaveLength(2);
+    expect(mergeShared([stored({ id: 'a', title: 'Focus time' }), stored({ id: 'b', connectionId: 'cal_b', title: 'Focus time' })])).toHaveLength(2);
+    expect(mergeShared([stored({ id: 'a', title: '(No title)', participants: sam }), stored({ id: 'b', connectionId: 'cal_b', title: '(No title)', participants: sam })])).toHaveLength(2);
+  });
+
+  test('a copy on another calendar never pulls two of one calendar’s blocks together', () => {
+    const sam = [{ email: 'sam@work.com', name: null }];
+    const merged = mergeShared([
+      stored({ id: 'a', title: 'Standup', participants: sam }),
+      stored({ id: 'b', title: 'Standup', participants: sam }),
+      stored({ id: 'c', connectionId: 'cal_b', title: 'Standup', participants: sam }),
+    ]);
+    expect(merged.map((e) => e.id)).toEqual(['a', 'b']);
   });
 
   test('a copy that matches two others by different keys joins them into one', () => {
