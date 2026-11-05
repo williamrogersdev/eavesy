@@ -17,6 +17,7 @@ import {
   setTypeAsYouTalk,
   setAutoRecordMeetings,
   setCaptureSounds,
+  setSnapshots,
   setAgentHold,
   setAgentVoice,
   setAgentMessages,
@@ -402,6 +403,16 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setLocalError('The meeting recording preference couldn’t be saved. Try the switch again.'))
       .finally(() => setAutoRecordBusy(false));
   };
+  const snapshotsOn = settings?.snapshots ?? true;
+  const [snapshotsBusy, setSnapshotsBusy] = useState(false);
+  const toggleSnapshots = (next: boolean) => {
+    setSnapshotsBusy(true);
+    setLocalError(null);
+    void setSnapshots(next)
+      .then(() => setSettings((current) => current ? { ...current, snapshots: next } : current))
+      .catch(() => setLocalError('The shared screens preference couldn’t be saved. Try the switch again.'))
+      .finally(() => setSnapshotsBusy(false));
+  };
   const agentsOn = settings?.agent_voice ?? false;
   const agentHold = String(settings?.agent_hold_secs ?? 300) as AgentHold;
   const [agentsBusy, setAgentsBusy] = useState(false);
@@ -717,6 +728,13 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
               hint={autoRecordOn
                 ? 'When a call starts, Eavesy counts down 10 seconds and records unless you choose Don’t record. It stops when the call ends.'
                 : 'When a call starts, Eavesy asks before recording.'}
+            />
+            <Switch
+              checked={snapshotsOn}
+              onCheckedChange={toggleSnapshots}
+              disabled={!settings || snapshotsBusy}
+              label="Keep shared screens"
+              hint="While a meeting records, Eavesy saves a picture each time shared slides, charts or designs change, and files it in the transcript. Needs Screen Recording."
             />
           </Section>
         )}

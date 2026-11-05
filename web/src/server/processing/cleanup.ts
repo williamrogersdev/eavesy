@@ -72,6 +72,7 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
 
 /** Tables purged by user_id when an account is deleted; exported for the test that checks none is missing. */
 export const ACCOUNT_TABLES = [
+  'meeting_attachments',
   'recording_imports',
   'embeddings',
   'captures',

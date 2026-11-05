@@ -104,6 +104,8 @@ case .audio:
 case .screen:
     recorder = ScreenRecorder(outPath: args.outPath, includeMic: args.includeMic)
 }
+let snapshots = args.snapshotsDir.map(SnapshotSampler.init(folder:))
+
 // The recorder holds the prepared session if it can use it; let go of it here.
 micWarmup = nil
 
@@ -119,6 +121,7 @@ func gracefulStop() {
     didStop = true
     stopLock.unlock()
 
+    snapshots?.stop()
     recorder.stop { durationSec in
         EventEmitter.done(path: args.outPath, durationSec: durationSec)
         fflush(stdout)
@@ -153,5 +156,6 @@ stdinThread.stackSize = 1 << 20
 stdinThread.start()
 
 recorder.start()
+snapshots?.start()
 
 RunLoop.main.run()

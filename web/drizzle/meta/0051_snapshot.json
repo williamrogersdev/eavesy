@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "956490cc-679c-42ea-ae03-46fc6be4f5ba",
+  "id": "9c889d43-3916-4d3b-ad27-f99552a33f57",
   "prevId": "1fe5d4b3-d981-4f85-b514-27e4129ada52",
   "tables": {
     "activity_log": {
@@ -1007,15 +1007,6 @@
           "columns": [
             "user_id",
             "created_at"
-          ],
-          "isUnique": false
-        },
-        "captures_user_kind_updated_idx": {
-          "name": "captures_user_kind_updated_idx",
-          "columns": [
-            "user_id",
-            "kind",
-            "updated_at"
           ],
           "isUnique": false
         },
@@ -2156,6 +2147,173 @@
         "mcp_tokens_user_id_users_id_fk": {
           "name": "mcp_tokens_user_id_users_id_fk",
           "tableFrom": "mcp_tokens",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "meeting_attachments": {
+      "name": "meeting_attachments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "client_name": {
+          "name": "client_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "offset_ms": {
+          "name": "offset_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "r2_key": {
+          "name": "r2_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "width": {
+          "name": "width",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "caption": {
+          "name": "caption",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "caption_model": {
+          "name": "caption_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "captioned_at": {
+          "name": "captioned_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "meeting_attachments_meeting_client_uq": {
+          "name": "meeting_attachments_meeting_client_uq",
+          "columns": [
+            "meeting_id",
+            "client_name"
+          ],
+          "isUnique": true
+        },
+        "meeting_attachments_meeting_offset_idx": {
+          "name": "meeting_attachments_meeting_offset_idx",
+          "columns": [
+            "meeting_id",
+            "offset_ms"
+          ],
+          "isUnique": false
+        },
+        "meeting_attachments_uncaptioned_idx": {
+          "name": "meeting_attachments_uncaptioned_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false,
+          "where": "\"meeting_attachments\".\"captioned_at\" IS NULL"
+        }
+      },
+      "foreignKeys": {
+        "meeting_attachments_meeting_id_meetings_id_fk": {
+          "name": "meeting_attachments_meeting_id_meetings_id_fk",
+          "tableFrom": "meeting_attachments",
+          "tableTo": "meetings",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "meeting_attachments_user_id_users_id_fk": {
+          "name": "meeting_attachments_user_id_users_id_fk",
+          "tableFrom": "meeting_attachments",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

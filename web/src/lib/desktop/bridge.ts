@@ -137,6 +137,17 @@ export async function onRecordingsUpdated(cb: () => void): Promise<UnlistenFn> {
   return t.event.listen<unknown>('recordings:updated', () => cb());
 }
 
+/** A screenshot joined the meeting being recorded (the button, or ⌘⇧3/4/5). */
+export async function onMeetingAttachment(
+  cb: (sessionId: string, kind: 'snapshot' | 'screenshot') => void,
+): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<{ sessionId: string; kind?: 'snapshot' | 'screenshot' }>('meeting:attachment', (event) =>
+    cb(event.payload.sessionId, event.payload.kind ?? 'screenshot'),
+  );
+}
+
 /** On-device captions while recording; partials replace each other, finals settle. */
 export async function onLiveCaption(cb: (caption: LiveCaption) => void): Promise<UnlistenFn> {
   const t = tauri();
@@ -284,6 +295,11 @@ export async function setLiveCaptions(enabled: boolean): Promise<void> {
 /** "Type as I talk": applies from the next dictation. */
 export async function setTypeAsYouTalk(enabled: boolean): Promise<void> {
   await invoke('set_type_as_you_talk', { enabled });
+}
+
+/** Snapshots of shared screens while a meeting records; applies from the next meeting. */
+export async function setSnapshots(enabled: boolean): Promise<void> {
+  await invoke('set_snapshots', { enabled });
 }
 
 export async function setCaptureSounds(enabled: boolean): Promise<void> {
@@ -931,6 +947,8 @@ export interface Settings {
   live_captions?: boolean;
   /** Copy new macOS screenshots into the history. Absent means on. */
   add_screenshots?: boolean;
+  /** Snapshots of shared screens in meetings. Absent means on. */
+  snapshots?: boolean;
   /** Absent means on. */
   capture_sounds?: boolean;
   auto_record_meetings?: boolean;
