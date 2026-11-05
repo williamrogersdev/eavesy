@@ -84,8 +84,11 @@ export async function setSelectedCalendars(
         calendarsJson: encode(calendars),
         // Due again now, unless a sync is under way: that one reads the new
         // choice before it finishes, and a second sync beside it would race it.
+        // A claim can't be told from a failed try (both stamp only the
+        // attempt), so after a failure the tick wins and the sync runs now.
         lastAttemptAt: sql`CASE WHEN ${calendarConnections.lastAttemptAt} IS NULL
           OR ${calendarConnections.lastAttemptAt} = ${calendarConnections.lastSyncAt}
+          OR coalesce(${calendarConnections.lastSyncStatus}, '') <> 'ok'
           OR ${calendarConnections.lastAttemptAt} < ${now - IN_FLIGHT_MS} THEN NULL
           ELSE ${calendarConnections.lastAttemptAt} END`,
       })
@@ -157,7 +160,7 @@ export async function claimAttempt(db: AppDb, id: string, now: number, staleMs: 
   return claimed.length > 0;
 }
 
-/** Undoes a claim made at `claimedAt` that never got to sync, so the connection is due again. */
+/** Makes the connection due again by undoing the attempt stamped at `claimedAt` (a claim that never got to sync, or a sync that read an outdated choice). */
 export async function releaseAttempt(db: AppDb, id: string, claimedAt: number): Promise<void> {
   await db
     .update(calendarConnections)

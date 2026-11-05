@@ -168,6 +168,39 @@ describe('calendar sync across an account’s calendars', () => {
     expect(await storedTitles()).toContain('Side thing@side@group.calendar.google.com');
   });
 
+  it('a tick after a failed sync makes the connection due at once', async () => {
+    fakeGoogle({ primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [] });
+    await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
+    await syncConnection(db(), (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!, NOW);
+    await calendarRepo.markAttempt(db(), 'cal_a', 'failed', NOW + 1000);
+    expect(await calendarRepo.setSelectedCalendars(db(), 'user_a', 'cal_a', [{ id: 'side@group.calendar.google.com', selected: true }], NOW + 2000)).toBe('ok');
+    expect((await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!.lastAttemptAt).toBeNull();
+  });
+
+  it('ticks that keep arriving during a sync leave the connection due', async () => {
+    const byCalendar: Record<string, unknown[]> = { primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [], 'side@group.calendar.google.com': [] };
+    fakeGoogle(byCalendar);
+    await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
+    await syncConnection(db(), (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!, NOW);
+    expect(await calendarRepo.claimAttempt(db(), 'cal_a', NOW + 1000, 0)).toBe(true);
+    const snapshot = (await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!;
+    let flip = false;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'at' });
+      if (url.pathname.endsWith('/users/me/calendarList')) return Response.json({ items: CALENDARS });
+      const calendar = decodeURIComponent(url.pathname.split('/calendars/')[1]!.replace(/\/events$/, ''));
+      // Every read of the primary calendar meets a new tick of "Side project".
+      if (calendar === 'primary') {
+        flip = !flip;
+        await calendarRepo.setSelectedCalendars(db(), 'user_a', 'cal_a', [{ id: 'side@group.calendar.google.com', selected: flip }], NOW + 1500);
+      }
+      return Response.json({ items: byCalendar[calendar] ?? [] });
+    });
+    expect(await syncConnection(db(), snapshot, NOW + 1000)).toBe('ok');
+    expect((await calendarRepo.getConnection(db(), 'user_a', 'cal_a'))!.lastAttemptAt).toBeNull();
+  });
+
   it('a calendar that can no longer be read deletes nothing', async () => {
     fakeGoogle({ primary: [googleEvent('a', 'Numeral intro')], 'team@group.calendar.google.com': [googleEvent('b', 'Team sync')] });
     await addConnection('cal_a', [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE]);
