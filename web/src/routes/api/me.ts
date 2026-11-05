@@ -19,9 +19,14 @@ import { openUserKeys } from '@/server/secret-box';
 import { resolveIngestActor } from '@/server/device-auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import { type EmailEnv, emailConfigured } from '@/server/email/resend';
+import { waitUntil } from 'cloudflare:workers';
+import { cleanNotetakerName, MAX_NOTETAKER_NAME, notetakerName } from '@/lib/meetings/capture-plan';
+import { reconcileCalendarBots } from '@/server/meeting-bots/calendar-plan';
+import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
+import { botsAvailable } from '@/server/meeting-bots/service';
 
 /** What the Mac app may change with its device token; the rest needs a web sign-in. */
-const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents']);
+const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents', 'meetingCaptureDefault', 'notetakerName']);
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -37,6 +42,9 @@ const updateSchema = z.object({
   dictationForAgents: z.boolean().optional(),
   emailRecaps: z.boolean().optional(),
   emailRecapTranscript: z.boolean().optional(),
+  meetingCaptureDefault: z.enum(['mac', 'notetaker', 'both']).optional(),
+  /** Empty or null goes back to "<name>'s Notetaker". */
+  notetakerName: z.string().max(MAX_NOTETAKER_NAME * 2).nullable().optional(),
   customVocabulary: z.array(z.string().max(MAX_TERM_LENGTH * 2)).max(MAX_VOCABULARY_TERMS * 2).optional(),
 });
 
@@ -81,6 +89,11 @@ export const Route = createFileRoute('/api/me')({
           emailRecaps: u.emailRecaps,
           emailRecapTranscript: u.emailRecapTranscript,
           emailRecapsAvailable: emailConfigured(getCloudflareContext<EmailEnv>().env),
+          meetingCaptureDefault: u.meetingCaptureDefault,
+          // The name typed in Settings (null: none), and the one the Notetaker joins under.
+          notetakerName: u.notetakerName,
+          notetakerJoinsAs: notetakerName(u.notetakerName, u.displayName),
+          notetakerAvailable: botsAvailable(getCloudflareContext<MeetingBotsEnv>().env),
           hasAnthropicKey: !!u.byoAnthropicKey,
           anthropicKeyHint: maskedHint(u.byoAnthropicKey),
           hasOpenRouterKey: !!u.byoOpenRouterKey,
@@ -133,11 +146,18 @@ export const Route = createFileRoute('/api/me')({
           patch.emailRecaps = body.emailRecaps;
         }
         if (body.emailRecapTranscript !== undefined) patch.emailRecapTranscript = body.emailRecapTranscript;
+        if (body.meetingCaptureDefault) patch.meetingCaptureDefault = body.meetingCaptureDefault;
+        if (body.notetakerName !== undefined) patch.notetakerName = cleanNotetakerName(body.notetakerName);
         if (body.customVocabulary) {
           const vocabulary = normalizeVocabulary(body.customVocabulary);
           patch.customVocabularyJson = vocabulary.length > 0 ? JSON.stringify(vocabulary) : null;
         }
         await db.update(users).set(patch).where(eq(users.id, actor.userId));
+        // A new default (or name) changes which meetings get the Notetaker, and what it's called.
+        if (body.meetingCaptureDefault || body.notetakerName !== undefined || body.displayName !== undefined) {
+          const botEnv = getCloudflareContext<MeetingBotsEnv>().env;
+          if (botsAvailable(botEnv)) waitUntil(reconcileCalendarBots(db, botEnv, actor.userId).catch((error: unknown) => console.error('[me] notetaker plan', error)));
+        }
         await activityRepo.log(db, { userId: actor.userId, eventType: 'settings.update' });
         return Response.json({ ok: true });
       },

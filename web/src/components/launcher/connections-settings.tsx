@@ -9,8 +9,12 @@ import {
   getCalendarStatus,
   getUpcomingMeetings,
   NOT_REVOKED,
+  getMeetingCapture,
+  saveMeetingCapture,
+  setCaptureMode,
   setSyncedCalendars,
   type CalendarChoice,
+  type MeetingCapturePrefs,
   type CalendarStatus,
   type UpcomingMeeting,
 } from '@/lib/api/calendar';
@@ -36,7 +40,7 @@ import {
   type McpToken,
 } from '@/lib/mcp-tokens';
 import { claudeCodeConnected, claudeCodeStage, type ClaudeCodeStage } from './connections-model';
-import { MeetingRecordSwitch } from './meeting-details';
+import type { CaptureMode } from '@/lib/meetings/capture-plan';
 import { meetingTime } from './meeting-model';
 
 /** Text to copy (a URL, a command or a whole prompt), with a Copy button that says when it worked. */
@@ -338,38 +342,178 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   );
 }
 
+type CaptureDefault = MeetingCapturePrefs['captureDefault'];
+
+const DEFAULT_OPTIONS: { value: CaptureDefault; label: string }[] = [
+  { value: 'mac', label: 'This Mac' },
+  { value: 'notetaker', label: 'Notetaker' },
+  { value: 'both', label: 'Both' },
+];
+
+const DEFAULT_HINT: Record<CaptureDefault, string> = {
+  mac: 'Eavesy records on your Mac. Nothing joins the call.',
+  notetaker: 'Your Notetaker joins Meet and Teams calls and takes the notes, even when your Mac is closed.',
+  both: 'Your Mac records the audio and your Notetaker joins for everyone’s names and the chat. The fullest notes.',
+};
+
 /**
- * The next day's meetings, each with whether Eavesy records it when its call
- * starts. A switch left as the "record all" setting says stores nothing, so
- * changing that setting moves every meeting you didn't choose for.
+ * How calendar meetings are captured unless chosen one by one, and the name
+ * the Notetaker joins under. Changing either updates upcoming Notetaker bots.
  */
-function UpcomingMeetings({ autoRecord, active }: { autoRecord: boolean; active: boolean }) {
+function MeetingCapture({ prefs, onChange }: { prefs: MeetingCapturePrefs; onChange: (next: MeetingCapturePrefs) => void }) {
+  const [name, setName] = useState(prefs.notetakerName ?? '');
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setName(prefs.notetakerName ?? ''); }, [prefs.notetakerName]);
+  // Each save shows its change at once, then what the server holds; only the
+  // latest save's answer is shown, so a slow earlier one can't undo a later one.
+  const latest = useRef(0);
+  // What the server last confirmed: a failed save goes back to it.
+  const confirmed = useRef(prefs);
+  const save = (change: Parameters<typeof saveMeetingCapture>[0], next: MeetingCapturePrefs) => {
+    const mine = ++latest.current;
+    setError(null);
+    onChange(next);
+    const settle = () => getMeetingCapture().then((fresh) => {
+      confirmed.current = fresh;
+      if (mine === latest.current) onChange(fresh);
+    });
+    void saveMeetingCapture(change)
+      .then(settle, (e: unknown) => {
+        if (mine === latest.current) {
+          onChange(confirmed.current);
+          setError(errMsg(e, 'Couldn’t save that. Try again.'));
+        }
+        return settle();
+      })
+      .catch((e: unknown) => { if (mine === latest.current) setError(errMsg(e, 'Couldn’t check what was saved. Reopen Settings to see it.')); });
+  };
+  const saveName = () => {
+    const typed = name.trim();
+    if (typed === (prefs.notetakerName ?? '')) return;
+    save({ notetakerName: typed || null }, { ...prefs, notetakerName: typed || null });
+  };
+  const options = prefs.notetakerAvailable ? DEFAULT_OPTIONS : DEFAULT_OPTIONS.filter((o) => o.value === 'mac');
+  return (
+    <>
+      <div className="ev-set-row ev-capture-default">
+        <div className="min-w-0 flex-1">
+          <div className="ev-set-label">Capture meetings with</div>
+          <p className="ev-set-hint">{DEFAULT_HINT[prefs.captureDefault]}</p>
+        </div>
+        {options.length > 1 && (
+          <Segmented
+            size="sm"
+            label="Capture meetings with"
+            value={prefs.captureDefault}
+            options={options}
+            onChange={(value) => save({ meetingCaptureDefault: value }, { ...prefs, captureDefault: value })}
+          />
+        )}
+      </div>
+      {prefs.notetakerAvailable && (
+        <div className="ev-set-row ev-capture-default">
+          <label className="block min-w-0 flex-1" htmlFor="ev-notetaker-name">
+            <span className="ev-set-label block">Notetaker name</span>
+            <span className="ev-set-hint block">What people see in the call. Joins as “{prefs.joinsAs}”.</span>
+          </label>
+          <input
+            id="ev-notetaker-name"
+            className="ev-field-input ev-notetaker-name"
+            value={name}
+            maxLength={60}
+            placeholder={prefs.notetakerName ? undefined : prefs.joinsAs}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={saveName}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          />
+        </div>
+      )}
+      {error && <p role="alert" className="ev-set-hint">{error}</p>}
+    </>
+  );
+}
+
+const MEETING_LABEL: Record<CaptureMode, string> = { mac: 'Mac', notetaker: 'Notetaker', both: 'Both', skip: 'Off' };
+
+/**
+ * The next day's meetings, each with how it's captured. A choice that matches
+ * the account default stores nothing, so changing the default moves every
+ * meeting you didn't choose for. Zoom calls and ones without a link offer
+ * only the Mac: the Notetaker can't join them.
+ */
+function UpcomingMeetings({ captureDefault, notetakerAvailable, active }: { captureDefault: CaptureDefault; notetakerAvailable: boolean; active: boolean }) {
   // undefined while loading, null when no calendar is connected.
   const [meetings, setMeetings] = useState<UpcomingMeeting[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     if (!active) return;
     void getUpcomingMeetings()
       .then((next) => { setMeetings(next); setError(null); })
       .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your meetings.')));
-  }, [active]);
+  }, [active, captureDefault]);
   if (error) return <p role="alert" className="ev-set-hint">{error}</p>;
   if (meetings === undefined) return null;
   if (meetings === null) return <p className="ev-set-hint">Connect a calendar above to choose meeting by meeting.</p>;
   if (meetings.length === 0) return <p className="ev-set-hint">No meetings in the next day.</p>;
   const now = Date.now();
+  const choose = (meeting: UpcomingMeeting, mode: CaptureMode) => {
+    const choice = mode === captureDefault ? null : mode;
+    setBusy(meeting.id);
+    setError(null);
+    void setCaptureMode(meeting.id, choice)
+      .then(() => setMeetings((current) => current?.map((m) => (m.id === meeting.id ? { ...m, captureMode: choice, mode } : m)) ?? current))
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that. Try again.')))
+      .finally(() => setBusy(null));
+  };
   return (
     <>
-      {meetings.map((meeting) => (
-        <MeetingRecordSwitch
-          key={meeting.id}
-          meeting={meeting}
-          autoRecord={autoRecord}
-          hint={meetingTime(meeting, now)}
-          onChanged={(choice) => { setError(null); setMeetings((current) => current?.map((m) => m.id === meeting.id ? { ...m, recordChoice: choice } : m) ?? current); }}
-          onError={setError}
-        />
-      ))}
+      {meetings.map((meeting) => {
+        const modes: CaptureMode[] = notetakerAvailable && meeting.notetakerCanJoin ? ['mac', 'notetaker', 'both', 'skip'] : ['mac', 'skip'];
+        // A Notetaker default on a call it can't join falls back to the Mac.
+        const shown = modes.includes(meeting.mode) ? meeting.mode : 'mac';
+        return (
+          <div key={meeting.id} className="ev-set-row ev-meeting-plan" aria-busy={busy === meeting.id}>
+            <div className="min-w-0 flex-1">
+              <div className="ev-set-label truncate">{meeting.title}</div>
+              <p className="ev-set-hint">{meetingTime(meeting, now)}</p>
+            </div>
+            <Segmented
+              size="sm"
+              label={`Capture ${meeting.title} with`}
+              value={shown}
+              options={modes.map((value) => ({ value, label: MEETING_LABEL[value] }))}
+              onChange={(mode) => { if (busy !== meeting.id) choose(meeting, mode); }}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** "Meetings": the capture default, the Notetaker's name, and the next day's meetings one by one. */
+function MeetingsCard({ signedIn, active }: { signedIn: boolean; active: boolean }) {
+  const [prefs, setPrefs] = useState<MeetingCapturePrefs | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!signedIn || !active) return;
+    void getMeetingCapture()
+      .then((next) => { setPrefs(next); setError(null); })
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t load your meeting settings.')));
+  }, [signedIn, active]);
+  if (!signedIn) return null;
+  return (
+    <>
+      <Card title="Meetings">
+        {error && <p role="alert" className="ev-set-hint">{error}</p>}
+        {prefs && <MeetingCapture prefs={prefs} onChange={setPrefs} />}
+      </Card>
+      {prefs && (
+        <Card title="Upcoming meetings">
+          <UpcomingMeetings captureDefault={prefs.captureDefault} notetakerAvailable={prefs.notetakerAvailable} active={active} />
+        </Card>
+      )}
     </>
   );
 }
@@ -815,7 +959,7 @@ function AvailableApps({ open, setOpen, claude, stage, showClaudeCode, elsewhere
  * one list or the other, never both. On the Mac (`autoRecord` given), the
  * day's meetings and whether to record each.
  */
-export function ConnectionsSettings({ signedIn, active, autoRecord, children }: { signedIn: boolean; active: boolean; autoRecord?: boolean; children?: ReactNode }) {
+export function ConnectionsSettings({ signedIn, active, children }: { signedIn: boolean; active: boolean; children?: ReactNode }) {
   const mcp = useMcpTokens(signedIn, active);
   const claude = useClaudeCode(active);
   const [open, setOpen] = useState<AppId | null>(null);
@@ -828,11 +972,7 @@ export function ConnectionsSettings({ signedIn, active, autoRecord, children }: 
       <Card title="Accounts">
         <Accounts signedIn={signedIn} active={active} />
       </Card>
-      {signedIn && autoRecord !== undefined && (
-        <Card title="Record these meetings">
-          <UpcomingMeetings autoRecord={autoRecord} active={active} />
-        </Card>
-      )}
+      <MeetingsCard signedIn={signedIn} active={active} />
       <Card title="Connected AI apps">
         <ConnectedApps signedIn={signedIn} mcp={mcp} claudeLocal={stage === 'connected'} onClaudeSetup={() => setOpen('claude-code')} />
       </Card>

@@ -38,7 +38,14 @@ const TICK_MS: u64 = 1_000;
 /// only to finish the spans sharing a start with the last one, at most one
 /// per person in the call: a thousand people starting on one tick add 30 KB.
 const MAX_SPANS_PER_REPORT: usize = 2_000;
-const ANNOUNCEMENT: &str = "Eavesy Notetaker is transcribing this call for the person who invited it.";
+/// The chat line the bot posts once in the call, so everyone knows it's taking notes.
+fn announcement(bot_name: &str) -> String {
+    if bot_name == "Eavesy Notetaker" {
+        "Eavesy Notetaker is transcribing this call for the person who invited it.".into()
+    } else {
+        format!("{bot_name} is taking notes on this call with Eavesy.")
+    }
+}
 
 struct Config {
     meeting_url: String,
@@ -230,7 +237,7 @@ async fn run(
                         let others: Vec<String> = seen.speaking.into_iter().filter(|n| *n != cfg.bot_name).collect();
                         speakers.note(&others, since.elapsed().as_millis() as u64, TICK_MS);
                         if !announced {
-                            announced = session.announce(ANNOUNCEMENT).await;
+                            announced = session.announce(&announcement(&cfg.bot_name)).await;
                             if announced { log(json!({ "msg": "announced" })); }
                         }
                     }
@@ -397,5 +404,16 @@ mod tests {
         }
         assert_eq!(reports, 3);
         assert_eq!(stored, s.spans);
+    }
+}
+
+#[cfg(test)]
+mod announcement_tests {
+    use super::announcement;
+
+    #[test]
+    fn names_the_owners_notetaker() {
+        assert_eq!(announcement("William Rogers' Notetaker"), "William Rogers' Notetaker is taking notes on this call with Eavesy.");
+        assert!(announcement("Eavesy Notetaker").starts_with("Eavesy Notetaker is transcribing"));
     }
 }

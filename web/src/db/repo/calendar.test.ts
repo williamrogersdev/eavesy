@@ -16,6 +16,7 @@ function stored(over: Partial<StoredEvent> & { id: string }): StoredEvent {
     participants: [],
     description: null,
     recordChoice: null,
+    captureMode: null,
     recordedMeetingId: null,
     ...over,
   };

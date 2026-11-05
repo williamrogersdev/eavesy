@@ -351,6 +351,13 @@
       "when": 1793917662411,
       "tag": "0049_calendar_backbone",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1793918204567,
+      "tag": "0050_capture_plan",
+      "breakpoints": true
     }
   ]
 }
