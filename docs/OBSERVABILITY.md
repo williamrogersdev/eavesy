@@ -56,6 +56,8 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `recording_saved` | Mac app | `kind` (`audio`, `screen`, `dictation`), `duration_sec` |
 | `recording_started` | Mac app, when the capture engine is launched (an attempt; a later engine failure is reported as an error) | `kind` (`audio`, `screen`, `dictation`) |
 | `app_launched` | Mac app | `install_location` (`applications`, `user_applications`, `translocated`, `other_volume`, `build_folder`, `other`, `unbundled`, `unknown`), `previous_version` (what this install location ran last), `setup_completed`, `paired` |
+| `setup_step_viewed` | Mac app, each time the launcher shows a setup step (a new step, a return from Settings, or the panel reopened on it); count unique installs for a funnel | `step` (0–3), `step_name` (`sign_in`, `permissions`, `shortcuts`, `try_it`), `paired` |
+| `setup_completed` | Mac app, on every completion of setup, including a rerun | `again` (setup had already been finished once; filter on `false` for first completions) |
 | `update_available`, `update_installed` | Mac app | `version` |
 | `stray_copies_found` | Mac app, when other copies of Eavesy are registered with macOS | `unregistered`, `failed`, `newer` (counts) |
 

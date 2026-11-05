@@ -22,6 +22,7 @@ import {
   relaunchApp,
   saveNote,
   setPanelPinned,
+  setupStepShown,
   type ImportResult,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
@@ -89,6 +90,12 @@ export function DesktopPanel() {
     else panelRef.current?.focus({ preventScroll: true });
     searchRef.current?.select();
   }, []);
+
+  // Each time setup shows a step (a new step, a return from Settings, or the panel reopened
+  // on it), for analytics: an install that never finishes shows where it stopped.
+  useEffect(() => {
+    if (setupKnown && view === 'setup') void setupStepShown(setupStep);
+  }, [setupKnown, view, setupStep, opened]);
 
   const { toast, flash, runTask } = useToastTasks();
   useEffect(() => {

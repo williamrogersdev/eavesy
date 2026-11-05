@@ -471,7 +471,32 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn complete_setup(app: AppHandle) -> Result<(), String> {
-    settings::update(&app, |config| config.setup_completed = true).map(drop)
+    let mut again = false;
+    settings::update(&app, |config| {
+        again = config.setup_completed;
+        config.setup_completed = true;
+    })?;
+    crate::telemetry::track("setup_completed", serde_json::json!({ "again": again }));
+    Ok(())
+}
+
+/// Setup's steps, in the launcher's order.
+const SETUP_STEPS: [&str; 4] = ["sign_in", "permissions", "shortcuts", "try_it"];
+
+/// The launcher showed a setup step. The last one an install reports is where
+/// it stopped, which `app_launched` alone (`setup_completed: false`) can't say.
+#[tauri::command(async)]
+pub fn setup_step_shown(app: AppHandle, step: u8) -> Result<(), String> {
+    let name = setup_step_name(step).ok_or_else(|| format!("setup has no step {step}"))?;
+    crate::telemetry::track(
+        "setup_step_viewed",
+        serde_json::json!({ "step": step, "step_name": name, "paired": settings::device_token(&app).is_some() }),
+    );
+    Ok(())
+}
+
+fn setup_step_name(step: u8) -> Option<&'static str> {
+    SETUP_STEPS.get(usize::from(step)).copied()
 }
 
 /// Gives `action` ("toggle" or "dictation") a shortcut; "" leaves it unbound.
@@ -1006,7 +1031,14 @@ pub fn suspend_hotkeys(app: AppHandle, suspended: bool) -> Result<bool, HotkeyEr
 
 #[cfg(test)]
 mod tests {
-    use super::{Restore, WEB_VIEW_RUNNING};
+    use super::{setup_step_name, Restore, WEB_VIEW_RUNNING};
+
+    #[test]
+    fn setup_steps_are_named_in_the_launchers_order() {
+        // The launcher's setupStep numbering (STEPS in setup-view.tsx) must match.
+        let names: Vec<_> = (0..5).map(setup_step_name).collect();
+        assert_eq!(names, [Some("sign_in"), Some("permissions"), Some("shortcuts"), Some("try_it"), None]);
+    }
 
     #[test]
     fn the_release_launch_test_waits_for_the_web_view_line() {
