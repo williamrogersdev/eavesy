@@ -49,10 +49,14 @@ export async function saveCalendarList(db: AppDb, connectionId: string, calendar
   return saved.length > 0;
 }
 
+/** Longer than any one sync runs (the background budget is 4 minutes): a claim older than this isn't live. */
+const IN_FLIGHT_MS = 5 * 60 * 1000;
+
 /**
  * Applies the person's ticks to a connection's calendars (ids it doesn't
  * know are ignored; the primary calendar can't be unticked) and marks it due,
- * so the next sync adds or drops those calendars' events. Each try writes only
+ * so the next sync adds or drops those calendars' events. A sync under way
+ * keeps its claim and picks the change up itself. Each try writes only
  * if the list is unchanged since it was read, so two saves at once (the Mac
  * and a browser) both land. `not_found` when the connection isn't theirs;
  * `not_listed` when its calendars haven't been read from Google yet;
@@ -63,6 +67,7 @@ export async function setSelectedCalendars(
   userId: string,
   connectionId: string,
   choices: { id: string; selected: boolean }[],
+  now = Date.now(),
 ): Promise<'ok' | 'not_found' | 'not_listed' | 'conflict'> {
   const wanted = new Map(choices.map((choice) => [choice.id, choice.selected]));
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -75,7 +80,15 @@ export async function setSelectedCalendars(
     }));
     const saved = await db
       .update(calendarConnections)
-      .set({ calendarsJson: encode(calendars), lastAttemptAt: null })
+      .set({
+        calendarsJson: encode(calendars),
+        // Due again now, unless a sync is under way: that one reads the new
+        // choice before it finishes, and a second sync beside it would race it.
+        lastAttemptAt: sql`CASE WHEN ${calendarConnections.lastAttemptAt} IS NULL
+          OR ${calendarConnections.lastAttemptAt} = ${calendarConnections.lastSyncAt}
+          OR ${calendarConnections.lastAttemptAt} < ${now - IN_FLIGHT_MS} THEN NULL
+          ELSE ${calendarConnections.lastAttemptAt} END`,
+      })
       .where(and(eq(calendarConnections.id, connectionId), eq(calendarConnections.userId, userId), unchangedSince(connection.calendarsJson)))
       .returning({ id: calendarConnections.id });
     if (saved.length) return 'ok';
