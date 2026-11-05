@@ -146,7 +146,8 @@ cmd_up() {
   gsh "ditto '$SHARE_IN_GUEST/Eavesy.app' /Applications/Eavesy.app && xattr -cr /Applications/Eavesy.app"
   if [[ "${1:-}" == --granted ]]; then
     echo "▸ Pre-granting mic, screen, speech and accessibility (guest only)"
-    grant "$RUN" "$BUNDLE_ID|0"
+    # A debug build is ad-hoc signed, so macOS files its grants by path, not bundle id.
+    grant "$RUN" "$BUNDLE_ID|0" "/Applications/Eavesy.app/Contents/MacOS/eavesy|1"
     approve_screen_capture "$RUN" /Applications/Eavesy.app/Contents/MacOS/eavesy \
       /Applications/Eavesy.app/Contents/MacOS/SwiftAudio
   fi

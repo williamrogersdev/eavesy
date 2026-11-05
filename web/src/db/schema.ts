@@ -210,6 +210,47 @@ export const meetingSegments = sqliteTable(
   ],
 );
 
+/**
+ * Pictures attached to a meeting at a moment in it: Snapshots the Mac app took
+ * of a shared screen (slides, charts, designs) and screenshots taken during the
+ * recording. The image is in R2 at `r2Key` (under the meeting's prefix, so
+ * deleting the meeting removes it); `offsetMs` is from the start of the
+ * recording, the same clock as `transcript_segments.start_ms`. `caption*` is
+ * for the vision step to fill in; null until then. See docs/MEETING-ATTACHMENTS.md.
+ */
+export const meetingAttachments = sqliteTable(
+  'meeting_attachments',
+  {
+    id: text('id').primaryKey(),
+    meetingId: text('meeting_id')
+      .notNull()
+      .references(() => meetings.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: text('kind', { enum: ['snapshot', 'screenshot'] }).notNull(),
+    /** The uploader's name for it (`snapshot-000123456`): retries never double it. */
+    clientName: text('client_name').notNull(),
+    offsetMs: integer('offset_ms').notNull(),
+    r2Key: text('r2_key').notNull(),
+    contentType: text('content_type', { enum: ['image/jpeg', 'image/png'] }).notNull(),
+    bytes: integer('bytes').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    caption: text('caption'),
+    captionModel: text('caption_model'),
+    captionedAt: integer('captioned_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('meeting_attachments_meeting_client_uq').on(t.meetingId, t.clientName),
+    index('meeting_attachments_meeting_offset_idx').on(t.meetingId, t.offsetMs),
+    index('meeting_attachments_uncaptioned_idx')
+      .on(t.createdAt)
+      .where(sql`${t.captionedAt} IS NULL`),
+  ],
+);
+
 export const meetingUploads = sqliteTable('meeting_uploads', {
   meetingId: text('meeting_id')
     .primaryKey()

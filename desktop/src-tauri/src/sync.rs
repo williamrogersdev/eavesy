@@ -126,7 +126,7 @@ impl std::fmt::Display for Unauthorized {
 }
 impl std::error::Error for Unauthorized {}
 
-fn is_unauthorized(error: &anyhow::Error) -> bool {
+pub(crate) fn is_unauthorized(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Unauthorized>().is_some()
 }
 
@@ -702,6 +702,11 @@ async fn sync_session<R: Runtime>(
                 "the transcript was not ready a day after the recording ended".to_string()
             )));
         }
+        // A picture taken just before the stop, or one that failed earlier, goes
+        // while the transcript is written.
+        if upload_attachment(app, api, token, &remote_id, &session).await? {
+            return Ok(Step::Progressed);
+        }
         poll_result(app, api, token, &remote_id, &session).await?;
         return Ok(Step::Waiting);
     }
@@ -722,6 +727,12 @@ async fn sync_session<R: Runtime>(
                 return Err(error);
             }
         }
+        return Ok(Step::Progressed);
+    }
+
+    // Snapshots and screenshots go once the transcript's audio is up, one per
+    // pass, while the meeting records and before it is finished.
+    if upload_attachment(app, api, token, &remote_id, &session).await? {
         return Ok(Step::Progressed);
     }
 
@@ -747,6 +758,27 @@ async fn sync_session<R: Runtime>(
         upload_archive(app, api, token, &remote_id, &session).await?;
     }
     Ok(Step::Progressed)
+}
+
+/// Uploads one waiting picture of the meeting. A failure other than being
+/// signed out never holds up the transcript: the picture is tried again on a
+/// later pass, while the meeting records or is being written up.
+async fn upload_attachment<R: Runtime>(
+    app: &AppHandle<R>,
+    api: &Api,
+    token: &str,
+    remote_id: &str,
+    session: &sqlite::PendingSession,
+) -> Result<bool> {
+    let Some(folder) = session.archive_path.parent() else { return Ok(false) };
+    match crate::meeting_attachments::upload_next(app, api, token, remote_id, &session.id, folder).await {
+        Ok(sent) => Ok(sent),
+        Err(error) if is_unauthorized(&error) => Err(error),
+        Err(error) => {
+            tracing::warn!(id = %session.id, "desktop ingest: meeting picture not sent this pass: {error:#}");
+            Ok(false)
+        }
+    }
 }
 
 /// How long a cancelled recording whose cloud copy the server refused to
@@ -1604,6 +1636,64 @@ mod tests {
 
             assert_eq!(harness.pass().await, Pass::Busy);
             assert_eq!(harness.segment_state("meeting"), ("failed:1".to_string(), 1));
+        }
+
+        #[tokio::test]
+        async fn a_meetings_pictures_upload_once_each_after_its_audio_with_their_offsets() {
+            use wiremock::matchers::header;
+            let harness = Harness::new().await;
+            let archive = harness.session("meeting", "recording", 1);
+            let folder = archive.parent().unwrap();
+            std::fs::create_dir_all(folder.join("snapshots")).unwrap();
+            std::fs::create_dir_all(folder.join("screenshots")).unwrap();
+            std::fs::write(folder.join("snapshots/snapshot-000005000.jpg"), b"jpeg").unwrap();
+            std::fs::write(folder.join("screenshots/screenshot-000001000.png"), b"png").unwrap();
+            Mock::given(method("PUT"))
+                .and(path("/api/sessions/remote-meeting/segments/0"))
+                .respond_with(ResponseTemplate::new(202))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("PUT"))
+                .and(path("/api/sessions/remote-meeting/attachments/screenshot-000001000"))
+                .and(header("x-attachment-kind", "screenshot"))
+                .and(header("x-attachment-offset-ms", "1000"))
+                .and(header("content-type", "image/png"))
+                .and(body_bytes(b"png".to_vec()))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+            // The server will never take this one: it is given up on, not retried.
+            Mock::given(method("PUT"))
+                .and(path("/api/sessions/remote-meeting/attachments/snapshot-000005000"))
+                .and(header("x-attachment-kind", "snapshot"))
+                .and(header("x-attachment-offset-ms", "5000"))
+                .respond_with(ResponseTemplate::new(415))
+                .expect(1)
+                .mount(&harness.server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/sessions/remote-meeting/result"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(result_body("recording")))
+                .mount(&harness.server)
+                .await;
+
+            assert_eq!(harness.pass().await, Pass::Busy, "the transcript's audio first");
+            assert_eq!(harness.segment_state("meeting").0, "uploaded:0");
+            assert_eq!(harness.pass().await, Pass::Busy, "then the screenshot, taken first");
+            assert_eq!(harness.pass().await, Pass::Busy, "then the snapshot");
+            // Nothing left to send: the recording waits on its result.
+            assert_eq!(harness.pass().await, Pass::Busy);
+            let gave_up = sqlite::with_conn(harness.handle(), |conn| {
+                conn.query_row(
+                    "SELECT group_concat(name || ':' || gave_up) FROM (SELECT * FROM recording_attachments WHERE session_id='meeting' ORDER BY name)",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap()
+            });
+            assert_eq!(gave_up, "screenshot-000001000:0,snapshot-000005000:1");
         }
 
         #[tokio::test]

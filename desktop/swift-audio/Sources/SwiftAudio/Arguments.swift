@@ -34,6 +34,8 @@ struct Arguments {
     let preview: Bool
     /// `--dictation`: a third recognizer spells the user's words (see `Speller`).
     let spell: Bool
+    /// `--snapshots-dir`: save Snapshots of the shared screen there (audio captures only).
+    let snapshotsDir: String?
 
     static func parse(_ argv: [String]) -> Arguments {
         var dict: [String: String] = [:]
@@ -97,7 +99,8 @@ struct Arguments {
             followsSpeech: language?.lowercased() == CaptionLanguage.auto,
             vocabulary: parseVocabulary(dict["vocabulary"]),
             preview: dict["no-preview"]?.lowercased() != "true",
-            spell: dict["dictation"]?.lowercased() == "true")
+            spell: dict["dictation"]?.lowercased() == "true",
+            snapshotsDir: mode == .audio ? dict["snapshots-dir"].flatMap { $0.isEmpty ? nil : $0 } : nil)
     }
 
     /// The host sends at most 100 words; this holds to that whatever it sends.
