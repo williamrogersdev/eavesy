@@ -466,7 +466,11 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
                 .await;
         }
     }
-    settings::delete_device_token(&app)
+    settings::delete_device_token(&app)?;
+    // Signed out: no calendar, so the menu bar stops naming meetings.
+    crate::meeting_watch::signed_out();
+    crate::meeting_bar::refresh(&app);
+    Ok(())
 }
 
 #[tauri::command(async)]
