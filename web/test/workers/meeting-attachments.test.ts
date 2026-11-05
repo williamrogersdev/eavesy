@@ -14,7 +14,7 @@ vi.mock('../../src/server/device-auth', () => ({
 const put = handler(attachmentRoute, 'PUT');
 
 /** A PNG's first bytes: enough for its signature and its size. */
-function png(width = 1600, height = 900): Uint8Array {
+function png(width = 1600, height = 900): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(33);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
   const view = new DataView(bytes.buffer);
@@ -23,7 +23,7 @@ function png(width = 1600, height = 900): Uint8Array {
   return bytes;
 }
 
-function upload(name: string, body: Uint8Array, headers: Record<string, string> = {}) {
+function upload(name: string, body: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) {
   return put({
     request: new Request(`https://eavesy.test/api/sessions/m_live/attachments/${name}`, {
       method: 'PUT',
