@@ -35,6 +35,7 @@ mod dictate;
 mod dictation;
 mod machine;
 mod meeting_attachments;
+mod meeting_bar;
 mod meeting_watch;
 mod make_room;
 mod moments;
@@ -171,6 +172,10 @@ pub fn run() {
             commands::set_capture_sounds,
             meeting_watch::set_auto_record_meetings,
             meeting_watch::answer_meeting_prompt,
+            meeting_bar::menu_bar_meeting,
+            meeting_bar::open_meeting_link,
+            meeting_bar::close_meeting_card,
+            meeting_bar::fit_meeting_card,
             commands::set_hud_look,
             commands::set_dictation_in_panel,
             commands::ack_dictation_text,

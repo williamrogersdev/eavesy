@@ -36,6 +36,7 @@ export default defineConfig({
         marker: path.resolve(dir, 'marker.html'),
         settings: path.resolve(dir, 'settings.html'),
         agents: path.resolve(dir, 'agents.html'),
+        meeting: path.resolve(dir, 'meeting.html'),
       },
     },
   },
