@@ -4,7 +4,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
-import { PermissionChecklist, setupPermissionsReady, setupSpeechRefused, usesFnKey, useOnGrant } from './permission-checklist';
+import { answered, PermissionChecklist, setupPermissionsReady, setupSpeechRefused, usesFnKey, useOnGrant } from './permission-checklist';
 import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { useLiveLines } from './use-live-lines';
@@ -73,7 +73,10 @@ export function SetupView({
   const shortcuts = useShortcuts(onShortcutsChanged);
   const tryBox = useRef<HTMLTextAreaElement>(null);
   const ready = setupPermissionsReady(permissions, paired);
+  // Signed out without Speech Recognition nothing can be typed yet, so Try it is skipped and
+  // signing in becomes the way to dictation.
   const speechRefused = setupSpeechRefused(permissions, paired);
+  const speechOff = permissions?.speech === false && answered(permissions, 'speech');
   const hearing = useLiveLines(step === TRY_IT && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
   // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
   useEffect(() => {
@@ -124,6 +127,10 @@ export function SetupView({
   const bubble: ReactNode = [
     !micOn
       ? "Hi, I'm Eavesy. I type what you say, anywhere. I'll need to borrow your ears, only while you're talking to me."
+      : speechOff
+        ? paired
+          ? 'Speech Recognition is off. Turn it on in System Settings any time for live captions.'
+          : 'That’s all right. Without Speech Recognition I’ll type for you once you sign in, on the next step.'
       : permissions?.speech === false
         ? paired
           ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
@@ -145,9 +152,13 @@ export function SetupView({
         : 'Last thing, and it’s up to you.',
   ][step];
 
-  const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
+  // Try it can't work signed out without Speech Recognition, so that path goes Permissions ⇄ Sign in.
+  const skipTry = speechRefused && (step === PERMISSIONS || step === SIGN_IN);
+  const prevStep = skipTry && step === SIGN_IN ? PERMISSIONS : step - 1;
+  const nextStep = skipTry && step === PERMISSIONS ? SIGN_IN : step + 1;
+  const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(prevStep)}>Back</Button> : <span />;
   const next = (label = 'Continue', disabled = false, title?: string) => (
-    <Button variant="primary" size="md" disabled={disabled} title={title} onClick={() => setStep(step + 1)}>
+    <Button variant="primary" size="md" disabled={disabled} title={title} onClick={() => setStep(nextStep)}>
       {label}
     </Button>
   );
@@ -176,7 +187,7 @@ export function SetupView({
             {micOn ? 'Allow Speech Recognition to continue.' : 'Allow the microphone to continue.'} Screenshots, video and notifications can wait for Settings.
           </p>
         ) : speechRefused && (
-          <p className="ev-onb-note">Without Speech Recognition, Eavesy can type your words only once you sign in, on the last step.</p>
+          <p className="ev-onb-note">Without Speech Recognition, Eavesy types your words only once you sign in, so that’s next. To use this Mac alone, turn it on in System Settings.</p>
         )}
       </>
     );
@@ -187,9 +198,7 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Try it once</h2>
         <p className="ev-onb-lead">
-          {speechRefused
-            ? 'Without Speech Recognition, Eavesy types your words once you sign in. Do that on the next step, then talk in any app.'
-            : !talk
+          {!talk
             ? 'Talk has no shortcut yet. Pick one below, then say something. Your words land in the box.'
             : usesFnKey(talk)
             ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
@@ -216,8 +225,6 @@ export function SetupView({
             <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
           ) : listening ? (
             <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
-          ) : speechRefused ? (
-            'You can still talk now: the recording is saved, and its words reach History once you sign in.'
           ) : pasteOn ? (
             'Nothing to send anywhere. This box is just for practice.'
           ) : (
@@ -231,7 +238,7 @@ export function SetupView({
         </div>
       </>
     );
-    footer = <>{back}{next(heard || speechRefused ? 'Continue' : 'Skip for now')}</>;
+    footer = <>{back}{next(heard ? 'Continue' : 'Skip for now')}</>;
   } else {
     body = (
       <>
@@ -239,7 +246,9 @@ export function SetupView({
         <p className="ev-onb-lead">
           {paired
             ? `${account?.email ?? account?.name ?? 'This Mac'} is connected. Transcripts and summaries sync to your account.`
-            : 'Everything stays in ~/Eavesy on this Mac either way. Signing in adds sharper transcripts, summaries, sync across your Macs, and lets Claude, Cursor and other agents read your captures.'}
+            : speechRefused
+              ? 'Speech Recognition is off, so signing in is how Eavesy types what you say. Everything still stays in ~/Eavesy on this Mac, and you also get summaries, sync and agent access.'
+              : 'Everything stays in ~/Eavesy on this Mac either way. Signing in adds sharper transcripts, summaries, sync across your Macs, and lets Claude, Cursor and other agents read your captures.'}
         </p>
         {connecting && <p className="ev-onb-note">Click “Approve this Mac” on the page that opened. This updates on its own.</p>}
       </>
