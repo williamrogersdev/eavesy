@@ -481,7 +481,7 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
 }
 
 /// Setup's steps, in the launcher's order.
-const SETUP_STEPS: [&str; 4] = ["sign_in", "permissions", "shortcuts", "try_it"];
+const SETUP_STEPS: [&str; 3] = ["permissions", "try_it", "sign_in"];
 
 /// The launcher showed a setup step. The last one an install reports is where
 /// it stopped, which `app_launched` alone (`setup_completed: false`) can't say.
@@ -1036,8 +1036,8 @@ mod tests {
     #[test]
     fn setup_steps_are_named_in_the_launchers_order() {
         // The launcher's setupStep numbering (STEPS in setup-view.tsx) must match.
-        let names: Vec<_> = (0..5).map(setup_step_name).collect();
-        assert_eq!(names, [Some("sign_in"), Some("permissions"), Some("shortcuts"), Some("try_it"), None]);
+        let names: Vec<_> = (0..4).map(setup_step_name).collect();
+        assert_eq!(names, [Some("permissions"), Some("try_it"), Some("sign_in"), None]);
     }
 
     #[test]

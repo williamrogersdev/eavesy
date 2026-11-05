@@ -1026,7 +1026,7 @@ export async function completeSetup(): Promise<void> {
   await invoke('complete_setup');
 }
 
-/** Product analytics only: which setup step is on screen (0 = Sign in). Never fails the caller. */
+/** Product analytics only: which setup step is on screen (0 = Permissions). Never fails the caller. */
 export async function setupStepShown(step: number): Promise<void> {
   if (!isDesktop()) return;
   await invoke('setup_step_shown', { step }).catch(() => undefined);

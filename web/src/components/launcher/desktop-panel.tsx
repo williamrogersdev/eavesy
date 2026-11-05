@@ -541,7 +541,7 @@ export function DesktopPanel() {
             onFinish={() => runTask(async () => {
               // The toast is about Talk, so it looks at the dictation shortcut alone.
               if (!(await finishSetup())) return;
-              flash(usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey || '⌘⇧D'} anywhere to talk.`, 5000);
+              flash(!dictationHotkey ? 'You’re set. Give Talk a shortcut in Settings to dictate anywhere.' : usesFnKey(dictationHotkey) ? 'You’re set. Tap fn anywhere to talk.' : `You’re set. Press ${dictationHotkey} anywhere to talk.`, 5000);
             }, 'Couldn’t finish setup')}
           />
         ) : (
