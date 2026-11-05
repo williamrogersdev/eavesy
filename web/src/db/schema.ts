@@ -63,6 +63,14 @@ export const users = sqliteTable(
     shareNotesScope: text('share_notes_scope', { enum: ['everyone', 'domain'] }).notNull().default('everyone'),
     /** Send notes to the allowed attendees straight after the owner's recap, without asking. */
     shareNotesAuto: integer('share_notes_auto', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * How calendar meetings are captured unless chosen meeting by meeting:
+     * `mac` records on the Mac (no bot), `notetaker` sends the Notetaker bot,
+     * `both` does both (Mac audio, the bot's speaker names and chat).
+     */
+    meetingCaptureDefault: text('meeting_capture_default', { enum: ['mac', 'notetaker', 'both'] }).notNull().default('mac'),
+    /** The name the Notetaker joins calls under; null means "<display name>'s Notetaker". */
+    notetakerName: text('notetaker_name'),
     isAnonymous: integer('is_anonymous', { mode: 'boolean' }).notNull().default(false),
     anonymousSessionToken: text('anonymous_session_token'),
     companyName: text('company_name'),
@@ -528,8 +536,10 @@ export const calendarEvents = sqliteTable(
     /** The Google calendar it came from; null on rows synced before several calendars were. */
     calendarId: text('calendar_id'),
     autoRecord: integer('auto_record', { mode: 'boolean' }).notNull().default(false),
-    /** The user's choice for this meeting: record it, or skip it; null follows the Mac's "record all" setting. */
+    /** The user's choice for this meeting: record it, or skip it; null follows the Mac's "record all" setting. Superseded by `captureMode`, kept for older Mac apps. */
     recordChoice: text('record_choice', { enum: ['record', 'skip'] }),
+    /** How to capture this meeting; null follows the account's `meetingCaptureDefault`. */
+    captureMode: text('capture_mode', { enum: ['mac', 'notetaker', 'both', 'skip'] }),
     recordedMeetingId: text('recorded_meeting_id'),
   },
   (t) => [
@@ -897,6 +907,10 @@ export const meetingBots = sqliteTable('meeting_bots', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id),
   meetingId: text('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
+  /** The calendar meeting this bot was sent to by the account's capture plan; null when sent by hand. */
+  calendarEventId: text('calendar_event_id'),
+  /** The name it joins under; null joins as BOT_NAME. */
+  botName: text('bot_name'),
   provider: text('provider', { enum: ['recall', 'eavesy'] }).notNull(),
   providerBotId: text('provider_bot_id'),
   meetingUrl: text('meeting_url').notNull(),
@@ -923,6 +937,7 @@ export const meetingBots = sqliteTable('meeting_bots', {
   uniqueIndex('meeting_bots_provider_bot_uq').on(t.provider, t.providerBotId),
   index('meeting_bots_status_updated_idx').on(t.status, t.updatedAt),
   index('meeting_bots_meeting_idx').on(t.meetingId),
+  index('meeting_bots_calendar_event_idx').on(t.calendarEventId),
 ]);
 
 /** Provider webhook deliveries already applied, so a redelivery is a no-op. */

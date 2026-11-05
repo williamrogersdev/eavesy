@@ -363,8 +363,13 @@ const MACHINE_SIZES: Record<string, number> = {
 
 /** eavesy.com's /api/me and /api/projects, enough to edit them in Settings. */
 function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false, noSuggestions = false): (args: Record<string, unknown>) => unknown {
+  const meetingModes = new Map<string, string>();
   const many = ['Anthropic', 'Cloudflare', 'Durable Objects', 'Vectorize', 'SpeechAnalyzer', 'ScreenCaptureKit', 'TanStack', 'Drizzle', 'Clerk', 'PostHog', 'Homebrew', 'notarytool', 'Sparkle', 'Rolldown', 'Vite', 'Zod', 'Tailwind', 'lucide', 'Bun', 'wrangler', 'Priya Raman', 'Dana Okafor', 'Mateo Silva', 'Kenji Ito', 'Aisha Khan', 'Lukas Weber'];
-  const me = {
+  const me: Record<string, unknown> = {
+    meetingCaptureDefault: 'mac',
+    notetakerName: null,
+    notetakerJoinsAs: "Robin Avery's Notetaker",
+    notetakerAvailable: true,
     spokenLanguages: ['en'],
     dictationStyle: 'concise',
     dictationForAgents: true,
@@ -430,7 +435,28 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
         : { ...p, ...fields, ...(fields.name ? { slug: slug(String(fields.name)) } : {}), updatedAt: Date.now() });
       return { prompt: prompts.find((p) => p.id === id) };
     }
-    if (path === '/api/me') return method === 'GET' ? me : Object.assign(me, fields) && { ok: true };
+    if (path === '/api/me') {
+      if (method === 'GET') return me;
+      Object.assign(me, fields);
+      me.notetakerJoinsAs = typeof me.notetakerName === 'string' && me.notetakerName ? me.notetakerName : "Robin Avery's Notetaker";
+      return { ok: true };
+    }
+    if (path === '/api/calendar-events' && method === 'GET') {
+      const at = Date.now();
+      const plan = (id: string, title: string, inMin: number, platform: string | null) => {
+        const own = meetingModes.get(id) ?? null;
+        const mode = own ?? me.meetingCaptureDefault;
+        return { id, title, startsAt: at + inMin * 60_000, endsAt: at + (inMin + 30) * 60_000, meetingUrl: platform ? 'https://meet.google.com/abc-defg-hij' : null, platform, attendees: [], recorded: false, recordChoice: null, captureMode: own, mode, notetakerCanJoin: platform === 'meet' };
+      };
+      const upcoming = [plan('evt-1', 'William & Ben | Numeral Intro', 11, 'meet'), plan('evt-2', 'Design review', 120, 'meet'), plan('evt-3', 'Zoom with Acme', 240, 'zoom')];
+      return { connected: true, captureDefault: me.meetingCaptureDefault, current: null, next: upcoming[0], upcoming };
+    }
+    if (typeof path === 'string' && path.startsWith('/api/calendar-events/') && method === 'PATCH') {
+      const id = decodeURIComponent(path.split('/').pop()!);
+      const mode = (fields as { captureMode?: string | null }).captureMode ?? null;
+      if (mode) meetingModes.set(id, mode); else meetingModes.delete(id);
+      return { id, captureMode: mode };
+    }
     if (path === '/api/projects' && method === 'GET') return { items: projects };
     if (path === '/api/projects' && method === 'POST') {
       const project = { id: `p-${Date.now()}`, name: String(fields.name), about: null, vocabulary: [], people: null, match: [], recordingCount: 0 };

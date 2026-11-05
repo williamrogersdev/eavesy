@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { z } from 'zod';
@@ -9,6 +9,7 @@ import * as projectsRepo from '@/db/repo/projects';
 import type { AppDb } from '@/db/client';
 import { type ProcessingEnv, runBatched } from '@/server/processing/shared';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
+import { notetakerName } from '@/lib/meetings/capture-plan';
 import { PARTIAL_ATTRIBUTION_KEY, parseSpeakerNames } from '@/lib/transcription/two-track';
 import { type MeetingBotsEnv, type SpeakerSpan, attributeSpeakers, parseSpeakerSpans } from './control';
 
@@ -54,6 +55,8 @@ const SEGMENT_STATUSES: BotStatus[] = ['recording', 'call_ended'];
 
 /** Bots one account may have scheduled or in calls at once. */
 export const ACTIVE_BOT_LIMIT = 10;
+/** Of those, kept free for bots sent by hand: the calendar's plan never fills them. */
+export const HAND_SENT_RESERVE = 3;
 /** Collection checks back this often while the last segments are transcribed, for up to an hour. */
 export const COLLECT_RETRY_SECONDS = 60;
 export const MAX_COLLECT_ATTEMPTS = 60;
@@ -118,6 +121,12 @@ export function parseMeetingUrl(value: string): { url: string; platform: BotPlat
   return null;
 }
 
+/** The Meet or Teams call behind a calendar link that the Notetaker can join, or null. */
+export function joinableMeeting(link: string | null | undefined): { url: string; platform: BotPlatform } | null {
+  const target = link ? parseMeetingUrl(link) : null;
+  return target && JOINABLE_PLATFORMS.includes(target.platform) ? target : null;
+}
+
 const scheduleSchema = z.object({
   meetingUrl: z.string().trim().min(1).max(2_000),
   /** Epoch ms. Omitted means join now. */
@@ -163,8 +172,7 @@ export async function botById(db: AppDb, id: string) {
 }
 
 export async function scheduleBot(db: AppDb, env: MeetingBotsEnv, userId: string, input: unknown, now = Date.now()): Promise<Response> {
-  const control = env.MEETING_BOTS;
-  if (!control) return json({ error: 'The notetaker is not available on this server.' }, 503);
+  if (!env.MEETING_BOTS) return json({ error: 'The notetaker is not available on this server.' }, 503);
   const parsed = scheduleSchema.safeParse(input);
   if (!parsed.success) return json({ error: 'Invalid notetaker request' }, 400);
   const target = parseMeetingUrl(parsed.data.meetingUrl);
@@ -178,43 +186,117 @@ export async function scheduleBot(db: AppDb, env: MeetingBotsEnv, userId: string
   }
   const folderId = parsed.data.folderId || null;
   if (folderId && !(await projectsRepo.ownsProject(db, userId, folderId))) return json({ error: 'Project not found' }, 404);
+  const placed = await placeBot(db, env, userId, {
+    url: target.url,
+    platform: target.platform,
+    title: parsed.data.title || null,
+    folderId,
+    joinAt,
+    calendarEventId: null,
+    botName: await ownerBotName(db, userId),
+  }, now);
+  if ('error' in placed) return json({ error: placed.error }, placed.status);
+  return json(placed.duplicate ? { bot: publicBot(placed.bot), duplicate: true } : { bot: publicBot(placed.bot) }, placed.duplicate ? 200 : 201);
+}
 
+/** The name the account's Notetaker joins under (its chosen name, else "<name>'s Notetaker"). */
+export async function ownerBotName(db: AppDb, userId: string): Promise<string> {
+  const row = (await db.select({ displayName: users.displayName, notetakerName: users.notetakerName }).from(users).where(eq(users.id, userId)).limit(1))[0];
+  return notetakerName(row?.notetakerName, row?.displayName);
+}
+
+export type BotPlacement = {
+  url: string;
+  platform: BotPlatform;
+  title: string | null;
+  folderId: string | null;
+  /** Epoch ms; null joins now. */
+  joinAt: number | null;
+  calendarEventId: string | null;
+  botName: string;
+};
+
+/**
+ * Records a bot and schedules its start. A bot already on its way to the same
+ * link around the same time is returned instead (`duplicate`), and an account
+ * has at most ACTIVE_BOT_LIMIT out at once. Shared by "Send the Notetaker" and
+ * the calendar's capture plan.
+ */
+export async function placeBot(
+  db: AppDb,
+  env: MeetingBotsEnv,
+  userId: string,
+  placement: BotPlacement,
+  now = Date.now(),
+): Promise<{ bot: MeetingBot; duplicate: boolean } | { error: string; status: number }> {
+  const control = env.MEETING_BOTS;
+  if (!control) return { error: 'The notetaker is not available on this server.', status: 503 };
   const id = pid('bot', now);
+  const { url, platform, title, folderId, joinAt, calendarEventId, botName } = placement;
   const at = joinAt ?? now;
+  const active = sql`${meetingBots.userId} = ${userId} AND ${meetingBots.status} NOT IN ('done', 'failed', 'cancelled')`;
+  // The calendar's plan leaves room for "Send the Notetaker" by hand: its own
+  // bots stop at the plan's share, and every bot counts toward the account's limit.
+  const planLimit = ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE;
+  const planRoom = calendarEventId
+    ? sql`AND (SELECT count(*) FROM ${meetingBots} WHERE ${active} AND ${meetingBots.calendarEventId} IS NOT NULL) < ${planLimit}`
+    : sql``;
   // One statement, so two clicks at once can't both get past the checks: a
   // bot for the same link around the same time is the one already on its way,
   // and an account has at most ACTIVE_BOT_LIMIT out at once.
-  const active = sql`${meetingBots.userId} = ${userId} AND ${meetingBots.status} NOT IN ('done', 'failed', 'cancelled')`;
   const inserted = await db.run(sql`
-    INSERT INTO ${meetingBots} (id, user_id, provider, provider_bot_id, meeting_url, platform, title, folder_id, join_at, status, created_at, updated_at)
-    SELECT ${id}, ${userId}, 'eavesy', ${id}, ${target.url}, ${target.platform}, ${parsed.data.title || null}, ${folderId}, ${joinAt}, 'scheduling', ${now}, ${now}
+    INSERT INTO ${meetingBots} (id, user_id, provider, provider_bot_id, meeting_url, platform, title, folder_id, join_at, calendar_event_id, bot_name, status, created_at, updated_at)
+    SELECT ${id}, ${userId}, 'eavesy', ${id}, ${url}, ${platform}, ${title}, ${folderId}, ${joinAt}, ${calendarEventId}, ${botName}, 'scheduling', ${now}, ${now}
     WHERE NOT EXISTS (
-      SELECT 1 FROM ${meetingBots} WHERE ${active} AND ${meetingBots.meetingUrl} = ${target.url}
+      SELECT 1 FROM ${meetingBots} WHERE ${active} AND ${meetingBots.meetingUrl} = ${url}
         AND abs(coalesce(${meetingBots.joinAt}, ${meetingBots.createdAt}) - ${at}) < ${DUPLICATE_WINDOW_MS}
     )
-    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${ACTIVE_BOT_LIMIT}`);
+    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${ACTIVE_BOT_LIMIT}
+    ${planRoom}`);
   if (!inserted.meta.changes) {
     const others = await db.select().from(meetingBots)
       .where(and(eq(meetingBots.userId, userId), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)));
     // A second click, or the same invite pasted twice, gets the bot already on its way.
-    const same = others.find((bot) => bot.meetingUrl === target.url && Math.abs((bot.joinAt ?? bot.createdAt) - at) < DUPLICATE_WINDOW_MS);
-    if (same) return json({ bot: publicBot(same), duplicate: true });
-    if (others.length >= ACTIVE_BOT_LIMIT) {
-      return json({ error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.` }, 429);
+    const same = others.find((bot) => bot.meetingUrl === url && Math.abs((bot.joinAt ?? bot.createdAt) - at) < DUPLICATE_WINDOW_MS);
+    if (same) return { bot: same, duplicate: true };
+    const planned = others.filter((bot) => bot.calendarEventId !== null).length;
+    if (others.length >= ACTIVE_BOT_LIMIT || (calendarEventId && planned >= planLimit)) {
+      return { error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.`, status: 429 };
     }
     // The bot in the way finished between the insert and the look.
-    return json({ error: 'The notetaker could not be scheduled. Please retry.' }, 503);
+    return { error: 'The notetaker could not be scheduled. Please retry.', status: 503 };
   }
   try {
     await control.schedule(id, joinAt);
   } catch (error) {
     console.error(JSON.stringify({ message: 'notetaker schedule failed', botId: id, error: error instanceof Error ? error.message : String(error) }));
     await finishBot(db, id, 'failed', 'provider_unavailable', 'scheduling');
-    return json({ error: 'The notetaker service is unavailable. Please retry.' }, 503);
+    return { error: 'The notetaker service is unavailable. Please retry.', status: 503 };
   }
   await db.update(meetingBots).set({ status: 'scheduled', updatedAt: Date.now() })
     .where(and(eq(meetingBots.id, id), eq(meetingBots.status, 'scheduling')));
-  return json({ bot: publicBot((await botById(db, id))!) }, 201);
+  return { bot: (await botById(db, id))!, duplicate: false };
+}
+
+/**
+ * Takes back a bot that hasn't joined yet because its meeting's plan changed
+ * (`detail` says why). A bot already in the call is left to finish. True when
+ * it was cancelled.
+ */
+export async function withdrawBot(db: AppDb, env: MeetingBotsEnv, bot: MeetingBot, detail: string): Promise<boolean> {
+  // A claimed bot (`launching`) is already starting its container: it's on its way in.
+  if ((bot.status !== 'scheduling' && bot.status !== 'scheduled') || bot.statusDetail === 'launching') return false;
+  const cancelled = await db.update(meetingBots)
+    .set({ status: 'cancelled', statusDetail: detail, updatedAt: Date.now() })
+    .where(and(
+      eq(meetingBots.id, bot.id),
+      eq(meetingBots.status, bot.status),
+      or(isNull(meetingBots.statusDetail), ne(meetingBots.statusDetail, 'launching')),
+    ))
+    .returning({ id: meetingBots.id });
+  if (!cancelled.length) return false;
+  await env.MEETING_BOTS?.stop(bot.id).catch(() => undefined);
+  return true;
 }
 
 /** Cancels a bot that hasn't joined, or makes one in a call leave and keep what it recorded. */
@@ -783,7 +865,7 @@ export async function claimBotStart(db: AppDb, botId: string) {
     .where(and(eq(meetingBots.id, botId), inArray(meetingBots.status, ['scheduling', 'scheduled']), isNull(meetingBots.statusDetail)))
     .returning();
   const bot = claimed[0] as MeetingBot | undefined;
-  return bot ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME } : null;
+  return bot ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: bot.botName ?? BOT_NAME } : null;
 }
 
 /** Container starts tried for one bot before it is failed, and the wait between them. */
@@ -810,7 +892,7 @@ export function nextStartAttemptAt(attempt: number, claimedAt: number, now: numb
 export async function launchingBot(db: AppDb, botId: string) {
   const bot = await botById(db, botId);
   return bot && bot.status === 'scheduled' && bot.statusDetail === 'launching'
-    ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: BOT_NAME }
+    ? { meetingUrl: bot.meetingUrl, platform: bot.platform, botName: bot.botName ?? BOT_NAME }
     : null;
 }
 
