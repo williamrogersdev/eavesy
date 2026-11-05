@@ -187,7 +187,9 @@ export function SetupView({
       <>
         <h2 className="ev-onb-title">Try it once</h2>
         <p className="ev-onb-lead">
-          {!talk
+          {speechRefused
+            ? 'Without Speech Recognition, Eavesy types your words once you sign in. Do that on the next step, then talk in any app.'
+            : !talk
             ? 'Talk has no shortcut yet. Pick one below, then say something. Your words land in the box.'
             : usesFnKey(talk)
             ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
@@ -214,23 +216,22 @@ export function SetupView({
             <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
           ) : listening ? (
             <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
+          ) : speechRefused ? (
+            'You can still talk now: the recording is saved, and its words reach History once you sign in.'
           ) : pasteOn ? (
             'Nothing to send anywhere. This box is just for practice.'
           ) : (
             <>Accessibility is off, so I’ll copy instead of paste. Press <Kbd keys="⌘V" /> here.</>
           )}
         </p>
-        {/* The one shortcut this step needs, so a clash with another app is fixed right here. */}
+        {/* Both shortcuts, so a clash with another app is caught and fixed during setup. */}
         <div className="ev-card">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
         </div>
-        <p className="ev-onb-note">
-          {toggleHotkey ? <>Open this panel any time with <Kbd keys={toggleHotkey} />. </> : null}
-          Every shortcut can be changed later in Settings.
-        </p>
       </>
     );
-    footer = <>{back}{next(heard ? 'Continue' : 'Skip for now')}</>;
+    footer = <>{back}{next(heard || speechRefused ? 'Continue' : 'Skip for now')}</>;
   } else {
     body = (
       <>
