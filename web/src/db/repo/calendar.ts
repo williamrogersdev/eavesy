@@ -426,7 +426,12 @@ export async function markRecorded(db: AppDb, userId: string, eventId: string, m
 export async function setRecordChoice(db: AppDb, userId: string, eventId: string, choice: 'record' | 'skip' | null): Promise<boolean> {
   const updated = await db
     .update(calendarEvents)
-    .set({ recordChoice: choice, captureMode: choice === null ? null : choice === 'record' ? 'mac' : 'skip' })
+    .set({
+      recordChoice: choice,
+      // "Record" from an older Mac adds the Mac to a Notetaker plan rather than dropping the Notetaker.
+      captureMode: choice === null ? null : choice === 'skip' ? 'skip'
+        : sql`CASE WHEN ${calendarEvents.captureMode} IN ('notetaker', 'both') THEN 'both' ELSE 'mac' END`,
+    })
     .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId)))
     .returning({ id: calendarEvents.id });
   return updated.length > 0;

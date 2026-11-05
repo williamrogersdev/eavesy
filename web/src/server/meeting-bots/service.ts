@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { z } from 'zod';
@@ -55,6 +55,8 @@ const SEGMENT_STATUSES: BotStatus[] = ['recording', 'call_ended'];
 
 /** Bots one account may have scheduled or in calls at once. */
 export const ACTIVE_BOT_LIMIT = 10;
+/** Of those, kept free for bots sent by hand: the calendar's plan never fills them. */
+export const HAND_SENT_RESERVE = 3;
 /** Collection checks back this often while the last segments are transcribed, for up to an hour. */
 export const COLLECT_RETRY_SECONDS = 60;
 export const MAX_COLLECT_ATTEMPTS = 60;
@@ -117,6 +119,12 @@ export function parseMeetingUrl(value: string): { url: string; platform: BotPlat
     return { url: url.toString(), platform: 'teams' };
   }
   return null;
+}
+
+/** The Meet or Teams call behind a calendar link that the Notetaker can join, or null. */
+export function joinableMeeting(link: string | null | undefined): { url: string; platform: BotPlatform } | null {
+  const target = link ? parseMeetingUrl(link) : null;
+  return target && JOINABLE_PLATFORMS.includes(target.platform) ? target : null;
 }
 
 const scheduleSchema = z.object({
@@ -226,6 +234,8 @@ export async function placeBot(
   const id = pid('bot', now);
   const { url, platform, title, folderId, joinAt, calendarEventId, botName } = placement;
   const at = joinAt ?? now;
+  // The calendar's plan leaves room for "Send the Notetaker" by hand.
+  const limit = calendarEventId ? ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE : ACTIVE_BOT_LIMIT;
   // One statement, so two clicks at once can't both get past the checks: a
   // bot for the same link around the same time is the one already on its way,
   // and an account has at most ACTIVE_BOT_LIMIT out at once.
@@ -237,14 +247,14 @@ export async function placeBot(
       SELECT 1 FROM ${meetingBots} WHERE ${active} AND ${meetingBots.meetingUrl} = ${url}
         AND abs(coalesce(${meetingBots.joinAt}, ${meetingBots.createdAt}) - ${at}) < ${DUPLICATE_WINDOW_MS}
     )
-    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${ACTIVE_BOT_LIMIT}`);
+    AND (SELECT count(*) FROM ${meetingBots} WHERE ${active}) < ${limit}`);
   if (!inserted.meta.changes) {
     const others = await db.select().from(meetingBots)
       .where(and(eq(meetingBots.userId, userId), notInArray(meetingBots.status, TERMINAL_BOT_STATUSES)));
     // A second click, or the same invite pasted twice, gets the bot already on its way.
     const same = others.find((bot) => bot.meetingUrl === url && Math.abs((bot.joinAt ?? bot.createdAt) - at) < DUPLICATE_WINDOW_MS);
     if (same) return { bot: same, duplicate: true };
-    if (others.length >= ACTIVE_BOT_LIMIT) {
+    if (others.length >= limit) {
       return { error: `You can have ${ACTIVE_BOT_LIMIT} notetakers scheduled at once. Cancel one to add another.`, status: 429 };
     }
     // The bot in the way finished between the insert and the look.
@@ -268,10 +278,15 @@ export async function placeBot(
  * it was cancelled.
  */
 export async function withdrawBot(db: AppDb, env: MeetingBotsEnv, bot: MeetingBot, detail: string): Promise<boolean> {
-  if (bot.status !== 'scheduling' && bot.status !== 'scheduled') return false;
+  // A claimed bot (`launching`) is already starting its container: it's on its way in.
+  if ((bot.status !== 'scheduling' && bot.status !== 'scheduled') || bot.statusDetail === 'launching') return false;
   const cancelled = await db.update(meetingBots)
     .set({ status: 'cancelled', statusDetail: detail, updatedAt: Date.now() })
-    .where(and(eq(meetingBots.id, bot.id), eq(meetingBots.status, bot.status)))
+    .where(and(
+      eq(meetingBots.id, bot.id),
+      eq(meetingBots.status, bot.status),
+      or(isNull(meetingBots.statusDetail), ne(meetingBots.statusDetail, 'launching')),
+    ))
     .returning({ id: meetingBots.id });
   if (!cancelled.length) return false;
   await env.MEETING_BOTS?.stop(bot.id).catch(() => undefined);

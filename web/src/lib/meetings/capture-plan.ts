@@ -10,9 +10,14 @@ export type CaptureDefault = Exclude<CaptureMode, 'skip'>;
 export const CAPTURE_MODES: readonly CaptureMode[] = ['mac', 'notetaker', 'both', 'skip'];
 export const CAPTURE_DEFAULTS: readonly CaptureDefault[] = ['mac', 'notetaker', 'both'];
 
-/** The plan for one meeting: its own choice, else the account's default. */
-export function effectiveMode(choice: CaptureMode | null | undefined, accountDefault: CaptureDefault): CaptureMode {
-  return choice ?? accountDefault;
+/**
+ * The plan for one meeting: its own choice, else the account's default. A
+ * meeting the Notetaker can't join (a Zoom call, no link) falls back to the
+ * Mac, so a Notetaker default never leaves it unrecorded.
+ */
+export function effectiveMode(choice: CaptureMode | null | undefined, accountDefault: CaptureDefault, notetakerCanJoin = true): CaptureMode {
+  const mode = choice ?? accountDefault;
+  return !notetakerCanJoin && wantsNotetaker(mode) ? 'mac' : mode;
 }
 
 export function wantsNotetaker(mode: CaptureMode): boolean {
@@ -24,10 +29,11 @@ export function wantsNotetaker(mode: CaptureMode): boolean {
  * stay out of a meeting the Notetaker alone covers, record one chosen for the
  * Mac, and otherwise follow its own "record automatically" setting.
  */
-export function legacyRecordChoice(choice: CaptureMode | null, accountDefault: CaptureDefault): 'record' | 'skip' | null {
-  const mode = effectiveMode(choice, accountDefault);
+export function legacyRecordChoice(choice: CaptureMode | null, accountDefault: CaptureDefault, notetakerCanJoin = true): 'record' | 'skip' | null {
+  const mode = effectiveMode(choice, accountDefault, notetakerCanJoin);
   if (mode === 'skip' || mode === 'notetaker') return 'skip';
-  return choice ? 'record' : null;
+  // A Notetaker-only plan the bot can't carry out falls to the Mac: record it.
+  return choice || effectiveMode(choice, accountDefault) === 'notetaker' ? 'record' : null;
 }
 
 export const MAX_NOTETAKER_NAME = 60;

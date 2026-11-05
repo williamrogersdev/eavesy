@@ -18,6 +18,14 @@ describe('capture plan', () => {
     expect(legacyRecordChoice('skip', 'mac')).toBe('skip');
   });
 
+  test('a Notetaker plan on a call the bot can’t join (Zoom, no link) falls to the Mac', () => {
+    expect(effectiveMode(null, 'notetaker', false)).toBe('mac');
+    expect(effectiveMode('both', 'mac', false)).toBe('mac');
+    expect(effectiveMode('skip', 'notetaker', false)).toBe('skip');
+    expect(legacyRecordChoice(null, 'notetaker', false)).toBe('record');
+    expect(legacyRecordChoice(null, 'both', false)).toBeNull();
+  });
+
   test('the Notetaker is named after its owner unless they chose a name', () => {
     expect(notetakerName(null, 'William Rogers')).toBe("William Rogers' Notetaker");
     expect(notetakerName(null, ' Sam ')).toBe("Sam's Notetaker");

@@ -5,7 +5,7 @@ import { meetingBots, users } from '@/db/schema';
 import { isMeetingLike } from '@/lib/calendar/match';
 import { type CaptureDefault, effectiveMode, notetakerName, wantsNotetaker } from '@/lib/meetings/capture-plan';
 import type { MeetingBotsEnv } from './control';
-import { JOINABLE_PLATFORMS, type MeetingBot, parseMeetingUrl, placeBot, withdrawBot } from './service';
+import { joinableMeeting, type MeetingBot, placeBot, withdrawBot } from './service';
 
 /** How far ahead the plan sends bots. Every sync runs it again, so later meetings get theirs in time. */
 export const PLAN_AHEAD_MS = 24 * 60 * 60 * 1000;
@@ -13,6 +13,8 @@ export const PLAN_AHEAD_MS = 24 * 60 * 60 * 1000;
 export const JOIN_EARLY_MS = 60 * 1000;
 /** A bot whose meeting moved by more than this is sent again for the new time. */
 const MOVED_MS = 2 * 60 * 1000;
+/** The status detail of a bot the plan itself withdrew; only those are sent again. */
+const WITHDRAWN_PREFIX = 'calendar_';
 
 export type PlanResult = { scheduled: number; withdrawn: number; skipped: string[] };
 
@@ -40,13 +42,13 @@ export async function reconcileCalendarBots(db: AppDb, env: MeetingBotsEnv, user
   const wanted = new Map<string, { joinAt: number | null; url: string; platform: MeetingBot['platform']; title: string }>();
   for (const event of events) {
     if (!isMeetingLike(event) || event.endsAt <= now || event.recordedMeetingId) continue;
-    if (!wantsNotetaker(effectiveMode(event.captureMode, accountDefault))) continue;
-    const target = event.meetingUrl ? parseMeetingUrl(event.meetingUrl) : null;
-    if (!target || !JOINABLE_PLATFORMS.includes(target.platform)) {
-      // A Zoom call (or no link): nothing the bot can join. The Mac still can.
-      result.skipped.push(event.id);
+    const target = joinableMeeting(event.meetingUrl);
+    if (!wantsNotetaker(effectiveMode(event.captureMode, accountDefault, target !== null))) {
+      // A Zoom call (or no link) under a Notetaker plan falls to the Mac.
+      if (!target && wantsNotetaker(effectiveMode(event.captureMode, accountDefault))) result.skipped.push(event.id);
       continue;
     }
+    if (!target) continue;
     const joinAt = event.startsAt - JOIN_EARLY_MS;
     wanted.set(event.id, { joinAt: joinAt > now ? joinAt : null, url: target.url, platform: target.platform, title: event.title });
   }
@@ -56,15 +58,30 @@ export async function reconcileCalendarBots(db: AppDb, env: MeetingBotsEnv, user
     .from(meetingBots)
     .where(and(eq(meetingBots.userId, userId), isNotNull(meetingBots.calendarEventId), inArray(meetingBots.status, ['scheduling', 'scheduled', 'joining', 'waiting_room', 'in_call', 'recording', 'call_ended', 'collecting'])));
   const covered = new Set<string>();
+  // A meeting whose bot failed, finished or was cancelled by the person isn't
+  // sent another: a withdrawn plan bot (`calendar_*`) is the only one replaced.
+  if (wanted.size) {
+    const ended = await db
+      .select({ calendarEventId: meetingBots.calendarEventId, statusDetail: meetingBots.statusDetail })
+      .from(meetingBots)
+      .where(and(eq(meetingBots.userId, userId), inArray(meetingBots.calendarEventId, [...wanted.keys()]), inArray(meetingBots.status, ['done', 'failed', 'cancelled'])));
+    for (const bot of ended) {
+      if (!bot.statusDetail?.startsWith(WITHDRAWN_PREFIX)) covered.add(bot.calendarEventId!);
+    }
+  }
   for (const bot of planned) {
     const want = bot.calendarEventId ? wanted.get(bot.calendarEventId) : undefined;
     const target = want?.joinAt ?? now;
-    const moved = want && bot.joinAt !== null && Math.abs(bot.joinAt - target) > MOVED_MS && bot.status === 'scheduled';
-    if (want && !moved && bot.meetingUrl === want.url) {
+    const notStarted = bot.status === 'scheduled' && bot.statusDetail !== 'launching';
+    const moved = want && bot.joinAt !== null && Math.abs(bot.joinAt - target) > MOVED_MS && notStarted;
+    // A new name (or display name) reaches bots that haven't joined yet.
+    const renamed = want && bot.botName !== botName && notStarted;
+    if (want && !moved && !renamed && bot.meetingUrl === want.url) {
       covered.add(bot.calendarEventId!);
       continue;
     }
-    if (await withdrawBot(db, env, bot, want ? 'calendar_moved' : 'calendar_plan_changed')) result.withdrawn++;
+    const why = !want ? 'calendar_plan_changed' : renamed && !moved ? 'calendar_renamed' : 'calendar_moved';
+    if (await withdrawBot(db, env, bot, why)) result.withdrawn++;
     else if (bot.calendarEventId) covered.add(bot.calendarEventId);
   }
 

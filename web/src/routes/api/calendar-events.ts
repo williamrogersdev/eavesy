@@ -8,6 +8,7 @@ import { resolveIngestActor } from '@/server/device-auth';
 import { eq } from 'drizzle-orm';
 import { users } from '@/db/schema';
 import { type CaptureDefault, effectiveMode, legacyRecordChoice } from '@/lib/meetings/capture-plan';
+import { joinableMeeting } from '@/server/meeting-bots/service';
 
 /** How far ahead `next` and `upcoming` look. */
 const NEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -16,6 +17,8 @@ const UPCOMING_LIMIT = 20;
 
 function view(event: calendarRepo.StoredEvent | null, accountDefault: CaptureDefault) {
   if (!event) return null;
+  // The same test the plan uses to send a bot.
+  const notetakerCanJoin = joinableMeeting(event.meetingUrl) !== null;
   return {
     id: event.id,
     title: event.title,
@@ -26,11 +29,11 @@ function view(event: calendarRepo.StoredEvent | null, accountDefault: CaptureDef
     attendees: event.participants,
     recorded: event.recordedMeetingId !== null,
     // What Mac apps from before capture modes read: never record a Notetaker-only meeting.
-    recordChoice: legacyRecordChoice(event.captureMode, accountDefault),
+    recordChoice: legacyRecordChoice(event.captureMode, accountDefault, notetakerCanJoin),
     // This meeting's own choice (null: the account default), and the plan it ends up with.
     captureMode: event.captureMode,
-    mode: effectiveMode(event.captureMode, accountDefault),
-    notetakerCanJoin: event.platform === 'meet' || event.platform === 'teams',
+    mode: effectiveMode(event.captureMode, accountDefault, notetakerCanJoin),
+    notetakerCanJoin,
   };
 }
 

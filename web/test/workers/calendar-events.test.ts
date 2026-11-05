@@ -312,11 +312,11 @@ describe('capture modes over the API', () => {
     expect(after).toMatchObject({ mode: 'notetaker', captureMode: 'notetaker', recordChoice: 'skip' });
     expect(await row('SELECT record_choice FROM calendar_events WHERE id = ?', 'evt_plan')).toEqual({ record_choice: 'skip' });
 
-    // An older Mac's record/skip still lands as a capture mode.
+    // An older Mac's record/skip still lands as a capture mode; "record" on a Notetaker meeting adds the Mac.
     await patchEvent({
       request: new Request('https://eavesy.test/api/calendar-events/evt_plan', { method: 'PATCH', body: JSON.stringify({ recordChoice: 'record' }) }),
       params: { id: 'evt_plan' },
     });
-    expect(await row('SELECT capture_mode FROM calendar_events WHERE id = ?', 'evt_plan')).toEqual({ capture_mode: 'mac' });
+    expect(await row('SELECT capture_mode FROM calendar_events WHERE id = ?', 'evt_plan')).toEqual({ capture_mode: 'both' });
   });
 });

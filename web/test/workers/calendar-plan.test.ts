@@ -6,7 +6,7 @@ import * as schema from '../../src/db/schema';
 import * as calendarRepo from '../../src/db/repo/calendar';
 import { JOIN_EARLY_MS, reconcileCalendarBots } from '../../src/server/meeting-bots/calendar-plan';
 import type { MeetingBotsEnv } from '../../src/server/meeting-bots/control';
-import { placeBot } from '../../src/server/meeting-bots/service';
+import { ACTIVE_BOT_LIMIT, HAND_SENT_RESERVE, placeBot } from '../../src/server/meeting-bots/service';
 import { insertUser, resetTables, testEnv } from './support';
 
 const NOW = Date.UTC(2026, 10, 5, 15);
@@ -138,7 +138,78 @@ describe('the Notetaker follows the calendar', () => {
   it('does nothing where the meeting-bot service isn’t deployed', async () => {
     await setDefault('notetaker');
     await addEvent('evt_a');
+    const read = vi.spyOn(calendarRepo, 'eventsAround');
     expect(await reconcileCalendarBots(db(), {} as MeetingBotsEnv, 'user_a', NOW)).toMatchObject({ scheduled: 0 });
+    expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
     expect(await activeBots()).toHaveLength(0);
+  });
+
+  it('leaves a bot that is already launching alone, even when the plan changes', async () => {
+    await setDefault('notetaker');
+    await addEvent('evt_a');
+    const { env, control } = fakeBots();
+    await reconcileCalendarBots(db(), env, 'user_a', NOW);
+    await db().update(schema.meetingBots).set({ statusDetail: 'launching' });
+    await calendarRepo.setCaptureMode(db(), 'user_a', 'evt_a', 'skip');
+    expect(await reconcileCalendarBots(db(), env, 'user_a', NOW + 1000)).toMatchObject({ withdrawn: 0 });
+    expect(await activeBots()).toHaveLength(1);
+    expect(control.stop).not.toHaveBeenCalled();
+  });
+
+  it('doesn’t send another bot to a meeting whose bot failed or that the owner cancelled', async () => {
+    await setDefault('notetaker');
+    await addEvent('evt_a');
+    await addEvent('evt_b', { providerEventId: 'g_b', meetingUrl: 'https://meet.google.com/xyz-abcd-efg', startsAt: NOW + 4 * HOUR, endsAt: NOW + 5 * HOUR });
+    const { env } = fakeBots();
+    await reconcileCalendarBots(db(), env, 'user_a', NOW);
+    await db().update(schema.meetingBots).set({ status: 'cancelled', statusDetail: 'cancelled_by_user' }).where(eq(schema.meetingBots.calendarEventId, 'evt_a'));
+    await db().update(schema.meetingBots).set({ status: 'failed', statusDetail: 'provider_unavailable' }).where(eq(schema.meetingBots.calendarEventId, 'evt_b'));
+    expect(await reconcileCalendarBots(db(), env, 'user_a', NOW + 1000)).toMatchObject({ scheduled: 0 });
+    expect(await activeBots()).toHaveLength(0);
+  });
+
+  it('a new Notetaker name reaches bots that haven’t joined', async () => {
+    await setDefault('notetaker');
+    await addEvent('evt_a');
+    const { env } = fakeBots();
+    await reconcileCalendarBots(db(), env, 'user_a', NOW);
+    await setDefault('notetaker', 'Will’s notes');
+    expect(await reconcileCalendarBots(db(), env, 'user_a', NOW + 1000)).toMatchObject({ scheduled: 1, withdrawn: 1 });
+    const [bot] = await activeBots();
+    expect(bot!.botName).toBe('Will’s notes');
+    const withdrawn = (await db().select().from(schema.meetingBots)).find((b) => b.status === 'cancelled');
+    expect(withdrawn!.statusDetail).toBe('calendar_renamed');
+  });
+
+  it('a Notetaker default on a Zoom call leaves it to the Mac', async () => {
+    await setDefault('notetaker');
+    await addEvent('evt_zoom', { meetingUrl: 'https://zoom.us/j/123', platform: 'zoom' });
+    const [event] = await calendarRepo.eventsAround(db(), 'user_a', NOW, NOW + 24 * HOUR);
+    expect(event).toBeDefined();
+    expect(await reconcileCalendarBots(db(), fakeBots().env, 'user_a', NOW)).toMatchObject({ scheduled: 0, skipped: ['evt_zoom'] });
+  });
+
+  it('an older Mac’s “record” adds the Mac to a Notetaker plan instead of dropping the Notetaker', async () => {
+    await addEvent('evt_a');
+    await calendarRepo.setCaptureMode(db(), 'user_a', 'evt_a', 'notetaker');
+    await calendarRepo.setRecordChoice(db(), 'user_a', 'evt_a', 'record');
+    const [row] = await db().select().from(schema.calendarEvents).where(eq(schema.calendarEvents.id, 'evt_a'));
+    expect(row!.captureMode).toBe('both');
+    await calendarRepo.setCaptureMode(db(), 'user_a', 'evt_a', null);
+    await calendarRepo.setRecordChoice(db(), 'user_a', 'evt_a', 'record');
+    expect((await db().select().from(schema.calendarEvents).where(eq(schema.calendarEvents.id, 'evt_a')))[0]!.captureMode).toBe('mac');
+  });
+
+  it('the plan leaves room for bots sent by hand', async () => {
+    await setDefault('notetaker');
+    for (let i = 0; i < ACTIVE_BOT_LIMIT; i++) {
+      await addEvent(`evt_${i}`, { providerEventId: `g_${i}`, meetingUrl: `https://meet.google.com/abc-defg-hi${String.fromCharCode(97 + i)}`, startsAt: NOW + (i + 1) * HOUR, endsAt: NOW + (i + 1) * HOUR + 1800_000 });
+    }
+    const { env } = fakeBots();
+    await reconcileCalendarBots(db(), env, 'user_a', NOW);
+    expect(await activeBots()).toHaveLength(ACTIVE_BOT_LIMIT - HAND_SENT_RESERVE);
+    const byHand = await placeBot(db(), env, 'user_a', { url: 'https://meet.google.com/zzz-zzzz-zzz', platform: 'meet', title: null, folderId: null, joinAt: null, calendarEventId: null, botName: 'x' }, NOW);
+    expect('bot' in byHand).toBe(true);
   });
 });

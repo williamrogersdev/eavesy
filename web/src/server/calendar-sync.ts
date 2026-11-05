@@ -28,7 +28,8 @@ export type SyncResult = 'ok' | 'reconnect' | 'failed';
 
 /**
  * Pulls the window's events for one connection and records how it went.
- * Uses `accessToken` when the caller already has one.
+ * Uses `accessToken` when the caller already has one. `plan: false` leaves the
+ * Notetaker plan to a caller syncing several connections, so it runs once per account.
  */
 export async function syncConnection(
   db: AppDb,
@@ -36,6 +37,7 @@ export async function syncConnection(
   now = Date.now(),
   accessToken?: string,
   signal?: AbortSignal,
+  plan = true,
 ): Promise<SyncResult> {
   const creds = googleCredentials();
   if (connection.provider !== 'google' || !creds) return 'failed';
@@ -43,7 +45,7 @@ export async function syncConnection(
   // A success already stamped the row along with its events.
   if (result !== 'ok') await calendarRepo.markAttempt(db, connection.id, result, now).catch(() => undefined);
   // Fresh events can change which meetings the Notetaker goes to.
-  else await planAfterSync(db, connection.userId, now);
+  else if (plan) await planAfterSync(db, connection.userId, now);
   return result;
 }
 
@@ -72,6 +74,7 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
   const signal = AbortSignal.timeout(BACKGROUND_BUDGET_MS);
   let next = 0;
   let synced = 0;
+  const accounts = new Set<string>();
   const worker = async () => {
     while (next < due.length && !signal.aborted) {
       const connection = due[next++];
@@ -81,10 +84,15 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
         await calendarRepo.releaseAttempt(db, connection.id, now).catch(() => undefined);
         break;
       }
-      if ((await syncConnection(db, connection, now, undefined, signal)) === 'ok') synced++;
+      if ((await syncConnection(db, connection, now, undefined, signal, false)) === 'ok') {
+        synced++;
+        accounts.add(connection.userId);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(BACKGROUND_CONCURRENCY, due.length) }, worker));
+  // One plan per account, after all its calendars are in.
+  for (const userId of accounts) await planAfterSync(db, userId, now);
   return { synced };
 }
 
@@ -92,11 +100,13 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
 export async function syncDue(db: AppDb, connections: calendarRepo.CalendarConnection[], now = Date.now()): Promise<void> {
   const signal = AbortSignal.timeout(SYNC_BUDGET_MS);
   const due = connections.filter((c) => isDue(c, now)).sort((a, b) => (a.lastAttemptAt ?? 0) - (b.lastAttemptAt ?? 0));
+  const accounts = new Set<string>();
   for (const connection of due) {
     if (signal.aborted) break;
     if (!(await calendarRepo.claimAttempt(db, connection.id, now, SYNC_STALE_MS))) continue;
-    await syncConnection(db, connection, now, undefined, signal);
+    if ((await syncConnection(db, connection, now, undefined, signal, false)) === 'ok') accounts.add(connection.userId);
   }
+  for (const userId of accounts) await planAfterSync(db, userId, now);
 }
 
 async function attempt(

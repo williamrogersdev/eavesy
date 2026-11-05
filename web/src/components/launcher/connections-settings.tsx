@@ -364,13 +364,20 @@ function MeetingCapture({ prefs, onChange }: { prefs: MeetingCapturePrefs; onCha
   const [name, setName] = useState(prefs.notetakerName ?? '');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { setName(prefs.notetakerName ?? ''); }, [prefs.notetakerName]);
+  // Each save shows its change at once, then what the server holds; only the
+  // latest save's answer is shown, so a slow earlier one can't undo a later one.
+  const latest = useRef(0);
   const save = (change: Parameters<typeof saveMeetingCapture>[0], next: MeetingCapturePrefs) => {
-    const before = prefs;
+    const mine = ++latest.current;
     setError(null);
     onChange(next);
+    const settle = () => getMeetingCapture().then((fresh) => { if (mine === latest.current) onChange(fresh); });
     void saveMeetingCapture(change)
-      .then(() => getMeetingCapture().then(onChange))
-      .catch((e: unknown) => { onChange(before); setError(errMsg(e, 'Couldn’t save that. Try again.')); });
+      .then(settle, (e: unknown) => {
+        if (mine === latest.current) setError(errMsg(e, 'Couldn’t save that. Try again.'));
+        return settle();
+      })
+      .catch(() => undefined);
   };
   const saveName = () => {
     const typed = name.trim();
