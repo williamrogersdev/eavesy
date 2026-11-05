@@ -191,7 +191,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
         const overQuota = await guardUserQuota(actor.userId, 'capture-sync', chargedAt);
         if (overQuota) return overQuota;
 
-        const body = await readCappedBody(request.body, bytes);
+        // Null when the body runs past content-length; shorter, or cut off, stores nothing either.
+        const body = await readCappedBody(request.body, bytes).catch(() => null);
         if (!body || body.byteLength !== bytes) {
           await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
           return Response.json({ error: 'upload interrupted' }, { status: 400 });

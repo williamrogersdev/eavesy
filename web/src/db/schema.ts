@@ -352,6 +352,8 @@ export const captures = sqliteTable(
   },
   (t) => [
     index('captures_user_created_idx').on(t.userId, t.createdAt),
+    // The note change feed and an edit's change time read notes by when they changed.
+    index('captures_user_kind_updated_idx').on(t.userId, t.kind, t.updatedAt),
     uniqueIndex('captures_user_client_uq').on(t.userId, t.clientCaptureId),
     index('captures_deleted_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
   ],
