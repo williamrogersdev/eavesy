@@ -187,22 +187,18 @@ export const Route = createFileRoute('/api/devices/captures/')({
         if (!existing || existing.deletedAt !== null || existing.kind !== 'note') {
           return Response.json({ error: 'not found' }, { status: 404 });
         }
+        // Read (at most 1 MB) before anything is charged or stored. Null when the
+        // body runs past content-length; any other failure is left to throw.
+        const body = await readCappedBody(request.body, bytes);
+        if (!body || body.byteLength !== bytes) return Response.json({ error: 'upload interrupted' }, { status: 400 });
+        const text = new TextDecoder().decode(body);
+        // The same text again (a retry whose reply was lost): nothing to store or
+        // announce, and nothing charged.
+        if (existing.transcript === text) return Response.json({ id: existing.id, updatedAt: existing.updatedAt, unchanged: true });
+
         const chargedAt = Date.now();
         const overQuota = await guardUserQuota(actor.userId, 'capture-sync', chargedAt);
         if (overQuota) return overQuota;
-
-        // Null when the body runs past content-length. The only other failure is
-        // the request stream itself breaking off (the Mac went away): logged, and
-        // like a short body it stores nothing.
-        const body = await readCappedBody(request.body, bytes).catch((cause: unknown) => {
-          console.warn('[device-captures] note edit body broke off', cause);
-          return null;
-        });
-        if (!body || body.byteLength !== bytes) {
-          await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
-          return Response.json({ error: 'upload interrupted' }, { status: 400 });
-        }
-        const text = new TextDecoder().decode(body);
         // The new text goes to an object of its own, and the row moves to it in
         // one write: the row and its object always agree, and a note deleted
         // meanwhile keeps the text it had.
