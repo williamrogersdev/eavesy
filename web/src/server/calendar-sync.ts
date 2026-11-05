@@ -128,12 +128,17 @@ async function attempt(
     const to = now + SYNC_AHEAD_MS;
     let calendarIds = await calendarsToSync(db, connection, token, signal);
     // A tick saved while this sync read Google changes what it should have
-    // read: read again with the saved choice, so the last write always matches it.
-    for (let pass = 0; pass < 2; pass++) {
+    // read: read again with the saved choice. Ticks still arriving after a
+    // second read leave the connection due, so the next sync reads them.
+    for (let pass = 0; ; pass++) {
       const { events, complete } = await eventsFrom(token, calendarIds, from, to, signal);
       await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, complete, now });
       const latest = await savedChoice(db, connection);
       if (!latest || sameSet(latest, calendarIds)) break;
+      if (pass === 1) {
+        await calendarRepo.releaseAttempt(db, connection.id, now);
+        break;
+      }
       calendarIds = latest;
     }
     return 'ok';
