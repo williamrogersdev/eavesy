@@ -147,8 +147,8 @@ pub fn refresh(app: &AppHandle) {
         tooltip: event.title.clone(),
         meeting: MeetingView::from(event),
     });
-    // Changed: tell the card. Not yet applied (a change, or an earlier failure): try again.
-    let (changed, pending) = with_bar(|bar| {
+    // Not yet applied (a change, or an earlier failure): apply it, which also tells the card.
+    let pending = with_bar(|bar| {
         let changed = bar.shown != next;
         if changed {
             bar.shown = next.clone();
@@ -156,11 +156,8 @@ pub fn refresh(app: &AppHandle) {
         }
         let pending = !bar.applied && !bar.queued;
         bar.queued |= pending;
-        (changed, pending)
+        pending
     });
-    if changed {
-        let _ = app.emit_to(LABEL, "meeting:updated", next.as_ref().map(|shown| &shown.meeting));
-    }
     if !pending {
         return;
     }
@@ -204,12 +201,16 @@ fn apply(app: &AppHandle) {
         }
     };
     match result {
-        Ok(()) => with_bar(|bar| {
-            // Applied unless it changed again meanwhile; the next refresh covers that.
-            if bar.shown == shown {
-                bar.applied = true;
-            }
-        }),
+        Ok(()) => {
+            // The card hears of it only once the item shows it, so the two agree.
+            let _ = app.emit_to(LABEL, "meeting:updated", shown.as_ref().map(|shown| &shown.meeting));
+            with_bar(|bar| {
+                // Applied unless it changed again meanwhile; the next refresh covers that.
+                if bar.shown == shown {
+                    bar.applied = true;
+                }
+            });
+        }
         Err(error) => tracing::warn!("meeting bar: couldn't update the menu bar item: {error}"),
     }
 }

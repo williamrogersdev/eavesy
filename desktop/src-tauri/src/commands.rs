@@ -470,7 +470,7 @@ pub async fn disconnect_account(app: AppHandle) -> Result<(), String> {
     let deleted = settings::delete_device_token(&app);
     crate::meeting_watch::signed_out();
     crate::meeting_bar::refresh(&app);
-    deleted
+    deleted.map_err(|error| format!("eavesy.com has let this Mac go, but its sign-in couldn't be removed from the keychain ({error}). Try Disconnect again."))
 }
 
 #[tauri::command(async)]
