@@ -14,7 +14,7 @@
 //! terminal, some Electron apps) gets no live typing; its dictation pastes
 //! at the end as before.
 
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{channel, sync_channel, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -56,11 +56,12 @@ enum Msg {
     Cancel,
 }
 
-/// Captions waiting for the typist; past this they are dropped (the next
-/// one carries the whole text anyway).
-const QUEUE: usize = 64;
-/// How long a stopping dictation waits for typing under way to finish.
+/// How long a stopping dictation waits for typing under way to finish: the
+/// most `finish` holds up delivery.
 const FINISH_WAIT: Duration = Duration::from_secs(2);
+/// How long after a first lookup finds no readable field it is looked for
+/// again, at each update, before live typing is off for the dictation.
+const FIELD_SEARCH: Duration = Duration::from_secs(5);
 /// A typist with no words or stop this long gives up. Far past any
 /// dictation (they are short, and are delivered within
 /// `dictation::DELIVER_WINDOW` of stopping), so in practice only one whose
@@ -83,7 +84,10 @@ struct Shared {
 
 struct Entry {
     id: String,
-    tx: SyncSender<Msg>,
+    /// Unbounded, so a caption, a stop or a cancel is never dropped or
+    /// waited on: the typist takes everything queued at once whenever it is
+    /// free, and a dictation's captions are few.
+    tx: Sender<Msg>,
     shared: Arc<Shared>,
 }
 
@@ -99,7 +103,7 @@ pub fn start(app: &AppHandle, session_id: &str) {
     if !crate::settings::load(app).type_as_you_talk() {
         return;
     }
-    let (tx, rx) = sync_channel(QUEUE);
+    let (tx, rx) = channel();
     let shared = Arc::new(Shared::default());
     register(Entry { id: session_id.to_string(), tx, shared: shared.clone() });
     let session_id = session_id.to_string();
@@ -126,9 +130,8 @@ pub fn caption(caption: &Caption) {
     }
     let typists = typists();
     let Some(entry) = typists.iter().find(|entry| entry.id == caption.session_id) else { return };
-    if let Err(TrySendError::Full(_)) = entry.tx.try_send(Msg::Caption(caption.clone())) {
-        tracing::debug!("live typing is behind; a caption waits for the next");
-    }
+    // Fails only once the typist is gone.
+    let _ = entry.tx.send(Msg::Caption(caption.clone()));
 }
 
 /// What a stopping dictation finds typed for it.
@@ -159,21 +162,9 @@ pub fn finish(session_id: &str) -> Typed {
         }
     };
     let (reply, answer) = sync_channel(1);
-    // Never block on a full queue: the typist takes all of it at once
-    // whenever it is free, so room comes within the wait or not at all.
-    let give_up = std::time::Instant::now() + FINISH_WAIT;
-    let mut msg = Msg::Finish(reply);
-    loop {
-        match entry.tx.try_send(msg) {
-            Ok(()) => break,
-            // The typist idled out.
-            Err(TrySendError::Disconnected(_)) => return unknown(),
-            Err(TrySendError::Full(back)) if std::time::Instant::now() < give_up => {
-                msg = back;
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(TrySendError::Full(_)) => return unknown(),
-        }
+    if entry.tx.send(Msg::Finish(reply)).is_err() {
+        // The typist idled out.
+        return unknown();
     }
     // A sync under way when the wait runs out posts no further key (each
     // press checks `stop` first), but a press already posted may still
@@ -192,8 +183,8 @@ pub fn finish(session_id: &str) -> Typed {
 pub fn cancel(session_id: &str) {
     if let Some(entry) = take(session_id) {
         entry.shared.stop.store(true, Ordering::SeqCst);
-        // Never blocks; with a full queue the typist is busy and the words stay.
-        let _ = entry.tx.try_send(Msg::Cancel);
+        // Never blocks. The typist takes the words back once it is free.
+        let _ = entry.tx.send(Msg::Cancel);
     }
 }
 
@@ -205,9 +196,10 @@ fn take(session_id: &str) -> Option<Entry> {
 
 /// Where the typist is with its field.
 enum Field {
-    /// Not looked for yet: it is found at the first words, in the app the
-    /// dictation will paste into.
-    Unknown,
+    /// Not found yet: it is looked for from the draft's first update, in
+    /// the app the dictation will paste into. Holds when a lookup first
+    /// found no readable field.
+    Unknown(Option<std::time::Instant>),
     Typing(LiveField),
     /// Typing stopped for this dictation; the field is kept so the end can
     /// still replace what was typed, should it be untouched after all.
@@ -216,7 +208,7 @@ enum Field {
 
 fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
     let mut heard = Heard::default();
-    let mut field = Field::Unknown;
+    let mut field = Field::Unknown(None);
     let mut pace = Pace::default();
     loop {
         let msg = match rx.recv_timeout(IDLE) {
@@ -315,10 +307,10 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
     let mut live = match field {
         Field::Stopped(_) => unreachable!("returned above"),
         Field::Typing(live) => live,
-        Field::Unknown => {
+        Field::Unknown(missed) => {
             match crate::dictation::live_typing_target(session_id) {
                 // Not in front yet: look again at the next words.
-                Ok(false) => return Field::Unknown,
+                Ok(false) => return Field::Unknown(missed),
                 Err(why) => {
                     tracing::info!(session_id, "live typing off for this dictation: {why}");
                     return Field::Stopped(None);
@@ -327,8 +319,11 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
             }
             match LiveField::focused() {
                 Some(live) => live,
-                // Nothing to type yet: look again at the next update.
-                None if text.is_empty() => return Field::Unknown,
+                // A field an app is still exposing, or focus passing through:
+                // look again at the next update, for a while.
+                None if missed.is_none_or(|at| at.elapsed() < FIELD_SEARCH) => {
+                    return Field::Unknown(missed.or_else(|| Some(std::time::Instant::now())));
+                }
                 None => {
                     tracing::info!(session_id, "live typing off for this dictation: the field can't be read back");
                     return Field::Stopped(None);
@@ -499,7 +494,7 @@ mod tests {
 
     #[test]
     fn only_mic_words_for_the_current_dictation_are_queued() {
-        let (tx, rx) = sync_channel(QUEUE);
+        let (tx, rx) = channel();
         // Marked typed so another test's registering can't evict it.
         let shared = Arc::new(Shared::default());
         shared.typed.store(true, Ordering::SeqCst);
@@ -528,7 +523,7 @@ mod tests {
     }
 
     fn entry(id: &str, typed: bool) -> (Entry, Receiver<Msg>) {
-        let (tx, rx) = sync_channel(1);
+        let (tx, rx) = channel();
         let shared = Arc::new(Shared::default());
         shared.typed.store(typed, Ordering::SeqCst);
         (Entry { id: id.into(), tx, shared }, rx)
