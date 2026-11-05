@@ -2,11 +2,15 @@ import type { AppDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { openSecret } from '@/server/secret-box';
 import {
+  CALENDAR_LIST_SCOPE,
+  type CalendarEventInput,
   type GoogleCredentials,
   GoogleAccessRevoked,
   googleCredentials,
+  listGoogleCalendars,
   listGoogleEvents,
   refreshGoogleAccess,
+  selectedByDefault,
 } from '@/server/google-calendar';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,6 +48,37 @@ export function isDue(connection: calendarRepo.CalendarConnection, now: number):
   return !connection.lastAttemptAt || now - connection.lastAttemptAt > SYNC_STALE_MS;
 }
 
+/** The background sync's cadence (the web Worker's cron) and the age it treats as due. */
+export const BACKGROUND_SYNC_CRON = '*/5 * * * *';
+export const BACKGROUND_STALE_MS = 4 * 60 * 1000;
+/** Connections one background run takes on, and its time budget. */
+export const BACKGROUND_BATCH = 200;
+export const BACKGROUND_BUDGET_MS = 4 * 60 * 1000;
+const BACKGROUND_CONCURRENCY = 6;
+
+/**
+ * Every account's calendars, kept fresh without anyone having Settings or the
+ * Mac app open: each connection not tried in BACKGROUND_STALE_MS is synced,
+ * a few at a time, within one budget. A connection another request is
+ * syncing is skipped (`claimAttempt`).
+ */
+export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced: number }> {
+  const due = await calendarRepo.listDueConnections(db, now, BACKGROUND_STALE_MS, BACKGROUND_BATCH);
+  const signal = AbortSignal.timeout(BACKGROUND_BUDGET_MS);
+  let next = 0;
+  let synced = 0;
+  const worker = async () => {
+    while (next < due.length && !signal.aborted) {
+      const connection = due[next++];
+      if (!(await calendarRepo.claimAttempt(db, connection.id, now, BACKGROUND_STALE_MS))) continue;
+      await syncConnection(db, connection, now, undefined, signal);
+      synced++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BACKGROUND_CONCURRENCY, due.length) }, worker));
+  return { synced };
+}
+
 /** Syncs every due connection one after another, longest-waiting first, within one shared budget. */
 export async function syncDue(db: AppDb, connections: calendarRepo.CalendarConnection[], now = Date.now()): Promise<void> {
   const signal = AbortSignal.timeout(SYNC_BUDGET_MS);
@@ -72,7 +107,8 @@ async function attempt(
     }
     const from = now - SYNC_BEHIND_MS;
     const to = now + SYNC_AHEAD_MS;
-    const { events, complete } = await listGoogleEvents(token, from, to, signal);
+    const calendarIds = await calendarsToSync(db, connection, token, signal);
+    const { events, complete } = await eventsFrom(token, calendarIds, from, to, signal);
     await calendarRepo.replaceEvents(db, { userId: connection.userId, connectionId: connection.id, from, to, events, complete, now });
     return 'ok';
   } catch (error) {
@@ -80,4 +116,78 @@ async function attempt(
     console.error('[calendar-sync]', error);
     return 'failed';
   }
+}
+
+/** Whether this connection's grant lets Eavesy list its calendars. */
+export function canListCalendars(connection: Pick<calendarRepo.CalendarConnection, 'scopes'>): boolean {
+  return (connection.scopes ?? '').split(' ').includes(CALENDAR_LIST_SCOPE);
+}
+
+/**
+ * The calendars to read: the ticked ones from the account's current list
+ * (refreshed each sync, keeping earlier choices and ticking new calendars by
+ * `selectedByDefault`), or only the primary one when the grant can't list them
+ * or the list can't be read right now.
+ */
+async function calendarsToSync(
+  db: AppDb,
+  connection: calendarRepo.CalendarConnection,
+  token: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  if (!canListCalendars(connection)) return ['primary'];
+  let listed;
+  try {
+    listed = await listGoogleCalendars(token, signal);
+  } catch (error) {
+    if (error instanceof GoogleAccessRevoked) throw error;
+    console.error('[calendar-sync] calendar list', error);
+    const known = calendarRepo.storedCalendars(connection).filter((c) => c.selected);
+    return known.length ? known.map((c) => (c.primary ? 'primary' : c.id)) : ['primary'];
+  }
+  const before = new Map(calendarRepo.storedCalendars(connection).map((c) => [c.id, c.selected]));
+  const calendars = listed.map((calendar) => ({
+    id: calendar.id,
+    name: calendar.name,
+    primary: calendar.primary,
+    selected: calendar.primary || (before.get(calendar.id) ?? selectedByDefault(calendar)),
+  }));
+  await calendarRepo.saveCalendarList(db, connection.id, calendars);
+  const ids = calendars.filter((c) => c.selected).map((c) => (c.primary ? 'primary' : c.id));
+  return ids.length ? ids : ['primary'];
+}
+
+/**
+ * Events from each calendar, one entry per Google event (the first calendar to
+ * carry it wins, primary first). A calendar that can't be read (unshared since
+ * the list was read, say) makes the listing incomplete, so nothing is deleted.
+ */
+async function eventsFrom(
+  token: string,
+  calendarIds: string[],
+  from: number,
+  to: number,
+  signal: AbortSignal | undefined,
+): Promise<{ events: CalendarEventInput[]; complete: boolean }> {
+  const seen = new Set<string>();
+  const events: CalendarEventInput[] = [];
+  let complete = true;
+  for (const calendarId of calendarIds) {
+    let listing;
+    try {
+      listing = await listGoogleEvents(token, from, to, signal, calendarId);
+    } catch (error) {
+      if (error instanceof GoogleAccessRevoked || calendarId === 'primary') throw error;
+      console.error('[calendar-sync] calendar', error);
+      complete = false;
+      continue;
+    }
+    complete &&= listing.complete;
+    for (const event of listing.events) {
+      if (seen.has(event.providerEventId)) continue;
+      seen.add(event.providerEventId);
+      events.push(event);
+    }
+  }
+  return { events, complete };
 }

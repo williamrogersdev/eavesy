@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { decode, encode } from '../codec';
 import { pid } from '../ids';
@@ -7,6 +7,61 @@ import { UNTITLED_EVENT } from '@/lib/calendar/match';
 import type { CalendarEventInput } from '@/server/google-calendar';
 
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
+
+/** One of a connected account's calendars, and whether Eavesy syncs it. */
+export type StoredCalendar = { id: string; name: string; primary: boolean; selected: boolean };
+
+export function storedCalendars(connection: Pick<CalendarConnection, 'calendarsJson'>): StoredCalendar[] {
+  return decode<StoredCalendar[]>(connection.calendarsJson, []);
+}
+
+/** Connections whose last sync attempt is older than `staleMs` (or never ran), longest-waiting first, across all accounts. Broken grants are left for the person to reconnect. */
+export async function listDueConnections(db: AppDb, now: number, staleMs: number, limit: number): Promise<CalendarConnection[]> {
+  return db
+    .select()
+    .from(calendarConnections)
+    .where(
+      and(
+        or(isNull(calendarConnections.lastSyncStatus), ne(calendarConnections.lastSyncStatus, 'reconnect')),
+        or(isNull(calendarConnections.lastAttemptAt), lt(calendarConnections.lastAttemptAt, now - staleMs)),
+      ),
+    )
+    .orderBy(sql`coalesce(${calendarConnections.lastAttemptAt}, 0)`)
+    .limit(limit);
+}
+
+/** Keeps the calendar list read from Google, with each calendar's sync choice. */
+export async function saveCalendarList(db: AppDb, connectionId: string, calendars: StoredCalendar[]): Promise<void> {
+  await db.update(calendarConnections).set({ calendarsJson: encode(calendars) }).where(eq(calendarConnections.id, connectionId));
+}
+
+/**
+ * Applies the person's ticks to a connection's calendars (ids it doesn't
+ * know are ignored; the primary calendar can't be unticked) and marks it due,
+ * so the next sync adds or drops those calendars' events. `not_found` when
+ * the connection isn't theirs; `not_listed` when its calendars haven't been
+ * read from Google yet (nothing to choose from).
+ */
+export async function setSelectedCalendars(
+  db: AppDb,
+  userId: string,
+  connectionId: string,
+  choices: { id: string; selected: boolean }[],
+): Promise<'ok' | 'not_found' | 'not_listed'> {
+  const connection = await getConnection(db, userId, connectionId);
+  if (!connection) return 'not_found';
+  if (!connection.calendarsJson) return 'not_listed';
+  const wanted = new Map(choices.map((choice) => [choice.id, choice.selected]));
+  const calendars = storedCalendars(connection).map((calendar) => ({
+    ...calendar,
+    selected: calendar.primary || (wanted.get(calendar.id) ?? calendar.selected),
+  }));
+  await db
+    .update(calendarConnections)
+    .set({ calendarsJson: encode(calendars), lastAttemptAt: null })
+    .where(and(eq(calendarConnections.id, connectionId), eq(calendarConnections.userId, userId)));
+  return 'ok';
+}
 
 export async function listConnections(db: AppDb, userId: string): Promise<CalendarConnection[]> {
   return db.select().from(calendarConnections).where(eq(calendarConnections.userId, userId));
@@ -24,7 +79,7 @@ export async function getConnection(db: AppDb, userId: string, id: string): Prom
 /** One row per account: connecting the same Google account again replaces its token. */
 export async function saveConnection(
   db: AppDb,
-  args: { userId: string; provider: 'google' | 'outlook'; accountEmail: string; refreshTokenEncrypted: string },
+  args: { userId: string; provider: 'google' | 'outlook'; accountEmail: string; refreshTokenEncrypted: string; scopes?: string | null },
 ): Promise<string> {
   const existing = (
     await db
@@ -42,12 +97,12 @@ export async function saveConnection(
   if (existing) {
     await db
       .update(calendarConnections)
-      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted, lastAttemptAt: null, lastSyncStatus: null })
+      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted, scopes: args.scopes ?? null, lastAttemptAt: null, lastSyncStatus: null })
       .where(eq(calendarConnections.id, existing.id));
     return existing.id;
   }
   const id = pid('cal');
-  await db.insert(calendarConnections).values({ id, ...args, lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null });
+  await db.insert(calendarConnections).values({ id, ...args, scopes: args.scopes ?? null, lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null });
   return id;
 }
 
@@ -115,6 +170,8 @@ export async function replaceEvents(
       meetingUrl: event.meetingUrl,
       platform: event.platform,
       participantsJson: encode(event.participants),
+      description: event.description,
+      calendarId: event.calendarId,
     };
     return db
       .insert(calendarEvents)
@@ -151,6 +208,7 @@ export type StoredEvent = {
   meetingUrl: string | null;
   platform: string | null;
   participants: { email: string; name: string | null }[];
+  description: string | null;
   recordChoice: 'record' | 'skip' | null;
   recordedMeetingId: string | null;
 };
@@ -186,6 +244,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     meetingUrl: row.meetingUrl,
     platform: row.platform,
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
+    description: row.description,
     recordChoice: row.recordChoice,
     recordedMeetingId: row.recordedMeetingId,
   })), own);

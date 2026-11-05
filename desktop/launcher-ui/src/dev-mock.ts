@@ -59,7 +59,14 @@ export function installDevMock(): void {
     { id: 'word-4', from: 'post hog', to: 'PostHog', origin: 'learned', seen: 1, updatedAt: Date.now() - 86_400_000 * 3 },
   ];
   let calendars = params.has('noconnections') ? [] : [
-    { id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false },
+    {
+      id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false, canAddCalendars: false,
+      calendars: [
+        { id: 'robin@example.com', name: 'Robin', primary: true, selected: true },
+        { id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: true },
+        { id: 'side@group.calendar.google.com', name: 'Side project', primary: false, selected: false },
+      ],
+    },
   ];
   let mcpTokens = params.has('noconnections') ? [] : [
     { id: 'mcp-1', name: 'Claude Code', createdAt: Date.now() - 86_400_000 * 3, lastUsedAt: Date.now() - 3_600_000, expiresAt: Date.now() + 86_400_000 * 89, scopes: ['read'], usesLegacyUrl: false },
@@ -122,6 +129,13 @@ export function installDevMock(): void {
       if (args.path === '/api/me' && args.method === 'PATCH' && preferencesSaveFailures > 0) { preferencesSaveFailures--; throw new Error('Could not reach eavesy.com'); }
       if (args.path === '/api/calendar-connections') {
         if (args.method === 'DELETE') { calendars = calendars.filter((c) => c.id !== (args.body as { id?: string } | null)?.id); return { ok: true }; }
+        if (args.method === 'PATCH') {
+          const body = args.body as { id: string; calendars: { id: string; selected: boolean }[] };
+          const connection = calendars.find((c) => c.id === body.id);
+          if (!connection) return { error: 'not_found' };
+          connection.calendars = connection.calendars.map((cal) => ({ ...cal, selected: cal.primary || (body.calendars.find((x) => x.id === cal.id)?.selected ?? cal.selected) }));
+          return { ok: true, calendars: connection.calendars };
+        }
         return { available: { google: true, outlook: false }, connections: calendars };
       }
       if (args.path === '/api/mcp-tokens') {

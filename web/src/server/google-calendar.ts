@@ -7,6 +7,25 @@ const CALENDARS_URL = 'https://www.googleapis.com/calendar/v3/calendars';
 
 /** Read-only access to calendar events, plus the account's email to show it. */
 export const GOOGLE_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events.readonly'];
+/** Lets Eavesy list the account's calendars, so people can pick which ones besides the primary one to sync. */
+export const CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly';
+const CALENDAR_LIST_URL = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
+
+/**
+ * Whether "Connect Google" asks for the calendar list too. Off until the
+ * scope is on the deployment's Google OAuth consent screen
+ * (`GOOGLE_CALENDAR_LIST=on`, docs/DEPLOY.md): asking for a scope the screen
+ * doesn't list shows people Google's "unverified app" warning.
+ */
+export function calendarListEnabled(): boolean {
+  const env = typeof process !== 'undefined' ? process.env : {};
+  return env.GOOGLE_CALENDAR_LIST === 'on';
+}
+
+/** The scopes "Connect Google" asks for on this deployment. */
+export function googleScopes(): string[] {
+  return calendarListEnabled() ? [...GOOGLE_SCOPES, CALENDAR_LIST_SCOPE] : GOOGLE_SCOPES;
+}
 
 export type GoogleCredentials = { clientId: string; clientSecret: string };
 
@@ -26,12 +45,13 @@ export function buildGoogleAuthorizeUrl(opts: {
   redirectUri: string;
   state: string;
   codeChallenge: string;
+  scopes?: string[];
 }): string {
   const params = new URLSearchParams({
     client_id: opts.clientId,
     redirect_uri: opts.redirectUri,
     response_type: 'code',
-    scope: GOOGLE_SCOPES.join(' '),
+    scope: (opts.scopes ?? GOOGLE_SCOPES).join(' '),
     access_type: 'offline',
     // Always ask, so Google sends a refresh token even on a reconnect, and
     // always show the account picker, so "Add another Google account" can
@@ -135,7 +155,31 @@ export type CalendarEventInput = {
   meetingUrl: string | null;
   platform: 'meet' | 'zoom' | 'teams' | null;
   participants: { email: string; name: string | null }[];
+  /** The invite's text (agenda, notes), as plain text, capped at MAX_DESCRIPTION. */
+  description: string | null;
+  /** The calendar it was read from; 'primary' for the account's own. */
+  calendarId: string;
 };
+
+/** The longest invite text kept: enough for an agenda, not a pasted document. */
+export const MAX_DESCRIPTION = 4_000;
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+
+/** Google sends invite text as HTML when it was written in Calendar's editor; keep the words and line breaks. */
+export function plainDescription(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw
+    .replace(/<(br|\/p|\/div|\/li)\s*\/?>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name: string) => ENTITIES[name] ?? '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) return null;
+  return text.length > MAX_DESCRIPTION ? `${text.slice(0, MAX_DESCRIPTION - 1)}…` : text;
+}
 
 /** Whole URLs in free text: a URL inside another URL's query stays part of that one. */
 const URL_TOKEN = /https:\/\/[^\s"'<>()[\]]+/g;
@@ -186,7 +230,7 @@ function timeOf(value: unknown): number | null {
 }
 
 /** Turns one item from Google's events list into a row, or null for cancelled or undated ones. */
-export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
+export function parseGoogleEvent(event: unknown, calendarId = 'primary'): CalendarEventInput | null {
   if (!isRecord(event) || typeof event.id !== 'string' || event.status === 'cancelled') return null;
   const startsAt = timeOf(event.start);
   const endsAt = timeOf(event.end);
@@ -206,6 +250,8 @@ export function parseGoogleEvent(event: unknown): CalendarEventInput | null {
     meetingUrl: link?.url ?? null,
     platform: link?.platform ?? null,
     participants,
+    description: plainDescription(event.description),
+    calendarId,
   };
 }
 
@@ -244,7 +290,7 @@ export async function listGoogleEvents(
     if (!isRecord(json)) return { events: out, complete: false };
     if (Array.isArray(json.items)) {
       for (const item of json.items) {
-        const parsed = parseGoogleEvent(item);
+        const parsed = parseGoogleEvent(item, calendarId);
         if (parsed) out.push(parsed);
       }
     }
@@ -252,4 +298,52 @@ export async function listGoogleEvents(
     if (!pageToken) return { events: out, complete: true };
   }
   return { events: out, complete: false };
+}
+
+export type GoogleCalendarInfo = {
+  id: string;
+  name: string;
+  primary: boolean;
+  /** Shown in the person's own Google Calendar list. */
+  selected: boolean;
+};
+
+/**
+ * Google's built-in subscriptions (holidays, birthdays, week numbers) live
+ * under this domain: they never hold meetings, so they start unticked.
+ */
+function isBuiltInSubscription(id: string): boolean {
+  return id.endsWith('@group.v.calendar.google.com');
+}
+
+/** Whether a calendar Eavesy hasn't seen before starts ticked: the primary one, and the ones shown in Google Calendar that can hold meetings. */
+export function selectedByDefault(calendar: GoogleCalendarInfo): boolean {
+  return calendar.primary || (calendar.selected && !isBuiltInSubscription(calendar.id));
+}
+
+/** The account's calendars it can read events on, primary first. Needs CALENDAR_LIST_SCOPE. */
+export async function listGoogleCalendars(accessToken: string, signal?: AbortSignal): Promise<GoogleCalendarInfo[]> {
+  const out: GoogleCalendarInfo[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({ minAccessRole: 'reader', maxResults: '250' });
+    if (pageToken) params.set('pageToken', pageToken);
+    const res = await fetch(`${CALENDAR_LIST_URL}?${params.toString()}`, { headers: { authorization: `Bearer ${accessToken}` }, signal });
+    if (res.status === 401) throw new GoogleAccessRevoked('unauthorized');
+    if (!res.ok) throw new Error(`google_calendars_http_${res.status}`);
+    const json: unknown = await res.json();
+    if (!isRecord(json)) break;
+    if (Array.isArray(json.items)) {
+      for (const item of json.items) {
+        if (!isRecord(item) || typeof item.id !== 'string' || item.deleted === true) continue;
+        const name = typeof item.summaryOverride === 'string' && item.summaryOverride.trim()
+          ? item.summaryOverride.trim()
+          : typeof item.summary === 'string' && item.summary.trim() ? item.summary.trim() : item.id;
+        out.push({ id: item.id, name, primary: item.primary === true, selected: item.selected === true });
+      }
+    }
+    pageToken = typeof json.nextPageToken === 'string' ? json.nextPageToken : undefined;
+    if (!pageToken) break;
+  }
+  return out.sort((a, b) => Number(b.primary) - Number(a.primary));
 }
