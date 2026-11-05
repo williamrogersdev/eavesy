@@ -60,8 +60,10 @@ enum Msg {
 /// most `finish` holds up delivery.
 const FINISH_WAIT: Duration = Duration::from_secs(2);
 /// How long after a first lookup finds no readable field it is looked for
-/// again, at each update, before live typing is off for the dictation.
+/// again, at most every `FIELD_RETRY`, before live typing is off for the
+/// dictation.
 const FIELD_SEARCH: Duration = Duration::from_secs(5);
+const FIELD_RETRY: Duration = Duration::from_secs(1);
 /// A typist with no words or stop this long gives up. Far past any
 /// dictation (they are short, and are delivered within
 /// `dictation::DELIVER_WINDOW` of stopping), so in practice only one whose
@@ -194,12 +196,18 @@ fn take(session_id: &str) -> Option<Entry> {
     Some(typists.remove(at))
 }
 
+/// Lookups that found no readable field: when the first and the last ran.
+#[derive(Clone, Copy)]
+struct Search {
+    first: std::time::Instant,
+    last: std::time::Instant,
+}
+
 /// Where the typist is with its field.
 enum Field {
     /// Not found yet: it is looked for from the draft's first update, in
-    /// the app the dictation will paste into. Holds when a lookup first
-    /// found no readable field.
-    Unknown(Option<std::time::Instant>),
+    /// the app the dictation will paste into.
+    Unknown(Option<Search>),
     Typing(LiveField),
     /// Typing stopped for this dictation; the field is kept so the end can
     /// still replace what was typed, should it be untouched after all.
@@ -308,6 +316,9 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
         Field::Stopped(_) => unreachable!("returned above"),
         Field::Typing(live) => live,
         Field::Unknown(missed) => {
+            if missed.is_some_and(|search| search.last.elapsed() < FIELD_RETRY) {
+                return Field::Unknown(missed);
+            }
             match crate::dictation::live_typing_target(session_id) {
                 // Not in front yet: look again at the next words.
                 Ok(false) => return Field::Unknown(missed),
@@ -321,8 +332,9 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
                 Some(live) => live,
                 // A field an app is still exposing, or focus passing through:
                 // look again at the next update, for a while.
-                None if missed.is_none_or(|at| at.elapsed() < FIELD_SEARCH) => {
-                    return Field::Unknown(missed.or_else(|| Some(std::time::Instant::now())));
+                None if missed.is_none_or(|search| search.first.elapsed() < FIELD_SEARCH) => {
+                    let now = std::time::Instant::now();
+                    return Field::Unknown(Some(Search { first: missed.map_or(now, |search| search.first), last: now }));
                 }
                 None => {
                     tracing::info!(session_id, "live typing off for this dictation: the field can't be read back");
@@ -356,6 +368,11 @@ struct Heard {
     drafts: Vec<Draft>,
 }
 
+/// Whether two captions share any audio.
+fn overlaps(a: &Caption, b: &Caption) -> bool {
+    a.start_ms < b.end_ms && b.start_ms < a.end_ms
+}
+
 /// A phrase not settled yet, as the live draft last read, and the words of it
 /// that are typed.
 struct Draft {
@@ -367,15 +384,14 @@ impl Heard {
     fn add(&mut self, caption: Caption) {
         if caption.is_final {
             // The engine starts each draft where the settled words end, so one
-            // starting earlier is this phrase's, even when unlike it.
-            self.drafts.retain(|draft| draft.caption.start_ms >= caption.end_ms && !same_phrase(&draft.caption, &caption));
+            // over this phrase's audio is its draft, even when unlike it.
+            self.drafts.retain(|draft| !overlaps(&draft.caption, &caption) && !same_phrase(&draft.caption, &caption));
             self.finals.retain(|previous| !same_phrase(previous, &caption));
             self.finals.push(caption);
             return;
         }
         // A late update for a phrase that has settled since.
-        let settled = self.finals.iter().map(|c| c.end_ms).max().unwrap_or(i64::MIN);
-        if caption.start_ms < settled || self.finals.iter().any(|final_| same_phrase(final_, &caption)) {
+        if self.finals.iter().any(|final_| overlaps(final_, &caption) || same_phrase(final_, &caption)) {
             return;
         }
         let earlier = self.drafts.iter().position(|draft| same_phrase(&draft.caption, &caption));
@@ -474,6 +490,40 @@ mod tests {
         heard.add(draft(2_000, 3_000, "Before Friday"));
         heard.add(draft(2_000, 3_500, "Before Friday please"));
         assert_eq!(heard.text(), "Send Sam the deck. Tomorrow. Before Friday");
+    }
+
+    #[test]
+    fn a_draft_before_a_final_that_came_early_is_kept() {
+        let mut heard = Heard::default();
+        heard.add(final_(2_000, 3_000, "before Friday."));
+        heard.add(draft(0, 1_900, "Send Sam"));
+        heard.add(draft(0, 1_950, "Send Sam the deck"));
+        assert_eq!(heard.text(), "Send Sam before Friday.");
+    }
+
+    #[test]
+    fn cancel_and_finish_reach_a_busy_typist() {
+        let (typed, rx) = entry("busy", true);
+        register(typed);
+        for n in 0..500 {
+            caption(&Caption { session_id: "busy".into(), ..draft(0, n, "words") });
+        }
+        cancel("busy");
+        assert!(matches!(rx.try_iter().last(), Some(Msg::Cancel)), "a long backlog never drops the cancel");
+
+        let (typed, rx) = entry("answers", true);
+        register(typed);
+        caption(&Caption { session_id: "answers".into(), ..draft(0, 1, "words") });
+        let typist = std::thread::spawn(move || {
+            for msg in rx {
+                if let Msg::Finish(reply) = msg {
+                    let _ = reply.send(None);
+                }
+            }
+        });
+        // It answered: no field came back, so nothing is in one.
+        assert!(matches!(finish("answers"), Typed::Nothing));
+        typist.join().unwrap();
     }
 
     #[test]
