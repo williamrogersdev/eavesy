@@ -138,6 +138,8 @@ async function handle(message: ProcessingMessage, env: ProcessingEnv) {
       return;
     case 'send-recap':
       // With "Send to attendees automatically" on, the notes go out right after the owner's recap.
+      // sendRecap answers 'recapped' only once the provider accepted the owner's own copy
+      // (sent or delivered): a rejected or unconfirmed recap sends attendees nothing.
       if (await sendRecap(db, env, message.meetingId) === 'recapped') await autoSendMeetingNotes(db, env, message.meetingId);
       return;
     case 'send-meeting-notes':

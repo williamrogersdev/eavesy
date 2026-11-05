@@ -454,3 +454,37 @@ describe('review round 2', () => {
     expect(confirmed.at(-1)).toEqual({ email: `x${MAX_ADDED_RECIPIENTS}@else.com`, outcome: 'too_many_added' });
   });
 });
+
+describe('review round 3', () => {
+  test('two sends at once cannot spend the day’s cap twice', async () => {
+    const t = setup();
+    const now = Date.now();
+    for (let i = 0; i < MAX_NOTE_RECIPIENTS_PER_DAY - 1; i++) {
+      t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+                    VALUES (?, 'u1', 'meeting_notes', ?, ?, 'resend', 'sent', ?, ?)`, [`d${i}`, `p${i}@x.com`, `k${i}`, now, now]);
+    }
+    const [a, b] = await Promise.all([
+      queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] }),
+      queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['cy@partner.io'] }),
+    ]);
+    expect([a[0].outcome, b[0].outcome].sort()).toEqual(['daily_limit', 'queued']);
+  });
+
+  test('addresses from outside the meeting are charged to their own allowance, enforced on the server', async () => {
+    const t = setup();
+    let left = 1;
+    const reserveAdded = async () => left-- > 0;
+    const results = await queueMeetingNotes(t.db, t.env, {
+      user: await t.user(),
+      meeting: await t.meeting(),
+      recipients: ['bea@acme.com', 'x1@else.com', 'x2@else.com'],
+      confirmAdded: true,
+      reserveAdded,
+    });
+    expect(results).toEqual([
+      { email: 'bea@acme.com', outcome: 'queued' },
+      { email: 'x1@else.com', outcome: 'queued' },
+      { email: 'x2@else.com', outcome: 'daily_limit' },
+    ]);
+  });
+});

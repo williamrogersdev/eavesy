@@ -5,7 +5,7 @@
  * Each send is an `email_deliveries` row of kind `meeting_notes`, keyed per
  * meeting and recipient, so an address gets a meeting's notes at most once.
  */
-import { and, count, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { calendarEvents, emailDeliveries, meetings, summaries, users } from '@/db/schema';
 import { type ActionItem, type Decision, decode } from '@/db/codec';
 import { pid } from '@/db/ids';
@@ -25,6 +25,8 @@ export const MAX_NOTE_RECIPIENTS_PER_DAY = 200;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 /** Most addresses from outside the meeting one send may add. */
 export const MAX_ADDED_RECIPIENTS = 10;
+/** Most addresses from outside a meeting one account sends notes to in a day. */
+export const MAX_ADDED_RECIPIENTS_PER_DAY = 30;
 export const MAX_NOTE_LENGTH = 2_000;
 /** How long a share link made for emailed notes stays open. */
 export const SHARE_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -138,6 +140,11 @@ export async function queueMeetingNotes(
     note?: string | null;
     /** The owner confirmed sending to addresses that weren't in the meeting (added by hand). */
     confirmAdded?: boolean;
+    /**
+     * Charges one address from outside the meeting to the account's own daily
+     * allowance for those (enforced by the caller's counter); false refuses it.
+     */
+    reserveAdded?: () => Promise<boolean>;
     now?: number;
   },
 ): Promise<{ email: string; outcome: QueueOutcome }[]> {
@@ -162,62 +169,63 @@ export async function queueMeetingNotes(
 
   // Addresses that weren't in the meeting go out only once the owner confirmed them, and only a few per send.
   const invited = new Set((await meetingAttendees(db, args.meeting, args.user.email)).flatMap((a) => (a.email ? [a.email] : [])));
-  let added = 0;
-  for (const email of [...candidates]) {
-    if (invited.has(email)) continue;
-    if (!args.confirmAdded || ++added > MAX_ADDED_RECIPIENTS) {
-      candidates.splice(candidates.indexOf(email), 1);
-      results.push({ email, outcome: args.confirmAdded ? 'too_many_added' : 'needs_confirmation' });
-    }
+  const outside = candidates.filter((email) => !invited.has(email));
+  for (const email of outside.filter((_, i) => !args.confirmAdded || i >= MAX_ADDED_RECIPIENTS)) {
+    candidates.splice(candidates.indexOf(email), 1);
+    results.push({ email, outcome: args.confirmAdded ? 'too_many_added' : 'needs_confirmation' });
   }
 
-  const [blocked, existing, [{ today }]] = await Promise.all([
+  const [blocked, existing] = await Promise.all([
     suppressedAmong(db, candidates, args.user.id),
     candidates.length
       ? db.select().from(emailDeliveries).where(inArray(emailDeliveries.idempotencyKey, candidates.map((e) => recapIdempotencyKey(args.meeting.id, e))))
       : Promise.resolve([] as EmailDelivery[]),
-    db.select({ today: count() }).from(emailDeliveries).where(and(
-      eq(emailDeliveries.userId, args.user.id),
-      eq(emailDeliveries.kind, 'meeting_notes'),
-      gte(emailDeliveries.createdAt, now - DAY_MS),
-      inArray(emailDeliveries.status, HAS_NOTES),
-    )),
   ]);
   const existingBy = new Map(existing.map((row) => [row.recipient, row]));
-  let budget = MAX_NOTE_RECIPIENTS_PER_DAY - today;
+  // Checked inside each write, so two sends at once can't both spend the last of the day's cap.
+  const underDailyCap = sql`(SELECT count(*) FROM email_deliveries
+    WHERE user_id = ${args.user.id} AND kind = 'meeting_notes' AND created_at >= ${now - DAY_MS}
+      AND status IN ('queued', 'unknown', 'sent', 'delivered')) < ${MAX_NOTE_RECIPIENTS_PER_DAY}`;
   let queued = 0;
   for (const email of candidates) {
     const before = existingBy.get(email);
-    if (before && HAS_NOTES.includes(before.status)) results.push({ email, outcome: 'already_sent' });
-    else if (blocked.has(email) || before?.status === 'complained') results.push({ email, outcome: 'suppressed' });
-    else if (budget <= 0) results.push({ email, outcome: 'daily_limit' });
-    else {
-      // A certainly-failed earlier send is queued again on the same row (its own provider key per attempt).
-      const changed = before
-        ? await db.update(emailDeliveries)
-          // A fresh start: counted in today's cap, not expired by the hourly reconcile, and matched to the new email's webhooks.
-          .set({ status: 'queued', statusDetail: 'resend', statusAt: null, providerMessageId: null, note, createdAt: now, updatedAt: now })
-          .where(and(eq(emailDeliveries.id, before.id), inArray(emailDeliveries.status, ['failed', 'bounced']), eq(emailDeliveries.kind, 'meeting_notes')))
-          .returning({ id: emailDeliveries.id })
-        : await db.insert(emailDeliveries).values({
-          id: pid('eml', now),
-          userId: args.user.id,
-          meetingId: args.meeting.id,
-          kind: 'meeting_notes',
-          recipient: email,
-          idempotencyKey: recapIdempotencyKey(args.meeting.id, email),
-          provider: 'resend',
-          status: 'queued',
-          note,
-          createdAt: now,
-          updatedAt: now,
-        }).onConflictDoNothing({ target: emailDeliveries.idempotencyKey }).returning({ id: emailDeliveries.id });
-      if (changed.length) {
-        queued++;
-        budget--;
-      }
-      results.push({ email, outcome: changed.length ? 'queued' : 'already_sent' });
+    if (before && HAS_NOTES.includes(before.status)) {
+      results.push({ email, outcome: 'already_sent' });
+      continue;
     }
+    if (blocked.has(email) || before?.status === 'complained') {
+      results.push({ email, outcome: 'suppressed' });
+      continue;
+    }
+    if (!invited.has(email) && args.reserveAdded && !(await args.reserveAdded())) {
+      results.push({ email, outcome: 'daily_limit' });
+      continue;
+    }
+    const key = recapIdempotencyKey(args.meeting.id, email);
+    // A certainly-failed earlier send is queued again on the same row (its own provider key per attempt).
+    const changed = before
+      ? await db.update(emailDeliveries)
+        // A fresh start: counted in today's cap, not expired by the hourly reconcile, and matched to the new email's webhooks.
+        .set({ status: 'queued', statusDetail: 'resend', statusAt: null, providerMessageId: null, note, createdAt: now, updatedAt: now })
+        .where(and(eq(emailDeliveries.id, before.id), inArray(emailDeliveries.status, ['failed', 'bounced']), eq(emailDeliveries.kind, 'meeting_notes'), underDailyCap))
+        .returning({ id: emailDeliveries.id })
+      : await db.all<{ id: string }>(sql`INSERT INTO email_deliveries
+          (id, user_id, meeting_id, kind, recipient, idempotency_key, provider, status, note, attempts, created_at, updated_at)
+          SELECT ${pid('eml', now)}, ${args.user.id}, ${args.meeting.id}, 'meeting_notes', ${email}, ${key}, 'resend', 'queued', ${note}, 0, ${now}, ${now}
+          WHERE ${underDailyCap}
+          ON CONFLICT (idempotency_key) DO NOTHING
+          RETURNING id`);
+    if (changed.length) {
+      queued++;
+      results.push({ email, outcome: 'queued' });
+      continue;
+    }
+    // Nothing written: someone else queued it first, its status moved on, or the day's cap is spent.
+    const current = (await db.select({ status: emailDeliveries.status }).from(emailDeliveries).where(eq(emailDeliveries.idempotencyKey, key)).limit(1))[0];
+    results.push({
+      email,
+      outcome: current && HAS_NOTES.includes(current.status) ? 'already_sent' : current?.status === 'complained' ? 'suppressed' : 'daily_limit',
+    });
   }
   if (queued) {
     await ensureShareLink(db, args.meeting, now);

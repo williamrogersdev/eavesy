@@ -6,10 +6,10 @@ import * as meetingsRepo from '@/db/repo/meetings';
 import * as usersRepo from '@/db/repo/users';
 import { resolveActor } from '@/server/auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import { guardBurst, guardUserQuota } from '@/server/rate-limit';
+import { guardBurst, guardUserQuota, rateLimit } from '@/server/rate-limit';
 import type { RecapEnv } from '@/server/email/recaps';
 import { emailConfigured } from '@/server/email/resend';
-import { MAX_NOTE_LENGTH, MAX_NOTE_RECIPIENTS, queueMeetingNotes, shareOverview } from '@/server/email/meeting-notes';
+import { MAX_ADDED_RECIPIENTS_PER_DAY, MAX_NOTE_LENGTH, MAX_NOTE_RECIPIENTS, queueMeetingNotes, shareOverview } from '@/server/email/meeting-notes';
 
 const sendSchema = z.object({
   recipients: z.array(z.string().max(320)).min(1).max(MAX_NOTE_RECIPIENTS),
@@ -80,6 +80,13 @@ export const Route = createFileRoute('/api/meetings/$id/share-notes')({
           recipients: parsed.data.recipients,
           note: parsed.data.note ?? null,
           confirmAdded: parsed.data.confirmAdded === true,
+          // Addresses from outside the meeting have their own, smaller daily allowance.
+          reserveAdded: async () => (await rateLimit({
+            key: `share-notes-added:${actor.userId}`,
+            limit: MAX_ADDED_RECIPIENTS_PER_DAY,
+            windowSec: 24 * 60 * 60,
+            failMode: 'closed',
+          })).allowed,
         });
         const queued = results.filter((r) => r.outcome === 'queued').length;
         await activityRepo.log(db, {
