@@ -1,6 +1,8 @@
 import type { AppDb } from '@/db/client';
 import * as calendarRepo from '@/db/repo/calendar';
 import { openSecret } from '@/server/secret-box';
+import { reconcileCalendarBots } from '@/server/meeting-bots/calendar-plan';
+import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
 import {
   CALENDAR_LIST_SCOPE,
   type CalendarEventInput,
@@ -26,7 +28,8 @@ export type SyncResult = 'ok' | 'reconnect' | 'failed';
 
 /**
  * Pulls the window's events for one connection and records how it went.
- * Uses `accessToken` when the caller already has one.
+ * Uses `accessToken` when the caller already has one. `plan: false` leaves the
+ * Notetaker plan to a caller syncing several connections, so it runs once per account.
  */
 export async function syncConnection(
   db: AppDb,
@@ -34,12 +37,15 @@ export async function syncConnection(
   now = Date.now(),
   accessToken?: string,
   signal?: AbortSignal,
+  plan = true,
 ): Promise<SyncResult> {
   const creds = googleCredentials();
   if (connection.provider !== 'google' || !creds) return 'failed';
   const result = await attempt(db, connection, creds, now, accessToken, signal);
   // A success already stamped the row along with its events.
   if (result !== 'ok') await calendarRepo.markAttempt(db, connection.id, result, now).catch(() => undefined);
+  // Fresh events can change which meetings the Notetaker goes to.
+  else if (plan) await planAfterSync(db, connection.userId, now);
   return result;
 }
 
@@ -68,6 +74,7 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
   const signal = AbortSignal.timeout(BACKGROUND_BUDGET_MS);
   let next = 0;
   let synced = 0;
+  const accounts = new Set<string>();
   const worker = async () => {
     while (next < due.length && !signal.aborted) {
       const connection = due[next++];
@@ -77,10 +84,15 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
         await calendarRepo.releaseAttempt(db, connection.id, now).catch(() => undefined);
         break;
       }
-      if ((await syncConnection(db, connection, now, undefined, signal)) === 'ok') synced++;
+      if ((await syncConnection(db, connection, now, undefined, signal, false)) === 'ok') {
+        synced++;
+        accounts.add(connection.userId);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(BACKGROUND_CONCURRENCY, due.length) }, worker));
+  // One plan per account, after all its calendars are in.
+  for (const userId of accounts) await planAfterSync(db, userId, now);
   return { synced };
 }
 
@@ -88,11 +100,13 @@ export async function syncAllDue(db: AppDb, now = Date.now()): Promise<{ synced:
 export async function syncDue(db: AppDb, connections: calendarRepo.CalendarConnection[], now = Date.now()): Promise<void> {
   const signal = AbortSignal.timeout(SYNC_BUDGET_MS);
   const due = connections.filter((c) => isDue(c, now)).sort((a, b) => (a.lastAttemptAt ?? 0) - (b.lastAttemptAt ?? 0));
+  const accounts = new Set<string>();
   for (const connection of due) {
     if (signal.aborted) break;
     if (!(await calendarRepo.claimAttempt(db, connection.id, now, SYNC_STALE_MS))) continue;
-    await syncConnection(db, connection, now, undefined, signal);
+    if ((await syncConnection(db, connection, now, undefined, signal, false)) === 'ok') accounts.add(connection.userId);
   }
+  for (const userId of accounts) await planAfterSync(db, userId, now);
 }
 
 async function attempt(
@@ -132,6 +146,25 @@ async function attempt(
     if (error instanceof GoogleAccessRevoked) return 'reconnect';
     console.error('[calendar-sync]', error);
     return 'failed';
+  }
+}
+
+/** Sends or withdraws Notetaker bots for the account's meetings; a failure never fails the sync. */
+async function planAfterSync(db: AppDb, userId: string, now: number): Promise<void> {
+  const env = await botEnv();
+  if (!env) return;
+  await reconcileCalendarBots(db, env, userId, now).catch((error: unknown) => console.error('[calendar-sync] notetaker plan', error));
+}
+
+/** The meeting-bot service binding where this Worker has one (the web Worker does). */
+async function botEnv(): Promise<MeetingBotsEnv | null> {
+  try {
+    // Loaded here, not at the top: outside a Worker (unit tests) there is no `cloudflare:workers`.
+    const { getCloudflareContext } = await import('@/server/cloudflare-context');
+    const env = getCloudflareContext<Partial<MeetingBotsEnv>>().env;
+    return env?.MEETING_BOTS ? { MEETING_BOTS: env.MEETING_BOTS } : null;
+  } catch {
+    return null;
   }
 }
 

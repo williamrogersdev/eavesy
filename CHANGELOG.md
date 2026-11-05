@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-11-05 - desktop
+
+### Added
+
+- Mac app: name the next meeting in the menu bar ([#336](https://github.com/williamrogersdev/eavesy/pull/336))
+
+### Fixed
+
+- Mac app: keep live typing up with speech ([#334](https://github.com/williamrogersdev/eavesy/pull/334))
+- Mac app: address review of the menu bar meeting item ([#340](https://github.com/williamrogersdev/eavesy/pull/340))
+
 ## [0.9.8] - 2026-11-05 - desktop
 
 ### Added

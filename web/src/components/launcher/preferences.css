@@ -210,3 +210,10 @@
 .ev-conn-error .ev-btn { margin-top: 4px; }
 /* A connected account's calendars, under its row in Connections. */
 .ev-conn-calendars { display: flex; flex-direction: column; gap: 2px; padding: 0 0 8px 40px; }
+/* Connections → Meetings: a choice per row, title on the left. */
+.ev-capture-default, .ev-meeting-plan { display: flex; align-items: center; gap: 12px; }
+.ev-capture-default .ev-field-input.ev-notetaker-name { width: 220px; flex: none; }
+@media (max-width: 560px) {
+  .ev-capture-default, .ev-meeting-plan { flex-wrap: wrap; }
+  .ev-capture-default .ev-field-input.ev-notetaker-name { width: 100%; }
+}
