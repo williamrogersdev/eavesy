@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseUpcomingMeeting } from '@/lib/api/calendar';
-import { attendeeList, choiceFor, linkHost, meetingTime, recordHint, recordsMeeting } from './meeting-model';
+import { attendeeList, choiceFor, linkHost, meetingSpan, meetingTime, recordHint, recordsMeeting } from './meeting-model';
 
 describe('meeting model', () => {
   test('the switch follows the setting unless the meeting has its own choice', () => {
@@ -23,10 +23,14 @@ describe('meeting model', () => {
     }
   });
 
-  test('a started meeting says until when', () => {
+  test('it says today, tomorrow, or until when once started', () => {
     const now = new Date(2026, 10, 5, 15, 0).getTime();
-    expect(meetingTime({ startsAt: now - 60_000, endsAt: now + 30 * 60_000 }, now)).toStartWith('Now, until');
-    expect(meetingTime({ startsAt: now + 60 * 60_000, endsAt: now + 90 * 60_000 }, now)).toStartWith('Today');
+    const clock = (at: Date) => at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const at = (day: number, hour: number, minute = 0) => new Date(2026, 10, day, hour, minute);
+    expect(meetingTime({ startsAt: now - 60_000, endsAt: at(5, 15, 30).getTime() }, now)).toBe(`Now, until ${clock(at(5, 15, 30))}`);
+    expect(meetingTime({ startsAt: at(5, 16).getTime(), endsAt: at(5, 16, 30).getTime() }, now)).toBe(`Today ${clock(at(5, 16))}`);
+    expect(meetingTime({ startsAt: at(6, 9).getTime(), endsAt: at(6, 9, 30).getTime() }, now)).toBe(`Tomorrow ${clock(at(6, 9))}`);
+    expect(meetingSpan({ startsAt: at(5, 16).getTime(), endsAt: at(5, 16, 30).getTime() }, now)).toBe(`Today ${clock(at(5, 16))} – ${clock(at(5, 16, 30))}`);
   });
 
   test('people are listed by name, then email, with a count of the rest', () => {
