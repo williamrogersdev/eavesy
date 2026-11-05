@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7f2c40da-d4cc-460c-87ab-dba14dee0482",
+  "id": "2ded6e8a-dc33-4e34-9cfb-a7765de5e473",
   "prevId": "9c889d43-3916-4d3b-ad27-f99552a33f57",
   "tables": {
     "activity_log": {
@@ -1010,15 +1010,6 @@
           ],
           "isUnique": false
         },
-        "captures_user_kind_updated_idx": {
-          "name": "captures_user_kind_updated_idx",
-          "columns": [
-            "user_id",
-            "kind",
-            "updated_at"
-          ],
-          "isUnique": false
-        },
         "captures_user_client_uq": {
           "name": "captures_user_client_uq",
           "columns": [
@@ -1715,6 +1706,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "sent_at": {
           "name": "sent_at",
@@ -4661,6 +4659,66 @@
           "autoincrement": false,
           "default": false
         },
+        "email_recaps_set_at": {
+          "name": "email_recaps_set_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "email_recaps_off_reason": {
+          "name": "email_recaps_off_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "email_recaps_auto_enabled_at": {
+          "name": "email_recaps_auto_enabled_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "email_recaps_notice_pending": {
+          "name": "email_recaps_notice_pending",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "email_recaps_off_token": {
+          "name": "email_recaps_off_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "share_notes_offer": {
+          "name": "share_notes_offer",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "share_notes_scope": {
+          "name": "share_notes_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'everyone'"
+        },
+        "share_notes_auto": {
+          "name": "share_notes_auto",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "meeting_capture_default": {
           "name": "meeting_capture_default",
           "type": "text",
@@ -4746,6 +4804,13 @@
           "name": "users_anonymous_token_uq",
           "columns": [
             "anonymous_session_token"
+          ],
+          "isUnique": true
+        },
+        "users_recaps_off_token_uq": {
+          "name": "users_recaps_off_token_uq",
+          "columns": [
+            "email_recaps_off_token"
           ],
           "isUnique": true
         },

@@ -39,10 +39,30 @@ export const users = sqliteTable(
     dictationStyle: text('dictation_style'),
     /** Whether dictations are structured as a prompt for an AI agent, in addition to their tone. */
     dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }).notNull().default(false),
-    /** Whether a recap of each finished meeting is emailed to the account's own address. */
+    /**
+     * Whether a recap of each finished meeting is emailed to the account's own address.
+     * On for new accounts: the SQL default stays false to avoid a users-table
+     * rebuild, and every insert of a signed-in account writes true.
+     */
     emailRecaps: integer('email_recaps', { mode: 'boolean' }).notNull().default(false),
-    /** Whether that recap carries the transcript as a text attachment. */
+    /** Whether that recap carries the transcript as a text attachment (and so do notes sent to attendees). */
     emailRecapTranscript: integer('email_recap_transcript', { mode: 'boolean' }).notNull().default(false),
+    /** When the owner last turned recaps on or off themselves; null if they never have. */
+    emailRecapsSetAt: integer('email_recaps_set_at'),
+    /** Why recaps are off: the owner turned them off, or a spam complaint did. Migrations never turn these back on. */
+    emailRecapsOffReason: text('email_recaps_off_reason', { enum: ['user', 'complaint'] }),
+    /** When Eavesy (not the owner) switched recaps on for an existing account. */
+    emailRecapsAutoEnabledAt: integer('email_recaps_auto_enabled_at'),
+    /** The next recap says recaps were switched on for them, with a link to turn them off. */
+    emailRecapsNoticePending: integer('email_recaps_notice_pending', { mode: 'boolean' }).notNull().default(false),
+    /** Secret in the one-click "turn off recaps" link; made when first needed. */
+    emailRecapsOffToken: text('email_recaps_off_token'),
+    /** Whether recaps and meeting pages offer "Send to everyone". */
+    shareNotesOffer: integer('share_notes_offer', { mode: 'boolean' }).notNull().default(true),
+    /** Who notes may be sent to: anyone, or only addresses on the owner's own domain. */
+    shareNotesScope: text('share_notes_scope', { enum: ['everyone', 'domain'] }).notNull().default('everyone'),
+    /** Send notes to the allowed attendees straight after the owner's recap, without asking. */
+    shareNotesAuto: integer('share_notes_auto', { mode: 'boolean' }).notNull().default(false),
     /**
      * How calendar meetings are captured unless chosen meeting by meeting:
      * `mac` records on the Mac (no bot), `notetaker` sends the Notetaker bot,
@@ -63,6 +83,7 @@ export const users = sqliteTable(
   (t) => [
     uniqueIndex('users_clerk_user_id_uq').on(t.clerkUserId),
     uniqueIndex('users_anonymous_token_uq').on(t.anonymousSessionToken),
+    uniqueIndex('users_recaps_off_token_uq').on(t.emailRecapsOffToken),
     index('users_email_idx').on(t.email),
     index('users_created_idx').on(t.createdAt),
     index('users_onboarded_idx').on(t.onboardingCompletedAt),
@@ -980,7 +1001,8 @@ export const emailDeliveries = sqliteTable('email_deliveries', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id),
   meetingId: text('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
-  kind: text('kind', { enum: ['meeting_recap'] }).notNull(),
+  /** `meeting_recap` goes to the owner; `meeting_notes` is the owner's notes sent on to an attendee. */
+  kind: text('kind', { enum: ['meeting_recap', 'meeting_notes'] }).notNull(),
   recipient: text('recipient').notNull(),
   idempotencyKey: text('idempotency_key').notNull(),
   provider: text('provider', { enum: ['resend'] }).notNull(),
@@ -993,6 +1015,8 @@ export const emailDeliveries = sqliteTable('email_deliveries', {
   /** Provider time of the newest event applied; older webhook deliveries are ignored. */
   statusAt: integer('status_at'),
   attempts: integer('attempts').notNull().default(0),
+  /** The owner's own note to attendees, sent above the notes. */
+  note: text('note'),
   sentAt: integer('sent_at'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),

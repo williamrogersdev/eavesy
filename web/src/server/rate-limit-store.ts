@@ -98,6 +98,8 @@ export const USER_DAILY_QUOTAS = {
   search: { limit: 1_000, failMode: 'closed' },
   export: { limit: 10, failMode: 'closed' },
   'meeting-export': { limit: 200, failMode: 'closed' },
+  // "Send to everyone" sends (each up to 50 recipients).
+  'share-notes': { limit: 30, failMode: 'closed' },
   // Spoken summaries and suggested replies when a Claude Code session stops.
   'agent-reply': { limit: 1_000, failMode: 'closed' },
   // Saved prompts suggested from recent dictations when Settings → Prompts opens.

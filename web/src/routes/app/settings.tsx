@@ -35,6 +35,11 @@ interface Me {
   emailRecaps: boolean;
   emailRecapTranscript: boolean;
   emailRecapsAvailable: boolean;
+  shareNotesOffer: boolean;
+  shareNotesScope: 'everyone' | 'domain';
+  shareNotesAuto: boolean;
+  /** The owner's company domain, or null for a personal webmail address. */
+  companyDomain: string | null;
   hasAnthropicKey: boolean;
   anthropicKeyHint?: string | null;
   hasOpenRouterKey: boolean;
@@ -170,7 +175,7 @@ function SettingsPage() {
     }
   };
 
-  const saveRecaps = async (change: Partial<Pick<Me, 'emailRecaps' | 'emailRecapTranscript'>>) => {
+  const saveRecaps = async (change: Partial<Pick<Me, 'emailRecaps' | 'emailRecapTranscript' | 'shareNotesOffer' | 'shareNotesScope' | 'shareNotesAuto'>>) => {
     const previous = me;
     setError(null);
     if (previous) setMe({ ...previous, ...change });
@@ -184,6 +189,7 @@ function SettingsPage() {
         const body: unknown = await response.json().catch(() => null);
         throw new Error(isRecord(body) && typeof body.error === 'string' && body.error !== 'invalid_request' ? body.error : `Server returned ${response.status}`);
       }
+      void refreshMe();
       toast.show();
     } catch (cause) {
       setMe(previous);
@@ -399,12 +405,13 @@ function SettingsPage() {
       <TemplateManager />
 
       <AppSection
-        title="Email recaps"
+        id="email"
+        title="Email"
         description={me.emailRecapsAvailable
-          ? `When a meeting finishes, Eavesy emails ${me.email ?? 'you'} its TL;DR, decisions, action items and a link to the transcript. Only you get it.`
-          : 'Email recaps are not set up on this server.'}
+          ? `After a meeting, Eavesy emails ${me.email ?? 'you'} its notes: the TL;DR, decisions, action items and a link to the transcript. Only you get it, unless you send it on.`
+          : 'Email is not set up on this server.'}
       >
-        <Row label="Email me a recap" hint="One email per finished meeting, to your account's address." htmlFor="settings-email-recaps">
+        <Row label="Email me notes after every meeting" hint="One email per finished meeting, to your account's address." htmlFor="settings-email-recaps">
           <input
             id="settings-email-recaps"
             type="checkbox"
@@ -413,13 +420,49 @@ function SettingsPage() {
             onChange={(e) => void saveRecaps({ emailRecaps: e.target.checked })}
           />
         </Row>
-        <Row label="Attach the transcript" hint="Adds the full transcript as a text file." htmlFor="settings-email-recap-transcript">
+        <Row label="Include the transcript" hint="Attaches the full transcript as a text file, to your notes and to notes you send on." htmlFor="settings-email-recap-transcript">
           <input
             id="settings-email-recap-transcript"
             type="checkbox"
             checked={me.emailRecapTranscript}
-            disabled={!me.emailRecapsAvailable || !me.emailRecaps}
+            disabled={!me.emailRecapsAvailable}
             onChange={(e) => void saveRecaps({ emailRecapTranscript: e.target.checked })}
+          />
+        </Row>
+        <Row label="Offer “Send to everyone”" hint="A button in your notes email and on each meeting that sends the notes to the people who were there. You review the list first." htmlFor="settings-share-notes-offer">
+          <input
+            id="settings-share-notes-offer"
+            type="checkbox"
+            checked={me.shareNotesOffer}
+            disabled={!me.emailRecapsAvailable}
+            onChange={(e) => void saveRecaps({ shareNotesOffer: e.target.checked })}
+          />
+        </Row>
+        <Row
+          label="Who can receive it"
+          hint={me.shareNotesScope === 'domain' && !me.companyDomain
+            ? 'Your address is a personal one, so nobody counts as your company: switch to Everyone to send notes on.'
+            : 'Applies to “Send to everyone” and to automatic sending.'}
+          htmlFor="settings-share-notes-scope"
+        >
+          <select
+            id="settings-share-notes-scope"
+            value={me.shareNotesScope}
+            disabled={!me.emailRecapsAvailable}
+            onChange={(e) => void saveRecaps({ shareNotesScope: e.target.value === 'domain' ? 'domain' : 'everyone' })}
+            className={`${input} sm:w-56`}
+          >
+            <option value="everyone">Everyone</option>
+            <option value="domain">{me.companyDomain ? `Only people at ${me.companyDomain}` : 'Only my company’s domain'}</option>
+          </select>
+        </Row>
+        <Row label="Send to attendees automatically" hint="Right after your own notes arrive, the calendar guests allowed above get them too, without asking you first." htmlFor="settings-share-notes-auto">
+          <input
+            id="settings-share-notes-auto"
+            type="checkbox"
+            checked={me.shareNotesAuto}
+            disabled={!me.emailRecapsAvailable || !me.emailRecaps}
+            onChange={(e) => void saveRecaps({ shareNotesAuto: e.target.checked })}
           />
         </Row>
       </AppSection>
@@ -689,6 +732,10 @@ function parseMe(value: unknown): Me | null {
     emailRecaps: value.emailRecaps === true,
     emailRecapTranscript: value.emailRecapTranscript === true,
     emailRecapsAvailable: value.emailRecapsAvailable === true,
+    shareNotesOffer: value.shareNotesOffer !== false,
+    shareNotesScope: value.shareNotesScope === 'domain' ? 'domain' : 'everyone',
+    shareNotesAuto: value.shareNotesAuto === true,
+    companyDomain: typeof value.companyDomain === 'string' ? value.companyDomain : null,
     hasAnthropicKey: value.hasAnthropicKey,
     anthropicKeyHint: nullableString(value.anthropicKeyHint),
     hasOpenRouterKey: value.hasOpenRouterKey,

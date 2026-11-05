@@ -8,6 +8,8 @@ export interface MeSummary {
   hasMac: boolean;
   /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
   notesLanguage: string | null;
+  /** Whether meetings offer "Send to everyone" (Settings → Email). */
+  shareNotesOffer: boolean;
 }
 
 function parseMe(value: unknown): MeSummary | null {
@@ -18,6 +20,7 @@ function parseMe(value: unknown): MeSummary | null {
     displayName: typeof record.displayName === 'string' ? record.displayName : undefined,
     hasMac: record.hasMac === true,
     notesLanguage: typeof record.notesLanguage === 'string' ? record.notesLanguage : null,
+    shareNotesOffer: record.shareNotesOffer !== false,
   };
 }
 

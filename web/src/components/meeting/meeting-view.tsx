@@ -1,8 +1,9 @@
 'use client';
 
-import { CalendarDays, Check, ChevronLeft, Clock, Download, FolderOpen, Laptop, Sparkles } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, Clock, Download, FolderOpen, Laptop, Send, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLiveTranscript, useMeeting } from '@/lib/api/use-meeting';
+import { useMe } from '@/lib/api/use-me';
 import { isDesktop, revealInFinder } from '@/lib/desktop/bridge';
 import { applyTranscriptDelta } from '@/lib/transcription/live-transcript';
 import { cn, formatDuration } from '@/lib/utils';
@@ -93,6 +94,8 @@ function Loaded({
   const device = meeting.deviceName || (meeting.source ? SOURCE_LABELS[meeting.source] : undefined);
   const started = new Date(meeting.startedAt);
   const hasBrief = Boolean(summary || meeting.summaryOverrideMd);
+  const me = useMe();
+  const offerShare = meeting.status === 'complete' && hasBrief && me.data?.shareNotesOffer === true;
 
   return (
     <AppPage width="wide" className="gap-6">
@@ -138,6 +141,16 @@ function Loaded({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:pt-1">
+            {offerShare ? (
+              <Link
+                href={`/app/meetings/${encodeURIComponent(meeting.id)}/share-notes`}
+                className={appButton('secondary', 'sm')}
+                title="Email the notes to the people in this meeting. You review the list first."
+              >
+                <Send className="h-3.5 w-3.5" />
+                Send to everyone
+              </Link>
+            ) : null}
             <CopyContextButton data={data} />
             <a
               href={`/api/export/${meeting.id}/zip`}
