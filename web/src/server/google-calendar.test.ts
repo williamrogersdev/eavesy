@@ -6,7 +6,9 @@ import {
   listGoogleEvents,
   meetingLinkOf,
   parseGoogleEvent,
+  plainDescription,
   refreshGoogleAccess,
+  selectedByDefault,
   revokeGoogleToken,
 } from './google-calendar';
 import type { AppDb } from '@/db/client';
@@ -103,6 +105,7 @@ describe('syncConnection', () => {
   const connection = {
     id: 'cal', userId: 'u', provider: 'google' as const, accountEmail: 'a@example.com',
     refreshTokenEncrypted: 'rt', lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null,
+    scopes: null, calendarsJson: null,
   };
 
   test('a refused refresh token is recorded as reconnect', async () => {
@@ -160,6 +163,8 @@ describe('Google events', () => {
       meetingUrl: 'https://meet.google.com/abc-defg-hij',
       platform: 'meet',
       participants: [{ email: 'a@example.com', name: 'A' }, { email: 'b@example.com', name: null }],
+      description: null,
+      calendarId: 'primary',
     });
   });
 
@@ -214,5 +219,34 @@ describe('Google events', () => {
     expect(meetingLinkOf({ location: 'https://us02web.zoom.us/j/123456?pwd=abc' })?.platform).toBe('zoom');
     expect(meetingLinkOf({ description: 'Join: https://teams.microsoft.com/l/meetup-join/19%3a123 now' })?.platform).toBe('teams');
     expect(meetingLinkOf({ location: 'Room 4' })).toBeNull();
+  });
+});
+
+describe('invite text and calendar choices', () => {
+  test('HTML invite text becomes plain text with its line breaks, capped', () => {
+    expect(plainDescription('<b>Agenda</b><br>1. Pricing &amp; plans<br/>2. Next&nbsp;steps')).toBe('Agenda\n1. Pricing & plans\n2. Next steps');
+    expect(plainDescription('Ben&#8217;s deck &#x2014; v2 &#55296;')).toBe('Ben’s deck — v2');
+    expect(plainDescription('   ')).toBeNull();
+    expect(plainDescription(undefined)).toBeNull();
+    expect(plainDescription('x'.repeat(5_000))!.length).toBe(4_000);
+  });
+
+  test('events keep their invite text and the calendar they came from', () => {
+    const event = parseGoogleEvent({ id: 'e', summary: 'Intro', description: 'Talk pricing', start: { dateTime: '2026-11-05T15:00:00Z' }, end: { dateTime: '2026-11-05T16:00:00Z' } }, 'team@group.calendar.google.com');
+    expect(event?.description).toBe('Talk pricing');
+    expect(event?.calendarId).toBe('team@group.calendar.google.com');
+  });
+
+  test('new calendars start ticked when shown in Google Calendar, never holidays or birthdays', () => {
+    expect(selectedByDefault({ id: 'me@x.com', name: 'Me', primary: true, selected: false })).toBe(true);
+    expect(selectedByDefault({ id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: true })).toBe(true);
+    expect(selectedByDefault({ id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: false })).toBe(false);
+    expect(selectedByDefault({ id: 'en.usa#holiday@group.v.calendar.google.com', name: 'Holidays', primary: false, selected: true })).toBe(false);
+  });
+
+  test('the calendar list scope is asked for only where it is switched on', () => {
+    const url = (scopes?: string[]) => new URL(buildGoogleAuthorizeUrl({ clientId: 'c', redirectUri: 'https://x/cb', state: 's', codeChallenge: 'cc', scopes })).searchParams.get('scope');
+    expect(url()).not.toContain('calendarlist');
+    expect(url(['openid', 'https://www.googleapis.com/auth/calendar.calendarlist.readonly'])).toContain('calendarlist');
   });
 });

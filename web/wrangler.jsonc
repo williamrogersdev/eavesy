@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
 
+  // Every five minutes: background calendar sync (src/server/calendar-sync.ts, BACKGROUND_SYNC_CRON).
+  "triggers": { "crons": ["*/5 * * * *"] },
+
   "placement": { "mode": "smart" },
 
   "routes": [

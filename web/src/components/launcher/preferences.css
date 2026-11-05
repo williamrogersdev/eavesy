@@ -208,3 +208,5 @@
 .ev-conn-error { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px; padding: 10px 12px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); }
 .ev-conn-error .ev-set-hint { margin: 0; white-space: pre-line; }
 .ev-conn-error .ev-btn { margin-top: 4px; }
+/* A connected account's calendars, under its row in Connections. */
+.ev-conn-calendars { display: flex; flex-direction: column; gap: 2px; padding: 0 0 8px 40px; }
