@@ -232,6 +232,10 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
   '/api/devices/captures/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/devices/captures' }, excludes: [CAPTURE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'uploads a capture owned by the calling device’s user' },
+    PUT: {
+      unauthenticated: SIGNED_IN,
+      scopedToCaller: 'replaces a note found by the calling device’s user and its x-client-capture-id; replaceNote is also scoped to that user (repo tests cover another user)',
+    },
   },
   '/api/devices/captures/$id': {
     GET: {
