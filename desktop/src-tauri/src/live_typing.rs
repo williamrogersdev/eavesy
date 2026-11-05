@@ -119,7 +119,9 @@ fn register(entry: Entry) {
 /// A caption from the capture engine. Never blocks: the engine's reader
 /// calls this, and it must keep reading.
 pub fn caption(caption: &Caption) {
-    if caption.track != "mic" || caption.text.trim().is_empty() {
+    // Drafts are typed too, but a final is only ever the accurate
+    // recognizer's (the engine never sends a preview final).
+    if caption.track != "mic" || caption.text.trim().is_empty() || (caption.preview && caption.is_final) {
         return;
     }
     let typists = typists();
@@ -157,9 +159,21 @@ pub fn finish(session_id: &str) -> Typed {
         }
     };
     let (reply, answer) = sync_channel(1);
-    if entry.tx.send(Msg::Finish(reply)).is_err() {
-        // The typist idled out.
-        return unknown();
+    // Never block on a full queue: the typist takes all of it at once
+    // whenever it is free, so room comes within the wait or not at all.
+    let give_up = std::time::Instant::now() + FINISH_WAIT;
+    let mut msg = Msg::Finish(reply);
+    loop {
+        match entry.tx.try_send(msg) {
+            Ok(()) => break,
+            // The typist idled out.
+            Err(TrySendError::Disconnected(_)) => return unknown(),
+            Err(TrySendError::Full(back)) if std::time::Instant::now() < give_up => {
+                msg = back;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(TrySendError::Full(_)) => return unknown(),
+        }
     }
     // A sync under way when the wait runs out posts no further key (each
     // press checks `stop` first), but a press already posted may still
@@ -210,9 +224,9 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
             // A dictation this quiet can no longer be delivered (IDLE is
             // past `dictation::DELIVER_WINDOW`): let its field go. Its
             // words stay in it, and `finish` copies rather than pastes.
-            Err(RecvTimeoutError::Timeout) => return,
+            Err(RecvTimeoutError::Timeout) => return pace.report(session_id),
             // Replaced or cancelled: whatever was typed stays as it is.
-            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Disconnected) => return pace.report(session_id),
         };
         let mut ending = None;
         match msg {
@@ -246,9 +260,11 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
             return;
         }
         let text = heard.text();
+        // Only updates that type count: finding the field is timed apart.
+        let typing = matches!(field, Field::Typing(_)) && !text.is_empty();
         let began = std::time::Instant::now();
         field = type_into(session_id, field, &text, shared);
-        if matches!(field, Field::Typing(_)) {
+        if typing && matches!(field, Field::Typing(_)) {
             pace.add(began.elapsed());
         }
     }
@@ -311,6 +327,8 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
             }
             match LiveField::focused() {
                 Some(live) => live,
+                // Nothing to type yet: look again at the next update.
+                None if text.is_empty() => return Field::Unknown,
                 None => {
                     tracing::info!(session_id, "live typing off for this dictation: the field can't be read back");
                     return Field::Stopped(None);
@@ -496,6 +514,9 @@ mod tests {
         let mut preview = draft(0, 500, "hi there");
         preview.preview = true;
         caption(&preview);
+        let mut preview_final = final_(0, 500, "hi there you");
+        preview_final.preview = true;
+        caption(&preview_final);
         caption(&final_(0, 500, "hello"));
         assert!(matches!(rx.try_recv(), Ok(Msg::Caption(c)) if c.text == "hi there"));
         assert!(matches!(rx.try_recv(), Ok(Msg::Caption(c)) if c.text == "hello"));

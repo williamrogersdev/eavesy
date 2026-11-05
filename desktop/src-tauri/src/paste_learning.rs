@@ -813,13 +813,28 @@ pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> 
     Some(middle.into())
 }
 
-/// Where a field's text first parts from what was expected, for the log: a
-/// UTF-16 offset and the two characters there, never the text itself.
+/// Where a field's text first parts from what was expected, for the log:
+/// UTF-16 offsets and the kind of character on each side there, never the
+/// text itself.
 pub fn where_it_differs(value: &str, expected: &str) -> String {
     let value = normalize(value);
     let at = shared_prefix(&value, expected);
-    let next = |text: &str| text[at..].chars().next().map_or("the end".to_string(), |c| format!("U+{:04X}", c as u32));
-    format!("at {} of {} units: the field has {}, expected {}", units(&value[..at]), units(expected), next(&value), next(expected))
+    let kind = |text: &str| match text[at..].chars().next() {
+        None => "the end",
+        Some('\n') => "a newline",
+        Some(c) if c.is_whitespace() => "a space",
+        Some(c) if c.is_alphanumeric() => "a letter",
+        Some(c) if c.is_control() => "a control character",
+        Some(_) => "punctuation",
+    };
+    format!(
+        "at {} units, of {} in the field and {} expected: the field has {}, expected {}",
+        units(&value[..at]),
+        units(&value),
+        units(expected),
+        kind(&value),
+        kind(expected)
+    )
 }
 
 /// Text as live typing puts it in a field: as fields hand it back
@@ -902,10 +917,17 @@ mod tests {
         assert_eq!(typed_passage("Hi\u{a0}Hello there", "Hi ", "").as_deref(), Some("Hello there"));
         assert_eq!(typed_passage("I\u{2019}m in", "", "").as_deref(), Some("I'm in"));
         assert_eq!(
-            where_it_differs("Hi Hellp", "Hi Hello"),
-            "at 7 of 8 units: the field has U+0070, expected U+006F"
+            where_it_differs("Hi Hello\n", "Hi Hello."),
+            "at 8 units, of 9 in the field and 9 expected: the field has a newline, expected punctuation"
         );
-        assert_eq!(where_it_differs("Hi", "Hi!"), "at 2 of 3 units: the field has the end, expected U+0021");
+        assert_eq!(
+            where_it_differs("Hi", "Hi there"),
+            "at 2 units, of 2 in the field and 8 expected: the field has the end, expected a space"
+        );
+        // Offsets into the field hold after normalizing: one unit for one.
+        for c in ['\u{a0}', '\u{202f}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}'] {
+            assert_eq!(units(&normalize(&c.to_string())), units(&c.to_string()));
+        }
     }
 
     #[test]
