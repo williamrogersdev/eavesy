@@ -41,6 +41,7 @@ import {
 } from '@/lib/mcp-tokens';
 import { claudeCodeConnected, claudeCodeStage, type ClaudeCodeStage } from './connections-model';
 import type { CaptureMode } from '@/lib/meetings/capture-plan';
+import { meetingTime } from './meeting-model';
 
 /** Text to copy (a URL, a command or a whole prompt), with a Copy button that says when it worked. */
 function CopyField({ label, text, block = false }: { label: string; text: string; block?: boolean }) {
@@ -339,13 +340,6 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
       )}
     </>
   );
-}
-
-function meetingTime(meeting: UpcomingMeeting, now: number): string {
-  const start = new Date(meeting.startsAt);
-  const time = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (meeting.startsAt <= now) return `Now, until ${new Date(meeting.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-  return start.toDateString() === new Date(now).toDateString() ? `Today ${time}` : `Tomorrow ${time}`;
 }
 
 type CaptureDefault = MeetingCapturePrefs['captureDefault'];

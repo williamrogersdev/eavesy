@@ -110,6 +110,10 @@ pub async fn account_call(app: AppHandle, method: String, path: String, body: Op
     if path == "/api/me" && method == "PATCH" {
         crate::vocabulary::refresh(&app);
     }
+    // A meeting's record choice: the watcher and the menu bar's meeting card read the calendar again.
+    if method == "PATCH" && path.starts_with("/api/calendar-events/") {
+        crate::meeting_watch::calendar_changed();
+    }
     // Any change to the account or a project, tone or not: the HUD reads the account again (cheap, rare).
     if reloads_hud(&method, &path) {
         let _ = app.emit_to("hud", "account:changed", ());

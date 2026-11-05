@@ -108,29 +108,49 @@ export interface UpcomingMeeting {
   mode: CaptureMode;
   /** A Meet or Teams call the Notetaker can join. */
   notetakerCanJoin: boolean;
+  /** Who's invited, as the calendar lists them. */
+  attendees: MeetingAttendee[];
+}
+
+export interface MeetingAttendee {
+  email: string;
+  name: string | null;
+}
+
+function parseAttendees(value: unknown): MeetingAttendee[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => isRecord(item) && typeof item.email === 'string'
+    ? [{ email: item.email, name: typeof item.name === 'string' && item.name.trim() ? item.name : null }]
+    : []);
 }
 
 const MODES: readonly CaptureMode[] = ['mac', 'notetaker', 'both', 'skip'];
 const asMode = (value: unknown): CaptureMode | null => (MODES.includes(value as CaptureMode) ? (value as CaptureMode) : null);
 
-function parseMeeting(item: unknown): UpcomingMeeting[] {
-  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return [];
-  if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return [];
+/** One meeting from `/api/calendar-events` (or the Mac app's menu bar), or null when it isn't one. */
+export function parseUpcomingMeeting(item: unknown): UpcomingMeeting | null {
+  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return null;
+  if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return null;
   const choice = item.recordChoice === 'record' || item.recordChoice === 'skip' ? item.recordChoice : null;
-  const captureMode = asMode(item.captureMode);
   // An older server sends only recordChoice.
   const mode = asMode(item.mode) ?? (choice === 'skip' ? 'skip' : 'mac');
-  return [{
+  return {
     id: item.id,
     title: item.title,
     startsAt: item.startsAt,
     endsAt: item.endsAt,
     meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null,
     recordChoice: choice,
-    captureMode,
+    captureMode: asMode(item.captureMode),
     mode,
     notetakerCanJoin: item.notetakerCanJoin === true,
-  }];
+    attendees: parseAttendees(item.attendees),
+  };
+}
+
+function parseMeeting(item: unknown): UpcomingMeeting[] {
+  const meeting = parseUpcomingMeeting(item);
+  return meeting ? [meeting] : [];
 }
 
 /** `/api/calendar-events`' upcoming meetings, or null when it isn't that answer. */
