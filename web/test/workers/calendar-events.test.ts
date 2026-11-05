@@ -120,6 +120,27 @@ describe('GET /api/calendar-events', () => {
     expect(JSON.stringify(body)).not.toContain('Design review');
   });
 
+  it('merges every connected calendar and lists a meeting both carry once', async () => {
+    await connection('cal_work', 'user_mac');
+    const now = Date.now();
+    const shared = (await row<{ starts_at: number; ends_at: number }>('SELECT starts_at, ends_at FROM calendar_events WHERE id = ?', 'evt_now'))!;
+    // The same call on a second account: its own Google id, the same link and time.
+    await event({
+      id: 'evt_now_work',
+      userId: 'user_mac',
+      connectionId: 'cal_work',
+      title: 'Design review',
+      startsAt: shared.starts_at,
+      endsAt: shared.ends_at,
+      participants: [{ email: 'dana@example.com', name: 'Dana' }, { email: 'lee@example.com', name: 'Lee' }],
+    });
+    await event({ id: 'evt_work_only', userId: 'user_mac', connectionId: 'cal_work', title: 'Planning', startsAt: now + 120 * MIN, endsAt: now + 150 * MIN });
+    const { body } = await events();
+    expect(body.upcoming.map((e) => e.id)).toEqual(['evt_now', 'evt_next', 'evt_work_only']);
+    expect(body.current?.id).toBe('evt_now');
+    expect(body.current?.attendees.map((a) => a.email)).toEqual(['user_mac@example.com', 'dana@example.com', 'lee@example.com']);
+  });
+
   it('says when no calendar is connected', async () => {
     await insertUser('user_new');
     actor.userId = 'user_new';
